@@ -527,7 +527,7 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
 });
 
-Deno.test("createDefaultHostedChatRuntime forwards project identity to tool execution", async () => {
+Deno.test("createDefaultHostedChatRuntime forwards bound run and agent identity to tool execution", async () => {
   await runWithProjectRequestContext(
     {
       projectId: "project-1",
@@ -584,6 +584,8 @@ Deno.test("createDefaultHostedChatRuntime forwards project identity to tool exec
             authToken: "token-1",
             instructions: "Inspect the runtime context.",
             model: "test/hosted-context",
+            runId: "run-bound-default-chat",
+            agentId: "veryfront",
             allowedTools: ["inspect_context"],
           },
           config: {
@@ -618,6 +620,8 @@ Deno.test("createDefaultHostedChatRuntime forwards project identity to tool exec
 
         assertEquals(capturedExecutionContext?.projectId, "project-1");
         assertEquals(capturedExecutionContext?.projectSlug, "project-slug-1");
+        assertEquals(capturedExecutionContext?.runId, "run-bound-default-chat");
+        assertEquals(capturedExecutionContext?.agentId, "veryfront");
       } finally {
         clearModelProviders();
       }

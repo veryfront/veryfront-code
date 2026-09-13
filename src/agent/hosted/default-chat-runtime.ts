@@ -335,7 +335,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     refreshSystem,
   });
   const runtimeConfig: RuntimeToolFilterConfig = {
-    id: input.runtimeAgentId ?? "veryfront-hosted-runtime",
+    id: input.runtimeAgentId ?? input.options.agentId ?? "veryfront-hosted-runtime",
     model: input.modelId,
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
