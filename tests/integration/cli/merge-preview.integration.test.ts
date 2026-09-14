@@ -51,7 +51,7 @@ describe("merge dry-run REST contract", () => {
         });
       }, () => mergeCommand({ branch: "fixture", dryRun: true, force: false }));
       assertEquals(requests.length, 3);
-      assertEquals(requests[1].includes("cursor=page-two"), true);
+      assertEquals(requests[1]?.includes("cursor=page-two"), true);
       assertEquals(warnings, ["  1 file(s) have conflicts", "    - app/page.tsx"]);
     } finally {
       cliLogger.warn = originalWarn;
