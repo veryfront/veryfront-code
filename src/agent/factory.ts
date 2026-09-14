@@ -73,6 +73,7 @@ import {
 import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const StringTrim = String.prototype.trim;
 const IntrinsicArrayFilter = Array.prototype.filter;
 const IntrinsicObjectEntries = Object.entries;
 const IntrinsicObjectKeys = Object.keys;
@@ -533,7 +534,9 @@ function createAgent<TOutput = never>(
   config: AgentConfig<TOutput>,
   options: { register: boolean; runtimeOptions?: AgentRuntimeInternalOptions },
 ): Agent<TOutput> {
-  if (typeof config.id === "string" && config.id.trim().length === 0) {
+  if (
+    typeof config.id === "string" && IntrinsicReflectApply(StringTrim, config.id, []).length === 0
+  ) {
     throw toError(
       createError({
         type: "agent",
