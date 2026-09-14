@@ -1,3 +1,4 @@
+import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import {
   MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
   MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
@@ -14,7 +15,6 @@ import {
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 
 const DEFAULT_PROVIDER_REPLAY_APPEND_TIMEOUT_MS = 15_000;
-const MAX_RUN_EVENT_APPEND_TOKEN_BYTES = 4 * 1024;
 
 type Fetch = typeof globalThis.fetch;
 
@@ -193,7 +193,7 @@ function isValidRunEventAppendToken(token: string | null | undefined): token is 
   }
   const encoded = apply(textEncoderEncode, textEncoder, [token]) as Uint8Array;
   return (apply(typedArrayByteLengthGetter, encoded, []) as number) <=
-    MAX_RUN_EVENT_APPEND_TOKEN_BYTES;
+    MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES;
 }
 
 function getAbortReason(signal: AbortSignal): unknown {

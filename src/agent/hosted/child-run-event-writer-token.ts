@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import {
   createVeryfrontApiRequestUrlResolver,
   type VeryfrontApiRequestUrlResolver,
@@ -12,8 +13,6 @@ import {
 
 const DEFAULT_CHILD_RUN_EVENT_WRITER_TOKEN_TIMEOUT_MS = 10_000;
 const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES = 4 * 1024;
-// Root credentials can also carry the configured integration-tool grant.
-const MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES = 32 * 1024;
 const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_RESPONSE_BYTES = 16 * 1024;
 const CHILD_RUN_EVENT_WRITER_TOKEN_SETUP_ERROR =
   "Unable to initialize durable child event persistence";

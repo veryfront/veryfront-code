@@ -266,12 +266,14 @@ Deno.test("mintChildRunEventWriterCapability rejects an oversized token", async 
 });
 
 Deno.test("run event writer capabilities accept root tokens carrying large integration grants", () => {
-  const capability = createHostedRunEventWriterCapability({
-    apiUrl: "https://api.example.com",
-    runId: "run_parent",
-    runEventAppendToken: "x".repeat(4_657),
-  });
-  assertEquals(typeof capability.mintChildRunEventWriterCapability, "function");
+  for (const bytes of [4_657, 32 * 1024]) {
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.com",
+      runId: "run_parent",
+      runEventAppendToken: "x".repeat(bytes),
+    });
+    assertEquals(typeof capability.mintChildRunEventWriterCapability, "function");
+  }
 });
 
 Deno.test("run event writer capabilities reject oversized root tokens", () => {

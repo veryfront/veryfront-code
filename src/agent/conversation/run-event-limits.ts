@@ -9,6 +9,9 @@ export const MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES = 240 * 1024;
 /** Maximum JSON body accepted by the trusted conversation run-event endpoint. */
 export const MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES = 10 * 1024 * 1024;
 
+/** Maximum root writer credential size, including configured integration grants. */
+export const MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES = 32 * 1024;
+
 const encoder = new TextEncoder();
 
 /** Return the conservative append-request size for one private durable event. */
