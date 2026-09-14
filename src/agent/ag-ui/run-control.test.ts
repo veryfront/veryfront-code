@@ -257,4 +257,62 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(response.status, 204);
     assertEquals(await response.text(), "");
   });
+
+  /**
+   * An integration-auth park cancels the runtime turn, then resumes the same run
+   * once the integration is connected. The ordinary cancel keeps a tombstone so a
+   * delayed start of a cancelled run is refused; kept for a park, that tombstone
+   * refuses the resume start instead.
+   */
+  it("keeps a run startable after a cancellation for an integration-auth park", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const handler = createAgUiCancelHandler({ sessionManager });
+
+    const response = await handler(
+      new Request("https://example.com/api/runs/run_1?reason=integration_auth_park", {
+        method: "DELETE",
+      }),
+    );
+
+    assertEquals(response.status, 202);
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertExists(
+      sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }),
+      "the resume start must not be refused as a delayed start",
+    );
+  });
+
+  it("does not remember a park cancellation for a run that is not active", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    const handler = createAgUiCancelHandler({ sessionManager });
+
+    const response = await handler(
+      new Request("https://example.com/api/runs/run_1?reason=integration_auth_park", {
+        method: "DELETE",
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertExists(sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }));
+  });
+
+  it("still refuses a delayed start after an ordinary cancellation", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const handler = createAgUiCancelHandler({ sessionManager });
+
+    const response = await handler(
+      new Request("https://example.com/api/runs/run_1", { method: "DELETE" }),
+    );
+
+    assertEquals(response.status, 202);
+    let refused: unknown;
+    try {
+      sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    } catch (error) {
+      refused = error;
+    }
+    assertEquals(refused instanceof RunCancelledError, true);
+  });
 });

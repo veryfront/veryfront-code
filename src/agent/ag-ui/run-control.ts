@@ -144,6 +144,13 @@ export function createAgUiResumeHandler(
   };
 }
 
+/**
+ * Cancel reason sent by the control plane when it parks a run on an integration
+ * auth wall. The turn is stopped, but the run stays startable so the resume that
+ * follows once the integration is connected is not refused.
+ */
+const INTEGRATION_AUTH_PARK_CANCEL_REASON = "integration_auth_park";
+
 /** Handler for create AG-UI cancel. */
 export function createAgUiCancelHandler<T = unknown>(
   options: AgUiCancelHandlerOptions<T>,
@@ -156,7 +163,14 @@ export function createAgUiCancelHandler<T = unknown>(
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
-    const accepted = options.sessionManager.cancelRun(runId, { rememberIfMissing: true });
+    // A park stops the turn so a waiting run cannot finish, then resumes the same
+    // run later. Remembering that cancellation would refuse the resume start as a
+    // delayed start of a cancelled run, so only an ordinary cancel is remembered.
+    const parkCancellation =
+      new URL(request.url).searchParams.get("reason") === INTEGRATION_AUTH_PARK_CANCEL_REASON;
+    const accepted = options.sessionManager.cancelRun(runId, {
+      rememberIfMissing: !parkCancellation,
+    });
     if (accepted) {
       return Response.json({ accepted: true }, { status: 202 });
     }
