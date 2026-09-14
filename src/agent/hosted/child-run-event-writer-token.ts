@@ -12,6 +12,8 @@ import {
 
 const DEFAULT_CHILD_RUN_EVENT_WRITER_TOKEN_TIMEOUT_MS = 10_000;
 const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES = 4 * 1024;
+// Root credentials can also carry the configured integration-tool grant.
+const MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES = 32 * 1024;
 const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_RESPONSE_BYTES = 16 * 1024;
 const CHILD_RUN_EVENT_WRITER_TOKEN_SETUP_ERROR =
   "Unable to initialize durable child event persistence";
@@ -151,13 +153,16 @@ function isNoStoreResponse(response: Response): boolean {
   ]) as boolean;
 }
 
-function isValidRunEventWriterToken(token: unknown): token is string {
+function isValidRunEventWriterToken(
+  token: unknown,
+  maxBytes = MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES,
+): token is string {
   if (typeof token !== "string" || token.length === 0 || trim(token) !== token) {
     return false;
   }
   const encoded = apply(textEncoderEncode, utf8Encoder, [token]) as Uint8Array;
   const byteLength = apply(typedArrayByteLengthGetter, encoded, []) as number;
-  return byteLength <= MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES;
+  return byteLength <= maxBytes;
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
@@ -324,7 +329,9 @@ export function createHostedRunEventWriterCapability(input: {
   /** Explicit trusted-host or test transport; tenant code must omit this seam. */
   fetch?: Fetch;
 }): HostedRunEventWriterCapability {
-  if (!isValidRunEventWriterToken(input.runEventAppendToken)) {
+  if (
+    !isValidRunEventWriterToken(input.runEventAppendToken, MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES)
+  ) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
   const state: CapabilityState = {
