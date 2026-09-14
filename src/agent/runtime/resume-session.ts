@@ -402,16 +402,29 @@ export class RunResumeSessionManager<T> {
     return true;
   }
 
-  completeRun(runId: string): void {
-    const session = this.sessions.get(runId);
+  /**
+   * Finalize a run as completed. Pass the signal `startRun` returned so a stale
+   * execution cannot finalize a newer session started under the same run id,
+   * such as the resume of a run whose parked turn settled late.
+   */
+  completeRun(runId: string, signal?: AbortSignal): void {
+    const session = this.getOwnedSession(runId, signal);
     if (!session) return;
     this.finalizeSession(session, "completed");
   }
 
-  failRun(runId: string): void {
-    const session = this.sessions.get(runId);
+  /** Finalize a run as failed; see {@link completeRun} for `signal`. */
+  failRun(runId: string, signal?: AbortSignal): void {
+    const session = this.getOwnedSession(runId, signal);
     if (!session) return;
     this.finalizeSession(session, "failed");
+  }
+
+  private getOwnedSession(runId: string, signal?: AbortSignal): RunSession<T> | undefined {
+    const session = this.sessions.get(runId);
+    if (!session) return undefined;
+    if (signal && session.abortController.signal !== signal) return undefined;
+    return session;
   }
 
   getRunStatus(runId: string): RunSessionStatus | null {

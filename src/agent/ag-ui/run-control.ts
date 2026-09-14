@@ -58,6 +58,13 @@ export interface AgUiResumeHandlerOptions extends AgUiRunControlHandlerOptions {
 /** Options accepted by AG-UI cancel handler. */
 export interface AgUiCancelHandlerOptions<T = unknown> extends AgUiRunControlHandlerOptions {
   sessionManager: RunResumeSessionManager<T>;
+  /**
+   * Honour `reason=integration_auth_park` on the cancel request. The reason comes
+   * from the request, so set this only where the caller has already been
+   * authenticated as the control plane for the run; everywhere else a cancel
+   * keeps the tombstone that refuses a delayed start.
+   */
+  acceptIntegrationAuthParkReason?: boolean;
 }
 
 async function resolveRunId(
@@ -166,7 +173,7 @@ export function createAgUiCancelHandler<T = unknown>(
     // A park stops the turn so a waiting run cannot finish, then resumes the same
     // run later. Remembering that cancellation would refuse the resume start as a
     // delayed start of a cancelled run, so only an ordinary cancel is remembered.
-    const parkCancellation =
+    const parkCancellation = options.acceptIntegrationAuthParkReason === true &&
       new URL(request.url).searchParams.get("reason") === INTEGRATION_AUTH_PARK_CANCEL_REASON;
     const accepted = options.sessionManager.cancelRun(runId, {
       rememberIfMissing: !parkCancellation,

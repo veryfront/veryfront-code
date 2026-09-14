@@ -387,6 +387,61 @@ describe("agent/ag-ui-detached-start", () => {
     assertEquals(started, false);
   });
 
+  /**
+   * A run parked on an integration auth wall is cancelled without a tombstone and
+   * resumed under the same run id. A provider can ignore the abort, so the parked
+   * execution may settle after the resumed one has started; it must not finalize
+   * the resumed session.
+   */
+  it("keeps a resumed run active when the park-cancelled execution settles after the resume", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const captured: Promise<unknown>[] = [];
+    let releaseParkedExecution!: () => void;
+    const parkedExecution = new Promise<void>((resolve) => {
+      releaseParkedExecution = resolve;
+    });
+    let executions = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        executions += 1;
+        if (executions === 1) {
+          await parkedExecution;
+          return;
+        }
+        await new Promise<void>(() => {});
+      },
+    });
+
+    const parked = await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    assertEquals(parked.status, 202);
+
+    sessionManager.cancelRun("run_1");
+
+    const resumed = await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    assertEquals(resumed.status, 202);
+    assertEquals(executions, 2);
+
+    releaseParkedExecution();
+    await captured[0];
+
+    assertEquals(
+      sessionManager.getRunStatus("run_1"),
+      "running",
+      "the park-cancelled execution must not finalize the resumed session",
+    );
+  });
+
   it("returns 400 for malformed detached start payloads", async () => {
     const handler = createAgUiDetachedStartHandler({
       agent: createTestAgent(),

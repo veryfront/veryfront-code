@@ -291,6 +291,34 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(manager.getRunStatus("run_2"), "running", "the freed slot must admit a new run");
   });
 
+  /**
+   * A run parked on an integration auth wall is cancelled without a tombstone and
+   * resumed under the same run id. The cancelled execution can still settle after
+   * the resume starts, and finalizing by run id alone would end the resumed
+   * session instead of its own.
+   */
+  it("finalizes only the session that owns the given signal", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const parkedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    manager.cancelRun("run_1");
+    const resumedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    manager.completeRun("run_1", parkedSignal);
+    manager.failRun("run_1", parkedSignal);
+    assertEquals(
+      manager.getRunStatus("run_1"),
+      "running",
+      "a stale execution must not finalize the resumed session",
+    );
+
+    manager.completeRun("run_1", resumedSignal);
+    assertEquals(
+      manager.getRunStatus("run_1"),
+      null,
+      "the owning execution still finalizes its session",
+    );
+  });
+
   it("does not leak session slots across repeated completed runs", () => {
     const maxConcurrentSessions = 2;
     const manager = new RunResumeSessionManager<{ ok: boolean }>({ maxConcurrentSessions });

@@ -511,6 +511,9 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
       const hostedAgUiCancelHandler = createAgUiCancelHandler({
         sessionManager: options.tracker.sessionManager,
         resolveRunId: () => runId,
+        // The run cancellation token above is minted by the control plane for
+        // this run, so its park reason can be trusted here.
+        acceptIntegrationAuthParkReason: true,
       });
       return hostedAgUiCancelHandler(input.request);
     });
