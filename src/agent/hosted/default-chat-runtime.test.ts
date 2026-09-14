@@ -548,107 +548,131 @@ it("keeps the hosted runtime usable when an optional agent identity is blank", a
   }
 });
 
-Deno.test("createDefaultHostedChatRuntime forwards bound run and agent identity to tool execution", async () => {
-  await runWithProjectRequestContext(
+for (
+  const identityCase of [
+    { name: "default", expected: "veryfront", resolved: undefined },
+    { name: "normalized task context", expected: "canonical-agent", resolved: "canonical-agent" },
     {
-      projectId: "project-1",
-      projectSlug: "project-slug-1",
-      token: "token-1",
+      name: "removed task context identity",
+      expected: "veryfront-hosted-runtime",
+      resolved: undefined,
     },
-    async () => {
-      clearModelProviders();
-      let modelCallCount = 0;
-      let capturedExecutionContext: ToolExecutionContext | undefined;
+    { name: "blank task context identity", expected: "veryfront-hosted-runtime", resolved: "   " },
+  ]
+) {
+  Deno.test(`createDefaultHostedChatRuntime forwards bound identity from ${identityCase.name}`, async () => {
+    await runWithProjectRequestContext(
+      {
+        projectId: "project-1",
+        projectSlug: "project-slug-1",
+        token: "token-1",
+      },
+      async () => {
+        clearModelProviders();
+        let modelCallCount = 0;
+        let capturedExecutionContext: ToolExecutionContext | undefined;
 
-      registerModelProvider("test", () => ({
-        provider: "test",
-        modelId: "test/hosted-context",
-        doGenerate: () => Promise.reject(new Error("unused")),
-        doStream() {
-          modelCallCount += 1;
-          return Promise.resolve({
-            stream: new ReadableStream<unknown>({
-              start(controller) {
-                if (modelCallCount === 1) {
-                  controller.enqueue({
-                    type: "tool-call",
-                    toolCallId: "inspect-context-1",
-                    toolName: "inspect_context",
-                    input: {},
-                  });
-                  controller.enqueue({
-                    type: "finish",
-                    finishReason: "tool-calls",
-                    usage: { inputTokens: 1, outputTokens: 1 },
-                  });
-                } else {
-                  controller.enqueue({ type: "text-delta", text: "done" });
-                  controller.enqueue({
-                    type: "finish",
-                    finishReason: "stop",
-                    usage: { inputTokens: 1, outputTokens: 1 },
-                  });
-                }
-                controller.close();
+        registerModelProvider("test", () => ({
+          provider: "test",
+          modelId: "test/hosted-context",
+          doGenerate: () => Promise.reject(new Error("unused")),
+          doStream() {
+            modelCallCount += 1;
+            return Promise.resolve({
+              stream: new ReadableStream<unknown>({
+                start(controller) {
+                  if (modelCallCount === 1) {
+                    controller.enqueue({
+                      type: "tool-call",
+                      toolCallId: "inspect-context-1",
+                      toolName: "inspect_context",
+                      input: {},
+                    });
+                    controller.enqueue({
+                      type: "finish",
+                      finishReason: "tool-calls",
+                      usage: { inputTokens: 1, outputTokens: 1 },
+                    });
+                  } else {
+                    controller.enqueue({ type: "text-delta", text: "done" });
+                    controller.enqueue({
+                      type: "finish",
+                      finishReason: "stop",
+                      usage: { inputTokens: 1, outputTokens: 1 },
+                    });
+                  }
+                  controller.close();
+                },
+              }),
+            });
+          },
+        }));
+
+        try {
+          const runtime = await createDefaultHostedChatRuntime({
+            sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+            options: {
+              projectId: "project-1",
+              projectSlug: "project-slug-1",
+              authToken: "token-1",
+              instructions: "Inspect the runtime context.",
+              model: "test/hosted-context",
+              runId: "run-bound-default-chat",
+              agentId: "veryfront",
+              allowedTools: ["inspect_context"],
+            },
+            config: {
+              apiUrl: "https://api.example.com",
+              apiMcpUrl: "https://api.example.com/mcp",
+            },
+            ...(identityCase.name === "default" ? {} : {
+              createTaskContext: ({ options, modelId }) => ({
+                authToken: options.authToken,
+                runId: options.runId,
+                agentId: identityCase.resolved,
+                projectId: options.projectId ?? "",
+                projectSlug: options.projectSlug,
+                branchId: options.branchId ?? null,
+                model: modelId,
+              }),
+            }),
+            buildLocalTools: () => ({
+              inspect_context: {
+                ...localTool("Inspect the runtime context"),
+                execute: (_input: unknown, context?: ToolExecutionContext) => {
+                  capturedExecutionContext = context;
+                  return { ok: true };
+                },
               },
             }),
+            createRemoteToolSource: emptyRemoteSource,
+            preloadLatestConversationUserText: false,
           });
-        },
-      }));
 
-      try {
-        const runtime = await createDefaultHostedChatRuntime({
-          sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
-          options: {
-            projectId: "project-1",
-            projectSlug: "project-slug-1",
-            authToken: "token-1",
-            instructions: "Inspect the runtime context.",
-            model: "test/hosted-context",
-            runId: "run-bound-default-chat",
-            agentId: "veryfront",
-            allowedTools: ["inspect_context"],
-          },
-          config: {
-            apiUrl: "https://api.example.com",
-            apiMcpUrl: "https://api.example.com/mcp",
-          },
-          buildLocalTools: () => ({
-            inspect_context: {
-              ...localTool("Inspect the runtime context"),
-              execute: (_input: unknown, context?: ToolExecutionContext) => {
-                capturedExecutionContext = context;
-                return { ok: true };
-              },
+          await withMockFetch(
+            () => Promise.resolve(Response.json({ tools: [] })),
+            async () => {
+              const result = await runtime.agent.stream({
+                messages: [],
+                abortSignal: new AbortController().signal,
+              });
+              for await (const _chunk of result.toUIMessageStream()) {
+                // Consume the complete tool-call round trip.
+              }
             },
-          }),
-          createRemoteToolSource: emptyRemoteSource,
-          preloadLatestConversationUserText: false,
-        });
+          );
 
-        await withMockFetch(
-          () => Promise.resolve(Response.json({ tools: [] })),
-          async () => {
-            const result = await runtime.agent.stream({
-              messages: [],
-              abortSignal: new AbortController().signal,
-            });
-            for await (const _chunk of result.toUIMessageStream()) {
-              // Consume the complete tool-call round trip.
-            }
-          },
-        );
-
-        assertEquals(capturedExecutionContext?.projectId, "project-1");
-        assertEquals(capturedExecutionContext?.projectSlug, "project-slug-1");
-        assertEquals(capturedExecutionContext?.runId, "run-bound-default-chat");
-        assertEquals(capturedExecutionContext?.agentId, "veryfront");
-      } finally {
-        clearModelProviders();
-      }
-    },
-  );
-});
+          assertEquals(capturedExecutionContext?.projectId, "project-1");
+          assertEquals(capturedExecutionContext?.projectSlug, "project-slug-1");
+          assertEquals(capturedExecutionContext?.runId, "run-bound-default-chat");
+          assertEquals(capturedExecutionContext?.agentId, identityCase.expected);
+        } finally {
+          clearModelProviders();
+        }
+      },
+    );
+  });
+}
 
 Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of project tools", async () => {
   clearModelProviders();

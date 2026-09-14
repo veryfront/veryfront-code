@@ -550,6 +550,9 @@ export async function createDefaultHostedChatRuntime(
           cloudContext,
           () =>
             createPreparedHostedRuntimeAgent({
+              runtimeAgentId: taskContext.agentId?.trim()
+                ? taskContext.agentId
+                : "veryfront-hosted-runtime",
               options: input.options,
               taskContext,
               toolAssembly,
