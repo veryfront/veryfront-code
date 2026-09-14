@@ -1,7 +1,7 @@
 import { readDir, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import {
   createVeryfrontCloudFetch,
@@ -9,6 +9,17 @@ import {
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { chunk } from "../chunk.ts";
 import { embedding } from "../embedding.ts";
+import {
+  activeDocumentPaths,
+  buildChunkFilePaths,
+  CHUNKS_PER_FILE as MAX_API_CHUNK_BATCH,
+  type DocumentParts,
+  documentPartsMetadata,
+  metadataWriteOutcome,
+  readPartPaths,
+  retiredDocumentPaths,
+  retireDocumentParts,
+} from "./document-parts.ts";
 import type {
   RagDocumentMeta,
   RagRefreshOptions,
@@ -20,9 +31,9 @@ import type {
 
 const DEFAULT_TOP_K = 5;
 const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
-const MAX_API_CHUNK_BATCH = 500;
 const MAX_API_EMBEDDING_BATCH = 100;
 const MAX_SEARCH_LIMIT = 100;
+const MAX_PART_READ_CONCURRENCY = 8;
 const SEARCH_OVERSCAN = 25;
 const DOCUMENTS_DIR = ".veryfront/rag/documents";
 
@@ -56,6 +67,7 @@ interface CloudSearchResponse {
 }
 
 interface CloudRagDocumentResponse {
+  revision?: string;
   id: string;
   title: string;
   source: string;
@@ -94,7 +106,7 @@ interface ChunkMutationInput {
 
 type ResolvedCloudRagStoreConfig = RagStoreConfig & { model: string };
 
-type CloudRagDocumentMeta = RagDocumentMeta & { filePath?: string };
+type CloudRagDocumentMeta = RagDocumentMeta & DocumentParts & { revision?: string };
 
 interface ContentFile {
   path: string;
@@ -179,6 +191,10 @@ function buildRefreshDocumentFilePath(documentId: string, type?: string): string
   return `${DOCUMENTS_DIR}/${documentId}.refresh-${crypto.randomUUID()}.${extension || "txt"}`;
 }
 
+function documentFilePaths(document: CloudRagDocumentMeta): string[] {
+  return activeDocumentPaths(document, buildDocumentFilePath(document.id, document.type));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -243,6 +259,7 @@ async function requestJson<T>(
   if (!response.ok) {
     const body = await response.text().catch(() => "");
     throw INVALID_ARGUMENT.create({
+      context: { upstreamStatus: response.status },
       detail: `Veryfront Cloud RAG request failed (${response.status} ${response.statusText}): ${
         body || path
       }`,
@@ -311,7 +328,7 @@ async function deleteFileChunks(context: CloudStoreContext, filePath: string): P
 
 async function upsertFileChunks(
   context: CloudStoreContext,
-  filePath: string,
+  filePaths: string[],
   chunks: ChunkMutationInput[],
 ): Promise<Array<{ id: string; index: number }>> {
   if (chunks.length === 0) {
@@ -323,7 +340,8 @@ async function upsertFileChunks(
     const batch = chunks.slice(i, i + MAX_API_CHUNK_BATCH);
     const response = await requestJson<CloudUpsertChunksResponse>(
       context,
-      getFileChunksPath(context, filePath),
+      // Each POST replaces its file's complete chunk set.
+      getFileChunksPath(context, filePaths[Math.floor(i / MAX_API_CHUNK_BATCH)]!),
       {
         method: "POST",
         body: JSON.stringify({ chunks: batch }),
@@ -383,6 +401,9 @@ async function listRagDocuments(
     type: doc.type,
     createdAt: new Date(doc.created_at).getTime(),
     filePath: typeof doc.metadata?.filePath === "string" ? doc.metadata.filePath : undefined,
+    filePaths: readPartPaths(doc.metadata?.filePaths),
+    cleanupFilePaths: readPartPaths(doc.metadata?.cleanupFilePaths),
+    revision: doc.revision,
   }));
 }
 
@@ -394,6 +415,7 @@ async function upsertRagDocument(
     source?: string;
     type?: string;
     metadata?: Record<string, unknown>;
+    expectedRevision: string | null;
   },
 ): Promise<void> {
   await requestJson<CloudUpsertRagDocumentResponse>(
@@ -407,6 +429,7 @@ async function upsertRagDocument(
         source: document.source ?? "",
         type: document.type ?? "",
         metadata: document.metadata,
+        expected_revision: document.expectedRevision,
       }),
     },
   );
@@ -415,13 +438,97 @@ async function upsertRagDocument(
 async function deleteRagDocument(
   context: CloudStoreContext,
   documentId: string,
+  expectedRevision: string,
 ): Promise<void> {
   await requestJson(
     context,
-    `${getRagDocumentsPath(context)}/${encodeURIComponent(documentId)}`,
+    `${getRagDocumentsPath(context)}/${encodeURIComponent(documentId)}?expected_revision=${
+      encodeURIComponent(expectedRevision)
+    }`,
     { method: "DELETE" },
     { allowNotFound: true },
   );
+}
+
+type DocumentPartDiscovery = { paths: string[]; errors: unknown[] };
+
+async function inspectDocumentParts(
+  context: CloudStoreContext,
+  candidates: string[],
+): Promise<DocumentPartDiscovery> {
+  const paths: string[] = [];
+  const errors: unknown[] = [];
+  // Chunk deletion retains the file node and its immutable history. Do not
+  // repeatedly add acknowledged empty generations back to the cleanup journal.
+  for (let offset = 0; offset < candidates.length; offset += MAX_PART_READ_CONCURRENCY) {
+    const results = await Promise.allSettled(
+      candidates.slice(offset, offset + MAX_PART_READ_CONCURRENCY).map(async (path) => {
+        const chunks = await requestJson<CloudChunkListResponse>(
+          context,
+          `${getFileChunksPath(context, path)}?limit=1`,
+          {},
+          { allowNotFound: true },
+        );
+        return chunks?.data.length ? path : null;
+      }),
+    );
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index]!;
+      if (result.status === "rejected") {
+        errors.push(result.reason);
+        // The namespace already established ownership. A failed read must not
+        // prevent removal from trying the independent deletion endpoint.
+        paths.push(candidates[offset + index]!);
+      } else if (result.value) paths.push(result.value);
+    }
+  }
+  return { paths, errors };
+}
+
+async function listDocumentPartFiles(
+  context: CloudStoreContext,
+  documentId: string,
+): Promise<DocumentPartDiscovery> {
+  // Generated document IDs are one path segment. Never let a supplied glob or
+  // separator select another document's namespace.
+  if (!/^[A-Za-z0-9_-]+$/.test(documentId)) return { paths: [], errors: [] };
+  const prefix = `${DOCUMENTS_DIR}/${documentId}.`;
+  const paths: string[] = [];
+  const errors: unknown[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | null | undefined;
+  do {
+    const query = new URLSearchParams({
+      branch: context.branch,
+      pattern: `${prefix}*`,
+      limit: "100",
+      fields: "(path)",
+    });
+    if (cursor) query.set("cursor", cursor);
+    let response: CloudFileListResponse | null;
+    try {
+      response = await requestJson<CloudFileListResponse>(
+        context,
+        `/projects/${encodeURIComponent(context.projectSlug)}/files?${query}`,
+      );
+    } catch (error) {
+      errors.push(error);
+      break;
+    }
+    const candidates = (response?.data ?? []).map((file) => file.path).filter((path) =>
+      path.startsWith(prefix) && !path.slice(prefix.length).includes("/")
+    );
+    const liveParts = await inspectDocumentParts(context, candidates);
+    paths.push(...liveParts.paths);
+    errors.push(...liveParts.errors);
+    cursor = response?.page_info?.next;
+    if (cursor && cursors.has(cursor)) {
+      errors.push(INVALID_ARGUMENT.create({ detail: "Document file listing repeated a cursor." }));
+      break;
+    }
+    if (cursor) cursors.add(cursor);
+  } while (cursor);
+  return { paths, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -452,12 +559,26 @@ async function refreshCloudDocument(
   if (!existing) {
     throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${documentId}` });
   }
+  const expectedRevision = requireDocumentRevision(existing);
 
   const type = meta?.type ?? existing.type;
-  const previousFilePath = existing.filePath ?? buildDocumentFilePath(documentId, existing.type);
+  const discovery = await listDocumentPartFiles(context, documentId);
+  if (discovery.errors.length) throw discovery.errors[0];
+  // Capture pre-existing parts before writing a new generation. Only retire
+  // them after the revision-guarded metadata update succeeds.
+  const previousFilePaths = [
+    ...new Set([
+      ...documentFilePaths(existing),
+      ...discovery.paths,
+    ]),
+  ];
+  const inheritedCleanupPaths = retiredDocumentPaths(
+    existing,
+    buildDocumentFilePath(documentId, existing.type),
+  );
   const filePath = buildRefreshDocumentFilePath(documentId, type);
 
-  await writeDocumentContent(
+  const pendingCleanupPaths = await writeDocumentContent(
     context,
     config,
     documentId,
@@ -467,12 +588,42 @@ async function refreshCloudDocument(
       source: meta?.source ?? existing.source,
       type,
     },
-    { filePath },
+    { filePath, previousFilePaths, inheritedCleanupPaths, expectedRevision },
   );
 
-  if (previousFilePath !== filePath) {
-    await deleteFileChunks(context, previousFilePath);
+  const cleanupFailures = await retireDocumentParts(
+    pendingCleanupPaths,
+    (path) => deleteFileChunks(context, path),
+  );
+  if (cleanupFailures.length > 0) throw cleanupFailures[0]!.error;
+}
+
+function requireDocumentRevision(document: CloudRagDocumentMeta): string {
+  if (typeof document.revision !== "string" || !/^[a-f0-9]{64}$/.test(document.revision)) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        "The document revision is unavailable. Update Veryfront Cloud before changing this document.",
+    });
   }
+  return document.revision;
+}
+
+async function inspectMetadataWriteOutcome(
+  context: CloudStoreContext,
+  documentId: string,
+  filePaths: string[],
+  error: unknown,
+): Promise<ReturnType<typeof metadataWriteOutcome>> {
+  let current: CloudRagDocumentMeta | undefined;
+  try {
+    current = (await listRagDocuments(context)).find((document) => document.id === documentId);
+  } catch {
+    return "unknown";
+  }
+  const upstreamStatus = error instanceof VeryfrontError && isRecord(error.context)
+    ? error.context.upstreamStatus
+    : undefined;
+  return metadataWriteOutcome(filePaths, current ? documentFilePaths(current) : [], upstreamStatus);
 }
 
 async function writeDocumentContent(
@@ -482,8 +633,13 @@ async function writeDocumentContent(
   title: string,
   text: string,
   meta?: { source?: string; type?: string },
-  options?: { filePath?: string },
-): Promise<void> {
+  options?: {
+    filePath?: string;
+    previousFilePaths?: string[];
+    inheritedCleanupPaths?: string[];
+    expectedRevision?: string;
+  },
+): Promise<string[]> {
   if (text.length > MAX_TEXT_LENGTH) {
     throw INVALID_ARGUMENT.create({
       detail: `Upload text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
@@ -506,9 +662,21 @@ async function writeDocumentContent(
     source: meta?.source ?? "",
     type: meta?.type ?? "",
   });
+  const filePaths = buildChunkFilePaths(filePath, chunkInputs.length);
+  // Compact acknowledged historical cleanup before publishing the next record.
+  // Active previous parts remain until the replacement is committed.
+  const inheritedFailures = await retireDocumentParts(
+    options?.inheritedCleanupPaths ?? [],
+    (path) => deleteFileChunks(context, path),
+  );
+  const pendingCleanupPaths = [
+    ...(options?.previousFilePaths ?? []),
+    ...inheritedFailures.map((failure) => failure.path),
+  ];
+  let metadataWriteAttempted = false;
 
   try {
-    const createdChunks = await upsertFileChunks(context, filePath, chunkInputs);
+    const createdChunks = await upsertFileChunks(context, filePaths, chunkInputs);
     const chunkIds = createdChunks.map((entry) => entry.id);
 
     if (chunkIds.length !== vectors.length) {
@@ -524,24 +692,36 @@ async function writeDocumentContent(
       vectors,
       normalizeEmbeddingModelDescriptor(config.model, dimension),
     );
+    metadataWriteAttempted = true;
+    await upsertRagDocument(context, {
+      id: documentId,
+      title,
+      source: meta?.source ?? "",
+      type: meta?.type ?? "",
+      metadata: documentPartsMetadata(filePaths, pendingCleanupPaths),
+      expectedRevision: options?.expectedRevision ?? null,
+    });
   } catch (error) {
-    await deleteFileChunks(context, filePath).catch((cleanupError) =>
-      serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", {
-        filePath,
-        error: cleanupError,
-      })
-    );
+    if (metadataWriteAttempted) {
+      const outcome = await inspectMetadataWriteOutcome(context, documentId, filePaths, error);
+      if (outcome === "committed") return pendingCleanupPaths;
+      if (outcome !== "rejected") {
+        // Transport and gateway failures can leave the write in flight. Retain
+        // the parts until its outcome is known instead of deleting live data.
+        throw error;
+      }
+    }
+    for (const cleanupPath of filePaths) {
+      await deleteFileChunks(context, cleanupPath).catch((cleanupError) =>
+        serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", {
+          filePath: cleanupPath,
+          error: cleanupError,
+        })
+      );
+    }
     throw error;
   }
-
-  // Record document in server-side store (atomic, no client-side manifest needed)
-  await upsertRagDocument(context, {
-    id: documentId,
-    title,
-    source: meta?.source ?? "",
-    type: meta?.type ?? "",
-    metadata: { filePath },
-  });
+  return pendingCleanupPaths;
 }
 
 function createEmbedder(config: ResolvedCloudRagStoreConfig) {
@@ -764,26 +944,34 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
     async removeDocument(id: string): Promise<void> {
       const context = getCloudStoreContext(config);
 
-      // Fetch document metadata to find its filePath for chunk cleanup
+      // Fetch document metadata to find every file part for chunk cleanup.
       const documents = await listRagDocuments(context);
       const target = documents.find((doc) => doc.id === id);
 
-      // Delete server-side document record first (authoritative)
-      await deleteRagDocument(context, id);
-
-      // Best-effort cleanup of file chunks
-      if (target) {
-        const filePath = target.filePath ?? buildDocumentFilePath(id, target.type);
-        try {
-          await deleteFileChunks(context, filePath);
-        } catch (error) {
-          serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
-            id,
-            filePath,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+      // Preserve record-first deletion so a refresh starting during cleanup
+      // cannot publish a replacement through a still-visible document.
+      if (target) await deleteRagDocument(context, id, requireDocumentRevision(target));
+      // The file namespace also owns parts whose metadata acknowledgement was
+      // lost. Read it after deletion, so a retry can collect them even when the
+      // document record is already absent.
+      const discovery = await listDocumentPartFiles(context, id);
+      const paths = [
+        ...discovery.paths,
+        ...(target ? documentFilePaths(target) : []),
+        ...(target ? retiredDocumentPaths(target, buildDocumentFilePath(id, target.type)) : []),
+      ];
+      const failures = await retireDocumentParts(
+        paths,
+        (path) => deleteFileChunks(context, path),
+      );
+      for (const failure of failures) {
+        serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
+          id,
+          filePath: failure.path,
+          error: failure.error instanceof Error ? failure.error.message : String(failure.error),
+        });
       }
+      if (discovery.errors.length) throw discovery.errors[0];
     },
 
     async indexContentDir(): Promise<void> {

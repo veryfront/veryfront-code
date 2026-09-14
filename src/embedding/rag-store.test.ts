@@ -1482,6 +1482,12 @@ describe("ragStore", () => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
         const path = url.pathname;
+        if (request.method === "GET" && path.endsWith("/files")) {
+          return Response.json({
+            data: [...fileChunks.keys()].map((path) => ({ path })),
+            page_info: { next: null },
+          });
+        }
         authHeaders.push(request.headers.get("authorization"));
         if (request.method === "POST") {
           postContentTypes.push(request.headers.get("content-type"));
@@ -1497,7 +1503,10 @@ describe("ragStore", () => {
 
           if (request.method === "GET" && !docId) {
             return Response.json({
-              documents: [...ragDocuments.values()],
+              documents: [...ragDocuments.values()].map((document) => ({
+                ...document,
+                revision: "a".repeat(64),
+              })),
             });
           }
 
@@ -1510,7 +1519,11 @@ describe("ragStore", () => {
               metadata?: Record<string, unknown>;
             };
             ragDocuments.set(body.id, {
-              ...body,
+              id: body.id,
+              title: body.title,
+              source: body.source,
+              type: body.type,
+              metadata: body.metadata,
               created_at: new Date().toISOString(),
             });
             return Response.json({ id: body.id });
@@ -1645,6 +1658,87 @@ describe("ragStore", () => {
     );
   });
 
+  it("refuses cloud refresh and removal before mutation when the API has no document revision", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    const requests: string[] = [];
+    await withMockFetch((input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      requests.push(`${request.method} ${path}`);
+      assertEquals(request.method, "GET");
+      assertEquals(path, "/projects/cloud-project/rag/documents");
+      return Promise.resolve(Response.json({
+        documents: [{
+          id: "fixture-document",
+          title: "Existing",
+          source: "",
+          type: "txt",
+          created_at: "2026-09-14T00:00:00Z",
+          metadata: { filePath: ".veryfront/rag/documents/fixture-document.txt" },
+        }],
+      }));
+    }, async () => {
+      const store = ragStore({ model: "test/demo" });
+      await assertRejects(
+        () => store.refreshDocument!("fixture-document", "replacement"),
+        Error,
+        "document revision is unavailable",
+      );
+      await assertRejects(
+        () => store.removeDocument("fixture-document"),
+        Error,
+        "document revision is unavailable",
+      );
+      assertEquals(requests, [
+        "GET /projects/cloud-project/rag/documents",
+        "GET /projects/cloud-project/rag/documents",
+      ]);
+    });
+  });
+
+  it("removes discovered orphan parts even when another part cannot be inspected", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    const prefix = ".veryfront/rag/documents/fixture-document.";
+    const deleted: string[] = [];
+    await withMockFetch((input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      if (url.pathname.endsWith("/rag/documents")) {
+        return Promise.resolve(Response.json({ documents: [] }));
+      }
+      if (url.pathname.endsWith("/files")) {
+        assertEquals(url.searchParams.get("fields"), "(path)");
+        return Promise.resolve(
+          Response.json({
+            data: [{ path: `${prefix}failed.txt` }, { path: `${prefix}orphan.txt` }],
+            page_info: { next: null },
+          }),
+        );
+      }
+      const file = decodeURIComponent(url.pathname.split("/files/")[1]!.replace(/\/chunks$/, ""));
+      if (request.method === "DELETE") {
+        deleted.push(file);
+        return Promise.resolve(Response.json({ deleted: 1 }));
+      }
+      if (file === `${prefix}failed.txt`) {
+        return Promise.resolve(Response.json({ message: "Fixture probe failed" }, { status: 503 }));
+      }
+      return Promise.resolve(
+        Response.json({ data: [{ id: "chunk", index: 0, content: "fixture" }] }),
+      );
+    }, async () => {
+      const store = ragStore({ model: "test/demo" });
+      await assertRejects(
+        () => store.removeDocument("fixture-document"),
+        Error,
+        "Fixture probe failed",
+      );
+      assertEquals(deleted, [`${prefix}failed.txt`, `${prefix}orphan.txt`]);
+    });
+  });
+
   it("refreshes cloud document chunks and embeddings under the existing id", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
     setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
@@ -1705,6 +1799,12 @@ describe("ragStore", () => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
         const path = url.pathname;
+        if (request.method === "GET" && path.endsWith("/files")) {
+          return Response.json({
+            data: [...fileChunks.keys()].map((path) => ({ path })),
+            page_info: { next: null },
+          });
+        }
 
         const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
         if (ragDocMatch !== null) {
@@ -1712,7 +1812,10 @@ describe("ragStore", () => {
 
           if (request.method === "GET" && !docId) {
             return Response.json({
-              documents: [...ragDocuments.values()],
+              documents: [...ragDocuments.values()].map((document) => ({
+                ...document,
+                revision: "a".repeat(64),
+              })),
             });
           }
 
@@ -1725,7 +1828,11 @@ describe("ragStore", () => {
               metadata?: Record<string, unknown>;
             };
             ragDocuments.set(body.id, {
-              ...body,
+              id: body.id,
+              title: body.title,
+              source: body.source,
+              type: body.type,
+              metadata: body.metadata,
               created_at: ragDocuments.get(body.id)?.created_at ??
                 "2026-06-25T00:00:00.000Z",
               updated_at: "2026-06-25T01:00:00.000Z",
@@ -1820,7 +1927,10 @@ describe("ragStore", () => {
           type: "pptx",
           created_at: "2026-06-25T00:00:00.000Z",
           updated_at: "2026-06-25T01:00:00.000Z",
-          metadata: { filePath: refreshedFilePath },
+          metadata: {
+            filePath: refreshedFilePath,
+            cleanupFilePaths: [".veryfront/rag/documents/doc-pptx.pptx"],
+          },
         });
         const chunks = fileChunks.get(refreshedFilePath as string) ?? [];
         assertEquals(chunks.length, 1);
@@ -1896,10 +2006,21 @@ describe("ragStore", () => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
         const path = url.pathname;
+        if (request.method === "GET" && path.endsWith("/files")) {
+          return Response.json({
+            data: [...fileChunks.keys()].map((path) => ({ path })),
+            page_info: { next: null },
+          });
+        }
 
         const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
         if (ragDocMatch !== null && request.method === "GET" && !ragDocMatch[1]) {
-          return Response.json({ documents: [...ragDocuments.values()] });
+          return Response.json({
+            documents: [...ragDocuments.values()].map((document) => ({
+              ...document,
+              revision: "a".repeat(64),
+            })),
+          });
         }
 
         const fileMatch = path.match(/^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/);
@@ -2128,7 +2249,12 @@ describe("ragStore", () => {
           const docId = ragDocMatch[1] ? decodeURIComponent(ragDocMatch[1]) : null;
 
           if (request.method === "GET" && !docId) {
-            return Response.json({ documents: [...ragDocuments.values()] });
+            return Response.json({
+              documents: [...ragDocuments.values()].map((document) => ({
+                ...document,
+                revision: "a".repeat(64),
+              })),
+            });
           }
 
           if (request.method === "POST" && !docId) {
@@ -2140,7 +2266,11 @@ describe("ragStore", () => {
               metadata?: Record<string, unknown>;
             };
             ragDocuments.set(body.id, {
-              ...body,
+              id: body.id,
+              title: body.title,
+              source: body.source,
+              type: body.type,
+              metadata: body.metadata,
               created_at: "2026-06-25T00:00:00.000Z",
               updated_at: "2026-06-25T00:00:00.000Z",
             });

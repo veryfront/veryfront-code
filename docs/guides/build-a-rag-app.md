@@ -286,11 +286,29 @@ The manual flow is:
 
 1. Create or list RAG document records.
 2. Split source content into chunks.
-3. Generate vectors through AI Gateway or another embedding provider.
-4. Store vectors with the embeddings endpoint.
-5. Search with a query vector.
+3. Store each file's complete chunk set with the chunks endpoint. Each POST
+   replaces that file's existing chunks. Use a distinct file for each batch of
+   up to 500 chunks.
+4. Generate vectors through AI Gateway or another embedding provider.
+5. Store vectors with the embeddings endpoint.
+6. Search with a query vector.
 
 For Veryfront apps, prefer `ragStore()` unless you need that lower-level control.
+It keeps every batch under one document ID and cleans up the file parts when you
+refresh or remove the document.
+Removal also attempts to clean obsolete parts recorded by an interrupted refresh.
+It scans the document's file namespace to find parts whose metadata write timed
+out, including when you retry removal after the record was deleted. Removal also
+attempts deletion of listed document parts whose inspection failed, then reports
+the inspection error. Refresh collects pre-existing parts in the current branch and retires them
+only after its conditional metadata update succeeds.
+
+For raw metadata updates, read the document's `revision` and send it as
+`expected_revision` in the upsert body or delete query. Use `null` when creating
+a document that must not already exist. A stale update returns HTTP 412; read
+the current document before deciding whether to retry. Deploy the Cloud API
+revision support before using SDK refresh and removal, which require a revision
+to prevent delayed writes from replacing newer content.
 
 ## Verify it worked
 
