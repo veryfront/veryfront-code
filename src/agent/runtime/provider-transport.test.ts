@@ -153,7 +153,7 @@ describe("agent provider transport hooks", () => {
       normalizeRunRuntimeContext(localContext),
     );
     assertEquals(normalizeRunRuntimeContext(cloudContext), {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [
         {
           role: "system",

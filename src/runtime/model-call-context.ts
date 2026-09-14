@@ -75,7 +75,7 @@ export interface ModelCallRequest {
  * provider-specific values are excluded because run events are durable.
  */
 export type AgentRunModelCallContextEvent = {
-  type: "AGENT_RUN_MODEL_CALL_CONTEXT";
+  type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
   model?: ModelCallModel;
   request?: ModelCallRequest;
   messages: ModelCallMessage[];

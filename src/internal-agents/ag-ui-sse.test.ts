@@ -99,7 +99,7 @@ describe("internal-agents/ag-ui-sse", () => {
         { event: "ToolCallEnd", payload: { toolCallId: "tool-1" } },
         {
           event: "ToolCallResult",
-          payload: { toolCallId: "tool-1", result: { error: "boom" }, isError: true },
+          payload: { toolCallId: "tool-1", content: { error: "boom" }, isError: true },
         },
       ],
     );
@@ -156,7 +156,7 @@ describe("internal-agents/ag-ui-sse", () => {
       }),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "tool-2", result: { ok: true } },
+        payload: { toolCallId: "tool-2", content: { ok: true } },
       }],
     );
     assertEquals(
@@ -247,7 +247,7 @@ describe("internal-agents/ag-ui-sse", () => {
           event: "ToolCallResult",
           payload: {
             toolCallId: "tool-4",
-            result: { error: "invalid url" },
+            content: { error: "invalid url" },
             isError: true,
           },
         },
@@ -263,7 +263,7 @@ describe("internal-agents/ag-ui-sse", () => {
         event: "ToolCallResult",
         payload: {
           toolCallId: "tool-5",
-          result: { error: "Tool output denied" },
+          content: { error: "Tool output denied" },
           isError: true,
         },
       }],
@@ -456,6 +456,25 @@ describe("internal-agents/ag-ui-sse", () => {
       payload,
       'event: ToolCallStatusChanged\ndata: {"toolCallId":"tool-1","status":"completed",' +
         '"emittedAt":8}\n\n',
+    );
+  });
+
+  it("carries a tool result's canonical content field through the payload allow-list", () => {
+    // `content` is the canonical tool result field. The allow-list returns only
+    // declared keys, so an undeclared `content` would be dropped before the wire.
+    const payload = new TextDecoder().decode(
+      formatAgUiEvent("ToolCallResult", {
+        toolCallId: "tool-1",
+        content: '{"ok":true}',
+        isError: true,
+        emittedAt: 8,
+      }),
+    );
+
+    assertEquals(
+      payload,
+      'event: ToolCallResult\ndata: {"toolCallId":"tool-1","content":"{\\"ok\\":true}",' +
+        '"isError":true,"emittedAt":8}\n\n',
     );
   });
 
@@ -691,7 +710,7 @@ describe("internal-agents/ag-ui-sse", () => {
         event: "ToolCallResult",
         payload: {
           toolCallId: CANONICAL_TOOL_CALL_ID,
-          result: CANONICAL_TOOL_RESULT,
+          content: CANONICAL_TOOL_RESULT,
         },
       },
       {

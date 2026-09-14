@@ -667,6 +667,45 @@ describe("eval/agent-service", () => {
     assertEquals(record.metrics?.[0]?.evidence, { failedTools: ["search"] });
   });
 
+  it("reads canonical ToolCallResult content before a legacy result", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          { event: "ToolCallStart", data: { toolCallId: "tool_err", toolCallName: "search" } },
+          {
+            event: "ToolCallResult",
+            data: { toolCallId: "tool_err", content: { error: "boom" }, isError: true },
+          },
+          { event: "ToolCallStart", data: { toolCallId: "tool_ok", toolCallName: "lookup" } },
+          {
+            event: "ToolCallResult",
+            data: { toolCallId: "tool_ok", content: { fresh: true }, result: { stale: true } },
+          },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:canonical-content",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "Search docs" }]),
+      metrics: [metrics.agent.noFailedTools()],
+    });
+
+    const report = await runEval(definition, { adapters: { agent: adapter } });
+
+    const toolCalls = report.records[0]!.trace.toolCalls ?? [];
+    assertEquals(
+      toolCalls.map((call) => [call.id, call.status, call.error, call.output]),
+      [
+        ["tool_err", "error", "boom", undefined],
+        ["tool_ok", "ok", undefined, { fresh: true }],
+      ],
+    );
+  });
+
   it("classifies denied AG-UI tool results apart from tool errors", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",

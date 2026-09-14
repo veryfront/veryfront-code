@@ -161,7 +161,7 @@ describe("hosted executor model dispatch", () => {
       assertEquals(order, ["persist"]);
       assert(isPrivateConversationRunEvent(events[0]));
       assertEquals<unknown>(events[0], {
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         model: { id: "synthetic-model", modelProvider: "openai" },
         messages: [{
           role: "system",
@@ -723,7 +723,7 @@ describe("hosted executor model dispatch", () => {
         channels.caller.request("model.generate", {
           modelId,
           options: { prompt: [] },
-          event: { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [] },
+          event: { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] },
           runId: "other-run",
         })
       );

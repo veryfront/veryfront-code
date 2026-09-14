@@ -97,7 +97,7 @@ mechanism.
 ## Durability and resume
 
 Exposure state is persisted as a private durable checkpoint event,
-`AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT`, carrying a versioned
+`AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED`, carrying a versioned
 `ToolExposureCheckpoint`. `restoreToolExposureState` rehydrates it, so a resumed
 run keeps the schemas it had already loaded instead of starting from an empty
 set. Restoration returns exposure, not authorization: execution still re-checks

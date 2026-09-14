@@ -26,8 +26,14 @@ import {
  * the copy under test, and a name changed there fails the digest.
  */
 const API_RUN_EVENT_TYPE_COUNT = 53;
+// Recomputed on 2026-09-14 after the eight control plane types took the
+// past-tense names the API catalog declares (`RUNTIME_INVOKE_RETRIED`,
+// `TOOL_EXPOSURE_CHECKPOINTED`, `PROVIDER_REPLAY_CHECKPOINTED`,
+// `PROVIDER_REPLAY_TURN_FINISHED`, `MODEL_CALL_CONTEXT_RECORDED`,
+// `CONTROL_PLANE_DISPATCH_ACCEPTED`, `INVOKE_AGENT_BILLING_MODE_RETAINED`,
+// `BILLING_USAGE_RETAINED`). Only those names changed.
 const API_RUN_EVENT_TYPES_SHA256 =
-  "9aeb493b3010fc05f63ca401ddb92e546c3f0dca4b51000ed0cdb3cb680c5803";
+  "f5ed5e0225a6ace61c670d43ab7a18f60186e2e63912202d063ad1091090a1e5";
 
 /**
  * Read from the veryfront-api checkout on 2026-09-10 by importing
@@ -38,8 +44,9 @@ const API_RUN_EVENT_TYPES_SHA256 =
  * digest is the ground truth, `RUN_EVENT_CLASS_BY_TYPE` in `vocabulary.ts` is
  * the copy under test, and a class changed there fails the digest.
  */
+// Recomputed on 2026-09-14 for the same eight renames; every class is unchanged.
 const API_RUN_EVENT_CLASS_BY_TYPE_SHA256 =
-  "75a339e05665a7f4e90600bc94f1dfc7115b7385a03b78d50a5d62211ec602af";
+  "5bdf63c9744b56f639db8ecdd16a80f636f335a4725b2e95708f640a5eb3da8c";
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));

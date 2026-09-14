@@ -25,14 +25,14 @@ describe("model-call-context", () => {
       args: { maxUses: 3 },
     }];
     const event: AgentRunModelCallContextEvent = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       model: { id: "anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
       request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
       messages,
       tools,
     };
     assertEquals(event, {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       model: { id: "anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
       request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
       messages,
@@ -40,12 +40,12 @@ describe("model-call-context", () => {
     });
 
     const eventWithExtraField: AgentRunModelCallContextEvent = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages,
       // @ts-expect-error model-call context events do not accept chunk metadata
       contextId: "context-1",
     };
-    assertEquals(eventWithExtraField.type, "AGENT_RUN_MODEL_CALL_CONTEXT");
+    assertEquals(eventWithExtraField.type, "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
 
     const providerPrivateReasoning: ModelCallMessage = {
       role: "assistant",
@@ -67,9 +67,9 @@ describe("model-call-context", () => {
       { nowMs: () => now, epochMs: () => 1_786_866_357_364.4, startedMs: 100 },
     );
     now = 142.6;
-    sink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [] });
+    sink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] });
     sink({
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [],
       elapsedMs: 7,
       emittedAt: 8,
@@ -90,7 +90,7 @@ describe("model-call-context", () => {
     assertThrows(
       () =>
         sink({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           elapsedMs: Number.NaN,
         }),
@@ -100,7 +100,7 @@ describe("model-call-context", () => {
     assertThrows(
       () =>
         sink({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           emittedAt: 1.5,
         }),
@@ -116,7 +116,7 @@ describe("model-call-context", () => {
       sinkCalls += 1;
     });
     const event = Object.defineProperty(
-      { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [] },
+      { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] },
       "elapsedMs",
       {
         enumerable: true,
@@ -143,7 +143,7 @@ describe("model-call-context", () => {
       startedMs: 0,
     });
     assertThrows(
-      () => sink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [] }),
+      () => sink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] }),
       TypeError,
       "elapsedMs must be a finite non-negative number",
     );
@@ -154,7 +154,7 @@ describe("model-call-context", () => {
       startedMs: 0,
     });
     assertThrows(
-      () => wallClockSink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [] }),
+      () => wallClockSink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] }),
       TypeError,
       "emittedAt must be a non-negative integer",
     );

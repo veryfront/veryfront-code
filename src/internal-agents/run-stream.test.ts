@@ -3851,7 +3851,7 @@ describe("internal-agents/run-stream", () => {
   });
   describe("model call context", () => {
     const modelCallContextEvent = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [{ role: "system", content: "test system prompt" }],
       tools: [{ type: "function", name: "granted_tool", inputSchema: {} }],
     };

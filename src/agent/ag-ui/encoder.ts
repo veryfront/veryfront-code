@@ -603,16 +603,20 @@ function completeToolInput(
   return events;
 }
 
+/**
+ * Tool results carry the canonical `content` field. The value is passed through
+ * unchanged, which is exactly what the API stores for a legacy `result` field.
+ */
 function createToolResultEvent(
   toolCallId: unknown,
-  result: Record<string, unknown> | unknown,
+  content: Record<string, unknown> | unknown,
   isError = false,
 ): AgUiEncodedEvent {
   return {
     event: "ToolCallResult",
     payload: {
       toolCallId,
-      result,
+      content,
       ...(isError ? { isError: true } : {}),
     },
   };
@@ -958,7 +962,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
         event: "ToolCallResult",
         payload: {
           toolCallId: event.toolCallId,
-          result: {
+          content: {
             error: typeof event.errorText === "string" ? event.errorText : "Tool input failed",
           },
           isError: true,

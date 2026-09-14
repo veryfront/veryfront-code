@@ -2385,7 +2385,7 @@ describe("agent/hosted-chat-request", () => {
         id: "m1",
         role: "assistant",
         parts: [{
-          type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+          type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED",
           version: 1,
           loadedToolNames: ["get_release"],
         }],

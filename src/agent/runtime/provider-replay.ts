@@ -135,7 +135,20 @@ export type ProviderReplayCheckpoint = {
 
 /** Private durable event discriminator for provider-native replay state. */
 export const AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE =
-  "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT" as const;
+  "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED" as const;
+
+/**
+ * The spelling used before the past-tense rename. Read-only: nothing here
+ * writes it, but a reader still accepts it and hands back the canonical name.
+ */
+const LEGACY_AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE =
+  "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT";
+
+/** Return whether a value is either spelling of the provider replay checkpoint type. */
+export function isProviderReplayCheckpointEventType(type: unknown): boolean {
+  return type === AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE ||
+    type === LEGACY_AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE;
+}
 
 /** Private durable event carrying provider-native replay state. */
 export type ProviderReplayCheckpointEvent = ProviderReplayCheckpoint & {
@@ -343,7 +356,7 @@ export function parseProviderReplayCheckpointEvent(
   } catch {
     invalidCheckpoint("provider replay checkpoint event exceeds raw metadata bounds");
   }
-  if (!isRecord(snapshot) || snapshot.type !== AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE) {
+  if (!isRecord(snapshot) || !isProviderReplayCheckpointEventType(snapshot.type)) {
     invalidCheckpoint("provider replay checkpoint event type is invalid");
   }
   const checkpointValue: Record<string, unknown> = {};

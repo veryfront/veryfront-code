@@ -952,8 +952,12 @@ function mapWireEventToChatEvents(
     case "ToolCallResult": {
       const toolCall = state.toolCalls.get(wireEvent.payload.toolCallId);
       state.toolCalls.delete(wireEvent.payload.toolCallId);
+      // The canonical `content` field wins whenever it is present, even when a
+      // tool returned null; only a frame without it falls back to `result`.
       const parsedResult = parseSerializedToolResult(
-        wireEvent.payload.content ?? wireEvent.payload.result,
+        Object.hasOwn(wireEvent.payload, "content")
+          ? wireEvent.payload.content
+          : wireEvent.payload.result,
       );
 
       if (wireEvent.payload.isError) {

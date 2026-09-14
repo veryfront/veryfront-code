@@ -200,7 +200,7 @@ function createContextEvent(call: ExecutorModelDispatch): AgentRunModelCallConte
   const modelProvider = resolveModelCallProvider(call.model);
   const request = buildModelCallContextRequest(call.model, options);
   const event: AgentRunModelCallContextEvent = {
-    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
     ...(call.model.modelId
       ? {
         model: { id: call.model.modelId, ...(modelProvider ? { modelProvider } : {}) },

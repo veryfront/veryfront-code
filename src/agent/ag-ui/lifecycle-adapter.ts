@@ -268,7 +268,7 @@ export function createLifecycleAgUiAdapter(input: {
             event: "ToolCallResult",
             payload: {
               toolCallId: event.toolCallId,
-              result: { error: "Tool input was rejected before handoff" },
+              content: { error: "Tool input was rejected before handoff" },
               isError: true,
             },
           },
@@ -282,7 +282,7 @@ export function createLifecycleAgUiAdapter(input: {
           event: "ToolCallResult",
           payload: {
             toolCallId: event.toolCallId,
-            result: safeJson(event.output),
+            content: safeJson(event.output),
             ...(event.isError ? { isError: true } : {}),
           },
         }];
@@ -292,7 +292,7 @@ export function createLifecycleAgUiAdapter(input: {
           event: "ToolCallResult",
           payload: {
             toolCallId: event.toolCallId,
-            result: { error: "Tool output denied" },
+            content: { error: "Tool output denied" },
             isError: true,
           },
         }];
@@ -302,7 +302,7 @@ export function createLifecycleAgUiAdapter(input: {
           event: "ToolCallResult",
           payload: {
             toolCallId: event.toolCallId,
-            result: { error: "Provider tool execution was cancelled" },
+            content: { error: "Provider tool execution was cancelled" },
             isError: true,
           },
         }];

@@ -265,7 +265,7 @@ describe("provider replay checkpoint emission", () => {
     assertEquals(options.requireProviderReplayCheckpointPersistence, true);
     await options.persistProviderReplayCheckpoint?.(replayCheckpoint());
     assertEquals(operations, [
-      "append:AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+      "append:AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED",
       "flush",
     ]);
   });
@@ -537,7 +537,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     loadedToolNames: ["get_release"],
   });
   assertEquals(checkpointPersistenceOperations, [
-    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED",
     "flush",
   ]);
   assertEquals(publicCheckpointAppends, 0);
@@ -553,7 +553,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     "not durably persisted",
   );
   assertEquals(checkpointPersistenceOperations.slice(-3), [
-    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED",
     "flush",
     "dispose",
   ]);
@@ -808,14 +808,14 @@ it("resolves private checkpoint persistence only after the durable flush complet
   await Promise.resolve();
 
   assertEquals(operations, [
-    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED",
     "flush:start",
   ]);
   assertEquals(resolved, false);
   resolveFlush?.();
   await persistence;
   assertEquals(operations, [
-    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED",
     "flush:start",
     "flush:end",
   ]);

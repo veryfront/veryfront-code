@@ -9,7 +9,7 @@ import {
 describe("agent/conversation/private-run-event", () => {
   it("recognizes only well-shaped private provider replay checkpoint events", () => {
     const checkpoint = {
-      type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+      type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED",
       version: 1,
       messageId: "assistant-message-1",
       provider: "anthropic",
@@ -38,17 +38,43 @@ describe("agent/conversation/private-run-event", () => {
     );
   });
 
+  it("still classifies the pre-rename spellings as private, so they can never reach a public append", () => {
+    // Read compatibility: an older producer may still hand this boundary the
+    // spelling used before the past-tense rename. Treating it as public would
+    // leak model context into the public event sequence.
+    assertEquals(
+      isPrivateConversationRunEvent({ type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [] }),
+      true,
+    );
+    assertEquals(
+      isPrivateConversationRunEvent({
+        type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "thinking", thinking: "", signature: "test-signature" },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      }),
+      true,
+    );
+  });
+
   it("recognizes only well-shaped private model-call context events", () => {
     assertEquals(
       isPrivateConversationRunEvent({
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         messages: [],
       }),
       true,
     );
     assertEquals(
       isPrivateConversationRunEvent({
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         model: { id: "veryfront-cloud/anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
         request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
         messages: [],
@@ -60,7 +86,7 @@ describe("agent/conversation/private-run-event", () => {
     );
     assertEquals(
       isPrivateConversationRunEvent({
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         messages: [{
           role: "system",
           content: "Cache safely.",
@@ -75,22 +101,22 @@ describe("agent/conversation/private-run-event", () => {
     for (
       const value of [
         [],
-        { type: "AGENT_RUN_MODEL_CALL_CONTEXT" },
-        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: {} },
-        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], tools: {} },
-        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], model: { id: 1 } },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: {} },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [], tools: {} },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [], model: { id: 1 } },
         {
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           model: { id: "x", provider: "anthropic" },
         },
         {
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           request: { reasoning: { arbitrary: true } },
         },
         {
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [{
             role: "system",
             content: "Do not persist provider secrets.",
@@ -103,7 +129,7 @@ describe("agent/conversation/private-run-event", () => {
           }],
         },
         {
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [{
             role: "system",
             content: "Reject unsupported cache policy.",
@@ -113,7 +139,7 @@ describe("agent/conversation/private-run-event", () => {
           }],
         },
         {
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [{
             role: "assistant",
             content: [{
@@ -125,7 +151,7 @@ describe("agent/conversation/private-run-event", () => {
           }],
         },
         {
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [{
             role: "tool",
             content: [{
@@ -137,7 +163,7 @@ describe("agent/conversation/private-run-event", () => {
           }],
         },
         {
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           tools: [{
             type: "function",
@@ -145,8 +171,8 @@ describe("agent/conversation/private-run-event", () => {
             inputSchema: undefined,
           }],
         },
-        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], emittedAt: 1.5 },
-        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], contextId: "legacy" },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [], emittedAt: 1.5 },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [], contextId: "legacy" },
         { type: "TEXT_MESSAGE_CONTENT", messages: [] },
       ]
     ) {
@@ -157,7 +183,7 @@ describe("agent/conversation/private-run-event", () => {
   it("does not invoke accessors while checking private event shape", () => {
     let reads = 0;
     const event = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [],
     };
     Object.defineProperty(event, "tools", {
@@ -183,7 +209,7 @@ describe("agent/conversation/private-run-event", () => {
 
     assertEquals(
       isPrivateConversationRunEvent({
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         messages: [],
         request: { reasoning: { effort } },
       }),
