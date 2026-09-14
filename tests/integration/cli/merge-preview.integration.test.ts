@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { cliLogger } from "../../../cli/utils/index.ts";
 import { mergeCommand } from "../../../cli/commands/merge/command.ts";
@@ -9,7 +10,7 @@ import { mergeCommand } from "../../../cli/commands/merge/command.ts";
 describe("merge dry-run REST contract", () => {
   it("finds a branch on the next page and reports canonical conflict paths without merging", async () => {
     const originalDirectory = Deno.cwd();
-    const directory = await Deno.makeTempDir();
+    const directory = await makeTempDir();
     const keys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const previous = keys.map((key) => Deno.env.get(key));
     const originalWarn = cliLogger.warn;
