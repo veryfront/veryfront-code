@@ -1697,6 +1697,48 @@ describe("ragStore", () => {
     });
   });
 
+  it("removes discovered orphan parts even when another part cannot be inspected", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    const prefix = ".veryfront/rag/documents/fixture-document.";
+    const deleted: string[] = [];
+    await withMockFetch((input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      if (url.pathname.endsWith("/rag/documents")) {
+        return Promise.resolve(Response.json({ documents: [] }));
+      }
+      if (url.pathname.endsWith("/files")) {
+        assertEquals(url.searchParams.get("fields"), "(path)");
+        return Promise.resolve(
+          Response.json({
+            data: [{ path: `${prefix}failed.txt` }, { path: `${prefix}orphan.txt` }],
+            page_info: { next: null },
+          }),
+        );
+      }
+      const file = decodeURIComponent(url.pathname.split("/files/")[1]!.replace(/\/chunks$/, ""));
+      if (request.method === "DELETE") {
+        deleted.push(file);
+        return Promise.resolve(Response.json({ deleted: 1 }));
+      }
+      if (file === `${prefix}failed.txt`) {
+        return Promise.resolve(Response.json({ message: "Fixture probe failed" }, { status: 503 }));
+      }
+      return Promise.resolve(
+        Response.json({ data: [{ id: "chunk", index: 0, content: "fixture" }] }),
+      );
+    }, async () => {
+      const store = ragStore({ model: "test/demo" });
+      await assertRejects(
+        () => store.removeDocument("fixture-document"),
+        Error,
+        "Fixture probe failed",
+      );
+      assertEquals(deleted, [`${prefix}orphan.txt`]);
+    });
+  });
+
   it("refreshes cloud document chunks and embeddings under the existing id", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
     setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");

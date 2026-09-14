@@ -453,12 +453,13 @@ async function deleteRagDocument(
 async function listDocumentPartFiles(
   context: CloudStoreContext,
   documentId: string,
-): Promise<string[]> {
+): Promise<{ paths: string[]; errors: unknown[] }> {
   // Generated document IDs are one path segment. Never let a supplied glob or
   // separator select another document's namespace.
-  if (!/^[A-Za-z0-9_-]+$/.test(documentId)) return [];
+  if (!/^[A-Za-z0-9_-]+$/.test(documentId)) return { paths: [], errors: [] };
   const prefix = `${DOCUMENTS_DIR}/${documentId}.`;
   const paths: string[] = [];
+  const errors: unknown[] = [];
   const cursors = new Set<string>();
   let cursor: string | null | undefined;
   do {
@@ -469,10 +470,16 @@ async function listDocumentPartFiles(
       fields: "(path)",
     });
     if (cursor) query.set("cursor", cursor);
-    const response = await requestJson<CloudFileListResponse>(
-      context,
-      `/projects/${encodeURIComponent(context.projectSlug)}/files?${query}`,
-    );
+    let response: CloudFileListResponse | null;
+    try {
+      response = await requestJson<CloudFileListResponse>(
+        context,
+        `/projects/${encodeURIComponent(context.projectSlug)}/files?${query}`,
+      );
+    } catch (error) {
+      errors.push(error);
+      break;
+    }
     const candidates = (response?.data ?? []).map((file) => file.path).filter((path) =>
       path.startsWith(prefix) && !path.slice(prefix.length).includes("/")
     );
@@ -491,17 +498,18 @@ async function listDocumentPartFiles(
         }),
       );
       for (const result of results) {
-        if (result.status === "rejected") throw result.reason;
-        if (result.value) paths.push(result.value);
+        if (result.status === "rejected") errors.push(result.reason);
+        else if (result.value) paths.push(result.value);
       }
     }
     cursor = response?.page_info?.next;
     if (cursor && cursors.has(cursor)) {
-      throw INVALID_ARGUMENT.create({ detail: "Document file listing repeated a cursor." });
+      errors.push(INVALID_ARGUMENT.create({ detail: "Document file listing repeated a cursor." }));
+      break;
     }
     if (cursor) cursors.add(cursor);
   } while (cursor);
-  return paths;
+  return { paths, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -535,12 +543,14 @@ async function refreshCloudDocument(
   const expectedRevision = requireDocumentRevision(existing);
 
   const type = meta?.type ?? existing.type;
+  const discovery = await listDocumentPartFiles(context, documentId);
+  if (discovery.errors.length) throw discovery.errors[0];
   // Capture pre-existing parts before writing a new generation. Only retire
   // them after the revision-guarded metadata update succeeds.
   const previousFilePaths = [
     ...new Set([
       ...documentFilePaths(existing),
-      ...await listDocumentPartFiles(context, documentId),
+      ...discovery.paths,
     ]),
   ];
   const inheritedCleanupPaths = retiredDocumentPaths(
@@ -921,15 +931,9 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       // The file namespace also owns parts whose metadata acknowledgement was
       // lost. Read it after deletion, so a retry can collect them even when the
       // document record is already absent.
-      let scannedPaths: string[] = [];
-      let scanError: unknown;
-      try {
-        scannedPaths = await listDocumentPartFiles(context, id);
-      } catch (error) {
-        scanError = error;
-      }
+      const discovery = await listDocumentPartFiles(context, id);
       const paths = [
-        ...scannedPaths,
+        ...discovery.paths,
         ...(target ? documentFilePaths(target) : []),
         ...(target ? retiredDocumentPaths(target, buildDocumentFilePath(id, target.type)) : []),
       ];
@@ -944,7 +948,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
           error: failure.error instanceof Error ? failure.error.message : String(failure.error),
         });
       }
-      if (scanError) throw scanError;
+      if (discovery.errors.length) throw discovery.errors[0];
     },
 
     async indexContentDir(): Promise<void> {

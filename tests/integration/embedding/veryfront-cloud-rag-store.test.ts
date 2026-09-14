@@ -40,6 +40,7 @@ function replacementApi() {
   let delayChunkReads = false;
   let activeChunkReads = 0;
   let peakChunkReads = 0;
+  let failedProbePath: string | undefined;
   const removeFile = (path: string) => {
     for (const chunk of files.get(path) ?? []) embeddings.delete(chunk.id);
     files.delete(path);
@@ -67,6 +68,9 @@ function replacementApi() {
     },
     peakChunkReadConcurrency() {
       return peakChunkReads;
+    },
+    failProbe(path?: string) {
+      failedProbePath = path;
     },
     paginateSearch(size: number) {
       searchPageSize = size;
@@ -122,6 +126,9 @@ function replacementApi() {
       if (fileMatch) {
         const filePath = decodeURIComponent(fileMatch[1]!);
         if (request.method === "GET") {
+          if (filePath === failedProbePath) {
+            return Response.json({ message: "Fixture probe failure" }, { status: 503 });
+          }
           activeChunkReads++;
           peakChunkReads = Math.max(peakChunkReads, activeChunkReads);
           if (delayChunkReads) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -507,6 +514,29 @@ describe("cloud RAG batch replacement", () => {
       await rag.removeDocument(id);
       assertEquals([...api.files.values()].flat().length, 0);
       assertEquals(api.documents.size, 0);
+    });
+  });
+
+  it("cleans discovered orphans across a failed probe before reporting incomplete cleanup", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Existing", "original");
+      const original = [...api.files.values()][0]!;
+      const prefix = `.veryfront/rag/documents/${id}`;
+      const before = `${prefix}.refresh-before.txt`;
+      const failing = `${prefix}.refresh-failing.txt`;
+      const after = `${prefix}.refresh-after.txt`;
+      api.files.set(before, original);
+      api.files.set(failing, original);
+      api.files.set(after, original);
+      api.failProbe(failing);
+      await assertRejects(() => rag.removeDocument(id));
+      assertEquals([...api.files.keys()], [failing]);
+      assertEquals(api.documents.size, 0);
+      api.failProbe();
+      await rag.removeDocument(id);
+      assertEquals(api.files.size, 0);
     });
   });
 });
