@@ -456,6 +456,46 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
+  it("keeps a null tool output carried in the canonical content field", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ToolCallStart",
+        'data: {"toolCallId":"tool-null","toolCallName":"lookup"}',
+        "",
+        "event: ToolCallResult",
+        'data: {"toolCallId":"tool-null","content":null}',
+        "",
+        "event: ToolCallStart",
+        'data: {"toolCallId":"tool-both","toolCallName":"lookup"}',
+        "",
+        "event: ToolCallResult",
+        'data: {"toolCallId":"tool-both","content":null,"result":{"stale":true}}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const outputs = result.events.flatMap((entry) => entry.chatEvents).filter((event) =>
+      event.type === "tool-output-available"
+    );
+    assertEquals(outputs, [
+      {
+        type: "tool-output-available",
+        toolCallId: "tool-null",
+        output: null,
+        providerExecuted: true,
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tool-both",
+        output: null,
+        providerExecuted: true,
+      },
+    ]);
+  });
+
   it("emits tool output errors when AG-UI result payloads are marked as failures", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(
