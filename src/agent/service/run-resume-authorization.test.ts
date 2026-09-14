@@ -28,6 +28,15 @@ const collaboratorClaims = {
   exp: CONTRACT_EXPIRY_SECONDS,
 };
 
+// The v1 digests, pinned independently of the fixture and identical to the
+// producer pins in veryfront-api. Comparing a payload only with its adjacent,
+// equally editable hash lets a producer change be absorbed by regenerating both
+// in one repo while the other keeps the old payload under the same contract id.
+const EXPECTED_PAYLOAD_DIGESTS = {
+  projectScoped: "8141244b70fe35ac57d038b6a8cf438680fb5d3f281bf8f802677f42e8c6ecd5",
+  runScoped: "42c52da39f013575a7e8f58992fc58c55147f4a7fee96c5bc83e64d31ba5e0b3",
+};
+
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   let hex = "";
@@ -100,6 +109,11 @@ describe("hosted resume token authorization", () => {
     );
     assertEquals(apiRunResumeContract.serviceIdentity, "veryfront-server");
     for (const shape of ["projectScoped", "runScoped"] as const) {
+      assertEquals(
+        apiRunResumeContract[shape].payloadSha256,
+        EXPECTED_PAYLOAD_DIGESTS[shape],
+        `${shape} contract digest was redefined under an unchanged contract id`,
+      );
       assertEquals(
         await sha256Hex(JSON.stringify(apiRunResumeContract[shape].payload)),
         apiRunResumeContract[shape].payloadSha256,
