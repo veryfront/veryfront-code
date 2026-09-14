@@ -592,6 +592,8 @@ stays the API's decision. Custom route sets that serve resume must supply
 Authentication receives a separate request with the bounded original body, so it may
 read JSON without consuming the signal handler's input. Oversized declared or chunked
 bodies return HTTP 413 before authentication and cancel the remaining stream.
+Standalone resume and cancel handlers apply the same bound before run-id resolvers
+and authorizers receive a body. Cancellation without a body remains supported.
 
 Cancellation claims and request bindings must be own data properties. The route
 also rejects inherited `then` properties before authentication and rechecks after

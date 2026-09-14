@@ -3,11 +3,7 @@ import type { AgentServiceRoute } from "./definition.ts";
 import { createAgUiRunErrorEvent, createAgUiSseErrorResponse } from "../ag-ui/host-support.ts";
 import { createAgUiRuntimeHandler } from "../ag-ui/runtime-handler.ts";
 import { createAgUiCancelHandler, createAgUiResumeHandler } from "../ag-ui/run-control.ts";
-import {
-  AG_UI_MAX_REQUEST_BODY_BYTES,
-  parseAgUiJsonRequestOrError,
-} from "#veryfront/agent/ag-ui/request-shared.ts";
-import { readBodyWithLimit } from "#veryfront/security/input-validation/limits.ts";
+import { boundAgUiRequestBody } from "#veryfront/agent/ag-ui/request-shared.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import type { DetachedRunTracker } from "./detached-run-tracker.ts";
 import {
@@ -499,14 +495,13 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         // Bound the original stream before a custom authenticator can parse its
         // clone. Otherwise the unread control branch buffers every byte it reads.
         let controlRequest = input.request;
-        if (operation === "resume") {
-          const boundedRequest = await parseAgUiJsonRequestOrError(async () => {
-            const body = await readBodyWithLimit(controlRequest, AG_UI_MAX_REQUEST_BODY_BYTES);
-            return new NativeRequest(controlRequest, { body });
-          }, "Invalid AG-UI resume request");
-          if (isResponseLike(boundedRequest)) return boundedRequest;
-          controlRequest = boundedRequest;
-        }
+        const boundedRequest = await boundAgUiRequestBody(
+          controlRequest,
+          `Invalid AG-UI ${operation} request`,
+          operation === "cancel",
+        );
+        if (isResponseLike(boundedRequest)) return boundedRequest;
+        controlRequest = boundedRequest;
         const authenticationRequest = IntrinsicReflectApply(
           RequestClone,
           controlRequest,

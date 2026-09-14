@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
+  boundAgUiRequestBody,
   createAgUiBodyLimitErrorResponse,
   extractRequest,
   parseAgUiJsonBody,
@@ -98,7 +99,12 @@ export function createAgUiResumeHandler(
   options: AgUiResumeHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response> {
   return async function POST(requestOrCtx: unknown): Promise<Response> {
-    const request = extractRequest(requestOrCtx);
+    const request = await boundAgUiRequestBody(
+      extractRequest(requestOrCtx),
+      "Invalid AG-UI run control request",
+      true,
+    );
+    if (request instanceof Response) return request;
     const runId = await resolveRunId(request, options, RESUME_PATH_REGEX);
 
     if (!runId) {
@@ -178,7 +184,12 @@ export function createAgUiCancelHandler<T = unknown>(
   options: AgUiCancelHandlerOptions<T>,
 ): (requestOrCtx: unknown) => Promise<Response> {
   return async function DELETE(requestOrCtx: unknown): Promise<Response> {
-    const request = extractRequest(requestOrCtx);
+    const request = await boundAgUiRequestBody(
+      extractRequest(requestOrCtx),
+      "Invalid AG-UI run control request",
+      true,
+    );
+    if (request instanceof Response) return request;
     const runId = await resolveRunId(request, options, CANCEL_PATH_REGEX);
 
     if (!runId) {

@@ -32,6 +32,60 @@ describe("agent/ag-ui-run-control", () => {
     );
   });
 
+  for (const operation of ["resume", "cancel"] as const) {
+    for (const callback of ["resolve", "authorize"] as const) {
+      it(`bounds standalone ${operation} bodies before the ${callback} callback reads them`, async () => {
+        let calls = 0;
+        let cancelled = false;
+        let pulls = 0;
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            pulls++;
+            controller.enqueue(new TextEncoder().encode(pulls <= 40 ? " ".repeat(65_536) : "{}"));
+            if (pulls === 41) controller.close();
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+        const createHandler = operation === "resume"
+          ? createAgUiResumeHandler
+          : createAgUiCancelHandler;
+        const handler = createHandler({
+          sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),
+          ...(callback === "resolve"
+            ? {
+              resolveRunId: async ({ request }: { request: Request }) => {
+                calls++;
+                await request.json();
+                return "run-large";
+              },
+            }
+            : {}),
+          authorizeRunControl: async ({ request }) => {
+            calls++;
+            await request.json();
+            return false;
+          },
+        });
+        const response = await handler(
+          new Request(
+            `https://example.test/api/runs/run-large${operation === "resume" ? "/resume" : ""}`,
+            {
+              method: operation === "resume" ? "POST" : "DELETE",
+              body,
+              ...{ duplex: "half" },
+            },
+          ),
+        );
+        assertEquals(response.status, 413);
+        assertEquals(calls, 0);
+        assertEquals(pulls <= 18, true);
+        assertEquals(cancelled, true);
+      });
+    }
+  }
+
   it("submits a tool result through the public resume handler", async () => {
     const sessionManager = new RunResumeSessionManager<{
       result: unknown;

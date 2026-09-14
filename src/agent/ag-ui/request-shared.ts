@@ -3,12 +3,31 @@ import {
   isRequestBodyTooLargeError,
   readBodyWithLimit,
 } from "#veryfront/security/input-validation/limits.ts";
+import { assertNativeRequestDefaults } from "#veryfront/security/http/native-request-processing.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
+const NativeRequest = Request;
+const RequestBodyGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "body")!.get!;
 
 export const AG_UI_MAX_REQUEST_BODY_BYTES = DEFAULT_MAX_BODY_SIZE_BYTES;
+
+/** Bound incoming bytes before exposing a body to application callbacks. */
+export async function boundAgUiRequestBody(
+  request: Request,
+  errorLabel: string,
+  allowEmptyBody = false,
+): Promise<Request | Response> {
+  return await parseAgUiJsonRequestOrError(async () => {
+    if (allowEmptyBody && IntrinsicReflectApply(RequestBodyGet, request, []) === null) {
+      return request;
+    }
+    const body = await readBodyWithLimit(request, AG_UI_MAX_REQUEST_BODY_BYTES);
+    assertNativeRequestDefaults();
+    return new NativeRequest(request, { body });
+  }, errorLabel);
+}
 
 export async function parseAgUiJsonBody(request: Request): Promise<unknown> {
   return IntrinsicReflectApply(
