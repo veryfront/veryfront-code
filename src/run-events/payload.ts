@@ -146,6 +146,8 @@ export const getToolCallResultPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TOOL_CALL_RESULT", {
     toolCallId: requiredString(v),
     messageId: optionalString(v),
+    // The assistant message this result belongs to, as on TOOL_CALL_START.
+    parentMessageId: optionalString(v),
     content: v.unknown(),
     isError: v.boolean().nullable(),
     role: v.literal("tool").optional(),
