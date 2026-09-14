@@ -1658,6 +1658,45 @@ describe("ragStore", () => {
     );
   });
 
+  it("refuses cloud refresh and removal before mutation when the API has no document revision", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    const requests: string[] = [];
+    await withMockFetch((input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      requests.push(`${request.method} ${path}`);
+      assertEquals(request.method, "GET");
+      assertEquals(path, "/projects/cloud-project/rag/documents");
+      return Promise.resolve(Response.json({
+        documents: [{
+          id: "fixture-document",
+          title: "Existing",
+          source: "",
+          type: "txt",
+          created_at: "2026-09-14T00:00:00Z",
+          metadata: { filePath: ".veryfront/rag/documents/fixture-document.txt" },
+        }],
+      }));
+    }, async () => {
+      const store = ragStore({ model: "test/demo" });
+      await assertRejects(
+        () => store.refreshDocument!("fixture-document", "replacement"),
+        Error,
+        "document revision is unavailable",
+      );
+      await assertRejects(
+        () => store.removeDocument("fixture-document"),
+        Error,
+        "document revision is unavailable",
+      );
+      assertEquals(requests, [
+        "GET /projects/cloud-project/rag/documents",
+        "GET /projects/cloud-project/rag/documents",
+      ]);
+    });
+  });
+
   it("refreshes cloud document chunks and embeddings under the existing id", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
     setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
