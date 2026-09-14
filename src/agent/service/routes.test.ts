@@ -1432,3 +1432,33 @@ for (const routeCase of controlRouteCases) {
     }
   });
 }
+
+// Regression: bounding the control body must not also decode it. Cancellation
+// carries no JSON payload, so a custom authenticator doing a body-bound
+// signature over raw bytes has to still see those bytes.
+it("bounds an opaque cancellation body without decoding it", async () => {
+  const opaque = new Uint8Array([0xff, 0xfe, 0x00, 0x01, 0x80]);
+  let seenBytes: Uint8Array | undefined;
+  const { routeSet, tracker } = createRouteSet({
+    authenticateRequest: async (request) => {
+      seenBytes = new Uint8Array(await request.arrayBuffer());
+      return { authToken: "opaque-token", userId: "user-1" };
+    },
+  });
+  const manager = tracker.sessionManager;
+  const signal = manager.startRun({ runId: "run-opaque", threadId: "thread" });
+  try {
+    const response = await routeSet.handleDurableChatRunCancelRequest({
+      request: new Request("https://agent.example.test/api/runs/run-opaque", {
+        method: "DELETE",
+        body: opaque,
+      }),
+      runId: "run-opaque",
+    });
+    assertEquals(response.status, 202);
+    assertEquals(signal.aborted, true);
+    assertEquals(seenBytes, opaque);
+  } finally {
+    tracker.reset();
+  }
+});

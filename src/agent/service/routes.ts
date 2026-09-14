@@ -499,6 +499,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           controlRequest,
           `Invalid AG-UI ${operation} request`,
           operation === "cancel",
+          operation === "resume",
         );
         if (isResponseLike(boundedRequest)) return boundedRequest;
         controlRequest = boundedRequest;
