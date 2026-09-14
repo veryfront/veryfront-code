@@ -179,6 +179,49 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(response.status, 202);
   });
 
+  for (const operation of ["resume", "cancel"] as const) {
+    it(`withholds infrastructure headers from ${operation} authorizers on denial`, async () => {
+      const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+      let observed: Record<string, string | null> | undefined;
+      const createHandler = operation === "resume"
+        ? createAgUiResumeHandler
+        : createAgUiCancelHandler;
+      const handler = createHandler({
+        sessionManager,
+        authorizeRunControl: ({ request }) => {
+          observed = {
+            authorization: request.headers.get("authorization"),
+            token: request.headers.get("x-token"),
+            project: request.headers.get("x-project-id"),
+            proxy: request.headers.get("x-forwarded-host"),
+          };
+          return false;
+        },
+      });
+      const response = await handler(
+        new Request(
+          `https://example.test/api/runs/run_private${operation === "resume" ? "/resume" : ""}`,
+          {
+            method: operation === "resume" ? "POST" : "DELETE",
+            headers: {
+              Authorization: "Bearer public-user",
+              "x-token": "synthetic-host-secret",
+              "x-project-id": "private-project",
+              "x-forwarded-host": "private-proxy",
+            },
+          },
+        ),
+      );
+      assertEquals(response.status, 403);
+      assertEquals(observed, {
+        authorization: "Bearer public-user",
+        token: null,
+        project: null,
+        proxy: null,
+      });
+    });
+  }
+
   it("accepts a request wrapper and returns 410 for inactive runs", async () => {
     const handler = createAgUiResumeHandler({
       authorizeRunControl: allowRunControl,

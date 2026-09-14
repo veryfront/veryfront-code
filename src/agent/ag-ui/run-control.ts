@@ -18,7 +18,6 @@ import {
 } from "../runtime/run-control-authority.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
-const NativeRequestClone = Request.prototype.clone;
 const NativeRequestBody = Object.getOwnPropertyDescriptor(Request.prototype, "body")!.get!;
 const NativeStreamLocked = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "locked")!
   .get!;
@@ -118,7 +117,7 @@ export function createAgUiResumeHandler(
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
-    const authorizationRequest = IntrinsicReflectApply(NativeRequestClone, request, []) as Request;
+    const authorizationRequest = createApplicationRequest(request);
     const authority = await authorizeRunControl(options.authorizeRunControl, {
       request: authorizationRequest,
       runId,
@@ -198,11 +197,12 @@ export function createAgUiCancelHandler<T = unknown>(
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
+    const authorizationRequest = createApplicationRequest(request);
     const authority = await authorizeRunControl(options.authorizeRunControl, {
-      request,
+      request: authorizationRequest,
       runId,
       operation: "cancel",
-    });
+    }).finally(() => cancelUnusedRequestBody(authorizationRequest));
     if (!authority) {
       return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
     }
