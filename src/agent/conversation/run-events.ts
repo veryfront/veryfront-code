@@ -347,6 +347,7 @@ export class ConversationRunEventEncoder {
         events.push({
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
+          ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
           ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
@@ -364,6 +365,7 @@ export class ConversationRunEventEncoder {
         const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
+          ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
           ...serializeConversationToolResultContent(chunk.output),
           role: "tool",
@@ -379,6 +381,7 @@ export class ConversationRunEventEncoder {
         const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
+          ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
           ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
@@ -395,6 +398,7 @@ export class ConversationRunEventEncoder {
         const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
+          ...(this.activeMessageId ? { parentMessageId: this.activeMessageId } : {}),
           toolCallId: chunk.toolCallId,
           content: "Tool output denied",
           role: "tool",

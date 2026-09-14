@@ -102,6 +102,36 @@ describe("run-events/payload", () => {
     );
   });
 
+  it("types the parent message a tool result belongs to", () => {
+    const parsed = getToolCallResultPayloadSchema().parse({
+      type: "TOOL_CALL_RESULT",
+      toolCallId: "toolu_01",
+      messageId: "33333333-3333-4333-a333-333333333333:tool:toolu_01",
+      parentMessageId: "33333333-3333-4333-a333-333333333333",
+      content: "ok",
+      isError: null,
+    });
+    assertEquals(parsed.parentMessageId, "33333333-3333-4333-a333-333333333333");
+    assertThrows(() =>
+      getToolCallResultPayloadSchema().parse({
+        type: "TOOL_CALL_RESULT",
+        toolCallId: "toolu_01",
+        parentMessageId: 7,
+        content: "ok",
+        isError: null,
+      })
+    );
+    assertThrows(() =>
+      getToolCallResultPayloadSchema().parse({
+        type: "TOOL_CALL_RESULT",
+        toolCallId: "toolu_01",
+        parentMessageId: "",
+        content: "ok",
+        isError: null,
+      })
+    );
+  });
+
   it("requires contentId on a text message start", () => {
     assertThrows(() =>
       getTextMessageStartPayloadSchema().parse({
