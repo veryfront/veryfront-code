@@ -286,11 +286,16 @@ The manual flow is:
 
 1. Create or list RAG document records.
 2. Split source content into chunks.
-3. Generate vectors through AI Gateway or another embedding provider.
-4. Store vectors with the embeddings endpoint.
-5. Search with a query vector.
+3. Store each file's complete chunk set with the chunks endpoint. Each POST
+   replaces that file's existing chunks. Use a distinct file for each batch of
+   up to 500 chunks.
+4. Generate vectors through AI Gateway or another embedding provider.
+5. Store vectors with the embeddings endpoint.
+6. Search with a query vector.
 
 For Veryfront apps, prefer `ragStore()` unless you need that lower-level control.
+It keeps every batch under one document ID and cleans up the file parts when you
+refresh or remove the document.
 
 ## Verify it worked
 

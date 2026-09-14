@@ -94,7 +94,7 @@ interface ChunkMutationInput {
 
 type ResolvedCloudRagStoreConfig = RagStoreConfig & { model: string };
 
-type CloudRagDocumentMeta = RagDocumentMeta & { filePath?: string };
+type CloudRagDocumentMeta = RagDocumentMeta & { filePath?: string; filePaths?: string[] };
 
 interface ContentFile {
   path: string;
@@ -177,6 +177,21 @@ function buildDocumentFilePath(documentId: string, type?: string): string {
 function buildRefreshDocumentFilePath(documentId: string, type?: string): string {
   const extension = normalizeExtension(type);
   return `${DOCUMENTS_DIR}/${documentId}.refresh-${crypto.randomUUID()}.${extension || "txt"}`;
+}
+
+function buildChunkFilePaths(filePath: string, chunkCount: number): string[] {
+  const extension = extname(filePath);
+  const stem = filePath.slice(0, filePath.length - extension.length);
+  return Array.from(
+    { length: Math.ceil(chunkCount / MAX_API_CHUNK_BATCH) },
+    (_, index) => index === 0 ? filePath : `${stem}.part-${index}${extension}`,
+  );
+}
+
+function documentFilePaths(document: CloudRagDocumentMeta): string[] {
+  return document.filePaths?.length
+    ? [...new Set(document.filePaths)]
+    : [document.filePath ?? buildDocumentFilePath(document.id, document.type)];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -311,7 +326,7 @@ async function deleteFileChunks(context: CloudStoreContext, filePath: string): P
 
 async function upsertFileChunks(
   context: CloudStoreContext,
-  filePath: string,
+  filePaths: string[],
   chunks: ChunkMutationInput[],
 ): Promise<Array<{ id: string; index: number }>> {
   if (chunks.length === 0) {
@@ -323,7 +338,8 @@ async function upsertFileChunks(
     const batch = chunks.slice(i, i + MAX_API_CHUNK_BATCH);
     const response = await requestJson<CloudUpsertChunksResponse>(
       context,
-      getFileChunksPath(context, filePath),
+      // Each POST replaces its file's complete chunk set.
+      getFileChunksPath(context, filePaths[Math.floor(i / MAX_API_CHUNK_BATCH)]!),
       {
         method: "POST",
         body: JSON.stringify({ chunks: batch }),
@@ -383,6 +399,11 @@ async function listRagDocuments(
     type: doc.type,
     createdAt: new Date(doc.created_at).getTime(),
     filePath: typeof doc.metadata?.filePath === "string" ? doc.metadata.filePath : undefined,
+    filePaths: Array.isArray(doc.metadata?.filePaths)
+      ? doc.metadata.filePaths.filter((path): path is string =>
+        typeof path === "string" && path.length > 0
+      )
+      : undefined,
   }));
 }
 
@@ -454,7 +475,7 @@ async function refreshCloudDocument(
   }
 
   const type = meta?.type ?? existing.type;
-  const previousFilePath = existing.filePath ?? buildDocumentFilePath(documentId, existing.type);
+  const previousFilePaths = documentFilePaths(existing);
   const filePath = buildRefreshDocumentFilePath(documentId, type);
 
   await writeDocumentContent(
@@ -470,8 +491,8 @@ async function refreshCloudDocument(
     { filePath },
   );
 
-  if (previousFilePath !== filePath) {
-    await deleteFileChunks(context, previousFilePath);
+  for (const previousFilePath of previousFilePaths) {
+    if (previousFilePath !== filePath) await deleteFileChunks(context, previousFilePath);
   }
 }
 
@@ -506,9 +527,10 @@ async function writeDocumentContent(
     source: meta?.source ?? "",
     type: meta?.type ?? "",
   });
+  const filePaths = buildChunkFilePaths(filePath, chunkInputs.length);
 
   try {
-    const createdChunks = await upsertFileChunks(context, filePath, chunkInputs);
+    const createdChunks = await upsertFileChunks(context, filePaths, chunkInputs);
     const chunkIds = createdChunks.map((entry) => entry.id);
 
     if (chunkIds.length !== vectors.length) {
@@ -525,12 +547,14 @@ async function writeDocumentContent(
       normalizeEmbeddingModelDescriptor(config.model, dimension),
     );
   } catch (error) {
-    await deleteFileChunks(context, filePath).catch((cleanupError) =>
-      serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", {
-        filePath,
-        error: cleanupError,
-      })
-    );
+    for (const cleanupPath of filePaths) {
+      await deleteFileChunks(context, cleanupPath).catch((cleanupError) =>
+        serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", {
+          filePath: cleanupPath,
+          error: cleanupError,
+        })
+      );
+    }
     throw error;
   }
 
@@ -540,7 +564,7 @@ async function writeDocumentContent(
     title,
     source: meta?.source ?? "",
     type: meta?.type ?? "",
-    metadata: { filePath },
+    metadata: filePaths.length === 1 ? { filePath } : { filePath, filePaths },
   });
 }
 
@@ -764,7 +788,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
     async removeDocument(id: string): Promise<void> {
       const context = getCloudStoreContext(config);
 
-      // Fetch document metadata to find its filePath for chunk cleanup
+      // Fetch document metadata to find every file part for chunk cleanup.
       const documents = await listRagDocuments(context);
       const target = documents.find((doc) => doc.id === id);
 
@@ -773,15 +797,16 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
 
       // Best-effort cleanup of file chunks
       if (target) {
-        const filePath = target.filePath ?? buildDocumentFilePath(id, target.type);
-        try {
-          await deleteFileChunks(context, filePath);
-        } catch (error) {
-          serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
-            id,
-            filePath,
-            error: error instanceof Error ? error.message : String(error),
-          });
+        for (const filePath of documentFilePaths(target)) {
+          try {
+            await deleteFileChunks(context, filePath);
+          } catch (error) {
+            serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
+              id,
+              filePath,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
     },
