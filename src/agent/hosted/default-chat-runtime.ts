@@ -64,6 +64,7 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
 const apply = Reflect.apply;
+const stringTrim = String.prototype.trim;
 const TypeErrorConstructor = TypeError;
 const objectEntries = Object.entries;
 const objectSetPrototypeOf = Object.setPrototypeOf;
@@ -322,6 +323,10 @@ export type PreparedHostedRuntimeAgentOptions = {
   refreshSystem?: () => Promise<AgentSystem> | AgentSystem;
 };
 
+function resolveRuntimeAgentId(agentId: string | undefined): string {
+  return agentId && apply(stringTrim, agentId, []) ? agentId : "veryfront-hosted-runtime";
+}
+
 function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): AgentConfig {
   const liveProjectSteering = input.options.liveProjectSteering;
   const refreshSystem = input.refreshSystem;
@@ -335,8 +340,7 @@ function createRuntimeAgentConfig(input: PreparedHostedRuntimeAgentOptions): Age
     refreshSystem,
   });
   const runtimeConfig: RuntimeToolFilterConfig = {
-    id: input.runtimeAgentId ??
-      (input.options.agentId?.trim() ? input.options.agentId : "veryfront-hosted-runtime"),
+    id: input.runtimeAgentId ?? resolveRuntimeAgentId(input.options.agentId),
     model: input.modelId,
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
@@ -550,9 +554,7 @@ export async function createDefaultHostedChatRuntime(
           cloudContext,
           () =>
             createPreparedHostedRuntimeAgent({
-              runtimeAgentId: taskContext.agentId?.trim()
-                ? taskContext.agentId
-                : "veryfront-hosted-runtime",
+              runtimeAgentId: resolveRuntimeAgentId(taskContext.agentId),
               options: input.options,
               taskContext,
               toolAssembly,
