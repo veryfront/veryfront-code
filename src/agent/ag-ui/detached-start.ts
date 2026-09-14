@@ -347,14 +347,17 @@ export async function executeAgUiDetachedStart(
         }
 
         // Finalize by signal: a park-cancelled execution can settle after the
-        // resumed start has reused this run id, and must not end that session.
+        // resumed start has reused this run id, and must neither end that session
+        // nor run lifecycle callbacks (which untrack the run id) on its behalf.
         options.sessionManager.completeRun(input.request.runId, abortSignal);
+        if (options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) return;
         await options.onFinish?.({
           runId: input.request.runId,
           threadId: input.request.threadId,
         });
       } catch (error) {
         options.sessionManager.failRun(input.request.runId, abortSignal);
+        if (options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) return;
         await options.onError?.({
           runId: input.request.runId,
           threadId: input.request.threadId,

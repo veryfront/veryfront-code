@@ -442,6 +442,93 @@ describe("agent/ag-ui-detached-start", () => {
     );
   });
 
+  /**
+   * A park-cancelled execution that fails after the resume must not report that
+   * failure: the host's error callback untracks the run id, which would drop the
+   * resumed execution from shutdown cancellation.
+   */
+  it("does not report a park-cancelled execution's failure after the resume", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const captured: Promise<unknown>[] = [];
+    const reported: string[] = [];
+    let rejectParkedExecution!: (error: Error) => void;
+    const parkedExecution = new Promise<void>((_resolve, reject) => {
+      rejectParkedExecution = reject;
+    });
+    let executions = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        executions += 1;
+        if (executions === 1) {
+          await parkedExecution;
+          return;
+        }
+        await new Promise<void>(() => {});
+      },
+      onFinish: ({ runId }) => {
+        reported.push(`finish:${runId}`);
+      },
+      onError: ({ runId }) => {
+        reported.push(`error:${runId}`);
+      },
+    });
+
+    await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    sessionManager.cancelRun("run_1");
+    await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+
+    rejectParkedExecution(new DOMException("Run cancelled", "AbortError"));
+    await captured[0];
+
+    assertEquals(reported, [], "a superseded execution must not run lifecycle callbacks");
+    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+  });
+
+  it("still reports the failure of an execution cancelled without a resume", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const captured: Promise<unknown>[] = [];
+    const reported: string[] = [];
+    let rejectExecution!: (error: Error) => void;
+    const execution = new Promise<void>((_resolve, reject) => {
+      rejectExecution = reject;
+    });
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        await execution;
+      },
+      onError: ({ runId }) => {
+        reported.push(`error:${runId}`);
+      },
+    });
+
+    await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    sessionManager.cancelRun("run_1", { rememberIfMissing: true });
+
+    rejectExecution(new DOMException("Run cancelled", "AbortError"));
+    await captured[0];
+
+    assertEquals(reported, ["error:run_1"], "an ordinary cancellation still reports its failure");
+  });
+
   it("returns 400 for malformed detached start payloads", async () => {
     const handler = createAgUiDetachedStartHandler({
       agent: createTestAgent(),

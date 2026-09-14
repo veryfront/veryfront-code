@@ -420,6 +420,16 @@ export class RunResumeSessionManager<T> {
     this.finalizeSession(session, "failed");
   }
 
+  /**
+   * Whether a newer session now owns the run id of the execution holding
+   * `signal`. A run whose own session simply ended is not superseded; one whose
+   * id was reused by a later start, such as the resume of a parked run, is.
+   */
+  isSupersededRun(runId: string, signal: AbortSignal): boolean {
+    const session = this.sessions.get(runId);
+    return session !== undefined && session.abortController.signal !== signal;
+  }
+
   private getOwnedSession(runId: string, signal?: AbortSignal): RunSession<T> | undefined {
     const session = this.sessions.get(runId);
     if (!session) return undefined;

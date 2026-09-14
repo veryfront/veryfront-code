@@ -319,6 +319,27 @@ describe("agent/runtime/resume-session", () => {
     );
   });
 
+  it("reports a run superseded only when another session owns its run id", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const parkedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(
+      manager.isSupersededRun("run_1", parkedSignal),
+      false,
+      "an owner is not superseded",
+    );
+
+    manager.cancelRun("run_1");
+    assertEquals(
+      manager.isSupersededRun("run_1", parkedSignal),
+      false,
+      "a cancelled run with no newer session is not superseded",
+    );
+
+    const resumedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(manager.isSupersededRun("run_1", parkedSignal), true);
+    assertEquals(manager.isSupersededRun("run_1", resumedSignal), false);
+  });
+
   it("does not leak session slots across repeated completed runs", () => {
     const maxConcurrentSessions = 2;
     const manager = new RunResumeSessionManager<{ ok: boolean }>({ maxConcurrentSessions });
