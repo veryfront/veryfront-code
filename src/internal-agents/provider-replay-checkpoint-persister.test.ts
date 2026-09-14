@@ -430,8 +430,30 @@ describe("run-scoped provider replay checkpoint persistence", () => {
     assertEquals(String(error).includes("10.0.0.1"), false);
   });
 
+  it("persists replay checkpoints with large integration-bearing root credentials", async () => {
+    for (const bytes of [4_657, 32 * 1024]) {
+      const token = "x".repeat(bytes);
+      let appended = false;
+      const persist = createRunScopedProviderReplayCheckpointPersister({
+        apiUrl: "https://api.example.test",
+        runId: RUN_ID,
+        runEventAppendToken: token,
+        fetch: (_input, init) => {
+          assertEquals(new Headers(init?.headers).get("Authorization"), `Bearer ${token}`);
+          appended = true;
+          return Promise.resolve(Response.json({ appended_count: 1 }));
+        },
+      });
+      if (!persist) throw new Error("Expected a checkpoint persister for the root credential");
+      await persist(checkpoint());
+      assertEquals(appended, true);
+    }
+  });
+
   it("does not create a writer for a missing or malformed credential", () => {
-    for (const runEventAppendToken of [null, " token-with-whitespace "]) {
+    for (
+      const runEventAppendToken of [null, " token-with-whitespace ", "x".repeat(32 * 1024 + 1)]
+    ) {
       assertEquals(
         createRunScopedProviderReplayCheckpointPersister({
           apiUrl: "https://api.example.test",

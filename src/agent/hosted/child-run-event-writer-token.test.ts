@@ -265,13 +265,24 @@ Deno.test("mintChildRunEventWriterCapability rejects an oversized token", async 
   );
 });
 
+Deno.test("run event writer capabilities accept root tokens carrying large integration grants", () => {
+  for (const bytes of [4_657, 32 * 1024]) {
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.com",
+      runId: "run_parent",
+      runEventAppendToken: "x".repeat(bytes),
+    });
+    assertEquals(typeof capability.mintChildRunEventWriterCapability, "function");
+  }
+});
+
 Deno.test("run event writer capabilities reject oversized root tokens", () => {
   assertThrows(
     () =>
       createHostedRunEventWriterCapability({
         apiUrl: "https://api.example.com",
         runId: "run_parent",
-        runEventAppendToken: "x".repeat(5_000),
+        runEventAppendToken: "x".repeat(32 * 1024 + 1),
       }),
     HostedChildRunEventWriterTokenExchangeError,
     "Unable to initialize durable child event persistence",

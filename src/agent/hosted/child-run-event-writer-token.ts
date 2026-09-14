@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import {
   createVeryfrontApiRequestUrlResolver,
   type VeryfrontApiRequestUrlResolver,
@@ -151,13 +152,16 @@ function isNoStoreResponse(response: Response): boolean {
   ]) as boolean;
 }
 
-function isValidRunEventWriterToken(token: unknown): token is string {
+function isValidRunEventWriterToken(
+  token: unknown,
+  maxBytes = MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES,
+): token is string {
   if (typeof token !== "string" || token.length === 0 || trim(token) !== token) {
     return false;
   }
   const encoded = apply(textEncoderEncode, utf8Encoder, [token]) as Uint8Array;
   const byteLength = apply(typedArrayByteLengthGetter, encoded, []) as number;
-  return byteLength <= MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES;
+  return byteLength <= maxBytes;
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
@@ -324,7 +328,9 @@ export function createHostedRunEventWriterCapability(input: {
   /** Explicit trusted-host or test transport; tenant code must omit this seam. */
   fetch?: Fetch;
 }): HostedRunEventWriterCapability {
-  if (!isValidRunEventWriterToken(input.runEventAppendToken)) {
+  if (
+    !isValidRunEventWriterToken(input.runEventAppendToken, MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES)
+  ) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
   const state: CapabilityState = {
