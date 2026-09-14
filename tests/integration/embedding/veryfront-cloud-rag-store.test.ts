@@ -15,7 +15,13 @@ type StoredChunk = {
   content: string;
   metadata: Record<string, unknown>;
 };
-type Document = { id: string; title: string; metadata: Record<string, unknown> };
+type Document = {
+  id: string;
+  title: string;
+  metadata: Record<string, unknown>;
+  revision?: string;
+  expected_revision?: string | null;
+};
 
 function replacementApi() {
   const files = new Map<string, StoredChunk[]>();
@@ -30,6 +36,18 @@ function replacementApi() {
   const removeFile = (path: string) => {
     for (const chunk of files.get(path) ?? []) embeddings.delete(chunk.id);
     files.delete(path);
+  };
+  const commitMetadata = (document: Document) => {
+    const existing = documents.get(document.id);
+    if (
+      document.expected_revision === null ? existing : document.expected_revision !== undefined &&
+        existing?.revision !== document.expected_revision
+    ) return false;
+    documents.set(document.id, {
+      ...document,
+      revision: crypto.randomUUID().replaceAll("-", "").repeat(2),
+    });
+    return true;
   };
   return {
     files,
@@ -47,7 +65,7 @@ function replacementApi() {
     },
     completeDelayedMetadata() {
       assert(delayedMetadata);
-      documents.set(delayedMetadata.id, delayedMetadata);
+      return commitMetadata(delayedMetadata);
     },
     pauseNextDeletion() {
       let entered!: () => void;
@@ -126,7 +144,9 @@ function replacementApi() {
           if (failure === "before") {
             return Response.json({ message: "Fixture metadata rejection" }, { status: 400 });
           }
-          documents.set(body.id, { ...body });
+          if (!commitMetadata(body)) {
+            return Response.json({ message: "Stale document revision" }, { status: 412 });
+          }
           if (failure === "after") {
             return Response.json({ message: "Fixture response failure after commit" }, {
               status: 503,
@@ -138,7 +158,12 @@ function replacementApi() {
           return Response.json({ document: body });
         }
         if (request.method === "DELETE") {
-          documents.delete(decodeURIComponent(documentMatch[1]!));
+          const id = decodeURIComponent(documentMatch[1]!);
+          const expected = new URL(request.url).searchParams.get("expected_revision");
+          if (expected && documents.get(id)?.revision !== expected) {
+            return Response.json({ message: "Stale document revision" }, { status: 412 });
+          }
+          documents.delete(id);
           return Response.json({ deleted: 1 });
         }
       }
@@ -295,6 +320,40 @@ describe("cloud RAG batch replacement", () => {
       await rag.removeDocument(id);
       assertEquals(api.files.size, 0);
       assertEquals(api.embeddings.size, 0);
+      assertEquals(api.documents.size, 0);
+    });
+  });
+
+  it("prevents a delayed refresh from overwriting a newer successful retry", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Existing", "original");
+      api.failMetadata("delayed");
+      await assertRejects(() => rag.refreshDocument!(id, "delayed"));
+      await rag.refreshDocument!(id, "newer");
+      const current = api.documents.get(id);
+      assertEquals(api.completeDelayedMetadata(), false);
+      assertEquals(api.documents.get(id), current);
+      const paths = (current!.metadata.filePaths ?? [current!.metadata.filePath]) as string[];
+      assertEquals(
+        paths.flatMap((path) => api.files.get(path) ?? []).map((chunk) => chunk.content).join(""),
+        "newer",
+      );
+      await rag.removeDocument(id);
+      assertEquals(api.documents.size, 0);
+    });
+  });
+
+  it("prevents a delayed refresh from resurrecting a deleted record", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Existing", "original");
+      api.failMetadata("delayed");
+      await assertRejects(() => rag.refreshDocument!(id, "delayed"));
+      await rag.removeDocument(id);
+      assertEquals(api.completeDelayedMetadata(), false);
       assertEquals(api.documents.size, 0);
     });
   });

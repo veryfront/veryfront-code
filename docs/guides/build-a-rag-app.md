@@ -298,6 +298,13 @@ It keeps every batch under one document ID and cleans up the file parts when you
 refresh or remove the document.
 Removal also attempts to clean obsolete parts recorded by an interrupted refresh.
 
+For raw metadata updates, read the document's `revision` and send it as
+`expected_revision` in the upsert body or delete query. Use `null` when creating
+a document that must not already exist. A stale update returns HTTP 412; read
+the current document before deciding whether to retry. Deploy the Cloud API
+revision support before using SDK refresh and removal, which require a revision
+to prevent delayed writes from replacing newer content.
+
 ## Verify it worked
 
 Run `veryfront dev`, open the app, and check these behaviors:

@@ -1497,7 +1497,10 @@ describe("ragStore", () => {
 
           if (request.method === "GET" && !docId) {
             return Response.json({
-              documents: [...ragDocuments.values()],
+              documents: [...ragDocuments.values()].map((document) => ({
+                ...document,
+                revision: "a".repeat(64),
+              })),
             });
           }
 
@@ -1510,7 +1513,11 @@ describe("ragStore", () => {
               metadata?: Record<string, unknown>;
             };
             ragDocuments.set(body.id, {
-              ...body,
+              id: body.id,
+              title: body.title,
+              source: body.source,
+              type: body.type,
+              metadata: body.metadata,
               created_at: new Date().toISOString(),
             });
             return Response.json({ id: body.id });
@@ -1712,7 +1719,10 @@ describe("ragStore", () => {
 
           if (request.method === "GET" && !docId) {
             return Response.json({
-              documents: [...ragDocuments.values()],
+              documents: [...ragDocuments.values()].map((document) => ({
+                ...document,
+                revision: "a".repeat(64),
+              })),
             });
           }
 
@@ -1725,7 +1735,11 @@ describe("ragStore", () => {
               metadata?: Record<string, unknown>;
             };
             ragDocuments.set(body.id, {
-              ...body,
+              id: body.id,
+              title: body.title,
+              source: body.source,
+              type: body.type,
+              metadata: body.metadata,
               created_at: ragDocuments.get(body.id)?.created_at ??
                 "2026-06-25T00:00:00.000Z",
               updated_at: "2026-06-25T01:00:00.000Z",
@@ -1902,7 +1916,12 @@ describe("ragStore", () => {
 
         const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
         if (ragDocMatch !== null && request.method === "GET" && !ragDocMatch[1]) {
-          return Response.json({ documents: [...ragDocuments.values()] });
+          return Response.json({
+            documents: [...ragDocuments.values()].map((document) => ({
+              ...document,
+              revision: "a".repeat(64),
+            })),
+          });
         }
 
         const fileMatch = path.match(/^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/);
@@ -2131,7 +2150,12 @@ describe("ragStore", () => {
           const docId = ragDocMatch[1] ? decodeURIComponent(ragDocMatch[1]) : null;
 
           if (request.method === "GET" && !docId) {
-            return Response.json({ documents: [...ragDocuments.values()] });
+            return Response.json({
+              documents: [...ragDocuments.values()].map((document) => ({
+                ...document,
+                revision: "a".repeat(64),
+              })),
+            });
           }
 
           if (request.method === "POST" && !docId) {
@@ -2143,7 +2167,11 @@ describe("ragStore", () => {
               metadata?: Record<string, unknown>;
             };
             ragDocuments.set(body.id, {
-              ...body,
+              id: body.id,
+              title: body.title,
+              source: body.source,
+              type: body.type,
+              metadata: body.metadata,
               created_at: "2026-06-25T00:00:00.000Z",
               updated_at: "2026-06-25T00:00:00.000Z",
             });

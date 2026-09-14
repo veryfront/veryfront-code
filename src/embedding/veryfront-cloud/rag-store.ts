@@ -66,6 +66,7 @@ interface CloudSearchResponse {
 }
 
 interface CloudRagDocumentResponse {
+  revision?: string;
   id: string;
   title: string;
   source: string;
@@ -104,7 +105,7 @@ interface ChunkMutationInput {
 
 type ResolvedCloudRagStoreConfig = RagStoreConfig & { model: string };
 
-type CloudRagDocumentMeta = RagDocumentMeta & DocumentParts;
+type CloudRagDocumentMeta = RagDocumentMeta & DocumentParts & { revision?: string };
 
 interface ContentFile {
   path: string;
@@ -401,6 +402,7 @@ async function listRagDocuments(
     filePath: typeof doc.metadata?.filePath === "string" ? doc.metadata.filePath : undefined,
     filePaths: readPartPaths(doc.metadata?.filePaths),
     cleanupFilePaths: readPartPaths(doc.metadata?.cleanupFilePaths),
+    revision: doc.revision,
   }));
 }
 
@@ -412,6 +414,7 @@ async function upsertRagDocument(
     source?: string;
     type?: string;
     metadata?: Record<string, unknown>;
+    expectedRevision: string | null;
   },
 ): Promise<void> {
   await requestJson<CloudUpsertRagDocumentResponse>(
@@ -425,6 +428,7 @@ async function upsertRagDocument(
         source: document.source ?? "",
         type: document.type ?? "",
         metadata: document.metadata,
+        expected_revision: document.expectedRevision,
       }),
     },
   );
@@ -433,10 +437,13 @@ async function upsertRagDocument(
 async function deleteRagDocument(
   context: CloudStoreContext,
   documentId: string,
+  expectedRevision: string,
 ): Promise<void> {
   await requestJson(
     context,
-    `${getRagDocumentsPath(context)}/${encodeURIComponent(documentId)}`,
+    `${getRagDocumentsPath(context)}/${encodeURIComponent(documentId)}?expected_revision=${
+      encodeURIComponent(expectedRevision)
+    }`,
     { method: "DELETE" },
     { allowNotFound: true },
   );
@@ -470,6 +477,7 @@ async function refreshCloudDocument(
   if (!existing) {
     throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${documentId}` });
   }
+  const expectedRevision = requireDocumentRevision(existing);
 
   const type = meta?.type ?? existing.type;
   const previousFilePaths = documentFilePaths(existing);
@@ -489,7 +497,7 @@ async function refreshCloudDocument(
       source: meta?.source ?? existing.source,
       type,
     },
-    { filePath, previousFilePaths, inheritedCleanupPaths },
+    { filePath, previousFilePaths, inheritedCleanupPaths, expectedRevision },
   );
 
   const cleanupFailures = await retireDocumentParts(
@@ -499,6 +507,16 @@ async function refreshCloudDocument(
   if (cleanupFailures.length > 0) throw cleanupFailures[0]!.error;
 }
 
+function requireDocumentRevision(document: CloudRagDocumentMeta): string {
+  if (typeof document.revision !== "string" || !/^[a-f0-9]{64}$/.test(document.revision)) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        "The document revision is unavailable. Update Veryfront Cloud before changing this document.",
+    });
+  }
+  return document.revision;
+}
+
 async function writeDocumentContent(
   context: CloudStoreContext,
   config: ResolvedCloudRagStoreConfig,
@@ -506,7 +524,12 @@ async function writeDocumentContent(
   title: string,
   text: string,
   meta?: { source?: string; type?: string },
-  options?: { filePath?: string; previousFilePaths?: string[]; inheritedCleanupPaths?: string[] },
+  options?: {
+    filePath?: string;
+    previousFilePaths?: string[];
+    inheritedCleanupPaths?: string[];
+    expectedRevision?: string;
+  },
 ): Promise<string[]> {
   if (text.length > MAX_TEXT_LENGTH) {
     throw INVALID_ARGUMENT.create({
@@ -567,6 +590,7 @@ async function writeDocumentContent(
       source: meta?.source ?? "",
       type: meta?.type ?? "",
       metadata: documentPartsMetadata(filePaths, pendingCleanupPaths),
+      expectedRevision: options?.expectedRevision ?? null,
     });
   } catch (error) {
     if (metadataWriteAttempted) {
@@ -828,10 +852,11 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       // Fetch document metadata to find every file part for chunk cleanup.
       const documents = await listRagDocuments(context);
       const target = documents.find((doc) => doc.id === id);
+      if (!target) return;
 
       // Preserve record-first deletion so a refresh starting during cleanup
       // cannot publish a replacement through a still-visible document.
-      await deleteRagDocument(context, id);
+      await deleteRagDocument(context, id, requireDocumentRevision(target));
       if (target) {
         const paths = [
           ...documentFilePaths(target),
