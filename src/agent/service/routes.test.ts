@@ -96,6 +96,7 @@ function createRuntimeAgentInvocationBody(): Record<string, unknown> {
 function createRouteSet(input: {
   authenticateRequest?: (request: Request) => Promise<HostedServiceAuthenticatedRequest | Response>;
   verifyRunResumeToken?: (input: { token: string; runId: string }) => Promise<boolean>;
+  verifyRunCancellationToken?: (input: { token: string; runId: string }) => Promise<boolean>;
   prepareExecution?: (req: ParsedHostedChatRequest) => Promise<{ executionId: string }>;
   streamResponse?: Response;
   runtimeSource?: HostedRuntimeSourceIdentity | null;
@@ -124,7 +125,7 @@ function createRouteSet(input: {
         return { authToken: authorization.slice(7), userId: "user-1" };
       }),
     verifyProjectAccess: async () => ({ success: true }),
-    verifyRunCancellationToken: () => Promise.resolve(true),
+    verifyRunCancellationToken: input.verifyRunCancellationToken ?? (() => Promise.resolve(true)),
     verifyRunResumeToken: input.verifyRunResumeToken,
     verifyRunEventAppendToken: input.verifyRunEventAppendToken ??
       (() => Promise.resolve(false)),
@@ -1315,3 +1316,119 @@ it("carries no grant when no run-event token is presented", async () => {
   assertEquals(response.status, 202);
   assertEquals(preparedRequests[0]?.serverResolvedIntegrationToolNames, undefined);
 });
+
+// Regression: the control routes must spend exactly one verification per
+// request. Pre-verifying at the route and verifying again inside
+// `authorizeRunControl` double-spends a one-time grant and, because only the
+// authorizer is fail-closed, lets a throwing verifier escape as an error
+// instead of a controlled denial.
+const controlRouteCases = [
+  { label: "cancel", path: "/api/runs/:runId", method: "DELETE", operation: "cancel" },
+  { label: "durable resume", path: "/api/runs/:runId/resume", method: "POST", operation: "resume" },
+  {
+    label: "control-plane resume",
+    path: "/api/control-plane/runs/:runId/resume",
+    method: "POST",
+    operation: "resume",
+  },
+] as const;
+
+function createControlRouteSet(
+  routeCase: (typeof controlRouteCases)[number],
+  verify: (input: { token: string; runId: string }) => Promise<boolean>,
+) {
+  return createRouteSet(
+    routeCase.operation === "cancel"
+      ? { verifyRunCancellationToken: verify }
+      : { verifyRunResumeToken: verify },
+  );
+}
+
+function dispatchControlRequest(
+  routeSet: ReturnType<typeof createRouteSet>["routeSet"],
+  routeCase: (typeof controlRouteCases)[number],
+  runId: string,
+): Promise<Response> {
+  const route = routeSet.routes.find(
+    (candidate) => candidate.method === routeCase.method && candidate.path === routeCase.path,
+  );
+  if (!route) throw new Error(`missing control route ${routeCase.method} ${routeCase.path}`);
+  return Promise.resolve(
+    route.handler(
+      createAuthenticatedRequest(
+        routeCase.path.replace(":runId", runId),
+        { type: "tool_result", toolCallId: "tool-control", result: { ok: true } },
+        routeCase.method,
+      ),
+      { runId },
+    ),
+  );
+}
+
+for (const routeCase of controlRouteCases) {
+  it(`verifies a ${routeCase.label} request exactly once`, async () => {
+    let verifications = 0;
+    const { routeSet, tracker } = createControlRouteSet(routeCase, () => {
+      verifications++;
+      return Promise.resolve(true);
+    });
+    const manager = tracker.sessionManager;
+    manager.startRun({ runId: "run-control", threadId: "thread" });
+    const pending = routeCase.operation === "resume"
+      ? manager.waitForSignal("run-control", "tool-control").catch(() => undefined)
+      : undefined;
+    try {
+      const response = await dispatchControlRequest(routeSet, routeCase, "run-control");
+      assertEquals(response.status, routeCase.operation === "cancel" ? 202 : 200);
+      assertEquals(verifications, 1);
+    } finally {
+      manager.reset();
+      await pending;
+    }
+  });
+
+  it(`accepts a ${routeCase.label} whose verifier grants authority only once`, async () => {
+    let remaining = 1;
+    const { routeSet, tracker } = createControlRouteSet(routeCase, () => {
+      const granted = remaining > 0;
+      remaining--;
+      return Promise.resolve(granted);
+    });
+    const manager = tracker.sessionManager;
+    manager.startRun({ runId: "run-control", threadId: "thread" });
+    const pending = routeCase.operation === "resume"
+      ? manager.waitForSignal("run-control", "tool-control").catch(() => undefined)
+      : undefined;
+    try {
+      const response = await dispatchControlRequest(routeSet, routeCase, "run-control");
+      assertEquals(response.status, routeCase.operation === "cancel" ? 202 : 200);
+    } finally {
+      manager.reset();
+      await pending;
+    }
+  });
+
+  it(`denies a ${routeCase.label} whose verifier throws, without disturbing the run`, async () => {
+    const { routeSet, tracker } = createControlRouteSet(
+      routeCase,
+      () => Promise.reject(new Error("verifier unavailable")),
+    );
+    const manager = tracker.sessionManager;
+    const signal = manager.startRun({ runId: "run-control", threadId: "thread" });
+    const pending = routeCase.operation === "resume"
+      ? manager.waitForSignal("run-control", "tool-control").catch(() => undefined)
+      : undefined;
+    try {
+      const response = await dispatchControlRequest(routeSet, routeCase, "run-control");
+      assertEquals(response.status, 403);
+      assertEquals(signal.aborted, false);
+      assertEquals(
+        manager.getRunStatus("run-control"),
+        routeCase.operation === "cancel" ? "running" : "waiting",
+      );
+    } finally {
+      manager.reset();
+      await pending;
+    }
+  });
+}

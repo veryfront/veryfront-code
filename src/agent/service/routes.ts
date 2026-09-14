@@ -524,13 +524,6 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         const verifyRunToken = operation === "cancel"
           ? options.verifyRunCancellationToken
           : options.verifyRunResumeToken;
-        const authorized = await verifyRunToken?.({
-          token: authenticatedRequest.authToken,
-          runId,
-        });
-        if (authorized !== true || !isSafeHostedJwtVerificationEnvironment()) {
-          return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
-        }
 
         options.setActiveSpanAttributes?.({ "run.id": runId });
         const createControlHandler = operation === "cancel"
@@ -539,12 +532,18 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         const controlHandler = createControlHandler({
           sessionManager: options.tracker.sessionManager,
           resolveRunId: () => runId,
-          // The effect handler obtains its own verified authority for this run.
-          authorizeRunControl: async (control) =>
-            await verifyRunToken?.({
+          // The single verification for this request. Checking here as well
+          // would spend a one-time grant before the effect handler asks for its
+          // own authority, and would answer a throwing or non-boolean verifier
+          // with an uncaught error: only `authorizeRunControl` turns those into
+          // a controlled denial. A missing verifier still denies.
+          authorizeRunControl: async (control) => {
+            const decision = await verifyRunToken?.({
               token: authenticatedRequest.authToken,
               runId: control.runId,
-            }) === true,
+            });
+            return decision === true && isSafeHostedJwtVerificationEnvironment();
+          },
         });
         return controlHandler(controlRequest);
       },
