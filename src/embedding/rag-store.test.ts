@@ -1735,7 +1735,7 @@ describe("ragStore", () => {
         Error,
         "Fixture probe failed",
       );
-      assertEquals(deleted, [`${prefix}orphan.txt`]);
+      assertEquals(deleted, [`${prefix}failed.txt`, `${prefix}orphan.txt`]);
     });
   });
 

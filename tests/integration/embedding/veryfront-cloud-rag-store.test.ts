@@ -532,7 +532,7 @@ describe("cloud RAG batch replacement", () => {
       api.files.set(after, original);
       api.failProbe(failing);
       await assertRejects(() => rag.removeDocument(id));
-      assertEquals([...api.files.keys()], [failing]);
+      assertEquals([...api.files.keys()], []);
       assertEquals(api.documents.size, 0);
       api.failProbe();
       await rag.removeDocument(id);

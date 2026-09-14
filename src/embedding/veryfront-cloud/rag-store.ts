@@ -472,9 +472,14 @@ async function inspectDocumentParts(
         return chunks?.data.length ? path : null;
       }),
     );
-    for (const result of results) {
-      if (result.status === "rejected") errors.push(result.reason);
-      else if (result.value) paths.push(result.value);
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index]!;
+      if (result.status === "rejected") {
+        errors.push(result.reason);
+        // The namespace already established ownership. A failed read must not
+        // prevent removal from trying the independent deletion endpoint.
+        paths.push(candidates[offset + index]!);
+      } else if (result.value) paths.push(result.value);
     }
   }
   return { paths, errors };

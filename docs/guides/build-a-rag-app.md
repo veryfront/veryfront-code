@@ -298,7 +298,9 @@ It keeps every batch under one document ID and cleans up the file parts when you
 refresh or remove the document.
 Removal also attempts to clean obsolete parts recorded by an interrupted refresh.
 It scans the document's file namespace to find parts whose metadata write timed
-out, including when you retry removal after the record was deleted. Refresh collects pre-existing parts in the current branch and retires them
+out, including when you retry removal after the record was deleted. Removal also
+attempts deletion of listed document parts whose inspection failed, then reports
+the inspection error. Refresh collects pre-existing parts in the current branch and retires them
 only after its conditional metadata update succeeds.
 
 For raw metadata updates, read the document's `revision` and send it as
