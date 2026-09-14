@@ -141,12 +141,17 @@ describe("private executor facades", () => {
           Object.defineProperty(Object.prototype, "delegates", {
             configurable: true,
             get() {
-              if (this.id === "veryfront-hosted-runtime" && this.tools?.visible?.execute) {
+              if (this.id === coder.id && this.tools?.visible?.execute) {
                 exposedFacadeValues++;
               }
               return undefined;
             },
           });
+          // Positive control: the probe must detect a reflected configuration
+          // carrying the selected agent identity before testing the private path.
+          Reflect.get({ id: coder.id, tools: { visible } }, "delegates");
+          assertEquals(exposedFacadeValues, 1);
+          exposedFacadeValues = 0;
           Object.defineProperty(Object.prototype, "projectSteering", {
             configurable: true,
             get() {

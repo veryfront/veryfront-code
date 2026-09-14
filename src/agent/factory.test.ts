@@ -101,6 +101,14 @@ describe("agent factory", () => {
     toolRegistryInternal.clearAll();
   });
 
+  it("rejects empty explicit identities and preserves valid or generated identities", () => {
+    for (const id of ["", "   ", "\t\n"]) {
+      assertThrows(() => agent({ id, system: "Synthetic" }), Error, "Agent id cannot be empty");
+    }
+    assertEquals(agent({ id: "bound-agent", system: "Synthetic" }).id, "bound-agent");
+    assertEquals(typeof agent({ system: "Synthetic" }).id, "string");
+  });
+
   it("bootstraps schema validation before registering universal skill tools", () => {
     resetExtensionContracts();
     registerSkill("support-triage", createSkill("support-triage", "Triage support requests"));

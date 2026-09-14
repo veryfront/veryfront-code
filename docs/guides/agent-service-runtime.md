@@ -87,6 +87,11 @@ When exactly one code or markdown agent is discovered, that agent becomes the
 default for direct `/api/runs` requests. Pass `agentId` when the service exposes
 multiple agents and direct requests need a predictable default.
 
+Hosted tool execution preserves the selected agent ID and durable run ID. Remote
+tool calls carry these identities so they match the run authorization claims.
+If you customize `createTaskContext`, return the resolved `agentId` in that context.
+Hosted execution uses that identity, including any normalization your hook applies.
+
 ## Keep agent behavior in project files
 
 Define the agent in `agents/` and keep service startup separate from agent
