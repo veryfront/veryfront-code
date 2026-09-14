@@ -180,14 +180,16 @@ function coerceWireEvent(
       return { type: agUiSseEventTypes.toolCallArgs, ...payload };
     case "ToolCallEnd":
       return { type: agUiSseEventTypes.toolCallEnd, ...payload };
-    case "ToolCallResult":
+    case "ToolCallResult": {
+      // The canonical `content` field wins whenever it is present, even when it
+      // is null; only a frame without it falls back to the legacy `result`.
+      const toolResult = Object.hasOwn(payload, "content") ? payload.content : payload.result;
       return {
         type: agUiSseEventTypes.toolCallResult,
         ...payload,
-        ...((payload.content ?? payload.result) !== undefined
-          ? { content: serializeToolResult(payload.content ?? payload.result) }
-          : {}),
+        ...(toolResult !== undefined ? { content: serializeToolResult(toolResult) } : {}),
       };
+    }
     case "Custom":
       return { type: agUiSseEventTypes.custom, ...payload };
     case "RunError":

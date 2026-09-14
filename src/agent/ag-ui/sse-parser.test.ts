@@ -82,6 +82,18 @@ describe("agent/ag-ui-sse-parser", () => {
     assertEquals(run.events[1]?.content, '{"ok":false}');
   });
 
+  it("keeps a null ToolCallResult content value as the serialized canonical field", async () => {
+    const response = createSseResponse([
+      'event: ToolCallResult\ndata: {"toolCallId":"tool-1","content":null}\n\n',
+      'event: ToolCallResult\ndata: {"toolCallId":"tool-2","content":null,"result":{"ok":true}}\n\n',
+    ]);
+
+    const run = await parseAgUiSseResponse(response);
+
+    assertEquals(run.events[0]?.content, "null");
+    assertEquals(run.events[1]?.content, "null");
+  });
+
   it("keeps parsing legacy raw AG-UI payloads", async () => {
     const response = createSseResponse([
       'id: 1\nevent: RunStarted\ndata: {"type":"RUN_STARTED"}\n\n',
