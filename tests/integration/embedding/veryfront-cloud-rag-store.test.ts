@@ -23,6 +23,9 @@ function replacementApi() {
   const embeddings = new Set<string>();
   const writes: string[] = [];
   let failWrite = 0;
+  let failedDeletePath: string | undefined;
+  let metadataFailure: "before" | "after" | "transport-after" | "delayed" | undefined;
+  let delayedMetadata: Document | undefined;
   const removeFile = (path: string) => {
     for (const chunk of files.get(path) ?? []) embeddings.delete(chunk.id);
     files.delete(path);
@@ -35,6 +38,16 @@ function replacementApi() {
     failChunkWriteAfter(count: number) {
       failWrite = writes.length + count;
     },
+    failDelete(path: string) {
+      failedDeletePath = path;
+    },
+    failMetadata(mode: "before" | "after" | "transport-after" | "delayed") {
+      metadataFailure = mode;
+    },
+    completeDelayedMetadata() {
+      assert(delayedMetadata);
+      documents.set(delayedMetadata.id, delayedMetadata);
+    },
     async fetch(input: string | URL | Request, init?: RequestInit) {
       const request = input instanceof Request ? input : new Request(input, init);
       const path = new URL(request.url).pathname;
@@ -42,6 +55,9 @@ function replacementApi() {
       if (fileMatch) {
         const filePath = decodeURIComponent(fileMatch[1]!);
         if (request.method === "DELETE") {
+          if (filePath === failedDeletePath) {
+            return Response.json({ message: "Fixture cleanup failure" }, { status: 503 });
+          }
           removeFile(filePath);
           return Response.json({ deleted: 1 });
         }
@@ -82,7 +98,24 @@ function replacementApi() {
         if (request.method === "GET") return Response.json({ documents: [...documents.values()] });
         if (request.method === "POST") {
           const body = await request.json() as Document;
+          const failure = metadataFailure;
+          metadataFailure = undefined;
+          if (failure === "delayed") {
+            delayedMetadata = body;
+            return Response.json({ message: "Fixture gateway timeout" }, { status: 504 });
+          }
+          if (failure === "before") {
+            return Response.json({ message: "Fixture metadata rejection" }, { status: 400 });
+          }
           documents.set(body.id, { ...body });
+          if (failure === "after") {
+            return Response.json({ message: "Fixture response failure after commit" }, {
+              status: 503,
+            });
+          }
+          if (failure === "transport-after") {
+            throw new TypeError("Fixture acknowledgement lost after commit");
+          }
           return Response.json({ document: body });
         }
         if (request.method === "DELETE") {
@@ -175,6 +208,68 @@ describe("cloud RAG batch replacement", () => {
       assertEquals([...api.files], originalFiles);
       assertEquals(api.documents.get(id), originalDocument);
       assertEquals(api.embeddings.size, 1);
+    });
+  });
+
+  it("attempts every old part cleanup even when the first deletion fails", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Large", "abcdefghij".repeat(1001));
+      const oldPaths = [...api.files.keys()];
+      assertEquals(oldPaths.length, 3);
+      api.failDelete(oldPaths[0]!);
+      await assertRejects(() => rag.refreshDocument!(id, "replacement"));
+      assert(api.files.has(oldPaths[0]!));
+      assert(oldPaths.slice(1).every((path) => !api.files.has(path)));
+      assertEquals(api.files.size, 2);
+    });
+  });
+
+  it("cleans every new part when the metadata response fails and the old document remains authoritative", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Existing", "original");
+      const originalFiles = [...api.files];
+      const originalDocument = api.documents.get(id);
+      api.failMetadata("before");
+      await assertRejects(() => rag.refreshDocument!(id, "abcdefghij".repeat(501)));
+      assertEquals([...api.files], originalFiles);
+      assertEquals(api.documents.get(id), originalDocument);
+      assertEquals(api.embeddings.size, 1);
+    });
+  });
+
+  for (const mode of ["after", "transport-after"] as const) {
+    it(`keeps a committed replacement after ${mode} metadata acknowledgement failure`, async () => {
+      const api = replacementApi();
+      await withMockFetch(api.fetch, async () => {
+        const rag = store();
+        const id = await rag.ingest("Existing", "original");
+        const originalPaths = [...api.files.keys()];
+        api.failMetadata(mode);
+        await rag.refreshDocument!(id, "abcdefghij".repeat(501));
+        assertEquals(api.embeddings.size, 501);
+        assertEquals(api.files.size, 2);
+        assert(originalPaths.every((path) => !api.files.has(path)));
+        assertEquals([...api.documents.keys()], [id]);
+      });
+    });
+  }
+
+  it("preserves replacement parts when a gateway timeout precedes a delayed metadata commit", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Existing", "original");
+      api.failMetadata("delayed");
+      await assertRejects(() => rag.refreshDocument!(id, "abcdefghij".repeat(501)));
+      api.completeDelayedMetadata();
+      const paths = api.documents.get(id)!.metadata.filePaths as string[];
+      assertEquals(paths.length, 2);
+      assert(paths.every((path) => api.files.has(path)));
+      assertEquals(paths.flatMap((path) => api.files.get(path) ?? []).length, 501);
     });
   });
 });

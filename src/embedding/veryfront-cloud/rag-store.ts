@@ -1,7 +1,7 @@
 import { readDir, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import {
   createVeryfrontCloudFetch,
@@ -258,6 +258,7 @@ async function requestJson<T>(
   if (!response.ok) {
     const body = await response.text().catch(() => "");
     throw INVALID_ARGUMENT.create({
+      context: { upstreamStatus: response.status },
       detail: `Veryfront Cloud RAG request failed (${response.status} ${response.statusText}): ${
         body || path
       }`,
@@ -491,9 +492,16 @@ async function refreshCloudDocument(
     { filePath },
   );
 
+  const cleanupFailures: unknown[] = [];
   for (const previousFilePath of previousFilePaths) {
-    if (previousFilePath !== filePath) await deleteFileChunks(context, previousFilePath);
+    if (previousFilePath === filePath) continue;
+    try {
+      await deleteFileChunks(context, previousFilePath);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
   }
+  if (cleanupFailures.length > 0) throw cleanupFailures[0];
 }
 
 async function writeDocumentContent(
@@ -528,6 +536,7 @@ async function writeDocumentContent(
     type: meta?.type ?? "",
   });
   const filePaths = buildChunkFilePaths(filePath, chunkInputs.length);
+  let metadataWriteAttempted = false;
 
   try {
     const createdChunks = await upsertFileChunks(context, filePaths, chunkInputs);
@@ -546,7 +555,37 @@ async function writeDocumentContent(
       vectors,
       normalizeEmbeddingModelDescriptor(config.model, dimension),
     );
+    metadataWriteAttempted = true;
+    await upsertRagDocument(context, {
+      id: documentId,
+      title,
+      source: meta?.source ?? "",
+      type: meta?.type ?? "",
+      metadata: filePaths.length === 1 ? { filePath } : { filePath, filePaths },
+    });
   } catch (error) {
+    if (metadataWriteAttempted) {
+      let current: CloudRagDocumentMeta | undefined;
+      try {
+        current = (await listRagDocuments(context)).find((document) => document.id === documentId);
+      } catch {
+        // Without a readable result, the metadata write may have committed.
+        throw error;
+      }
+      if (current && JSON.stringify(documentFilePaths(current)) === JSON.stringify(filePaths)) {
+        return;
+      }
+      const upstreamStatus = error instanceof VeryfrontError && isRecord(error.context)
+        ? error.context.upstreamStatus
+        : undefined;
+      const rejected = typeof upstreamStatus === "number" && upstreamStatus >= 400 &&
+        upstreamStatus < 500 && upstreamStatus !== 408;
+      if (!rejected) {
+        // Transport and gateway failures can leave the write in flight. Retain
+        // the parts until its outcome is known instead of deleting live data.
+        throw error;
+      }
+    }
     for (const cleanupPath of filePaths) {
       await deleteFileChunks(context, cleanupPath).catch((cleanupError) =>
         serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", {
@@ -557,15 +596,6 @@ async function writeDocumentContent(
     }
     throw error;
   }
-
-  // Record document in server-side store (atomic, no client-side manifest needed)
-  await upsertRagDocument(context, {
-    id: documentId,
-    title,
-    source: meta?.source ?? "",
-    type: meta?.type ?? "",
-    metadata: filePaths.length === 1 ? { filePath } : { filePath, filePaths },
-  });
 }
 
 function createEmbedder(config: ResolvedCloudRagStoreConfig) {
