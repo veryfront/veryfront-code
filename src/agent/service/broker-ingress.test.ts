@@ -82,6 +82,45 @@ function options(publicKeyPem: string) {
 }
 
 describe("managed broker ingress", () => {
+  it("accepts root writer grants through the shared 32 KiB boundary", async () => {
+    for (const length of [16 * 1024 + 1, 32 * 1024]) {
+      const signed = await signedRequest();
+      const token = "r".repeat(length);
+      signed.request.headers.set("x-veryfront-run-event-token", token);
+      let authorized = false;
+      const result = await parseBrokerRuntimeAgentIngress(signed.request, {
+        ...options(signed.publicKeyPem),
+        authorizeScope: (input) => {
+          assertEquals(input.runEventToken, token);
+          authorized = true;
+          return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+        },
+      });
+      assertEquals(authorized, true);
+      assertEquals(result.privateAuthority.runEventToken, token);
+      assertEquals(JSON.stringify(result.executor).includes(token), false);
+    }
+  });
+
+  it("rejects root writer grants above 32 KiB before scope authorization", async () => {
+    const signed = await signedRequest();
+    signed.request.headers.set("x-veryfront-run-event-token", "r".repeat(32 * 1024 + 1));
+    let authorized = false;
+    await assertIngressError(
+      () =>
+        parseBrokerRuntimeAgentIngress(signed.request, {
+          ...options(signed.publicKeyPem),
+          authorizeScope: () => {
+            authorized = true;
+            return undefined;
+          },
+        }),
+      401,
+      "BROKER_INGRESS_AUTH_REQUIRED",
+    );
+    assertEquals(authorized, false);
+  });
+
   it("accepts a canonical run ID encoded in the signed request path", async () => {
     const encodedPath = "/api/control-plane/runs/%72un%2D1/stream";
     const signed = await signedRequest(invocation(), { requestPath: encodedPath });

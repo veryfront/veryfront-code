@@ -1,3 +1,4 @@
+import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import { parseBrokerSignedRunPath } from "./broker-run-route.ts";
 import { containsBrokerCredential } from "#veryfront/agent/service/broker-credentials.ts";
 import type { ControlPlaneClaims, ControlPlaneSurface } from "#veryfront/channels/control-plane.ts";
@@ -145,7 +146,7 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   const runEventToken = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER);
   if (
     !inboundAuthorization || inboundAuthorization.length > 16 * 1024 || !signature ||
-    !runEventToken || runEventToken.length > 16 * 1024
+    !runEventToken || runEventToken.length > MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES
   ) {
     throw new BrokerIngressError(401, "BROKER_INGRESS_AUTH_REQUIRED");
   }
