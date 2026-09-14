@@ -11,17 +11,14 @@ import {
   WaitConflictError,
   WaitNotPendingError,
 } from "../runtime/resume-session.ts";
-import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  cancelUnusedRequestBody,
+  createApplicationRequest,
+} from "#veryfront/security/http/application-request.ts";
 import {
   authorizeRunControl,
   type RunControlAuthorizer,
 } from "../runtime/run-control-authority.ts";
-
-const IntrinsicReflectApply = Reflect.apply;
-const NativeRequestBody = Object.getOwnPropertyDescriptor(Request.prototype, "body")!.get!;
-const NativeStreamLocked = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "locked")!
-  .get!;
-const NativeStreamCancel = ReadableStream.prototype.cancel;
 
 const RESUME_PATH_REGEX = /^\/api\/runs\/([^/]+)\/resume$/;
 const CANCEL_PATH_REGEX = /^\/api\/runs\/([^/]+)$/;
@@ -76,15 +73,6 @@ export interface AgUiResumeHandlerOptions extends AgUiRunControlHandlerOptions {
 /** Options accepted by AG-UI cancel handler. */
 export interface AgUiCancelHandlerOptions<T = unknown> extends AgUiRunControlHandlerOptions {
   sessionManager: RunResumeSessionManager<T>;
-}
-
-function cancelUnusedRequestBody(request: Request): void {
-  // A clone is a tee branch. Do not await its cancellation while the original
-  // branch is still needed to parse the authenticated request.
-  const body = IntrinsicReflectApply(NativeRequestBody, request, []) as ReadableStream | null;
-  if (body && !IntrinsicReflectApply(NativeStreamLocked, body, [])) {
-    void IntrinsicReflectApply(NativeStreamCancel, body, []).catch(() => {});
-  }
 }
 
 async function resolveRunId(

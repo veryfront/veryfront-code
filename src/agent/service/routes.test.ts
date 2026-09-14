@@ -95,6 +95,7 @@ function createRuntimeAgentInvocationBody(): Record<string, unknown> {
 
 function createRouteSet(input: {
   authenticateRequest?: (request: Request) => Promise<HostedServiceAuthenticatedRequest | Response>;
+  verifyRunResumeToken?: (input: { token: string; runId: string }) => Promise<boolean>;
   prepareExecution?: (req: ParsedHostedChatRequest) => Promise<{ executionId: string }>;
   streamResponse?: Response;
   runtimeSource?: HostedRuntimeSourceIdentity | null;
@@ -124,6 +125,7 @@ function createRouteSet(input: {
       }),
     verifyProjectAccess: async () => ({ success: true }),
     verifyRunCancellationToken: () => Promise.resolve(true),
+    verifyRunResumeToken: input.verifyRunResumeToken,
     verifyRunEventAppendToken: input.verifyRunEventAppendToken ??
       (() => Promise.resolve(false)),
     prepareExecution: async (req) => {
@@ -154,6 +156,33 @@ Deno.test("agent service routes expose the default paths", () => {
     "POST /api/runs",
     "POST /api/control-plane/runs/:runId/stream",
   ]);
+});
+
+it("preserves resume signals when custom authentication consumes the body", async () => {
+  const payload = { type: "tool_result", toolCallId: "tool-body", result: { ok: true } };
+  const { routeSet, tracker } = createRouteSet({
+    authenticateRequest: async (request) => {
+      assertEquals(await request.json(), payload);
+      return { authToken: "fixture-token", userId: "user-1" };
+    },
+    verifyRunResumeToken: () => Promise.resolve(true),
+  });
+  const manager = tracker.sessionManager;
+  for (const route of routeSet.routes.filter((route) => route.path.endsWith("/resume"))) {
+    manager.startRun({ runId: "run-body", threadId: "thread" });
+    const pending = manager.waitForSignal("run-body", "tool-body").catch(() => undefined);
+    try {
+      const response = await route.handler(
+        createAuthenticatedRequest(route.path.replace(":runId", "run-body"), payload),
+        { runId: "run-body" },
+      );
+      assertEquals(response.status, 200);
+      assertEquals(await pending, { result: { ok: true }, isError: false });
+    } finally {
+      manager.reset();
+      await pending;
+    }
+  }
 });
 
 it("refuses resume when a custom route set omits exact-run verification", async () => {

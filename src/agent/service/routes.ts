@@ -26,6 +26,7 @@ import {
 } from "./auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
 import {
+  cancelUnusedRequestBody,
   createApplicationRequest,
   createApplicationRequestHeaders,
 } from "#veryfront/security/http/application-request.ts";
@@ -490,7 +491,13 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         if (!isSafeHostedJwtVerificationEnvironment(input)) {
           return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
         }
-        const authenticatedRequest = await authenticateAgUiRequest(input.request);
+        const authenticationRequest = IntrinsicReflectApply(
+          RequestClone,
+          input.request,
+          [],
+        ) as Request;
+        const authenticatedRequest = await authenticateAgUiRequest(authenticationRequest)
+          .finally(() => cancelUnusedRequestBody(authenticationRequest));
         if (!isSafeHostedJwtVerificationEnvironment(authenticatedRequest)) {
           return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
         }
