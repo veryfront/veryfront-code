@@ -527,6 +527,27 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
 });
 
+it("keeps the hosted runtime usable when an optional agent identity is blank", async () => {
+  for (const agentId of ["", "   "]) {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "fixture-token",
+        instructions: "Respond briefly.",
+        model: "openai/gpt-5.4",
+        agentId,
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () => ({}),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+    assertExists(runtime.agent);
+    await runtime.cleanup();
+  }
+});
+
 Deno.test("createDefaultHostedChatRuntime forwards bound run and agent identity to tool execution", async () => {
   await runWithProjectRequestContext(
     {
