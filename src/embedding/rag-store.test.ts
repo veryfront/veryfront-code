@@ -1482,6 +1482,12 @@ describe("ragStore", () => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
         const path = url.pathname;
+        if (request.method === "GET" && path.endsWith("/files")) {
+          return Response.json({
+            data: [...fileChunks.keys()].map((path) => ({ path })),
+            page_info: { next: null },
+          });
+        }
         authHeaders.push(request.headers.get("authorization"));
         if (request.method === "POST") {
           postContentTypes.push(request.headers.get("content-type"));
@@ -1712,6 +1718,12 @@ describe("ragStore", () => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
         const path = url.pathname;
+        if (request.method === "GET" && path.endsWith("/files")) {
+          return Response.json({
+            data: [...fileChunks.keys()].map((path) => ({ path })),
+            page_info: { next: null },
+          });
+        }
 
         const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
         if (ragDocMatch !== null) {
@@ -1913,6 +1925,12 @@ describe("ragStore", () => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
         const path = url.pathname;
+        if (request.method === "GET" && path.endsWith("/files")) {
+          return Response.json({
+            data: [...fileChunks.keys()].map((path) => ({ path })),
+            page_info: { next: null },
+          });
+        }
 
         const ragDocMatch = path.match(/^\/projects\/[^/]+\/rag\/documents(?:\/(.+))?$/);
         if (ragDocMatch !== null && request.method === "GET" && !ragDocMatch[1]) {

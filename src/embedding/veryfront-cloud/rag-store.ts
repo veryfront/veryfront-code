@@ -33,6 +33,7 @@ const DEFAULT_TOP_K = 5;
 const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
 const MAX_API_EMBEDDING_BATCH = 100;
 const MAX_SEARCH_LIMIT = 100;
+const MAX_PART_READ_CONCURRENCY = 8;
 const SEARCH_OVERSCAN = 25;
 const DOCUMENTS_DIR = ".veryfront/rag/documents";
 
@@ -449,6 +450,60 @@ async function deleteRagDocument(
   );
 }
 
+async function listDocumentPartFiles(
+  context: CloudStoreContext,
+  documentId: string,
+): Promise<string[]> {
+  // Generated document IDs are one path segment. Never let a supplied glob or
+  // separator select another document's namespace.
+  if (!/^[A-Za-z0-9_-]+$/.test(documentId)) return [];
+  const prefix = `${DOCUMENTS_DIR}/${documentId}.`;
+  const paths: string[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | null | undefined;
+  do {
+    const query = new URLSearchParams({
+      branch: context.branch,
+      pattern: `${prefix}*`,
+      limit: "100",
+      fields: "(path)",
+    });
+    if (cursor) query.set("cursor", cursor);
+    const response = await requestJson<CloudFileListResponse>(
+      context,
+      `/projects/${encodeURIComponent(context.projectSlug)}/files?${query}`,
+    );
+    const candidates = (response?.data ?? []).map((file) => file.path).filter((path) =>
+      path.startsWith(prefix) && !path.slice(prefix.length).includes("/")
+    );
+    // Chunk deletion retains the file node and its immutable history. Do not
+    // repeatedly add acknowledged empty generations back to the cleanup journal.
+    for (let offset = 0; offset < candidates.length; offset += MAX_PART_READ_CONCURRENCY) {
+      const results = await Promise.allSettled(
+        candidates.slice(offset, offset + MAX_PART_READ_CONCURRENCY).map(async (path) => {
+          const chunks = await requestJson<CloudChunkListResponse>(
+            context,
+            `${getFileChunksPath(context, path)}?limit=1`,
+            {},
+            { allowNotFound: true },
+          );
+          return chunks?.data.length ? path : null;
+        }),
+      );
+      for (const result of results) {
+        if (result.status === "rejected") throw result.reason;
+        if (result.value) paths.push(result.value);
+      }
+    }
+    cursor = response?.page_info?.next;
+    if (cursor && cursors.has(cursor)) {
+      throw INVALID_ARGUMENT.create({ detail: "Document file listing repeated a cursor." });
+    }
+    if (cursor) cursors.add(cursor);
+  } while (cursor);
+  return paths;
+}
+
 // ---------------------------------------------------------------------------
 // Document ingestion (chunks + embeddings + server-side record)
 // ---------------------------------------------------------------------------
@@ -480,7 +535,14 @@ async function refreshCloudDocument(
   const expectedRevision = requireDocumentRevision(existing);
 
   const type = meta?.type ?? existing.type;
-  const previousFilePaths = documentFilePaths(existing);
+  // Capture pre-existing parts before writing a new generation. Only retire
+  // them after the revision-guarded metadata update succeeds.
+  const previousFilePaths = [
+    ...new Set([
+      ...documentFilePaths(existing),
+      ...await listDocumentPartFiles(context, documentId),
+    ]),
+  ];
   const inheritedCleanupPaths = retiredDocumentPaths(
     existing,
     buildDocumentFilePath(documentId, existing.type),
@@ -852,28 +914,37 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       // Fetch document metadata to find every file part for chunk cleanup.
       const documents = await listRagDocuments(context);
       const target = documents.find((doc) => doc.id === id);
-      if (!target) return;
 
       // Preserve record-first deletion so a refresh starting during cleanup
       // cannot publish a replacement through a still-visible document.
-      await deleteRagDocument(context, id, requireDocumentRevision(target));
-      if (target) {
-        const paths = [
-          ...documentFilePaths(target),
-          ...retiredDocumentPaths(target, buildDocumentFilePath(id, target.type)),
-        ];
-        const failures = await retireDocumentParts(
-          paths,
-          (path) => deleteFileChunks(context, path),
-        );
-        for (const failure of failures) {
-          serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
-            id,
-            filePath: failure.path,
-            error: failure.error instanceof Error ? failure.error.message : String(failure.error),
-          });
-        }
+      if (target) await deleteRagDocument(context, id, requireDocumentRevision(target));
+      // The file namespace also owns parts whose metadata acknowledgement was
+      // lost. Read it after deletion, so a retry can collect them even when the
+      // document record is already absent.
+      let scannedPaths: string[] = [];
+      let scanError: unknown;
+      try {
+        scannedPaths = await listDocumentPartFiles(context, id);
+      } catch (error) {
+        scanError = error;
       }
+      const paths = [
+        ...scannedPaths,
+        ...(target ? documentFilePaths(target) : []),
+        ...(target ? retiredDocumentPaths(target, buildDocumentFilePath(id, target.type)) : []),
+      ];
+      const failures = await retireDocumentParts(
+        paths,
+        (path) => deleteFileChunks(context, path),
+      );
+      for (const failure of failures) {
+        serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
+          id,
+          filePath: failure.path,
+          error: failure.error instanceof Error ? failure.error.message : String(failure.error),
+        });
+      }
+      if (scanError) throw scanError;
     },
 
     async indexContentDir(): Promise<void> {

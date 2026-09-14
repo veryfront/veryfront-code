@@ -33,6 +33,13 @@ function replacementApi() {
   let metadataFailure: "before" | "after" | "transport-after" | "delayed" | undefined;
   let delayedMetadata: Document | undefined;
   let deletionPause: { entered: () => void; wait: Promise<void> } | undefined;
+  let searchPageSize: number | undefined;
+  let listingFailed = false;
+  let retainFileNodes = false;
+  let listingPageSize = 1;
+  let delayChunkReads = false;
+  let activeChunkReads = 0;
+  let peakChunkReads = 0;
   const removeFile = (path: string) => {
     for (const chunk of files.get(path) ?? []) embeddings.delete(chunk.id);
     files.delete(path);
@@ -54,10 +61,26 @@ function replacementApi() {
     documents,
     embeddings,
     writes,
+    measureChunkReadConcurrency() {
+      listingPageSize = 100;
+      delayChunkReads = true;
+    },
+    peakChunkReadConcurrency() {
+      return peakChunkReads;
+    },
+    paginateSearch(size: number) {
+      searchPageSize = size;
+    },
+    failListing() {
+      listingFailed = true;
+    },
+    preserveFileNodes() {
+      retainFileNodes = true;
+    },
     failChunkWriteAfter(count: number) {
       failWrite = writes.length + count;
     },
-    failDelete(path: string) {
+    failDelete(path?: string) {
       failedDeletePath = path;
     },
     failMetadata(mode: "before" | "after" | "transport-after" | "delayed") {
@@ -82,9 +105,32 @@ function replacementApi() {
     async fetch(input: string | URL | Request, init?: RequestInit) {
       const request = input instanceof Request ? input : new Request(input, init);
       const path = new URL(request.url).pathname;
+      if (path.endsWith("/files") && request.method === "GET") {
+        if (listingFailed) {
+          return Response.json({ message: "Fixture listing failure" }, { status: 503 });
+        }
+        const cursor = Number(new URL(request.url).searchParams.get("cursor") ?? 0);
+        const paths = [...files.keys()];
+        return Response.json({
+          data: paths.slice(cursor, cursor + listingPageSize).map((path) => ({ path })),
+          page_info: {
+            next: cursor + listingPageSize < paths.length ? String(cursor + listingPageSize) : null,
+          },
+        });
+      }
       const fileMatch = path.match(/\/files\/(.+)\/chunks$/);
       if (fileMatch) {
         const filePath = decodeURIComponent(fileMatch[1]!);
+        if (request.method === "GET") {
+          activeChunkReads++;
+          peakChunkReads = Math.max(peakChunkReads, activeChunkReads);
+          if (delayChunkReads) await new Promise((resolve) => setTimeout(resolve, 10));
+          activeChunkReads--;
+          return Response.json({
+            data: (files.get(filePath) ?? []).slice(0, 1),
+            page_info: { next: null },
+          });
+        }
         if (request.method === "DELETE") {
           if (deletionPause) {
             const pause = deletionPause;
@@ -96,6 +142,7 @@ function replacementApi() {
             return Response.json({ message: "Fixture cleanup failure" }, { status: 503 });
           }
           removeFile(filePath);
+          if (retainFileNodes) files.set(filePath, []);
           return Response.json({ deleted: 1 });
         }
         if (request.method === "POST") {
@@ -168,10 +215,15 @@ function replacementApi() {
         }
       }
       if (path.endsWith("/search")) {
+        const body = await request.json() as { cursor?: string };
+        const offset = Number(body.cursor ?? 0);
+        const data = [...files].flatMap(([file_path, chunks]) =>
+          chunks.slice(-1).map((chunk) => ({ chunk: { ...chunk, file_path }, score: 1 }))
+        );
+        const end = searchPageSize ? offset + searchPageSize : data.length;
         return Response.json({
-          data: [...files].flatMap(([file_path, chunks]) =>
-            chunks.slice(-1).map((chunk) => ({ chunk: { ...chunk, file_path }, score: 1 }))
-          ),
+          data: data.slice(offset, end),
+          page_info: { next: end < data.length ? String(end) : null },
         });
       }
       throw new Error(`Unexpected fixture route: ${request.method} ${path}`);
@@ -335,6 +387,8 @@ describe("cloud RAG batch replacement", () => {
       const current = api.documents.get(id);
       assertEquals(api.completeDelayedMetadata(), false);
       assertEquals(api.documents.get(id), current);
+      api.paginateSearch(1);
+      assertEquals((await rag.search("newer")).map((result) => result.text), ["newer"]);
       const paths = (current!.metadata.filePaths ?? [current!.metadata.filePath]) as string[];
       assertEquals(
         paths.flatMap((path) => api.files.get(path) ?? []).map((chunk) => chunk.content).join(""),
@@ -342,6 +396,8 @@ describe("cloud RAG batch replacement", () => {
       );
       await rag.removeDocument(id);
       assertEquals(api.documents.size, 0);
+      assertEquals(api.files.size, 0);
+      assertEquals(await rag.search("newer"), []);
     });
   });
 
@@ -355,6 +411,8 @@ describe("cloud RAG batch replacement", () => {
       await rag.removeDocument(id);
       assertEquals(api.completeDelayedMetadata(), false);
       assertEquals(api.documents.size, 0);
+      assertEquals(api.files.size, 0);
+      assertEquals(await rag.search("delayed"), []);
     });
   });
 
@@ -368,6 +426,9 @@ describe("cloud RAG batch replacement", () => {
       assertEquals(api.documents.size, 0);
       assertEquals(api.files.size, 1);
       await assertRejects(() => rag.refreshDocument!(id, "replacement"));
+      api.failDelete();
+      await rag.removeDocument(id);
+      assertEquals(api.files.size, 0);
     });
   });
 
@@ -387,6 +448,65 @@ describe("cloud RAG batch replacement", () => {
       }
       assertEquals(api.documents.size, 0);
       assertEquals(api.files.size, 0);
+    });
+  });
+
+  it("keeps another document intact while scanning paginated orphan parts", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const removeId = await rag.ingest("Remove", "remove");
+      const keepId = await rag.ingest("Keep", "keep");
+      await rag.removeDocument(removeId);
+      assertEquals([...api.documents.keys()], [keepId]);
+      assertEquals([...api.files.values()].flat().map((chunk) => chunk.content), ["keep"]);
+      await rag.removeDocument(keepId);
+      assertEquals(api.files.size, 0);
+    });
+  });
+
+  it("cleans known parts and reports an incomplete scan when file listing fails", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Large", "abcdefghij".repeat(501));
+      api.failListing();
+      await assertRejects(() => rag.removeDocument(id));
+      assertEquals(api.documents.size, 0);
+      assertEquals(api.files.size, 0);
+      assertEquals(api.embeddings.size, 0);
+    });
+  });
+
+  it("does not reintroduce already-cleaned file nodes into the cleanup journal", async () => {
+    const api = replacementApi();
+    api.preserveFileNodes();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Existing", "original");
+      for (let index = 0; index < 4; index++) await rag.refreshDocument!(id, `new-${index}`);
+      const pending = api.documents.get(id)!.metadata.cleanupFilePaths as string[];
+      assertEquals(pending.length, 1);
+      await rag.removeDocument(id);
+      assertEquals([...api.files.values()].flat().length, 0);
+    });
+  });
+
+  it("bounds concurrent history probes while avoiding a serial network round trip per generation", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Existing", "original");
+      for (let index = 0; index < 20; index++) {
+        api.files.set(`.veryfront/rag/documents/${id}.refresh-${index}.txt`, []);
+      }
+      api.measureChunkReadConcurrency();
+      await rag.refreshDocument!(id, "current");
+      assert(api.peakChunkReadConcurrency() > 1);
+      assert(api.peakChunkReadConcurrency() <= 8);
+      await rag.removeDocument(id);
+      assertEquals([...api.files.values()].flat().length, 0);
+      assertEquals(api.documents.size, 0);
     });
   });
 });
