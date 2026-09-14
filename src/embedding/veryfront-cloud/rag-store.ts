@@ -450,10 +450,40 @@ async function deleteRagDocument(
   );
 }
 
+type DocumentPartDiscovery = { paths: string[]; errors: unknown[] };
+
+async function inspectDocumentParts(
+  context: CloudStoreContext,
+  candidates: string[],
+): Promise<DocumentPartDiscovery> {
+  const paths: string[] = [];
+  const errors: unknown[] = [];
+  // Chunk deletion retains the file node and its immutable history. Do not
+  // repeatedly add acknowledged empty generations back to the cleanup journal.
+  for (let offset = 0; offset < candidates.length; offset += MAX_PART_READ_CONCURRENCY) {
+    const results = await Promise.allSettled(
+      candidates.slice(offset, offset + MAX_PART_READ_CONCURRENCY).map(async (path) => {
+        const chunks = await requestJson<CloudChunkListResponse>(
+          context,
+          `${getFileChunksPath(context, path)}?limit=1`,
+          {},
+          { allowNotFound: true },
+        );
+        return chunks?.data.length ? path : null;
+      }),
+    );
+    for (const result of results) {
+      if (result.status === "rejected") errors.push(result.reason);
+      else if (result.value) paths.push(result.value);
+    }
+  }
+  return { paths, errors };
+}
+
 async function listDocumentPartFiles(
   context: CloudStoreContext,
   documentId: string,
-): Promise<{ paths: string[]; errors: unknown[] }> {
+): Promise<DocumentPartDiscovery> {
   // Generated document IDs are one path segment. Never let a supplied glob or
   // separator select another document's namespace.
   if (!/^[A-Za-z0-9_-]+$/.test(documentId)) return { paths: [], errors: [] };
@@ -483,25 +513,9 @@ async function listDocumentPartFiles(
     const candidates = (response?.data ?? []).map((file) => file.path).filter((path) =>
       path.startsWith(prefix) && !path.slice(prefix.length).includes("/")
     );
-    // Chunk deletion retains the file node and its immutable history. Do not
-    // repeatedly add acknowledged empty generations back to the cleanup journal.
-    for (let offset = 0; offset < candidates.length; offset += MAX_PART_READ_CONCURRENCY) {
-      const results = await Promise.allSettled(
-        candidates.slice(offset, offset + MAX_PART_READ_CONCURRENCY).map(async (path) => {
-          const chunks = await requestJson<CloudChunkListResponse>(
-            context,
-            `${getFileChunksPath(context, path)}?limit=1`,
-            {},
-            { allowNotFound: true },
-          );
-          return chunks?.data.length ? path : null;
-        }),
-      );
-      for (const result of results) {
-        if (result.status === "rejected") errors.push(result.reason);
-        else if (result.value) paths.push(result.value);
-      }
-    }
+    const liveParts = await inspectDocumentParts(context, candidates);
+    paths.push(...liveParts.paths);
+    errors.push(...liveParts.errors);
     cursor = response?.page_info?.next;
     if (cursor && cursors.has(cursor)) {
       errors.push(INVALID_ARGUMENT.create({ detail: "Document file listing repeated a cursor." }));
@@ -589,6 +603,24 @@ function requireDocumentRevision(document: CloudRagDocumentMeta): string {
   return document.revision;
 }
 
+async function inspectMetadataWriteOutcome(
+  context: CloudStoreContext,
+  documentId: string,
+  filePaths: string[],
+  error: unknown,
+): Promise<ReturnType<typeof metadataWriteOutcome>> {
+  let current: CloudRagDocumentMeta | undefined;
+  try {
+    current = (await listRagDocuments(context)).find((document) => document.id === documentId);
+  } catch {
+    return "unknown";
+  }
+  const upstreamStatus = error instanceof VeryfrontError && isRecord(error.context)
+    ? error.context.upstreamStatus
+    : undefined;
+  return metadataWriteOutcome(filePaths, current ? documentFilePaths(current) : [], upstreamStatus);
+}
+
 async function writeDocumentContent(
   context: CloudStoreContext,
   config: ResolvedCloudRagStoreConfig,
@@ -666,21 +698,7 @@ async function writeDocumentContent(
     });
   } catch (error) {
     if (metadataWriteAttempted) {
-      let current: CloudRagDocumentMeta | undefined;
-      try {
-        current = (await listRagDocuments(context)).find((document) => document.id === documentId);
-      } catch {
-        // Without a readable result, the metadata write may have committed.
-        throw error;
-      }
-      const upstreamStatus = error instanceof VeryfrontError && isRecord(error.context)
-        ? error.context.upstreamStatus
-        : undefined;
-      const outcome = metadataWriteOutcome(
-        filePaths,
-        current ? documentFilePaths(current) : [],
-        upstreamStatus,
-      );
+      const outcome = await inspectMetadataWriteOutcome(context, documentId, filePaths, error);
       if (outcome === "committed") return pendingCleanupPaths;
       if (outcome !== "rejected") {
         // Transport and gateway failures can leave the write in flight. Retain
