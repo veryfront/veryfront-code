@@ -81,7 +81,7 @@ function createModelCallContextEventWithText(
   textLength: number,
 ): AgentRunModelCallContextEvent {
   return {
-    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
     messages: [{
       role: "user",
       content: [{ type: "text", text: "x".repeat(textLength) }],
@@ -102,7 +102,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
     publicEncoder.encode({ type: "start", messageId: "message-1" });
     const publicEvent = publicEncoder.encode({ type: "text-start", id: "text:0" })[0];
     await createDurableRunEventSink({ mirror: target.result, timing })({
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [],
     });
     const privateEvent = firstAppendedEvent(target.appended);
@@ -128,7 +128,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
       },
     });
     const event: AgentRunModelCallContextEvent = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [{ role: "system", content: "Use available skills." }],
       tools: [{ type: "function", name: "search", inputSchema: { type: "object" } }],
     };
@@ -180,7 +180,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
     });
 
     await sink({
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [],
       elapsedMs: 42,
       emittedAt: 1_786_866_357_364,
@@ -358,7 +358,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
   it("guarantees a fit when message count alone exceeds the budget", async () => {
     const target = mirror();
     const event = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: Array.from({ length: 120_000 }, () => ({
         role: "user",
         content: [{ type: "text", text: "y".repeat(80) }],
@@ -418,12 +418,12 @@ describe("agent/hosted/durable-run-event-sink", () => {
       dispose: () => {},
     };
     const first = createDurableRunEventSink({ mirror: target })({
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [{ role: "system", content: "first" }],
     });
     await firstAppendStarted.promise;
     const second = createDurableRunEventSink({ mirror: target })({
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [{ role: "system", content: "second" }],
     });
 
@@ -449,7 +449,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
               getSnapshot: () => snapshot({ disabled: true, disableReason }),
             },
           })({
-            type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
             messages: [],
           }),
         DurableRunEventPersistenceError,
@@ -483,7 +483,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
             getSnapshot: () => snapshot({ disabled: true, disableReason: "run_terminal" }),
           },
         })({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
         }),
       DOMException,
@@ -517,7 +517,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
     const error = await assertRejects(
       async () =>
         await createDurableRunEventSink({ mirror: target.result })({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
         }),
       DOMException,
@@ -561,12 +561,12 @@ describe("agent/hosted/durable-run-event-sink", () => {
       dispose: () => {},
     };
     const first = createDurableRunEventSink({ mirror: target })({
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [{ role: "system", content: "first" }],
     });
     await firstAppendStarted.promise;
     const second = createDurableRunEventSink({ mirror: target })({
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [{ role: "system", content: "second" }],
     });
 
@@ -585,7 +585,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
     await assertRejects(
       async () =>
         await createDurableRunEventSink({ mirror: appendFailure.result })({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
         }),
       Error,
@@ -640,7 +640,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
           mirror: target.result,
           abortSignal: controller.signal,
         })({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
         }),
       DOMException,
@@ -657,7 +657,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
     await assertRejects(
       async () =>
         await createDurableRunEventSink({ mirror: target.result })({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
         }),
       DurableRunEventPersistenceError,
@@ -678,7 +678,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
     await assertRejects(
       async () =>
         await createDurableRunEventSink({ mirror: target.result })({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
         }),
       DurableRunEventPersistenceError,
@@ -712,7 +712,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
             },
           },
         })({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
         }),
       DurableRunEventPersistenceError,
@@ -739,7 +739,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
             timeoutMs: 1,
             abortSignal: guard.signal,
           })({
-            type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
             messages: [],
           }),
         DurableRunEventPersistenceError,

@@ -40,7 +40,7 @@ const BRANCH_ID = "44444444-4444-4444-8444-444444444444";
 
 function modelCallContextEvent(content: string) {
   return {
-    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
     messages: [{ role: "system", content }],
   };
 }
@@ -663,7 +663,7 @@ describe("agent/durable", () => {
     let accessorReads = 0;
     let fetchCalls = 0;
     const event = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [],
       extra: "invalid",
     };
@@ -702,7 +702,7 @@ describe("agent/durable", () => {
     let accessorReads = 0;
     let fetchCalls = 0;
     const event = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [],
     };
     Object.defineProperty(event, "tools", {

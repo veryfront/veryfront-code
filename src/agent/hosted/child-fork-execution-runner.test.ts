@@ -505,7 +505,7 @@ Deno.test("executeHostedChildForkWithPreparedTools preserves the mandatory sink 
   assertEquals(activeDuringIteration, true);
   assertEquals(order.slice(0, 4), ["append", "flush", "observe", "dispatch"]);
   assertEquals(persisted.map(withoutEventTiming), [{
-    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
     messages: [
       { role: "system", content: "Hosted child instructions" },
       { role: "user", content: [{ type: "text", text: "Run child" }] },
@@ -646,7 +646,7 @@ Deno.test("executeHostedChildForkWithPreparedTools drains queued child events be
   assertEquals(dispatches, 2);
   assertEquals(
     persisted.filter((event) =>
-      (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT"
+      (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
     ).length,
     2,
   );

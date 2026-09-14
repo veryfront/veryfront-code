@@ -789,12 +789,12 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(providerDispatches, 1);
     assertEquals(
       persisted.filter((event) =>
-        (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT"
+        (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
       ).length,
       1,
     );
     const persistedContext = persisted.find((event) =>
-      (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT"
+      (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
     ) as Record<string, unknown> | undefined;
     assertEquals(
       typeof persistedContext?.elapsedMs === "number" &&
@@ -913,7 +913,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(dispatches, 2);
     assertEquals(
       persisted.filter((event) =>
-        (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT"
+        (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
       ).length,
       2,
     );

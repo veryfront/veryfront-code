@@ -141,7 +141,7 @@ describe("conversation run lifecycle read adapter", () => {
         event: "ToolCallResult",
         payload: {
           toolCallId: "legacy-fetch",
-          result: { error: "Stored tool call ended without a result" },
+          content: { error: "Stored tool call ended without a result" },
           isError: true,
         },
       }],
@@ -1151,7 +1151,7 @@ describe("conversation run lifecycle read adapter", () => {
       aguiEvents.filter((event) => event.event === "ToolCallResult"),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "provider-1", result: { forecast: "sunny" } },
+        payload: { toolCallId: "provider-1", content: { forecast: "sunny" } },
       }],
     );
   });
@@ -1363,7 +1363,7 @@ describe("conversation run lifecycle read adapter", () => {
         event: "ToolCallResult",
         payload: {
           toolCallId: "provider-err",
-          result: diagnostic,
+          content: diagnostic,
           isError: true,
         },
       }],

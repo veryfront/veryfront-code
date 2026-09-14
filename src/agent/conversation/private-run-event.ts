@@ -1,6 +1,7 @@
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, VeryfrontError } from "../../errors/index.ts";
 import {
   AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
+  isProviderReplayCheckpointEventType,
   parseProviderReplayCheckpointEvent,
 } from "#veryfront/agent/runtime/provider-replay.ts";
 
@@ -159,18 +160,40 @@ function isTool(value: unknown): boolean {
     isRecord(ownDataValue(value, "args"));
 }
 
+const AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED";
+/** Pre-rename spelling, accepted on read so an older producer's event stays private. */
+const LEGACY_AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CONTEXT";
+
+/**
+ * The canonical private type an event declares, or `undefined` for a public
+ * event. Either spelling of a renamed private type maps to its past-tense name.
+ */
+export function getCanonicalPrivateConversationRunEventType(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const type = ownDataValue(value, "type");
+  if (
+    type === AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE ||
+    type === LEGACY_AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE
+  ) {
+    return AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE;
+  }
+  return isProviderReplayCheckpointEventType(type)
+    ? AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE
+    : undefined;
+}
+
 /** Return whether an event declares the private durable run-event discriminator. */
 export function hasPrivateConversationRunEventType(value: unknown): value is object {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const type = ownDataValue(value, "type");
-  return type === "AGENT_RUN_MODEL_CALL_CONTEXT" ||
-    type === AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE;
+  return getCanonicalPrivateConversationRunEventType(value) !== undefined;
 }
 
 /** Return whether an event belongs to the private durable run-event sequence. */
 export function isPrivateConversationRunEvent(value: unknown): boolean {
   if (!hasPrivateConversationRunEventType(value)) return false;
-  if (ownDataValue(value, "type") === AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE) {
+  if (
+    getCanonicalPrivateConversationRunEventType(value) ===
+      AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE
+  ) {
     try {
       parseProviderReplayCheckpointEvent(value);
       return true;

@@ -740,7 +740,7 @@ async function emitModelCallContextEvent(
   const request = buildModelCallContextRequest(options.model, directOptions);
 
   const event: AgentRunModelCallContextEvent = {
-    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
     ...(options.model.modelId
       ? {
         model: {

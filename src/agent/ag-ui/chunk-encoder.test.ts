@@ -121,7 +121,7 @@ describe("agent/ag-ui-chunk-encoder", () => {
         payload: {
           toolCallId: "tool-1",
           input: { query: "ag-ui" },
-          result: { ok: true },
+          content: { ok: true },
         },
       }],
     );

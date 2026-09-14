@@ -231,7 +231,7 @@ describe("lifecycle AG-UI adapter", () => {
       events.at(-1)?.payload,
       {
         toolCallId: "provider-1",
-        result: { content: "final" },
+        content: { content: "final" },
       },
       "the final provider result must reach the client even when it carries preliminary: false",
     );

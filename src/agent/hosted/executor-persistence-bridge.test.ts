@@ -40,12 +40,12 @@ function parentProgressEvent(
 }
 const privateCheckpointEvents = [
   executorPersistenceJson({
-    type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED",
     version: 2,
     loadedToolNames: ["search"],
   }),
   executorPersistenceJson({
-    type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+    type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED",
     version: 1,
     messageId: "message-test",
     provider: "anthropic",

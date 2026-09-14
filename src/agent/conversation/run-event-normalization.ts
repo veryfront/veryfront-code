@@ -1,6 +1,7 @@
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 import {
   DurableRunEventPersistenceError,
+  getCanonicalPrivateConversationRunEventType,
   hasPrivateConversationRunEventType,
   isPrivateConversationRunEvent,
 } from "./private-run-event.ts";
@@ -59,6 +60,12 @@ export function normalizeConversationRunEvent(
   if (hasPrivateConversationRunEventType(event)) {
     if (!isPrivateConversationRunEvent(event)) {
       throw new DurableRunEventPersistenceError("Invalid private run event shape");
+    }
+    // An older producer may still use the pre-rename spelling; only the
+    // canonical past-tense name leaves this boundary.
+    const canonicalType = getCanonicalPrivateConversationRunEventType(event);
+    if (canonicalType !== undefined && canonicalType !== event.type) {
+      event = { ...event, type: canonicalType };
     }
     if (
       event.type === AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE &&

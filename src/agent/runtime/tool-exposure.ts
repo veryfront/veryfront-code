@@ -101,7 +101,7 @@ export type ToolExposureCheckpoint = {
 };
 
 export const AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT_EVENT_TYPE =
-  "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT" as const;
+  "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED" as const;
 
 /** Private durable event carrying trusted tool exposure state. */
 export type ToolExposureCheckpointEvent = ToolExposureCheckpoint & {

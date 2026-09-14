@@ -28,11 +28,39 @@ describe("agent/conversation-run-event-normalization", () => {
     assertEquals(normalizeConversationRunEvent(event), [event]);
   });
 
+  it("rewrites a pre-rename private event spelling to the canonical past-tense type", () => {
+    // Read compatibility for an older producer: the event is still private,
+    // and what leaves this boundary carries only the canonical name.
+    assertEquals(
+      normalizeConversationRunEvent({ type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [] }),
+      [{ type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] }],
+    );
+    const checkpoint = {
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "test-signature" },
+      }],
+      providerBlockPositions: [0],
+      totalPartCount: 1,
+    };
+    assertEquals(
+      normalizeConversationRunEvent({
+        type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+        ...checkpoint,
+      }),
+      [{ type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED", ...checkpoint }],
+    );
+  });
+
   it("fails closed for a malformed private event discriminator", () => {
     assertThrows(
       () =>
         normalizeConversationRunEvent({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           contextId: "legacy",
         }),
@@ -45,7 +73,7 @@ describe("agent/conversation-run-event-normalization", () => {
     assertThrows(
       () =>
         normalizeConversationRunEvent({
-          type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+          type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED",
           version: 1,
           messageId: "assistant-message-1",
           provider: "anthropic",
@@ -287,7 +315,7 @@ describe("agent/conversation-run-event-normalization", () => {
 
   it("preserves one direct private event above 2 MiB byte-for-byte", () => {
     const event = {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [{ role: "system", content: "x".repeat(2 * 1024 * 1024 + 1) }],
     };
 

@@ -93,7 +93,8 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
     ToolCallEnd: withTiming({ toolCallId: v.string().min(1) }),
     ToolCallResult: withTiming({
       toolCallId: v.string().min(1),
-      result: v.unknown(),
+      content: v.unknown().optional(),
+      result: v.unknown().optional(),
       isError: v.boolean().optional(),
     }),
     Custom: withTiming({ name: v.string().min(1), value: v.unknown() }),

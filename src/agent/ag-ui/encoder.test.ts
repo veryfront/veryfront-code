@@ -112,7 +112,7 @@ describe("agent/ag-ui-encoder", () => {
       }),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "tool-1", result: { ok: true } },
+        payload: { toolCallId: "tool-1", content: { ok: true } },
       }],
     );
     assertEquals(
@@ -313,7 +313,7 @@ describe("agent/ag-ui-encoder", () => {
         },
         {
           event: "ToolCallResult",
-          payload: { toolCallId: "tool-2", result: { error: "invalid url" }, isError: true },
+          payload: { toolCallId: "tool-2", content: { error: "invalid url" }, isError: true },
         },
       ],
     );
@@ -324,7 +324,7 @@ describe("agent/ag-ui-encoder", () => {
       }),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "tool-3", result: { error: "Tool output denied" }, isError: true },
+        payload: { toolCallId: "tool-3", content: { error: "Tool output denied" }, isError: true },
       }],
     );
   });
@@ -499,7 +499,7 @@ describe("agent/ag-ui-encoder", () => {
         event: "ToolCallResult",
         payload: {
           toolCallId: "tool-provider",
-          result: { type: "web_search_result", answer: "resident" },
+          content: { type: "web_search_result", answer: "resident" },
         },
       }],
     );

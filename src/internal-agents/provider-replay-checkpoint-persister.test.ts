@@ -78,7 +78,7 @@ describe("run-scoped provider replay checkpoint persistence", () => {
     const body = JSON.parse(String(capturedInit?.body)) as {
       events: Array<Record<string, unknown>>;
     };
-    assertEquals(body.events[0]?.type, "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT");
+    assertEquals(body.events[0]?.type, "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED");
     assertEquals(body.events[0]?.messageId, MESSAGE_ID);
 
     acknowledge?.(Response.json({ appended_count: 1 }));
@@ -181,7 +181,7 @@ describe("run-scoped provider replay checkpoint persistence", () => {
     const body = JSON.parse(String(bodies[1])) as {
       events: Array<Record<string, unknown>>;
     };
-    assertEquals(body.events[0]?.type, "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT");
+    assertEquals(body.events[0]?.type, "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED");
     assertEquals(body.events[0]?.messageId, MESSAGE_ID);
   });
 

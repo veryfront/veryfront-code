@@ -103,7 +103,7 @@ for (const authority of ["token", "capability"] as const) {
 
       await assertRejects(async () =>
         await persistence.modelRunEventSink({
-          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           tools: [],
         })
@@ -166,7 +166,7 @@ for (const authority of ["token", "capability"] as const) {
           }));
           await persistence.output.write({ type: "text-delta", id: "message", delta: "hello" });
           await persistence.modelRunEventSink({
-            type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
             messages: [],
             tools: [],
           });
@@ -204,14 +204,17 @@ for (const authority of ["token", "capability"] as const) {
       );
       const events = calls.flatMap((call) => Array.isArray(call.events) ? call.events : []);
       assertEquals(events.some((event) => event.type === "TEXT_MESSAGE_CONTENT"), true);
-      assertEquals(events.some((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT"), true);
+      assertEquals(
+        events.some((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"),
+        true,
+      );
       assertEquals(events.some((event) => event.type === "STEP_STARTED"), true);
       assertEquals(
-        events.some((event) => event.type === "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"),
+        events.some((event) => event.type === "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINTED"),
         true,
       );
       assertEquals(
-        events.some((event) => event.type === "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT"),
+        events.some((event) => event.type === "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINTED"),
         true,
       );
       assertEquals(calls.at(-1)?.status, "completed");
@@ -346,7 +349,7 @@ for (const authority of ["token", "capability"] as const) {
         return result;
       });
       const audit = persistence.modelRunEventSink({
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         messages: [],
         tools: [],
       });

@@ -90,9 +90,14 @@ const INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME = new TextEncoder().encode(
   ": internal-agent-runtime-heartbeat\n\n",
 );
 /**
- * SSE frame name carrying AGENT_RUN_MODEL_CALL_CONTEXT to veryfront-api. Not an
+ * SSE frame name carrying AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED to veryfront-api. Not an
  * AG-UI event: veryfront-api persists it under its own event type rather than
  * folding it into the run's public event sequence.
+ *
+ * These two frame names are a private channel the API matches exactly, so they
+ * stay as they are even though the payload `type` each frame carries uses the
+ * canonical past-tense name. Renaming a frame needs the API to accept the new
+ * name first.
  */
 export const MODEL_CALL_CONTEXT_SSE_EVENT_NAME = "AgentRunModelCallContext";
 export const PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME = "AgentRunProviderReplayTurnComplete";
@@ -842,7 +847,7 @@ function createProviderReplayCheckpointRelay(): {
       buffered.push({
         event: PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
         payload: {
-          type: "AGENT_RUN_PROVIDER_REPLAY_TURN_COMPLETE",
+          type: "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED",
           messageId,
         },
       });

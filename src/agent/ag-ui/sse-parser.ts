@@ -184,7 +184,9 @@ function coerceWireEvent(
       return {
         type: agUiSseEventTypes.toolCallResult,
         ...payload,
-        ...(payload.result !== undefined ? { content: serializeToolResult(payload.result) } : {}),
+        ...((payload.content ?? payload.result) !== undefined
+          ? { content: serializeToolResult(payload.content ?? payload.result) }
+          : {}),
       };
     case "Custom":
       return { type: agUiSseEventTypes.custom, ...payload };

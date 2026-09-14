@@ -128,7 +128,7 @@ describe("runtime-bridge", () => {
       { role: "user", content: [{ type: "text", text: "Hello" }] },
     ]);
     assertEquals(recorded, {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       model: { id: "test/sanitized-context", modelProvider: "test" },
       messages: [
         {
@@ -345,7 +345,7 @@ describe("runtime-bridge", () => {
       assertEquals(event.messages, options.prompt);
       assertEquals(event.tools, options.tools);
       assertEquals(recorded, {
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         model: { id: "test/model-call-context", modelProvider: "test" },
         request: { temperature: 0.7 },
         messages: options.prompt,
@@ -409,7 +409,7 @@ describe("runtime-bridge", () => {
 
     assertEquals(order, ["persist", "dispatch"]);
     assertEquals(recorded, {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       model: { id: "test/model-call-context", modelProvider: "test" },
       request: { temperature: 0.7 },
       messages: [
@@ -486,7 +486,7 @@ describe("runtime-bridge", () => {
     );
 
     assertEquals(recorded, {
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       model: { id: "test/model-call-provider-redaction", modelProvider: "test" },
       messages: [
         {
@@ -577,7 +577,7 @@ describe("runtime-bridge", () => {
     }];
     assertEquals(contexts, [
       {
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         model: { id: "test/evolving-skill-context", modelProvider: "test" },
         messages: [
           { role: "system", content: system },
@@ -586,7 +586,7 @@ describe("runtime-bridge", () => {
         tools: resolvedTools,
       },
       {
-        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         model: { id: "test/evolving-skill-context", modelProvider: "test" },
         messages: [
           { role: "system", content: system },

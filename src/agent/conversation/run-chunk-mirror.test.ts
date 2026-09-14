@@ -140,7 +140,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
 
     await mirror.handleChunk({ type: "text-delta", id: "m1", delta: "hello" });
     await createDurableRunEventSink({ mirror })({
-      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
       messages: [],
     });
 
