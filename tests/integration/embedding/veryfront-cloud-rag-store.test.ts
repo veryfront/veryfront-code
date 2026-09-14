@@ -3,8 +3,11 @@ import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.t
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { clearEmbeddingProviders, registerEmbeddingProvider } from "../resolve.ts";
-import { createVeryfrontCloudRagStore } from "./rag-store.ts";
+import {
+  clearEmbeddingProviders,
+  registerEmbeddingProvider,
+} from "#veryfront/embedding/resolve.ts";
+import { createVeryfrontCloudRagStore } from "#veryfront/embedding/veryfront-cloud/rag-store.ts";
 
 type StoredChunk = {
   id: string;
