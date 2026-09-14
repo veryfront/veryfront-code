@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AG_UI_MAX_REQUEST_BODY_BYTES } from "./request-shared.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -59,6 +60,60 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(await response.json(), { accepted: true });
     assertEquals(await pending, { result: { ok: true }, isError: false });
   });
+
+  it("preserves the resume body when authorization consumes its request", async () => {
+    const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+    sessionManager.startRun({ runId: "run_body", threadId: "thread" });
+    const pending = sessionManager.waitForSignal("run_body", "tool_body").catch(() => undefined);
+    const payload = { type: "tool_result", toolCallId: "tool_body", result: { text: "retained" } };
+    const handler = createAgUiResumeHandler({
+      sessionManager,
+      authorizeRunControl: async ({ request }) => {
+        assertEquals(await request.json(), payload);
+        return true;
+      },
+    });
+    try {
+      const response = await handler(
+        new Request("https://example.test/api/runs/run_body/resume", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }),
+      );
+      assertEquals(response.status, 200);
+      assertEquals(await pending, { result: { text: "retained" }, isError: false });
+    } finally {
+      sessionManager.reset();
+      await pending;
+    }
+  });
+
+  for (const customResolver of [false, true]) {
+    it(`cancels oversized upload sources when clones are unread (custom resolver=${customResolver})`, async () => {
+      const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(AG_UI_MAX_REQUEST_BODY_BYTES + 1));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const handler = createAgUiResumeHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+        ...(customResolver ? { resolveRunId: () => "run_large" } : {}),
+      });
+      const init = { method: "POST", body, duplex: "half" };
+      const response = await handler(
+        new Request("https://example.test/api/runs/run_large/resume", init),
+      );
+      assertEquals(response.status, 413);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(cancelled, true);
+    });
+  }
 
   it("cancels a waiting run through the public cancel handler", async () => {
     const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();

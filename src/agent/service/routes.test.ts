@@ -149,9 +149,35 @@ Deno.test("agent service routes expose the default paths", () => {
   assertEquals(routeSet.routes.map((route) => `${route.method} ${route.path}`), [
     "POST /api/ag-ui",
     "DELETE /api/runs/:runId",
+    "POST /api/runs/:runId/resume",
+    "POST /api/control-plane/runs/:runId/resume",
     "POST /api/runs",
     "POST /api/control-plane/runs/:runId/stream",
   ]);
+});
+
+it("refuses resume when a custom route set omits exact-run verification", async () => {
+  const { routeSet, tracker } = createRouteSet();
+  const manager = tracker.sessionManager;
+  manager.startRun({ runId: "run-1", threadId: "thread" });
+  const pending = manager.waitForSignal("run-1", "tool-1").catch(() => undefined);
+  try {
+    for (const route of routeSet.routes.filter((route) => route.path.endsWith("/resume"))) {
+      const response = await route.handler(
+        createAuthenticatedRequest(route.path.replace(":runId", "run-1"), {
+          type: "tool_result",
+          toolCallId: "tool-1",
+          result: { ok: true },
+        }),
+        { runId: "run-1" },
+      );
+      assertEquals(response.status, 403);
+      assertEquals(manager.getRunStatus("run-1"), "waiting");
+    }
+  } finally {
+    manager.reset();
+    await pending;
+  }
 });
 
 for (const route of ["durable", "runtime", "cancel"] as const) {

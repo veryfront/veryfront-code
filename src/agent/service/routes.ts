@@ -2,7 +2,7 @@ import { CONTROL_PLANE_RUN_STREAM_PATH } from "../../channels/control-plane.ts";
 import type { AgentServiceRoute } from "./definition.ts";
 import { createAgUiRunErrorEvent, createAgUiSseErrorResponse } from "../ag-ui/host-support.ts";
 import { createAgUiRuntimeHandler } from "../ag-ui/runtime-handler.ts";
-import { createAgUiCancelHandler } from "../ag-ui/run-control.ts";
+import { createAgUiCancelHandler, createAgUiResumeHandler } from "../ag-ui/run-control.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import type { DetachedRunTracker } from "./detached-run-tracker.ts";
 import {
@@ -162,6 +162,8 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   }) => Promise<HostedServiceRunEventAppendTokenVerification>;
   /** Exact-run authority must be verified before cancellation, including delayed starts. */
   verifyRunCancellationToken?: (input: { token: string; runId: string }) => Promise<boolean>;
+  /** Exact-run authority must be verified before delivering a resume signal. */
+  verifyRunResumeToken?: (input: { token: string; runId: string }) => Promise<boolean>;
   tracker: DetachedRunTracker<AgUiResumeValue>;
   prepareExecution: (req: ParsedHostedChatRequest) => Promise<TExecution>;
   streamExecutionToAgUiResponse: (
@@ -475,57 +477,65 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     });
   }
 
-  async function handleDurableChatRunCancelRequest(input: {
+  async function handleDurableChatRunControlRequest(input: {
     request: Request;
     runId: string | undefined;
-  }): Promise<Response> {
+  }, operation: "cancel" | "resume"): Promise<Response> {
     if (!isSafeHostedJwtVerificationEnvironment(input)) {
       return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
     }
-    return trace("handler.durableChatRunCancel", async () => {
-      if (!isSafeHostedJwtVerificationEnvironment(input)) {
-        return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
-      }
-      const authenticatedRequest = await authenticateAgUiRequest(input.request);
-      if (!isSafeHostedJwtVerificationEnvironment(authenticatedRequest)) {
-        return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
-      }
-      if (isResponseLike(authenticatedRequest)) {
-        return authenticatedRequest;
-      }
+    return trace(
+      operation === "cancel" ? "handler.durableChatRunCancel" : "handler.durableChatRunResume",
+      async () => {
+        if (!isSafeHostedJwtVerificationEnvironment(input)) {
+          return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+        }
+        const authenticatedRequest = await authenticateAgUiRequest(input.request);
+        if (!isSafeHostedJwtVerificationEnvironment(authenticatedRequest)) {
+          return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+        }
+        if (isResponseLike(authenticatedRequest)) {
+          return authenticatedRequest;
+        }
 
-      const runId = input.runId;
-      if (!runId) {
-        return Response.json({ errorCode: "VALIDATION_ERROR" }, { status: 400 });
-      }
+        const runId = input.runId;
+        if (!runId) {
+          return Response.json({ errorCode: "VALIDATION_ERROR" }, { status: 400 });
+        }
 
-      const authorized = await options.verifyRunCancellationToken?.({
-        token: authenticatedRequest.authToken,
-        runId,
-      });
-      if (authorized !== true || !isSafeHostedJwtVerificationEnvironment()) {
-        return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
-      }
+        const verifyRunToken = operation === "cancel"
+          ? options.verifyRunCancellationToken
+          : options.verifyRunResumeToken;
+        const authorized = await verifyRunToken?.({
+          token: authenticatedRequest.authToken,
+          runId,
+        });
+        if (authorized !== true || !isSafeHostedJwtVerificationEnvironment()) {
+          return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+        }
 
-      options.setActiveSpanAttributes?.({ "run.id": runId });
-      const hostedAgUiCancelHandler = createAgUiCancelHandler({
-        sessionManager: options.tracker.sessionManager,
-        resolveRunId: () => runId,
-        // The handler repeats the decision rather than trusting this route's.
-        // The session manager now takes authority instead of a run id for the
-        // cancel-and-tombstone effect, and the authority can only come from the
-        // handler's own call, so the route cannot hand down a decision the
-        // handler did not make. Re-verifying one already-parsed RS256 bearer
-        // once per Stop is not a cost worth a bypass for.
-        authorizeRunControl: async (control) =>
-          await options.verifyRunCancellationToken?.({
-            token: authenticatedRequest.authToken,
-            runId: control.runId,
-          }) === true,
-      });
-      return hostedAgUiCancelHandler(input.request);
-    });
+        options.setActiveSpanAttributes?.({ "run.id": runId });
+        const createControlHandler = operation === "cancel"
+          ? createAgUiCancelHandler<AgUiResumeValue>
+          : createAgUiResumeHandler;
+        const controlHandler = createControlHandler({
+          sessionManager: options.tracker.sessionManager,
+          resolveRunId: () => runId,
+          // The effect handler obtains its own verified authority for this run.
+          authorizeRunControl: async (control) =>
+            await verifyRunToken?.({
+              token: authenticatedRequest.authToken,
+              runId: control.runId,
+            }) === true,
+        });
+        return controlHandler(input.request);
+      },
+    );
   }
+
+  const handleDurableChatRunCancelRequest = (
+    input: { request: Request; runId: string | undefined },
+  ) => handleDurableChatRunControlRequest(input, "cancel");
 
   const routes: AgentServiceRoute[] = [
     {
@@ -542,6 +552,12 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           runId: params.runId,
         }),
     },
+    ...["/api/runs/:runId/resume", "/api/control-plane/runs/:runId/resume"].map((path) => ({
+      method: "POST" as const,
+      path,
+      handler: (request: Request, params: Record<string, string>) =>
+        handleDurableChatRunControlRequest({ request, runId: params.runId }, "resume"),
+    })),
     {
       method: "POST",
       path: "/api/runs",

@@ -99,6 +99,8 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(bundle.routes.map((route) => route.path), [
       "/api/ag-ui",
       "/api/runs/:runId",
+      "/api/runs/:runId/resume",
+      "/api/control-plane/runs/:runId/resume",
       "/api/runs",
       "/api/control-plane/runs/:runId/stream",
     ]);

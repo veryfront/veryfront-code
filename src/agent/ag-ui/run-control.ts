@@ -17,6 +17,13 @@ import {
   type RunControlAuthorizer,
 } from "../runtime/run-control-authority.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const NativeRequestClone = Request.prototype.clone;
+const NativeRequestBody = Object.getOwnPropertyDescriptor(Request.prototype, "body")!.get!;
+const NativeStreamLocked = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "locked")!
+  .get!;
+const NativeStreamCancel = ReadableStream.prototype.cancel;
+
 const RESUME_PATH_REGEX = /^\/api\/runs\/([^/]+)\/resume$/;
 const CANCEL_PATH_REGEX = /^\/api\/runs\/([^/]+)$/;
 
@@ -72,18 +79,31 @@ export interface AgUiCancelHandlerOptions<T = unknown> extends AgUiRunControlHan
   sessionManager: RunResumeSessionManager<T>;
 }
 
+function cancelUnusedRequestBody(request: Request): void {
+  // A clone is a tee branch. Do not await its cancellation while the original
+  // branch is still needed to parse the authenticated request.
+  const body = IntrinsicReflectApply(NativeRequestBody, request, []) as ReadableStream | null;
+  if (body && !IntrinsicReflectApply(NativeStreamLocked, body, [])) {
+    void IntrinsicReflectApply(NativeStreamCancel, body, []).catch(() => {});
+  }
+}
+
 async function resolveRunId(
   request: Request,
   options: AgUiRunControlHandlerOptions | undefined,
   regex: RegExp,
 ): Promise<string | null> {
   const applicationRequest = options?.resolveRunId ? createApplicationRequest(request) : request;
-  const explicit = await options?.resolveRunId?.({
-    request: applicationRequest,
-    requestOrCtx: applicationRequest,
-  });
-  if (explicit) return explicit;
-  return getRunId(new URL(request.url).pathname, regex);
+  try {
+    const explicit = await options?.resolveRunId?.({
+      request: applicationRequest,
+      requestOrCtx: applicationRequest,
+    });
+    if (explicit) return explicit;
+    return getRunId(new URL(request.url).pathname, regex);
+  } finally {
+    if (applicationRequest !== request) cancelUnusedRequestBody(applicationRequest);
+  }
 }
 
 /** Handler for create AG-UI resume. */
@@ -98,11 +118,12 @@ export function createAgUiResumeHandler(
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
+    const authorizationRequest = IntrinsicReflectApply(NativeRequestClone, request, []) as Request;
     const authority = await authorizeRunControl(options.authorizeRunControl, {
-      request,
+      request: authorizationRequest,
       runId,
       operation: "resume",
-    });
+    }).finally(() => cancelUnusedRequestBody(authorizationRequest));
     if (!authority) {
       return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
     }

@@ -573,8 +573,10 @@ control the runtime itself performs, such as a session or waiting timeout, still
 cancels by run id and cannot create a delayed-start cancellation.
 
 Resume carries the same contract. The default runtime verifies the bearer the API
-signs for `POST /api/runs/:runId/resume` against the same public key. Resume has no
-separate mint: the API signs it with the run-bound service credential it already
+signs for `POST /api/control-plane/runs/:runId/resume` against the same public key.
+The default route set also serves `POST /api/runs/:runId/resume` with the same
+verification and signal handler. Both routes refuse an invalid bearer before
+changing the waiting run. Resume has no separate mint: the API signs it with the run-bound service credential it already
 uses for the stream, so two claim shapes are accepted, both bound to one run and one
 project. A run whose record names an actor service account and an agent access grant
 carries `tokenUse: run_scoped_service_account` with that grant recorded in the token;

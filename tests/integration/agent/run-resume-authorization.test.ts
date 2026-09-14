@@ -4,8 +4,7 @@ import { Buffer } from "node:buffer";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { createHostedServiceAuth } from "#veryfront/agent/service/auth.ts";
-import { createAgUiResumeHandler } from "#veryfront/agent/ag-ui/run-control.ts";
-import { RunResumeSessionManager } from "#veryfront/agent/runtime/resume-session.ts";
+import { createAgentServiceRuntime } from "#veryfront/agent/service/runtime.ts";
 import apiRunResumeContract from "../../fixtures/contracts/api-run-resume-jwt-payload.json" with {
   type: "json",
 };
@@ -59,32 +58,86 @@ it("accepts both API-minted resume contracts under real RS256 verification", asy
     );
   }
 
-  // End to end through the resume handler with the run-scoped contract, the
-  // shape an installed agent's run carries.
-  const auth = createHostedServiceAuth({ getConfig });
-  const runId = apiRunResumeContract.runScoped.payload.runId;
-  const token = signContract(apiRunResumeContract.runScoped.payload);
+  for (const shape of ["projectScoped", "runScoped"] as const) {
+    for (const prefix of ["/api/runs/", "/api/control-plane/runs/"]) {
+      const payload = apiRunResumeContract[shape].payload;
+      const runId = payload.runId;
+      const token = signContract(payload);
+      const bundle = createAgentServiceRuntime({
+        serviceName: "resume-contract-fixture",
+        getConfig: () => ({ ...getConfig(), PORT: 0, ALLOWED_ORIGINS: [] }),
+        getAgentConfig: () => ({
+          id: "fixture",
+          name: "Fixture",
+          description: "",
+          instructions: "Test fixture",
+        }),
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+        prepareExecution: async () => ({}),
+        streamExecutionToAgUiResponse: () => new Response("unused"),
+        startDetachedExecution: async () => {},
+      });
+      const manager = bundle.tracker.sessionManager;
+      const request = (target: string, credential: string) => {
+        const original = resumeRequest(target, credential);
+        return new Request(`https://runtime.example.test${prefix}${target}/resume`, original);
+      };
+      try {
+        const beforeStart = await bundle.runtime.request(request(runId, token));
+        assertEquals(
+          beforeStart.status,
+          410,
+          `${shape} ${prefix} valid authority reaches mounted handler`,
+        );
+        manager.startRun({ runId, threadId: "thread" });
+        const settled = manager.waitForSignal(runId, "tool_1").catch(() => undefined);
+        manager.startRun({ runId: "run_other", threadId: "other-thread" });
+        assertEquals((await bundle.runtime.request(request("run_other", token))).status, 403);
+        assertEquals((await bundle.runtime.request(request(runId, "invalid"))).status, 401);
+        assertEquals(manager.getRunStatus(runId), "waiting");
+        const accepted = await bundle.runtime.request(request(runId, token));
+        assertEquals(accepted.status, 200, `${shape} ${prefix} accepts producer bearer`);
+        assertEquals(await accepted.json(), { accepted: true });
+        assertEquals(await settled, { result: { ok: true }, isError: false });
+      } finally {
+        manager.reset();
+      }
+    }
+  }
+});
+
+it("does not expose credentialed resume requests to a replaced clone method", async () => {
+  const { createAgUiResumeHandler } = await import("#veryfront/agent/ag-ui/run-control.ts");
+  const { RunResumeSessionManager } = await import("#veryfront/agent/runtime/resume-session.ts");
   const manager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
-  manager.startRun({ runId, threadId: "thread" });
-  const settled = manager.waitForSignal(runId, "tool_1").catch(() => undefined);
   const handler = createAgUiResumeHandler({
     sessionManager: manager,
-    authorizeRunControl: (control) =>
-      auth.verifyRunResumeToken({ token, runId: control.runId }),
+    authorizeRunControl: () => false,
   });
-
+  const nativeClone = Request.prototype.clone;
+  const nativeBody = Object.getOwnPropertyDescriptor(Request.prototype, "body")!;
+  const apply = Reflect.apply;
+  let observed = false;
+  const request = resumeRequest("run-private", "synthetic-resume-credential");
+  let status: number | undefined;
   try {
-    // The same bearer aimed at a run it does not name is refused, and the
-    // targeted run keeps waiting.
-    manager.startRun({ runId: "run_other", threadId: "other-thread" });
-    assertEquals((await handler(resumeRequest("run_other", token))).status, 403);
-    assertEquals(manager.getRunStatus("run_other"), "running");
-
-    const accepted = await handler(resumeRequest(runId, token));
-    assertEquals(accepted.status, 200);
-    assertEquals(await accepted.json(), { accepted: true });
-    await settled;
+    Request.prototype.clone = function () {
+      observed ||= this.headers.get("authorization") === "Bearer synthetic-resume-credential";
+      return apply(nativeClone, this, []);
+    };
+    Object.defineProperty(Request.prototype, "body", {
+      ...nativeBody,
+      get() {
+        observed ||= this.headers.get("authorization") === "Bearer synthetic-resume-credential";
+        return apply(nativeBody.get!, this, []);
+      },
+    });
+    status = (await handler(request)).status;
   } finally {
+    Request.prototype.clone = nativeClone;
+    Object.defineProperty(Request.prototype, "body", nativeBody);
     manager.reset();
   }
+  assertEquals(status, 403);
+  assertEquals(observed, false);
 });
