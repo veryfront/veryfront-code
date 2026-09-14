@@ -139,8 +139,9 @@ export const getToolCallEndPayloadSchema = defineRunEventSchema((v) =>
 );
 
 /**
- * Payload of a tool result. `isError` is `null` when no producer evidence
- * exists; the API never defaults it to false.
+ * Payload of a tool result. `parentMessageId` names the assistant turn, as on
+ * a tool call start. `isError` is `null` when no producer evidence exists; the
+ * API never defaults it to false.
  */
 export const getToolCallResultPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "TOOL_CALL_RESULT", {
