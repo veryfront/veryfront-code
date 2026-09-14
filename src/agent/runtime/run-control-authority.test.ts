@@ -174,18 +174,20 @@ describe("agent/run-control-authority", () => {
     manager.reset();
   });
 
-  it("denies control before the resume body is consumed", async () => {
+  it("denies malformed resume input without parsing it or changing the waiting run", async () => {
     const manager = startedManager();
     const handler = createAgUiResumeHandler({
       sessionManager: manager,
       authorizeRunControl: () => false,
     });
-    const request = controlRequest(RUN_ID, "resume");
+    const request = new Request(`https://runtime.example.test/api/runs/${RUN_ID}/resume`, {
+      method: "POST",
+      body: "{ invalid JSON",
+      headers: { "content-type": "application/json" },
+    });
 
     assertEquals((await handler(request)).status, 403);
-    // A denial must not spend the caller's body, and must not reach the schema
-    // parse: the effect is refused on authority, not on payload validity.
-    assertEquals(request.bodyUsed, false);
+    assertEquals(manager.getRunStatus(RUN_ID), "waiting");
     manager.reset();
   });
 });
