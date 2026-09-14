@@ -1820,7 +1820,10 @@ describe("ragStore", () => {
           type: "pptx",
           created_at: "2026-06-25T00:00:00.000Z",
           updated_at: "2026-06-25T01:00:00.000Z",
-          metadata: { filePath: refreshedFilePath },
+          metadata: {
+            filePath: refreshedFilePath,
+            cleanupFilePaths: [".veryfront/rag/documents/doc-pptx.pptx"],
+          },
         });
         const chunks = fileChunks.get(refreshedFilePath as string) ?? [];
         assertEquals(chunks.length, 1);

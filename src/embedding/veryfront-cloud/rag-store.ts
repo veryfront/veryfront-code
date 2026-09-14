@@ -9,6 +9,17 @@ import {
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { chunk } from "../chunk.ts";
 import { embedding } from "../embedding.ts";
+import {
+  activeDocumentPaths,
+  buildChunkFilePaths,
+  CHUNKS_PER_FILE as MAX_API_CHUNK_BATCH,
+  type DocumentParts,
+  documentPartsMetadata,
+  metadataWriteOutcome,
+  readPartPaths,
+  retiredDocumentPaths,
+  retireDocumentParts,
+} from "./document-parts.ts";
 import type {
   RagDocumentMeta,
   RagRefreshOptions,
@@ -20,7 +31,6 @@ import type {
 
 const DEFAULT_TOP_K = 5;
 const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
-const MAX_API_CHUNK_BATCH = 500;
 const MAX_API_EMBEDDING_BATCH = 100;
 const MAX_SEARCH_LIMIT = 100;
 const SEARCH_OVERSCAN = 25;
@@ -94,7 +104,7 @@ interface ChunkMutationInput {
 
 type ResolvedCloudRagStoreConfig = RagStoreConfig & { model: string };
 
-type CloudRagDocumentMeta = RagDocumentMeta & { filePath?: string; filePaths?: string[] };
+type CloudRagDocumentMeta = RagDocumentMeta & DocumentParts;
 
 interface ContentFile {
   path: string;
@@ -179,19 +189,8 @@ function buildRefreshDocumentFilePath(documentId: string, type?: string): string
   return `${DOCUMENTS_DIR}/${documentId}.refresh-${crypto.randomUUID()}.${extension || "txt"}`;
 }
 
-function buildChunkFilePaths(filePath: string, chunkCount: number): string[] {
-  const extension = extname(filePath);
-  const stem = filePath.slice(0, filePath.length - extension.length);
-  return Array.from(
-    { length: Math.ceil(chunkCount / MAX_API_CHUNK_BATCH) },
-    (_, index) => index === 0 ? filePath : `${stem}.part-${index}${extension}`,
-  );
-}
-
 function documentFilePaths(document: CloudRagDocumentMeta): string[] {
-  return document.filePaths?.length
-    ? [...new Set(document.filePaths)]
-    : [document.filePath ?? buildDocumentFilePath(document.id, document.type)];
+  return activeDocumentPaths(document, buildDocumentFilePath(document.id, document.type));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -400,11 +399,8 @@ async function listRagDocuments(
     type: doc.type,
     createdAt: new Date(doc.created_at).getTime(),
     filePath: typeof doc.metadata?.filePath === "string" ? doc.metadata.filePath : undefined,
-    filePaths: Array.isArray(doc.metadata?.filePaths)
-      ? doc.metadata.filePaths.filter((path): path is string =>
-        typeof path === "string" && path.length > 0
-      )
-      : undefined,
+    filePaths: readPartPaths(doc.metadata?.filePaths),
+    cleanupFilePaths: readPartPaths(doc.metadata?.cleanupFilePaths),
   }));
 }
 
@@ -477,9 +473,13 @@ async function refreshCloudDocument(
 
   const type = meta?.type ?? existing.type;
   const previousFilePaths = documentFilePaths(existing);
+  const inheritedCleanupPaths = retiredDocumentPaths(
+    existing,
+    buildDocumentFilePath(documentId, existing.type),
+  );
   const filePath = buildRefreshDocumentFilePath(documentId, type);
 
-  await writeDocumentContent(
+  const pendingCleanupPaths = await writeDocumentContent(
     context,
     config,
     documentId,
@@ -489,19 +489,14 @@ async function refreshCloudDocument(
       source: meta?.source ?? existing.source,
       type,
     },
-    { filePath },
+    { filePath, previousFilePaths, inheritedCleanupPaths },
   );
 
-  const cleanupFailures: unknown[] = [];
-  for (const previousFilePath of previousFilePaths) {
-    if (previousFilePath === filePath) continue;
-    try {
-      await deleteFileChunks(context, previousFilePath);
-    } catch (error) {
-      cleanupFailures.push(error);
-    }
-  }
-  if (cleanupFailures.length > 0) throw cleanupFailures[0];
+  const cleanupFailures = await retireDocumentParts(
+    pendingCleanupPaths,
+    (path) => deleteFileChunks(context, path),
+  );
+  if (cleanupFailures.length > 0) throw cleanupFailures[0]!.error;
 }
 
 async function writeDocumentContent(
@@ -511,8 +506,8 @@ async function writeDocumentContent(
   title: string,
   text: string,
   meta?: { source?: string; type?: string },
-  options?: { filePath?: string },
-): Promise<void> {
+  options?: { filePath?: string; previousFilePaths?: string[]; inheritedCleanupPaths?: string[] },
+): Promise<string[]> {
   if (text.length > MAX_TEXT_LENGTH) {
     throw INVALID_ARGUMENT.create({
       detail: `Upload text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
@@ -536,6 +531,16 @@ async function writeDocumentContent(
     type: meta?.type ?? "",
   });
   const filePaths = buildChunkFilePaths(filePath, chunkInputs.length);
+  // Compact acknowledged historical cleanup before publishing the next record.
+  // Active previous parts remain until the replacement is committed.
+  const inheritedFailures = await retireDocumentParts(
+    options?.inheritedCleanupPaths ?? [],
+    (path) => deleteFileChunks(context, path),
+  );
+  const pendingCleanupPaths = [
+    ...(options?.previousFilePaths ?? []),
+    ...inheritedFailures.map((failure) => failure.path),
+  ];
   let metadataWriteAttempted = false;
 
   try {
@@ -561,7 +566,7 @@ async function writeDocumentContent(
       title,
       source: meta?.source ?? "",
       type: meta?.type ?? "",
-      metadata: filePaths.length === 1 ? { filePath } : { filePath, filePaths },
+      metadata: documentPartsMetadata(filePaths, pendingCleanupPaths),
     });
   } catch (error) {
     if (metadataWriteAttempted) {
@@ -572,15 +577,16 @@ async function writeDocumentContent(
         // Without a readable result, the metadata write may have committed.
         throw error;
       }
-      if (current && JSON.stringify(documentFilePaths(current)) === JSON.stringify(filePaths)) {
-        return;
-      }
       const upstreamStatus = error instanceof VeryfrontError && isRecord(error.context)
         ? error.context.upstreamStatus
         : undefined;
-      const rejected = typeof upstreamStatus === "number" && upstreamStatus >= 400 &&
-        upstreamStatus < 500 && upstreamStatus !== 408;
-      if (!rejected) {
+      const outcome = metadataWriteOutcome(
+        filePaths,
+        current ? documentFilePaths(current) : [],
+        upstreamStatus,
+      );
+      if (outcome === "committed") return pendingCleanupPaths;
+      if (outcome !== "rejected") {
         // Transport and gateway failures can leave the write in flight. Retain
         // the parts until its outcome is known instead of deleting live data.
         throw error;
@@ -596,6 +602,7 @@ async function writeDocumentContent(
     }
     throw error;
   }
+  return pendingCleanupPaths;
 }
 
 function createEmbedder(config: ResolvedCloudRagStoreConfig) {
@@ -822,21 +829,24 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       const documents = await listRagDocuments(context);
       const target = documents.find((doc) => doc.id === id);
 
-      // Delete server-side document record first (authoritative)
+      // Preserve record-first deletion so a refresh starting during cleanup
+      // cannot publish a replacement through a still-visible document.
       await deleteRagDocument(context, id);
-
-      // Best-effort cleanup of file chunks
       if (target) {
-        for (const filePath of documentFilePaths(target)) {
-          try {
-            await deleteFileChunks(context, filePath);
-          } catch (error) {
-            serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
-              id,
-              filePath,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
+        const paths = [
+          ...documentFilePaths(target),
+          ...retiredDocumentPaths(target, buildDocumentFilePath(id, target.type)),
+        ];
+        const failures = await retireDocumentParts(
+          paths,
+          (path) => deleteFileChunks(context, path),
+        );
+        for (const failure of failures) {
+          serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
+            id,
+            filePath: failure.path,
+            error: failure.error instanceof Error ? failure.error.message : String(failure.error),
+          });
         }
       }
     },

@@ -26,6 +26,7 @@ function replacementApi() {
   let failedDeletePath: string | undefined;
   let metadataFailure: "before" | "after" | "transport-after" | "delayed" | undefined;
   let delayedMetadata: Document | undefined;
+  let deletionPause: { entered: () => void; wait: Promise<void> } | undefined;
   const removeFile = (path: string) => {
     for (const chunk of files.get(path) ?? []) embeddings.delete(chunk.id);
     files.delete(path);
@@ -48,6 +49,18 @@ function replacementApi() {
       assert(delayedMetadata);
       documents.set(delayedMetadata.id, delayedMetadata);
     },
+    pauseNextDeletion() {
+      let entered!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const wait = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      deletionPause = { entered, wait };
+      return { started, release };
+    },
     async fetch(input: string | URL | Request, init?: RequestInit) {
       const request = input instanceof Request ? input : new Request(input, init);
       const path = new URL(request.url).pathname;
@@ -55,6 +68,12 @@ function replacementApi() {
       if (fileMatch) {
         const filePath = decodeURIComponent(fileMatch[1]!);
         if (request.method === "DELETE") {
+          if (deletionPause) {
+            const pause = deletionPause;
+            deletionPause = undefined;
+            pause.entered();
+            await pause.wait;
+          }
           if (filePath === failedDeletePath) {
             return Response.json({ message: "Fixture cleanup failure" }, { status: 503 });
           }
@@ -186,9 +205,12 @@ describe("cloud RAG batch replacement", () => {
       await rag.refreshDocument!(id, "small");
       assertEquals(api.embeddings.size, 1);
       assert(originalPaths.every((path) => !api.files.has(path)));
+      assertEquals(api.documents.get(id)!.metadata.cleanupFilePaths, originalPaths);
+      const smallPaths = [...api.files.keys()];
       assertEquals([...api.documents.keys()], [id]);
       await rag.refreshDocument!(id, text);
       assertEquals(api.embeddings.size, 501);
+      assertEquals(api.documents.get(id)!.metadata.cleanupFilePaths, smallPaths);
       await rag.removeDocument(id);
       assertEquals(api.files.size, 0);
       assertEquals(api.embeddings.size, 0);
@@ -270,6 +292,42 @@ describe("cloud RAG batch replacement", () => {
       assertEquals(paths.length, 2);
       assert(paths.every((path) => api.files.has(path)));
       assertEquals(paths.flatMap((path) => api.files.get(path) ?? []).length, 501);
+      await rag.removeDocument(id);
+      assertEquals(api.files.size, 0);
+      assertEquals(api.embeddings.size, 0);
+      assertEquals(api.documents.size, 0);
+    });
+  });
+
+  it("preserves legacy record-first removal while attempting every part after a deletion failure", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Large", "abcdefghij".repeat(501));
+      api.failDelete([...api.files.keys()][0]!);
+      await rag.removeDocument(id);
+      assertEquals(api.documents.size, 0);
+      assertEquals(api.files.size, 1);
+      await assertRejects(() => rag.refreshDocument!(id, "replacement"));
+    });
+  });
+
+  it("rejects a refresh starting while removed document parts are still being cleaned", async () => {
+    const api = replacementApi();
+    await withMockFetch(api.fetch, async () => {
+      const rag = store();
+      const id = await rag.ingest("Existing", "original");
+      const pause = api.pauseNextDeletion();
+      const removing = rag.removeDocument(id);
+      try {
+        await pause.started;
+        await assertRejects(() => rag.refreshDocument!(id, "replacement"));
+      } finally {
+        pause.release();
+        await removing;
+      }
+      assertEquals(api.documents.size, 0);
+      assertEquals(api.files.size, 0);
     });
   });
 });
