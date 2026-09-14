@@ -319,7 +319,7 @@ function stringifyError(value: unknown): string | undefined {
 }
 
 function getToolResultError(event: Record<string, unknown>): string | undefined {
-  return stringifyError(event.result) ?? stringifyError(event.content) ?? "Tool call failed";
+  return stringifyError(readToolResultValue(event)) ?? "Tool call failed";
 }
 
 function parseJsonString(value: string): unknown {
@@ -334,13 +334,21 @@ function readToolInputDelta(event: Record<string, unknown>): string | undefined 
   return readString(event.delta) ?? readString(event.inputTextDelta) ?? readString(event.argsDelta);
 }
 
-function readToolOutput(event: Record<string, unknown>): unknown {
-  if (Object.hasOwn(event, "result")) return event.result;
-  if (Object.hasOwn(event, "output")) return event.output;
+/**
+ * The value a tool result carries. The canonical `content` field wins whenever it
+ * is present; the legacy `result` and `output` fields are read only without it.
+ */
+function readToolResultValue(event: Record<string, unknown>): unknown {
   if (Object.hasOwn(event, "content")) {
     return typeof event.content === "string" ? parseJsonString(event.content) : event.content;
   }
+  if (Object.hasOwn(event, "result")) return event.result;
+  if (Object.hasOwn(event, "output")) return event.output;
   return undefined;
+}
+
+function readToolOutput(event: Record<string, unknown>): unknown {
+  return readToolResultValue(event);
 }
 
 function isDeniedToolResult(event: Record<string, unknown>, error: string | undefined): boolean {
