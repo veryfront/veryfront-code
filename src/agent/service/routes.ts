@@ -3,6 +3,11 @@ import type { AgentServiceRoute } from "./definition.ts";
 import { createAgUiRunErrorEvent, createAgUiSseErrorResponse } from "../ag-ui/host-support.ts";
 import { createAgUiRuntimeHandler } from "../ag-ui/runtime-handler.ts";
 import { createAgUiCancelHandler, createAgUiResumeHandler } from "../ag-ui/run-control.ts";
+import {
+  AG_UI_MAX_REQUEST_BODY_BYTES,
+  parseAgUiJsonRequestOrError,
+} from "#veryfront/agent/ag-ui/request-shared.ts";
+import { readBodyWithLimit } from "#veryfront/security/input-validation/limits.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import type { DetachedRunTracker } from "./detached-run-tracker.ts";
 import {
@@ -491,9 +496,20 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         if (!isSafeHostedJwtVerificationEnvironment(input)) {
           return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
         }
+        // Bound the original stream before a custom authenticator can parse its
+        // clone. Otherwise the unread control branch buffers every byte it reads.
+        let controlRequest = input.request;
+        if (operation === "resume") {
+          const boundedRequest = await parseAgUiJsonRequestOrError(async () => {
+            const body = await readBodyWithLimit(controlRequest, AG_UI_MAX_REQUEST_BODY_BYTES);
+            return new NativeRequest(controlRequest, { body });
+          }, "Invalid AG-UI resume request");
+          if (isResponseLike(boundedRequest)) return boundedRequest;
+          controlRequest = boundedRequest;
+        }
         const authenticationRequest = IntrinsicReflectApply(
           RequestClone,
-          input.request,
+          controlRequest,
           [],
         ) as Request;
         const authenticatedRequest = await authenticateAgUiRequest(authenticationRequest)
@@ -535,7 +551,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
               runId: control.runId,
             }) === true,
         });
-        return controlHandler(input.request);
+        return controlHandler(controlRequest);
       },
     );
   }

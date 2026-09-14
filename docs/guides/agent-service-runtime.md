@@ -587,7 +587,11 @@ shapes are pinned by a contract fixture holding payloads captured from the API's
 signing path, including the scope ordering, which differs between the two mints. The
 grant relation is recorded rather than re-derived, so the API's collaborator policy
 stays the API's decision. Custom route sets that serve resume must supply
-`verifyRunResumeToken`; omission returns HTTP 403.
+`verifyRunResumeToken`; omission returns HTTP 403. Both resume routes enforce the
+1 MiB request-body limit on the incoming stream before calling custom authentication.
+Authentication receives a separate request with the bounded original body, so it may
+read JSON without consuming the signal handler's input. Oversized declared or chunked
+bodies return HTTP 413 before authentication and cancel the remaining stream.
 
 Cancellation claims and request bindings must be own data properties. The route
 also rejects inherited `then` properties before authentication and rechecks after

@@ -185,6 +185,70 @@ it("preserves resume signals when custom authentication consumes the body", asyn
   }
 });
 
+it("bounds resume bodies before custom authentication can consume them", async () => {
+  let authenticationCalls = 0;
+  const { routeSet } = createRouteSet({
+    authenticateRequest: async (request) => {
+      authenticationCalls++;
+      await request.json();
+      return new Response("unauthorized", { status: 401 });
+    },
+  });
+  for (const route of routeSet.routes.filter((route) => route.path.endsWith("/resume"))) {
+    for (const declaredLength of [false, true]) {
+      let pulls = 0;
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls++;
+          controller.enqueue(new TextEncoder().encode(pulls <= 40 ? " ".repeat(65_536) : "{}"));
+          if (pulls === 41) controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const response = await route.handler(
+        new Request(`https://agent.example.test${route.path.replace(":runId", "run-large")}`, {
+          method: "POST",
+          headers: declaredLength ? { "content-length": String(40 * 65_536 + 2) } : {},
+          body,
+          // Node's streaming Request requires duplex; Deno and Bun accept it.
+          ...{ duplex: "half" },
+        }),
+        { runId: "run-large" },
+      );
+      assertEquals(response.status, 413);
+      assertEquals(authenticationCalls, 0);
+      assertEquals(pulls <= 18, true);
+      assertEquals(cancelled, true);
+    }
+  }
+});
+
+it("returns controlled validation errors for missing and invalid UTF-8 resume bodies", async () => {
+  let authenticationCalls = 0;
+  const { routeSet } = createRouteSet({
+    authenticateRequest: () => {
+      authenticationCalls++;
+      return Promise.resolve(new Response("unauthorized", { status: 401 }));
+    },
+  });
+  for (const route of routeSet.routes.filter((route) => route.path.endsWith("/resume"))) {
+    for (const body of [undefined, new Uint8Array([0xff])]) {
+      const response = await route.handler(
+        new Request(`https://agent.example.test${route.path.replace(":runId", "run-invalid")}`, {
+          method: "POST",
+          body,
+        }),
+        { runId: "run-invalid" },
+      );
+      assertEquals(response.status, 400);
+      assertEquals(authenticationCalls, 0);
+    }
+  }
+});
+
 it("refuses resume when a custom route set omits exact-run verification", async () => {
   const { routeSet, tracker } = createRouteSet();
   const manager = tracker.sessionManager;
