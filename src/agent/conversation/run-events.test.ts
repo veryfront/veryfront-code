@@ -50,6 +50,7 @@ describe("agent/conversation-run-events", () => {
       [{
         type: conversationRunEventTypes.toolCallResult,
         messageId: "msg-1:tool:tc-1",
+        parentMessageId: "msg-1",
         toolCallId: "tc-1",
         content: "ok",
         role: "tool",
@@ -427,6 +428,57 @@ describe("agent/conversation-run-events", () => {
       ],
     );
   });
+
+  const terminalToolChunks = [
+    {
+      branch: "tool-input-error",
+      chunk: {
+        type: "tool-input-error",
+        toolCallId: "tc-1",
+        toolName: "create_file",
+        input: { path: "a.ts" },
+        errorText: "bad input",
+      },
+    },
+    {
+      branch: "tool-output-available",
+      chunk: { type: "tool-output-available", toolCallId: "tc-1", output: "ok" },
+    },
+    {
+      branch: "tool-output-error",
+      chunk: { type: "tool-output-error", toolCallId: "tc-1", errorText: "fail" },
+    },
+    {
+      branch: "tool-output-denied",
+      chunk: { type: "tool-output-denied", toolCallId: "tc-1" },
+    },
+  ] as const;
+
+  for (const { branch, chunk } of terminalToolChunks) {
+    it(`names the parent message on a ${branch} tool result inside an open message`, () => {
+      const encoder = new ConversationRunEventEncoder();
+      assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
+      const results = encoder.encode(chunk as never).filter((event) =>
+        event.type === conversationRunEventTypes.toolCallResult
+      );
+      assertEquals(results.length, 1);
+      // The API derives a tool result's turn from parentMessageId, so the result
+      // states it the same way TOOL_CALL_START does. The synthetic message id
+      // keeps its shape: consumers still key tool messages off it.
+      assertEquals(results[0]?.parentMessageId, "assistant-1");
+      assertEquals(results[0]?.messageId, "assistant-1:tool:tc-1");
+    });
+
+    it(`omits the parent message on a ${branch} tool result outside any message`, () => {
+      const encoder = new ConversationRunEventEncoder();
+      const results = encoder.encode(chunk as never).filter((event) =>
+        event.type === conversationRunEventTypes.toolCallResult
+      );
+      assertEquals(results.length, 1);
+      assertEquals(Object.hasOwn(results[0]!, "parentMessageId"), false);
+      assertEquals(results[0]?.messageId, "tool:tc-1");
+    });
+  }
 
   it("gives an unresolved provider-executed tool call a durable terminal result", () => {
     // The reported incident read as TOOL_CALL_START + TOOL_CALL_END with no
