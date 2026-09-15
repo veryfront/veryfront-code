@@ -1,14 +1,51 @@
 import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import {
   isRequestBodyTooLargeError,
+  readBodyBytesWithLimit,
   readBodyWithLimit,
 } from "#veryfront/security/input-validation/limits.ts";
+import { assertNativeRequestDefaults } from "#veryfront/security/http/native-request-processing.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
+const NativeRequest = Request;
+const RequestBodyGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "body")!.get!;
+const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const FatalUtf8Decode = (bytes: Uint8Array): string => fatalUtf8Decoder.decode(bytes);
 
 export const AG_UI_MAX_REQUEST_BODY_BYTES = DEFAULT_MAX_BODY_SIZE_BYTES;
+
+/**
+ * Bound incoming bytes before exposing a body to application callbacks.
+ *
+ * The bound is applied over bytes rather than text. Cancellation carries no
+ * JSON payload, so decoding here would reject an opaque body -- a body-bound
+ * signature over raw bytes, say -- before authentication or authorization ever
+ * saw it. Callers whose payload must be JSON pass `requireUtf8Body` so a
+ * malformed body is still refused as a validation error rather than reaching
+ * those callbacks.
+ */
+export async function boundAgUiRequestBody(
+  request: Request,
+  errorLabel: string,
+  allowEmptyBody = false,
+  requireUtf8Body = false,
+): Promise<Request | Response> {
+  return await parseAgUiJsonRequestOrError(async () => {
+    if (allowEmptyBody && IntrinsicReflectApply(RequestBodyGet, request, []) === null) {
+      return request;
+    }
+    const body = await readBodyBytesWithLimit(request, AG_UI_MAX_REQUEST_BODY_BYTES);
+    if (requireUtf8Body) {
+      FatalUtf8Decode(body);
+    }
+    assertNativeRequestDefaults();
+    // The bytes are a BufferSource; the cast only narrows the buffer-backing
+    // type parameter that `BodyInit` spells more strictly than the reader does.
+    return new NativeRequest(request, { body: body as BodyInit });
+  }, errorLabel);
+}
 
 export async function parseAgUiJsonBody(request: Request): Promise<unknown> {
   return IntrinsicReflectApply(

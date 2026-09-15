@@ -568,6 +568,38 @@ authentication does not grant cancellation. Custom route sets must supply
 collaborator authorization before minting the runtime credential. Request-owned
 AG-UI streams still support cancellation through their request signal.
 
+The requirement sits at the effect, not only at that route. `createAgUiCancelHandler`
+and `createAgUiResumeHandler` both require an `authorizeRunControl` decision, and the
+session manager takes verified authority rather than a run id for the cancel-and-tombstone
+and resume paths. The run the effect reaches is read out of that authority, so a
+surface that mounts either handler cannot reach the registry without a decision, and
+authority granted for one run or operation cannot be redirected to another. Run
+control the runtime itself performs, such as a session or waiting timeout, still
+cancels by run id and cannot create a delayed-start cancellation.
+
+Resume carries the same contract. The default runtime verifies the bearer the API
+signs for `POST /api/control-plane/runs/:runId/resume` against the same public key.
+The default route set also serves `POST /api/runs/:runId/resume` with the same
+verification and signal handler. Both routes refuse an invalid bearer before
+changing the waiting run. Resume has no separate mint: the API signs it with the run-bound service credential it already
+uses for the stream, so two claim shapes are accepted, both bound to one run and one
+project. A run whose record names an actor service account and an agent access grant
+carries `tokenUse: run_scoped_service_account` with that grant recorded in the token;
+every other project-bound run carries the `veryfront-server` service-account bearer
+with `tokenUse: project_scoped_service_account`. The API refuses to resume a run with
+no project before it mints anything, so no projectless resume shape exists. Both
+shapes are pinned by a contract fixture holding payloads captured from the API's
+signing path, including the scope ordering, which differs between the two mints. The
+grant relation is recorded rather than re-derived, so the API's collaborator policy
+stays the API's decision. Custom route sets that serve resume must supply
+`verifyRunResumeToken`; omission returns HTTP 403. Both resume routes enforce the
+1 MiB request-body limit on the incoming stream before calling custom authentication.
+Authentication receives a separate request with the bounded original body, so it may
+read JSON without consuming the signal handler's input. Oversized declared or chunked
+bodies return HTTP 413 before authentication and cancel the remaining stream.
+Standalone resume and cancel handlers apply the same bound before run-id resolvers
+and authorizers receive a body. Cancellation without a body remains supported.
+
 Cancellation claims and request bindings must be own data properties. The route
 also rejects inherited `then` properties before authentication and rechecks after
 asynchronous verification. This prevents known thenable pollution from replacing

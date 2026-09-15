@@ -71,8 +71,8 @@ interface MergeResponse {
  * Merge preview diff item
  */
 interface MergePreviewDiff {
-  path: string;
-  has_conflict: boolean;
+  file_path: string;
+  has_conflicts: boolean;
 }
 
 /**
@@ -190,13 +190,13 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
     );
     spinner.stop();
 
-    const conflicts = diffs.filter((d) => d.has_conflict);
+    const conflicts = diffs.filter((d) => d.has_conflicts);
 
     logInfo(`Would merge ${diffs.length} files from "${branch}" into ${targetName}`);
     if (conflicts.length > 0) {
       cliLogger.warn(`  ${conflicts.length} file(s) have conflicts`);
       for (const conflict of conflicts) {
-        cliLogger.warn(`    - ${conflict.path}`);
+        cliLogger.warn(`    - ${conflict.file_path}`);
       }
     }
     return;

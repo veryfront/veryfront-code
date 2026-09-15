@@ -1,5 +1,9 @@
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
+import {
+  assertRunControlAuthority,
+  type VerifiedRunControlAuthority,
+} from "./run-control-authority.ts";
 
 /** Public API contract for run session status. */
 export type RunSessionStatus = "running" | "waiting" | "completed" | "cancelled" | "failed";
@@ -371,7 +375,56 @@ export class RunResumeSessionManager<T> {
     return { accepted: true };
   }
 
-  cancelRun(runId: string, options: { rememberIfMissing?: boolean } = {}): boolean {
+  /**
+   * Cancel a run this process already owns.
+   *
+   * In-process callers reach this with a run id they are already executing (a
+   * session or waiting timeout, stream teardown, `reset`). It deliberately
+   * cannot create a delayed-start cancellation tombstone: a tombstone rejects a
+   * start that has not happened yet, so an unknown run id must never reach it
+   * without verified authority. Remote control goes through
+   * `cancelRunWithAuthority`.
+   */
+  cancelRun(runId: string): boolean {
+    return this.cancelRunById(runId, {});
+  }
+
+  /**
+   * Cancel a run, and remember the cancellation for a delayed start, on behalf
+   * of a remote caller whose authority over this exact run was verified.
+   *
+   * The run id comes out of the authority rather than from a separate argument,
+   * so a caller holding authority for one run cannot direct the effect at
+   * another. This is the only path to the tombstone.
+   */
+  cancelRunWithAuthority(
+    authority: VerifiedRunControlAuthority,
+    options: {
+      /**
+       * Remember the cancellation so a delayed start is refused (default).
+       * `false` for an integration-auth park, whose resume must be able to start
+       * the same run again.
+       */
+      rememberCancellation?: boolean;
+    } = {},
+  ): boolean {
+    const runId = assertRunControlAuthority(authority, "cancel");
+    return this.cancelRunById(runId, { rememberIfMissing: options.rememberCancellation !== false });
+  }
+
+  /**
+   * Deliver a resume signal on behalf of a remote caller whose authority over
+   * this exact run was verified. The run id comes out of the authority.
+   */
+  submitSignalWithAuthority(
+    authority: VerifiedRunControlAuthority,
+    input: { waitKey: string; value: T },
+  ): SubmitResumeValueOutcome {
+    const runId = assertRunControlAuthority(authority, "resume");
+    return this.submitSignal(runId, input);
+  }
+
+  private cancelRunById(runId: string, options: { rememberIfMissing?: boolean }): boolean {
     const session = this.sessions.get(runId);
     if (!session) {
       if (options.rememberIfMissing) {

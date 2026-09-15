@@ -169,6 +169,7 @@ export const UNIT_CWD_FILES: readonly string[] = Object.freeze([
 const CWD_MUTATING_TEST_FILES = new Set([
   ...UNIT_CWD_FILES,
   "tests/integration/adapters/shell-adapter.test.ts",
+  "tests/integration/cli/merge-preview.integration.test.ts",
   "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
   "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
 ]);
