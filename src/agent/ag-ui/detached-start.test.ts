@@ -538,6 +538,58 @@ describe("agent/ag-ui-detached-start", () => {
     assertEquals(reported, ["error:run_1"], "an ordinary cancellation still reports its failure");
   });
 
+  /**
+   * An asynchronous onAccepted can still be pending when the park cancels this
+   * start and the resume reuses the run id. Its later rejection reaches the
+   * outer catch, which must not fail the resumed session.
+   */
+  it("keeps a resumed run active when a park-cancelled start's onAccepted rejects late", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    let rejectFirstAcceptance!: (error: Error) => void;
+    const firstAcceptance = new Promise<void>((_resolve, reject) => {
+      rejectFirstAcceptance = reject;
+    });
+    let acceptances = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        await new Promise<void>(() => {});
+      },
+      onAccepted: async () => {
+        acceptances += 1;
+        if (acceptances === 1) await firstAcceptance;
+      },
+    });
+
+    const parkedStart = handler({
+      request: createDetachedRequest(),
+      waitUntil: () => {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sessionManager.cancelRun("run_1");
+
+    const resumed = await handler({
+      request: createDetachedRequest(),
+      waitUntil: () => {},
+    });
+    assertEquals(resumed.status, 202);
+
+    rejectFirstAcceptance(new Error("acceptance persistence failed"));
+    // The handler may answer the setup failure as an error response or rethrow
+    // it; either way the parked start fails, and only its own session may go.
+    await parkedStart.catch(() => undefined);
+
+    assertEquals(
+      sessionManager.getRunStatus("run_1"),
+      "running",
+      "a late setup failure must not fail the resumed session",
+    );
+  });
+
   it("returns 400 for malformed detached start payloads", async () => {
     const handler = createAgUiDetachedStartHandler({
       agent: createTestAgent(),

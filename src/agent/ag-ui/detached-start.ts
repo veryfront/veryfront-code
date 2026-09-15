@@ -312,8 +312,12 @@ export async function executeAgUiDetachedStart(
     rawRequest: applicationRequest,
   });
 
+  // Held outside the try so a setup failure after the start (a rejecting
+  // onAccepted) fails only the session this call started, never a resumed start
+  // that has since reused the run id.
+  let abortSignal: AbortSignal | undefined;
   try {
-    const abortSignal = options.sessionManager.startRun({
+    abortSignal = options.sessionManager.startRun({
       runId: input.request.runId,
       threadId: input.request.threadId,
       ...(options.startedFromEventId !== undefined
@@ -413,7 +417,9 @@ export async function executeAgUiDetachedStart(
       );
     }
 
-    options.sessionManager.failRun(input.request.runId);
+    if (abortSignal) {
+      options.sessionManager.failRun(input.request.runId, abortSignal);
+    }
     throw error;
   }
 }
