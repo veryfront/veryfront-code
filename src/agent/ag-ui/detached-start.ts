@@ -207,6 +207,8 @@ type AgUiDetachedExecutionStarter = (
 
 interface AgUiDetachedStartHandlerOptionsBase {
   sessionManager: RunResumeSessionManager<AgUiResumeValue>;
+  /** The durable run's latest event id this start was dispatched from, if known. */
+  startedFromEventId?: number;
   context?: AgUiContextValue;
   startDetachedExecution?: AgUiDetachedExecutionStarter;
   onAccepted?: (input: {
@@ -314,6 +316,9 @@ export async function executeAgUiDetachedStart(
     const abortSignal = options.sessionManager.startRun({
       runId: input.request.runId,
       threadId: input.request.threadId,
+      ...(options.startedFromEventId !== undefined
+        ? { startedFromEventId: options.startedFromEventId }
+        : {}),
     });
 
     await options.onAccepted?.({

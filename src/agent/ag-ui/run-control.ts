@@ -186,6 +186,12 @@ export function createAgUiResumeHandler(
  */
 const INTEGRATION_AUTH_PARK_CANCEL_REASON = "integration_auth_park";
 
+function parsePositiveEventId(value: string | null): number | undefined {
+  if (value === null || !/^[1-9][0-9]*$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
 /** Handler for create AG-UI cancel. */
 export function createAgUiCancelHandler<T = unknown>(
   options: AgUiCancelHandlerOptions<T>,
@@ -219,8 +225,14 @@ export function createAgUiCancelHandler<T = unknown>(
     // The authority check above already limits this to a verified caller.
     const parkCancellation =
       new URL(request.url).searchParams.get("reason") === INTEGRATION_AUTH_PARK_CANCEL_REASON;
+    const parkedAfterEventId = parkCancellation
+      ? parsePositiveEventId(new URL(request.url).searchParams.get("parked_after_event_id"))
+      : undefined;
     const accepted = options.sessionManager.cancelRunWithAuthority(authority, {
       rememberCancellation: !parkCancellation,
+      ...(parkedAfterEventId !== undefined
+        ? { onlyIfStartedBeforeEventId: parkedAfterEventId }
+        : {}),
     });
     if (accepted) {
       return Response.json({ accepted: true }, { status: 202 });

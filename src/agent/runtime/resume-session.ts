@@ -67,6 +67,8 @@ type WaitingState<T> = {
 
 type RunSession<T> = {
   runId: string;
+  /** The durable run's latest event id the control plane dispatched this start from. */
+  startedFromEventId?: number;
   status: RunSessionStatus;
   abortController: AbortController;
   waitingState: WaitingState<T> | null;
@@ -221,7 +223,7 @@ export class RunResumeSessionManager<T> {
     this.sessions.delete(session.runId);
   }
 
-  startRun(input: { runId: string; threadId: string }): AbortSignal {
+  startRun(input: { runId: string; threadId: string; startedFromEventId?: number }): AbortSignal {
     if (this.hasCancellationTombstone(input.runId)) {
       throw new RunCancelledError(`Run "${input.runId}" was cancelled before start`);
     }
@@ -239,6 +241,9 @@ export class RunResumeSessionManager<T> {
 
     const session: RunSession<T> = {
       runId: input.runId,
+      ...(input.startedFromEventId !== undefined
+        ? { startedFromEventId: input.startedFromEventId }
+        : {}),
       status: "running",
       abortController: new AbortController(),
       waitingState: null,
@@ -406,10 +411,19 @@ export class RunResumeSessionManager<T> {
        * the same run again.
        */
       rememberCancellation?: boolean;
+      /**
+       * Cancel only a session dispatched from before this durable event id. An
+       * integration-auth park names the event it settled at, so a late or retried
+       * park cancel cannot stop the resumed start that reused the run id.
+       */
+      onlyIfStartedBeforeEventId?: number;
     } = {},
   ): boolean {
     const runId = assertRunControlAuthority(authority, "cancel");
-    return this.cancelRunById(runId, { rememberIfMissing: options.rememberCancellation !== false });
+    return this.cancelRunById(runId, {
+      rememberIfMissing: options.rememberCancellation !== false,
+      onlyIfStartedBeforeEventId: options.onlyIfStartedBeforeEventId,
+    });
   }
 
   /**
@@ -424,8 +438,18 @@ export class RunResumeSessionManager<T> {
     return this.submitSignal(runId, input);
   }
 
-  private cancelRunById(runId: string, options: { rememberIfMissing?: boolean }): boolean {
+  private cancelRunById(
+    runId: string,
+    options: { rememberIfMissing?: boolean; onlyIfStartedBeforeEventId?: number },
+  ): boolean {
     const session = this.sessions.get(runId);
+    if (
+      session && options.onlyIfStartedBeforeEventId !== undefined &&
+      session.startedFromEventId !== undefined &&
+      session.startedFromEventId >= options.onlyIfStartedBeforeEventId
+    ) {
+      return false;
+    }
     if (!session) {
       if (options.rememberIfMissing) {
         this.rememberCancellation(runId);

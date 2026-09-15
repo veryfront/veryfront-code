@@ -366,6 +366,45 @@ describe("agent/runtime/resume-session", () => {
     );
   });
 
+  /**
+   * A park cancellation names the event the park settled at. It must stop the
+   * turn that started before the park, and leave alone a resumed start that
+   * reused the run id after it, even when the park cancel arrives late.
+   */
+  it("cancels for a park only a session that started before the parked event", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const grant = async () => {
+      const authority = await authorizeRunControl(() => true, {
+        request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+        runId: "run_1",
+        operation: "cancel",
+      });
+      if (!authority) throw new Error("Test authorizer must grant authority");
+      return authority;
+    };
+
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 10 });
+    assertEquals(
+      manager.cancelRunWithAuthority(await grant(), {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: 20,
+      }),
+      true,
+      "the parked turn started before the park and is cancelled",
+    );
+
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 20 });
+    assertEquals(
+      manager.cancelRunWithAuthority(await grant(), {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: 20,
+      }),
+      false,
+      "a late park cancel must not cancel the resumed start",
+    );
+    assertEquals(manager.getRunStatus("run_1"), "running");
+  });
+
   it("reports a run superseded only when another session owns its run id", () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>();
     const parkedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });

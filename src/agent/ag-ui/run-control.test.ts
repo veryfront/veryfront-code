@@ -499,6 +499,52 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(refused instanceof RunCancelledError, true);
   });
 
+  it("leaves a resumed run running when a park cancellation for an earlier generation arrives late", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      startedFromEventId: 30,
+    });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request(
+        "https://example.com/api/runs/run_1?reason=integration_auth_park&parked_after_event_id=20",
+        { method: "DELETE" },
+      ),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+  });
+
+  it("cancels the parked generation named by a park cancellation", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      startedFromEventId: 10,
+    });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request(
+        "https://example.com/api/runs/run_1?reason=integration_auth_park&parked_after_event_id=20",
+        { method: "DELETE" },
+      ),
+    );
+
+    assertEquals(response.status, 202);
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+  });
+
   /**
    * The park reason arrives in the request, so it only changes what an
    * authorized cancellation remembers. Without authority for the run the cancel
