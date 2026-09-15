@@ -396,6 +396,277 @@ describe("agent/ag-ui-detached-start", () => {
     assertEquals(started, false);
   });
 
+  /**
+   * A run parked on an integration auth wall is cancelled without a tombstone and
+   * resumed under the same run id. A provider can ignore the abort, so the parked
+   * execution may settle after the resumed one has started; it must not finalize
+   * the resumed session.
+   */
+  it("keeps a resumed run active when the park-cancelled execution settles after the resume", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const captured: Promise<unknown>[] = [];
+    let releaseParkedExecution!: () => void;
+    const parkedExecution = new Promise<void>((resolve) => {
+      releaseParkedExecution = resolve;
+    });
+    let executions = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        executions += 1;
+        if (executions === 1) {
+          await parkedExecution;
+          return;
+        }
+        await new Promise<void>(() => {});
+      },
+    });
+
+    const parked = await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    assertEquals(parked.status, 202);
+
+    sessionManager.cancelRun("run_1");
+
+    const resumed = await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    assertEquals(resumed.status, 202);
+    assertEquals(executions, 2);
+
+    releaseParkedExecution();
+    await captured[0];
+
+    assertEquals(
+      sessionManager.getRunStatus("run_1"),
+      "running",
+      "the park-cancelled execution must not finalize the resumed session",
+    );
+  });
+
+  /**
+   * A park-cancelled execution that fails after the resume must not report that
+   * failure: the host's error callback untracks the run id, which would drop the
+   * resumed execution from shutdown cancellation.
+   */
+  it("does not report a park-cancelled execution's failure after the resume", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const captured: Promise<unknown>[] = [];
+    const reported: string[] = [];
+    let rejectParkedExecution!: (error: Error) => void;
+    const parkedExecution = new Promise<void>((_resolve, reject) => {
+      rejectParkedExecution = reject;
+    });
+    let executions = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        executions += 1;
+        if (executions === 1) {
+          await parkedExecution;
+          return;
+        }
+        await new Promise<void>(() => {});
+      },
+      onFinish: ({ runId }) => {
+        reported.push(`finish:${runId}`);
+      },
+      onError: ({ runId }) => {
+        reported.push(`error:${runId}`);
+      },
+    });
+
+    await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    sessionManager.cancelRun("run_1");
+    await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+
+    rejectParkedExecution(new DOMException("Run cancelled", "AbortError"));
+    await captured[0];
+
+    assertEquals(reported, [], "a superseded execution must not run lifecycle callbacks");
+    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+  });
+
+  it("still reports the failure of an execution cancelled without a resume", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const captured: Promise<unknown>[] = [];
+    const reported: string[] = [];
+    let rejectExecution!: (error: Error) => void;
+    const execution = new Promise<void>((_resolve, reject) => {
+      rejectExecution = reject;
+    });
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        await execution;
+      },
+      onError: ({ runId }) => {
+        reported.push(`error:${runId}`);
+      },
+    });
+
+    await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    sessionManager.cancelRun("run_1");
+
+    rejectExecution(new DOMException("Run cancelled", "AbortError"));
+    await captured[0];
+
+    assertEquals(reported, ["error:run_1"], "an ordinary cancellation still reports its failure");
+  });
+
+  /**
+   * An asynchronous onAccepted can still be pending when the park cancels this
+   * start and the resume reuses the run id. Its later rejection reaches the
+   * outer catch, which must not fail the resumed session.
+   */
+  it("keeps a resumed run active when a park-cancelled start's onAccepted rejects late", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    let rejectFirstAcceptance!: (error: Error) => void;
+    const firstAcceptance = new Promise<void>((_resolve, reject) => {
+      rejectFirstAcceptance = reject;
+    });
+    let acceptances = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        await new Promise<void>(() => {});
+      },
+      onAccepted: async () => {
+        acceptances += 1;
+        if (acceptances === 1) await firstAcceptance;
+      },
+    });
+
+    const parkedStart = handler({
+      request: createDetachedRequest(),
+      waitUntil: () => {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sessionManager.cancelRun("run_1");
+
+    const resumed = await handler({
+      request: createDetachedRequest(),
+      waitUntil: () => {},
+    });
+    assertEquals(resumed.status, 202);
+
+    rejectFirstAcceptance(new Error("acceptance persistence failed"));
+    // The handler may answer the setup failure as an error response or rethrow
+    // it; either way the parked start fails, and only its own session may go.
+    await parkedStart.catch(() => undefined);
+
+    assertEquals(
+      sessionManager.getRunStatus("run_1"),
+      "running",
+      "a late setup failure must not fail the resumed session",
+    );
+  });
+
+  /**
+   * onAccepted can resolve after the park cancelled this start and the resume
+   * reused the run id. Starting execution then would run a stale turn on an
+   * aborted signal, which a provider that ignores abort would still carry out.
+   */
+  it("does not start a park-cancelled execution when onAccepted resolves after the resume", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    let resolveFirstAcceptance!: () => void;
+    const firstAcceptance = new Promise<void>((resolve) => {
+      resolveFirstAcceptance = resolve;
+    });
+    let acceptances = 0;
+    let executions = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        executions += 1;
+        await new Promise<void>(() => {});
+      },
+      onAccepted: async () => {
+        acceptances += 1;
+        if (acceptances === 1) await firstAcceptance;
+      },
+    });
+
+    const parkedStart = handler({ request: createDetachedRequest(), waitUntil: () => {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sessionManager.cancelRun("run_1");
+    const resumed = await handler({ request: createDetachedRequest(), waitUntil: () => {} });
+    assertEquals(resumed.status, 202);
+
+    resolveFirstAcceptance();
+    await parkedStart;
+
+    assertEquals(executions, 1, "only the resumed start may execute");
+    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+  });
+
+  it("reports a start cancelled while its acceptance was pending without executing it", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    let resolveAcceptance!: () => void;
+    const acceptance = new Promise<void>((resolve) => {
+      resolveAcceptance = resolve;
+    });
+    const reported: string[] = [];
+    let executions = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        executions += 1;
+      },
+      onAccepted: async () => {
+        await acceptance;
+      },
+      onError: ({ runId }) => {
+        reported.push(`error:${runId}`);
+      },
+    });
+
+    const start = handler({ request: createDetachedRequest(), waitUntil: () => {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sessionManager.cancelRun("run_1");
+    resolveAcceptance();
+    await start;
+
+    assertEquals(executions, 0, "a cancelled start must not execute");
+    assertEquals(reported, ["error:run_1"], "the cancellation is still reported to the host");
+  });
+
   it("returns 400 for malformed detached start payloads", async () => {
     const handler = createAgUiDetachedStartHandler({
       agent: createTestAgent(),

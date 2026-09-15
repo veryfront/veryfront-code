@@ -207,6 +207,8 @@ type AgUiDetachedExecutionStarter = (
 
 interface AgUiDetachedStartHandlerOptionsBase {
   sessionManager: RunResumeSessionManager<AgUiResumeValue>;
+  /** The durable run's latest event id this start was dispatched from, if known. */
+  startedFromEventId?: number;
   context?: AgUiContextValue;
   startDetachedExecution?: AgUiDetachedExecutionStarter;
   onAccepted?: (input: {
@@ -310,10 +312,17 @@ export async function executeAgUiDetachedStart(
     rawRequest: applicationRequest,
   });
 
+  // Held outside the try so a setup failure after the start (a rejecting
+  // onAccepted) fails only the session this call started, never a resumed start
+  // that has since reused the run id.
+  let abortSignal: AbortSignal | undefined;
   try {
-    const abortSignal = options.sessionManager.startRun({
+    abortSignal = options.sessionManager.startRun({
       runId: input.request.runId,
       threadId: input.request.threadId,
+      ...(options.startedFromEventId !== undefined
+        ? { startedFromEventId: options.startedFromEventId }
+        : {}),
     });
 
     await options.onAccepted?.({
@@ -321,6 +330,29 @@ export async function executeAgUiDetachedStart(
       runId: input.request.runId,
       threadId: input.request.threadId,
     });
+
+    // The session may have been cancelled while acceptance was pending, such as
+    // by an integration-auth park. Starting now would run a turn on an aborted
+    // signal that a provider could ignore. Report an ordinary cancellation to the
+    // host, but stay silent when a resumed start already owns the run id.
+    if (abortSignal.aborted) {
+      if (!options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) {
+        await options.onError?.({
+          runId: input.request.runId,
+          threadId: input.request.threadId,
+          error: new RunCancelledError(),
+        });
+      }
+      return Response.json(
+        {
+          accepted: true,
+          duplicate: false,
+          runId: input.request.runId,
+          threadId: input.request.threadId,
+        } satisfies AgUiDetachedStartAccepted,
+        { status: 202 },
+      );
+    }
 
     const detachedTask = (async () => {
       try {
@@ -346,13 +378,18 @@ export async function executeAgUiDetachedStart(
           });
         }
 
-        options.sessionManager.completeRun(input.request.runId);
+        // Finalize by signal: a park-cancelled execution can settle after the
+        // resumed start has reused this run id, and must neither end that session
+        // nor run lifecycle callbacks (which untrack the run id) on its behalf.
+        options.sessionManager.completeRun(input.request.runId, abortSignal);
+        if (options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) return;
         await options.onFinish?.({
           runId: input.request.runId,
           threadId: input.request.threadId,
         });
       } catch (error) {
-        options.sessionManager.failRun(input.request.runId);
+        options.sessionManager.failRun(input.request.runId, abortSignal);
+        if (options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) return;
         await options.onError?.({
           runId: input.request.runId,
           threadId: input.request.threadId,
@@ -403,7 +440,9 @@ export async function executeAgUiDetachedStart(
       );
     }
 
-    options.sessionManager.failRun(input.request.runId);
+    if (abortSignal) {
+      options.sessionManager.failRun(input.request.runId, abortSignal);
+    }
     throw error;
   }
 }

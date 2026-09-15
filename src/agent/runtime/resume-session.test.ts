@@ -310,6 +310,212 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(manager.getRunStatus("run_2"), "running", "the freed slot must admit a new run");
   });
 
+  /**
+   * A run parked on an integration auth wall is cancelled without a tombstone and
+   * resumed under the same run id. The cancelled execution can still settle after
+   * the resume starts, and finalizing by run id alone would end the resumed
+   * session instead of its own.
+   */
+  it("finalizes only the session that owns the given signal", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const parkedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    manager.cancelRun("run_1");
+    const resumedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    manager.completeRun("run_1", parkedSignal);
+    manager.failRun("run_1", parkedSignal);
+    assertEquals(
+      manager.getRunStatus("run_1"),
+      "running",
+      "a stale execution must not finalize the resumed session",
+    );
+
+    manager.completeRun("run_1", resumedSignal);
+    assertEquals(
+      manager.getRunStatus("run_1"),
+      null,
+      "the owning execution still finalizes its session",
+    );
+  });
+
+  /**
+   * An integration-auth park cancels the in-flight turn and later resumes the
+   * same run. Its authorized cancellation must not leave the tombstone that
+   * refuses a delayed start, or the resume start is refused too.
+   */
+  it("keeps a run startable after an authorized cancellation that is not remembered", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const authority = await authorizeRunControl(() => true, {
+      request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+      runId: "run_1",
+      operation: "cancel",
+    });
+    if (!authority) throw new Error("Test authorizer must grant authority");
+
+    assertEquals(manager.cancelRunWithAuthority(authority, { rememberCancellation: false }), true);
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(manager.getRunStatus("run_1"), "running");
+
+    manager.completeRun("run_1");
+    assertEquals(await cancelWithAuthority(manager, "run_1"), false);
+    assertThrows(
+      () => manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+  });
+
+  /**
+   * A park cancellation names the event the park settled at. It must stop the
+   * turn that started before the park, and leave alone a resumed start that
+   * reused the run id after it, even when the park cancel arrives late.
+   */
+  it("cancels for a park only a session that started before the parked event", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const grant = async () => {
+      const authority = await authorizeRunControl(() => true, {
+        request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+        runId: "run_1",
+        operation: "cancel",
+      });
+      if (!authority) throw new Error("Test authorizer must grant authority");
+      return authority;
+    };
+
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 10 });
+    assertEquals(
+      manager.cancelRunWithAuthority(await grant(), {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: 20,
+      }),
+      true,
+      "the parked turn started before the park and is cancelled",
+    );
+
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 20 });
+    assertEquals(
+      manager.cancelRunWithAuthority(await grant(), {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: 20,
+      }),
+      false,
+      "a late park cancel must not cancel the resumed start",
+    );
+    assertEquals(manager.getRunStatus("run_1"), "running");
+  });
+
+  /**
+   * A park cancel can find no session: the parked execution already ended while
+   * a retry of its original start is still on its way. That retry must not run
+   * the parked turn again, but the resume, dispatched from the parked event or
+   * later, must still start.
+   */
+  it("refuses a delayed start of the parked generation after a park cancel and starts the resume", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const authority = await authorizeRunControl(() => true, {
+      request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+      runId: "run_1",
+      operation: "cancel",
+    });
+    if (!authority) throw new Error("Test authorizer must grant authority");
+
+    assertEquals(
+      manager.cancelRunWithAuthority(authority, {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: 20,
+      }),
+      false,
+    );
+
+    assertThrows(
+      () =>
+        manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 10 }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+    assertThrows(
+      () => manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 20 });
+    assertEquals(manager.getRunStatus("run_1"), "running");
+  });
+
+  it("keeps the strictest remembered cancellation when park cancels follow", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const grant = async (runId: string) => {
+      const authority = await authorizeRunControl(() => true, {
+        request: new Request(`https://runtime.example.test/api/runs/${runId}`, {
+          method: "DELETE",
+        }),
+        runId,
+        operation: "cancel",
+      });
+      if (!authority) throw new Error("Test authorizer must grant authority");
+      return authority;
+    };
+    const parkCancel = async (runId: string, parkedAfterEventId: number) =>
+      manager.cancelRunWithAuthority(await grant(runId), {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: parkedAfterEventId,
+      });
+
+    assertEquals(await cancelWithAuthority(manager, "run_cancelled"), false);
+    await parkCancel("run_cancelled", 20);
+    assertThrows(
+      () =>
+        manager.startRun({
+          runId: "run_cancelled",
+          threadId: crypto.randomUUID(),
+          startedFromEventId: 30,
+        }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+
+    await parkCancel("run_parked_twice", 40);
+    await parkCancel("run_parked_twice", 20);
+    assertThrows(
+      () =>
+        manager.startRun({
+          runId: "run_parked_twice",
+          threadId: crypto.randomUUID(),
+          startedFromEventId: 30,
+        }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+    manager.startRun({
+      runId: "run_parked_twice",
+      threadId: crypto.randomUUID(),
+      startedFromEventId: 40,
+    });
+    assertEquals(manager.getRunStatus("run_parked_twice"), "running");
+  });
+
+  it("reports a run superseded only when another session owns its run id", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const parkedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(
+      manager.isSupersededRun("run_1", parkedSignal),
+      false,
+      "an owner is not superseded",
+    );
+
+    manager.cancelRun("run_1");
+    assertEquals(
+      manager.isSupersededRun("run_1", parkedSignal),
+      false,
+      "a cancelled run with no newer session is not superseded",
+    );
+
+    const resumedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(manager.isSupersededRun("run_1", parkedSignal), true);
+    assertEquals(manager.isSupersededRun("run_1", resumedSignal), false);
+  });
+
   it("does not leak session slots across repeated completed runs", () => {
     const maxConcurrentSessions = 2;
     const manager = new RunResumeSessionManager<{ ok: boolean }>({ maxConcurrentSessions });

@@ -179,6 +179,19 @@ export function createAgUiResumeHandler(
   };
 }
 
+/**
+ * Cancel reason sent by the control plane when it parks a run on an integration
+ * auth wall. The turn is stopped, but the run stays startable so the resume that
+ * follows once the integration is connected is not refused.
+ */
+const INTEGRATION_AUTH_PARK_CANCEL_REASON = "integration_auth_park";
+
+function parsePositiveEventId(value: string | null): number | undefined {
+  if (value === null || !/^[1-9][0-9]*$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
 /** Handler for create AG-UI cancel. */
 export function createAgUiCancelHandler<T = unknown>(
   options: AgUiCancelHandlerOptions<T>,
@@ -206,7 +219,22 @@ export function createAgUiCancelHandler<T = unknown>(
       return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
     }
 
-    const accepted = options.sessionManager.cancelRunWithAuthority(authority);
+    // A park stops the turn so a waiting run cannot finish, then resumes the same
+    // run later. Remembering that cancellation outright would refuse the resume
+    // start as a delayed start of a cancelled run, so a park cancellation only
+    // refuses delayed starts dispatched from before the parked event.
+    // The authority check above already limits this to a verified caller.
+    const parkCancellation =
+      new URL(request.url).searchParams.get("reason") === INTEGRATION_AUTH_PARK_CANCEL_REASON;
+    const parkedAfterEventId = parkCancellation
+      ? parsePositiveEventId(new URL(request.url).searchParams.get("parked_after_event_id"))
+      : undefined;
+    const accepted = options.sessionManager.cancelRunWithAuthority(authority, {
+      rememberCancellation: !parkCancellation,
+      ...(parkedAfterEventId !== undefined
+        ? { onlyIfStartedBeforeEventId: parkedAfterEventId }
+        : {}),
+    });
     if (accepted) {
       return Response.json({ accepted: true }, { status: 202 });
     }

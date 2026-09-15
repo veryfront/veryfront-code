@@ -431,4 +431,176 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(response.status, 204);
     assertEquals(await response.text(), "");
   });
+
+  /**
+   * An integration-auth park cancels the runtime turn, then resumes the same run
+   * once the integration is connected. The ordinary cancel keeps a tombstone so a
+   * delayed start of a cancelled run is refused; kept for a park, that tombstone
+   * refuses the resume start instead.
+   */
+  it("keeps a run startable after a cancellation for an integration-auth park", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request("https://example.com/api/runs/run_1?reason=integration_auth_park", {
+        method: "DELETE",
+      }),
+    );
+
+    assertEquals(response.status, 202);
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertExists(
+      sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }),
+      "the resume start must not be refused as a delayed start",
+    );
+  });
+
+  it("does not remember a park cancellation for a run that is not active", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request("https://example.com/api/runs/run_1?reason=integration_auth_park", {
+        method: "DELETE",
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertExists(sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }));
+  });
+
+  it("still refuses a delayed start after an ordinary cancellation", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request("https://example.com/api/runs/run_1", { method: "DELETE" }),
+    );
+
+    assertEquals(response.status, 202);
+    let refused: unknown;
+    try {
+      sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    } catch (error) {
+      refused = error;
+    }
+    assertEquals(refused instanceof RunCancelledError, true);
+  });
+
+  it("leaves a resumed run running when a park cancellation for an earlier generation arrives late", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      startedFromEventId: 30,
+    });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request(
+        "https://example.com/api/runs/run_1?reason=integration_auth_park&parked_after_event_id=20",
+        { method: "DELETE" },
+      ),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+  });
+
+  it("cancels the parked generation named by a park cancellation", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      startedFromEventId: 10,
+    });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request(
+        "https://example.com/api/runs/run_1?reason=integration_auth_park&parked_after_event_id=20",
+        { method: "DELETE" },
+      ),
+    );
+
+    assertEquals(response.status, 202);
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+  });
+
+  it("refuses a delayed start of the parked generation after a park cancellation finds no session", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request(
+        "https://example.com/api/runs/run_1?reason=integration_auth_park&parked_after_event_id=20",
+        { method: "DELETE" },
+      ),
+    );
+
+    assertEquals(response.status, 204);
+    let refused: unknown;
+    try {
+      sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 10,
+      });
+    } catch (error) {
+      refused = error;
+    }
+    assertEquals(refused instanceof RunCancelledError, true);
+    assertExists(
+      sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 20,
+      }),
+      "the resume start must not be refused",
+    );
+  });
+
+  /**
+   * The park reason arrives in the request, so it only changes what an
+   * authorized cancellation remembers. Without authority for the run the cancel
+   * is refused outright and the run keeps running.
+   */
+  it("refuses a park cancellation without authority for the run", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: () => false,
+    });
+
+    const response = await handler(
+      new Request("https://example.com/api/runs/run_1?reason=integration_auth_park", {
+        method: "DELETE",
+      }),
+    );
+
+    assertEquals(response.status, 403);
+    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+  });
 });

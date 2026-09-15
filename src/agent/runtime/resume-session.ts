@@ -67,6 +67,8 @@ type WaitingState<T> = {
 
 type RunSession<T> = {
   runId: string;
+  /** The durable run's latest event id the control plane dispatched this start from. */
+  startedFromEventId?: number;
   status: RunSessionStatus;
   abortController: AbortController;
   waitingState: WaitingState<T> | null;
@@ -74,6 +76,12 @@ type RunSession<T> = {
   submittedValues: Map<string, SubmittedValue<T>>;
   waitingTimeoutId: ReturnType<typeof setTimeout> | null;
   sessionTimeoutId: ReturnType<typeof setTimeout> | null;
+};
+
+type CancellationTombstone = {
+  expiresAt: number;
+  /** Set for a park cancellation: only starts from before this event are refused. */
+  refusesStartsBeforeEventId?: number;
 };
 
 const DEFAULT_WAITING_TTL_MS = 5 * 60 * 1000;
@@ -102,7 +110,7 @@ function defaultConflictKey(value: unknown): string {
 /** Implement run resume session manager. */
 export class RunResumeSessionManager<T> {
   private readonly sessions = new Map<string, RunSession<T>>();
-  private readonly cancellationTombstones = new Map<string, number>();
+  private readonly cancellationTombstones = new Map<string, CancellationTombstone>();
 
   constructor(
     private readonly options: RunResumeSessionManagerOptions<T> = {},
@@ -148,14 +156,21 @@ export class RunResumeSessionManager<T> {
     return createConflictKey(value);
   }
 
-  private rememberCancellation(runId: string): void {
+  /**
+   * Remember a cancellation so a delayed start of the run is refused. With
+   * `refusesStartsBeforeEventId`, only starts dispatched from before that event
+   * are refused. A tombstone already remembered for the run never gets less
+   * strict.
+   */
+  private rememberCancellation(runId: string, refusesStartsBeforeEventId?: number): void {
     const now = this.nowMs;
-    for (const [candidateRunId, expiresAt] of this.cancellationTombstones) {
-      if (expiresAt <= now) {
+    for (const [candidateRunId, tombstone] of this.cancellationTombstones) {
+      if (tombstone.expiresAt <= now) {
         this.cancellationTombstones.delete(candidateRunId);
       }
     }
 
+    const existing = this.cancellationTombstones.get(runId);
     this.cancellationTombstones.delete(runId);
 
     while (this.cancellationTombstones.size >= this.maxCancellationTombstones) {
@@ -164,17 +179,28 @@ export class RunResumeSessionManager<T> {
       this.cancellationTombstones.delete(oldestRunId);
     }
 
-    this.cancellationTombstones.set(runId, now + this.cancellationTtlMs);
+    const cutoff = existing === undefined
+      ? refusesStartsBeforeEventId
+      : existing.refusesStartsBeforeEventId === undefined ||
+          refusesStartsBeforeEventId === undefined
+      ? undefined
+      : Math.max(existing.refusesStartsBeforeEventId, refusesStartsBeforeEventId);
+    this.cancellationTombstones.set(runId, {
+      expiresAt: now + this.cancellationTtlMs,
+      ...(cutoff !== undefined ? { refusesStartsBeforeEventId: cutoff } : {}),
+    });
   }
 
-  private hasCancellationTombstone(runId: string): boolean {
-    const expiresAt = this.cancellationTombstones.get(runId);
-    if (expiresAt === undefined) return false;
-    if (expiresAt <= this.nowMs) {
+  private refusesCancelledStart(runId: string, startedFromEventId: number | undefined): boolean {
+    const tombstone = this.cancellationTombstones.get(runId);
+    if (tombstone === undefined) return false;
+    if (tombstone.expiresAt <= this.nowMs) {
       this.cancellationTombstones.delete(runId);
       return false;
     }
-    return true;
+    if (tombstone.refusesStartsBeforeEventId === undefined) return true;
+    return startedFromEventId === undefined ||
+      startedFromEventId < tombstone.refusesStartsBeforeEventId;
   }
 
   private clearWaitingTimeout(session: RunSession<T>): void {
@@ -221,8 +247,8 @@ export class RunResumeSessionManager<T> {
     this.sessions.delete(session.runId);
   }
 
-  startRun(input: { runId: string; threadId: string }): AbortSignal {
-    if (this.hasCancellationTombstone(input.runId)) {
+  startRun(input: { runId: string; threadId: string; startedFromEventId?: number }): AbortSignal {
+    if (this.refusesCancelledStart(input.runId, input.startedFromEventId)) {
       throw new RunCancelledError(`Run "${input.runId}" was cancelled before start`);
     }
 
@@ -239,6 +265,9 @@ export class RunResumeSessionManager<T> {
 
     const session: RunSession<T> = {
       runId: input.runId,
+      ...(input.startedFromEventId !== undefined
+        ? { startedFromEventId: input.startedFromEventId }
+        : {}),
       status: "running",
       abortController: new AbortController(),
       waitingState: null,
@@ -397,9 +426,34 @@ export class RunResumeSessionManager<T> {
    * so a caller holding authority for one run cannot direct the effect at
    * another. This is the only path to the tombstone.
    */
-  cancelRunWithAuthority(authority: VerifiedRunControlAuthority): boolean {
+  cancelRunWithAuthority(
+    authority: VerifiedRunControlAuthority,
+    options: {
+      /**
+       * Remember the cancellation so any delayed start is refused (default).
+       * `false` for an integration-auth park, whose resume must be able to start
+       * the same run again: with `onlyIfStartedBeforeEventId` only delayed starts
+       * of the parked generation are refused, and without it nothing is
+       * remembered.
+       */
+      rememberCancellation?: boolean;
+      /**
+       * Cancel only a session dispatched from before this durable event id. An
+       * integration-auth park names the event it settled at, so a late or retried
+       * park cancel cannot stop the resumed start that reused the run id.
+       */
+      onlyIfStartedBeforeEventId?: number;
+    } = {},
+  ): boolean {
     const runId = assertRunControlAuthority(authority, "cancel");
-    return this.cancelRunById(runId, { rememberIfMissing: true });
+    return this.cancelRunById(runId, {
+      remember: options.rememberCancellation !== false
+        ? {}
+        : options.onlyIfStartedBeforeEventId !== undefined
+        ? { refusesStartsBeforeEventId: options.onlyIfStartedBeforeEventId }
+        : undefined,
+      onlyIfStartedBeforeEventId: options.onlyIfStartedBeforeEventId,
+    });
   }
 
   /**
@@ -414,17 +468,29 @@ export class RunResumeSessionManager<T> {
     return this.submitSignal(runId, input);
   }
 
-  private cancelRunById(runId: string, options: { rememberIfMissing?: boolean }): boolean {
-    const session = this.sessions.get(runId);
-    if (!session) {
-      if (options.rememberIfMissing) {
-        this.rememberCancellation(runId);
-      }
-      return false;
+  private cancelRunById(
+    runId: string,
+    options: {
+      remember?: { refusesStartsBeforeEventId?: number };
+      onlyIfStartedBeforeEventId?: number;
+    },
+  ): boolean {
+    // Remembered whether or not a session is found: the start this refuses may
+    // still be on its way, and may arrive after a newer generation has finished.
+    if (options.remember) {
+      this.rememberCancellation(runId, options.remember.refusesStartsBeforeEventId);
     }
 
-    if (options.rememberIfMissing) {
-      this.rememberCancellation(runId);
+    const session = this.sessions.get(runId);
+    if (
+      session && options.onlyIfStartedBeforeEventId !== undefined &&
+      session.startedFromEventId !== undefined &&
+      session.startedFromEventId >= options.onlyIfStartedBeforeEventId
+    ) {
+      return false;
+    }
+    if (!session) {
+      return false;
     }
 
     if (
@@ -445,16 +511,39 @@ export class RunResumeSessionManager<T> {
     return true;
   }
 
-  completeRun(runId: string): void {
-    const session = this.sessions.get(runId);
+  /**
+   * Finalize a run as completed. Pass the signal `startRun` returned so a stale
+   * execution cannot finalize a newer session started under the same run id,
+   * such as the resume of a run whose parked turn settled late.
+   */
+  completeRun(runId: string, signal?: AbortSignal): void {
+    const session = this.getOwnedSession(runId, signal);
     if (!session) return;
     this.finalizeSession(session, "completed");
   }
 
-  failRun(runId: string): void {
-    const session = this.sessions.get(runId);
+  /** Finalize a run as failed; see {@link completeRun} for `signal`. */
+  failRun(runId: string, signal?: AbortSignal): void {
+    const session = this.getOwnedSession(runId, signal);
     if (!session) return;
     this.finalizeSession(session, "failed");
+  }
+
+  /**
+   * Whether a newer session now owns the run id of the execution holding
+   * `signal`. A run whose own session simply ended is not superseded; one whose
+   * id was reused by a later start, such as the resume of a parked run, is.
+   */
+  isSupersededRun(runId: string, signal: AbortSignal): boolean {
+    const session = this.sessions.get(runId);
+    return session !== undefined && session.abortController.signal !== signal;
+  }
+
+  private getOwnedSession(runId: string, signal?: AbortSignal): RunSession<T> | undefined {
+    const session = this.sessions.get(runId);
+    if (!session) return undefined;
+    if (signal && session.abortController.signal !== signal) return undefined;
+    return session;
   }
 
   getRunStatus(runId: string): RunSessionStatus | null {

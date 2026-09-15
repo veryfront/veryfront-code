@@ -242,6 +242,9 @@ async function executeHostedDurableChatRunStart<TExecution>(
     const detachedStartResponse = await executeAgUiDetachedStart(
       {
         sessionManager: input.tracker.sessionManager,
+        ...(typeof durableRootRun.latestEventId === "number"
+          ? { startedFromEventId: durableRootRun.latestEventId }
+          : {}),
         startDetachedExecution: async ({ abortSignal, rawRequest }) => {
           const detachedExecution = input.startDetachedExecution({
             execution,
