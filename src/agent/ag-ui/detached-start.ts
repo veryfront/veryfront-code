@@ -331,6 +331,29 @@ export async function executeAgUiDetachedStart(
       threadId: input.request.threadId,
     });
 
+    // The session may have been cancelled while acceptance was pending, such as
+    // by an integration-auth park. Starting now would run a turn on an aborted
+    // signal that a provider could ignore. Report an ordinary cancellation to the
+    // host, but stay silent when a resumed start already owns the run id.
+    if (abortSignal.aborted) {
+      if (!options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) {
+        await options.onError?.({
+          runId: input.request.runId,
+          threadId: input.request.threadId,
+          error: new RunCancelledError(),
+        });
+      }
+      return Response.json(
+        {
+          accepted: true,
+          duplicate: false,
+          runId: input.request.runId,
+          threadId: input.request.threadId,
+        } satisfies AgUiDetachedStartAccepted,
+        { status: 202 },
+      );
+    }
+
     const detachedTask = (async () => {
       try {
         if (options.startDetachedExecution) {
