@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AG_UI_MAX_REQUEST_BODY_BYTES } from "./request-shared.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -8,6 +9,11 @@ import {
   RunCancelledError,
   RunResumeSessionManager,
 } from "../index.ts";
+
+// Every run control handler now requires an authority decision, so the
+// behavioural tests below state one explicitly. `run-control-authorization.test.ts`
+// covers what happens when the decision is negative or missing.
+const allowRunControl = () => true;
 
 describe("agent/ag-ui-run-control", () => {
   it("exports the canonical public resume signal schema", () => {
@@ -26,6 +32,60 @@ describe("agent/ag-ui-run-control", () => {
     );
   });
 
+  for (const operation of ["resume", "cancel"] as const) {
+    for (const callback of ["resolve", "authorize"] as const) {
+      it(`bounds standalone ${operation} bodies before the ${callback} callback reads them`, async () => {
+        let calls = 0;
+        let cancelled = false;
+        let pulls = 0;
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            pulls++;
+            controller.enqueue(new TextEncoder().encode(pulls <= 40 ? " ".repeat(65_536) : "{}"));
+            if (pulls === 41) controller.close();
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+        const createHandler = operation === "resume"
+          ? createAgUiResumeHandler
+          : createAgUiCancelHandler;
+        const handler = createHandler({
+          sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),
+          ...(callback === "resolve"
+            ? {
+              resolveRunId: async ({ request }: { request: Request }) => {
+                calls++;
+                await request.json();
+                return "run-large";
+              },
+            }
+            : {}),
+          authorizeRunControl: async ({ request }) => {
+            calls++;
+            await request.json();
+            return false;
+          },
+        });
+        const response = await handler(
+          new Request(
+            `https://example.test/api/runs/run-large${operation === "resume" ? "/resume" : ""}`,
+            {
+              method: operation === "resume" ? "POST" : "DELETE",
+              body,
+              ...{ duplex: "half" },
+            },
+          ),
+        );
+        assertEquals(response.status, 413);
+        assertEquals(calls, 0);
+        assertEquals(pulls <= 18, true);
+        assertEquals(cancelled, true);
+      });
+    }
+  }
+
   it("submits a tool result through the public resume handler", async () => {
     const sessionManager = new RunResumeSessionManager<{
       result: unknown;
@@ -34,7 +94,10 @@ describe("agent/ag-ui-run-control", () => {
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     const pending = sessionManager.waitForSignal("run_1", "tool_1");
 
-    const handler = createAgUiResumeHandler({ sessionManager });
+    const handler = createAgUiResumeHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
     const response = await handler(
       new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
@@ -52,12 +115,69 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(await pending, { result: { ok: true }, isError: false });
   });
 
+  it("preserves the resume body when authorization consumes its request", async () => {
+    const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+    sessionManager.startRun({ runId: "run_body", threadId: "thread" });
+    const pending = sessionManager.waitForSignal("run_body", "tool_body").catch(() => undefined);
+    const payload = { type: "tool_result", toolCallId: "tool_body", result: { text: "retained" } };
+    const handler = createAgUiResumeHandler({
+      sessionManager,
+      authorizeRunControl: async ({ request }) => {
+        assertEquals(await request.json(), payload);
+        return true;
+      },
+    });
+    try {
+      const response = await handler(
+        new Request("https://example.test/api/runs/run_body/resume", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }),
+      );
+      assertEquals(response.status, 200);
+      assertEquals(await pending, { result: { text: "retained" }, isError: false });
+    } finally {
+      sessionManager.reset();
+      await pending;
+    }
+  });
+
+  for (const customResolver of [false, true]) {
+    it(`cancels oversized upload sources when clones are unread (custom resolver=${customResolver})`, async () => {
+      const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(AG_UI_MAX_REQUEST_BODY_BYTES + 1));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const handler = createAgUiResumeHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+        ...(customResolver ? { resolveRunId: () => "run_large" } : {}),
+      });
+      const init = { method: "POST", body, duplex: "half" };
+      const response = await handler(
+        new Request("https://example.test/api/runs/run_large/resume", init),
+      );
+      assertEquals(response.status, 413);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(cancelled, true);
+    });
+  }
+
   it("cancels a waiting run through the public cancel handler", async () => {
     const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     const pending = sessionManager.waitForSignal("run_1", "tool_1");
 
-    const handler = createAgUiCancelHandler({ sessionManager });
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
     const response = await handler(
       new Request("https://example.com/api/runs/run_1", {
         method: "DELETE",
@@ -85,6 +205,7 @@ describe("agent/ag-ui-run-control", () => {
     void sessionManager.waitForSignal("run_1", "tool_1").catch(() => undefined);
 
     const handler = createAgUiCancelHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager,
       resolveRunId: ({ request, requestOrCtx }) => {
         assertEquals(requestOrCtx, request);
@@ -112,8 +233,52 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(response.status, 202);
   });
 
+  for (const operation of ["resume", "cancel"] as const) {
+    it(`withholds infrastructure headers from ${operation} authorizers on denial`, async () => {
+      const sessionManager = new RunResumeSessionManager<{ result: unknown; isError: boolean }>();
+      let observed: Record<string, string | null> | undefined;
+      const createHandler = operation === "resume"
+        ? createAgUiResumeHandler
+        : createAgUiCancelHandler;
+      const handler = createHandler({
+        sessionManager,
+        authorizeRunControl: ({ request }) => {
+          observed = {
+            authorization: request.headers.get("authorization"),
+            token: request.headers.get("x-token"),
+            project: request.headers.get("x-project-id"),
+            proxy: request.headers.get("x-forwarded-host"),
+          };
+          return false;
+        },
+      });
+      const response = await handler(
+        new Request(
+          `https://example.test/api/runs/run_private${operation === "resume" ? "/resume" : ""}`,
+          {
+            method: operation === "resume" ? "POST" : "DELETE",
+            headers: {
+              Authorization: "Bearer public-user",
+              "x-token": "synthetic-host-secret",
+              "x-project-id": "private-project",
+              "x-forwarded-host": "private-proxy",
+            },
+          },
+        ),
+      );
+      assertEquals(response.status, 403);
+      assertEquals(observed, {
+        authorization: "Bearer public-user",
+        token: null,
+        project: null,
+        proxy: null,
+      });
+    });
+  }
+
   it("accepts a request wrapper and returns 410 for inactive runs", async () => {
     const handler = createAgUiResumeHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),
     });
 
@@ -135,6 +300,7 @@ describe("agent/ag-ui-run-control", () => {
 
   it("returns 404 when the route does not include a run id", async () => {
     const handler = createAgUiResumeHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),
     });
 
@@ -156,6 +322,7 @@ describe("agent/ag-ui-run-control", () => {
 
   it("returns 400 for malformed resume payloads", async () => {
     const handler = createAgUiResumeHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager: new RunResumeSessionManager<{ result: unknown; isError: boolean }>(),
     });
 
@@ -190,7 +357,10 @@ describe("agent/ag-ui-run-control", () => {
     });
     await pending;
 
-    const handler = createAgUiResumeHandler({ sessionManager });
+    const handler = createAgUiResumeHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
     const response = await handler(
       new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
@@ -215,7 +385,10 @@ describe("agent/ag-ui-run-control", () => {
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     const pending = sessionManager.waitForSignal("run_1", "tool_1").catch(() => undefined);
 
-    const handler = createAgUiResumeHandler({ sessionManager });
+    const handler = createAgUiResumeHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
     const response = await handler(
       new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
@@ -245,6 +418,7 @@ describe("agent/ag-ui-run-control", () => {
 
   it("returns 204 when cancelling an already inactive run", async () => {
     const handler = createAgUiCancelHandler({
+      authorizeRunControl: allowRunControl,
       sessionManager: new RunResumeSessionManager<{ ok: boolean }>(),
     });
 

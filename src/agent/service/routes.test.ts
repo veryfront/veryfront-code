@@ -95,6 +95,8 @@ function createRuntimeAgentInvocationBody(): Record<string, unknown> {
 
 function createRouteSet(input: {
   authenticateRequest?: (request: Request) => Promise<HostedServiceAuthenticatedRequest | Response>;
+  verifyRunResumeToken?: (input: { token: string; runId: string }) => Promise<boolean>;
+  verifyRunCancellationToken?: (input: { token: string; runId: string }) => Promise<boolean>;
   prepareExecution?: (req: ParsedHostedChatRequest) => Promise<{ executionId: string }>;
   streamResponse?: Response;
   runtimeSource?: HostedRuntimeSourceIdentity | null;
@@ -123,7 +125,8 @@ function createRouteSet(input: {
         return { authToken: authorization.slice(7), userId: "user-1" };
       }),
     verifyProjectAccess: async () => ({ success: true }),
-    verifyRunCancellationToken: () => Promise.resolve(true),
+    verifyRunCancellationToken: input.verifyRunCancellationToken ?? (() => Promise.resolve(true)),
+    verifyRunResumeToken: input.verifyRunResumeToken,
     verifyRunEventAppendToken: input.verifyRunEventAppendToken ??
       (() => Promise.resolve(false)),
     prepareExecution: async (req) => {
@@ -149,9 +152,126 @@ Deno.test("agent service routes expose the default paths", () => {
   assertEquals(routeSet.routes.map((route) => `${route.method} ${route.path}`), [
     "POST /api/ag-ui",
     "DELETE /api/runs/:runId",
+    "POST /api/runs/:runId/resume",
+    "POST /api/control-plane/runs/:runId/resume",
     "POST /api/runs",
     "POST /api/control-plane/runs/:runId/stream",
   ]);
+});
+
+it("preserves resume signals when custom authentication consumes the body", async () => {
+  const payload = { type: "tool_result", toolCallId: "tool-body", result: { ok: true } };
+  const { routeSet, tracker } = createRouteSet({
+    authenticateRequest: async (request) => {
+      assertEquals(await request.json(), payload);
+      return { authToken: "fixture-token", userId: "user-1" };
+    },
+    verifyRunResumeToken: () => Promise.resolve(true),
+  });
+  const manager = tracker.sessionManager;
+  for (const route of routeSet.routes.filter((route) => route.path.endsWith("/resume"))) {
+    manager.startRun({ runId: "run-body", threadId: "thread" });
+    const pending = manager.waitForSignal("run-body", "tool-body").catch(() => undefined);
+    try {
+      const response = await route.handler(
+        createAuthenticatedRequest(route.path.replace(":runId", "run-body"), payload),
+        { runId: "run-body" },
+      );
+      assertEquals(response.status, 200);
+      assertEquals(await pending, { result: { ok: true }, isError: false });
+    } finally {
+      manager.reset();
+      await pending;
+    }
+  }
+});
+
+it("bounds resume bodies before custom authentication can consume them", async () => {
+  let authenticationCalls = 0;
+  const { routeSet } = createRouteSet({
+    authenticateRequest: async (request) => {
+      authenticationCalls++;
+      await request.json();
+      return new Response("unauthorized", { status: 401 });
+    },
+  });
+  for (const route of routeSet.routes.filter((route) => route.path.endsWith("/resume"))) {
+    for (const declaredLength of [false, true]) {
+      let pulls = 0;
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls++;
+          controller.enqueue(new TextEncoder().encode(pulls <= 40 ? " ".repeat(65_536) : "{}"));
+          if (pulls === 41) controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const response = await route.handler(
+        new Request(`https://agent.example.test${route.path.replace(":runId", "run-large")}`, {
+          method: "POST",
+          headers: declaredLength ? { "content-length": String(40 * 65_536 + 2) } : {},
+          body,
+          // Node's streaming Request requires duplex; Deno and Bun accept it.
+          ...{ duplex: "half" },
+        }),
+        { runId: "run-large" },
+      );
+      assertEquals(response.status, 413);
+      assertEquals(authenticationCalls, 0);
+      assertEquals(pulls <= 18, true);
+      assertEquals(cancelled, true);
+    }
+  }
+});
+
+it("returns controlled validation errors for missing and invalid UTF-8 resume bodies", async () => {
+  let authenticationCalls = 0;
+  const { routeSet } = createRouteSet({
+    authenticateRequest: () => {
+      authenticationCalls++;
+      return Promise.resolve(new Response("unauthorized", { status: 401 }));
+    },
+  });
+  for (const route of routeSet.routes.filter((route) => route.path.endsWith("/resume"))) {
+    for (const body of [undefined, new Uint8Array([0xff])]) {
+      const response = await route.handler(
+        new Request(`https://agent.example.test${route.path.replace(":runId", "run-invalid")}`, {
+          method: "POST",
+          body,
+        }),
+        { runId: "run-invalid" },
+      );
+      assertEquals(response.status, 400);
+      assertEquals(authenticationCalls, 0);
+    }
+  }
+});
+
+it("refuses resume when a custom route set omits exact-run verification", async () => {
+  const { routeSet, tracker } = createRouteSet();
+  const manager = tracker.sessionManager;
+  manager.startRun({ runId: "run-1", threadId: "thread" });
+  const pending = manager.waitForSignal("run-1", "tool-1").catch(() => undefined);
+  try {
+    for (const route of routeSet.routes.filter((route) => route.path.endsWith("/resume"))) {
+      const response = await route.handler(
+        createAuthenticatedRequest(route.path.replace(":runId", "run-1"), {
+          type: "tool_result",
+          toolCallId: "tool-1",
+          result: { ok: true },
+        }),
+        { runId: "run-1" },
+      );
+      assertEquals(response.status, 403);
+      assertEquals(manager.getRunStatus("run-1"), "waiting");
+    }
+  } finally {
+    manager.reset();
+    await pending;
+  }
 });
 
 for (const route of ["durable", "runtime", "cancel"] as const) {
@@ -1195,4 +1315,150 @@ it("carries no grant when no run-event token is presented", async () => {
 
   assertEquals(response.status, 202);
   assertEquals(preparedRequests[0]?.serverResolvedIntegrationToolNames, undefined);
+});
+
+// Regression: the control routes must spend exactly one verification per
+// request. Pre-verifying at the route and verifying again inside
+// `authorizeRunControl` double-spends a one-time grant and, because only the
+// authorizer is fail-closed, lets a throwing verifier escape as an error
+// instead of a controlled denial.
+const controlRouteCases = [
+  { label: "cancel", path: "/api/runs/:runId", method: "DELETE", operation: "cancel" },
+  { label: "durable resume", path: "/api/runs/:runId/resume", method: "POST", operation: "resume" },
+  {
+    label: "control-plane resume",
+    path: "/api/control-plane/runs/:runId/resume",
+    method: "POST",
+    operation: "resume",
+  },
+] as const;
+
+function createControlRouteSet(
+  routeCase: (typeof controlRouteCases)[number],
+  verify: (input: { token: string; runId: string }) => Promise<boolean>,
+) {
+  return createRouteSet(
+    routeCase.operation === "cancel"
+      ? { verifyRunCancellationToken: verify }
+      : { verifyRunResumeToken: verify },
+  );
+}
+
+function dispatchControlRequest(
+  routeSet: ReturnType<typeof createRouteSet>["routeSet"],
+  routeCase: (typeof controlRouteCases)[number],
+  runId: string,
+): Promise<Response> {
+  const route = routeSet.routes.find(
+    (candidate) => candidate.method === routeCase.method && candidate.path === routeCase.path,
+  );
+  if (!route) throw new Error(`missing control route ${routeCase.method} ${routeCase.path}`);
+  return Promise.resolve(
+    route.handler(
+      createAuthenticatedRequest(
+        routeCase.path.replace(":runId", runId),
+        { type: "tool_result", toolCallId: "tool-control", result: { ok: true } },
+        routeCase.method,
+      ),
+      { runId },
+    ),
+  );
+}
+
+for (const routeCase of controlRouteCases) {
+  it(`verifies a ${routeCase.label} request exactly once`, async () => {
+    let verifications = 0;
+    const { routeSet, tracker } = createControlRouteSet(routeCase, () => {
+      verifications++;
+      return Promise.resolve(true);
+    });
+    const manager = tracker.sessionManager;
+    manager.startRun({ runId: "run-control", threadId: "thread" });
+    const pending = routeCase.operation === "resume"
+      ? manager.waitForSignal("run-control", "tool-control").catch(() => undefined)
+      : undefined;
+    try {
+      const response = await dispatchControlRequest(routeSet, routeCase, "run-control");
+      assertEquals(response.status, routeCase.operation === "cancel" ? 202 : 200);
+      assertEquals(verifications, 1);
+    } finally {
+      manager.reset();
+      await pending;
+    }
+  });
+
+  it(`accepts a ${routeCase.label} whose verifier grants authority only once`, async () => {
+    let remaining = 1;
+    const { routeSet, tracker } = createControlRouteSet(routeCase, () => {
+      const granted = remaining > 0;
+      remaining--;
+      return Promise.resolve(granted);
+    });
+    const manager = tracker.sessionManager;
+    manager.startRun({ runId: "run-control", threadId: "thread" });
+    const pending = routeCase.operation === "resume"
+      ? manager.waitForSignal("run-control", "tool-control").catch(() => undefined)
+      : undefined;
+    try {
+      const response = await dispatchControlRequest(routeSet, routeCase, "run-control");
+      assertEquals(response.status, routeCase.operation === "cancel" ? 202 : 200);
+    } finally {
+      manager.reset();
+      await pending;
+    }
+  });
+
+  it(`denies a ${routeCase.label} whose verifier throws, without disturbing the run`, async () => {
+    const { routeSet, tracker } = createControlRouteSet(
+      routeCase,
+      () => Promise.reject(new Error("verifier unavailable")),
+    );
+    const manager = tracker.sessionManager;
+    const signal = manager.startRun({ runId: "run-control", threadId: "thread" });
+    const pending = routeCase.operation === "resume"
+      ? manager.waitForSignal("run-control", "tool-control").catch(() => undefined)
+      : undefined;
+    try {
+      const response = await dispatchControlRequest(routeSet, routeCase, "run-control");
+      assertEquals(response.status, 403);
+      assertEquals(signal.aborted, false);
+      assertEquals(
+        manager.getRunStatus("run-control"),
+        routeCase.operation === "cancel" ? "running" : "waiting",
+      );
+    } finally {
+      manager.reset();
+      await pending;
+    }
+  });
+}
+
+// Regression: bounding the control body must not also decode it. Cancellation
+// carries no JSON payload, so a custom authenticator doing a body-bound
+// signature over raw bytes has to still see those bytes.
+it("bounds an opaque cancellation body without decoding it", async () => {
+  const opaque = new Uint8Array([0xff, 0xfe, 0x00, 0x01, 0x80]);
+  let seenBytes: Uint8Array | undefined;
+  const { routeSet, tracker } = createRouteSet({
+    authenticateRequest: async (request) => {
+      seenBytes = new Uint8Array(await request.arrayBuffer());
+      return { authToken: "opaque-token", userId: "user-1" };
+    },
+  });
+  const manager = tracker.sessionManager;
+  const signal = manager.startRun({ runId: "run-opaque", threadId: "thread" });
+  try {
+    const response = await routeSet.handleDurableChatRunCancelRequest({
+      request: new Request("https://agent.example.test/api/runs/run-opaque", {
+        method: "DELETE",
+        body: opaque,
+      }),
+      runId: "run-opaque",
+    });
+    assertEquals(response.status, 202);
+    assertEquals(signal.aborted, true);
+    assertEquals(seenBytes, opaque);
+  } finally {
+    tracker.reset();
+  }
 });

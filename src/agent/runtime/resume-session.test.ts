@@ -9,6 +9,25 @@ import {
   WaitConflictError,
   WaitNotPendingError,
 } from "./resume-session.ts";
+import { authorizeRunControl } from "./run-control-authority.ts";
+
+/**
+ * The cancel-and-tombstone path takes verified authority rather than a run id,
+ * so a test that wants a tombstone has to go through the same authorizer a
+ * remote caller does.
+ */
+async function cancelWithAuthority(
+  manager: RunResumeSessionManager<{ ok: boolean }>,
+  runId: string,
+): Promise<boolean> {
+  const authority = await authorizeRunControl(() => true, {
+    request: new Request(`https://runtime.example.test/api/runs/${runId}`, { method: "DELETE" }),
+    runId,
+    operation: "cancel",
+  });
+  if (!authority) throw new Error("Test authorizer must grant authority");
+  return manager.cancelRunWithAuthority(authority);
+}
 
 function createManualTimers(): {
   callbacks: Array<() => void>;
@@ -92,13 +111,13 @@ describe("agent/runtime/resume-session", () => {
     );
   });
 
-  it("rejects a start that arrives after cancellation and expires the cancellation tombstone", () => {
+  it("rejects a start that arrives after cancellation and expires the cancellation tombstone", async () => {
     using time = new FakeTime(1_000);
     const manager = new RunResumeSessionManager<{ ok: boolean }>({
       cancellationTtlMs: 1,
     });
 
-    assertEquals(manager.cancelRun("run_1", { rememberIfMissing: true }), false);
+    assertEquals(await cancelWithAuthority(manager, "run_1"), false);
     assertThrows(
       () => manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }),
       RunCancelledError,
@@ -111,13 +130,13 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(signal.aborted, false);
   });
 
-  it("bounds remembered cancellations while preserving the newest tombstone", () => {
+  it("bounds remembered cancellations while preserving the newest tombstone", async () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>({
       maxCancellationTombstones: 1,
     });
 
-    assertEquals(manager.cancelRun("run_1", { rememberIfMissing: true }), false);
-    assertEquals(manager.cancelRun("run_2", { rememberIfMissing: true }), false);
+    assertEquals(await cancelWithAuthority(manager, "run_1"), false);
+    assertEquals(await cancelWithAuthority(manager, "run_2"), false);
 
     const first = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     assertEquals(first.aborted, false);

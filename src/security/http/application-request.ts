@@ -27,6 +27,9 @@ const numberIsSafeInteger = NativeNumber.isSafeInteger;
 const objectKeys = Object.keys;
 const regexpTest = RegExp.prototype.test;
 const requestClone = NativeRequest.prototype.clone;
+const requestBodyGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "body")!.get!;
+const streamLockedGetter = getOwnPropertyDescriptor(ReadableStream.prototype, "locked")!.get!;
+const streamCancel = ReadableStream.prototype.cancel;
 const setAdd = NativeSet.prototype.add;
 const setHas = NativeSet.prototype.has;
 const requestHeadersGetter = getOwnPropertyDescriptor(
@@ -222,6 +225,14 @@ export function createApplicationRequestHeaders(
   return applicationHeaders;
 }
 
+/** Release an unread request branch without waiting for the paired body reader. */
+export function cancelUnusedRequestBody(request: Request): void {
+  const body = apply(requestBodyGetter, request, []) as ReadableStream | null;
+  if (body && !apply(streamLockedGetter, body, [])) {
+    void apply(streamCancel, body, []).catch(() => {});
+  }
+}
+
 /**
  * Detach a Request before exposing it to project-controlled code.
  *
@@ -239,7 +250,11 @@ export function createApplicationRequest(
   const applicationHeaders = createApplicationRequestHeaders(headers, options);
   assertNativeHeaderProcessing();
   assertNativeRequestDefaults();
-  return new NativeRequest(cloned, {
+  const applicationRequest = new NativeRequest(cloned, {
     headers: applicationHeaders,
   });
+  // Bun clones this intermediate body, whereas other runtimes transfer it.
+  // Release the remaining unlocked branch so cancellation reaches the source.
+  cancelUnusedRequestBody(cloned);
+  return applicationRequest;
 }

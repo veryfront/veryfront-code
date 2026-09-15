@@ -1,4 +1,10 @@
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { authorizeRunControl } from "../runtime/run-control-authority.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AGENT_NOT_FOUND,
@@ -245,7 +251,17 @@ describe("agent/hosted-durable-chat-run-start", () => {
     const conversationId = req.conversationId;
     const execution = { id: "execution-1" };
     const cleanupCalls: unknown[] = [];
-    tracker.sessionManager.cancelRun(runId, { rememberIfMissing: true });
+    {
+      const authority = await authorizeRunControl(() => true, {
+        request: new Request(`https://runtime.example.test/api/runs/${runId}`, {
+          method: "DELETE",
+        }),
+        runId,
+        operation: "cancel",
+      });
+      assertExists(authority);
+      tracker.sessionManager.cancelRunWithAuthority(authority);
+    }
 
     const response = await executeHostedDurableChatRun({
       req,

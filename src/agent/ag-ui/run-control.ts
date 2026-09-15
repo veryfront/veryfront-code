@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
+  boundAgUiRequestBody,
   createAgUiBodyLimitErrorResponse,
   extractRequest,
   parseAgUiJsonBody,
@@ -11,7 +12,14 @@ import {
   WaitConflictError,
   WaitNotPendingError,
 } from "../runtime/resume-session.ts";
-import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  cancelUnusedRequestBody,
+  createApplicationRequest,
+} from "#veryfront/security/http/application-request.ts";
+import {
+  authorizeRunControl,
+  type RunControlAuthorizer,
+} from "../runtime/run-control-authority.ts";
 
 const RESUME_PATH_REGEX = /^\/api\/runs\/([^/]+)\/resume$/;
 const CANCEL_PATH_REGEX = /^\/api\/runs\/([^/]+)$/;
@@ -48,6 +56,14 @@ export interface AgUiRunControlHandlerOptions {
   resolveRunId?:
     | ((input: { request: Request; requestOrCtx: unknown }) => string | null)
     | ((input: { request: Request; requestOrCtx: unknown }) => Promise<string | null>);
+  /**
+   * Decide whether this request may control this exact run. Required: these
+   * handlers reach a run registry keyed by run id alone, so a surface that
+   * mounts one without an authority decision would let any authenticated
+   * caller control another caller's run. Return `true` only for a caller whose
+   * permission for this run and operation has been verified.
+   */
+  authorizeRunControl: RunControlAuthorizer;
 }
 
 /** Options accepted by AG-UI resume handler. */
@@ -66,12 +82,16 @@ async function resolveRunId(
   regex: RegExp,
 ): Promise<string | null> {
   const applicationRequest = options?.resolveRunId ? createApplicationRequest(request) : request;
-  const explicit = await options?.resolveRunId?.({
-    request: applicationRequest,
-    requestOrCtx: applicationRequest,
-  });
-  if (explicit) return explicit;
-  return getRunId(new URL(request.url).pathname, regex);
+  try {
+    const explicit = await options?.resolveRunId?.({
+      request: applicationRequest,
+      requestOrCtx: applicationRequest,
+    });
+    if (explicit) return explicit;
+    return getRunId(new URL(request.url).pathname, regex);
+  } finally {
+    if (applicationRequest !== request) cancelUnusedRequestBody(applicationRequest);
+  }
 }
 
 /** Handler for create AG-UI resume. */
@@ -79,16 +99,31 @@ export function createAgUiResumeHandler(
   options: AgUiResumeHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response> {
   return async function POST(requestOrCtx: unknown): Promise<Response> {
-    const request = extractRequest(requestOrCtx);
+    const request = await boundAgUiRequestBody(
+      extractRequest(requestOrCtx),
+      "Invalid AG-UI run control request",
+      true,
+    );
+    if (request instanceof Response) return request;
     const runId = await resolveRunId(request, options, RESUME_PATH_REGEX);
 
     if (!runId) {
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
+    const authorizationRequest = createApplicationRequest(request);
+    const authority = await authorizeRunControl(options.authorizeRunControl, {
+      request: authorizationRequest,
+      runId,
+      operation: "resume",
+    }).finally(() => cancelUnusedRequestBody(authorizationRequest));
+    if (!authority) {
+      return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+    }
+
     try {
       const parsed = getAgUiResumeSignalSchema().parse(await parseAgUiJsonBody(request));
-      const outcome = options.sessionManager.submitSignal(runId, {
+      const outcome = options.sessionManager.submitSignalWithAuthority(authority, {
         waitKey: parsed.toolCallId,
         value: {
           result: parsed.result,
@@ -149,14 +184,29 @@ export function createAgUiCancelHandler<T = unknown>(
   options: AgUiCancelHandlerOptions<T>,
 ): (requestOrCtx: unknown) => Promise<Response> {
   return async function DELETE(requestOrCtx: unknown): Promise<Response> {
-    const request = extractRequest(requestOrCtx);
+    const request = await boundAgUiRequestBody(
+      extractRequest(requestOrCtx),
+      "Invalid AG-UI run control request",
+      true,
+    );
+    if (request instanceof Response) return request;
     const runId = await resolveRunId(request, options, CANCEL_PATH_REGEX);
 
     if (!runId) {
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
-    const accepted = options.sessionManager.cancelRun(runId, { rememberIfMissing: true });
+    const authorizationRequest = createApplicationRequest(request);
+    const authority = await authorizeRunControl(options.authorizeRunControl, {
+      request: authorizationRequest,
+      runId,
+      operation: "cancel",
+    }).finally(() => cancelUnusedRequestBody(authorizationRequest));
+    if (!authority) {
+      return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
+    }
+
+    const accepted = options.sessionManager.cancelRunWithAuthority(authority);
     if (accepted) {
       return Response.json({ accepted: true }, { status: 202 });
     }

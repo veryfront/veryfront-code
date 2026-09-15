@@ -175,6 +175,30 @@ const PROJECT_CANCELLATION_SCOPES = ["projects:read"] as const;
 // the two to stay equal.
 const AUTHENTICATED_USER_CANCELLATION_SCOPES = ["read", "write", "delete"] as const;
 
+// Cross-repo claim contract for the resume bearer `resumeRuntimeAgentRun`
+// signs (veryfront-api `src/usecases/agents/runtime-agent-run-client.ts`),
+// pinned by `tests/fixtures/contracts/api-run-resume-jwt-payload.json`.
+//
+// Resume has no separate mint: the API signs it with the same run-bound
+// service credentials as the stream, choosing the run-scoped shape when the
+// run carries an actor service account and grant, and the project-scoped shape
+// otherwise. `resumeRuntimeAgentRun` refuses a projectless run before minting,
+// so a resume bearer always carries a project.
+const RUN_SCOPED_SERVICE_ACCOUNT_TOKEN_USE = "run_scoped_service_account";
+// veryfront-api `RUNTIME_SCOPES.runsResume`. The project-scoped mint sorts this
+// set and the run-scoped mint does not, so the comparison is order insensitive.
+const RUN_RESUME_SCOPES = [
+  "projects:read",
+  "files:read",
+  "pages:read",
+  "components:read",
+  "cache:read",
+  "cache:write",
+  "conversations:read",
+  "conversations:write",
+  "runs:read",
+] as const;
+
 function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
   return Array.isArray(scopes) &&
     scopes.length === expected.length &&
@@ -183,17 +207,22 @@ function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
     expected.every((requiredScope) => scopes.includes(requiredScope));
 }
 
-function hasExactCancellationScopes(scopes: unknown, expected: readonly string[]): boolean {
+function hasExactCancellationScopes(
+  scopes: unknown,
+  expected: readonly string[],
+  label = "Cancellation scopes",
+): boolean {
   if (!ArrayIsArray(scopes)) return false;
-  if (readOwnDataProperty(scopes, "length", "Cancellation scopes") !== expected.length) {
+  if (readOwnDataProperty(scopes, "length", label) !== expected.length) {
     return false;
   }
-  // JWT arrays must contain each required scope exactly once. Reading descriptors
-  // avoids inherited entries, getters, iterators and overridable array methods.
+  // JWT arrays must contain each required scope exactly once, in any order.
+  // Reading descriptors avoids inherited entries, getters, iterators and
+  // overridable array methods.
   for (let expectedIndex = 0; expectedIndex < expected.length; expectedIndex++) {
     let matches = 0;
     for (let index = 0; index < expected.length; index++) {
-      if (readOwnDataProperty(scopes, index, "Cancellation scopes") === expected[expectedIndex]) {
+      if (readOwnDataProperty(scopes, index, label) === expected[expectedIndex]) {
         matches++;
       }
     }
@@ -225,6 +254,8 @@ export type HostedServiceAuthOptions = {
 export type HostedServiceAuth = {
   /** Verify the API's signed exact-run cancellation bearer; ordinary user tokens are insufficient. */
   verifyRunCancellationToken: (input: { token: string; runId: string }) => Promise<boolean>;
+  /** Verify the API's signed exact-run resume bearer; ordinary user tokens are insufficient. */
+  verifyRunResumeToken: (input: { token: string; runId: string }) => Promise<boolean>;
   authenticateRequest: (
     request: Request,
   ) => Promise<HostedServiceAuthenticatedRequest | Response>;
@@ -513,51 +544,86 @@ export function createHostedServiceAuth(
     };
   }
 
+  /**
+   * Verify one run control bearer and expose its claims as own data reads.
+   *
+   * Cancel and resume share every step up to the per-operation claim rules:
+   * the same thenable-inheritance guards, the same configured public key, the
+   * same RS256-pinned verification, and the same exact-run binding that closes
+   * the gap between verifying a token and acting on it. Returns `null` for any
+   * failure so a caller cannot distinguish a missing key from a bad signature.
+   */
+  async function readRunControlClaims(
+    input: { token: string; runId: string },
+    operationLabel: string,
+  ): Promise<
+    | null
+    | {
+      serverId: unknown;
+      userId: string;
+      scope: unknown;
+      tokenUse: unknown;
+      actorType: unknown;
+      serviceAccountId: unknown;
+      projectId: unknown;
+      read: (key: PropertyKey, required?: boolean) => unknown;
+    }
+  > {
+    if (!isSafeHostedJwtVerificationEnvironment(input)) return null;
+    const config = options.getConfig();
+    if (!isSafeHostedJwtVerificationEnvironment(config)) return null;
+    const token = readOwnDataProperty(input, "token", `${operationLabel} request`);
+    const runId = readOwnDataProperty(input, "runId", `${operationLabel} request`);
+    const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
+    if (
+      typeof publicKey !== "string" || !publicKey ||
+      typeof token !== "string" || !token || typeof runId !== "string" || !runId
+    ) return null;
+    const serverId = readOwnDataProperty(
+      config,
+      "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+      "Service config",
+      false,
+    );
+    const authProvider = await getAuthProvider(options);
+    if (!authProvider || !isSafeHostedJwtVerificationEnvironment(authProvider)) return null;
+    const claims = await authProvider.verifyWithPublicKey(token, publicKey, {
+      algorithms: ["RS256"],
+    });
+    if (!isSafeHostedJwtVerificationEnvironment(claims)) return null;
+    const read = (key: PropertyKey, required = true) =>
+      readOwnDataProperty(claims, key, `${operationLabel} claims`, required);
+    // Exact-run binding, then the claims and guards both operations share.
+    // Everything a caller reads below comes from a token already proven to name
+    // this run, to be unexpired, and to carry no `scopes` array (the run-event
+    // writer's V2 shape, which is not run control authority).
+    const userId = read("userId");
+    const exp = read("exp");
+    if (
+      read("runId") !== runId || typeof userId !== "string" || !userId ||
+      typeof exp !== "number" || !NumberIsFinite(exp) || exp * 1000 <= DateNow() ||
+      read("scopes", false) !== undefined
+    ) return null;
+    return {
+      serverId,
+      userId,
+      scope: read("scope"),
+      tokenUse: read("tokenUse", false),
+      actorType: read("actorType", false),
+      serviceAccountId: read("serviceAccountId", false),
+      projectId: read("projectId", false),
+      read,
+    };
+  }
+
   async function verifyRunCancellationToken(
     input: { token: string; runId: string },
   ): Promise<boolean> {
-    if (!isSafeHostedJwtVerificationEnvironment(input)) return false;
-    const config = options.getConfig();
     try {
-      if (!isSafeHostedJwtVerificationEnvironment(config)) return false;
-      const token = readOwnDataProperty(input, "token", "Cancellation request");
-      const runId = readOwnDataProperty(input, "runId", "Cancellation request");
-      const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
-      if (
-        typeof publicKey !== "string" || !publicKey ||
-        typeof token !== "string" || !token || typeof runId !== "string" || !runId
-      ) return false;
-      const serverId = readOwnDataProperty(
-        config,
-        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
-        "Service config",
-        false,
-      );
-      const authProvider = await getAuthProvider(options);
-      if (!authProvider || !isSafeHostedJwtVerificationEnvironment(authProvider)) return false;
-      const claims = await authProvider.verifyWithPublicKey(token, publicKey, {
-        algorithms: ["RS256"],
-      });
-      if (!isSafeHostedJwtVerificationEnvironment(claims)) return false;
-      const claimRunId = readOwnDataProperty(claims, "runId", "Cancellation claims");
-      const userId = readOwnDataProperty(claims, "userId", "Cancellation claims");
-      const exp = readOwnDataProperty(claims, "exp", "Cancellation claims");
-      const scope = readOwnDataProperty(claims, "scope", "Cancellation claims");
-      const tokenUse = readOwnDataProperty(claims, "tokenUse", "Cancellation claims", false);
-      const scopes = readOwnDataProperty(claims, "scopes", "Cancellation claims", false);
-      const actorType = readOwnDataProperty(claims, "actorType", "Cancellation claims", false);
-      const serviceAccountId = readOwnDataProperty(
-        claims,
-        "serviceAccountId",
-        "Cancellation claims",
-        false,
-      );
-      const projectId = readOwnDataProperty(claims, "projectId", "Cancellation claims", false);
-      if (
-        claimRunId !== runId || typeof userId !== "string" || !userId ||
-        typeof exp !== "number" || !NumberIsFinite(exp) ||
-        exp * 1000 <= DateNow() || scopes !== undefined
-      ) return false;
+      const verified = await readRunControlClaims(input, "Cancellation");
+      if (!verified) return false;
+      const { serverId, userId, scope, tokenUse, actorType, serviceAccountId, projectId } =
+        verified;
       // Match the two existing mintRuntimeCancellationAuthToken contracts. The
       // API authorizes the actor before minting this exact-run server authority.
       if (actorType === "service_account") {
@@ -574,6 +640,39 @@ export function createHostedServiceAuth(
       return tokenUse === undefined && actorType === undefined &&
         serviceAccountId === undefined && projectId === undefined &&
         hasExactCancellationScopes(scope, AUTHENTICATED_USER_CANCELLATION_SCOPES);
+    } catch {
+      return false;
+    }
+  }
+
+  async function verifyRunResumeToken(
+    input: { token: string; runId: string },
+  ): Promise<boolean> {
+    try {
+      const verified = await readRunControlClaims(input, "Resume");
+      if (!verified) return false;
+      const { serverId, userId, scope, tokenUse, actorType, serviceAccountId, projectId, read } =
+        verified;
+      const grantId = read("grantId", false);
+      if (
+        actorType !== "service_account" || userId !== serviceAccountId ||
+        typeof projectId !== "string" || !projectId ||
+        !hasExactCancellationScopes(scope, RUN_RESUME_SCOPES, "Resume scopes")
+      ) return false;
+      // The run-scoped shape is the actor's own credential for this run, minted
+      // only against a live agent access grant. The API authorizes the actor
+      // before minting it, so the grant is recorded here, not re-derived: no
+      // relation value is required, which keeps the collaborator policy the
+      // API's decision rather than a creator-only rule invented here.
+      if (tokenUse === RUN_SCOPED_SERVICE_ACCOUNT_TOKEN_USE) {
+        return typeof grantId === "string" && grantId.length > 0;
+      }
+      // The project-scoped shape is the `veryfront-server` credential, which
+      // carries no grant. Every other use (the writer, the inference uses) is a
+      // different authority and must not resume.
+      return tokenUse === PROJECT_SCOPED_SERVICE_ACCOUNT_TOKEN_USE &&
+        typeof serverId === "string" && !!serverId && serviceAccountId === serverId &&
+        grantId === undefined;
     } catch {
       return false;
     }
@@ -709,6 +808,7 @@ export function createHostedServiceAuth(
 
   return {
     verifyRunCancellationToken,
+    verifyRunResumeToken,
     authenticateRequest,
     getTokenFromRequest: getHostedServiceTokenFromRequest,
     verifyJwt,
