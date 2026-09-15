@@ -405,6 +405,96 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(manager.getRunStatus("run_1"), "running");
   });
 
+  /**
+   * A park cancel can find no session: the parked execution already ended while
+   * a retry of its original start is still on its way. That retry must not run
+   * the parked turn again, but the resume, dispatched from the parked event or
+   * later, must still start.
+   */
+  it("refuses a delayed start of the parked generation after a park cancel and starts the resume", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const authority = await authorizeRunControl(() => true, {
+      request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+      runId: "run_1",
+      operation: "cancel",
+    });
+    if (!authority) throw new Error("Test authorizer must grant authority");
+
+    assertEquals(
+      manager.cancelRunWithAuthority(authority, {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: 20,
+      }),
+      false,
+    );
+
+    assertThrows(
+      () =>
+        manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 10 }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+    assertThrows(
+      () => manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 20 });
+    assertEquals(manager.getRunStatus("run_1"), "running");
+  });
+
+  it("keeps the strictest remembered cancellation when park cancels follow", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const grant = async (runId: string) => {
+      const authority = await authorizeRunControl(() => true, {
+        request: new Request(`https://runtime.example.test/api/runs/${runId}`, {
+          method: "DELETE",
+        }),
+        runId,
+        operation: "cancel",
+      });
+      if (!authority) throw new Error("Test authorizer must grant authority");
+      return authority;
+    };
+    const parkCancel = async (runId: string, parkedAfterEventId: number) =>
+      manager.cancelRunWithAuthority(await grant(runId), {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: parkedAfterEventId,
+      });
+
+    assertEquals(await cancelWithAuthority(manager, "run_cancelled"), false);
+    await parkCancel("run_cancelled", 20);
+    assertThrows(
+      () =>
+        manager.startRun({
+          runId: "run_cancelled",
+          threadId: crypto.randomUUID(),
+          startedFromEventId: 30,
+        }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+
+    await parkCancel("run_parked_twice", 40);
+    await parkCancel("run_parked_twice", 20);
+    assertThrows(
+      () =>
+        manager.startRun({
+          runId: "run_parked_twice",
+          threadId: crypto.randomUUID(),
+          startedFromEventId: 30,
+        }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+    manager.startRun({
+      runId: "run_parked_twice",
+      threadId: crypto.randomUUID(),
+      startedFromEventId: 40,
+    });
+    assertEquals(manager.getRunStatus("run_parked_twice"), "running");
+  });
+
   it("reports a run superseded only when another session owns its run id", () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>();
     const parkedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });

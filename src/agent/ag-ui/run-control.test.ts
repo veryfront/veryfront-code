@@ -545,6 +545,42 @@ describe("agent/ag-ui-run-control", () => {
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
 
+  it("refuses a delayed start of the parked generation after a park cancellation finds no session", async () => {
+    const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+    const handler = createAgUiCancelHandler({
+      sessionManager,
+      authorizeRunControl: allowRunControl,
+    });
+
+    const response = await handler(
+      new Request(
+        "https://example.com/api/runs/run_1?reason=integration_auth_park&parked_after_event_id=20",
+        { method: "DELETE" },
+      ),
+    );
+
+    assertEquals(response.status, 204);
+    let refused: unknown;
+    try {
+      sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 10,
+      });
+    } catch (error) {
+      refused = error;
+    }
+    assertEquals(refused instanceof RunCancelledError, true);
+    assertExists(
+      sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 20,
+      }),
+      "the resume start must not be refused",
+    );
+  });
+
   /**
    * The park reason arrives in the request, so it only changes what an
    * authorized cancellation remembers. Without authority for the run the cancel

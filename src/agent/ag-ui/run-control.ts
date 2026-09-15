@@ -220,8 +220,9 @@ export function createAgUiCancelHandler<T = unknown>(
     }
 
     // A park stops the turn so a waiting run cannot finish, then resumes the same
-    // run later. Remembering that cancellation would refuse the resume start as a
-    // delayed start of a cancelled run, so a park cancellation is not remembered.
+    // run later. Remembering that cancellation outright would refuse the resume
+    // start as a delayed start of a cancelled run, so a park cancellation only
+    // refuses delayed starts dispatched from before the parked event.
     // The authority check above already limits this to a verified caller.
     const parkCancellation =
       new URL(request.url).searchParams.get("reason") === INTEGRATION_AUTH_PARK_CANCEL_REASON;
