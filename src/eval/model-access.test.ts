@@ -115,11 +115,11 @@ describe("eval/model-access", () => {
     assertEquals(classifyEvalModelAccessDenial(runLimit), undefined);
   });
 
-  it("classifies the gateway project-required 400 with the gateway message", async () => {
+  it("classifies the gateway project-required 400 with fixed gateway wording", async () => {
     const error = await buildProviderError(
       "anthropic",
       jsonResponse(400, {
-        error: "A project is required to use Veryfront-managed AI inference",
+        error: "echoed prompt text sk-live-123",
         code: "gateway_project_required",
       }),
     );

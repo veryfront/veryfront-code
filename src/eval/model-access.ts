@@ -24,9 +24,8 @@ const DENIAL_ERRORS = {
 } as const;
 
 const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
-const GATEWAY_PROJECT_REQUIRED_FALLBACK_MESSAGE =
+const GATEWAY_PROJECT_REQUIRED_MESSAGE =
   "A project is required to use Veryfront-managed AI inference";
-const MAX_GATEWAY_MESSAGE_LENGTH = 200;
 
 /**
  * Account-wide billing or entitlement denials. `RESOURCE_LIMIT_EXCEEDED` is
@@ -77,30 +76,25 @@ function parseJsonBody(body: string): unknown {
  */
 /**
  * The gateway's project-required rejection, identified by its structured
- * `code` in the preserved response body. The gateway's own `error` text is kept
- * when it is a short string, so the user sees the gateway's wording.
+ * `code` in the preserved response body. The detail always uses the gateway's
+ * known wording rather than the response's `error` field: a custom provider
+ * endpoint can return the same code with arbitrary text, which must not reach
+ * user-facing output.
  */
-function classifyProjectRequired(
-  responseBody: string,
-  options: { useGatewayMessage: boolean },
-): EvalModelAccessDenial | undefined {
+function classifyProjectRequired(responseBody: string): EvalModelAccessDenial | undefined {
   const body = parseJsonBody(responseBody);
   if (readProperty(body, "code") !== GATEWAY_PROJECT_REQUIRED_CODE) return undefined;
-  const gatewayMessage = options.useGatewayMessage ? readProperty(body, "error") : undefined;
   return {
     kind: "project-required",
     code: GATEWAY_PROJECT_REQUIRED_CODE,
-    message: typeof gatewayMessage === "string" && gatewayMessage.trim() &&
-        gatewayMessage.length <= MAX_GATEWAY_MESSAGE_LENGTH
-      ? gatewayMessage.trim()
-      : GATEWAY_PROJECT_REQUIRED_FALLBACK_MESSAGE,
+    message: GATEWAY_PROJECT_REQUIRED_MESSAGE,
   };
 }
 
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
   if (typeof error.responseBody !== "string") return undefined;
   if (error.status === 400) {
-    return classifyProjectRequired(error.responseBody, { useGatewayMessage: true });
+    return classifyProjectRequired(error.responseBody);
   }
   if (error.status !== 402) return undefined;
   const parsed = parseKnownProblemBody(parseJsonBody(error.responseBody));
@@ -163,7 +157,7 @@ export function classifyAgentServiceModelAccessDenial(input: {
   try {
     if (input.status === 400 && input.body) {
       // The endpoint's own text is not trusted for user-facing output.
-      const projectRequired = classifyProjectRequired(input.body, { useGatewayMessage: false });
+      const projectRequired = classifyProjectRequired(input.body);
       if (projectRequired) return projectRequired;
     }
     if (input.status === 402 && input.body) {
