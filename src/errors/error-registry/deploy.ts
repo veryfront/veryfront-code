@@ -46,7 +46,20 @@ export const ENVIRONMENT_NOT_ROUTABLE = defineError({
   status: 400,
   title: "Environment name has no Veryfront-hosted address",
   suggestion:
-    "Deploy to preview, staging, or production, or attach a custom domain to this environment in Studio",
+    "Deploy to staging or production, or attach a custom domain to this environment in Studio. Preview accepts no deployments: veryfront push updates it",
+});
+
+/**
+ * Veryfront's managed Preview environment renders the latest source on the
+ * main branch. It has no release to swap, so the API refuses deployments to it.
+ */
+export const PREVIEW_DEPLOYMENT_NOT_ALLOWED = defineError({
+  slug: "preview-deployment-not-allowed",
+  category: "DEPLOY",
+  status: 400,
+  title: "Preview does not accept deployments",
+  suggestion:
+    "Preview serves the latest push to main: run veryfront push to update it, or deploy to staging or production",
 });
 
 export const RELEASE_MISSING_VERSION = defineError({
@@ -148,6 +161,7 @@ export const DEPLOY_REGISTRY = {
   "production-build-required": PRODUCTION_BUILD_REQUIRED,
   "environment-not-found": ENVIRONMENT_NOT_FOUND,
   "environment-not-routable": ENVIRONMENT_NOT_ROUTABLE,
+  "preview-deployment-not-allowed": PREVIEW_DEPLOYMENT_NOT_ALLOWED,
   "release-missing-version": RELEASE_MISSING_VERSION,
   "release-build-timeout": RELEASE_BUILD_TIMEOUT,
   "deployment-verification-timeout": DEPLOYMENT_VERIFICATION_TIMEOUT,

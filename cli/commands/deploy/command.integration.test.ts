@@ -1955,7 +1955,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
 
       if (
         request.method === "GET" &&
-        url.hostname.endsWith(".preview.veryfront.com")
+        url.hostname.endsWith(".production.veryfront.com")
       ) {
         environmentUrlReads++;
         return new Response("ready");
@@ -1987,7 +1987,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
         return Response.json({
           data: [{
             id: ENVIRONMENT_ID,
-            name: "preview",
+            name: "production",
             project_id: PROJECT_ID,
             protected: false,
             deployment: {
@@ -2070,7 +2070,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
       deployCommand({
         projectDir,
         branch: "main",
-        env: "preview",
+        env: "production",
         releaseName: `github-main-${actualSha}`,
         dryRun: false,
         force: true,
