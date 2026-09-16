@@ -852,7 +852,7 @@ No model access for eval run.
 No project for eval model requests.
 
 - **HTTP status:** 400
-- **What to do:** Set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts, then run veryfront eval again
+- **What to do:** Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again
 
 ### eval-model-spend-limit-exceeded
 

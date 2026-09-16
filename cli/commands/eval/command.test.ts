@@ -2499,6 +2499,49 @@ describe("eval CLI command helpers", () => {
     assertEquals(warned(afterCreditDenial, "evalrun_credit_then_401"), true);
   });
 
+  it("names the configured project slug when the gateway refuses it", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    Deno.env.set("VERYFRONT_PROJECT_SLUG", "typo-project");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "Gateway billing group not found",
+            code: "gateway_billing_group_not_found",
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    const denied = createEvalModelAccessDeniedError(
+      "eval:typo",
+      {
+        kind: "project-required",
+        code: "gateway_project_required",
+        message: "A project is required to use Veryfront-managed AI inference",
+      },
+      undefined,
+    );
+
+    let thrown: unknown;
+    await captureConsoleOutput(async () => {
+      try {
+        await runEvalWithGatewayBillingGroup("evalrun_typo_project", () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          throw denied;
+        });
+      } catch (error) {
+        thrown = error;
+      }
+    });
+
+    assertInstanceOf(thrown, VeryfrontError);
+    assertEquals(thrown.slug, "eval-project-required");
+    assertStringIncludes(thrown.detail ?? "", 'found no project "typo-project"');
+    assertEquals(thrown.cause, denied);
+  });
+
   it("retries gateway billing finalization while usage capture is not ready", async () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");

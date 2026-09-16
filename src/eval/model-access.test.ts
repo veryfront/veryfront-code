@@ -17,6 +17,7 @@ import {
   classifyAgentServiceModelAccessDenial,
   classifyEvalModelAccessDenial,
   createEvalModelAccessDeniedError,
+  explainConfiguredProjectDenial,
   getEvalModelAccessDenialKind,
   isEvalModelAccessDeniedError,
 } from "./model-access.ts";
@@ -223,7 +224,7 @@ describe("eval/model-access", () => {
     );
     assertEquals(
       evalError.suggestion,
-      "Set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts, then run veryfront eval again",
+      "Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again",
     );
     assertEquals(isEvalModelAccessDeniedError(evalError), true);
   });
@@ -530,5 +531,54 @@ describe("eval/model-access", () => {
 
     markVeryfrontGatewayTransportFailure(blocked);
     assertEquals(classifyEvalModelAccessDenial(blocked)?.kind, "egress-blocked");
+  });
+
+  describe("explainConfiguredProjectDenial", () => {
+    const projectRequired = () =>
+      createEvalModelAccessDeniedError("eval:triage", {
+        kind: "project-required",
+        code: "gateway_project_required",
+        message: "A project is required to use Veryfront-managed AI inference",
+      }, undefined);
+
+    it("names the slug that was sent without confirming the project exists", () => {
+      const original = projectRequired();
+      const explained = explainConfiguredProjectDenial(
+        original,
+        " agentic-email-processing-outlok ",
+      );
+
+      if (!(explained instanceof VeryfrontError)) throw new Error("expected a VeryfrontError");
+      assertEquals(explained.slug, "eval-project-required");
+      assertEquals(
+        explained.detail,
+        'Eval "eval:triage" stopped at its first refused model request: Veryfront Cloud found no project ' +
+          '"agentic-email-processing-outlok" that this credential can use (it does not exist or you do not have access)',
+      );
+      assertEquals(explained.cause, original);
+      assertEquals(isEvalModelAccessDeniedError(explained), true);
+    });
+
+    it("bounds a long slug", () => {
+      const explained = explainConfiguredProjectDenial(projectRequired(), "a".repeat(150));
+
+      if (!(explained instanceof VeryfrontError)) throw new Error("expected a VeryfrontError");
+      assertEquals(explained.detail?.includes(`"${"a".repeat(100)}..."`), true);
+    });
+
+    it("leaves the error alone without a slug or for other denials", () => {
+      const original = projectRequired();
+      const billing = createEvalModelAccessDeniedError("eval:triage", {
+        kind: "billing",
+        code: "INSUFFICIENT_CREDITS",
+        message: "Insufficient AI credits",
+      }, undefined);
+      const other = new Error("boom");
+
+      assertEquals(explainConfiguredProjectDenial(original, undefined), original);
+      assertEquals(explainConfiguredProjectDenial(original, "  "), original);
+      assertEquals(explainConfiguredProjectDenial(billing, "some-project"), billing);
+      assertEquals(explainConfiguredProjectDenial(other, "some-project"), other);
+    });
   });
 });

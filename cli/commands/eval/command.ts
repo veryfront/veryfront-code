@@ -54,6 +54,7 @@ import {
 import { runEvalReport } from "../../../src/eval/run-report.ts";
 import {
   type EvalModelAccessDenialKind,
+  explainConfiguredProjectDenial,
   getEvalModelAccessDenialKind,
 } from "../../../src/eval/model-access.ts";
 import {
@@ -429,10 +430,14 @@ export async function runEvalWithGatewayBillingGroup(
 ): Promise<EvalReport> {
   const currentContext = getCurrentVeryfrontCloudContext();
   const billingContext = { ...(currentContext ?? {}), billingGroupId };
+  // The slug the model requests carried, so a project-required refusal can
+  // name it rather than suggest setting one that is already set.
+  const sentProjectSlug = getVeryfrontCloudBootstrap().projectSlug;
   let report: EvalReport;
   try {
     report = await runWithVeryfrontCloudContextAsync(billingContext, operation);
-  } catch (error) {
+  } catch (caught) {
+    const error = explainConfiguredProjectDenial(caught, sentProjectSlug);
     if (billingContext.billingGroupUsed) {
       // Still finalize: earlier requests can have been served before the
       // gateway started refusing them, and those must be reconciled.
