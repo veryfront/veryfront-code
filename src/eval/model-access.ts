@@ -331,31 +331,30 @@ export function getEvalModelAccessDenialKind(
 }
 
 /** Return true when an error is one of the eval fail-fast model access errors. */
-const MAX_ECHOED_PROJECT_SLUG_LENGTH = 100;
-
 /**
  * The gateway answers `gateway_project_required` both when no project was sent
  * and when the sent slug names no project the credential can use. When the
- * caller knows it sent a slug, say which one instead of implying none was set.
- * The wording covers "missing" and "not accessible" alike, as the gateway does.
+ * caller knows it sent one, say that the configured project was rejected
+ * instead of implying none was set. The slug itself stays out of the message:
+ * naming where it came from is just as actionable, and the value is an account
+ * identifier that lands in terminal and CI logs. The wording covers "missing"
+ * and "not accessible" alike, as the gateway does.
  */
 export function explainConfiguredProjectDenial(
   error: unknown,
   projectSlug: string | undefined,
 ): unknown {
-  const slug = projectSlug?.trim();
-  if (!slug || getEvalModelAccessDenialKind(error) !== "project-required") return error;
+  if (!projectSlug?.trim() || getEvalModelAccessDenialKind(error) !== "project-required") {
+    return error;
+  }
   const evalId = readProperty(readProperty(error, "context"), "evalId");
   if (typeof evalId !== "string") return error;
-  const bounded = slug.length > MAX_ECHOED_PROJECT_SLUG_LENGTH
-    ? `${slug.slice(0, MAX_ECHOED_PROJECT_SLUG_LENGTH)}...`
-    : slug;
   return createEvalModelAccessDeniedError(evalId, {
     kind: "project-required",
     code: GATEWAY_PROJECT_REQUIRED_CODE,
-    message: `Veryfront Cloud found no project ${
-      JSON.stringify(bounded)
-    } that this credential can use (it does not exist or you do not have access)`,
+    message:
+      "Veryfront Cloud rejected the configured project (VERYFRONT_PROJECT_SLUG, or projectSlug in " +
+      "veryfront.config.ts): it does not exist or this credential has no access to it",
   }, error);
 }
 

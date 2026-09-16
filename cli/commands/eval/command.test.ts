@@ -2505,7 +2505,7 @@ describe("eval CLI command helpers", () => {
     assertEquals(warned(afterCreditDenial, "evalrun_credit_then_401"), true);
   });
 
-  it("names the configured project slug when the gateway refuses it", async () => {
+  it("reports a refused configured project without echoing the slug", async () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
     Deno.env.set("VERYFRONT_PROJECT_SLUG", "typo-project");
@@ -2544,7 +2544,8 @@ describe("eval CLI command helpers", () => {
 
     assertInstanceOf(thrown, VeryfrontError);
     assertEquals(thrown.slug, "eval-project-required");
-    assertStringIncludes(thrown.detail ?? "", 'found no project "typo-project"');
+    assertStringIncludes(thrown.detail ?? "", "rejected the configured project");
+    assertEquals(thrown.detail?.includes("typo-project"), false);
     assertEquals(thrown.cause, denied);
   });
 

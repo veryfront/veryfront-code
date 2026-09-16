@@ -541,7 +541,7 @@ describe("eval/model-access", () => {
         message: "A project is required to use Veryfront-managed AI inference",
       }, undefined);
 
-    it("names the slug that was sent without confirming the project exists", () => {
+    it("reports the configured project without echoing the slug", () => {
       const original = projectRequired();
       const explained = explainConfiguredProjectDenial(
         original,
@@ -552,18 +552,14 @@ describe("eval/model-access", () => {
       assertEquals(explained.slug, "eval-project-required");
       assertEquals(
         explained.detail,
-        'Eval "eval:triage" stopped at its first refused model request: Veryfront Cloud found no project ' +
-          '"agentic-email-processing-outlok" that this credential can use (it does not exist or you do not have access)',
+        'Eval "eval:triage" stopped at its first refused model request: Veryfront Cloud rejected the ' +
+          "configured project (VERYFRONT_PROJECT_SLUG, or projectSlug in veryfront.config.ts): it does not " +
+          "exist or this credential has no access to it",
       );
+      assertEquals(explained.detail?.includes("agentic-email-processing-outlok"), false);
+      assertEquals(JSON.stringify(explained).includes("agentic-email-processing-outlok"), false);
       assertEquals(explained.cause, original);
       assertEquals(isEvalModelAccessDeniedError(explained), true);
-    });
-
-    it("bounds a long slug", () => {
-      const explained = explainConfiguredProjectDenial(projectRequired(), "a".repeat(150));
-
-      if (!(explained instanceof VeryfrontError)) throw new Error("expected a VeryfrontError");
-      assertEquals(explained.detail?.includes(`"${"a".repeat(100)}..."`), true);
     });
 
     it("leaves the error alone without a slug or for other denials", () => {
