@@ -17,7 +17,7 @@ export const upHelp: CommandHelp = {
   ],
   examples: ["veryfront up", "veryfront up --dry-run", "veryfront up --force"],
   notes: [
-    "Links or creates the project, pushes main, and provisions its preview",
+    "Links or creates the project, pushes the local source to main, and publishes its preview",
     "Use veryfront push for subsequent preview updates",
     "Run veryfront deploy when the preview is ready for production",
   ],

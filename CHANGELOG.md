@@ -6,6 +6,22 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: `veryfront up` pushes committed work again
+
+`veryfront up` now pushes the local source to main whenever the checkout no
+longer matches the last push to the same project and branch on the same
+control plane, including commits made after that push. It previously refused
+with "The latest push came from a different commit. Run veryfront push again."
+and left the preview on the older upload until you ran `veryfront push`
+yourself. A push receipt for another project, branch, or control plane is
+still refused, and so is a receipt written by a CLI older than 0.1.1258, which
+did not record the pushed paths. Run `veryfront push` once to replace such a
+receipt.
+
+`veryfront deploy` is unchanged. It still refuses a stale push receipt instead
+of uploading committed work, so run `veryfront push` before promoting new
+commits.
+
 ### Breaking: push, up, deploy, and pull respect Git ignore rules
 
 `veryfront push`, `up`, `deploy`, and `pull` now skip untracked files that Git
