@@ -102,6 +102,14 @@ describe("eval/model-access", () => {
       error.detail,
       'Eval "eval:triage" stopped at its first refused model request: AI credit limit exceeded: 0.25 credits required, 0 available. Purchase additional credits or upgrade your subscription plan.',
     );
+    assertEquals(
+      error.suggestion?.includes("https://veryfront.com/settings/billing"),
+      true,
+    );
+    assertEquals(
+      error.suggestion?.includes("https://veryfront.com/docs/api/errors/insufficient-credits"),
+      true,
+    );
     assertEquals(isEvalModelAccessDeniedError(error), true);
     assertEquals(isEvalModelAccessDeniedError(cause), false);
   });
