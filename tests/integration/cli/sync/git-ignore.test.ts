@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { scanLocalFiles } from "../../../../cli/commands/push/command.ts";
@@ -325,6 +325,28 @@ describe("cli/sync/git-ignore against real Git", () => {
 
         const files = await scanLocalFiles(repoDir, checker);
         assertEquals(files.map((file) => file.path).sort(), ["lib/late.ts", "pages/index.tsx"]);
+      });
+    });
+
+    it("skips a Git-ignored symbolic link created after the checker was loaded", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "linked.ts\n");
+        await writeFile(repoDir, "pages/index.tsx");
+        await writeFile(repoDir, "target.ts");
+
+        const checker = await loadIgnoreChecker(repoDir);
+        await Deno.symlink(`${repoDir}/target.ts`, `${repoDir}/linked.ts`);
+
+        const files = await scanLocalFiles(repoDir, checker);
+        assertEquals(files.map((file) => file.path).sort(), ["pages/index.tsx", "target.ts"]);
+
+        await Deno.symlink(`${repoDir}/target.ts`, `${repoDir}/other-link.ts`);
+        await assertRejects(
+          () => scanLocalFiles(repoDir, checker),
+          Error,
+          'does not support symbolic links: "other-link.ts"',
+        );
       });
     });
 

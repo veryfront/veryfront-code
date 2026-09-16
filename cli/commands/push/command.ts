@@ -215,6 +215,7 @@ export async function scanLocalFiles(
 ): Promise<UploadOp[]> {
   const fs = createFileSystem();
   const ops: UploadOp[] = [];
+  const supportedSymlinks: string[] = [];
 
   async function walk(currentDir: string): Promise<void> {
     const entries = await fs.readDir(currentDir);
@@ -226,12 +227,7 @@ export async function scanLocalFiles(
       if (ignoreChecker.isIgnored(relativePath, { isDirectory: entry.isDirectory })) continue;
 
       if (entry.isSymlink) {
-        if (ignoreChecker.isSupportedExtension(entry.name)) {
-          throw INVALID_ARGUMENT.create({
-            detail:
-              `Veryfront push does not support symbolic links: "${relativePath}". Replace the link with a file and run veryfront push again.`,
-          });
-        }
+        if (ignoreChecker.isSupportedExtension(entry.name)) supportedSymlinks.push(relativePath);
         continue;
       }
 
@@ -251,7 +247,19 @@ export async function scanLocalFiles(
   // The Git ignore listing is a snapshot taken when the checker was loaded. Ask
   // Git about every file this scan found, so one created since then is still
   // excluded when the checkout ignores it.
-  await ignoreChecker.resolveGitIgnoredCandidates(ops.map((op) => op.path));
+  await ignoreChecker.resolveGitIgnoredCandidates([
+    ...ops.map((op) => op.path),
+    ...supportedSymlinks,
+  ]);
+  // A symbolic link is rejected only once Git confirms the checkout does not
+  // ignore it, so an ignored link created since the listing is skipped instead.
+  const rejectedSymlink = supportedSymlinks.find((path) => !ignoreChecker.isIgnored(path));
+  if (rejectedSymlink !== undefined) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Veryfront push does not support symbolic links: "${rejectedSymlink}". Replace the link with a file and run veryfront push again.`,
+    });
+  }
   return ops.filter((op) => !ignoreChecker.isIgnored(op.path));
 }
 
