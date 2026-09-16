@@ -43,7 +43,9 @@ function fakeGit(options: FakeGitOptions = {}): {
 }
 
 const isRootCheck = (args: readonly string[]) => args[0] === "check-ignore";
-const isListing = (args: readonly string[]) => args[0] === "ls-files" && args[1] === "--others";
+const isListing = (args: readonly string[]) => args[0] === "ls-files" && args.includes("--ignored");
+const isUntrackedListing = (args: readonly string[]) =>
+  args[0] === "ls-files" && args[1] === "--others" && !args.includes("--ignored");
 const isIndexListing = (args: readonly string[]) => args[0] === "ls-files" && args[1] === "--stage";
 
 describe("cli/sync/git-ignore", () => {
@@ -232,7 +234,9 @@ describe("cli/sync/git-ignore", () => {
               ].join("\0"),
             };
           }
-          if (isListing(args)) return { success: true, code: 0, stdout: "" };
+          if (isListing(args) || isUntrackedListing(args)) {
+            return { success: true, code: 0, stdout: "" };
+          }
           if (args.includes("./secret.gen.ts")) {
             return { success: true, code: 0, stdout: "./secret.gen.ts\n" };
           }
@@ -264,6 +268,36 @@ describe("cli/sync/git-ignore", () => {
       assertEquals(submoduleCheck?.args.slice(3), ["./secret.gen.ts", "./index.ts"]);
     });
 
+    it("resolves paths in an untracked nested repository against its own rules", async () => {
+      const { dependencies, calls } = fakeGit({
+        existing: ["/repo", "/repo/tools", "/repo/tools/.git"],
+        respond: (args) => {
+          if (isRootCheck(args)) return NOTHING_IGNORED;
+          if (isIndexListing(args) || isListing(args)) {
+            return { success: true, code: 0, stdout: "" };
+          }
+          if (isUntrackedListing(args)) {
+            return { success: true, code: 0, stdout: "src/a.ts\0tools/\0" };
+          }
+          if (args.includes("./local.json")) {
+            return { success: true, code: 0, stdout: "./local.json\n" };
+          }
+          return NOTHING_IGNORED;
+        },
+      });
+
+      const context = await loadGitIgnoreContext("/repo", dependencies);
+
+      assertEquals(
+        await context.checkPaths(["tools/local.json", "tools/index.ts", "src/b.ts"]),
+        ["tools/local.json"],
+      );
+      assertEquals(
+        calls.some((call) => call.cwd === "/repo/tools" && call.args.includes("./local.json")),
+        true,
+      );
+    });
+
     it("drops paths inside a submodule and checks the rest again", async () => {
       const { dependencies, calls } = fakeGit({
         respond: (args) => {
@@ -293,7 +327,7 @@ describe("cli/sync/git-ignore", () => {
         respond: (args) =>
           isRootCheck(args)
             ? NOTHING_IGNORED
-            : isListing(args) || isIndexListing(args)
+            : isListing(args) || isIndexListing(args) || isUntrackedListing(args)
             ? { success: true, code: 0, stdout: "" }
             : { success: false, code: 128, stderr: "fatal: detected dubious ownership" },
         gitMetadata: true,

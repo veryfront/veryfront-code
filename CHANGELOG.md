@@ -16,8 +16,9 @@ directories were uploaded. Remote paths Git ignores are treated like paths
 `.vfignore` ignores even when no local copy exists: pull does not write them and
 `push --prune` does not delete them. Pull into a directory that does not exist
 yet applies the enclosing repository's rules, and files inside a checked-out
-submodule follow that submodule's own rules. Tracked files are never skipped by
-a Git ignore rule, and a directory outside Git behaves as before.
+submodule or another nested Git repository follow that repository's own rules.
+Tracked files are never skipped by a Git ignore rule, and a directory outside
+Git behaves as before.
 
 A supported file that Git ignores and earlier versions uploaded, such as
 generated source, is now skipped. To keep uploading it, re-include it in

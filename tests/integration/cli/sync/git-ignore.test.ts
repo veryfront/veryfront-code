@@ -218,6 +218,34 @@ describe("cli/sync/git-ignore against real Git", () => {
     });
   });
 
+  describe("nested repositories", () => {
+    it("applies an untracked nested repository's own ignore rules", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await writeFile(repoDir, "pages/index.tsx");
+        const nestedDir = `${repoDir}/tools/cli`;
+        await Deno.mkdir(nestedDir, { recursive: true });
+        await runGit(nestedDir, "init", "-q");
+        await Deno.writeTextFile(`${nestedDir}/.gitignore`, "credentials.json\n");
+        await writeFile(nestedDir, "index.ts");
+        await writeFile(nestedDir, "credentials.json", "{}");
+
+        const context = await loadGitIgnoreContext(repoDir);
+        assertEquals(context.ignoredPaths.includes("tools/cli/credentials.json"), true);
+        assertEquals(
+          await context.checkPaths(["tools/cli/credentials.json", "tools/cli/remote.ts"]),
+          ["tools/cli/credentials.json"],
+        );
+
+        const files = await scanLocalFiles(repoDir, await loadIgnoreChecker(repoDir));
+        assertEquals(files.map((file) => file.path).sort(), [
+          "pages/index.tsx",
+          "tools/cli/index.ts",
+        ]);
+      });
+    });
+  });
+
   describe("scanLocalFiles with loadIgnoreChecker", () => {
     it("skips files Git ignores through info/exclude and keeps tracked files", async () => {
       await withTempDir(async (repoDir) => {

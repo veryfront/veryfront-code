@@ -179,32 +179,51 @@ function submoduleArgumentRoot(pathspec: string, submodule: string): string | nu
   return null;
 }
 
-interface SubmoduleContext {
-  /** Project-relative path of the submodule. */
+interface NestedRepositoryContext {
+  /** Project-relative path of the nested repository. */
   path: string;
   context: GitIgnoreContext;
 }
 
 const GITLINK_ENTRY = /^160000 [0-9a-f]+ \d+\t(.+)$/;
 
-/** Load the Git ignore context of every checked-out submodule below `projectDir`. */
-async function loadCheckedOutSubmodules(
+/**
+ * Load the Git ignore context of every repository nested below `projectDir`:
+ * checked-out submodules, and untracked Git repositories that are not
+ * registered as submodules. Git lists an untracked nested repository once, as
+ * a directory entry, and does not look inside it.
+ */
+async function loadNestedRepositories(
   baseDir: string,
   projectDir: string,
   dependencies: GitIgnoreDependencies,
-): Promise<SubmoduleContext[]> {
+): Promise<NestedRepositoryContext[]> {
+  const candidates = new Set<string>();
   const index = await runGitIgnoreQuery(baseDir, ["ls-files", "--stage", "-z"], dependencies);
   if (index.kind !== "output") return [];
-  const submodules: SubmoduleContext[] = [];
   for (const entry of index.stdout.split("\0")) {
     const path = GITLINK_ENTRY.exec(entry)?.[1];
-    if (!path) continue;
-    const submoduleDir = join(projectDir, path);
-    if (!(await dependencies.pathExists(join(submoduleDir, ".git")))) continue;
-    submodules.push({ path, context: await loadGitIgnoreContext(submoduleDir, dependencies) });
+    if (path) candidates.add(path);
   }
-  // Longest paths first so a nested submodule wins over its parent.
-  return submodules.sort((left, right) => right.path.length - left.path.length);
+  const untracked = await runGitIgnoreQuery(
+    baseDir,
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    dependencies,
+  );
+  if (untracked.kind !== "output") return [];
+  for (const entry of untracked.stdout.split("\0")) {
+    if (entry.endsWith("/")) candidates.add(entry.replace(/\/+$/, ""));
+  }
+
+  const repositories: NestedRepositoryContext[] = [];
+  for (const path of candidates) {
+    if (!path) continue;
+    const repositoryDir = join(projectDir, path);
+    if (!(await dependencies.pathExists(join(repositoryDir, ".git")))) continue;
+    repositories.push({ path, context: await loadGitIgnoreContext(repositoryDir, dependencies) });
+  }
+  // Longest paths first so an inner repository wins over its parent.
+  return repositories.sort((left, right) => right.path.length - left.path.length);
 }
 
 /** Git ignore rules resolved for one project directory. */
@@ -290,36 +309,38 @@ export async function loadGitIgnoreContext(
       .filter((path) => path.length > 0 && path !== ".");
   }
 
-  // The enclosing repository's listing and `check-ignore` stop at a submodule,
-  // but sync still reads the checked-out files beneath it. Resolve each
-  // checked-out submodule against its own Git context.
-  const submodules = prefix ? [] : await loadCheckedOutSubmodules(
+  // The enclosing repository's listing and `check-ignore` stop at a submodule
+  // or nested repository, but sync still reads the files beneath it. Resolve
+  // each one against its own Git context.
+  const nestedRepositories = prefix ? [] : await loadNestedRepositories(
     baseDir,
     resolvedProjectDir,
     dependencies,
   );
-  for (const submodule of submodules) {
-    ignoredPaths.push(...submodule.context.ignoredPaths.map((path) => `${submodule.path}/${path}`));
+  for (const repository of nestedRepositories) {
+    ignoredPaths.push(
+      ...repository.context.ignoredPaths.map((path) => `${repository.path}/${path}`),
+    );
   }
 
   async function checkPaths(paths: Iterable<string>): Promise<string[]> {
     const ownCandidates: string[] = [];
     const ignored: string[] = [];
-    const submoduleCandidates = new Map<SubmoduleContext, string[]>();
+    const nestedCandidates = new Map<NestedRepositoryContext, string[]>();
     for (const path of new Set(paths)) {
       if (!path) continue;
-      const submodule = submodules.find((entry) => path.startsWith(`${entry.path}/`));
-      if (!submodule) {
+      const repository = nestedRepositories.find((entry) => path.startsWith(`${entry.path}/`));
+      if (!repository) {
         ownCandidates.push(path);
         continue;
       }
-      const grouped = submoduleCandidates.get(submodule) ?? [];
-      grouped.push(path.slice(submodule.path.length + 1));
-      submoduleCandidates.set(submodule, grouped);
+      const grouped = nestedCandidates.get(repository) ?? [];
+      grouped.push(path.slice(repository.path.length + 1));
+      nestedCandidates.set(repository, grouped);
     }
-    for (const [submodule, grouped] of submoduleCandidates) {
-      for (const path of await submodule.context.checkPaths(grouped)) {
-        ignored.push(`${submodule.path}/${path}`);
+    for (const [repository, grouped] of nestedCandidates) {
+      for (const path of await repository.context.checkPaths(grouped)) {
+        ignored.push(`${repository.path}/${path}`);
       }
     }
     ignored.push(...await checkOwnPaths(ownCandidates));

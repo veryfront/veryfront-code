@@ -147,8 +147,10 @@ Uncommitted edits are the one change no commit check can see, because they leave
 directory and refuses the promotion when it no longer matches the receipt, so an
 accidentally dirty checkout fails instead of promoting bytes no Push reviewed.
 
-The digest covers exactly the files Push uploads, so an edit that `.gitignore` hides
-is still caught and an edit to a file Push never sends is not a mismatch. Run
+The digest covers exactly the files Push uploads. A file Git ignores is not
+uploaded, so editing it is not a mismatch. The exception is a Git-ignored file
+that a `.vfignore` negation re-includes: Push uploads it and `git status` does
+not show it, so the digest is what catches an edit to it. Run
 Push again to deploy the current source. Deploying a project named with
 `--project` promotes what that project already has and never uploads the working
 directory, so local edits are neither pushed nor treated as a mismatch on that
