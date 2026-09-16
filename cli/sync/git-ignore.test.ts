@@ -1,88 +1,107 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withTempDir } from "#veryfront/testing/deno-compat.ts";
-import { scanLocalFiles } from "../commands/push/command.ts";
-import { loadGitIgnoredPaths } from "./git-ignore.ts";
-import { createDefaultIgnoreChecker, createIgnoreChecker, loadIgnoreChecker } from "./ignore.ts";
+import type { CommandResult } from "#cli/process-command";
+import { type GitIgnoreDependencies, loadGitIgnoredPaths } from "./git-ignore.ts";
+import { createDefaultIgnoreChecker, createIgnoreChecker } from "./ignore.ts";
 
-async function runGit(cwd: string, ...args: string[]): Promise<void> {
-  const result = await new Deno.Command("git", {
-    args,
-    cwd,
-    clearEnv: true,
-    env: {
-      ...Object.fromEntries(
-        Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
-      ),
-      GIT_CONFIG_NOSYSTEM: "1",
+interface FakeGitOptions {
+  exists?: boolean;
+  gitMetadata?: boolean;
+  result?: CommandResult;
+  spawnError?: Error;
+}
+
+function fakeGit(options: FakeGitOptions): {
+  dependencies: GitIgnoreDependencies;
+  calls: { args: readonly string[]; cwd?: string }[];
+} {
+  const calls: { args: readonly string[]; cwd?: string }[] = [];
+  const dependencies: GitIgnoreDependencies = {
+    runCommand: (_cmd, commandOptions = {}) => {
+      calls.push({ args: commandOptions.args ?? [], cwd: commandOptions.cwd });
+      if (options.spawnError) return Promise.reject(options.spawnError);
+      return Promise.resolve(options.result ?? { success: true, code: 0, stdout: "" });
     },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (!result.success) {
-    throw new Error(`git ${args.join(" ")} failed: ${new TextDecoder().decode(result.stderr)}`);
-  }
-}
-
-async function writeFile(root: string, path: string, content = "x"): Promise<void> {
-  const fullPath = `${root}/${path}`;
-  await Deno.mkdir(fullPath.slice(0, fullPath.lastIndexOf("/")), { recursive: true });
-  await Deno.writeTextFile(fullPath, content);
-}
-
-/**
- * A repository whose ignore rules come from every source Git reads: a root
- * `.gitignore`, a nested `.gitignore`, `.git/info/exclude`, and
- * `core.excludesFile`. The Veryfront project lives in `app/`.
- */
-async function createIgnoringRepository(repoDir: string): Promise<string> {
-  await runGit(repoDir, "init", "-q");
-  await Deno.writeTextFile(`${repoDir}/.gitignore`, "*.gen.ts\n");
-  await Deno.writeTextFile(`${repoDir}/.git/info/exclude`, ".context/\n");
-  await Deno.writeTextFile(`${repoDir}/global-excludes`, "scratch.md\n");
-  await runGit(repoDir, "config", "core.excludesFile", `${repoDir}/global-excludes`);
-
-  const projectDir = `${repoDir}/app`;
-  await writeFile(projectDir, "pages/index.tsx");
-  await writeFile(projectDir, "pages/types.gen.ts");
-  await writeFile(projectDir, "pages/tracked.gen.ts");
-  await writeFile(projectDir, ".context/todos.md");
-  await writeFile(projectDir, ".context/attachments/note.md");
-  await writeFile(projectDir, "scratch.md");
-  await writeFile(projectDir, "content/.gitignore", "drafts/\n");
-  await writeFile(projectDir, "content/post.md");
-  await writeFile(projectDir, "content/drafts/wip.md");
-  await runGit(repoDir, "add", "-f", "app/pages/tracked.gen.ts");
-  return projectDir;
+    hasGitMetadata: () => Promise.resolve(options.gitMetadata ?? false),
+    projectDirExists: () => Promise.resolve(options.exists ?? true),
+  };
+  return { dependencies, calls };
 }
 
 describe("cli/sync/git-ignore", () => {
   describe("loadGitIgnoredPaths", () => {
-    it("returns no paths outside a Git repository", async () => {
-      await withTempDir(async (projectDir) => {
-        await writeFile(projectDir, ".context/todos.md");
-        assertEquals(await loadGitIgnoredPaths(projectDir), []);
+    it("asks Git for every ignore source from the project directory", async () => {
+      const { dependencies, calls } = fakeGit({
+        result: { success: true, code: 0, stdout: ".context/\0dist/y.js\0scratch.md\0" },
       });
+
+      assertEquals(await loadGitIgnoredPaths("/repo/app", dependencies), [
+        ".context",
+        "dist/y.js",
+        "scratch.md",
+      ]);
+      assertEquals(calls, [{
+        args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+        cwd: "/repo/app",
+      }]);
     });
 
     it("returns no paths for a project directory that does not exist yet", async () => {
-      await withTempDir(async (root) => {
-        assertEquals(await loadGitIgnoredPaths(`${root}/missing`), []);
-      });
+      const { dependencies, calls } = fakeGit({ exists: false });
+      assertEquals(await loadGitIgnoredPaths("/missing", dependencies), []);
+      assertEquals(calls.length, 0);
     });
 
-    it("lists paths from .gitignore, info/exclude, and core.excludesFile relative to the project", async () => {
-      await withTempDir(async (repoDir) => {
-        const projectDir = await createIgnoringRepository(repoDir);
-
-        assertEquals((await loadGitIgnoredPaths(projectDir)).sort(), [
-          ".context",
-          "content/drafts",
-          "pages/types.gen.ts",
-          "scratch.md",
-        ]);
+    it("returns no paths outside a Git repository", async () => {
+      const { dependencies } = fakeGit({
+        result: {
+          success: false,
+          code: 128,
+          stderr: "fatal: not a git repository (or any of the parent directories): .git",
+        },
       });
+      assertEquals(await loadGitIgnoredPaths("/plain", dependencies), []);
+    });
+
+    it("returns no paths when Git is missing and no repository surrounds the project", async () => {
+      const { dependencies } = fakeGit({ spawnError: new Error("git: not found") });
+      assertEquals(await loadGitIgnoredPaths("/plain", dependencies), []);
+    });
+
+    it("refuses to continue when Git is missing inside a repository", async () => {
+      const { dependencies } = fakeGit({
+        spawnError: new Error("git: not found"),
+        gitMetadata: true,
+      });
+      await assertRejects(
+        () => loadGitIgnoredPaths("/repo", dependencies),
+        Error,
+        "Could not read Git ignore rules for this project.",
+      );
+    });
+
+    it("refuses to continue when Git fails inside a repository", async () => {
+      const { dependencies } = fakeGit({
+        result: { success: false, code: 128, stderr: "fatal: detected dubious ownership" },
+        gitMetadata: true,
+      });
+      await assertRejects(
+        () => loadGitIgnoredPaths("/repo", dependencies),
+        Error,
+        "Could not read Git ignore rules for this project.",
+      );
+    });
+
+    it("refuses a truncated Git listing", async () => {
+      const { dependencies } = fakeGit({
+        result: { success: true, code: 0, stdout: ".context/\0", outputTruncated: true },
+      });
+      await assertRejects(
+        () => loadGitIgnoredPaths("/repo", dependencies),
+        Error,
+        "Could not read Git ignore rules for this project.",
+      );
     });
   });
 
@@ -123,43 +142,5 @@ describe("cli/sync/git-ignore", () => {
     const checker = createDefaultIgnoreChecker();
     assertEquals(checker.isIgnored(".context", { isDirectory: true }), true);
     assertEquals(checker.isIgnored(".context/todos.md"), true);
-  });
-
-  describe("scanLocalFiles with loadIgnoreChecker", () => {
-    it("skips files Git ignores through info/exclude and keeps tracked files", async () => {
-      await withTempDir(async (repoDir) => {
-        const projectDir = await createIgnoringRepository(repoDir);
-        // Drop the `.context` default so only `.git/info/exclude` can hide it.
-        await Deno.writeTextFile(`${projectDir}/.vfignore`, "!.context\n");
-        await Deno.writeTextFile(`${repoDir}/.git/info/exclude`, ".context/\n");
-
-        const withNegation = await scanLocalFiles(projectDir, await loadIgnoreChecker(projectDir));
-        assertEquals(
-          withNegation.map((file) => file.path).includes(".context/todos.md"),
-          true,
-          "a .vfignore negation re-includes a Git-ignored path",
-        );
-
-        await Deno.remove(`${projectDir}/.vfignore`);
-        const files = await scanLocalFiles(projectDir, await loadIgnoreChecker(projectDir));
-        assertEquals(files.map((file) => file.path).sort(), [
-          "content/post.md",
-          "pages/index.tsx",
-          "pages/tracked.gen.ts",
-        ]);
-      });
-    });
-
-    it("skips info/exclude entries that the defaults do not cover", async () => {
-      await withTempDir(async (repoDir) => {
-        await runGit(repoDir, "init", "-q");
-        await Deno.writeTextFile(`${repoDir}/.git/info/exclude`, ".conductor/\n");
-        await writeFile(repoDir, "pages/index.tsx");
-        await writeFile(repoDir, ".conductor/todos.md");
-
-        const files = await scanLocalFiles(repoDir, await loadIgnoreChecker(repoDir));
-        assertEquals(files.map((file) => file.path), ["pages/index.tsx"]);
-      });
-    });
   });
 });

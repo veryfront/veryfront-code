@@ -1592,10 +1592,9 @@ describe("pullCommand", () => {
   });
 
   it("keeps local files Git ignores through info/exclude during a pruning pull", async () => {
-    const tempDir = await Deno.makeTempDir();
-    const originalFetch = globalThis.fetch;
-    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
-    const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+    const tempDir = await makeTempDir();
+    const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
+    const originalProjectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
 
     try {
       await Deno.mkdir(join(tempDir, "app"), { recursive: true });
@@ -1605,52 +1604,49 @@ describe("pullCommand", () => {
       await Deno.mkdir(join(tempDir, ".scratch"), { recursive: true });
       await Deno.writeTextFile(join(tempDir, ".scratch", "todos.md"), "local notes\n");
 
-      Deno.env.set("VERYFRONT_API_TOKEN", "token");
-      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      setEnv("VERYFRONT_API_TOKEN", "token");
+      deleteEnv("VERYFRONT_PROJECT_SLUG");
       _resetEnvironmentConfig();
 
-      globalThis.fetch = ((input: string | URL | Request) => {
-        const url = new URL(String(input));
-        if (url.pathname === "/projects/alpha") {
-          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
-        }
-        if (
-          url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
-        ) {
-          return Promise.resolve(Response.json({
-            data: [
-              {
-                path: "app/keep.ts",
-                content: "export default 1;",
-                size: 17,
-                type: "file",
-                created_at: "",
-                updated_at: "",
-              },
-              {
-                path: ".scratch/todos.md",
-                content: "remote notes\n",
-                size: 13,
-                type: "file",
-                created_at: "",
-                updated_at: "",
-              },
-            ],
-            page_info: {},
-          }));
-        }
-        throw new Error(`Pruning pull made an unexpected per-file request: ${url}`);
-      }) as typeof fetch;
-
-      await pullCommand({
-        projectDir: tempDir,
-        projectSlug: "alpha",
-        branch: "studio-change",
-        prune: true,
-        force: true,
-        quiet: true,
+      const remoteFile = (path: string, content: string) => ({
+        path,
+        content,
+        size: content.length,
+        type: "file",
+        created_at: "",
+        updated_at: "",
       });
+
+      await withMockFetch(
+        (input: RequestInfo | URL) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          if (url.pathname === "/projects/alpha") {
+            return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+          }
+          if (
+            url.pathname === "/projects/alpha/files" &&
+            url.searchParams.get("branch") === "studio-change"
+          ) {
+            return Promise.resolve(Response.json({
+              data: [
+                remoteFile("app/keep.ts", "export default 1;"),
+                remoteFile(".scratch/todos.md", "remote notes\n"),
+              ],
+              page_info: {},
+            }));
+          }
+          throw new Error(`Pruning pull made an unexpected per-file request: ${url}`);
+        },
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            branch: "studio-change",
+            prune: true,
+            force: true,
+            quiet: true,
+          }),
+      );
 
       assertEquals(await Deno.readTextFile(join(tempDir, "app", "keep.ts")), "export default 1;");
       assertEquals(
@@ -1659,9 +1655,10 @@ describe("pullCommand", () => {
         "a Git-ignored local file is neither pruned nor overwritten",
       );
     } finally {
-      globalThis.fetch = originalFetch;
-      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
-      restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+      if (originalApiToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
+      else setEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      if (originalProjectSlug === undefined) deleteEnv("VERYFRONT_PROJECT_SLUG");
+      else setEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
       _resetEnvironmentConfig();
       await Deno.remove(tempDir, { recursive: true });
     }
