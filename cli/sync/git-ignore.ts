@@ -227,11 +227,30 @@ async function loadNestedRepositories(
   dependencies: GitIgnoreDependencies,
 ): Promise<NestedRepositoryContext[]> {
   const candidates = new Set<string>();
+  const addAncestors = (path: string, includeSelf: boolean) => {
+    const segments = path.replace(/\/+$/, "").split("/");
+    // Git lists paths below the query directory; anything else is not a
+    // nested repository location.
+    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+      return;
+    }
+    const depth = includeSelf ? segments.length : segments.length - 1;
+    for (let length = 1; length <= depth; length++) {
+      candidates.add(segments.slice(0, length).join("/"));
+    }
+  };
   const index = await runGitIgnoreQuery(baseDir, ["ls-files", "--stage", "-z"], dependencies);
   if (index.kind !== "output") return [];
   for (const entry of index.stdout.split("\0")) {
-    const path = GITLINK_ENTRY.exec(entry)?.[1];
-    if (path) candidates.add(path);
+    const gitlink = GITLINK_ENTRY.exec(entry)?.[1];
+    if (gitlink) {
+      addAncestors(gitlink, true);
+      continue;
+    }
+    // A repository can be initialised over files the enclosing repository
+    // already tracks, so directories of tracked files are candidates too.
+    const tracked = /^\d+ [0-9a-f]+ \d+\t(.+)$/.exec(entry)?.[1];
+    if (tracked) addAncestors(tracked, false);
   }
   const untracked = await runGitIgnoreQuery(
     baseDir,
@@ -240,18 +259,7 @@ async function loadNestedRepositories(
   );
   if (untracked.kind !== "output") return [];
   for (const entry of untracked.stdout.split("\0")) {
-    if (!entry) continue;
-    const isDirectoryEntry = entry.endsWith("/");
-    const segments = entry.replace(/\/+$/, "").split("/");
-    // Git lists paths below the query directory; anything else is not a
-    // nested repository location.
-    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-      continue;
-    }
-    const depth = isDirectoryEntry ? segments.length : segments.length - 1;
-    for (let length = 1; length <= depth; length++) {
-      candidates.add(segments.slice(0, length).join("/"));
-    }
+    if (entry) addAncestors(entry, entry.endsWith("/"));
   }
 
   const found: string[] = [];

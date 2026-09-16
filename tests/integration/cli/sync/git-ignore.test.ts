@@ -286,6 +286,21 @@ describe("cli/sync/git-ignore against real Git", () => {
         ]);
       });
     });
+    it("applies a nested repository's rules to remote paths when it has no untracked files", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await writeFile(repoDir, "tools/tracked.ts");
+        await runGit(repoDir, "add", ".");
+        await runGit(`${repoDir}/tools`, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/tools/.git/info/exclude`, "remote.json\n");
+
+        const context = await loadGitIgnoreContext(repoDir);
+        assertEquals(await context.checkPaths(["tools/remote.json", "tools/other.json"]), [
+          "tools/remote.json",
+        ]);
+      });
+    });
+
     it("applies a nested repository's rules when the parent also tracks files there", async () => {
       await withTempDir(async (repoDir) => {
         await runGit(repoDir, "init", "-q");

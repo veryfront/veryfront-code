@@ -358,6 +358,37 @@ describe("cli/sync/git-ignore", () => {
       );
     });
 
+    it("finds a nested repository over parent-tracked files with no untracked files", async () => {
+      const { dependencies, calls } = fakeGit({
+        existing: ["/repo", "/repo/tools", "/repo/tools/.git"],
+        respond: (args) => {
+          if (isRootCheck(args)) return NOTHING_IGNORED;
+          if (isIndexListing(args)) {
+            return {
+              success: true,
+              code: 0,
+              stdout: [`100644 ${"a".repeat(40)} 0\ttools/tracked.ts`, ""].join("\0"),
+            };
+          }
+          if (isListing(args) || isUntrackedListing(args)) {
+            return { success: true, code: 0, stdout: "" };
+          }
+          if (args.includes("./remote.json")) {
+            return { success: true, code: 0, stdout: "./remote.json\n" };
+          }
+          return NOTHING_IGNORED;
+        },
+      });
+
+      const context = await loadGitIgnoreContext("/repo", dependencies);
+
+      assertEquals(await context.checkPaths(["tools/remote.json"]), ["tools/remote.json"]);
+      assertEquals(
+        calls.some((call) => call.cwd === "/repo/tools" && call.args.includes("./remote.json")),
+        true,
+      );
+    });
+
     it("drops paths inside a submodule and checks the rest again", async () => {
       const { dependencies, calls } = fakeGit({
         respond: (args) => {
