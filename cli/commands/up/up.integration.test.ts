@@ -277,6 +277,7 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
         // comparison decides first, which is what these receipts are here to prove.
         sourceDigest: await computeSourceDigest([{ path: "app/page.tsx", content: APP_PAGE }]),
         clean: true,
+        localPaths: ["app/page.tsx", "package.json"],
       });
     }
 

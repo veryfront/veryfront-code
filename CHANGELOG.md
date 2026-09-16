@@ -14,7 +14,9 @@ control plane, including commits made after that push. It previously refused
 with "The latest push came from a different commit. Run veryfront push again."
 and left the preview on the older upload until you ran `veryfront push`
 yourself. A push receipt for another project, branch, or control plane is
-still refused.
+still refused, and so is a receipt written by a CLI older than 0.1.1258, which
+did not record the pushed paths. Run `veryfront push` once to replace such a
+receipt.
 
 `veryfront deploy` is unchanged. It still refuses a stale push receipt instead
 of uploading committed work, so run `veryfront push` before promoting new

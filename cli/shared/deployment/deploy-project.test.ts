@@ -1641,7 +1641,7 @@ describe("resolveBootstrapPush", () => {
       // (veryfront/veryfront-issue-inbox#1470).
       assertEquals(
         resolveBootstrapPush(
-          { ...receipt, commitSha: "1".repeat(40), clean: true },
+          { ...receipt, commitSha: "1".repeat(40), clean: true, localPaths: ["app.ts"] },
           { kind: "ensure-pushed", refreshStaleSource: true },
           await observeLocalSource(projectDir),
           target,
@@ -1659,12 +1659,30 @@ describe("resolveBootstrapPush", () => {
 
       assertEquals(
         resolveBootstrapPush(
-          { ...receipt, commitSha: "1".repeat(40), clean: true },
+          { ...receipt, commitSha: "1".repeat(40), clean: true, localPaths: ["app.ts"] },
           { kind: "ensure-pushed", refreshStaleSource: true },
           await observeLocalSource(projectDir),
           target,
         ),
         "refresh",
+      );
+    });
+  });
+
+  it("leaves a moved HEAD to the receipt check when the receipt recorded no paths", async () => {
+    await withGitProject(async (projectDir) => {
+      // A receipt from before push recorded its paths cannot tell the refresh
+      // which files the new commits deleted, so the remote copies would
+      // survive a push that then reported success. The refusal stays, and one
+      // veryfront push writes a receipt that can be refreshed.
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: true },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "none",
       );
     });
   });
@@ -1695,7 +1713,13 @@ describe("resolveBootstrapPush", () => {
 
       assertEquals(
         resolveBootstrapPush(
-          { ...receipt, commitSha: null, clean: true, localSourceDigest: local.sourceDigest },
+          {
+            ...receipt,
+            commitSha: null,
+            clean: true,
+            localSourceDigest: local.sourceDigest,
+            localPaths: ["app.ts"],
+          },
           { kind: "ensure-pushed", refreshStaleSource: true },
           local,
           target,
@@ -1854,7 +1878,7 @@ describe("resolveBootstrapPush", () => {
       // one: the checkout moved on, so the new commit is pushed.
       assertEquals(
         resolveBootstrapPush(
-          { ...receipt, commitSha: "1".repeat(40), clean: false },
+          { ...receipt, commitSha: "1".repeat(40), clean: false, localPaths: ["app.ts"] },
           { kind: "ensure-pushed", refreshStaleSource: true },
           await observeLocalSource(projectDir),
           target,
