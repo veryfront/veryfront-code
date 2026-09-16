@@ -1049,6 +1049,42 @@ describe("provider-http", () => {
       assertEquals(await new Response(stream).text(), "chunk");
     });
 
+    it("reports no retry when the caller cancelled during the failed response", async () => {
+      const controller = new AbortController();
+      let attempts = 0;
+      const retries: ProviderRequestRetryEvent[] = [];
+      await runWithProviderRequestObserver(
+        {
+          onRetry: (event) => {
+            retries.push(event);
+          },
+        },
+        async () => {
+          await assertRejects(() =>
+            requestStream({
+              url: "https://provider.test/stream",
+              fetchImpl: () => {
+                attempts++;
+                // The caller gives up while this failed response is read.
+                controller.abort(new Error("caller cancelled"));
+                return Promise.resolve(jsonResponse(
+                  429,
+                  { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                  { "retry-after": "0" },
+                ));
+              },
+              init: { method: "POST", signal: controller.signal },
+              providerLabel: "veryfront-cloud",
+              providerKind: "moonshotai",
+            })
+          );
+        },
+      );
+
+      assertEquals(attempts, 1);
+      assertEquals(retries, []);
+    });
+
     it("bounds rate-limit retries", async () => {
       let attempts = 0;
       const error = await assertRejects(

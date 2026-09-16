@@ -1343,14 +1343,19 @@ export async function requestStream(options: {
           throw failure;
         }
       }
-      notifyProviderRequestRetry({
-        providerLabel: options.providerLabel,
-        ...(options.modelId === undefined ? {} : { modelId: options.modelId }),
-        reason: deadline.timedOut && !responseReceived ? "timeout" : String(failure.status),
-        attempt: retryCount + 2,
-        maxAttempts: MAX_PROVIDER_STREAM_RETRIES + 1,
-        delayMs: retryDelayMs,
-      });
+      // A caller that cancelled while the failed response was read gets no
+      // replay: the wait rejects, or the next attempt's deadline is already
+      // aborted. Announcing one would claim a request that is never sent.
+      if (!deadline.deadlineSignal.aborted) {
+        notifyProviderRequestRetry({
+          providerLabel: options.providerLabel,
+          ...(options.modelId === undefined ? {} : { modelId: options.modelId }),
+          reason: deadline.timedOut && !responseReceived ? "timeout" : String(failure.status),
+          attempt: retryCount + 2,
+          maxAttempts: MAX_PROVIDER_STREAM_RETRIES + 1,
+          delayMs: retryDelayMs,
+        });
+      }
       if (retryDelayMs > 0) {
         try {
           await waitForProviderStreamRetry(retryDelayMs, deadline.deadlineSignal);

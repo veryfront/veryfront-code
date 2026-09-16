@@ -763,14 +763,18 @@ export function createAnthropicModelRuntime(
               throw error;
             }
             const replayDelayMs = ANTHROPIC_STREAM_REPLAY_DELAY_MS * 2 ** streamReplayCount;
-            notifyProviderRequestRetry({
-              providerLabel: providerName,
-              modelId,
-              reason: "stream interrupted",
-              attempt: streamReplayCount + 2,
-              maxAttempts: MAX_ANTHROPIC_STREAM_REPLAYS + 1,
-              delayMs: replayDelayMs,
-            });
+            // A wait longer than the remaining budget leaves the replay no time
+            // to return headers, so it is not announced as an upcoming attempt.
+            if (replayDelayMs < remainingStreamHeadersBudgetMs()) {
+              notifyProviderRequestRetry({
+                providerLabel: providerName,
+                modelId,
+                reason: "stream interrupted",
+                attempt: streamReplayCount + 2,
+                maxAttempts: MAX_ANTHROPIC_STREAM_REPLAYS + 1,
+                delayMs: replayDelayMs,
+              });
+            }
             await waitForProviderStreamRetry(
               replayDelayMs,
               providerAbortScope.controller.signal,
