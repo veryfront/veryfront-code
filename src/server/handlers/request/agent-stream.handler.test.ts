@@ -1084,7 +1084,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedSkills, []);
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
-      assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);
+      assertEquals(capturedAllowedRemoteTools, [
+        "get_file",
+        "search_knowledge",
+        "veryfront__get_file",
+        "veryfront__search_knowledge",
+      ]);
       assertEquals(platformMcpFetchCalls, 1);
     } finally {
       restoreMockFetch();
@@ -2781,6 +2786,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       { canonical: true, denied: false, allowAll: true },
       { canonical: true, denied: false, allowAll: true, allTools: true },
       { canonical: true, denied: false, legacyAllow: true },
+      { canonical: true, denied: false, legacyAllow: true, allTools: true },
+      { canonical: false, denied: false, canonicalAllow: true, allTools: true },
       { canonical: false, denied: false, canonicalAllow: true },
       { canonical: true, denied: false, toolMapDenial: true, ownedProjectDenial: true },
     ]
@@ -3000,21 +3007,17 @@ describe("server/handlers/request/agent-stream.handler", () => {
           capturedAllowedRemoteTools,
           denied
             ? []
-            : canonicalAllow
-            ? ["list_uploads", "veryfront__list_uploads"]
-            : allowAll || legacyAllow
-            ? ["list_uploads", selectedName]
-            : [selectedName],
+            : ownedProjectDenial
+            ? [selectedName]
+            : ["list_uploads", "veryfront__list_uploads"],
         );
         assertEquals(
           capturedRemoteToolNames,
           denied
             ? []
-            : canonicalAllow
-            ? ["list_uploads", "veryfront__list_uploads"]
-            : allowAll || legacyAllow
-            ? ["list_uploads", selectedName]
-            : [selectedName],
+            : ownedProjectDenial
+            ? [selectedName]
+            : ["list_uploads", "veryfront__list_uploads"],
         );
         assertEquals(
           capturedToolArguments,
@@ -3256,8 +3259,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
       url: `${TEST_PUBLIC_API_ORIGIN}/mcp`,
       authorization: "Bearer request-scoped-user-token",
     });
-    assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
-    assertEquals(capturedRemoteToolNames, ["search_knowledge", "list_projects"]);
+    assertEquals(capturedAllowedRemoteTools, [
+      "list_projects",
+      "search_knowledge",
+      "veryfront__list_projects",
+      "veryfront__search_knowledge",
+    ]);
+    assertEquals(capturedRemoteToolNames, [
+      "search_knowledge",
+      "list_projects",
+      "veryfront__search_knowledge",
+      "veryfront__list_projects",
+    ]);
     // The environment is resolved before the source config is evaluated, so
     // both the config and the MCP tool headers see the same variables.
     assertEquals(fetchUrls, [

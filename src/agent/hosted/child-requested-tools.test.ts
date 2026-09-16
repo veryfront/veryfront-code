@@ -419,8 +419,10 @@ Deno.test("buildDefaultHostedChildForkToolSet merges tool sets deterministically
   const result = buildDefaultHostedChildForkToolSet(
     {
       studio_suggestions: { description: "Suggest UI actions" },
-      veryfront__studio_suggestions: { description: "Suggest UI actions" },
-      veryfront__form_input: { description: "Get form input" },
+      veryfront__studio_suggestions: markTrustedHostToolProvenance({
+        description: "Suggest UI actions",
+      }),
+      veryfront__form_input: markTrustedHostToolProvenance({ description: "Get form input" }),
       update_file: updateFileTool,
       create_file: createFileTool,
     },
@@ -539,5 +541,43 @@ it("child write companions stay optional when the effective catalog excludes the
       });
       assertEquals(missing.ok, false);
     }
+  }
+});
+
+it("prunes either sandbox spelling beside either artifact spelling", () => {
+  for (
+    const artifact of [
+      "create_file",
+      "veryfront__create_file",
+      "update_file",
+      "veryfront__update_file",
+    ]
+  ) {
+    const sandbox = [
+      "bash",
+      "readFile",
+      "writeFile",
+      "veryfront__bash",
+      "veryfront__readFile",
+      "veryfront__writeFile",
+    ];
+    assertEquals(
+      sanitizeHostedChildRequestedTools({
+        prompt: "Write a markdown report",
+        requestedTools: [artifact, ...sandbox],
+        isTextArtifactPrompt: textArtifactPrompt,
+        sandboxRequiredCuePattern: sandboxCuePattern,
+      }),
+      [artifact],
+    );
+    assertEquals(
+      sanitizeHostedChildRequestedTools({
+        prompt: "Use bash to write a markdown report",
+        requestedTools: [artifact, ...sandbox],
+        isTextArtifactPrompt: textArtifactPrompt,
+        sandboxRequiredCuePattern: sandboxCuePattern,
+      }),
+      [artifact, ...sandbox],
+    );
   }
 });

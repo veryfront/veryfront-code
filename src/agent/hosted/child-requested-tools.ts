@@ -32,8 +32,12 @@ export interface HostedChildRequestedToolsInput {
   isTextArtifactPrompt?: (prompt: string) => boolean;
 }
 
-const DEFAULT_SANDBOX_TOOL_NAMES = ["bash", "readFile", "writeFile"];
-const DEFAULT_ARTIFACT_TOOL_NAMES = ["create_file", "update_file"];
+const DEFAULT_SANDBOX_TOOL_NAMES = ["bash", "readFile", "writeFile"].flatMap(
+  (name) => [name, `veryfront__${name}`],
+);
+const DEFAULT_ARTIFACT_TOOL_NAMES = ["create_file", "update_file"].flatMap(
+  (name) => [name, `veryfront__${name}`],
+);
 
 /** Default value for hosted child excluded tool names. */
 export const DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([

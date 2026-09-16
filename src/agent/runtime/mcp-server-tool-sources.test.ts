@@ -1,3 +1,4 @@
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -1383,5 +1384,52 @@ it("bootstrap platform aliases use legacy wire names and enforce either policy s
       await assertRejects(() => source.executeTool(name, {}));
     }
     assertEquals(executions, ["get_file"]);
+  }
+});
+
+it("retained platform policies expand aliases without widening project source policies", async () => {
+  for (const trusted of [false, true]) {
+    for (const prefix of ["", "veryfront__"]) {
+      const source: RemoteToolSource = {
+        id: VERYFRONT_API_MCP_SOURCE_ID,
+        listTools: async () =>
+          ["get_file", "veryfront__get_file", "delete_file", "veryfront__delete_file"].map(
+            (name) => ({
+              name,
+              description: name,
+              parameters: { type: "object" as const, properties: {} },
+            }),
+          ),
+        executeTool: async (name) => ({ name }),
+      };
+      const sources = getRuntimeRemoteToolSources(
+        {
+          system: "Use files",
+          mcpServers: [{
+            kind: "veryfront-api",
+            toolPolicy: {
+              allow: [`${prefix}get_file`, "delete_file", "veryfront__delete_file"],
+              deny: [`${prefix}delete_file`],
+            },
+          }],
+          __vfRemoteToolSources: [trusted ? markTrustedPlatformSource(source) : source],
+        } as Parameters<typeof getRuntimeRemoteToolSources>[0],
+      );
+      const retained = sources![0]!;
+      assertEquals(
+        (await retained.listTools()).map((t) => t.name),
+        trusted
+          ? ["get_file", "veryfront__get_file"]
+          : [`${prefix}get_file`, prefix ? "delete_file" : "veryfront__delete_file"],
+      );
+      for (
+        const name of ["get_file", "veryfront__get_file", "delete_file", "veryfront__delete_file"]
+      ) {
+        const allowed = trusted ? name.endsWith("get_file") : name === `${prefix}get_file` ||
+          name === (prefix ? "delete_file" : "veryfront__delete_file");
+        if (allowed) assertEquals(await retained.executeTool(name, {}), { name });
+        else assertThrows(() => retained.executeTool(name, {}));
+      }
+    }
   }
 });

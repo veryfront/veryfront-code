@@ -3,6 +3,7 @@ import {
   withPlatformMcpPolicyAliases,
 } from "../platform-mcp-tool-source.ts";
 import {
+  hasTrustedPlatformSource,
   inheritTrustedPlatformSource,
   markTrustedPlatformSource,
 } from "#veryfront/tool/platform-source-provenance.ts";
@@ -517,7 +518,13 @@ export function getRuntimeRemoteToolSources(
       // A retained source keeps its provenance: a deeper child must still be
       // able to re-derive its own bootstrap source past an inherited alias
       // this level only policy-narrowed.
-      return propagateBootstrapIdentity(source, createMcpToolPolicySource(source, policy));
+      return propagateBootstrapIdentity(
+        source,
+        createMcpToolPolicySource(
+          source,
+          hasTrustedPlatformSource(source) ? withPlatformMcpPolicyAliases(policy) : policy,
+        ),
+      );
     },
   );
   const remoteToolSources = concatPrivateArrays(

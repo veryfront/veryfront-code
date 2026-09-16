@@ -568,15 +568,15 @@ async function withVeryfrontPlatformRemoteTools(input: {
   const { aliases } = platformCatalog;
   platformToolDefinitions = platformCatalog.definitions;
   for (const [canonicalName, legacyName] of aliases) {
-    if (!isRecord(input.agent.config.tools)) continue;
     if (!requestedToolNames.includes(canonicalName) && !requestedToolNames.includes(legacyName)) {
       continue;
     }
-    for (const selectedName of [canonicalName, legacyName]) {
-      if (
-        input.agent.config.tools[selectedName] === true &&
-        !requestedToolNames.includes(selectedName)
-      ) requestedToolNames.push(selectedName);
+    if (!requestedToolNames.includes(canonicalName)) requestedToolNames.push(canonicalName);
+    if (
+      !resolveVisibleRegistryTool(legacyName, input.agent.id) &&
+      !requestedToolNames.includes(legacyName)
+    ) {
+      requestedToolNames.push(legacyName);
     }
   }
 
