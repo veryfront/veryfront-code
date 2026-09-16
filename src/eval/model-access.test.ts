@@ -342,14 +342,18 @@ describe("eval/model-access", () => {
     const unauthorized = classifyAgentServiceModelAccessDenial({ status: 401, body: "x" });
     const forbidden = classifyAgentServiceModelAccessDenial({ status: 403, body: "x" });
 
-    assertEquals(unauthorized?.kind, "agent-service-access");
-    assertEquals(forbidden?.kind, "agent-service-access");
-    const error = createEvalModelAccessDeniedError("eval:a", unauthorized!, undefined);
-    assertEquals(error.slug, "eval-agent-service-access-denied");
+    assertEquals(unauthorized?.kind, "agent-service-unauthorized");
+    assertEquals(forbidden?.kind, "agent-service-forbidden");
+    const unauthorizedError = createEvalModelAccessDeniedError("eval:a", unauthorized!, undefined);
+    const forbiddenError = createEvalModelAccessDeniedError("eval:a", forbidden!, undefined);
+    assertEquals(unauthorizedError.slug, "eval-agent-service-unauthorized");
+    assertEquals(unauthorizedError.status, 401);
     assertEquals(
-      error.suggestion,
-      "Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and can access the configured project, then run the eval again",
+      unauthorizedError.suggestion,
+      "Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and not expired, then run the eval again",
     );
+    assertEquals(forbiddenError.slug, "eval-agent-service-access-denied");
+    assertEquals(forbiddenError.status, 403);
   });
 
   it("builds one registry error that names the eval and the denial", async () => {

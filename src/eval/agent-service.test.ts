@@ -356,7 +356,7 @@ describe("eval/agent-service", () => {
       return { slug: (error as { slug?: string }).slug, requests };
     };
 
-    assertEquals(await slugFor(401), { slug: "eval-agent-service-access-denied", requests: 1 });
+    assertEquals(await slugFor(401), { slug: "eval-agent-service-unauthorized", requests: 1 });
     assertEquals(await slugFor(403), { slug: "eval-agent-service-access-denied", requests: 1 });
   });
 

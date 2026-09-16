@@ -882,6 +882,13 @@ Agent service rejected the eval request.
 - **HTTP status:** 403
 - **What to do:** Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and can access the configured project, then run the eval again
 
+### eval-agent-service-unauthorized
+
+Agent service rejected the eval credential.
+
+- **HTTP status:** 401
+- **What to do:** Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and not expired, then run the eval again
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.

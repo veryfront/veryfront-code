@@ -163,7 +163,20 @@ export const EVAL_MODEL_PROJECT_ACCESS_DENIED = defineError({
 
 /**
  * An eval stopped because the agent service it runs against rejected the eval
- * request's credential or project access (HTTP 401 or 403).
+ * request's credential (HTTP 401).
+ */
+export const EVAL_AGENT_SERVICE_UNAUTHORIZED = defineError({
+  slug: "eval-agent-service-unauthorized",
+  category: "AGENT",
+  status: 401,
+  title: "Agent service rejected the eval credential",
+  suggestion:
+    "Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and not expired, then run the eval again",
+});
+
+/**
+ * An eval stopped because the agent service it runs against denied the eval
+ * request access (HTTP 403).
  */
 export const EVAL_AGENT_SERVICE_ACCESS_DENIED = defineError({
   slug: "eval-agent-service-access-denied",
@@ -192,4 +205,5 @@ export const AGENT_REGISTRY = {
   "eval-model-unauthorized": EVAL_MODEL_UNAUTHORIZED,
   "eval-model-project-access-denied": EVAL_MODEL_PROJECT_ACCESS_DENIED,
   "eval-agent-service-access-denied": EVAL_AGENT_SERVICE_ACCESS_DENIED,
+  "eval-agent-service-unauthorized": EVAL_AGENT_SERVICE_UNAUTHORIZED,
 } as const;

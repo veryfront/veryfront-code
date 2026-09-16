@@ -1,5 +1,6 @@
 import {
   EVAL_AGENT_SERVICE_ACCESS_DENIED,
+  EVAL_AGENT_SERVICE_UNAUTHORIZED,
   EVAL_MODEL_ACCESS_DENIED,
   EVAL_MODEL_PROJECT_ACCESS_DENIED,
   EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
@@ -22,7 +23,8 @@ export type EvalModelAccessDenialKind =
   | "project-required"
   | "unauthorized"
   | "forbidden"
-  | "agent-service-access";
+  | "agent-service-unauthorized"
+  | "agent-service-forbidden";
 
 /** Refusal that every later eval record would hit the same way. */
 export interface EvalModelAccessDenial {
@@ -37,7 +39,8 @@ const DENIAL_ERRORS = {
   "project-required": EVAL_PROJECT_REQUIRED,
   unauthorized: EVAL_MODEL_UNAUTHORIZED,
   forbidden: EVAL_MODEL_PROJECT_ACCESS_DENIED,
-  "agent-service-access": EVAL_AGENT_SERVICE_ACCESS_DENIED,
+  "agent-service-unauthorized": EVAL_AGENT_SERVICE_UNAUTHORIZED,
+  "agent-service-forbidden": EVAL_AGENT_SERVICE_ACCESS_DENIED,
 } as const;
 
 /**
@@ -47,14 +50,14 @@ const DENIAL_ERRORS = {
 function agentServiceAccessDenial(status: number): EvalModelAccessDenial | undefined {
   if (status === 401) {
     return {
-      kind: "agent-service-access",
+      kind: "agent-service-unauthorized",
       code: "UNAUTHORIZED",
       message: "The agent service rejected the eval request credential (401 Unauthorized)",
     };
   }
   if (status === 403) {
     return {
-      kind: "agent-service-access",
+      kind: "agent-service-forbidden",
       code: "FORBIDDEN",
       message: "The agent service denied the eval request access (403 Forbidden)",
     };
