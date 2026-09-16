@@ -293,6 +293,7 @@ describe("provider/veryfront-cloud/shared", () => {
       return context.billingGroupRequestAdmitted === true;
     };
 
+    assertEquals(await admittedFor(400), false);
     assertEquals(await admittedFor(402), false);
     assertEquals(await admittedFor(401), false);
     assertEquals(await admittedFor(200), true);

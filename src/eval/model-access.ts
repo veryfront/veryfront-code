@@ -1,6 +1,11 @@
 import { EVAL_MODEL_ACCESS_DENIED, EVAL_PROJECT_REQUIRED, VeryfrontError } from "#veryfront/errors";
 import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
-import { registeredProviderFailure } from "#veryfront/chat/provider-error-registry.ts";
+import {
+  CURATED_PROVIDER_FAILURE_CODES,
+  curatedProviderFailure,
+  type CuratedProviderFailureCode,
+  registeredProviderFailure,
+} from "#veryfront/chat/provider-error-registry.ts";
 import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 /** Why the model gateway refused an eval's model requests. */
@@ -75,10 +80,13 @@ function parseJsonBody(body: string): unknown {
  * `code` in the preserved response body. The gateway's own `error` text is kept
  * when it is a short string, so the user sees the gateway's wording.
  */
-function classifyProjectRequired(responseBody: string): EvalModelAccessDenial | undefined {
+function classifyProjectRequired(
+  responseBody: string,
+  options: { useGatewayMessage: boolean },
+): EvalModelAccessDenial | undefined {
   const body = parseJsonBody(responseBody);
   if (readProperty(body, "code") !== GATEWAY_PROJECT_REQUIRED_CODE) return undefined;
-  const gatewayMessage = readProperty(body, "error");
+  const gatewayMessage = options.useGatewayMessage ? readProperty(body, "error") : undefined;
   return {
     kind: "project-required",
     code: GATEWAY_PROJECT_REQUIRED_CODE,
@@ -91,7 +99,9 @@ function classifyProjectRequired(responseBody: string): EvalModelAccessDenial | 
 
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
   if (typeof error.responseBody !== "string") return undefined;
-  if (error.status === 400) return classifyProjectRequired(error.responseBody);
+  if (error.status === 400) {
+    return classifyProjectRequired(error.responseBody, { useGatewayMessage: true });
+  }
   if (error.status !== 402) return undefined;
   const parsed = parseKnownProblemBody(parseJsonBody(error.responseBody));
   return parsed ? toDenial(parsed) : undefined;
@@ -151,20 +161,35 @@ export function classifyAgentServiceModelAccessDenial(input: {
   runErrorMessage?: unknown;
 }): EvalModelAccessDenial | undefined {
   try {
+    if (input.status === 400 && input.body) {
+      // The endpoint's own text is not trusted for user-facing output.
+      const projectRequired = classifyProjectRequired(input.body, { useGatewayMessage: false });
+      if (projectRequired) return projectRequired;
+    }
     if (input.status === 402 && input.body) {
       const parsed = parseKnownProblemBody(parseJsonBody(input.body));
       if (parsed) return toDenial(parsed);
     }
-    if (typeof input.runErrorCode === "string") {
-      const message = typeof input.runErrorMessage === "string"
-        ? input.runErrorMessage
-        : input.runErrorCode;
-      return toDenial({ code: input.runErrorCode, message });
+    if (isCuratedProviderFailureCode(input.runErrorCode)) {
+      // The run error message is read only to recognize a run-scoped credit
+      // cap. The user-facing message is rebuilt from the curated code, so an
+      // endpoint cannot place arbitrary text in the CLI error.
+      if (
+        typeof input.runErrorMessage === "string" && isAgentRunCreditLimit(input.runErrorMessage)
+      ) {
+        return undefined;
+      }
+      return toDenial(curatedProviderFailure(input.runErrorCode));
     }
   } catch {
     return undefined;
   }
   return undefined;
+}
+
+function isCuratedProviderFailureCode(value: unknown): value is CuratedProviderFailureCode {
+  return typeof value === "string" &&
+    (CURATED_PROVIDER_FAILURE_CODES as readonly string[]).includes(value);
 }
 
 /** Build the fail-fast error for an eval whose model requests are refused. */

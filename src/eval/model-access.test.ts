@@ -58,6 +58,41 @@ describe("eval/model-access", () => {
     assertEquals(classifyEvalModelAccessDenial(error)?.code, "AI_PROVIDER_SPEND_LIMIT_EXCEEDED");
   });
 
+  it("rebuilds agent service denial messages from the curated code", () => {
+    const denial = classifyAgentServiceModelAccessDenial({
+      status: 402,
+      body: null,
+      runErrorCode: "INSUFFICIENT_CREDITS",
+      runErrorMessage: "secret prompt text sk-live-123",
+    });
+    const runLimit = classifyAgentServiceModelAccessDenial({
+      status: 402,
+      body: null,
+      runErrorCode: "INSUFFICIENT_CREDITS",
+      runErrorMessage: "Agent run credit limit exceeded: 1 credits required, 0 remaining.",
+    });
+
+    assertEquals(denial, {
+      kind: "billing",
+      code: "INSUFFICIENT_CREDITS",
+      message: "Insufficient AI credits",
+    });
+    assertEquals(runLimit, undefined);
+  });
+
+  it("classifies an agent service project-required 400 with a fixed message", () => {
+    const denial = classifyAgentServiceModelAccessDenial({
+      status: 400,
+      body: JSON.stringify({ error: "untrusted endpoint text", code: "gateway_project_required" }),
+    });
+
+    assertEquals(denial, {
+      kind: "project-required",
+      code: "gateway_project_required",
+      message: "A project is required to use Veryfront-managed AI inference",
+    });
+  });
+
   it("keeps request-scoped and unrecognized 402 responses as record failures", async () => {
     const bodyless = await buildProviderError("anthropic", new Response("", { status: 402 }));
     const resourceLimit = await buildProviderError(

@@ -41,8 +41,13 @@ const HeadersDelete = NativeHeaders.prototype.delete;
 const HeadersSet = NativeHeaders.prototype.set;
 const PromisePrototypeThen = Promise.prototype.then;
 const ResponseStatusGet = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
-/** Gateway admission rejections that return before any usage is recorded. */
-const GATEWAY_ADMISSION_REJECTION_STATUSES: ReadonlySet<number> = new Set([401, 402, 403]);
+/**
+ * Gateway admission rejections that return before any usage is recorded. A 400
+ * is included because the gateway rejects invalid requests, including the
+ * project-required refusal, before admission; treating a rare upstream 400 as
+ * unadmitted only risks demoting a finalize warning to debug.
+ */
+const GATEWAY_ADMISSION_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 401, 402, 403]);
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
 const URLHashSet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.set;
 const URLHostnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
