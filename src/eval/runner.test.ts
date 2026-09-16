@@ -658,7 +658,11 @@ describe("eval/runner", () => {
       target: "agent:researcher",
       dataset: datasets.inline([{ id: "q1", input: "First" }]),
       check({ record }) {
-        JSON.parse((record.output as { text?: string } | undefined)?.text ?? "");
+        // A fixed message keeps the assertion independent of each engine's
+        // JSON.parse wording.
+        if (!(record.output as { text?: string } | undefined)?.text) {
+          throw new Error("output is not valid JSON");
+        }
       },
     });
 
@@ -672,7 +676,7 @@ describe("eval/runner", () => {
 
     assertEquals(
       report.records[0]?.error,
-      "upstream unavailable; Eval check could not evaluate the failed target output: Unexpected end of JSON input",
+      "upstream unavailable; Eval check could not evaluate the failed target output: output is not valid JSON",
     );
   });
 
