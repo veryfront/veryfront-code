@@ -301,6 +301,24 @@ describe("cli/sync/git-ignore against real Git", () => {
       });
     });
 
+    it("keeps a file the nested repository tracks even when the parent ignores it", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "*.gen.ts\n");
+        await writeFile(repoDir, "tools/tracked.ts");
+        await runGit(repoDir, "add", ".");
+        await runGit(`${repoDir}/tools`, "init", "-q");
+        await writeFile(repoDir, "tools/schema.gen.ts");
+        await runGit(`${repoDir}/tools`, "add", "schema.gen.ts");
+
+        const files = await scanLocalFiles(repoDir, await loadIgnoreChecker(repoDir));
+        assertEquals(files.map((file) => file.path).sort(), [
+          "tools/schema.gen.ts",
+          "tools/tracked.ts",
+        ]);
+      });
+    });
+
     it("applies a nested repository's rules when the parent also tracks files there", async () => {
       await withTempDir(async (repoDir) => {
         await runGit(repoDir, "init", "-q");

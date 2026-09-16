@@ -389,6 +389,37 @@ describe("cli/sync/git-ignore", () => {
       );
     });
 
+    it("drops enclosing ignore matches beneath a nested repository", async () => {
+      const { dependencies } = fakeGit({
+        existing: ["/repo", "/repo/tools", "/repo/tools/.git"],
+        respond: (args) => {
+          if (isRootCheck(args)) return NOTHING_IGNORED;
+          if (isIndexListing(args)) {
+            return {
+              success: true,
+              code: 0,
+              stdout: [`100644 ${"a".repeat(40)} 0\ttools/tracked.ts`, ""].join("\0"),
+            };
+          }
+          if (isUntrackedListing(args)) return { success: true, code: 0, stdout: "" };
+          if (isListing(args)) {
+            return { success: true, code: 0, stdout: "tools/child-tracked.gen.ts\0top.gen.ts\0" };
+          }
+          return NOTHING_IGNORED;
+        },
+      });
+      const outerListing = dependencies.runCommand;
+      const context = await loadGitIgnoreContext("/repo", {
+        ...dependencies,
+        runCommand: (cmd, commandOptions = {}) =>
+          commandOptions.cwd === "/repo/tools" && isListing(commandOptions.args ?? [])
+            ? Promise.resolve({ success: true, code: 0, stdout: "cache/\0" })
+            : outerListing(cmd, commandOptions),
+      });
+
+      assertEquals([...context.ignoredPaths].sort(), ["tools/cache", "top.gen.ts"]);
+    });
+
     it("drops paths inside a submodule and checks the rest again", async () => {
       const { dependencies, calls } = fakeGit({
         respond: (args) => {

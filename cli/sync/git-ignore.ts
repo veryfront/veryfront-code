@@ -371,6 +371,12 @@ export async function loadGitIgnoreContext(
     resolvedProjectDir,
     dependencies,
   );
+  // Inside a nested repository its own rules decide: drop what the enclosing
+  // listing reported beneath it (for example a file the enclosing repository
+  // ignores but the nested one tracks), then add the nested repository's own.
+  ignoredPaths = ignoredPaths.filter((path) =>
+    !nestedRepositories.some((repository) => path.startsWith(`${repository.path}/`))
+  );
   for (const repository of nestedRepositories) {
     ignoredPaths.push(
       ...repository.context.ignoredPaths.map((path) => `${repository.path}/${path}`),
