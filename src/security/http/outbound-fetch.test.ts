@@ -8,11 +8,20 @@ import {
   WorkerEgressBlockedError,
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import {
+  clearEnvFileValueSource,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
+import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+  createOriginBoundOutboundFetch,
   createOutboundFetchBoundary,
+  createVeryfrontApiOriginBoundOutboundFetch,
   guardedOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
   loadTrustedCaCertificates,
   OutboundRequestBlockedError,
+  trustOperatorConfiguredVeryfrontApiOrigins,
 } from "./outbound-fetch.ts";
 
 function createTestBoundary(fetchImpl: typeof fetch) {
@@ -584,6 +593,219 @@ describe("guardedOutboundFetch", () => {
           TypeError,
           HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
         );
+      });
+    }
+  });
+});
+
+describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
+  const STAGING_API = "https://api.staging.example";
+  const PRIVATE_ADDRESS = "10.255.128.3";
+
+  /** Run `fn` against a stub transport whose DNS answers every host with `addresses`. */
+  async function withPrivateDns<T>(
+    fn: (seen: string[]) => Promise<T>,
+    addresses: readonly string[] = [PRIVATE_ADDRESS],
+  ): Promise<T> {
+    const seen: string[] = [];
+    const recordRequest = (input: RequestInfo | URL): Promise<Response> => {
+      seen.push(input instanceof Request ? input.url : String(input));
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    return await __runWithOutboundFetchTransportForTests(
+      {
+        fetch: recordRequest,
+        pinnedFetch: (url) => recordRequest(url),
+        resolveHost: () => Promise.resolve([...addresses]),
+      },
+      () => fn(seen),
+    );
+  }
+
+  async function withSealedOrigins<T>(
+    vars: Record<string, string>,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    __resetOperatorVeryfrontApiOriginsForTests();
+    try {
+      return await withEnv(
+        { VERYFRONT_API_URL: "", VERYFRONT_API_BASE_URL: "", ...vars },
+        async () => {
+          trustOperatorConfiguredVeryfrontApiOrigins();
+          return await fn();
+        },
+      );
+    } finally {
+      __resetOperatorVeryfrontApiOriginsForTests();
+    }
+  }
+
+  it("blocks a Veryfront API whose DNS answer is private when no command trusted it", async () => {
+    __resetOperatorVeryfrontApiOriginsForTests();
+    await withEnv({ VERYFRONT_API_URL: STAGING_API }, async () => {
+      await withPrivateDns(async (seen) => {
+        await assertRejects(
+          () => createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+          OutboundRequestBlockedError,
+          "Outbound network egress blocked for host: api.staging.example",
+        );
+        assertEquals(seen, []);
+      });
+    });
+  });
+
+  it("allows the exact operator-exported API origin to resolve to a private address", async () => {
+    await withSealedOrigins({ VERYFRONT_API_URL: `${STAGING_API}/api` }, async () => {
+      await withPrivateDns(async (seen) => {
+        const response = await createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(
+          `${STAGING_API}/ai/gateway/billing/finalize`,
+          { method: "POST", headers: { authorization: "Bearer <TOKEN>" } },
+        );
+        assertEquals(response.status, 200);
+        assertEquals(seen, [`${STAGING_API}/ai/gateway/billing/finalize`]);
+      });
+    });
+  });
+
+  it("trusts VERYFRONT_API_BASE_URL from the operator environment", async () => {
+    await withSealedOrigins({ VERYFRONT_API_BASE_URL: STAGING_API }, async () => {
+      await withPrivateDns(async () => {
+        const response = await createVeryfrontApiOriginBoundOutboundFetch(`${STAGING_API}/v1`)(
+          `${STAGING_API}/v1/health`,
+        );
+        assertEquals(response.status, 200);
+      });
+    });
+  });
+
+  it("keeps the private-address block for every other origin and transport", async () => {
+    await withSealedOrigins({ VERYFRONT_API_URL: STAGING_API }, async () => {
+      await withPrivateDns(async (seen) => {
+        for (
+          const base of [
+            "https://api.staging.example:8443",
+            "http://api.staging.example",
+            "https://other.staging.example",
+          ]
+        ) {
+          await assertRejects(
+            () => createVeryfrontApiOriginBoundOutboundFetch(base)(`${base}/health`),
+            OutboundRequestBlockedError,
+            "egress blocked",
+          );
+        }
+        // Generic provider, OIDC, and project-configured transports never
+        // consult the operator API origin.
+        await assertRejects(
+          () => createOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+          OutboundRequestBlockedError,
+          "egress blocked",
+        );
+        await assertRejects(
+          () => guardedOutboundFetch(`${STAGING_API}/health`),
+          OutboundRequestBlockedError,
+          "egress blocked",
+        );
+        assertEquals(seen, []);
+      });
+    });
+  });
+
+  it("does not let the trusted API transport reach another origin", async () => {
+    await withSealedOrigins({ VERYFRONT_API_URL: STAGING_API }, async () => {
+      await withPrivateDns(async (seen) => {
+        const apiFetch = createVeryfrontApiOriginBoundOutboundFetch(STAGING_API);
+        await assertRejects(
+          () => apiFetch("http://169.254.169.254/latest/meta-data"),
+          OutboundRequestBlockedError,
+          "destination origin is not authorized",
+        );
+        await assertRejects(
+          () => apiFetch(new Request("https://internal.staging.example/admin")),
+          OutboundRequestBlockedError,
+          "destination origin is not authorized",
+        );
+        assertEquals(seen, []);
+      });
+    });
+  });
+
+  it("rejects redirects from the trusted API origin", async () => {
+    await withSealedOrigins({ VERYFRONT_API_URL: STAGING_API }, async () => {
+      let calls = 0;
+      const redirectFetch = () => {
+        calls++;
+        return Promise.resolve(
+          new Response(null, {
+            status: 307,
+            headers: { location: `${STAGING_API}/elsewhere` },
+          }),
+        );
+      };
+      await __runWithOutboundFetchTransportForTests(
+        {
+          fetch: redirectFetch,
+          pinnedFetch: redirectFetch,
+          resolveHost: () => Promise.resolve([PRIVATE_ADDRESS]),
+        },
+        async () => {
+          await assertRejects(
+            () => createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/x`),
+            OutboundRequestBlockedError,
+            "unexpected redirect",
+          );
+        },
+      );
+      assertEquals(calls, 1);
+    });
+  });
+
+  it("ignores an API URL copied from a project .env file", async () => {
+    await withEnv({ VERYFRONT_API_URL: STAGING_API, VERYFRONT_API_BASE_URL: "" }, async () => {
+      __resetOperatorVeryfrontApiOriginsForTests();
+      markEnvFileValue("VERYFRONT_API_URL");
+      try {
+        trustOperatorConfiguredVeryfrontApiOrigins();
+        await withPrivateDns(async (seen) => {
+          await assertRejects(
+            () => createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+            OutboundRequestBlockedError,
+            "egress blocked",
+          );
+          assertEquals(seen, []);
+        });
+      } finally {
+        clearEnvFileValueSource("VERYFRONT_API_URL");
+        __resetOperatorVeryfrontApiOriginsForTests();
+      }
+    });
+  });
+
+  it("seals the trusted origins so later environment writes cannot add one", async () => {
+    await withSealedOrigins({}, async () => {
+      await withEnv({ VERYFRONT_API_URL: STAGING_API }, async () => {
+        trustOperatorConfiguredVeryfrontApiOrigins();
+        await withPrivateDns(async () => {
+          await assertRejects(
+            () => createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+            OutboundRequestBlockedError,
+            "egress blocked",
+          );
+        });
+      });
+    });
+  });
+
+  it("ignores API URLs that carry credentials or a non-HTTP scheme", async () => {
+    for (const value of ["https://user:secret@api.staging.example", "ftp://api.staging.example"]) {
+      await withSealedOrigins({ VERYFRONT_API_URL: value }, async () => {
+        await withPrivateDns(async () => {
+          await assertRejects(
+            () => createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+            OutboundRequestBlockedError,
+            "egress blocked",
+          );
+        });
       });
     }
   });

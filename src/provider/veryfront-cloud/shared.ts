@@ -6,7 +6,7 @@ import {
 } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
-  createOriginBoundOutboundFetch,
+  createVeryfrontApiOriginBoundOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
   HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
   isHostAllowedInternalProviderOrigin,
@@ -338,7 +338,10 @@ export function createVeryfrontCloudFetch(
       markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
-    // Consults the internal-provider-origin allowlist; resolved per call since it snapshots the host transport eagerly.
-    return createOriginBoundOutboundFetch(apiBaseUrl)(new NativeRequest(request, { headers }));
+    // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
+    // origin; resolved per call since it snapshots the host transport eagerly.
+    return createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
+      new NativeRequest(request, { headers }),
+    );
   };
 }

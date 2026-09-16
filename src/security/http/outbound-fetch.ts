@@ -7,6 +7,7 @@
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
@@ -23,6 +24,11 @@ import {
 export const HOST_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS";
 export const HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV =
   "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS";
+/** Operator environment keys that select the Veryfront API endpoint for a local command. */
+const OPERATOR_VERYFRONT_API_URL_ENV_KEYS = [
+  "VERYFRONT_API_URL",
+  "VERYFRONT_API_BASE_URL",
+] as const;
 
 const NODE_EXTRA_CA_CERTS_ENV = "NODE_EXTRA_CA_CERTS";
 const MAX_EXTRA_CA_BYTES = 1024 * 1024;
@@ -338,10 +344,81 @@ async function fetchWithBoundaryErrors(
   }
 }
 
+/**
+ * Veryfront API origins the operator selected for this local command, sealed by
+ * {@link trustOperatorConfiguredVeryfrontApiOrigins}. `undefined` means the
+ * process never opted in, which is the state of every hosted runtime.
+ */
+let operatorVeryfrontApiOrigins: ReadonlySet<string> | undefined;
+
+function parseOperatorVeryfrontApiOrigin(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmedValue = IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
+  if (!trimmedValue) return undefined;
+  let url: URL;
+  try {
+    url = new NativeURL(trimmedValue);
+  } catch {
+    return undefined;
+  }
+  const protocol = readNativeURLString(url, URLProtocolGet);
+  if (
+    (protocol !== "http:" && protocol !== "https:") ||
+    readNativeURLString(url, URLUsernameGet).length > 0 ||
+    readNativeURLString(url, URLPasswordGet).length > 0
+  ) {
+    return undefined;
+  }
+  return readNativeURLString(url, URLOriginGet);
+}
+
+/**
+ * Trust the Veryfront API origin the operator exported for this local command
+ * to resolve to a private address.
+ *
+ * Staging, VPN, and self-hosted Veryfront APIs legitimately resolve to private
+ * addresses, which the egress guard otherwise rejects as request forgery. Only
+ * `VERYFRONT_API_URL` and `VERYFRONT_API_BASE_URL` from the process environment
+ * (the shell or CI job) count: values copied from a project `.env` file are
+ * repository-steered and are ignored, as are `veryfront.json` endpoints, scoped
+ * request contexts, and URLs returned by a server.
+ *
+ * The first call seals the set, so later environment writes, including writes
+ * by project code loaded afterwards, cannot add an origin. Only
+ * {@link createVeryfrontApiOriginBoundOutboundFetch} consults it; every other
+ * outbound transport keeps the private-address block.
+ *
+ * @internal Call once from a local CLI command entry point, after env loading
+ * and before project code is loaded. Hosted runtimes and `veryfront serve` must
+ * never call it: there `VERYFRONT_API_URL` names a cluster-internal service.
+ */
+export function trustOperatorConfiguredVeryfrontApiOrigins(): void {
+  if (operatorVeryfrontApiOrigins !== undefined) return;
+  const origins = new NativeSet<string>();
+  for (let i = 0; i < OPERATOR_VERYFRONT_API_URL_ENV_KEYS.length; i++) {
+    const origin = parseOperatorVeryfrontApiOrigin(
+      getHostEnvExcludingEnvFile(OPERATOR_VERYFRONT_API_URL_ENV_KEYS[i]!),
+    );
+    if (origin !== undefined) IntrinsicReflectApply(SetPrototypeAdd, origins, [origin]);
+  }
+  operatorVeryfrontApiOrigins = origins;
+}
+
+/** @internal Forget the sealed operator origins so a test can seal them again. */
+export function __resetOperatorVeryfrontApiOriginsForTests(): void {
+  operatorVeryfrontApiOrigins = undefined;
+}
+
+function isOperatorVeryfrontApiOrigin(origin: string): boolean {
+  return operatorVeryfrontApiOrigins !== undefined &&
+    IntrinsicReflectApply(SetPrototypeHas, operatorVeryfrontApiOrigins, [origin]) as boolean;
+}
+
 function createOriginBoundFetchWithTransport(
   baseUrl: string,
   transport: OutboundFetchTransport,
   allowHostInternalEgress = false,
+  allowOperatorVeryfrontApiOrigin = false,
 ): typeof fetch {
   const base = new NativeURL(baseUrl);
   const baseProtocol = readNativeURLString(base, URLProtocolGet);
@@ -352,7 +429,9 @@ function createOriginBoundFetchWithTransport(
     throw new TypeError("Provider base URL must not include credentials");
   }
   const baseOrigin = readNativeURLString(base, URLOriginGet);
-  const allowInternalEgress = allowHostInternalEgress || isHostAllowedInternalProviderOrigin(base);
+  const allowInternalEgress = allowHostInternalEgress ||
+    (allowOperatorVeryfrontApiOrigin && isOperatorVeryfrontApiOrigin(baseOrigin)) ||
+    isHostAllowedInternalProviderOrigin(base);
   // A primitive, not the URL object: passing `base` itself as the second URL()
   // argument would coerce it through a possibly-replaced URL.prototype.toString.
   const baseHref = readNativeURLString(base, URLHrefGet);
@@ -527,6 +606,20 @@ export async function guardedExactHttpLoopbackOutboundFetch(
  */
 export function createOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
   return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport());
+}
+
+/**
+ * Create a credential-safe transport for the Veryfront API at `baseUrl`.
+ *
+ * Behaves like {@link createOriginBoundOutboundFetch}, except that the origin
+ * may resolve to a private address when it exactly matches an origin sealed by
+ * {@link trustOperatorConfiguredVeryfrontApiOrigins}. Redirects stay rejected
+ * and every other destination origin stays unauthorized.
+ *
+ * @internal Veryfront Cloud gateway and billing requests only.
+ */
+export function createVeryfrontApiOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
+  return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport(), false, true);
 }
 
 /** @internal Bind a host-selected sandbox runtime origin while allowing private service DNS. */
