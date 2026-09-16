@@ -861,6 +861,20 @@ AI provider spend limit reached for eval run.
 - **HTTP status:** 402
 - **What to do:** Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit
 
+### eval-model-unauthorized
+
+Veryfront Cloud rejected the eval credential.
+
+- **HTTP status:** 401
+- **What to do:** Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again
+
+### eval-model-project-access-denied
+
+No access to the linked project for eval run.
+
+- **HTTP status:** 403
+- **What to do:** Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.

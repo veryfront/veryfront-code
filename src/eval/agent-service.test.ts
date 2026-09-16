@@ -331,6 +331,35 @@ describe("eval/agent-service", () => {
     assertEquals(requests, 1);
   });
 
+  it("stops the eval when the agent service rejects the credential or project access", async () => {
+    const slugFor = async (status: number) => {
+      let requests = 0;
+      const adapter = createAgentServiceEvalAdapter({
+        endpoint: "http://127.0.0.1:4311/api/ag-ui",
+        authToken: "token",
+        fetch: async () => {
+          requests += 1;
+          return new Response(JSON.stringify({ error: "Rejected" }), { status });
+        },
+      });
+      const definition = evalAgent({
+        id: `eval:agent-service-${status}`,
+        target: "agent:assistant",
+        dataset: datasets.inline([
+          { id: "q1", input: "First" },
+          { id: "q2", input: "Second" },
+        ]),
+      });
+      const error = await assertRejects(() =>
+        runEval(definition, { adapters: { agent: adapter } })
+      );
+      return { slug: (error as { slug?: string }).slug, requests };
+    };
+
+    assertEquals(await slugFor(401), { slug: "eval-model-unauthorized", requests: 1 });
+    assertEquals(await slugFor(403), { slug: "eval-model-project-access-denied", requests: 1 });
+  });
+
   it("keeps request-scoped agent service limits as failed records", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",

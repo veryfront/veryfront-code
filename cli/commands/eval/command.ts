@@ -290,12 +290,19 @@ function isGatewayBillingUsageNotReady(
   return error.code === GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE;
 }
 
+/** Finalization status that repeats the refusal which stopped the eval. */
+const DENIAL_FINALIZE_STATUS: Partial<Record<EvalModelAccessDenialKind, number>> = {
+  unauthorized: 401,
+  forbidden: 403,
+};
+
 function isExpectedFinalizeRefusal(
   denial: EvalModelAccessDenialKind,
   response: Response,
   error: GatewayBillingFinalizeError,
 ): boolean {
   if (response.status === 404 && error.code === GATEWAY_BILLING_GROUP_NOT_FOUND_CODE) return true;
+  if (DENIAL_FINALIZE_STATUS[denial] === response.status) return true;
   return denial === "project-required" && response.status === 400 &&
     error.code === GATEWAY_PROJECT_REQUIRED_CODE;
 }

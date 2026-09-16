@@ -739,6 +739,32 @@ describe("provider-http", () => {
       assertEquals(error.retryable, true);
     });
 
+    it("keeps the HTTP status when a JSON error body stalls past the deadline", async () => {
+      const stalledBody = new ReadableStream<Uint8Array>({
+        pull() {
+          return new Promise<void>(() => {});
+        },
+      });
+      const error = await assertRejects(
+        () =>
+          requestJson({
+            url: "https://user:pass@gateway.test/ai/gateway/openai/v1/chat/completions?key=secret",
+            fetchImpl: () => Promise.resolve(new Response(stalledBody, { status: 401 })),
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            timeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "status 401",
+      ) as ProviderRequestError;
+
+      assertEquals(error.status, 401);
+      assertEquals(error.message.includes("timed out"), false);
+      assertEquals(error.requestUrl, "https://gateway.test/ai/gateway/openai/v1/chat/completions");
+      assertEquals(Object.keys(error).includes("requestUrl"), false);
+    });
+
     it("names the model, the elapsed time, and the deadline that fired", async () => {
       const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
       const error = await assertRejects(

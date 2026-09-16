@@ -135,6 +135,32 @@ export const EVAL_MODEL_SPEND_LIMIT_EXCEEDED = defineError({
     "Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit",
 });
 
+/**
+ * An eval stopped because the Veryfront Cloud gateway rejected the API
+ * credential for its model requests (HTTP 401).
+ */
+export const EVAL_MODEL_UNAUTHORIZED = defineError({
+  slug: "eval-model-unauthorized",
+  category: "AGENT",
+  status: 401,
+  title: "Veryfront Cloud rejected the eval credential",
+  suggestion:
+    "Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again",
+});
+
+/**
+ * An eval stopped because the Veryfront Cloud gateway denied the credential
+ * access to the linked project (HTTP 403).
+ */
+export const EVAL_MODEL_PROJECT_ACCESS_DENIED = defineError({
+  slug: "eval-model-project-access-denied",
+  category: "AGENT",
+  status: 403,
+  title: "No access to the linked project for eval run",
+  suggestion:
+    "Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -150,4 +176,6 @@ export const AGENT_REGISTRY = {
   "eval-model-access-denied": EVAL_MODEL_ACCESS_DENIED,
   "eval-project-required": EVAL_PROJECT_REQUIRED,
   "eval-model-spend-limit-exceeded": EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
+  "eval-model-unauthorized": EVAL_MODEL_UNAUTHORIZED,
+  "eval-model-project-access-denied": EVAL_MODEL_PROJECT_ACCESS_DENIED,
 } as const;
