@@ -420,6 +420,35 @@ describe("cli/sync/git-ignore", () => {
       assertEquals([...context.ignoredPaths].sort(), ["tools/cache", "top.gen.ts"]);
     });
 
+    it("drops a whole submodule named from the repository root in one retry", async () => {
+      const { dependencies, calls } = fakeGit({
+        respond: (args) => {
+          if (isRootCheck(args)) return NOTHING_IGNORED;
+          if (isListing(args) || isIndexListing(args) || isUntrackedListing(args)) {
+            return { success: true, code: 0, stdout: "" };
+          }
+          if (args[0] === "rev-parse") return { success: true, code: 0, stdout: "apps/proj/\n" };
+          const inSubmodule = args.find((arg) => arg.startsWith("./vendor/sub/"));
+          if (inSubmodule) {
+            return {
+              success: false,
+              code: 128,
+              stderr: `fatal: Pathspec '${inSubmodule}' is in submodule 'apps/proj/vendor/sub'`,
+            };
+          }
+          return { success: true, code: 0, stdout: "./x.gen.ts\n" };
+        },
+        gitMetadata: true,
+      });
+      const context = await loadGitIgnoreContext("/repo/apps/proj", dependencies);
+      const paths = Array.from({ length: 50 }, (_, index) => `vendor/sub/file-${index}.ts`);
+
+      assertEquals(await context.checkPaths([...paths, "x.gen.ts"]), ["x.gen.ts"]);
+      const checks = calls.filter((call) => call.args[0] === "-c");
+      assertEquals(checks.length, 2);
+      assertEquals(checks.at(-1)?.args.slice(3), ["./x.gen.ts"]);
+    });
+
     it("drops paths inside a submodule and checks the rest again", async () => {
       const { dependencies, calls } = fakeGit({
         respond: (args) => {

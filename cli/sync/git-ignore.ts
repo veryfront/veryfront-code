@@ -196,11 +196,20 @@ export function unquoteGitPath(line: string): string {
  * Find the leading part of a `./`-prefixed argument that names the submodule
  * Git reported, whose path Git gives relative to the repository root.
  */
-function submoduleArgumentRoot(pathspec: string, submodule: string): string | null {
+function submoduleArgumentRoot(
+  pathspec: string,
+  submodule: string,
+  repositoryPrefix: string,
+): string | null {
+  // Git names the submodule from the repository root; the arguments are
+  // relative to the query directory, whose root-relative prefix is known.
+  const relativeSubmodule = repositoryPrefix && submodule.startsWith(repositoryPrefix)
+    ? submodule.slice(repositoryPrefix.length)
+    : submodule;
   const segments = pathspec.split("/");
   for (let length = 1; length < segments.length; length++) {
     const candidate = segments.slice(0, length).join("/");
-    if (candidate === `./${submodule}` || candidate.endsWith(`/${submodule}`)) return candidate;
+    if (candidate === `./${relativeSubmodule}`) return candidate;
   }
   return null;
 }
@@ -427,6 +436,13 @@ export async function loadGitIgnoreContext(
     return ignored;
   }
 
+  let repositoryPrefix: Promise<string> | undefined;
+  function loadRepositoryPrefix(): Promise<string> {
+    repositoryPrefix ??= runGitIgnoreQuery(baseDir, ["rev-parse", "--show-prefix"], dependencies)
+      .then((run) => run.kind === "output" ? run.stdout.trim() : "");
+    return repositoryPrefix;
+  }
+
   async function checkOwnPaths(candidates: readonly string[]): Promise<string[]> {
     if (candidates.length === 0) return [];
 
@@ -461,7 +477,11 @@ export async function loadGitIgnoreContext(
       // exist there, so drop that submodule's paths and ask again.
       while (run.kind === "submodule-path") {
         const { pathspec } = run;
-        const submoduleRoot = submoduleArgumentRoot(pathspec, run.submodule);
+        const submoduleRoot = submoduleArgumentRoot(
+          pathspec,
+          run.submodule,
+          await loadRepositoryPrefix(),
+        );
         const remaining = arguments_.filter((argument) =>
           argument !== pathspec &&
           !(submoduleRoot && argument.startsWith(`${submoduleRoot}/`))
