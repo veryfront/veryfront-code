@@ -2767,6 +2767,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       denied,
       toolMapDenial = false,
       allowAll = false,
+      allTools = false,
       legacyAllow = false,
       ownedProjectDenial = false,
     } of [
@@ -2777,11 +2778,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       { canonical: true, denied: true, toolMapDenial: true },
       { canonical: false, denied: true, toolMapDenial: true },
       { canonical: true, denied: false, allowAll: true },
+      { canonical: true, denied: false, allowAll: true, allTools: true },
       { canonical: true, denied: false, legacyAllow: true },
       { canonical: true, denied: false, toolMapDenial: true, ownedProjectDenial: true },
     ]
   ) {
-    it(`preserves ${canonical ? "canonical" : "legacy"} platform identities through MCP dispatch (denied: ${denied}, map: ${toolMapDenial}, all: ${allowAll}, legacy allow: ${legacyAllow}, owned denial: ${ownedProjectDenial})`, async () => {
+    it(`preserves ${canonical ? "canonical" : "legacy"} platform identities through MCP dispatch (denied: ${denied}, map: ${toolMapDenial}, all: ${allowAll}, tools: ${allTools}, legacy allow: ${legacyAllow}, owned denial: ${ownedProjectDenial})`, async () => {
       const selectedName = canonical ? "veryfront__list_uploads" : "list_uploads";
       let capturedAllowedRemoteTools: string[] | undefined;
       let capturedRemoteToolNames: string[] = [];
@@ -2872,7 +2874,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             }
             return id === "assistant-1"
               ? createAgentWithConfig("assistant-1", {
-                tools: {
+                tools: allTools ? true : {
                   [selectedName]: true,
                   ...(toolMapDenial
                     ? { [canonical ? "list_uploads" : "veryfront__list_uploads"]: false }

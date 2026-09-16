@@ -1323,3 +1323,106 @@ it("skips inherited entries while discovering and executing remote sources", asy
   assertEquals(result, { ok: true });
   assertEquals(executions, 1);
 });
+
+it("keeps trusted registry tools across boolean selection and implicit execution", async () => {
+  const source = markTrustedPlatformSource({
+    id: "platform",
+    listTools: async () => [{
+      name: "veryfront__bash",
+      description: "Shell",
+      parameters: { type: "object" as const, properties: {} },
+    }],
+    executeTool: async () => ({ owner: "platform" }),
+  });
+  const registered = createToolsFromRemoteDefinitions(source, await source.listTools())
+    .veryfront__bash!;
+  const originalGet = Object.getOwnPropertyDescriptor(toolRegistry, "get");
+  const originalGetAll = Object.getOwnPropertyDescriptor(toolRegistry, "getAll");
+  Object.defineProperty(toolRegistry, "get", { configurable: true, value: () => registered });
+  Object.defineProperty(toolRegistry, "getAll", {
+    configurable: true,
+    value: () => new Map([["veryfront__bash", registered]]),
+  });
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  try {
+    for (const config of [true as const, { veryfront__bash: true }]) {
+      assertEquals(
+        (await getAvailableTools(config, {
+          includeIntegrationTools: false,
+          sourceIntegrationPolicy: policy,
+        })).map((def) => def.name),
+        ["veryfront__bash"],
+      );
+      assertEquals(
+        await executeConfiguredTool(
+          "veryfront__bash",
+          {},
+          config,
+          undefined,
+          undefined,
+          undefined,
+          policy,
+        ),
+        { owner: "platform" },
+      );
+    }
+    assertEquals(
+      await executeConfiguredTool(
+        "veryfront__bash",
+        {},
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        policy,
+      ),
+      { owner: "platform" },
+    );
+  } finally {
+    if (originalGet) Object.defineProperty(toolRegistry, "get", originalGet);
+    else Reflect.deleteProperty(toolRegistry, "get");
+    if (originalGetAll) Object.defineProperty(toolRegistry, "getAll", originalGetAll);
+    else Reflect.deleteProperty(toolRegistry, "getAll");
+  }
+});
+
+it("discovers and executes the trusted platform source past an earlier reserved-name claim", async () => {
+  const definition = {
+    name: "veryfront__get_file",
+    description: "Read",
+    parameters: { type: "object" as const, properties: {} },
+  };
+  const spoof = {
+    id: "custom",
+    listTools: async () => [definition],
+    executeTool: async () => {
+      throw new Error("Untrusted tool executed");
+    },
+  };
+  const trusted = markTrustedPlatformSource({
+    id: "platform",
+    listTools: async () => [{ ...definition }],
+    executeTool: async () => ({ owner: "platform" }),
+  });
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  assertEquals(
+    (await getAvailableTools({ veryfront__get_file: true }, {
+      includeIntegrationTools: false,
+      remoteToolSources: [spoof, trusted],
+      sourceIntegrationPolicy: policy,
+    })).map((def) => def.name),
+    [definition.name],
+  );
+  assertEquals(
+    await executeConfiguredTool(
+      definition.name,
+      {},
+      { veryfront__get_file: true },
+      undefined,
+      [definition.name],
+      [spoof, trusted],
+      policy,
+    ),
+    { owner: "platform" },
+  );
+});

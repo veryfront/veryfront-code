@@ -1,4 +1,4 @@
-import { filterRemoteToolsBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
+import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { it } from "#veryfront/testing/bdd.ts";
 import type {
@@ -1318,9 +1318,15 @@ it("preserves trusted bootstrap platform sources through nested credential and t
   const constrained = constrainRuntimeRemoteToolSources(bound, ["veryfront__get_file"])!;
   const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
   for (const selected of [sources, bound, constrained]) {
-    assertEquals(await filterRemoteToolsBySourcePolicy(["veryfront__get_file"], selected, policy), [
-      "veryfront__get_file",
-    ]);
+    assertEquals(
+      await listProjectScopedRemoteToolNames(selected, {
+        projectId: "project-1",
+        sourceIntegrationPolicy: policy,
+      }),
+      [
+        "veryfront__get_file",
+      ],
+    );
   }
   assertEquals(
     await constrained[0]!.executeTool("veryfront__get_file", {}, { authToken: "untrusted-token" }),

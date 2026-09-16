@@ -66,6 +66,9 @@ requires host-owned provenance; a remote source cannot claim it with a tool name
 or source ID. Hosted wrappers and child forks preserve provenance. Managed
 executor installations carry broker-derived platform source and host-tool
 metadata, then restore provenance on the executor-local facades.
+Reserved platform names resolve only through trusted sources, regardless of
+custom server ordering. Hosted discovery applies connector policy to the same
+catalog snapshot it lists, without fetching each catalog a second time.
 
 ## Try a tool directly
 

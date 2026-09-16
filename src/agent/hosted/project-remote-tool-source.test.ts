@@ -1,4 +1,4 @@
-import { filterRemoteToolsBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
+import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
 import {
   assertEquals,
   assertInstanceOf,
@@ -1357,12 +1357,11 @@ Deno.test("authenticated hosted API catalogs retain platform tools under connect
       }),
   });
   assertEquals(
-    await filterRemoteToolsBySourcePolicy(
-      ["veryfront__get_file", "veryfront__export_data"],
-      sources,
-      { schemaVersion: 1, mode: "allowlist", integrations: {} },
-      { projectId: "project-1", authToken: "token-1" },
-    ),
+    await listProjectScopedRemoteToolNames(sources, {
+      projectId: "project-1",
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "allowlist", integrations: {} },
+      context: { authToken: "token-1" },
+    }),
     ["veryfront__get_file"],
   );
 });

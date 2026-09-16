@@ -604,7 +604,10 @@ async function withVeryfrontPlatformRemoteTools(input: {
     const configuredAlias = isRecord(input.agent.config.tools) &&
       input.agent.config.tools[canonicalName] === true &&
       (veryfrontApiMcpPolicy.allowAll || requestedToolNames.includes(definition.name));
-    if (!requestedToolNames.includes(canonicalName) && !configuredAlias) continue;
+    if (
+      !veryfrontApiMcpPolicy.allowAll && !requestedToolNames.includes(canonicalName) &&
+      !configuredAlias
+    ) continue;
     if (configuredAlias && !requestedToolNames.includes(canonicalName)) {
       requestedToolNames.push(canonicalName);
     }

@@ -68,7 +68,7 @@ async function isTrustedPlatformSelection(
   for (let index = 0; index < sources.length; index++) {
     if (!intrinsicHasOwn(sources, index)) continue;
     const source = sources[index]!;
-    if (await sourceHasTool(source, name, context)) return hasTrustedPlatformSource(source);
+    if (hasTrustedPlatformSource(source) && await sourceHasTool(source, name, context)) return true;
   }
   return false;
 }
@@ -242,7 +242,9 @@ async function getRemoteToolDefinitions(options?: {
       const sourceDefs = await source.listTools(remoteToolContext);
       for (let index = 0; index < sourceDefs.length; index++) {
         if (intrinsicHasOwn(sourceDefs, index)) {
-          addDefinition(sourceDefs[index]!, hasTrustedPlatformSource(source));
+          const definition = sourceDefs[index]!;
+          if (isPlatformName(definition.name) && !hasTrustedPlatformSource(source)) continue;
+          addDefinition(definition, hasTrustedPlatformSource(source));
         }
       }
     } catch (error) {
@@ -295,6 +297,7 @@ async function executeRemoteToolFromSources(
   for (let index = 0; index < sources.length; index++) {
     if (!intrinsicHasOwn(sources, index)) continue;
     const source = sources[index]!;
+    if (isPlatformName(toolName) && !hasTrustedPlatformSource(source)) continue;
     if (!(await sourceHasTool(source, toolName, context))) {
       continue;
     }
@@ -379,7 +382,13 @@ export async function executeConfiguredTool(
 
   if (
     sourceIntegrationPolicy &&
-    !isAllowedBySourcePolicy(authorizationToolName, sourceIntegrationPolicy, configuredEntry) &&
+    !isAllowedBySourcePolicy(
+      authorizationToolName,
+      sourceIntegrationPolicy,
+      configuredEntry === true || configuredEntry === undefined
+        ? resolveVisibleRegistryTool(toolName, context?.agentId)
+        : configuredEntry,
+    ) &&
     !((configuredEntry === undefined || configuredEntry === true) &&
       await isTrustedPlatformSelection(authorizationToolName, remoteToolSources, context))
   ) {
@@ -582,7 +591,12 @@ export async function getAvailableTools(
     const authorizationToolName = getConfiguredToolAuthorizationName(name, entry);
     if (
       sourceIntegrationPolicy &&
-      !isAllowedBySourcePolicy(authorizationToolName, sourceIntegrationPolicy, entry, remoteDefs)
+      !isAllowedBySourcePolicy(
+        authorizationToolName,
+        sourceIntegrationPolicy,
+        entry === true ? resolveVisibleRegistryTool(name, options?.callerAgentId) : entry,
+        remoteDefs,
+      )
     ) {
       continue;
     }
@@ -673,7 +687,9 @@ export async function getAvailableTools(
       isAllowedBySourcePolicy(
         configuredAuthorizationToolNames.get(definition.name) ?? definition.name,
         sourceIntegrationPolicy,
-        toolsConfig[definition.name],
+        toolsConfig[definition.name] === true
+          ? resolveVisibleRegistryTool(definition.name, options?.callerAgentId)
+          : toolsConfig[definition.name],
         remoteDefs,
       )
     )
