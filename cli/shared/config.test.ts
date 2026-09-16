@@ -891,13 +891,15 @@ describe("resolveConfigWithAuthNoModule", () => {
         JSON.stringify({ name: "some-other-project" }),
       );
 
-      await withoutTenantEnvironment(() =>
+      const error = await withoutTenantEnvironment(() =>
         assertRejects(
           () => resolveConfigWithAuthNoModule(tempDir, noModuleEnv()),
           Error,
           "veryfront.config.ts is the only project reference in this directory",
         )
       );
+      // Only point at remedies the CLI supports; there is no `veryfront link` command.
+      assertEquals((error as Error).message.includes("veryfront link"), false);
     }, { prefix: "vf-no-module-only-" });
   });
 

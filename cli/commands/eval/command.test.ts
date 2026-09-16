@@ -2108,6 +2108,7 @@ describe("eval CLI command helpers", () => {
     assertEquals(typeof warning, "string");
     assertEquals(warning?.includes("gateway_project_required"), true);
     assertEquals(warning?.includes("VERYFRONT_PROJECT_SLUG"), true);
+    assertEquals(warning?.includes("veryfront link"), false);
     assertEquals(
       formatMissingEvalProjectWarning({ apiToken: "token", projectSlug: "eval-project" }),
       undefined,

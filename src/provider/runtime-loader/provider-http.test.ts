@@ -98,6 +98,7 @@ describe("provider-http", () => {
       assertMatch(err.message, /^Provider request failed with status 400: /);
       assertMatch(err.message, /gateway_project_required/);
       assertMatch(err.message, /VERYFRONT_PROJECT_SLUG/);
+      assertEquals(err.message.includes("veryfront link"), false);
       assertEquals(err.message.includes("<GATEWAY TEXT>"), false);
       assertEquals(err.responseBody, responseBody);
       assertEquals(Object.keys(err).includes("responseBody"), false);

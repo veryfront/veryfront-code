@@ -676,8 +676,7 @@ export function formatMissingEvalProjectWarning(
 ): string | undefined {
   if (!runtimeAuth.apiToken || runtimeAuth.projectSlug) return undefined;
   return "No Veryfront project is configured, so Veryfront Cloud will reject veryfront-cloud model requests " +
-    "(gateway_project_required). Set VERYFRONT_PROJECT_SLUG, add projectSlug to veryfront.config.ts, " +
-    "or run 'veryfront link' in the project directory.";
+    "(gateway_project_required). Set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
 }
 
 /**

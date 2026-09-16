@@ -444,7 +444,7 @@ const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
  */
 const GATEWAY_PROJECT_REQUIRED_MESSAGE =
   `Veryfront Cloud rejected the request because no project was sent (${GATEWAY_PROJECT_REQUIRED_CODE}). ` +
-  "Set VERYFRONT_PROJECT_SLUG, add projectSlug to veryfront.config.ts, or run 'veryfront link' in the project directory.";
+  "Set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
 
 /**
  * Whether a 400 is the Veryfront Cloud gateway rejecting a request that named
