@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { cliLogger } from "#cli/utils";
 import {
   assertEquals,
   assertInstanceOf,
@@ -639,6 +640,31 @@ describe("eval CLI command helpers", () => {
         }
       }, { prefix: "vf-eval-list-json-auth-" });
     }, { prefix: "vf-eval-list-json-" });
+  });
+
+  it("does not warn about a missing project when only listing evals", async () => {
+    await withTempDir(async (projectDir) => {
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await runEvalCommand(
+          { list: true, exporters: [], debug: false, candidateModels: [], projectDir },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            // A token without a project: the state that would warn before a run.
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-list-no-project-" });
   });
 
   it("resolves eval export redaction from exact global env toggles", () => {

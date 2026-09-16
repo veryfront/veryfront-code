@@ -76,6 +76,7 @@ export interface EvalOptions extends EvalArgs {
 
 interface EvalCommandDependencies {
   discoverProjectAgentRuntime?: typeof discoverProjectAgentRuntime;
+  hydrateEvalRuntimeAuth?: typeof hydrateEvalRuntimeAuth;
 }
 
 type GatewayBillingGroupFinalization = {
@@ -1390,9 +1391,16 @@ export async function runEvalCommand(
 
   return await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey } = context;
-    const runtimeAuth = await hydrateEvalRuntimeAuth(projectDir, config);
-    const missingProjectWarning = formatMissingEvalProjectWarning(runtimeAuth);
-    if (missingProjectWarning) cliLogger.warn(missingProjectWarning);
+    const runtimeAuth = await (dependencies.hydrateEvalRuntimeAuth ?? hydrateEvalRuntimeAuth)(
+      projectDir,
+      config,
+    );
+    // Emitted only once a run is certain: listing and usage errors never send
+    // a model request, so the warning would be noise there.
+    const warnIfNoProject = () => {
+      const warning = formatMissingEvalProjectWarning(runtimeAuth);
+      if (warning) cliLogger.warn(warning);
+    };
 
     const projectRuntime = await discoverRuntime({
       projectDir,
@@ -1462,6 +1470,7 @@ export async function runEvalCommand(
         return 0;
       }
 
+      warnIfNoProject();
       const selectedExporterIds = resolveEvalExporterIds(options);
       const extensionSetup = await setupEvalCliExtensions(
         projectDir,
@@ -1580,6 +1589,7 @@ export async function runEvalCommand(
       if (toolId && !tool) {
         return await outputToolNotFound(toolId);
       }
+      warnIfNoProject();
 
       if (modelComparisonConfig) {
         return await runWithProjectAgentRuntime(
