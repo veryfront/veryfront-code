@@ -916,6 +916,8 @@ export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext 
       ...baseContext,
       runId: context.runId,
       toolCallId,
+      // The runner aborts this when the case passes --record-timeout.
+      ...(context.signal ? { abortSignal: context.signal } : {}),
     });
     const error = getToolExecutionErrorMessage(output);
     return {

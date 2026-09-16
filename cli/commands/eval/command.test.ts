@@ -1174,6 +1174,36 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("forwards the record timeout signal into tool execution", async () => {
+    let executionSignal: AbortSignal | undefined;
+    const tool = {
+      id: "slow_lookup",
+      type: "function",
+      description: "Lookup that never finishes.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: (_input: unknown, context?: Parameters<Tool["execute"]>[1]) => {
+        executionSignal = context?.abortSignal;
+        return new Promise<never>(() => {});
+      },
+    } as Tool;
+    const definition = evalTool({
+      id: "eval:slow-tool",
+      target: "tool:slow_lookup",
+      dataset: datasets.inline([{ id: "q1", input: { query: "slow" } }]),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: { tool: createToolAdapter(tool) },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:slow-tool" case "q1" did not finish within 0.05s.',
+    );
+    assertEquals(executionSignal?.aborted, true);
+  });
+
   it("creates a CLI tool adapter for direct tool evals", async () => {
     const contexts: Array<Parameters<Tool["execute"]>[1]> = [];
     const tool = {
