@@ -6,6 +6,8 @@ import {
   requestJson,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import { createVeryfrontCloudFetch } from "#veryfront/provider/veryfront-cloud/shared.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   classifyAgentServiceAccessStatus,
   classifyAgentServiceModelAccessDenial,
@@ -218,6 +220,34 @@ describe("eval/model-access", () => {
     );
     const unrouted = await buildProviderError("anthropic", jsonResponse(400, projectRequiredBody));
     assertEquals(classifyEvalModelAccessDenial(unrouted), undefined);
+  });
+
+  it("classifies rejections from a gateway fetch built with an explicit base URL", async () => {
+    const gatewayFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://93.184.216.40/ai/gateway/anthropic/v1",
+    );
+    const classifyStatus = async (status: number) => {
+      try {
+        await withMockFetch(
+          async () => jsonResponse(status, { error: "Rejected" }),
+          () =>
+            requestJson({
+              url: "https://93.184.216.40/ai/gateway/anthropic/v1/messages",
+              fetchImpl: gatewayFetch,
+              init: { method: "POST", body: "{}" },
+              providerLabel: "veryfront-cloud",
+              providerKind: "anthropic",
+            }),
+        );
+      } catch (error) {
+        return classifyEvalModelAccessDenial(error)?.kind;
+      }
+      throw new Error("expected the request to reject");
+    };
+
+    assertEquals(await classifyStatus(401), "unauthorized");
+    assertEquals(await classifyStatus(403), "forbidden");
   });
 
   it("keeps other 400 responses as record failures", async () => {

@@ -95,6 +95,12 @@ export class ProviderError extends Error {
    * without parsing the message. Kept non-enumerable like `responseBody`.
    */
   declare readonly requestUrl?: string;
+  /**
+   * True when the Veryfront Cloud gateway fetch issued the failed request, so
+   * the rejection came from the gateway whatever base URL it was built with.
+   * Set only from a response that fetch marked. Kept non-enumerable.
+   */
+  declare readonly viaVeryfrontGateway?: boolean;
 
   constructor(options: {
     provider: ProviderKind;
@@ -139,12 +145,32 @@ function readRequestRoute(url: string): string | undefined {
   }
 }
 
+const veryfrontGatewayResponses = new WeakSet<Response>();
+
+/**
+ * @internal Record that the Veryfront Cloud gateway fetch produced this
+ * response. Provider errors built from it carry `viaVeryfrontGateway`.
+ */
+export function markVeryfrontGatewayResponse(response: Response): Response {
+  veryfrontGatewayResponses.add(response);
+  return response;
+}
+
 function labelProviderResponseError(
   error: ProviderError,
   providerLabel: string,
   requestUrl: string,
+  response: Response,
 ): ProviderError {
   error.message = `${providerLabel} request failed: ${error.message}`;
+  if (veryfrontGatewayResponses.has(response)) {
+    Object.defineProperty(error, "viaVeryfrontGateway", {
+      value: true,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
   const requestRoute = readRequestRoute(requestUrl);
   if (requestRoute !== undefined) {
     Object.defineProperty(error, "requestUrl", {
@@ -1003,7 +1029,12 @@ export async function requestJson(options: {
         if (!deadline.timedOut) throw error;
         err = buildProviderErrorFromUnreadableBody(options.providerKind, response);
       }
-      httpRejection = labelProviderResponseError(err, options.providerLabel, options.url);
+      httpRejection = labelProviderResponseError(
+        err,
+        options.providerLabel,
+        options.url,
+        response,
+      );
       throw httpRejection;
     }
 
@@ -1103,7 +1134,7 @@ export async function requestStream(options: {
           if (!deadline.timedOut) throw error;
           err = buildProviderErrorFromUnreadableBody(options.providerKind, response);
         }
-        throw labelProviderResponseError(err, options.providerLabel, options.url);
+        throw labelProviderResponseError(err, options.providerLabel, options.url, response);
       }
 
       if (!response.body) {

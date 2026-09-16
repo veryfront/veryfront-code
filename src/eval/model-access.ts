@@ -192,14 +192,16 @@ function classifyProjectRequired(responseBody: string): EvalModelAccessDenial | 
 }
 
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
+  // The gateway fetch marks its own responses, which covers a gateway built
+  // with an explicit per-model base URL; the configured route is the fallback.
+  const fromGateway = error.viaVeryfrontGateway === true ||
+    isVeryfrontGatewayRoute(error.requestUrl);
   if (error.status === 401 || error.status === 403) {
-    return isVeryfrontGatewayRoute(error.requestUrl) ? statusDenial(error.status) : undefined;
+    return fromGateway ? statusDenial(error.status) : undefined;
   }
   if (typeof error.responseBody !== "string") return undefined;
   if (error.status === 400) {
-    return isVeryfrontGatewayRoute(error.requestUrl)
-      ? classifyProjectRequired(error.responseBody)
-      : undefined;
+    return fromGateway ? classifyProjectRequired(error.responseBody) : undefined;
   }
   if (error.status !== 402) return undefined;
   const parsed = parseKnownProblemBody(parseJsonBody(error.responseBody));
