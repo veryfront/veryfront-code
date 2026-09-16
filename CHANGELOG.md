@@ -6,6 +6,17 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: `runEval()` rejects when the model gateway refuses model access
+
+`runEval()` from `veryfront/eval` now rejects with the
+`eval-model-access-denied` error when a target or metric model request returns
+HTTP 402 from the model gateway (insufficient AI credits, a resource limit, or
+the AI provider spend limit). It previously recorded the refusal on every
+record, ran checks against the empty output, and resolved with a report.
+`veryfront eval` stops at the first refusal and prints one error. If you call
+`runEval()` directly, handle the rejection where you previously inspected
+failed records for credit errors.
+
 ### Deprecated: the `event` key on conversation-scoped run event rows
 
 The Veryfront API now serves every run event row keyed `payload`, on the

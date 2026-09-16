@@ -94,6 +94,21 @@ export const PROVIDER_REPLAY_CHECKPOINT_INVALID = defineError({
     "Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state",
 });
 
+/**
+ * An eval stopped because the model gateway refused to serve its model
+ * requests for billing or entitlement reasons (HTTP 402). Every later record
+ * would fail the same way, so the run fails fast with one actionable error
+ * instead of grading empty outputs.
+ */
+export const EVAL_MODEL_ACCESS_DENIED = defineError({
+  slug: "eval-model-access-denied",
+  category: "AGENT",
+  status: 402,
+  title: "No model access for eval run",
+  suggestion:
+    "Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project, then run the eval again",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -106,4 +121,5 @@ export const AGENT_REGISTRY = {
   "durable-run-event-persistence-failed": DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
   "default-model-credential-mismatch": DEFAULT_MODEL_CREDENTIAL_MISMATCH,
   "provider-replay-checkpoint-invalid": PROVIDER_REPLAY_CHECKPOINT_INVALID,
+  "eval-model-access-denied": EVAL_MODEL_ACCESS_DENIED,
 } as const;

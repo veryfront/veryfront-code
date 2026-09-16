@@ -61,6 +61,8 @@ import {
   runEvalWithGatewayBillingGroup,
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
+import { createEvalModelAccessDeniedError } from "../../../src/eval/model-access.ts";
+import { buildProviderError } from "../../../src/provider/runtime-loader/provider-http.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
@@ -870,6 +872,64 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(report.records.map((record) => record.completed), [true, false]);
     assertEquals(report.records[1]?.error, "mock resolver failed");
+  });
+
+  it("fails the eval once when the gateway refuses a real agent's model request", async () => {
+    let modelCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-no-credits",
+      async doGenerate() {
+        modelCalls += 1;
+        const error = await buildProviderError(
+          "anthropic",
+          new Response(
+            JSON.stringify({
+              slug: "insufficient-credits",
+              error: "AI credit limit exceeded",
+              suggestion: "Purchase additional credits or upgrade your subscription plan.",
+              balance: 0,
+              required: 0.25,
+            }),
+            { status: 402, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+        error.message = `veryfront-cloud request failed: ${error.message}`;
+        throw error;
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const agent = createAgent({
+      id: "eval-no-credits-agent",
+      model: "hosted/eval-no-credits",
+      system: "Answer.",
+      resolveModelTransport: async () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:no-credits",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+      check({ record }) {
+        JSON.parse((record.output as { text?: string } | undefined)?.text ?? "");
+      },
+    });
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-access-denied");
+    assertStringIncludes(error.detail ?? "", "0.25 credits required, 0 available");
+    assertEquals(modelCalls, 1);
   });
 
   it("retains only skill loader tools for skills agents when mock tools are active", async () => {
@@ -2119,6 +2179,60 @@ describe("eval CLI command helpers", () => {
     assertEquals(requests.map((request) => request.url), [
       "https://api.staging.example/ai/gateway/billing/finalize",
     ]);
+  });
+
+  it("does not warn about a missing billing group when model access was denied", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    let finalizeRequests = 0;
+    installMockFetch(() => {
+      finalizeRequests += 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "Gateway billing group not found",
+            code: "gateway_billing_group_not_found",
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    });
+    const denied = createEvalModelAccessDeniedError(
+      "eval:denied",
+      { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+      undefined,
+    );
+
+    const deniedOutput = await captureConsoleOutput(() =>
+      assertRejects(() =>
+        runEvalWithGatewayBillingGroup("evalrun_denied", async () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          throw denied;
+        })
+      )
+    );
+    const otherFailureOutput = await captureConsoleOutput(() =>
+      assertRejects(() =>
+        runEvalWithGatewayBillingGroup("evalrun_other", async () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          throw new Error("custom metric failed");
+        })
+      )
+    );
+
+    assertEquals(finalizeRequests, 2);
+    assertEquals(
+      [...deniedOutput.stdout, ...deniedOutput.stderr].some((line) =>
+        line.includes("Gateway billing finalization skipped")
+      ),
+      false,
+    );
+    assertEquals(
+      [...otherFailureOutput.stdout, ...otherFailureOutput.stderr].some((line) =>
+        line.includes("Gateway billing finalization skipped for evalrun_other: 404")
+      ),
+      true,
+    );
   });
 
   it("retries gateway billing finalization while usage capture is not ready", async () => {

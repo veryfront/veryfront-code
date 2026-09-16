@@ -2,6 +2,7 @@ import { createEvalCheckContext } from "./expect.ts";
 import { isEvalDefinition } from "./factory.ts";
 import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
+import { classifyEvalModelAccessDenial, createEvalModelAccessDeniedError } from "./model-access.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import {
@@ -484,6 +485,16 @@ export async function exportEvalReport(
   return results;
 }
 
+/**
+ * Stop the whole eval when the model gateway refuses a model request for
+ * billing or entitlement reasons. Every later record would be refused the same
+ * way, and grading the empty output only buries the cause.
+ */
+function throwIfModelAccessDenied(definition: EvalDefinition, error: unknown): void {
+  const denial = classifyEvalModelAccessDenial(error);
+  if (denial) throw createEvalModelAccessDeniedError(definition.id, denial, error);
+}
+
 async function runRecord(
   definition: EvalDefinition,
   options: RunEvalOptions,
@@ -510,6 +521,7 @@ async function runRecord(
       result = await runAgentTarget(definition, options, example, repetition);
     }
   } catch (error) {
+    throwIfModelAccessDenied(definition, error);
     result = {
       ...(definition.targetKind === "tool" ? { output: undefined } : { text: "" }),
       completed: false,
@@ -558,6 +570,7 @@ async function runRecord(
     try {
       metricResults.push(normalizeMetricResult(metric, await metric.evaluate(record)));
     } catch (error) {
+      throwIfModelAccessDenied(definition, error);
       const failure = metricEvaluationFailure(metric, error);
       metricResults.push(failure);
       evaluationErrors.push(failure.explanation ?? `${metric.name} evaluation failed`);
@@ -576,7 +589,14 @@ async function runRecord(
         checks,
       }));
     } catch (error) {
-      evaluationErrors.push(`Eval check failed: ${stringifyEvalError(error)}`);
+      // A check that throws on the output of a target that already failed is a
+      // consequence of that failure, not a defect in the check. Say so, so the
+      // report does not send the author to debug eval logic that is fine.
+      evaluationErrors.push(
+        record.error
+          ? `Eval check could not evaluate the failed target output: ${stringifyEvalError(error)}`
+          : `Eval check failed: ${stringifyEvalError(error)}`,
+      );
     }
   }
   record.checks = checks;

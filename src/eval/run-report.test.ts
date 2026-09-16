@@ -9,6 +9,7 @@ import type {
   EvalRunProvenance,
 } from "./types.ts";
 import { runEvalReport } from "./run-report.ts";
+import { createEvalModelAccessDeniedError } from "./model-access.ts";
 
 const now = new Date("2026-06-21T01:02:03.004Z");
 const provenance: EvalRunProvenance = {
@@ -1219,6 +1220,47 @@ Result: \`1/4 passed\`
 </testsuites>
 `,
     );
+  });
+
+  it("stops the suite at the first model access denial", async () => {
+    const first = createSuiteEval("eval:first", "/repo/evals/first.eval.ts", "agent:first");
+    const second = createSuiteEval("eval:second", "/repo/evals/second.eval.ts", "agent:second");
+    const { adapters, events } = createAdapters();
+    const targetRuns: string[] = [];
+
+    const error = await assertRejects(() =>
+      runEvalReport({
+        kind: "suite",
+        projectDir: "/repo",
+        frameworkVersion: "1.2.3",
+        reportDir: "suite-denied",
+        evalItems: [first, second],
+        provenance,
+      }, {
+        ...adapters,
+        targets: {
+          resolveTarget: (evalItem: DiscoveredEval) => ({
+            targetKind: evalItem.definition.targetKind,
+            target: evalItem.definition.target,
+            targetAdapter: undefined,
+          }),
+          runEval: (evalItem: DiscoveredEval) => {
+            targetRuns.push(evalItem.id);
+            return Promise.reject(
+              createEvalModelAccessDeniedError(
+                evalItem.id,
+                { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+                undefined,
+              ),
+            );
+          },
+        },
+      })
+    );
+
+    assertEquals((error as { slug?: string }).slug, "eval-model-access-denied");
+    assertEquals(targetRuns, ["eval:first"]);
+    assertEquals(events.some((event) => event.startsWith("write:")), false);
   });
 
   it("writes an empty suite JSONL file without a trailing newline", async () => {

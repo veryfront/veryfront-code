@@ -51,6 +51,7 @@ import {
   runWithProjectAgentRuntime,
 } from "../../../src/agent/project/agent-runtime.ts";
 import { runEvalReport } from "../../../src/eval/run-report.ts";
+import { isEvalModelAccessDeniedError } from "../../../src/eval/model-access.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -91,11 +92,17 @@ type GatewayBillingFinalizeError = {
 type GatewayBillingFinalizeOptions = {
   retryDelaysMs?: readonly number[];
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * The gateway refused every model request before recording usage, so a
+   * missing billing group is expected and not worth a warning.
+   */
+  expectNoRecordedUsage?: boolean;
 };
 
 type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
 
 const GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE = "gateway_billing_group_usage_not_ready";
+const GATEWAY_BILLING_GROUP_NOT_FOUND_CODE = "gateway_billing_group_not_found";
 const ENV_EVAL_EXPORTERS = "VERYFRONT_EVAL_EXPORTERS";
 const ENV_EVAL_EXPORT = "VERYFRONT_EVAL_EXPORT";
 const ENV_EVAL_EXPORT_REQUIRED = "VERYFRONT_EVAL_EXPORT_REQUIRED";
@@ -277,6 +284,13 @@ function isGatewayBillingUsageNotReady(
   return error.code === GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE;
 }
 
+function isGatewayBillingGroupNotFound(
+  response: Response,
+  error: GatewayBillingFinalizeError,
+): boolean {
+  return response.status === 404 && error.code === GATEWAY_BILLING_GROUP_NOT_FOUND_CODE;
+}
+
 function formatGatewayBillingFinalizeWarning(
   billingGroupId: string,
   response: Response,
@@ -360,7 +374,12 @@ export async function finalizeGatewayBillingGroup(
         continue;
       }
 
-      cliLogger.warn(formatGatewayBillingFinalizeWarning(billingGroupId, response, error));
+      const message = formatGatewayBillingFinalizeWarning(billingGroupId, response, error);
+      if (options.expectNoRecordedUsage && isGatewayBillingGroupNotFound(response, error)) {
+        cliLogger.debug(message);
+      } else {
+        cliLogger.warn(message);
+      }
       return undefined;
     }
 
@@ -385,7 +404,11 @@ export async function runEvalWithGatewayBillingGroup(
     report = await runWithVeryfrontCloudContextAsync(billingContext, operation);
   } catch (error) {
     if (billingContext.billingGroupUsed) {
-      await finalizeGatewayBillingGroup(billingGroupId);
+      // Still finalize: earlier requests can have been served before the
+      // gateway started refusing them, and those must be reconciled.
+      await finalizeGatewayBillingGroup(billingGroupId, {
+        expectNoRecordedUsage: isEvalModelAccessDeniedError(error),
+      });
     }
     throw error;
   }

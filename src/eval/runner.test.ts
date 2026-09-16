@@ -1,5 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   datasets,
@@ -21,6 +23,24 @@ import {
   type Span,
 } from "../observability/tracing/api-shim.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
+
+async function createGatewayCreditDenial(): Promise<Error> {
+  const error = await buildProviderError(
+    "anthropic",
+    new Response(
+      JSON.stringify({
+        slug: "insufficient-credits",
+        error: "AI credit limit exceeded",
+        suggestion: "Purchase additional credits or upgrade your subscription plan.",
+        balance: 0,
+        required: 0.25,
+      }),
+      { status: 402, headers: { "Content-Type": "application/json" } },
+    ),
+  );
+  error.message = `veryfront-cloud request failed: ${error.message}`;
+  return error;
+}
 
 function createUnprintableThrownValue(): object {
   const revocable = Proxy.revocable({}, {});
@@ -571,6 +591,89 @@ describe("eval/runner", () => {
     assertEquals(report.summary.passRate, 0);
     assertEquals(report.records[0]?.completed, false);
     assertEquals(report.records[0]?.error, "AG-UI request failed");
+  });
+
+  it("stops at the first model access denial instead of grading empty output", async () => {
+    let adapterCalls = 0;
+    let checkCalls = 0;
+    const definition = evalAgent({
+      id: "eval:no-model-access",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+        { id: "q3", input: "Third" },
+      ]),
+      check({ record }) {
+        checkCalls += 1;
+        JSON.parse(String(record.output ?? ""));
+      },
+    });
+    const denial = await createGatewayCreditDenial();
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: {
+            agent: async () => {
+              adapterCalls += 1;
+              throw denial;
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-access-denied");
+    assertEquals(
+      error.detail,
+      'Eval "eval:no-model-access" stopped at its first refused model request: AI credit limit exceeded: 0.25 credits required, 0 available. Purchase additional credits or upgrade your subscription plan.',
+    );
+    assertEquals(adapterCalls, 1);
+    assertEquals(checkCalls, 0);
+  });
+
+  it("stops when a judge metric is refused model access", async () => {
+    const denial = await createGatewayCreditDenial();
+    const judge = metrics.answer.exactMatch().gate();
+    judge.evaluate = () => Promise.reject(denial);
+    const definition = evalAgent({
+      id: "eval:judge-no-model-access",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First", reference: "Paris" }]),
+      metrics: [judge],
+    });
+
+    const error = (await assertRejects(
+      () => runEval(definition, { adapters: { agent: async () => ({ text: "Paris" }) } }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-access-denied");
+  });
+
+  it("attributes a check that throws on a failed target output to the target failure", async () => {
+    const definition = evalAgent({
+      id: "eval:check-after-target-failure",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+      check({ record }) {
+        JSON.parse((record.output as { text?: string } | undefined)?.text ?? "");
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => {
+          throw new Error("upstream unavailable");
+        },
+      },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      "upstream unavailable; Eval check could not evaluate the failed target output: Unexpected end of JSON input",
+    );
   });
 
   it("contains hostile adapter throws as structured record failures", async () => {

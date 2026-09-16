@@ -833,6 +833,13 @@ Provider replay checkpoint is invalid.
 - **HTTP status:** 500
 - **What to do:** Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state
 
+### eval-model-access-denied
+
+No model access for eval run.
+
+- **HTTP status:** 402
+- **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project, then run the eval again
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.
