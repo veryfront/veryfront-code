@@ -60,7 +60,10 @@ import {
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
-import { createOriginBoundOutboundFetch } from "#cli/outbound-fetch";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#cli/outbound-fetch";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -323,7 +326,7 @@ export async function finalizeGatewayBillingGroup(
 
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS;
   const sleepFn = options.sleep ?? sleep;
-  const hostTransport = createOriginBoundOutboundFetch(bootstrap.apiBaseUrl);
+  const hostTransport = createVeryfrontApiOriginBoundOutboundFetch(bootstrap.apiBaseUrl);
 
   for (let attempt = 0;; attempt += 1) {
     let response: Response;
@@ -1664,6 +1667,10 @@ export async function runEvalCommand(
 }
 
 export async function evalCommand(options: EvalOptions): Promise<void> {
+  // Seal the operator's exported Veryfront API origin before project config or
+  // agent modules load, so a staging, VPN, or self-hosted API that resolves to
+  // a private address stays reachable while project code cannot widen the set.
+  trustOperatorConfiguredVeryfrontApiOrigins();
   const exitCode = await runEvalCommand(options);
   if (typeof exitCode === "number") {
     exitProcess(exitCode);

@@ -63,6 +63,11 @@ import {
 import { parseEvalArgs } from "./handler.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#cli/outbound-fetch";
 
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
@@ -2079,6 +2084,38 @@ describe("eval CLI command helpers", () => {
     assertEquals(request.headers.get("Authorization"), "Bearer test-token");
     assertEquals(await request.json(), { billing_group_id: "evalrun_test_model" });
     assertEquals(ambientFetchCalled, false);
+  });
+
+  it("finalizes gateway billing on an operator-exported API origin with a private DNS answer", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.staging.example");
+    const requests: Request[] = [];
+    const transport = {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push(new Request(input, init));
+        return Promise.resolve(Response.json({ ok: true }, { status: 404 }));
+      },
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    };
+
+    __resetOperatorVeryfrontApiOriginsForTests();
+    try {
+      await __runWithOutboundFetchTransportForTests(transport, async () => {
+        await finalizeGatewayBillingGroup("evalrun_private_api", { retryDelaysMs: [] });
+      });
+      assertEquals(requests.length, 0, "an untrusted private DNS answer must stay blocked");
+
+      trustOperatorConfiguredVeryfrontApiOrigins();
+      await __runWithOutboundFetchTransportForTests(transport, async () => {
+        await finalizeGatewayBillingGroup("evalrun_private_api", { retryDelaysMs: [] });
+      });
+    } finally {
+      __resetOperatorVeryfrontApiOriginsForTests();
+    }
+
+    assertEquals(requests.map((request) => request.url), [
+      "https://api.staging.example/ai/gateway/billing/finalize",
+    ]);
   });
 
   it("retries gateway billing finalization while usage capture is not ready", async () => {

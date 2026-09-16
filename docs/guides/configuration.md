@@ -325,6 +325,19 @@ source:
 Naming the default `https://api.veryfront.com` needs no confirmation, in any
 equivalent spelling.
 
+Veryfront blocks requests to hosts that resolve to private network addresses.
+`veryfront eval` makes one exception: the API host you set in your shell with
+`VERYFRONT_API_URL` or `VERYFRONT_API_BASE_URL` can resolve to a private address,
+as a staging, VPN, or self-hosted API does. The exception covers only that exact
+origin (scheme, host, and port). A host set in a project `.env` file or
+`veryfront.json` does not qualify, and redirects stay rejected. For other
+commands, add the origin to `VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS`:
+
+```bash
+export VERYFRONT_API_URL="https://api.example.com"
+export VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="https://api.example.com"
+```
+
 In CI, set the API URL variable used by the command next to
 `VERYFRONT_API_TOKEN` in the job environment whenever the project uses a
 self-hosted API host, so a non-interactive run has a confirmed host. See

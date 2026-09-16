@@ -3,6 +3,13 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { withEnv } from "#veryfront/testing";
+import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+  OutboundRequestBlockedError,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -323,5 +330,42 @@ describe("provider/veryfront-cloud/shared", () => {
       0,
       "the bearer credential must never leave the process for an unauthorized origin",
     );
+  });
+
+  it("reaches an operator-exported API origin whose DNS answer is private", async () => {
+    const apiBaseUrl = "https://api.staging.example";
+    const seen: Request[] = [];
+    const transport = {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+        seen.push(new Request(input, init));
+        return Promise.resolve(Response.json({ ok: true }));
+      },
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    };
+    const gatewayUrl = `${apiBaseUrl}/ai/gateway/openai/v1/chat/completions`;
+
+    __resetOperatorVeryfrontApiOriginsForTests();
+    try {
+      await withEnv({ VERYFRONT_API_URL: apiBaseUrl, VERYFRONT_API_BASE_URL: "" }, async () => {
+        const wrappedFetch = createVeryfrontCloudFetch("vf_test_provider", apiBaseUrl);
+        await __runWithOutboundFetchTransportForTests(transport, async () => {
+          await assertRejects(
+            () => wrappedFetch(gatewayUrl),
+            OutboundRequestBlockedError,
+            "Outbound network egress blocked for host: api.staging.example",
+          );
+        });
+        assertEquals(seen.length, 0);
+
+        trustOperatorConfiguredVeryfrontApiOrigins();
+        await __runWithOutboundFetchTransportForTests(transport, async () => {
+          assertEquals((await wrappedFetch(gatewayUrl)).status, 200);
+        });
+      });
+    } finally {
+      __resetOperatorVeryfrontApiOriginsForTests();
+    }
+    assertEquals(seen.length, 1);
+    assertEquals(seen[0]?.headers.get("authorization"), "Bearer vf_test_provider");
   });
 });
