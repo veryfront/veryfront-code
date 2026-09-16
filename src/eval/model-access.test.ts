@@ -102,6 +102,22 @@ describe("eval/model-access", () => {
     });
   });
 
+  it("classifies the project-required RUN_ERROR code from streaming agent services", () => {
+    assertEquals(
+      classifyAgentServiceModelAccessDenial({
+        status: 200,
+        body: null,
+        runErrorCode: "GATEWAY_PROJECT_REQUIRED",
+        runErrorMessage: "untrusted endpoint text",
+      }),
+      {
+        kind: "project-required",
+        code: "gateway_project_required",
+        message: "A project is required to use Veryfront-managed AI inference",
+      },
+    );
+  });
+
   it("keeps request-scoped and unrecognized 402 responses as record failures", async () => {
     const bodyless = await buildProviderError("anthropic", new Response("", { status: 402 }));
     const resourceLimit = await buildProviderError(

@@ -270,6 +270,40 @@ describe("eval/agent-service", () => {
     assertEquals(requests, 1);
   });
 
+  it("stops the eval when a streamed run reports the gateway project-required refusal", async () => {
+    let requests = 0;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () => {
+        requests += 1;
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "RunError",
+            data: {
+              code: "GATEWAY_PROJECT_REQUIRED",
+              message: "A project is required to use Veryfront-managed AI inference",
+            },
+          },
+        ]);
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-no-project",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = await assertRejects(() => runEval(definition, { adapters: { agent: adapter } }));
+
+    assertEquals((error as { slug?: string }).slug, "eval-project-required");
+    assertEquals(requests, 1);
+  });
+
   it("keeps request-scoped agent service limits as failed records", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",

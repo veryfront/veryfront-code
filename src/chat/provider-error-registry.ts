@@ -41,6 +41,12 @@ export const AI_PROVIDER_BILLING_ERROR = {
   status: 502,
 } as const;
 
+export const GATEWAY_PROJECT_REQUIRED_ERROR = {
+  code: "GATEWAY_PROJECT_REQUIRED",
+  message: "A project is required to use Veryfront-managed AI inference",
+  status: 400,
+} as const;
+
 /** Codes transported across model boundaries; diagnostics are reconstructed locally. */
 export const CURATED_PROVIDER_FAILURE_CODES = [
   "OVERLOADED_ERROR",
@@ -54,6 +60,7 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
   "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
   "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
   "AI_PROVIDER_BILLING_ERROR",
+  "GATEWAY_PROJECT_REQUIRED",
 ] as const;
 export type CuratedProviderFailureCode = typeof CURATED_PROVIDER_FAILURE_CODES[number];
 
@@ -92,6 +99,7 @@ const failures = {
   AI_PROVIDER_SPEND_LIMIT_EXCEEDED: AI_PROVIDER_SPEND_LIMIT_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED: AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   AI_PROVIDER_BILLING_ERROR: AI_PROVIDER_BILLING_ERROR,
+  GATEWAY_PROJECT_REQUIRED: GATEWAY_PROJECT_REQUIRED_ERROR,
 } as const;
 
 /** Return fixed local diagnostics; provider payload/status values are never forwarded. */

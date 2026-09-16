@@ -7,6 +7,7 @@ import {
   AI_PROVIDER_BILLING_ERROR,
   AI_PROVIDER_SPEND_LIMIT_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
+  GATEWAY_PROJECT_REQUIRED_ERROR,
   MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR,
   OUTPUT_SCHEMA_NOT_CLOSED_ERROR,
   PROJECT_SCHEMA_ERROR,
@@ -162,6 +163,12 @@ function formatCreditProblemMessage(
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
     return null;
+  }
+
+  // The Veryfront Cloud gateway rejects a request that names no project with
+  // this structured code. Its wording is fixed locally, never copied.
+  if (getOwnDataProperty(body, "code") === "gateway_project_required") {
+    return { ...GATEWAY_PROJECT_REQUIRED_ERROR };
   }
 
   const slugValue = getOwnDataProperty(body, "slug");

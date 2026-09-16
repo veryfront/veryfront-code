@@ -33,6 +33,12 @@ const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
 const GATEWAY_PROJECT_REQUIRED_MESSAGE =
   "A project is required to use Veryfront-managed AI inference";
 
+const PROJECT_REQUIRED_DENIAL: EvalModelAccessDenial = {
+  kind: "project-required",
+  code: GATEWAY_PROJECT_REQUIRED_CODE,
+  message: GATEWAY_PROJECT_REQUIRED_MESSAGE,
+};
+
 /**
  * Account-wide billing or entitlement denials. `RESOURCE_LIMIT_EXCEEDED` is
  * left out on purpose: it also covers per-request limits (output tokens,
@@ -82,6 +88,9 @@ function parseJsonBody(body: string): unknown {
  * provider carries no such body and stays a record failure, so it never gets
  * Veryfront billing advice. Message text is never consulted.
  */
+/** Curated code the AG-UI stream carries for the gateway project-required refusal. */
+const GATEWAY_PROJECT_REQUIRED_CURATED_CODE = "GATEWAY_PROJECT_REQUIRED";
+
 /**
  * The gateway's project-required rejection, identified by its structured
  * `code` in the preserved response body. The detail always uses the gateway's
@@ -92,11 +101,7 @@ function parseJsonBody(body: string): unknown {
 function classifyProjectRequired(responseBody: string): EvalModelAccessDenial | undefined {
   const body = parseJsonBody(responseBody);
   if (readProperty(body, "code") !== GATEWAY_PROJECT_REQUIRED_CODE) return undefined;
-  return {
-    kind: "project-required",
-    code: GATEWAY_PROJECT_REQUIRED_CODE,
-    message: GATEWAY_PROJECT_REQUIRED_MESSAGE,
-  };
+  return PROJECT_REQUIRED_DENIAL;
 }
 
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
@@ -123,6 +128,7 @@ function findDenial(
   if (error instanceof ProviderError) return classifyProviderError(error);
 
   const registered = registeredProviderFailure(error);
+  if (registered?.code === GATEWAY_PROJECT_REQUIRED_CURATED_CODE) return PROJECT_REQUIRED_DENIAL;
   if (registered) return toDenial(registered);
 
   for (const key of ["lastError", "cause"]) {
@@ -171,6 +177,10 @@ export function classifyAgentServiceModelAccessDenial(input: {
     if (input.status === 402 && input.body) {
       const parsed = parseKnownProblemBody(parseJsonBody(input.body));
       if (parsed) return toDenial(parsed);
+    }
+    if (input.runErrorCode === GATEWAY_PROJECT_REQUIRED_CURATED_CODE) {
+      // Streaming agent services report the gateway refusal as a RUN_ERROR.
+      return PROJECT_REQUIRED_DENIAL;
     }
     if (isCuratedProviderFailureCode(input.runErrorCode)) {
       // The run error message is read only to recognize a run-scoped credit
