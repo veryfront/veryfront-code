@@ -46,7 +46,7 @@ export const ENVIRONMENT_NOT_ROUTABLE = defineError({
   status: 400,
   title: "Environment name has no Veryfront-hosted address",
   suggestion:
-    "Deploy to preview, staging, or production, or attach a custom domain to this environment in Studio",
+    "Deploy to staging or production, or attach a custom domain to this environment in Studio. Preview accepts no deployments: veryfront push updates it",
 });
 
 /**

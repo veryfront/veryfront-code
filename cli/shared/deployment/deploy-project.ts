@@ -1211,8 +1211,9 @@ function assertEnvironmentIsReachable(environment: DeployEnvironment): void {
       `Veryfront serves ${
         HOSTED_ENVIRONMENT_NAMES.join(", ")
       } at https://<slug>.<environment>.veryfront.com; ` +
-      `no other environment name resolves. Deploy to one of those, or attach a custom domain ` +
-      `to "${environment.name}" in Studio under Environments and deploy again.`,
+      `no other environment name resolves. Deploy to staging or production, or attach a custom ` +
+      `domain to "${environment.name}" in Studio under Environments and deploy again. ` +
+      `Preview accepts no deployments: veryfront push updates it.`,
     context: { environmentName: environment.name, hostedEnvironments: HOSTED_ENVIRONMENT_NAMES },
   });
 }

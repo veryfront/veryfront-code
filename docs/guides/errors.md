@@ -694,7 +694,7 @@ Deployment environment not found.
 Environment name has no Veryfront-hosted address.
 
 - **HTTP status:** 400
-- **What to do:** Deploy to preview, staging, or production, or attach a custom domain to this environment in Studio
+- **What to do:** Deploy to staging or production, or attach a custom domain to this environment in Studio. Preview accepts no deployments: veryfront push updates it
 
 ### preview-deployment-not-allowed
 
