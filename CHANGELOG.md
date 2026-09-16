@@ -6,6 +6,49 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: push, up, deploy, and pull respect Git ignore rules
+
+`veryfront push`, `up`, `deploy`, and `pull` now skip untracked files that Git
+ignores, whether the rule comes from a `.gitignore` at any level,
+`.git/info/exclude`, or `core.excludesFile`. Previously only the built-in
+defaults and `.vfignore` applied, so local-only files such as tooling scratch
+directories were uploaded. Remote paths Git ignores are treated like paths
+`.vfignore` ignores even when no local copy exists: pull does not write them and
+`push --prune` does not delete them. Pull into a directory that does not exist
+yet applies the enclosing repository's rules, and files inside a checked-out
+submodule or another nested Git repository follow that repository's own rules.
+Tracked files are never skipped by a Git ignore rule, and a directory outside
+Git behaves as before.
+
+A supported file that Git ignores and earlier versions uploaded, such as
+generated source, is now skipped. To keep uploading it, re-include it in
+`.vfignore` with a `!` rule, for example `!dist` or `!generated/data.json`; the
+rule also reaches a file inside a directory Git ignores as a whole. The first
+`veryfront up` or `deploy` after upgrading re-pushes a project whose uploaded
+file set changes. Remote copies of newly ignored paths are preserved, not
+pruned; delete them in Studio if they should go.
+
+Git ignore rules are read when a command scans the project, so a rule changed
+during a push or pull applies from the next run. Nested Git repositories other
+than checked-out submodules and repositories created inside the project are a
+known limitation: a nested repository inside a directory the enclosing
+repository ignores stays ignored, and other layouts may not follow the nested
+repository's rules. Use `.vfignore` for exact control there. See
+[Git ignore limitations](./docs/guides/deploy-from-ci.md#git-ignore-limitations).
+
+If the enclosing repository ignores the project directory itself, Git ignore
+rules are not applied for that project and the CLI prints a warning; with
+`--json` it emits a `warning` line with code `git-ignore-rules-not-applied`. The
+defaults and `.vfignore` still apply.
+
+`.context` is now ignored by default, and a `.vfignore` negation can re-include
+it.
+
+If Git fails while reading ignore rules inside a repository, push (and so `up`
+and `deploy`) stops with an error instead of uploading files the checkout
+ignores. Pull stops the same way. Fix the Git error, then run the command
+again.
+
 ### Changed: `runEval()` rejects when the model gateway refuses model access
 
 `runEval()` from `veryfront/eval` now rejects with the

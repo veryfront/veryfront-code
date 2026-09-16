@@ -28,7 +28,7 @@ import {
   writePushReceipt,
 } from "../deployment-provenance.ts";
 import { capturePushSourceSnapshot } from "../../commands/push/command.ts";
-import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
+import { loadIgnoreChecker } from "../../sync/ignore.ts";
 import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
@@ -1332,10 +1332,11 @@ describe("pushed source provenance", () => {
   it("rejects a source change Git cannot see once the receipt digests the pushed files", async () => {
     await withTempDir((projectDir) =>
       withoutAmbientCommitSha(async () => {
-        // `.gitignore` hides this file while `.vfignore` does not, so push
-        // uploads it and `git status` never reports it. Cleanliness alone
-        // therefore cannot tell a stale upload from a current one.
+        // `.gitignore` hides this file while a `.vfignore` negation re-includes
+        // it, so push uploads it and `git status` never reports it. Cleanliness
+        // alone therefore cannot tell a stale upload from a current one.
         await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\ngenerated.ts\n");
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "!generated.ts\n");
         await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
         await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 1;\n");
         const commitSha = await commitProject(projectDir);
@@ -1390,7 +1391,10 @@ describe("pushed source provenance", () => {
   it("rejects an ignored source edit during the closing Git probe", async () => {
     await withTempDir((projectDir) =>
       withoutAmbientCommitSha(async () => {
+        // Git ignores the file, but the `.vfignore` negation keeps it in the
+        // pushed source set, so only the digest can observe the edit.
         await Deno.writeTextFile(`${projectDir}/.gitignore`, "generated.ts\n");
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "!generated.ts\n");
         await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
         await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 1;\n");
         await commitProject(projectDir);
@@ -1434,7 +1438,7 @@ describe("pushed source provenance", () => {
 
         const pushed = await capturePushSourceSnapshot(
           projectDir,
-          createIgnoreChecker(await loadIgnorePatterns(projectDir)),
+          await loadIgnoreChecker(projectDir),
         );
         const observed = await observeLocalSource(projectDir);
 

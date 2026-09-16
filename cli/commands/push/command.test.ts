@@ -6118,6 +6118,60 @@ describe("push deletion ownership", () => {
     }
   });
 
+  it("preserves remote-only files Git ignores during prune", async () => {
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(`${projectDir}/.gitignore`, "generated/\n");
+        await runGit("add", ".gitignore");
+        await runGit("commit", "--quiet", "-m", "ignore generated output");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const deleted: string[] = [];
+        const fetchHandler = (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Promise.resolve(Response.json({
+              data: [
+                { path: "app.ts", content: "export const value = 1;\n" },
+                ...(deleted.includes("stale.ts")
+                  ? []
+                  : [{ path: "stale.ts", content: "stale source" }]),
+                { path: "generated/remote-only.ts", content: "export const generated = 1;" },
+              ],
+              page_info: {},
+            }));
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Promise.resolve(Response.json({ id: "project-123", slug: "my-project" }));
+          }
+          if (request.method === "PUT") return Promise.resolve(Response.json({}));
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Promise.resolve(Response.json({}));
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        await withMockFetch(
+          fetchHandler,
+          () => pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true }),
+        );
+
+        assertEquals(deleted, ["stale.ts"]);
+      });
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("keeps protected deletion context when a preserved remote file lacks content", async () => {
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
