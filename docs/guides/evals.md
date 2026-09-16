@@ -126,9 +126,9 @@ requests at once, so rate limits (HTTP 429) become more likely.
 veryfront eval disposition-agent --concurrency 3
 ```
 
-Each agent eval case fails after 600 seconds by default with the
-`eval-record-timeout` error, and the eval continues with the next case. A model
-stream that stops sending data has no other deadline. Use
+Each case, including its metrics and checks, fails after 600 seconds by
+default with the `eval-record-timeout` error, and the eval continues with the
+next case. A model stream that stops sending data has no other deadline. Use
 `--record-timeout <seconds>` to change the limit, or `--record-timeout 0` to
 disable it.
 

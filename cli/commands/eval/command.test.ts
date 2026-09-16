@@ -5,6 +5,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, makeTempDir, setEnv, withTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -60,6 +61,7 @@ import {
   resolveEvalExporterIds,
   resolveEvalExportRedactionFromEnv,
   resolveEvalExportRequired,
+  resolveEvalRecordTimeoutMs,
   resolveToolTargetId,
   runEvalCommand,
   runEvalWithGatewayBillingGroup,
@@ -1034,9 +1036,8 @@ describe("eval CLI command helpers", () => {
     });
 
     const report = await runEval(definition, {
-      adapters: {
-        agent: createAgentAdapter(agent, createEvalOptions({ recordTimeout: 0.2 })),
-      },
+      recordTimeoutMs: resolveEvalRecordTimeoutMs(createEvalOptions({ recordTimeout: 0.2 })),
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
     });
 
     assertEquals(report.records[0]?.completed, false);
@@ -1445,6 +1446,20 @@ describe("eval CLI command helpers", () => {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
+  });
+
+  it("converts --record-timeout seconds into a valid timer deadline", () => {
+    assertEquals(resolveEvalRecordTimeoutMs({}), 600_000);
+    assertEquals(resolveEvalRecordTimeoutMs({ recordTimeout: 0 }), 0);
+    assertEquals(resolveEvalRecordTimeoutMs({ recordTimeout: 0.0004 }), 1);
+    const error = assertThrows(
+      () => resolveEvalRecordTimeoutMs({ recordTimeout: 10_000_000 }),
+      VeryfrontError,
+    );
+    assertEquals(
+      error.detail,
+      "Invalid --record-timeout: use 0 to disable the limit, or a number of seconds up to 2147483.",
+    );
   });
 
   it("reports suite progress per eval and passes the case concurrency to the runner", async () => {

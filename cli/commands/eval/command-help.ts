@@ -90,7 +90,7 @@ export const evalHelp: CommandHelp = {
     {
       flag: "--record-timeout <seconds>",
       description:
-        "Fail an agent eval case that runs longer than this (default: 600, 0 disables the limit)",
+        "Fail a case, including its metrics and checks, that runs longer than this (default: 600, 0 disables the limit)",
     },
   ],
   examples: [

@@ -489,6 +489,8 @@ export interface EvalAgentAdapterContext {
   definition: EvalDefinition;
   example: EvalExample;
   repetition: number;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Agent adapter result normalized into an eval record. */
@@ -517,6 +519,8 @@ export interface EvalToolAdapterContext {
   repetition: number;
   runId: string;
   input: unknown;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Tool adapter result normalized into an eval record. */
@@ -587,6 +591,13 @@ export interface RunEvalOptions {
    * records, so keep those at 1.
    */
   concurrency?: number;
+  /**
+   * Most milliseconds one record may take, covering target execution,
+   * metrics, and checks. A record past the limit fails with the
+   * `eval-record-timeout` error, its adapter `signal` aborts, and the run moves
+   * on without waiting for it. Omit or pass 0 for no limit.
+   */
+  recordTimeoutMs?: number;
   /**
    * Receives progress while records run. With `concurrency` above 1,
    * `record-finished` events can arrive out of dataset order. A listener that

@@ -933,6 +933,53 @@ describe("eval/runner", () => {
     assertEquals(calls, ["q1", "q2"]);
   });
 
+  it("fails a record whose metric stalls past the record timeout and aborts its signal", async () => {
+    const stalled = metrics.answer.exactMatch().gate();
+    stalled.evaluate = () => new Promise<never>(() => {});
+    const definition = evalAgent({
+      id: "eval:stalled-metric",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First", reference: "Paris" },
+        { id: "q2", input: "Second", reference: "Paris" },
+      ]),
+      metrics: [stalled],
+    });
+    const signals: AbortSignal[] = [];
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: {
+        agent: ({ signal }) => {
+          if (signal) signals.push(signal);
+          return "Paris";
+        },
+      },
+    });
+
+    assertEquals(report.records.map((record) => record.error), [
+      'Eval "eval:stalled-metric" case "q1" did not finish within 0.05s.',
+      'Eval "eval:stalled-metric" case "q2" did not finish within 0.05s.',
+    ]);
+    assertEquals(report.summary.failed, 2);
+    assertEquals(signals.map((signal) => signal.aborted), [true, true]);
+  });
+
+  it("rejects a record timeout outside the timer range", async () => {
+    const definition = evalAgent({
+      id: "eval:bad-timeout",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+    });
+
+    for (const recordTimeoutMs of [-1, Number.POSITIVE_INFINITY, 2 ** 31]) {
+      const error = await assertRejects(
+        () => runEval(definition, { recordTimeoutMs, adapters: { agent: async () => "ok" } }),
+      ) as Error;
+      assertEquals(error.message.includes("Eval record timeout must be finite"), true);
+    }
+  });
+
   it("rejects a concurrency that is not a positive integer", async () => {
     const definition = evalAgent({
       id: "eval:bad-concurrency",

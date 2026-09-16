@@ -3,7 +3,8 @@
  */
 
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
-import { EVAL_RECORD_TIMEOUT, INVALID_ARGUMENT } from "veryfront/errors";
+import { INVALID_ARGUMENT } from "veryfront/errors";
+import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "../../../src/utils/timer.ts";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
 import {
@@ -848,79 +849,51 @@ async function resolveEvalMockTools(
   return typeof mockTools === "function" ? await mockTools(context) : mockTools;
 }
 
-function resolveEvalRecordTimeoutMs(options: Pick<EvalOptions, "recordTimeout">): number {
-  const seconds = options.recordTimeout ?? DEFAULT_EVAL_RECORD_TIMEOUT_SECONDS;
-  return seconds > 0 ? Math.round(seconds * 1000) : 0;
-}
-
 /**
- * Run `operation` with an abort signal that fires once the case exceeds its time limit. The race
- * also returns control when the operation ignores the signal, so one stalled case cannot block the
- * rest of the eval.
+ * Convert `--record-timeout` seconds to the runner's millisecond deadline. Exact 0 disables it.
+ * Any other value must land in the portable timer range, so a tiny value never rounds down to
+ * "no limit" and a huge one is rejected instead of being clamped by the runtime.
  */
-async function withEvalRecordTimeout<T>(
-  timeoutMs: number,
-  context: { evalId: string; exampleId: string; repetition: number },
-  operation: (signal: AbortSignal | undefined) => Promise<T>,
-): Promise<T> {
-  if (timeoutMs <= 0) return await operation(undefined);
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const error = EVAL_RECORD_TIMEOUT.create({
-        detail: `Eval "${context.evalId}" case "${context.exampleId}" did not finish within ${
-          formatSeconds(timeoutMs)
-        }.`,
-        context: { ...context, timeoutMs },
-      });
-      controller.abort(error);
-      reject(error);
-    }, timeoutMs);
-  });
+export function resolveEvalRecordTimeoutMs(options: Pick<EvalOptions, "recordTimeout">): number {
+  const seconds = options.recordTimeout ?? DEFAULT_EVAL_RECORD_TIMEOUT_SECONDS;
+  if (seconds === 0) return 0;
   try {
-    return await Promise.race([operation(controller.signal), timeout]);
-  } finally {
-    clearTimeout(timer);
+    return normalizeTimerDurationMs(seconds * 1000, "--record-timeout");
+  } catch {
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid --record-timeout: use 0 to disable the limit, or a number of seconds up to ${
+        Math.floor(MAX_TIMER_DELAY_MS / 1000)
+      }.`,
+    });
   }
 }
 
-function formatSeconds(ms: number): string {
-  const seconds = ms / 1000;
-  return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)}s`;
-}
-
 export function createAgentAdapter(agent: Agent, options: EvalOptions) {
-  const recordTimeoutMs = resolveEvalRecordTimeoutMs(options);
-  return async ({ definition, example, repetition }: EvalAgentAdapterContext) => {
+  return async ({ definition, example, repetition, signal }: EvalAgentAdapterContext) => {
     const started = Date.now();
     const mockTools = await resolveEvalMockTools(definition.mockTools, {
       definition,
       example,
       repetition,
     });
-    const response = await withEvalRecordTimeout(recordTimeoutMs, {
-      evalId: definition.id,
-      exampleId: example.id,
-      repetition,
-    }, (abortSignal) =>
-      agent.generate({
-        input: normalizeEvalInputForAgent(example.input),
-        context: {
-          eval: {
-            definitionId: definition.id,
-            exampleId: example.id,
-            repetition,
-            metadata: example.metadata ?? {},
-          },
+    const response = await agent.generate({
+      input: normalizeEvalInputForAgent(example.input),
+      context: {
+        eval: {
+          definitionId: definition.id,
+          exampleId: example.id,
+          repetition,
+          metadata: example.metadata ?? {},
         },
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
-        ...(definition.mockTools !== undefined
-          ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
-          : {}),
-        ...(abortSignal ? { abortSignal } : {}),
-      }));
+      },
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+      ...(definition.mockTools !== undefined
+        ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
+        : {}),
+      // The runner aborts this when the case passes --record-timeout.
+      ...(signal ? { abortSignal: signal } : {}),
+    });
     return {
       text: response.text,
       trace: {
@@ -1470,6 +1443,7 @@ function createEvalReportCommandAdapters(input: {
               ...(input.options.concurrency !== undefined
                 ? { concurrency: input.options.concurrency }
                 : {}),
+              recordTimeoutMs: resolveEvalRecordTimeoutMs(input.options),
               onProgress: (event) => progress.onEvent(event),
             }),
         );
@@ -1599,6 +1573,12 @@ async function runEvalCommandWithProgress(
         cliLogger.info(`  - ${item.id} (${item.target})`);
       }
       return undefined;
+    }
+
+    try {
+      resolveEvalRecordTimeoutMs(options);
+    } catch (error) {
+      return await outputEvalUsageError(error instanceof Error ? error.message : String(error));
     }
 
     if (resolveEvalExportRequired(options) && resolveEvalExporterIds(options).length === 0) {
