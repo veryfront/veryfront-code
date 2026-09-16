@@ -44,25 +44,27 @@ const DENIAL_ERRORS = {
 } as const;
 
 /**
- * Classify an agent service 401 or 403 from its status alone, before the body
- * is read. It concerns the adapter's own token and project, not the model
- * gateway credential, so it gets agent-service guidance. A 401 always stops
- * the eval: the token is the same for every example. A 403 stops it only when
- * the adapter fixes the project for the whole eval; otherwise any example can
- * choose another project, so one inaccessible project fails only that example.
+ * Classify an agent service 401 or 403 from the service's own auth error code.
+ * The status alone is not proof: an application `beforeStream` hook can return
+ * any 401 or 403 for one example. Only the hosted service auth layer's
+ * `errorCode` (`UNAUTHENTICATED` for 401, `FORBIDDEN` for 403) shows that the
+ * adapter's token or project was rejected, which concerns every example, so it
+ * gets agent-service guidance. A 403 also stops the eval only when the project
+ * scope is fixed for it; otherwise an example can choose another project.
  */
 export function classifyAgentServiceAccessStatus(
   status: number,
+  errorCode: string | undefined,
   options: { projectScopeFixed: boolean },
 ): EvalModelAccessDenial | undefined {
-  if (status === 401) {
+  if (status === 401 && errorCode === "UNAUTHENTICATED") {
     return {
       kind: "agent-service-unauthorized",
       code: "UNAUTHORIZED",
       message: "The agent service rejected the eval request credential (401 Unauthorized)",
     };
   }
-  if (status === 403 && options.projectScopeFixed) {
+  if (status === 403 && errorCode === "FORBIDDEN" && options.projectScopeFixed) {
     return {
       kind: "agent-service-forbidden",
       code: "FORBIDDEN",

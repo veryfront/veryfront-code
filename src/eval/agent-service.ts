@@ -550,16 +550,76 @@ function isProjectScopeFixed(
   return !(isRecord(exampleInput) && readString(exampleInput.projectId) !== undefined);
 }
 
+const ACCESS_ERROR_BODY_MAX_BYTES = 4096;
+
+function readAuthErrorCode(text: string): string | undefined {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return isRecord(parsed) ? readString(parsed.errorCode) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+const ACCESS_ERROR_BODY_TIMEOUT_MS = 5000;
+
 /**
- * Stop on an access rejection as soon as the status is known, so a body that
- * fails to read cannot turn it into an ordinary failed record.
+ * Read the hosted service auth `errorCode` from a copy of a 401 or 403 body.
+ * The read is bounded in size and time, and never throws: an unreadable body
+ * yields no code, so the response stays an ordinary failed record.
  */
-function throwIfAgentServiceAccessRejected(
+async function readAgentServiceAuthErrorCode(response: Response): Promise<string | undefined> {
+  let copy: Response;
+  try {
+    copy = response.clone();
+  } catch {
+    return undefined;
+  }
+  const reader = copy.body?.getReader();
+  if (!reader) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ACCESS_ERROR_BODY_TIMEOUT_MS);
+  });
+  const read = (async () => {
+    const decoder = new TextDecoder();
+    let text = "";
+    // Parse after every chunk: a complete auth error body is classified even
+    // when the stream then stalls or errors.
+    while (text.length < ACCESS_ERROR_BODY_MAX_BYTES) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch {
+        return undefined;
+      }
+      if (chunk.done) return undefined;
+      text += decoder.decode(chunk.value, { stream: true });
+      const errorCode = readAuthErrorCode(text);
+      if (errorCode !== undefined) return errorCode;
+    }
+    return undefined;
+  })().catch(() => undefined);
+  try {
+    return await Promise.race([read, timeout]);
+  } finally {
+    clearTimeout(timer);
+    // Best-effort cleanup that must not delay the classification.
+    reader.cancel().catch(() => {});
+  }
+}
+
+/**
+ * Stop on a definitive agent service access rejection: a 401 or 403 carrying
+ * the hosted service auth error code for the adapter's token or project.
+ */
+async function throwIfAgentServiceAccessRejected(
   evalId: string,
   response: Response,
   options: { projectScopeFixed: boolean },
-): void {
-  const denial = classifyAgentServiceAccessStatus(response.status, options);
+): Promise<void> {
+  if (response.status !== 401 && response.status !== 403) return;
+  const errorCode = await readAgentServiceAuthErrorCode(response);
+  const denial = classifyAgentServiceAccessStatus(response.status, errorCode, options);
   if (!denial) return;
   // Best-effort cleanup: a cancel hook that never settles must not delay the
   // error, so cancellation is started and not awaited.
@@ -927,7 +987,7 @@ export function createAgentServiceEvalAdapter(
           : {}),
       };
       const response = await requestFetch(endpoint, createRequestInit(config, body));
-      throwIfAgentServiceAccessRejected(context.definition.id, response, {
+      await throwIfAgentServiceAccessRejected(context.definition.id, response, {
         projectScopeFixed: isProjectScopeFixed(config, context.example.input),
       });
       const run = await parseAgUiSseResponse(response, parseOptions);

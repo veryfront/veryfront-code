@@ -370,10 +370,26 @@ describe("eval/model-access", () => {
   });
 
   it("classifies agent service 401 and 403 responses with agent-service guidance", () => {
-    const unauthorized = classifyAgentServiceAccessStatus(401, { projectScopeFixed: false });
-    const forbidden = classifyAgentServiceAccessStatus(403, { projectScopeFixed: true });
+    const unauthorized = classifyAgentServiceAccessStatus(401, "UNAUTHENTICATED", {
+      projectScopeFixed: false,
+    });
+    const forbidden = classifyAgentServiceAccessStatus(403, "FORBIDDEN", {
+      projectScopeFixed: true,
+    });
 
-    assertEquals(classifyAgentServiceAccessStatus(403, { projectScopeFixed: false }), undefined);
+    // An application 401 or 403 without the service auth error code is not proof.
+    assertEquals(
+      classifyAgentServiceAccessStatus(401, undefined, { projectScopeFixed: true }),
+      undefined,
+    );
+    assertEquals(
+      classifyAgentServiceAccessStatus(403, "CUSTOM", { projectScopeFixed: true }),
+      undefined,
+    );
+    assertEquals(
+      classifyAgentServiceAccessStatus(403, "FORBIDDEN", { projectScopeFixed: false }),
+      undefined,
+    );
     assertEquals(classifyAgentServiceModelAccessDenial({ status: 403, body: "x" }), undefined);
     assertEquals(unauthorized?.kind, "agent-service-unauthorized");
     assertEquals(forbidden?.kind, "agent-service-forbidden");
