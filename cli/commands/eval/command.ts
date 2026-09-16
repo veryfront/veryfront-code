@@ -15,6 +15,7 @@ import {
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
+  EvalDefinition,
   EvalGateFailureSummary,
   EvalMockTools,
   EvalModelComparisonMetricName,
@@ -677,6 +678,27 @@ export function formatMissingEvalProjectWarning(
   return "No Veryfront project is configured, so Veryfront Cloud will reject veryfront-cloud model requests " +
     "(gateway_project_required). Set VERYFRONT_PROJECT_SLUG, add projectSlug to veryfront.config.ts, " +
     "or run 'veryfront link' in the project directory.";
+}
+
+/**
+ * Metrics that can call a model while grading. Judges are opaque functions, so
+ * an LLM judge cannot be told apart from a deterministic one: any metric that
+ * accepts a judge counts.
+ */
+const JUDGE_CAPABLE_METRIC_NAMES: ReadonlySet<string> = new Set(["answer.groundedness"]);
+
+/**
+ * Whether running these evals can send a model request. Agent and tool targets
+ * execute project code; a dataset eval grades stored values and only reaches a
+ * model through a judge metric.
+ */
+export function evalRunMayCallModel(definitions: readonly EvalDefinition[]): boolean {
+  return definitions.some((definition) =>
+    definition.targetKind !== "dataset" ||
+    definition.metrics.some((metric) =>
+      metric.family === "judge" || JUDGE_CAPABLE_METRIC_NAMES.has(metric.name)
+    )
+  );
 }
 
 export function createEvalToolExecutionContext(
@@ -1395,9 +1417,10 @@ export async function runEvalCommand(
       projectDir,
       config,
     );
-    // Emitted only once a run is certain: listing and usage errors never send
-    // a model request, so the warning would be noise there.
-    const warnIfNoProject = () => {
+    // Emitted only once a run is certain and it can reach a model: listing,
+    // usage errors, and model-free dataset evals never send a model request.
+    const warnIfNoProject = (definitions: readonly EvalDefinition[]) => {
+      if (!evalRunMayCallModel(definitions)) return;
       const warning = formatMissingEvalProjectWarning(runtimeAuth);
       if (warning) cliLogger.warn(warning);
     };
@@ -1470,7 +1493,7 @@ export async function runEvalCommand(
         return 0;
       }
 
-      warnIfNoProject();
+      warnIfNoProject(evals.map((item) => item.definition));
       const selectedExporterIds = resolveEvalExporterIds(options);
       const extensionSetup = await setupEvalCliExtensions(
         projectDir,
@@ -1589,7 +1612,7 @@ export async function runEvalCommand(
       if (toolId && !tool) {
         return await outputToolNotFound(toolId);
       }
-      warnIfNoProject();
+      warnIfNoProject([evalItem.definition]);
 
       if (modelComparisonConfig) {
         return await runWithProjectAgentRuntime(

@@ -46,6 +46,7 @@ import {
   createResolvedEvalModelComparisonConfig,
   createToolAdapter,
   type EvalOptions,
+  evalRunMayCallModel,
   exportEvalReportForCli,
   finalizeGatewayBillingGroup,
   findEvalForCliId,
@@ -665,6 +666,44 @@ describe("eval CLI command helpers", () => {
 
       assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
     }, { prefix: "vf-eval-list-no-project-" });
+  });
+
+  it("treats only dataset evals without judge metrics as model-free", () => {
+    const plainDataset = evalDataset({
+      id: "eval:plain-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      metrics: [metrics.answer.contains({ text: "value" })],
+    });
+    const rubricDataset = evalDataset({
+      id: "eval:rubric-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      metrics: [
+        metrics.judge.rubric({ rubric: "Is it good?", judge: () => Promise.resolve({ score: 1 }) }),
+      ],
+    });
+    const groundednessDataset = evalDataset({
+      id: "eval:groundedness-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      metrics: [metrics.answer.groundedness({ judge: () => Promise.resolve({ score: 1 }) })],
+    });
+    const agentEval = evalAgent({
+      id: "eval:agent",
+      target: "agent:fixture",
+      dataset: [{ id: "case", input: "value" }],
+    });
+    const toolEval = evalTool({
+      id: "eval:tool",
+      target: "tool:fixture",
+      dataset: [{ id: "case", input: {} }],
+    });
+
+    assertEquals(evalRunMayCallModel([plainDataset]), false);
+    assertEquals(evalRunMayCallModel([plainDataset, plainDataset]), false);
+    assertEquals(evalRunMayCallModel([rubricDataset]), true);
+    assertEquals(evalRunMayCallModel([groundednessDataset]), true);
+    assertEquals(evalRunMayCallModel([agentEval]), true);
+    assertEquals(evalRunMayCallModel([toolEval]), true);
+    assertEquals(evalRunMayCallModel([plainDataset, agentEval]), true);
   });
 
   it("resolves eval export redaction from exact global env toggles", () => {
@@ -2820,5 +2859,95 @@ describe("eval CLI command helpers", () => {
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+
+  it("does not warn about a missing project for a dataset-only suite", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:dataset-only",
+        dataset: [{ id: "case", input: "value" }],
+        metrics: [metrics.answer.contains({ text: "value" })],
+      });
+      definition.source = {
+        filePath: `${projectDir}/evals/dataset-only.eval.ts`,
+        exportName: "default",
+      };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        for (const id of [undefined, "eval:dataset-only"]) {
+          await runEvalCommand(
+            {
+              ...(id ? { id } : {}),
+              list: false,
+              exporters: [],
+              debug: false,
+              candidateModels: [],
+              projectDir,
+              reportDir: `${projectDir}/reports-${id ?? "suite"}`,
+            },
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+            },
+          );
+        }
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-dataset-no-project-" });
+  });
+
+  it("warns about a missing project for a dataset suite with an LLM-capable judge", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:judged-dataset",
+        dataset: [{ id: "case", input: "value" }],
+        metrics: [
+          metrics.judge.rubric({
+            rubric: "Is it good?",
+            judge: () => Promise.resolve({ score: 1 }),
+          }),
+        ],
+      });
+      definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/reports`,
+          },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.filter((line) => line.includes("gateway_project_required")).length,
+        1,
+      );
+    }, { prefix: "vf-eval-judged-no-project-" });
   });
 });
