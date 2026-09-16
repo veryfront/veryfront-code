@@ -1,5 +1,6 @@
 import {
   EVAL_MODEL_ACCESS_DENIED,
+  EVAL_MODEL_EGRESS_BLOCKED,
   EVAL_MODEL_PROJECT_ACCESS_DENIED,
   EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
   EVAL_MODEL_UNAUTHORIZED,
@@ -8,7 +9,13 @@ import {
 } from "#veryfront/errors";
 import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
 import { registeredProviderFailure } from "#veryfront/chat/provider-error-registry.ts";
-import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  getModelRequestTransportFailureUrl,
+  isVeryfrontGatewayTransportFailure,
+  ProviderError,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { isPrivateAddressEgressBlock } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import {
   getVeryfrontCloudBootstrap,
   resolveVeryfrontPublicApiBaseUrlFromHostEnv,
@@ -20,7 +27,8 @@ export type EvalModelAccessDenialKind =
   | "spend-limit"
   | "project-required"
   | "unauthorized"
-  | "forbidden";
+  | "forbidden"
+  | "egress-blocked";
 
 /** Refusal that every later eval record would hit the same way. */
 export interface EvalModelAccessDenial {
@@ -35,6 +43,7 @@ const DENIAL_ERRORS = {
   "project-required": EVAL_PROJECT_REQUIRED,
   unauthorized: EVAL_MODEL_UNAUTHORIZED,
   forbidden: EVAL_MODEL_PROJECT_ACCESS_DENIED,
+  "egress-blocked": EVAL_MODEL_EGRESS_BLOCKED,
 } as const;
 
 const UNAUTHORIZED_DENIAL: EvalModelAccessDenial = {
@@ -156,6 +165,39 @@ function classifyProjectRequired(responseBody: string): EvalModelAccessDenial | 
   return PROJECT_REQUIRED_DENIAL;
 }
 
+const EGRESS_BLOCKED_DENIAL: EvalModelAccessDenial = {
+  kind: "egress-blocked",
+  code: "EGRESS_BLOCKED",
+  message:
+    "Veryfront blocked the request to the configured Veryfront API because its host resolves to a private network address",
+};
+
+/**
+ * Classify the host egress guard's private-address block of a model gateway
+ * request, with the same gateway provenance the HTTP refusals use: the gateway
+ * fetch threw the block, or a model provider transport threw it for a request
+ * on the gateway route of a configured Veryfront API. A tool, agent tool,
+ * custom metric, local provider, another port on the API host, or a
+ * non-gateway path stays a record failure.
+ *
+ * The guard must also have recorded the cause as a private-address block,
+ * because proxy and broker connection failures reuse its wording. The denial
+ * never names the host: a private or internal API hostname must not reach
+ * user-facing CLI or JSON error output.
+ */
+function classifyOutboundRequestBlocked(
+  error: OutboundRequestBlockedError,
+): EvalModelAccessDenial | undefined {
+  // The gateway fetch marks what it throws, which covers a gateway built with
+  // an explicit per-model or run-scoped base URL; the configured route is the
+  // fallback, matching how the HTTP refusals resolve provenance.
+  const fromGateway = isVeryfrontGatewayTransportFailure(error) ||
+    isVeryfrontGatewayRoute(getModelRequestTransportFailureUrl(error));
+  if (!fromGateway) return undefined;
+  if (!isPrivateAddressEgressBlock(readProperty(error, "cause"))) return undefined;
+  return EGRESS_BLOCKED_DENIAL;
+}
+
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
   // The gateway fetch marks its own responses, which covers a gateway built
   // with an explicit per-model base URL; the configured route is the fallback.
@@ -185,6 +227,10 @@ function findDenial(
   seen.add(error);
 
   if (error instanceof ProviderError) return classifyProviderError(error);
+  if (error instanceof OutboundRequestBlockedError) {
+    const blocked = classifyOutboundRequestBlocked(error);
+    if (blocked) return blocked;
+  }
 
   const registered = registeredProviderFailure(error);
   // Curated failures crossing a runtime boundary keep only the code, which does

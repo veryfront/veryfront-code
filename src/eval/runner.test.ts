@@ -27,6 +27,7 @@ import {
   type Span,
 } from "../observability/tracing/api-shim.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
+import { createOutboundFetchBoundary } from "#veryfront/security/http/outbound-fetch.ts";
 
 async function createGatewayCreditDenial(): Promise<Error> {
   const error = await buildProviderError(
@@ -50,6 +51,28 @@ function createUnprintableThrownValue(): object {
   const revocable = Proxy.revocable({}, {});
   revocable.revoke();
   return revocable.proxy;
+}
+
+/** A guarded fetch whose DNS answers every host with `addresses`. */
+function blockingGuardedFetch(baseUrl: string, addresses: string[]): typeof fetch {
+  return createOutboundFetchBoundary({
+    fetch: () => Promise.resolve(Response.json({ ok: true })),
+    pinnedFetch: () => Promise.resolve(Response.json({ ok: true })),
+    resolveHost: () => Promise.resolve(addresses),
+  }).createOriginBoundFetch(baseUrl);
+}
+
+/** A model request whose provider transport the egress guard blocks. */
+function blockedModelRequest(): Promise<unknown> {
+  const apiBaseUrl = getVeryfrontCloudBootstrap().apiBaseUrl.replace(/\/+$/, "");
+  const apiOrigin = new URL(apiBaseUrl).origin;
+  return requestJson({
+    url: `${apiBaseUrl}/ai/gateway/openai/v1/responses`,
+    fetchImpl: blockingGuardedFetch(apiOrigin, ["10.255.128.3"]),
+    init: { method: "POST", body: "{}" },
+    providerLabel: "veryfront-cloud",
+    providerKind: "openai",
+  });
 }
 
 describe("eval/runner", () => {
@@ -717,6 +740,88 @@ describe("eval/runner", () => {
 
     assertEquals(error.slug, "eval-model-unauthorized");
     assertEquals(adapterCalls, 1);
+  });
+
+  it("stops at the first model request the egress guard blocks", async () => {
+    let adapterCalls = 0;
+    const definition = evalAgent({
+      id: "eval:blocked-endpoint",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: {
+            agent: async () => {
+              adapterCalls += 1;
+              return await blockedModelRequest() as never;
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-egress-blocked");
+    assertEquals(
+      error.detail,
+      'Eval "eval:blocked-endpoint" stopped at its first refused model request: Veryfront blocked the request to the configured Veryfront API because its host resolves to a private network address',
+    );
+    assertEquals(adapterCalls, 1);
+  });
+
+  it("keeps a tool eval that calls a blocked private endpoint as a record failure", async () => {
+    let adapterCalls = 0;
+    const definition = evalTool({
+      id: "eval:tool-private-endpoint",
+      target: "tool:lookup",
+      dataset: datasets.inline([
+        { id: "q1", input: { q: "First" } },
+        { id: "q2", input: { q: "Second" } },
+      ]),
+    });
+    const blockedFetch = blockingGuardedFetch("https://internal.example", ["10.0.0.8"]);
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async () => {
+          adapterCalls += 1;
+          await blockedFetch("https://internal.example/lookup");
+          return { output: "unreachable" };
+        },
+      },
+    });
+
+    assertEquals(adapterCalls, 2);
+    assertEquals(report.records.map((record) => record.completed), [false, false]);
+  });
+
+  it("stops when an eval check is refused model access", async () => {
+    let checkCalls = 0;
+    const definition = evalAgent({
+      id: "eval:check-blocked-endpoint",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+      check: async () => {
+        checkCalls += 1;
+        await blockedModelRequest();
+      },
+    });
+
+    const error = (await assertRejects(
+      () => runEval(definition, { adapters: { agent: async () => ({ text: "Paris" }) } }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-egress-blocked");
+    assertEquals(checkCalls, 1);
   });
 
   it("stops when a judge metric is refused model access", async () => {

@@ -25,7 +25,10 @@ import {
   requireInferenceProviderCredential,
   requireProviderCredential,
 } from "../runtime-loader/provider-request-init.ts";
-import { markVeryfrontGatewayResponse } from "../runtime-loader/provider-http.ts";
+import {
+  markVeryfrontGatewayResponse,
+  markVeryfrontGatewayTransportFailure,
+} from "../runtime-loader/provider-http.ts";
 
 export type { VeryfrontCloudProviderId } from "./model-catalog.ts";
 
@@ -307,6 +310,12 @@ export function getVeryfrontCloudGatewayBaseUrl(
  * The gateway expects only Bearer auth, so we strip all provider-specific
  * headers to prevent credential leakage to the wrong auth path.
  */
+/** Keep gateway provenance on a transport that threw before any response. */
+function rethrowAsGatewayTransportFailure(error: unknown): never {
+  markVeryfrontGatewayTransportFailure(error);
+  throw error;
+}
+
 export function createVeryfrontCloudFetch(
   apiToken: string,
   apiBaseUrl: string,
@@ -356,7 +365,7 @@ export function createVeryfrontCloudFetch(
       createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
         new NativeRequest(request, { headers }),
       ),
-      [markVeryfrontGatewayResponse],
+      [markVeryfrontGatewayResponse, rethrowAsGatewayTransportFailure],
     ) as Promise<Response>;
     if (!billingGroupId || !cloudContext || !ResponseStatusGet) return responsePromise;
     return IntrinsicReflectApply(PromisePrototypeThen, responsePromise, [

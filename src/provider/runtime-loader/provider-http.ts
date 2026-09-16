@@ -169,6 +169,69 @@ export function isVeryfrontGatewayResponse(response: Response): boolean {
   ]) as boolean;
 }
 
+const veryfrontGatewayTransportFailures = new WeakSet<object>();
+
+/**
+ * @internal Record that the Veryfront Cloud gateway fetch threw this error
+ * before any response arrived, the no-response counterpart of
+ * {@link markVeryfrontGatewayResponse}. It keeps gateway provenance for a
+ * transport that a run-scoped or per-model base URL configured, which no
+ * globally configured route matches.
+ */
+export function markVeryfrontGatewayTransportFailure(error: unknown): unknown {
+  if (typeof error === "object" && error !== null) {
+    IntrinsicReflectApply(WeakSetPrototypeAdd, veryfrontGatewayTransportFailures, [error]);
+  }
+  return error;
+}
+
+/** @internal Return true when the Veryfront Cloud gateway fetch threw this error. */
+export function isVeryfrontGatewayTransportFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    IntrinsicReflectApply(WeakSetPrototypeHas, veryfrontGatewayTransportFailures, [
+      error,
+    ]) as boolean;
+}
+
+const NativeWeakMap = WeakMap;
+const WeakMapPrototypeGet = NativeWeakMap.prototype.get;
+const WeakMapPrototypeSet = NativeWeakMap.prototype.set;
+const modelRequestTransportFailureRoutes = new NativeWeakMap<object, string>();
+
+/**
+ * Route (origin and path) of the model request whose provider transport threw
+ * `error` inside `requestJson` or `requestStream`, before any response
+ * arrived. The counterpart of `ProviderError.requestUrl` for failures that
+ * never produced a response.
+ *
+ * @internal Not re-exported from `veryfront/provider/shared`.
+ */
+export function getModelRequestTransportFailureUrl(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  return IntrinsicReflectApply(WeakMapPrototypeGet, modelRequestTransportFailureRoutes, [
+    error,
+  ]) as string | undefined;
+}
+
+async function fetchModelRequest(
+  fetchImpl: typeof globalThis.fetch,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetchImpl(url, init);
+  } catch (error) {
+    const requestRoute = readRequestRoute(url);
+    if (typeof error === "object" && error !== null && requestRoute !== undefined) {
+      IntrinsicReflectApply(WeakMapPrototypeSet, modelRequestTransportFailureRoutes, [
+        error,
+        requestRoute,
+      ]);
+    }
+    throw error;
+  }
+}
+
 function labelProviderResponseError(
   error: ProviderError,
   providerLabel: string,
@@ -1026,7 +1089,7 @@ export async function requestJson(options: {
 
   try {
     const response = await waitForAbortable(
-      () => options.fetchImpl(options.url, deadline.init),
+      () => fetchModelRequest(options.fetchImpl, options.url, deadline.init),
       deadline.deadlineSignal,
       cancelLateResponse,
     );
@@ -1130,7 +1193,7 @@ export async function requestStream(options: {
 
     try {
       const response = await waitForAbortable(
-        () => options.fetchImpl(options.url, deadline.init),
+        () => fetchModelRequest(options.fetchImpl, options.url, deadline.init),
         deadline.deadlineSignal,
         cancelLateResponse,
       );

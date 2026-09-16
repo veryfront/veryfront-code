@@ -595,6 +595,7 @@ async function runRecord(
         checks,
       }));
     } catch (error) {
+      throwIfModelAccessDenied(definition, error);
       // A check that throws on the output of a target that already failed is a
       // consequence of that failure, not a defect in the check. Say so, so the
       // report does not send the author to debug eval logic that is fine.

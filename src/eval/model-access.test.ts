@@ -8,6 +8,12 @@ import {
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
+  createOutboundFetchBoundary,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
+import { markVeryfrontGatewayTransportFailure } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { WorkerEgressBlockedError } from "#veryfront/security/sandbox/worker-egress-guard.ts";
+import {
   classifyAgentServiceModelAccessDenial,
   classifyEvalModelAccessDenial,
   createEvalModelAccessDeniedError,
@@ -59,6 +65,37 @@ async function rejectedRequest(
     return error;
   }
   throw new Error("expected the request to reject");
+}
+
+/** A guarded fetch whose DNS answers every host with `addresses`. */
+function blockingGuardedFetch(baseUrl: string, addresses: string[]): typeof fetch {
+  return createOutboundFetchBoundary({
+    fetch: () => Promise.resolve(Response.json({ ok: true })),
+    pinnedFetch: () => Promise.resolve(Response.json({ ok: true })),
+    resolveHost: () => Promise.resolve(addresses),
+  }).createOriginBoundFetch(baseUrl);
+}
+
+async function captureRejection(operation: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await operation();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the request to be blocked");
+}
+
+/** A model request whose provider transport the egress guard blocks. */
+function blockedModelRequest(url: string, addresses: string[]): Promise<unknown> {
+  return captureRejection(() =>
+    requestJson({
+      url,
+      fetchImpl: blockingGuardedFetch(new URL(url).origin, addresses),
+      init: { method: "POST", body: "{}" },
+      providerLabel: "veryfront-cloud",
+      providerKind: "openai",
+    })
+  );
 }
 
 describe("eval/model-access", () => {
@@ -384,5 +421,114 @@ describe("eval/model-access", () => {
     );
     assertEquals(isEvalModelAccessDeniedError(error), true);
     assertEquals(isEvalModelAccessDeniedError(cause), false);
+  });
+
+  it("classifies a gateway request the egress guard blocks for a private DNS answer", async () => {
+    const apiHost = new URL(veryfrontApiOrigin()).hostname;
+    const blocked = await blockedModelRequest(
+      `${veryfrontApiOrigin()}/ai/gateway/openai/v1/chat/completions`,
+      ["10.255.128.3"],
+    );
+    const denial = classifyEvalModelAccessDenial(new Error("agent failed", { cause: blocked }));
+
+    assertEquals(denial?.kind, "egress-blocked");
+    assertEquals(
+      denial?.message,
+      "Veryfront blocked the request to the configured Veryfront API because its host resolves to a private network address",
+    );
+    const error = createEvalModelAccessDeniedError("eval:staging", denial!, blocked);
+    // An internal API hostname must not reach user-facing error output.
+    assertEquals(error.detail?.includes(apiHost), false);
+    assertEquals(error.message.includes(apiHost), false);
+    assertEquals(error.slug, "eval-model-egress-blocked");
+    assertEquals(error.status, 403);
+    assertEquals(
+      error.suggestion?.includes("VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS"),
+      true,
+    );
+    assertEquals(getEvalModelAccessDenialKind(error), "egress-blocked");
+  });
+
+  it("keeps an egress block outside the Veryfront gateway route as a record failure", async () => {
+    const api = new URL(veryfrontApiOrigin());
+    // Another port on the API host, a non-gateway path on the API origin, and a
+    // local provider.
+    for (
+      const url of [
+        `${api.protocol}//${api.hostname}:8443/ai/gateway/openai/v1/chat/completions`,
+        `${api.origin}/v1/chat/completions`,
+        "http://localhost:11434/v1/chat/completions",
+      ]
+    ) {
+      assertEquals(
+        classifyEvalModelAccessDenial(await blockedModelRequest(url, ["10.255.128.3"])),
+        undefined,
+        url,
+      );
+    }
+  });
+
+  it("ignores a private-address block outside a model request", async () => {
+    // A tool, agent tool, or custom metric calling a private endpoint through a
+    // guarded transport fails only its own record, even on the gateway route.
+    const gatewayUrl = `${veryfrontApiOrigin()}/ai/gateway/openai/v1/chat/completions`;
+    const toolBlock = await captureRejection(() =>
+      blockingGuardedFetch(veryfrontApiOrigin(), ["10.255.128.3"])(gatewayUrl)
+    );
+
+    assertEquals(toolBlock instanceof OutboundRequestBlockedError, true);
+    assertEquals(classifyEvalModelAccessDenial(toolBlock), undefined);
+    assertEquals(
+      classifyEvalModelAccessDenial(new Error("tool failed", { cause: toolBlock })),
+      undefined,
+    );
+  });
+
+  it("ignores egress refusals that are not a private-address block", async () => {
+    const crossOrigin = await captureRejection(() =>
+      requestJson({
+        url: `https://other.example/ai/gateway/openai/v1/chat/completions`,
+        fetchImpl: blockingGuardedFetch("https://api.example", ["93.184.216.34"]),
+        init: { method: "POST", body: "{}" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "openai",
+      })
+    );
+    assertEquals(classifyEvalModelAccessDenial(crossOrigin), undefined);
+    assertEquals(
+      classifyEvalModelAccessDenial(
+        new Error("Outbound network egress blocked for host: api.veryfront.org"),
+      ),
+      undefined,
+    );
+  });
+
+  it("ignores a proxy or broker failure that reuses the private-address wording", () => {
+    // The SOCKS proxy and the worker broker report connection refused or
+    // network unreachable with the same message as a private DNS answer.
+    const apiHost = new URL(veryfrontApiOrigin()).hostname;
+    const boundaryError = new OutboundRequestBlockedError(
+      `Outbound network egress blocked for host: ${apiHost}`,
+      {
+        cause: new WorkerEgressBlockedError(`Worker network egress blocked for host: ${apiHost}`),
+      },
+    );
+
+    assertEquals(classifyEvalModelAccessDenial(boundaryError), undefined);
+  });
+
+  it("classifies a block from a gateway transport with an explicit base URL", async () => {
+    // createVeryfrontCloudInferenceModel(..., { apiBaseUrl }) builds a gateway
+    // transport for a run-scoped API URL that no globally configured route
+    // matches. The gateway fetch marks what it throws, so provenance holds.
+    const explicitGateway = "https://run-scoped.example:8443";
+    const blocked = await blockedModelRequest(
+      `${explicitGateway}/ai/gateway/openai/v1/chat/completions`,
+      ["10.255.128.3"],
+    );
+    assertEquals(classifyEvalModelAccessDenial(blocked), undefined);
+
+    markVeryfrontGatewayTransportFailure(blocked);
+    assertEquals(classifyEvalModelAccessDenial(blocked)?.kind, "egress-blocked");
   });
 });

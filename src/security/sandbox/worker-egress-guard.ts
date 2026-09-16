@@ -99,6 +99,32 @@ export class WorkerEgressBlockedError extends Error {
   override name = "WorkerEgressBlockedError";
 }
 
+// Blocks raised because the destination is, or resolves to, a private address.
+// Recorded at the throw site so callers never infer the reason from a message
+// that proxy and broker failures share. Captured intrinsics keep project code
+// that replaces WeakSet.prototype methods from forging or erasing an entry.
+const NativeWeakSet = WeakSet;
+const WeakSetPrototypeAdd = NativeWeakSet.prototype.add;
+const WeakSetPrototypeHas = NativeWeakSet.prototype.has;
+const privateAddressEgressBlocks = new NativeWeakSet<object>();
+
+function privateAddressEgressBlock(message: string): WorkerEgressBlockedError {
+  const error = new WorkerEgressBlockedError(message);
+  IntrinsicReflectApply(WeakSetPrototypeAdd, privateAddressEgressBlocks, [error]);
+  return error;
+}
+
+/**
+ * True when the guard blocked a destination because it is, or its DNS answer
+ * contains, a private or otherwise non-global address. Proxy connection
+ * failures and broker-reported failures reuse the same message but are never
+ * recorded here.
+ */
+export function isPrivateAddressEgressBlock(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    IntrinsicReflectApply(WeakSetPrototypeHas, privateAddressEgressBlocks, [error]) as boolean;
+}
+
 export type ResolveWorkerHost = (hostname: string) => Promise<string[]>;
 
 export interface WorkerEgressSocksProxyConfig {
@@ -400,7 +426,7 @@ async function resolveWorkerHostEgressAddresses(
     !allowInternalEgress && !allowedInternalHost &&
     (isLocalhostName(host) || isInternalEgressIp(host))
   ) {
-    throw new WorkerEgressBlockedError(
+    throw privateAddressEgressBlock(
       `Worker network egress blocked for internal host: ${hostname}`,
     );
   }
@@ -444,7 +470,7 @@ async function resolveWorkerHostEgressAddresses(
       isInternalEgressIp(normalizedAddress) &&
       !allowedResolvedAddresses.includes(normalizedAddress)
     ) {
-      throw new WorkerEgressBlockedError(
+      throw privateAddressEgressBlock(
         `Worker network egress blocked for host: ${hostname}`,
       );
     }

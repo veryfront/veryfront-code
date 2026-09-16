@@ -35,10 +35,10 @@ export default function AboutPage() {
 
 The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge:
 
-| Merge behavior | Tags |
-|---|---|
-| **Single-valued** (a page's tag overrides the same tag from a layout) | `<title>`, `<meta name="description">`, `<link rel="canonical">`, `og:title`, `robots`, `viewport`, and the other one-per-document tags |
-| **Repeatable** (tags accumulate instead of overriding) | `og:image` (and its `og:image:*` sub-tags), `og:video`, `og:audio`, `article:tag`, `article:author`, and `<link>` tags with a repeatable `rel`: `stylesheet`, `preload`, `modulepreload`, `prefetch`, `preconnect`, `dns-prefetch`, `icon`, `apple-touch-icon`, `alternate` |
+| Merge behavior                                                        | Tags                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Single-valued** (a page's tag overrides the same tag from a layout) | `<title>`, `<meta name="description">`, `<link rel="canonical">`, `og:title`, `robots`, `viewport`, and the other one-per-document tags                                                                                                                                     |
+| **Repeatable** (tags accumulate instead of overriding)                | `og:image` (and its `og:image:*` sub-tags), `og:video`, `og:audio`, `article:tag`, `article:author`, and `<link>` tags with a repeatable `rel`: `stylesheet`, `preload`, `modulepreload`, `prefetch`, `preconnect`, `dns-prefetch`, `icon`, `apple-touch-icon`, `alternate` |
 
 So you can define defaults in a layout and override the single-valued ones per page.
 
