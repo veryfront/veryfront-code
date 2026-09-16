@@ -5,12 +5,7 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
-import {
-  CURATED_PROVIDER_FAILURE_CODES,
-  curatedProviderFailure,
-  type CuratedProviderFailureCode,
-  registeredProviderFailure,
-} from "#veryfront/chat/provider-error-registry.ts";
+import { registeredProviderFailure } from "#veryfront/chat/provider-error-registry.ts";
 import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 /** Why the model gateway refused an eval's model requests. */
@@ -128,8 +123,11 @@ function findDenial(
   if (error instanceof ProviderError) return classifyProviderError(error);
 
   const registered = registeredProviderFailure(error);
+  // Curated failures crossing a runtime boundary keep only the code, which does
+  // not prove a Veryfront gateway source for billing codes. Only the
+  // project-required code is gateway-specific.
   if (registered?.code === GATEWAY_PROJECT_REQUIRED_CURATED_CODE) return PROJECT_REQUIRED_DENIAL;
-  if (registered) return toDenial(registered);
+  if (registered) return undefined;
 
   for (const key of ["lastError", "cause"]) {
     const nested = findDenial(readProperty(error, key), seen, depth + 1);
@@ -182,26 +180,13 @@ export function classifyAgentServiceModelAccessDenial(input: {
       // Streaming agent services report the gateway refusal as a RUN_ERROR.
       return PROJECT_REQUIRED_DENIAL;
     }
-    if (isCuratedProviderFailureCode(input.runErrorCode)) {
-      // The run error message is read only to recognize a run-scoped credit
-      // cap. The user-facing message is rebuilt from the curated code, so an
-      // endpoint cannot place arbitrary text in the CLI error.
-      if (
-        typeof input.runErrorMessage === "string" && isAgentRunCreditLimit(input.runErrorMessage)
-      ) {
-        return undefined;
-      }
-      return toDenial(curatedProviderFailure(input.runErrorCode));
-    }
+    // A curated billing code on RUN_ERROR (INSUFFICIENT_CREDITS, spend limit)
+    // is not classified: the stream can derive it from any provider's failure,
+    // including a direct or BYOK provider, so it carries no gateway provenance.
   } catch {
     return undefined;
   }
   return undefined;
-}
-
-function isCuratedProviderFailureCode(value: unknown): value is CuratedProviderFailureCode {
-  return typeof value === "string" &&
-    (CURATED_PROVIDER_FAILURE_CODES as readonly string[]).includes(value);
 }
 
 /** Build the fail-fast error for an eval whose model requests are refused. */

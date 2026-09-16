@@ -67,26 +67,27 @@ describe("eval/model-access", () => {
     assertEquals(isEvalModelAccessDeniedError(evalError), true);
   });
 
-  it("rebuilds agent service denial messages from the curated code", () => {
-    const denial = classifyAgentServiceModelAccessDenial({
-      status: 402,
-      body: null,
-      runErrorCode: "INSUFFICIENT_CREDITS",
-      runErrorMessage: "secret prompt text sk-live-123",
-    });
-    const runLimit = classifyAgentServiceModelAccessDenial({
-      status: 402,
-      body: null,
-      runErrorCode: "INSUFFICIENT_CREDITS",
-      runErrorMessage: "Agent run credit limit exceeded: 1 credits required, 0 remaining.",
-    });
+  it("does not classify billing codes carried only by an AG-UI run error", () => {
+    // The stream can derive INSUFFICIENT_CREDITS from a direct or BYOK provider
+    // failure, so the code alone is not Veryfront gateway provenance.
+    for (const code of ["INSUFFICIENT_CREDITS", "AI_PROVIDER_SPEND_LIMIT_EXCEEDED"]) {
+      assertEquals(
+        classifyAgentServiceModelAccessDenial({
+          status: 402,
+          body: null,
+          runErrorCode: code,
+          runErrorMessage: "Insufficient AI credits",
+        }),
+        undefined,
+      );
+    }
+  });
 
-    assertEquals(denial, {
-      kind: "billing",
-      code: "INSUFFICIENT_CREDITS",
-      message: "Insufficient AI credits",
+  it("does not classify curated billing failures that crossed a runtime boundary", () => {
+    const curated = Object.assign(new Error("Insufficient AI credits"), {
+      slug: "insufficient-credits",
     });
-    assertEquals(runLimit, undefined);
+    assertEquals(classifyEvalModelAccessDenial(curated), undefined);
   });
 
   it("classifies an agent service project-required 400 with a fixed message", () => {
@@ -200,16 +201,7 @@ describe("eval/model-access", () => {
     assertEquals(classifyEvalModelAccessDenial(openai), undefined);
   });
 
-  it("classifies agent service RUN_ERROR codes and 402 problem bodies", () => {
-    assertEquals(
-      classifyAgentServiceModelAccessDenial({
-        status: 402,
-        body: null,
-        runErrorCode: "INSUFFICIENT_CREDITS",
-        runErrorMessage: "Insufficient AI credits",
-      })?.code,
-      "INSUFFICIENT_CREDITS",
-    );
+  it("classifies agent service 402 gateway problem bodies", () => {
     assertEquals(
       classifyAgentServiceModelAccessDenial({
         status: 402,

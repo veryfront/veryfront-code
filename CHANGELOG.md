@@ -13,8 +13,11 @@ versions are listed at
 HTTP 402 from the model gateway for an account-wide denial (insufficient AI
 credits or the AI provider spend limit). Request-scoped limits, such as a
 resource limit or an agent run credit limit, still fail only the affected
-record. Built-in LLM judges and the agent service adapter stop the eval the
-same way.
+record. Built-in LLM judges stop the eval the same way, and so does the agent service
+adapter when the service returns the gateway's 402 problem body. A credit code
+carried only by an AG-UI run error still fails just that record, because the
+stream does not show whether the Veryfront gateway or another provider raised
+it.
 
 An AI provider spend limit rejects with `eval-model-spend-limit-exceeded`
 instead, because buying credits does not clear it.

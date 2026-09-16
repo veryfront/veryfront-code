@@ -242,7 +242,7 @@ describe("eval/agent-service", () => {
     });
   });
 
-  it("stops the eval when the agent service reports an account-wide credit denial", async () => {
+  it("stops the eval when the agent service returns a 402 gateway credit problem body", async () => {
     let requests = 0;
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",
@@ -250,8 +250,8 @@ describe("eval/agent-service", () => {
       fetch: async () => {
         requests += 1;
         return new Response(
-          'event: RunError\ndata: {"message":"Insufficient AI credits","code":"INSUFFICIENT_CREDITS"}\n\n',
-          { status: 402, headers: { "content-type": "text/event-stream" } },
+          JSON.stringify({ slug: "insufficient-credits", error: "AI credit limit exceeded" }),
+          { status: 402, headers: { "content-type": "application/json" } },
         );
       },
     });
@@ -268,6 +268,33 @@ describe("eval/agent-service", () => {
 
     assertEquals((error as { slug?: string }).slug, "eval-model-access-denied");
     assertEquals(requests, 1);
+  });
+
+  it("keeps a streamed credit code without gateway provenance as a failed record", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_byok" } },
+          {
+            event: "RunError",
+            data: { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+          },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-byok-credit-code",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const report = await runEval(definition, { adapters: { agent: adapter } });
+
+    assertEquals(report.records.map((record) => record.completed), [false, false]);
   });
 
   it("stops the eval when a streamed run reports the gateway project-required refusal", async () => {
