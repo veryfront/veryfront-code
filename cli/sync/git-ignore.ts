@@ -18,6 +18,12 @@ import { isJsonMode, streamJsonLine } from "../shared/json-output.ts";
 
 const GIT_IGNORE_TIMEOUT_MS = 30_000;
 
+/**
+ * Listings of every indexed or untracked path can exceed the 16 MiB default
+ * capture limit in large monorepos, so they get an explicit, larger cap.
+ */
+const GIT_LISTING_OUTPUT_LIMIT_BYTES = 512 * 1024 * 1024;
+
 /** Keep each `git check-ignore` command line well under the Windows limit. */
 const CHECK_IGNORE_ARGUMENT_BUDGET = 24_000;
 
@@ -112,11 +118,16 @@ async function runGitIgnoreQuery(
   args: string[],
   dependencies: GitIgnoreDependencies,
   acceptedFailureCodes: readonly number[] = [],
+  maxOutputBytes?: number,
 ): Promise<GitIgnoreRun> {
   const gitEnv = env();
   for (const key of Object.keys(gitEnv)) {
     if (key.startsWith("GIT_")) delete gitEnv[key];
   }
+  // Git diagnostics are parsed below, so keep them in English regardless of
+  // the user's locale.
+  gitEnv.LC_ALL = "C";
+  gitEnv.LANGUAGE = "C";
 
   let result;
   try {
@@ -127,6 +138,7 @@ async function runGitIgnoreQuery(
       env: gitEnv,
       capture: true,
       timeoutMs: GIT_IGNORE_TIMEOUT_MS,
+      ...(maxOutputBytes === undefined ? {} : { maxOutputBytes }),
     });
   } catch (error) {
     // Git is not installed or could not start. That only matters when there
@@ -248,7 +260,13 @@ async function loadNestedRepositories(
       candidates.add(segments.slice(0, length).join("/"));
     }
   };
-  const index = await runGitIgnoreQuery(baseDir, ["ls-files", "--stage", "-z"], dependencies);
+  const index = await runGitIgnoreQuery(
+    baseDir,
+    ["ls-files", "--stage", "-z"],
+    dependencies,
+    [],
+    GIT_LISTING_OUTPUT_LIMIT_BYTES,
+  );
   if (index.kind !== "output") return [];
   for (const entry of index.stdout.split("\0")) {
     const gitlink = GITLINK_ENTRY.exec(entry)?.[1];
@@ -265,6 +283,8 @@ async function loadNestedRepositories(
     baseDir,
     ["ls-files", "--others", "--exclude-standard", "-z"],
     dependencies,
+    [],
+    GIT_LISTING_OUTPUT_LIMIT_BYTES,
   );
   if (untracked.kind !== "output") return [];
   for (const entry of untracked.stdout.split("\0")) {
@@ -363,6 +383,8 @@ export async function loadGitIgnoreContext(
       // the listing to it, which matches the relative paths sync scans.
       ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
       dependencies,
+      [],
+      GIT_LISTING_OUTPUT_LIMIT_BYTES,
     );
     if (listing.kind === "no-repository") return DISABLED_CONTEXT;
     if (listing.kind !== "output") throw gitIgnoreUnavailableError();

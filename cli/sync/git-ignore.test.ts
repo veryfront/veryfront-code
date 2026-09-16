@@ -22,6 +22,8 @@ interface FakeGitCall {
   cwd?: string;
 }
 
+const commandSettings: { env?: Record<string, string>; maxOutputBytes?: number }[] = [];
+
 function fakeGit(options: FakeGitOptions = {}): {
   dependencies: GitIgnoreDependencies;
   calls: FakeGitCall[];
@@ -33,6 +35,10 @@ function fakeGit(options: FakeGitOptions = {}): {
     runCommand: (_cmd, commandOptions = {}) => {
       const args = commandOptions.args ?? [];
       calls.push({ args, cwd: commandOptions.cwd });
+      commandSettings.push({
+        env: commandOptions.env,
+        maxOutputBytes: commandOptions.maxOutputBytes,
+      });
       const answer = options.respond?.(args) ?? NOTHING_IGNORED;
       return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
     },
@@ -73,6 +79,27 @@ describe("cli/sync/git-ignore", () => {
         { args: ["ls-files", "--stage", "-z"], cwd: "/repo/app" },
       ]);
       assertEquals(warnings, []);
+    });
+
+    it("runs Git in the C locale and gives path listings a larger output cap", async () => {
+      commandSettings.length = 0;
+      const { dependencies, calls } = fakeGit({
+        respond: (args) =>
+          isListing(args) || isIndexListing(args) || isUntrackedListing(args)
+            ? { success: true, code: 0, stdout: "" }
+            : NOTHING_IGNORED,
+      });
+
+      await loadGitIgnoreContext("/repo", dependencies);
+
+      assertEquals(calls.length, commandSettings.length);
+      for (const [index, call] of calls.entries()) {
+        assertEquals(commandSettings[index]?.env?.LC_ALL, "C");
+        assertEquals(
+          commandSettings[index]?.maxOutputBytes,
+          call.args[0] === "ls-files" ? 512 * 1024 * 1024 : undefined,
+        );
+      }
     });
 
     it("skips Git rules with one warning when the enclosing repository ignores the project", async () => {
