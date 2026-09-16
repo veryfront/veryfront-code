@@ -56,7 +56,7 @@ it("rearms idle cleanup when the initial sweep finishes before a transform write
   } finally {
     adapter.fs.readFileBytesWithinLimit = read;
     __jsxCacheInternals.cancelScheduledJsxCachePrunes();
-    await __jsxCacheInternals.waitForJsxCacheMaintenanceForTests();
+    await __jsxCacheInternals.waitForJsxCacheMaintenance();
     await remove(cacheDir, { recursive: true });
     const { stop } = await import("veryfront/extensions/bundler");
     await stop();

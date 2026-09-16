@@ -1246,7 +1246,26 @@ const pendingJsxCachePersistence = new IntrinsicMap<
 >();
 let jsxCachePersistencePump: Promise<void> | undefined;
 let jsxCachePersistenceRetry: ReturnType<typeof setTimeout> | undefined;
-const inFlightJsxCachePrunes = new IntrinsicSet<string>();
+/**
+ * In-flight scheduled prune passes, keyed by prune key.
+ *
+ * A pass is started from a timer callback, so nothing in the call stack owns
+ * its promise. Retaining it here is what lets teardown await the pass instead
+ * of leaving its filesystem work to settle after the caller believed the
+ * module was quiet.
+ */
+const inFlightJsxCachePrunes = new IntrinsicMap<string, Promise<void>>();
+/**
+ * Generation counter for background prune work.
+ *
+ * Clearing a timer unschedules a pass that has not started, but a pass already
+ * running cannot be unscheduled: it resumes at its next await and arms the
+ * follow-up work its own bookkeeping asks for. Each pass captures the
+ * generation it began in and re-arms only while that generation is current, so
+ * cancellation is a fence the running pass observes rather than a race it can
+ * lose.
+ */
+let jsxCachePruneGeneration = 0;
 let persistedJsxCachePrunePromotion: Promise<void> | undefined;
 let persistedJsxCachePrunePromotionRetry: ReturnType<typeof setTimeout> | undefined;
 const pendingJsxCachePrunePromotionDirectories = new IntrinsicSet<string>();
@@ -1407,6 +1426,7 @@ async function retirePersistedJsxCachePruneRequest(
 async function promotePersistedJsxCachePruneRequest(
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): Promise<void> {
+  const generation = jsxCachePruneGeneration;
   const queuedCandidates = primordialArraySort(
     mapEntries(queuedJsxCachePrunes),
     (left, right) => left[1].fireAtMs - right[1].fireAtMs,
@@ -1485,7 +1505,7 @@ async function promotePersistedJsxCachePruneRequest(
       if (
         mapHas(scheduledJsxCachePrunes, pruneKey) ||
         mapHas(queuedJsxCachePrunes, pruneKey) ||
-        setHas(inFlightJsxCachePrunes, pruneKey)
+        mapHas(inFlightJsxCachePrunes, pruneKey)
       ) {
         continue;
       }
@@ -1499,6 +1519,11 @@ async function promotePersistedJsxCachePruneRequest(
       requestTombstoneRetryAtMs = hostNow() + JSX_CACHE_VARIANT_MIN_AGE_MS;
     }
   }
+  // The scan above is the only awaiting part of this pass. A cancellation that
+  // landed while it ran has already cleared the timers this pass was promoting
+  // work into, so arming fresh ones now would reintroduce exactly the timers
+  // teardown just retired.
+  if (generation !== jsxCachePruneGeneration) return;
   let queuedIndex = 0;
   let persistedIndex = 0;
   if (mapSize(scheduledJsxCachePrunes) >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
@@ -1575,6 +1600,7 @@ function pumpPersistedJsxCachePrunePromotions(): void {
   setDelete(pendingJsxCachePrunePromotionDirectories, requestDirectory);
   activeJsxCachePrunePromotionDirectory = requestDirectory;
   activeJsxCachePrunePromotionRequestedAgain = false;
+  const generation = jsxCachePruneGeneration;
   const promotion = promotePersistedJsxCachePruneRequest(requestDirectory);
   persistedJsxCachePrunePromotion = promotion;
   void primordialPromiseThen(promotion, () => {
@@ -1584,12 +1610,16 @@ function pumpPersistedJsxCachePrunePromotions(): void {
     activeJsxCachePrunePromotionDirectory = undefined;
     activeJsxCachePrunePromotionRequestedAgain = false;
     persistedJsxCachePrunePromotion = undefined;
+    // A cancellation during the promotion already emptied the pending set, so
+    // pumping again here would rebuild the backlog teardown just drained.
+    if (generation !== jsxCachePruneGeneration) return;
     pumpPersistedJsxCachePrunePromotions();
   }, () => {
-    setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
     activeJsxCachePrunePromotionDirectory = undefined;
     activeJsxCachePrunePromotionRequestedAgain = false;
     persistedJsxCachePrunePromotion = undefined;
+    if (generation !== jsxCachePruneGeneration) return;
+    setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
     persistedJsxCachePrunePromotionRetry = hostSetTimeout(() => {
       persistedJsxCachePrunePromotionRetry = undefined;
       pumpPersistedJsxCachePrunePromotions();
@@ -1775,8 +1805,8 @@ function scheduleJsxCachePruneRetry(
     // the pass schedules can then replace it even when every other slot is
     // occupied, without overflowing to persistence and racing completion.
     fired.timer = undefined;
-    void (async () => {
-      setAdd(inFlightJsxCachePrunes, pruneKey);
+    const generation = jsxCachePruneGeneration;
+    const pass = (async () => {
       try {
         await revisitJsxCacheDirectory(esmCacheDir, requestDirectory);
         const followUp = mapGet(scheduledJsxCachePrunes, pruneKey);
@@ -1792,13 +1822,19 @@ function scheduleJsxCachePruneRetry(
           );
         }
       } finally {
-        setDelete(inFlightJsxCachePrunes, pruneKey);
+        mapDelete(inFlightJsxCachePrunes, pruneKey);
         if (mapGet(scheduledJsxCachePrunes, pruneKey)?.timer === undefined) {
           mapDelete(scheduledJsxCachePrunes, pruneKey);
         }
-        requestPersistedJsxCachePrunePromotion(requestDirectory);
+        // Requesting a promotion arms the next timer, so it belongs to the
+        // generation this pass started in. After a cancellation it would hand
+        // the following test a timer it never scheduled.
+        if (generation === jsxCachePruneGeneration) {
+          requestPersistedJsxCachePrunePromotion(requestDirectory);
+        }
       }
     })();
+    mapSet(inFlightJsxCachePrunes, pruneKey, pass);
   }, delayMs);
   unrefTimer(timer);
   mapSet(scheduledJsxCachePrunes, pruneKey, {
@@ -1835,8 +1871,17 @@ export function ensureJsxCacheSweepArmed(esmCacheDir: string): void {
   requestPersistedJsxCachePrunePromotion(requestDirectory);
 }
 
-/** Drop every pending follow-up prune (test isolation only). */
+/**
+ * Drop every pending follow-up prune and fence the passes already running.
+ *
+ * Bumping the generation is what makes this a cancellation rather than a
+ * sweep: a pass suspended at an await resumes into a superseded generation and
+ * declines to arm the follow-up timer or promotion it would otherwise schedule.
+ * Passes still have to be awaited -- see {@link waitForJsxCacheMaintenance} --
+ * because this cannot unwind filesystem work already issued.
+ */
 function cancelScheduledJsxCachePrunes(): void {
+  jsxCachePruneGeneration++;
   for (const pending of primordialArrayValues(mapValues(scheduledJsxCachePrunes))) {
     if (pending.timer !== undefined) hostClearTimeout(pending.timer);
   }
@@ -1860,13 +1905,24 @@ function cancelScheduledJsxCachePrunes(): void {
   mapClear(lazyJsxArtifactExpirations);
 }
 
-async function waitForJsxCacheMaintenanceForTests(): Promise<void> {
+/**
+ * Settle every background prune pass this module still owns.
+ *
+ * Scheduled passes run from timer callbacks, so their promises have no caller
+ * to await them. Draining them here is what lets a process -- or a test -- know
+ * the module has stopped touching the filesystem, instead of discovering it
+ * from a leaked pending promise once the event loop has already resolved.
+ */
+async function waitForJsxCacheMaintenance(): Promise<void> {
   while (
-    jsxCachePersistencePump !== undefined || persistedJsxCachePrunePromotion !== undefined
+    jsxCachePersistencePump !== undefined || persistedJsxCachePrunePromotion !== undefined ||
+    mapSize(inFlightJsxCachePrunes) > 0
   ) {
-    await primordialPromiseAllSettled(
-      [jsxCachePersistencePump, persistedJsxCachePrunePromotion],
-    );
+    await primordialPromiseAllSettled([
+      jsxCachePersistencePump,
+      persistedJsxCachePrunePromotion,
+      ...primordialArrayValues(mapValues(inFlightJsxCachePrunes)),
+    ]);
   }
 }
 
@@ -2354,6 +2410,6 @@ export const __jsxCacheInternals = {
   revisitJsxCacheDirectory,
   servedArtifactMemoSize: (): number => mapSize(servedArtifactTimestamps),
   withJsxArtifactRefreshSlot,
-  waitForJsxCacheMaintenanceForTests,
+  waitForJsxCacheMaintenance,
   wasJsxArtifactRecentlyServed,
 };

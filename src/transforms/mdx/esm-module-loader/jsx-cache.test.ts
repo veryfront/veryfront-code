@@ -2805,12 +2805,12 @@ describe("scheduled prune bound", () => {
     retirePersistedJsxCachePruneRequest,
     scheduleJsxCachePruneRetry,
     scheduledJsxCachePruneCount,
-    waitForJsxCacheMaintenanceForTests,
+    waitForJsxCacheMaintenance,
   } = __jsxCacheInternals;
 
   afterEach(async () => {
     cancelScheduledJsxCachePrunes();
-    await waitForJsxCacheMaintenanceForTests();
+    await waitForJsxCacheMaintenance();
     cancelScheduledJsxCachePrunes();
     await clearPersistedJsxCachePruneRequestsForTests(persistedTestPrefix);
   });
@@ -3249,6 +3249,27 @@ describe("scheduled prune bound", () => {
     assertEquals(await hasPersistedJsxCachePrune(directory), true);
     await retirePersistedJsxCachePruneRequest(directory, replacementGeneration);
     assertEquals(await hasPersistedJsxCachePrune(directory), false);
+  });
+
+  it("should leave no armed timer when cancellation lands mid-promotion", async () => {
+    // Arrange: persisted work that a promotion pass will want to schedule.
+    const directory = `${persistedTestPrefix}cancel-during-promotion`;
+    await persistJsxCachePruneRequest(directory, Date.now());
+
+    // Act: cancel while the promotion is suspended on its filesystem scan.
+    // The pass resumes into a superseded generation and must not arm the
+    // follow-up timer, which would otherwise fire inside an unrelated test.
+    const promotion = promotePersistedJsxCachePruneRequest();
+    cancelScheduledJsxCachePrunes();
+    await promotion;
+    await waitForJsxCacheMaintenance();
+
+    // Assert: teardown really did leave the module quiet.
+    assertEquals(
+      scheduledJsxCachePruneCount(),
+      0,
+      "a cancelled promotion must not arm a prune timer after teardown drained",
+    );
   });
 });
 
