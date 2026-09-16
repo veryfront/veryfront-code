@@ -43,7 +43,7 @@ import {
 } from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, formatDuration } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
-import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
+import { type IgnoreChecker, loadIgnoreChecker } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { isNotFoundError, lstat } from "veryfront/fs";
@@ -320,7 +320,7 @@ export async function capturePushSourceDigest(
   projectDir: string,
   ignoreChecker?: IgnoreChecker,
 ): Promise<{ files: UploadOp[]; sourceDigest: string }> {
-  const checker = ignoreChecker ?? createIgnoreChecker(await loadIgnorePatterns(projectDir));
+  const checker = ignoreChecker ?? await loadIgnoreChecker(projectDir);
   const files = await scanLocalFiles(projectDir, checker);
   return { files, sourceDigest: await computeSourceDigest(files) };
 }
@@ -1160,8 +1160,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       await preflightSyncState(projectDir);
 
       spinner.update("Loading ignore patterns...");
-      const ignorePatterns = await loadIgnorePatterns(projectDir);
-      const ignoreChecker = createIgnoreChecker(ignorePatterns);
+      const ignoreChecker = await loadIgnoreChecker(projectDir);
 
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);

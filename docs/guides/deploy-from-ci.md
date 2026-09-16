@@ -67,8 +67,12 @@ stylesheets, HTML, Markdown, MDX, text, SVG, YAML, and TOML.
 Binary images, fonts, archives, and other unsupported files remain outside
 this handoff. Manage those files through another reviewed delivery path.
 
-Both commands use the same `.vfignore` rules. Ignored files and unsupported
-extensions are not reconciled with Veryfront. A `.vfignore` negation cannot
+Both commands use the same `.vfignore` rules. Inside a Git checkout they also
+skip untracked files that Git ignores, whether the rule comes from a
+`.gitignore`, `.git/info/exclude`, or `core.excludesFile`. A `.vfignore`
+negation such as `!dist` re-includes a path Git ignores. Tracked files are
+never skipped by Git ignore rules. `.context/` is ignored by default.
+Ignored files and unsupported extensions are not reconciled with Veryfront. A `.vfignore` negation cannot
 re-include `.env`, `.env.*`, `.veryfront`, or `.git` paths: those stay ignored
 so local secrets and CLI state are never uploaded. Push prints a warning naming
 each path whose negation was dropped. Pull does the same for protected `.env`
@@ -175,7 +179,7 @@ commands across CI jobs or clean the checkout between them.
 A receipt written by a CLI older than the source digest carries no digest to
 recompute, so Deploy falls back to the recorded Git cleanliness for it.
 
-That fallback cannot see an edit that `.gitignore` hides while `.vfignore` does not.
+That fallback cannot see an edit to a file that Git ignores but a `.vfignore` negation re-includes.
 Run Push once after upgrading: the receipt it writes carries the digest, and the
 full check applies from then on.
 

@@ -37,7 +37,7 @@ import {
 } from "veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
+import { type IgnoreChecker, loadIgnoreChecker } from "../../sync/ignore.ts";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import {
   ensurePulledProjectBootstrap,
@@ -394,7 +394,7 @@ async function writeFiles(
 
 async function listManagedLocalFiles(
   projectDir: string,
-  ignoreChecker: ReturnType<typeof createIgnoreChecker>,
+  ignoreChecker: IgnoreChecker,
 ): Promise<DeleteOp[]> {
   const fs = createFileSystem();
   if (!(await fs.exists(projectDir))) return [];
@@ -688,7 +688,7 @@ async function pullSingleProject(
     spinner.stop();
   }
 
-  const ignoreChecker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
+  const ignoreChecker = await loadIgnoreChecker(projectDir);
   const writeOps: WriteOp[] = [];
   const remotePaths = new Set<string>();
   for (const file of files) {

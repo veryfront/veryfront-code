@@ -331,7 +331,7 @@ async function gitSourceFromProbes(
   };
 }
 
-async function hasGitMetadata(projectDir: string): Promise<boolean> {
+export async function hasGitMetadata(projectDir: string): Promise<boolean> {
   let current: string;
   try {
     current = await realPath(projectDir);
@@ -379,10 +379,9 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
         // narrows the flag every push receipt records, not just deploy's gate.
         //
         // Cleanliness stays a proxy for source equality, not a proof of it. A
-        // supported file that `.gitignore` hides but `.vfignore` and
-        // DEFAULT_IGNORE_PATTERNS do not (cli/sync/ignore.ts reads only
-        // `.vfignore`) is uploaded by push yet stays invisible here, so editing
-        // one leaves the checkout clean. `localSourceDigest` is the proof that
+        // supported file that Git ignores but a `.vfignore` negation
+        // re-includes (cli/sync/ignore.ts) is uploaded by push yet stays
+        // invisible here, so editing one leaves the checkout clean. `localSourceDigest` is the proof that
         // closes that gap; this flag is provenance metadata and the fallback
         // for receipts written before the digest existed.
         args: [

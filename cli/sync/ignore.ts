@@ -8,6 +8,7 @@ import { cliLogger, logWarning } from "#cli/utils";
 import { isJsonMode } from "../shared/json-output.ts";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
+import { loadGitIgnoredPaths } from "./git-ignore.ts";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
@@ -24,6 +25,8 @@ const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
   ".vercel",
   ".netlify",
   "coverage",
+  // Local agent-tooling scratch space (Conductor) that is never project source.
+  ".context",
 
   // Files
   "*.log",
@@ -95,6 +98,19 @@ export interface IgnoreChecker {
 
   /** Check if a file extension is supported */
   isSupportedExtension(filename: string): boolean;
+}
+
+export interface IgnoreCheckerOptions {
+  /**
+   * Local paths Git ignores, relative to the project directory, as returned by
+   * {@link loadGitIgnoredPaths}. A listed directory covers its descendants.
+   *
+   * These rank below every default and `.vfignore` rule: a path that any rule
+   * matches is decided by the last matching rule, so a `.vfignore` negation
+   * such as `!dist` still re-includes output that Git ignores. Only a path no
+   * rule matches falls back to Git.
+   */
+  gitIgnoredPaths?: Iterable<string>;
 }
 
 interface IgnoreRule {
@@ -483,7 +499,10 @@ function collectCanceledNegations(rules: readonly IgnoreRule[]): ReadonlySet<Ign
 /**
  * Create an ignore checker with loaded patterns
  */
-export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker {
+export function createIgnoreChecker(
+  patterns: readonly string[],
+  options: IgnoreCheckerOptions = {},
+): IgnoreChecker {
   const hasDefaultPrefix = DEFAULT_IGNORE_PATTERNS.every(
     (pattern, index) => patterns[index] === pattern,
   );
@@ -497,6 +516,22 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
   // at the default log level. Deduplicated per checker because every path is
   // tested many times during a single scan.
   const warnedOverrides = new Set<string>();
+  const gitIgnoredPaths = new Set<string>();
+  for (const path of options.gitIgnoredPaths ?? []) {
+    const normalized = normalizeIgnorePath(path).replace(/\/+$/, "");
+    if (normalized) gitIgnoredPaths.add(normalized);
+  }
+
+  function isGitIgnored(normalizedPath: string): boolean {
+    if (gitIgnoredPaths.size === 0) return false;
+    if (gitIgnoredPaths.has(normalizedPath)) return true;
+    let separator = normalizedPath.lastIndexOf("/");
+    while (separator > 0) {
+      if (gitIgnoredPaths.has(normalizedPath.slice(0, separator))) return true;
+      separator = normalizedPath.lastIndexOf("/", separator - 1);
+    }
+    return false;
+  }
 
   function isIgnored(relativePath: string, options: { isDirectory?: boolean } = {}): boolean {
     const normalizedPath = normalizeIgnorePath(relativePath);
@@ -508,6 +543,7 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
       lastMatchedRule = rule;
       ignored = !rule.negated;
     }
+    if (!lastMatchedRule && isGitIgnored(normalizedPath)) ignored = true;
 
     if (isProtectedPath(normalizedPath)) {
       const droppedNegation = lastMatchedRule?.negated ||
@@ -534,6 +570,18 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
   }
 
   return { isIgnored, isProtected, isSupportedExtension };
+}
+
+/**
+ * Create the ignore checker sync uses for a project directory: the default
+ * patterns, the project's `.vfignore`, and the paths Git ignores there.
+ */
+export async function loadIgnoreChecker(projectPath: string): Promise<IgnoreChecker> {
+  const [patterns, gitIgnoredPaths] = await Promise.all([
+    loadIgnorePatterns(projectPath),
+    loadGitIgnoredPaths(projectPath),
+  ]);
+  return createIgnoreChecker(patterns, { gitIgnoredPaths });
 }
 
 /**

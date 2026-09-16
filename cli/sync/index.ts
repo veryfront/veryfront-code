@@ -17,5 +17,9 @@ export {
   createDefaultIgnoreChecker,
   createIgnoreChecker,
   type IgnoreChecker,
+  type IgnoreCheckerOptions,
+  loadIgnoreChecker,
   loadIgnorePatterns,
 } from "./ignore.ts";
+
+export { loadGitIgnoredPaths } from "./git-ignore.ts";
