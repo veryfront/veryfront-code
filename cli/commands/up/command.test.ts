@@ -22,7 +22,8 @@ import type {
   DeployProjectOutcome,
   DeployProjectRequest,
 } from "../../shared/deployment/deploy-project.ts";
-import type { DeployResult } from "../../shared/deployment/result.ts";
+import type { LiveSourceResult } from "../../shared/deployment/result.ts";
+import { DEPLOYMENT_ERROR, PREVIEW_DEPLOYMENT_NOT_ALLOWED, VeryfrontError } from "veryfront/errors";
 
 function createArgs(flags: Record<string, unknown> = {}): ParsedArgs {
   return { _: ["up"], ...flags };
@@ -148,27 +149,24 @@ function recordingDeployProject(
 }
 
 /**
- * A verified deployment whose URL shares no pattern with the preview hostname
+ * A verified Preview whose URL shares no pattern with the preview hostname
  * `up` used to rebuild locally, so tests can tell the two apart.
  */
-const VERIFIED_RESULT: DeployResult = {
+const VERIFIED_RESULT: LiveSourceResult = {
   projectId: "project-verified",
   projectSlug: "verified-slug",
-  release: { id: "release-1", name: "main", version: "2026.07.31-1" },
   environment: "preview",
   environmentId: "environment-1",
-  deploymentId: "deployment-1",
   url: "https://verified.example.test/dashboard",
   urlVerification: "served",
   protected: false,
-  routingConvergence: null,
   commitSha: "a".repeat(40),
   sourceDigest: "sha256:verified",
   controlPlane: "https://control.example.test/api",
   branch: "main",
 };
 
-const VERIFIED_OUTCOME: DeployProjectOutcome = { kind: "deployed", result: VERIFIED_RESULT };
+const VERIFIED_OUTCOME: DeployProjectOutcome = { kind: "live-source", result: VERIFIED_RESULT };
 
 function dryRunOutcome(overrides: Partial<DeployPlan> = {}): DeployProjectOutcome {
   return {
@@ -180,7 +178,7 @@ function dryRunOutcome(overrides: Partial<DeployPlan> = {}): DeployProjectOutcom
       environment: "preview",
       environmentId: "environment-1",
       controlPlane: "https://control.example.test/api",
-      plannedActions: ["push-source", "create-release", "deploy"],
+      plannedActions: ["push-source"],
       ...overrides,
     },
   };
@@ -399,7 +397,7 @@ describe("Up Command", () => {
       }
     });
 
-    it("asks Deploy Execution for one verified preview of main", async () => {
+    it("asks Deploy Execution to publish main live on Preview, never to deploy it", async () => {
       const projectDir = await createLinkedProjectDir();
       const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
 
@@ -416,6 +414,7 @@ describe("Up Command", () => {
           projectDir,
           branch: "main",
           environment: "preview",
+          publish: "live-source",
           mode: "apply",
           source: { kind: "ensure-pushed", refreshStaleSource: true },
         }]);
@@ -535,7 +534,7 @@ describe("Up Command", () => {
         // id, and the apply would target the plan's slug.
         assertEquals(
           lines.includes(
-            '  › Would push source to "main", create release, and deploy to "preview" for project verified-slug',
+            '  › Would push source to "main" and serve "main" on "preview" for project verified-slug',
           ),
           true,
         );
@@ -555,7 +554,7 @@ describe("Up Command", () => {
           // No project exists yet, so the plan carries the slug it would create.
           projectSlug: expectedSlug,
           environmentId: null,
-          plannedActions: ["create-project", "push-source", "create-release", "deploy"],
+          plannedActions: ["create-project", "push-source"],
         }),
       );
 
@@ -575,7 +574,7 @@ describe("Up Command", () => {
         assertEquals(lines.some((line) => line.trim() === "●"), false);
         assertEquals(
           lines.includes(
-            `  › Would create the project, push source to "main", create release, and deploy to "preview" for project ${expectedSlug}`,
+            `  › Would create the project, push source to "main", and serve "main" on "preview" for project ${expectedSlug}`,
           ),
           true,
         );
@@ -592,7 +591,7 @@ describe("Up Command", () => {
         dryRunOutcome({
           projectId: null,
           environmentId: null,
-          plannedActions: ["create-project", "push-source", "create-release", "deploy"],
+          plannedActions: ["create-project", "push-source"],
         }),
       );
 
@@ -705,7 +704,7 @@ describe("Up Command", () => {
       const projectDir = await Deno.makeTempDir();
       const projectPosts: string[] = [];
       const { deployProject, requests } = recordingDeployProject({
-        kind: "deployed",
+        kind: "live-source",
         result: { ...VERIFIED_RESULT, projectSlug: "pulled-up" },
       });
 
@@ -766,7 +765,7 @@ describe("Up Command", () => {
       }
     });
 
-    it("reports a failed deployment as a preview deployment failure", async () => {
+    it("classifies an unclassified Preview failure instead of reporting unknown-error", async () => {
       const projectDir = await createLinkedProjectDir();
       const deployProject: DeployProject = {
         execute() {
@@ -776,29 +775,118 @@ describe("Up Command", () => {
 
       try {
         setNonInteractive(true);
-        let message = "";
-        await captureLog(async () => {
-          try {
-            await withMockFetch(
-              authCheckOnlyFetch(),
-              () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
-            );
-          } catch (error) {
-            message = error instanceof Error ? error.message : String(error);
-          }
-        });
+        const error = await captureRejection(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
+          )
+        );
 
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals((error as VeryfrontError).slug, DEPLOYMENT_ERROR.slug);
         assertEquals(
-          message,
-          "Preview deployment failed: environment URL did not become ready",
+          (error as VeryfrontError).detail,
+          "Preview publish failed: environment URL did not become ready",
         );
       } finally {
         resetInteractiveMode();
         await Deno.remove(projectDir, { recursive: true });
       }
     });
+
+    it("keeps a registry error's classification when Preview publishing fails", async () => {
+      const projectDir = await createLinkedProjectDir();
+      const refusal = PREVIEW_DEPLOYMENT_NOT_ALLOWED.create({ detail: "Preview refused" });
+      const deployProject: DeployProject = {
+        execute() {
+          return Promise.reject(refusal);
+        },
+      };
+
+      try {
+        setNonInteractive(true);
+        const error = await captureRejection(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
+          )
+        ) as VeryfrontError;
+
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals(error.slug, "preview-deployment-not-allowed");
+        assertEquals(error.suggestion, PREVIEW_DEPLOYMENT_NOT_ALLOWED.suggestion);
+        assertEquals(error.detail, "Preview publish failed: Preview refused");
+        assertEquals(error.cause, refusal);
+      } finally {
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("says what already succeeded when Preview fails after creating the project and pushing", async () => {
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+      const projectDir = await Deno.makeTempDir();
+      const expectedSlug = normalizeProjectSlug(projectDir.split(/[/\\]/).pop() ?? "");
+      const deployProject: DeployProject = {
+        async execute(_request, observer) {
+          await observer?.onEvent({ kind: "step", step: "push-source", phase: "started" });
+          await observer?.onEvent({ kind: "step", step: "push-source", phase: "completed" });
+          throw new Error("environment URL did not become ready");
+        },
+      };
+
+      try {
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
+        Deno.env.set("VERYFRONT_API_TOKEN", "env-token");
+        Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.from-env.test");
+        Deno.env.delete("VERYFRONT_API_URL");
+        _resetEnvironmentConfig();
+        setNonInteractive(true);
+
+        const error = await captureRejection(() =>
+          captureLog(() =>
+            withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+              const request = input instanceof Request ? input : new Request(input, init);
+              const url = new URL(request.url);
+              if (url.pathname === "/me") return Promise.resolve(identityResponse());
+              if (request.method === "POST" && url.pathname === "/projects") {
+                return Promise.resolve(Response.json({ id: "project-1", slug: expectedSlug }));
+              }
+              throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+            }, () => upCommand({ projectDir }, undefined, { deployProject }))
+          )
+        ) as VeryfrontError;
+
+        assertEquals(error.slug, DEPLOYMENT_ERROR.slug);
+        assertEquals(
+          error.detail,
+          "Preview publish failed: environment URL did not become ready. " +
+            `Completed before the failure: project ${expectedSlug} was created and linked to this directory; ` +
+            `source was uploaded to main of project ${expectedSlug}. ` +
+            "Run veryfront up again to retry. It reuses the linked project and does not create another.",
+        );
+      } finally {
+        restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+        restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+        restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+        resetInteractiveMode();
+        _resetEnvironmentConfig();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   });
 });
+
+async function captureRejection(run: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected the command to reject");
+}
 
 async function exists(path: string): Promise<boolean> {
   try {

@@ -24,15 +24,22 @@ import {
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import {
   createDeployProject,
+  type DeployEvent,
   type DeployPlan,
   type DeployProject,
   type DeployProjectOutcome,
+  LIVE_PREVIEW_ENVIRONMENT,
 } from "../../shared/deployment/deploy-project.ts";
 import { deployProgressText, initialDeployProgressText } from "../../shared/deployment/progress.ts";
 import { buildStudioUrl } from "../studio/command.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
-import { AUTHENTICATION_REQUIRED, PROJECT_SOURCE_EMPTY } from "veryfront/errors";
+import {
+  AUTHENTICATION_REQUIRED,
+  DEPLOYMENT_ERROR,
+  PROJECT_SOURCE_EMPTY,
+  VeryfrontError,
+} from "veryfront/errors";
 
 export const getUpArgsSchema = defineSchema((v) =>
   v.object({
@@ -106,8 +113,9 @@ export interface UpDependencies {
 /**
  * Actions `up` reports for a dry run, derived from the Deploy Execution plan.
  *
- * Release creation and deployment are one user-visible step for `up`, which
- * only ever targets the preview environment.
+ * `up` only ever targets Preview, which renders the latest push to main live:
+ * it creates no release and no deployment. The final action keeps its
+ * established `deploy-preview` name so JSON consumers do not break.
  */
 function plannedUpActions(plan: DeployPlan): string[] {
   return [
@@ -132,12 +140,84 @@ function formatUpDryRunPlan(plan: DeployPlan): string {
   const actions = [
     ...(plan.plannedActions.includes("create-project") ? ["create the project"] : []),
     ...(plan.plannedActions.includes("push-source") ? [`push source to "${plan.branch}"`] : []),
-    "create release",
-    `deploy to "${plan.environment}"`,
+    `serve "${plan.branch}" on "${plan.environment}"`,
   ];
-  const last = actions[actions.length - 1];
-  const phrase = `${actions.slice(0, -1).join(", ")}, and ${last}`;
-  return `Would ${phrase} for project ${plan.projectSlug}`;
+  return `Would ${joinActions(actions)} for project ${plan.projectSlug}`;
+}
+
+function joinActions(actions: string[]): string {
+  if (actions.length <= 2) return actions.join(" and ");
+  return `${actions.slice(0, -1).join(", ")}, and ${actions[actions.length - 1]}`;
+}
+
+/**
+ * Spinner text for `up`. Deploy Execution labels target and source checks as
+ * "Building release...", and `up` builds no release.
+ */
+function upProgressText(
+  event: Extract<DeployEvent, { kind: "step" }>,
+  verbose: boolean,
+): string | null {
+  if (
+    !verbose && event.phase === "started" &&
+    (event.step === "resolve-target" || event.step === "verify-source")
+  ) {
+    return "Verifying source...";
+  }
+  return deployProgressText(event, LIVE_PREVIEW_ENVIRONMENT, verbose);
+}
+
+/**
+ * The error `up` raises when publishing Preview fails.
+ *
+ * It keeps the classification of a registry error, so the operator sees its
+ * slug and suggestion rather than `unknown-error`. Anything unclassified
+ * becomes a deployment error. When earlier steps already changed the cloud,
+ * the detail says so: a user who reads a bare failure retries by hand and can
+ * create a duplicate project.
+ */
+function describeUpFailure(
+  error: unknown,
+  progress: { projectSlug: string; projectCreated: boolean; sourceUploaded: boolean },
+): VeryfrontError {
+  const reason = error instanceof VeryfrontError
+    ? error.detail ?? error.message
+    : error instanceof Error
+    ? error.message
+    : String(error);
+
+  const completed: string[] = [];
+  if (progress.projectCreated) {
+    completed.push(`project ${progress.projectSlug} was created and linked to this directory`);
+  }
+  if (progress.sourceUploaded) {
+    completed.push(`source was uploaded to main of project ${progress.projectSlug}`);
+  }
+  const partial = completed.length === 0
+    ? ""
+    : ` Completed before the failure: ${
+      completed.join("; ")
+    }. Run veryfront up again to retry. It reuses the linked project and does not create another.`;
+  const sentence = partial && !/[.!?]$/.test(reason) ? `${reason}.` : reason;
+  const detail = `Preview publish failed: ${sentence}${partial}`;
+
+  if (error instanceof VeryfrontError) {
+    return new VeryfrontError(detail, {
+      slug: error.slug,
+      category: error.category,
+      status: error.status,
+      title: error.title,
+      suggestion: error.suggestion,
+      exitCode: error.exitCode,
+      detail,
+      context: error.context,
+      cause: error,
+    });
+  }
+  return DEPLOYMENT_ERROR.create({
+    detail,
+    cause: error instanceof Error ? error : undefined,
+  });
 }
 
 export async function upCommand(
@@ -192,6 +272,7 @@ export async function upCommand(
   }
 
   let projectSlug: string;
+  let projectCreated = false;
 
   if (context.type === "has-project") {
     projectSlug = context.config.projectSlug;
@@ -250,6 +331,7 @@ export async function upCommand(
         slug = outcome.plannedSlug;
       } else {
         slug = outcome.project.slug;
+        projectCreated = true;
         if (!jsonOutput) logSuccess(`Created project ${slug}`);
       }
     } catch (error) {
@@ -265,18 +347,23 @@ export async function upCommand(
   // it renders as a status glyph with no message.
   if (!jsonOutput) console.log();
 
-  // Deploy Execution owns the rest: the bootstrap push, the release, the
-  // deployment, and the readiness probe behind the URL printed below.
+  // Deploy Execution owns the rest: the bootstrap push, the source check, and
+  // the readiness probe behind the URL printed below. Preview renders the
+  // latest push to main live and refuses deployments, so up publishes live
+  // source and creates no release.
   const verbose = isVerbose();
   let progressText = initialDeployProgressText(verbose);
   const deploySpinner = jsonOutput ? createNoopSpinner() : createSpinner(progressText);
+  const warnings: string[] = [];
+  let sourceUploaded = false;
   let outcome: DeployProjectOutcome;
 
   try {
     outcome = await (dependencies.deployProject ?? createDeployProject()).execute({
       projectDir,
       branch: "main",
-      environment: "preview",
+      environment: LIVE_PREVIEW_ENVIRONMENT,
+      publish: "live-source",
       mode: dryRun ? "dry-run" : "apply",
       // up publishes what is on disk, so a receipt that no longer describes
       // this directory is refreshed rather than refused: refusing would leave
@@ -284,11 +371,17 @@ export async function upCommand(
       source: { kind: "ensure-pushed", refreshStaleSource: true },
     }, {
       onEvent(event) {
-        if (event.kind !== "step") return;
+        if (event.kind === "warning") {
+          warnings.push(event.message);
+          return;
+        }
+        if (event.step === "push-source" && event.phase === "completed" && !dryRun) {
+          sourceUploaded = true;
+        }
         // A dry run resolves the target and stops. Narrating the steps of an
         // apply it never performs told users it was "Building release...".
         if (dryRun) return;
-        const next = deployProgressText(event, "preview", verbose);
+        const next = upProgressText(event, verbose);
         if (!next || next === progressText) return;
         progressText = next;
         deploySpinner.update(next);
@@ -296,8 +389,7 @@ export async function upCommand(
     });
   } catch (error) {
     deploySpinner.stop();
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Preview deployment failed: ${message}`, { cause: error });
+    throw describeUpFailure(error, { projectSlug, projectCreated, sourceUploaded });
   }
   deploySpinner.stop();
 
@@ -317,6 +409,12 @@ export async function upCommand(
       logSuccess("Dry run complete");
     }
     return;
+  }
+
+  if (outcome.kind !== "live-source") {
+    throw DEPLOYMENT_ERROR.create({
+      detail: `Preview publish did not complete: unexpected outcome "${outcome.kind}".`,
+    });
   }
 
   const result = outcome.result;
@@ -344,4 +442,5 @@ export async function upCommand(
   console.log();
   console.log(`  Deploy:  ${brand("veryfront deploy")}`);
   console.log();
+  for (const message of warnings) logWarning(message);
 }

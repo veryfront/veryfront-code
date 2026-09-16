@@ -12,7 +12,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { exitProcess, isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
-import { UNKNOWN_ERROR, VeryfrontError } from "veryfront/errors";
+import { DEPLOYMENT_ERROR, UNKNOWN_ERROR, VeryfrontError } from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#cli/ui";
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
@@ -124,6 +124,14 @@ function logDryRunPlan(plan: DeployPlan, quiet: boolean): void {
   logInfo(`Would ${formatDryRunActions(plan)} for project ${plan.projectSlug}`);
 }
 
+/** The release deployment a deploy request produces; deploy never publishes live source. */
+function deployedResult(outcome: DeployProjectOutcome): DeployResult {
+  if (outcome.kind === "deployed") return outcome.result;
+  throw DEPLOYMENT_ERROR.create({
+    detail: `Deploy did not complete: unexpected outcome "${outcome.kind}".`,
+  });
+}
+
 function commandStepName(stepName: DeployStepName): string {
   return stepName === "create-deployment" ? "deploy" : stepName;
 }
@@ -165,7 +173,7 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
     return null;
   }
 
-  const result = outcome.result;
+  const result = deployedResult(outcome);
 
   if (quiet) return result;
 
@@ -243,7 +251,7 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
       return null;
     }
 
-    const result = outcome.result;
+    const result = deployedResult(outcome);
     streamJsonLine({
       type: "result",
       success: true,

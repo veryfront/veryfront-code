@@ -29,3 +29,25 @@ export interface DeployResult {
   controlPlane: string;
   branch: string;
 }
+
+/**
+ * Source published to an environment that renders a branch live.
+ *
+ * Veryfront's managed Preview environment serves the latest source on main
+ * directly, so publishing there is a push followed by a readiness probe. No
+ * release or deployment exists, which is why this result carries neither.
+ */
+export interface LiveSourceResult {
+  projectId: string;
+  projectSlug: string;
+  environment: string;
+  environmentId: string;
+  url: string;
+  /** Same meaning as {@link DeployResult.urlVerification}. */
+  urlVerification: "served" | "gated" | "unprobed";
+  protected: boolean;
+  commitSha: string | null;
+  sourceDigest: string;
+  controlPlane: string;
+  branch: string;
+}

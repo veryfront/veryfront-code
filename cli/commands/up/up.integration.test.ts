@@ -14,13 +14,13 @@ import {
 import { upCommand } from "./index.ts";
 import { createDeployProject } from "../../shared/deployment/deploy-project.ts";
 import type {
+  DeployDeployment,
   DeployEnvironment,
   DeployReleaseFile,
 } from "../../shared/deployment/control-plane.ts";
 import {
   commitProject,
   CONTROL_PLANE,
-  ENVIRONMENT_ID,
   InMemoryDeployControlPlane,
   PROJECT_ID,
   PROJECT_SLUG,
@@ -182,6 +182,8 @@ const APP_PAGE = "export default function Page() { return <main>Hello</main>; }\
 /**
  * The in-memory control plane with a preview environment that carries its own
  * domain, and whose release mirrors whatever the bootstrap push uploaded.
+ *
+ * Like the API, it refuses every deployment to Preview.
  */
 class PreviewControlPlane extends InMemoryDeployControlPlane {
   constructor(private readonly pushedFiles: Map<string, string>) {
@@ -194,6 +196,17 @@ class PreviewControlPlane extends InMemoryDeployControlPlane {
   ): Promise<DeployEnvironment | null> {
     const environment = await super.getEnvironment(reference, name);
     return environment ? { ...environment, domains: [PREVIEW_DOMAIN] } : environment;
+  }
+
+  override createDeployment(): Promise<DeployDeployment> {
+    return Promise.reject(
+      Object.assign(
+        new Error(
+          "Deployments to Preview environments are not allowed. Check the request body and query parameters against the API documentation.",
+        ),
+        { status: 400 },
+      ),
+    );
   }
 
   override async *listReleaseFiles(
@@ -352,8 +365,8 @@ describe("up end to end", () => {
     const run = await runUp({ relativeProjectDir: true });
 
     assertEquals(run.failure, null);
-    assertEquals(run.controlPlane.createdReleases.length, 1);
-    assertEquals(run.controlPlane.createdDeployments.length, 1);
+    assertEquals(run.controlPlane.createdReleases, []);
+    assertEquals(run.controlPlane.createdDeployments, []);
   });
 
   it("creates the project, pushes source, and prints the verified preview URL", async () => {
@@ -362,9 +375,11 @@ describe("up end to end", () => {
     assertEquals(run.failure, null);
     assertEquals(run.projectCreates, 1);
     assertEquals(run.uploadedPaths.includes("app/page.tsx"), true);
-    assertEquals(run.controlPlane.createdReleases.length, 1);
-    assertEquals(run.controlPlane.createdDeployments.length, 1);
-    assertEquals(run.controlPlane.createdDeployments[0]?.environmentId, ENVIRONMENT_ID);
+    // Preview renders the latest push to main and the API refuses deployments
+    // to it (veryfront/veryfront-issue-inbox#1442), so up creates neither a
+    // release nor a deployment.
+    assertEquals(run.controlPlane.createdReleases, []);
+    assertEquals(run.controlPlane.createdDeployments, []);
 
     const lines = run.output.map(stripAnsi);
     assertEquals(lines.includes(`  ✓ ${PROJECT_SLUG} is ready`), true);
@@ -423,7 +438,7 @@ describe("up end to end", () => {
     // receipt, and reported a push it would not have made.
     assertEquals(
       run.failure,
-      'Preview deployment failed: The latest push is for branch "feature-x", but deploy targets ' +
+      'Preview publish failed: The latest push is for branch "feature-x", but deploy targets ' +
         '"main". Run veryfront deploy --branch feature-x to deploy the latest push, or veryfront ' +
         "push --branch main to preview main first.",
     );

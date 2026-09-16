@@ -29,6 +29,7 @@ import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
   ENVIRONMENT_NOT_ROUTABLE,
+  PREVIEW_DEPLOYMENT_NOT_ALLOWED,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -73,7 +74,7 @@ import {
   type DeployRelease,
   type EnvironmentAccessTarget,
 } from "./control-plane.ts";
-import type { DeployResult } from "./result.ts";
+import type { DeployResult, LiveSourceResult } from "./result.ts";
 
 export interface DeployProjectRequest {
   projectDir: string;
@@ -88,6 +89,19 @@ export interface DeployProjectRequest {
   branch?: string;
   environment: string;
   releaseName?: string;
+  /**
+   * How the source reaches the environment.
+   *
+   * `"deployment"` (the default) builds a release and deploys it. Veryfront's
+   * managed Preview environment refuses that: it renders the latest source on
+   * main directly, so a deployment request fails fast with
+   * `preview-deployment-not-allowed` before anything is pushed or built.
+   *
+   * `"live-source"` publishes to Preview the way it actually works: push the
+   * branch, verify the pushed source, then probe the Preview URL. It creates
+   * no release and no deployment, and only accepts the Preview environment.
+   */
+  publish?: "deployment" | "live-source";
   mode: "apply" | "dry-run";
   source:
     | {
@@ -169,6 +183,7 @@ export interface DeployPlan {
 
 export type DeployProjectOutcome =
   | { kind: "deployed"; result: DeployResult }
+  | { kind: "live-source"; result: LiveSourceResult }
   | { kind: "dry-run"; plan: DeployPlan };
 
 export interface DeployProject {
@@ -226,6 +241,34 @@ interface VerificationRetryOptions {
 interface DeploymentVerificationOptions extends VerificationRetryOptions {
   releaseSource?: VerificationRetryOptions;
   verifiedRelease?: ReleaseSourceVerification;
+}
+
+/** The managed environment that renders main live and accepts no deployments. */
+export const LIVE_PREVIEW_ENVIRONMENT = "preview";
+
+/** Whether a requested environment name targets the managed Preview environment. */
+export function isLivePreviewEnvironmentName(name: string): boolean {
+  return name.trim().toLowerCase() === LIVE_PREVIEW_ENVIRONMENT;
+}
+
+/**
+ * The API's refusal of a Preview deployment, classified.
+ *
+ * The CLI refuses a Preview deployment by name before any work, but the API
+ * also quarantines legacy environments that only look like Preview. Without
+ * this, that refusal reaches the operator as an unclassified error.
+ */
+function classifyPreviewDeploymentRefusal(error: unknown, environmentName: string): unknown {
+  if (error instanceof VeryfrontError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/deployments to preview environments are not allowed/i.test(message)) return error;
+  return PREVIEW_DEPLOYMENT_NOT_ALLOWED.create({
+    detail:
+      `Veryfront refused to deploy to environment "${environmentName}" because it is managed as Preview, which renders the latest push to main and accepts no deployments. ` +
+      "Run veryfront push --branch main to update Preview, or deploy to staging or production.",
+    context: { environmentName },
+    cause: error,
+  });
 }
 
 const MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS = 20;
@@ -1588,9 +1631,10 @@ function getEnvironmentUrlWarning(
   readiness: EnvironmentReadiness,
   apiTokenSource: ResolvedConfig["apiTokenSource"],
   access: EnvironmentAccess,
+  published: "Deployment committed" | "Source pushed",
 ): string | null {
   if (readiness.kind !== "gated") return null;
-  const prefix = `Deployment committed, but ${readiness.url} was never observed serving this app:`;
+  const prefix = `${published}, but ${readiness.url} was never observed serving this app:`;
   if (access.kind === "exchanged") {
     return `${prefix} the access gate refused the environment access token with HTTP ${readiness.status}. Check that the API key owner is a member of this project, or open the URL signed in, to confirm the app responds.`;
   }
@@ -1678,6 +1722,7 @@ function dryRunPlan(input: {
   environment: DeployEnvironment | null;
   controlPlane: DeployControlPlane;
   bootstrapPush: boolean;
+  liveSource: boolean;
 }): DeployPlan {
   return {
     branch: input.branch,
@@ -1689,8 +1734,7 @@ function dryRunPlan(input: {
     plannedActions: [
       ...(input.project ? [] : ["create-project" as const]),
       ...(input.bootstrapPush ? ["push-source" as const] : []),
-      "create-release",
-      "deploy",
+      ...(input.liveSource ? [] : ["create-release" as const, "deploy" as const]),
     ],
   };
 }
@@ -1714,6 +1758,24 @@ export function createDeployProject(options: {
         throw DEPLOYMENT_ERROR.create({
           detail:
             `An explicit projectSlug requires source { kind: "already-pushed" }: request-scoped deploys never push local sources. Run veryfront push first, or omit projectSlug to deploy the locally configured project.`,
+        });
+      }
+      const liveSource = request.publish === "live-source";
+      if (liveSource && !isLivePreviewEnvironmentName(request.environment)) {
+        throw DEPLOYMENT_ERROR.create({
+          detail:
+            `Live-source publishing only targets the "${LIVE_PREVIEW_ENVIRONMENT}" environment, not "${request.environment}". Deploy a release to other environments.`,
+          context: { environmentName: request.environment },
+        });
+      }
+      // Refused before any push, release, or build: the API rejects the
+      // deployment at the very end, after every other step has already run.
+      if (!liveSource && isLivePreviewEnvironmentName(request.environment)) {
+        throw PREVIEW_DEPLOYMENT_NOT_ALLOWED.create({
+          detail:
+            `Preview renders the latest push to main, so it accepts no release deployments. ` +
+            "Run veryfront push --branch main to update Preview, or deploy to staging or production with veryfront deploy --env production.",
+          context: { environmentName: request.environment },
         });
       }
       const environmentConfig = await step(
@@ -1773,6 +1835,7 @@ export function createDeployProject(options: {
             environment: null,
             controlPlane,
             bootstrapPush,
+            liveSource,
           }),
         };
       }
@@ -1872,6 +1935,7 @@ export function createDeployProject(options: {
             environment,
             controlPlane,
             bootstrapPush,
+            liveSource,
           }),
         };
       }
@@ -1891,6 +1955,81 @@ export function createDeployProject(options: {
           observeSource,
         });
       });
+
+      /** Probes the environment URL and warns when only its access gate answered. */
+      const waitForEnvironmentUrl = async (
+        projectSlug: string,
+        published: "Deployment committed" | "Source pushed",
+      ) => {
+        const environmentUrl = buildReadyEnvironmentUrl(
+          buildEnvironmentUrl(projectSlug, environment),
+          readinessRoute,
+        );
+        let access: EnvironmentAccess = { kind: "session" };
+        const readiness = await step(
+          observer,
+          "wait-environment-url",
+          async () => {
+            if (environment.protected) {
+              access = await resolveEnvironmentAccess(controlPlane, config.apiToken, {
+                projectId: project!.id,
+                environmentName: environment.name,
+              });
+            }
+            return waitForEnvironmentReady({
+              projectSlug,
+              environmentName: environment.name,
+              url: environmentUrl,
+              route: readinessRoute,
+              protected: environment.protected,
+              apiToken: config.apiToken,
+              ...(access.kind === "exchanged" ? { environmentAccessToken: access.token } : {}),
+            }, {
+              pollIntervalMs: polling.environmentPollIntervalMs,
+              timeoutMs: polling.environmentTimeoutMs,
+            });
+          },
+        );
+
+        const urlWarning = getEnvironmentUrlWarning(
+          readiness,
+          config.apiTokenSource,
+          access,
+          published,
+        );
+        if (urlWarning) {
+          await emit(observer, {
+            kind: "warning",
+            code: "environment-url-unverified",
+            message: urlWarning,
+          });
+        }
+        return { environmentUrl, readiness };
+      };
+
+      if (liveSource) {
+        const { environmentUrl, readiness } = await waitForEnvironmentUrl(
+          project!.slug,
+          "Source pushed",
+        );
+
+        return {
+          kind: "live-source",
+          result: {
+            projectId: project!.id,
+            projectSlug: project!.slug,
+            environment: environment.name,
+            environmentId: environment.id,
+            url: environmentUrl,
+            urlVerification: readiness.kind,
+            protected: environment.protected,
+            commitSha: source.commitSha,
+            sourceDigest: source.sourceDigest,
+            controlPlane: controlPlaneFromConfig(config),
+            branch,
+          },
+        };
+      }
 
       const release = await step(observer, "create-release", async () => {
         const created = await controlPlane.createRelease(project!.id, {
@@ -1927,11 +2066,16 @@ export function createDeployProject(options: {
       const deployment = await step(
         observer,
         "create-deployment",
-        async () =>
-          controlPlane.createDeployment(project!.id, {
-            releaseId: release.id,
-            environmentId: environment.id,
-          }),
+        async () => {
+          try {
+            return await controlPlane.createDeployment(project!.id, {
+              releaseId: release.id,
+              environmentId: environment.id,
+            });
+          } catch (error) {
+            throw classifyPreviewDeploymentRefusal(error, environment.name);
+          }
+        },
       );
 
       const verification = await step(
@@ -1951,44 +2095,10 @@ export function createDeployProject(options: {
           }, { verifiedRelease }),
       );
 
-      const environmentUrl = buildReadyEnvironmentUrl(
-        buildEnvironmentUrl(verification.projectSlug, environment),
-        readinessRoute,
+      const { environmentUrl, readiness } = await waitForEnvironmentUrl(
+        verification.projectSlug,
+        "Deployment committed",
       );
-      let access: EnvironmentAccess = { kind: "session" };
-      const readiness = await step(
-        observer,
-        "wait-environment-url",
-        async () => {
-          if (environment.protected) {
-            access = await resolveEnvironmentAccess(controlPlane, config.apiToken, {
-              projectId: project!.id,
-              environmentName: environment.name,
-            });
-          }
-          return waitForEnvironmentReady({
-            projectSlug: verification.projectSlug,
-            environmentName: environment.name,
-            url: environmentUrl,
-            route: readinessRoute,
-            protected: environment.protected,
-            apiToken: config.apiToken,
-            ...(access.kind === "exchanged" ? { environmentAccessToken: access.token } : {}),
-          }, {
-            pollIntervalMs: polling.environmentPollIntervalMs,
-            timeoutMs: polling.environmentTimeoutMs,
-          });
-        },
-      );
-
-      const urlWarning = getEnvironmentUrlWarning(readiness, config.apiTokenSource, access);
-      if (urlWarning) {
-        await emit(observer, {
-          kind: "warning",
-          code: "environment-url-unverified",
-          message: urlWarning,
-        });
-      }
 
       const warning = getDeploymentRoutingConvergenceWarning(deployment);
       if (warning) {

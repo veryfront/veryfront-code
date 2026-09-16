@@ -13,6 +13,7 @@ import { FakeTime } from "#std/testing/time";
 import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
+  PREVIEW_DEPLOYMENT_NOT_ALLOWED,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -446,6 +447,162 @@ describe("DeployProject", () => {
     });
   });
 
+  describe("managed Preview environment", () => {
+    // Preview renders the latest push to main and the API refuses deployments
+    // to it (veryfront/veryfront-issue-inbox#1442).
+    it("refuses a Preview deployment before pushing, releasing, or deploying", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        const events: DeployEvent[] = [];
+        try {
+          const error = await expectDeployError(() =>
+            executeApply(projectDir, controlPlane, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }, { environment: "Preview", source: { kind: "ensure-pushed" } })
+          );
+
+          assertEquals(error instanceof VeryfrontError, true);
+          assertEquals((error as VeryfrontError).slug, PREVIEW_DEPLOYMENT_NOT_ALLOWED.slug);
+          assertStringIncludes((error as VeryfrontError).detail ?? "", "veryfront push");
+          assertEquals(events, []);
+          assertEquals(controlPlane.projectLookups, []);
+          assertEquals(controlPlane.createdReleases, []);
+          assertEquals(controlPlane.createdDeployments, []);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("classifies the API refusal of an environment it manages as Preview", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        const apiRefusal = Object.assign(
+          new Error(
+            "Deployments to Preview environments are not allowed. Check the request body and query parameters against the API documentation.",
+          ),
+          { status: 400 },
+        );
+        controlPlane.createDeployment = () => Promise.reject(apiRefusal);
+        try {
+          const error = await expectDeployError(() =>
+            executeApply(projectDir, controlPlane, undefined, { environment: "staging" })
+          );
+
+          assertEquals(error instanceof VeryfrontError, true);
+          assertEquals((error as VeryfrontError).slug, PREVIEW_DEPLOYMENT_NOT_ALLOWED.slug);
+          assertEquals((error as VeryfrontError).cause, apiRefusal);
+          assertStringIncludes((error as VeryfrontError).detail ?? "", '"staging"');
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("publishes live source to Preview without a release or deployment", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir, commitSha } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        controlPlane.environmentDomains = ["https://my-project.preview.veryfront.com"];
+        controlPlane.createDeployment = () =>
+          Promise.reject(new Error("Deployments to Preview environments are not allowed"));
+        const events: DeployEvent[] = [];
+        const readinessRequests: string[] = [];
+        try {
+          const outcome = await withFetchStub((input, init) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            readinessRequests.push(request.url);
+            return new Response("ready");
+          }, () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "preview",
+              publish: "live-source",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }));
+
+          const completedSteps = events
+            .filter((event): event is Extract<DeployEvent, { kind: "step" }> =>
+              event.kind === "step" && event.phase === "completed"
+            )
+            .map((event) => event.step);
+          assertEquals(completedSteps, [
+            "resolve-config",
+            "resolve-target",
+            "verify-source",
+            "wait-environment-url",
+          ]);
+          assertEquals(controlPlane.createdReleases, []);
+          assertEquals(controlPlane.createdDeployments, []);
+          assertEquals(readinessRequests, ["https://my-project.preview.veryfront.com/"]);
+          assertEquals(outcome.kind, "live-source");
+          if (outcome.kind !== "live-source") throw new Error("unreachable");
+          assertEquals(outcome.result.projectSlug, PROJECT_SLUG);
+          assertEquals(outcome.result.environment, "preview");
+          assertEquals(outcome.result.environmentId, ENVIRONMENT_ID);
+          assertEquals(outcome.result.url, "https://my-project.preview.veryfront.com");
+          assertEquals(outcome.result.urlVerification, "served");
+          assertEquals(outcome.result.commitSha, commitSha);
+          assertEquals(outcome.result.branch, "main");
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("plans a live-source dry run without release or deploy actions", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        try {
+          const outcome = await createDeployment(controlPlane).execute({
+            projectDir,
+            environment: "preview",
+            publish: "live-source",
+            mode: "dry-run",
+            source: { kind: "already-pushed" },
+          });
+
+          assertEquals(outcome.kind, "dry-run");
+          if (outcome.kind !== "dry-run") throw new Error("unreachable");
+          assertEquals(outcome.plan.plannedActions, []);
+          assertEquals(controlPlane.createdReleases, []);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("refuses live-source publishing to any environment other than Preview", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        try {
+          const error = await expectDeployError(() =>
+            executeApply(projectDir, controlPlane, undefined, {
+              environment: "production",
+              publish: "live-source",
+            })
+          );
+
+          assertEquals((error as VeryfrontError).slug, DEPLOYMENT_ERROR.slug);
+          assertEquals(controlPlane.projectLookups, []);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+  });
+
   it("preserves VeryfrontError instances from project resolution", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -481,7 +638,7 @@ describe("DeployProject", () => {
         const error = await expectDeployError(() =>
           createDeployment(controlPlane).execute({
             projectDir,
-            environment: "preview",
+            environment: "staging",
             mode: "dry-run",
             source: { kind: "already-pushed" },
           })

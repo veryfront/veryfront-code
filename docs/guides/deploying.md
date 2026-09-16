@@ -103,6 +103,10 @@ Deploy uses the last verified Push receipt, confirms the release source digest,
 and prints the environment URL. If the receipt is missing, Deploy first runs a
 quiet Push.
 
+Preview accepts no deployments. It renders the latest push to `main`, so
+`veryfront push` updates it, and `veryfront deploy --env preview` fails with
+`preview-deployment-not-allowed` before anything is uploaded or built.
+
 For a named nonproduction environment:
 
 ```bash
