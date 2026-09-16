@@ -1418,7 +1418,9 @@ export async function runEvalCommand(
     // Emitted only once a run is certain and it can reach a model: listing,
     // usage errors, and model-free dataset evals never send a model request.
     const warnIfNoProject = (definitions: readonly EvalDefinition[]) => {
-      if (!evalRunMayCallModel(definitions)) return;
+      // JSON output must stay machine-readable; the refusal itself still
+      // arrives in the envelope if the run reaches the gateway.
+      if (isJsonMode() || !evalRunMayCallModel(definitions)) return;
       const warning = formatMissingEvalProjectWarning(runtimeAuth);
       if (warning) cliLogger.warn(warning);
     };

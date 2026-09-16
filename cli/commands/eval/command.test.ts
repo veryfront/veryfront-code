@@ -2999,4 +2999,49 @@ describe("eval CLI command helpers", () => {
       );
     }, { prefix: "vf-eval-judged-no-project-" });
   });
+
+  it("does not warn about a missing project in JSON mode", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:judged-dataset",
+        dataset: [{ id: "case", input: "value" }],
+        metrics: [
+          metrics.judge.rubric({
+            rubric: "Is it good?",
+            judge: () => Promise.resolve({ score: 1 }),
+          }),
+        ],
+      });
+      definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      setJsonMode(true);
+      try {
+        await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/reports`,
+          },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        setJsonMode(false);
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-json-no-project-" });
+  });
 });
