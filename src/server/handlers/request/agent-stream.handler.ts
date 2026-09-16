@@ -1,3 +1,4 @@
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { Agent } from "#veryfront/agent";
 import type { AgentMcpServerConfig } from "#veryfront/agent/types.ts";
@@ -625,13 +626,13 @@ async function withVeryfrontPlatformRemoteTools(input: {
   const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
   const platformRemoteToolSources = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
-    bindRemoteToolSourceToProject(
+    markTrustedPlatformSource(bindRemoteToolSourceToProject(
       wrapRemoteToolSourceWithMcpPolicy(
         createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions, aliases),
         { allow: requestedPlatformToolNames },
       ),
       input.projectId,
-    ),
+    )),
   ];
 
   const mcpServers = withPlatformMcpPolicyAliases(input.agent.config.mcpServers, aliases);

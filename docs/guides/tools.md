@@ -61,6 +61,12 @@ Integration tools retain names such as `github__list_repos`. Project tool IDs
 cannot use the reserved double-underscore namespace. Platform aliases retain
 the same project scope and policy restrictions as their legacy names.
 
+Connector allowlists do not remove trusted platform capabilities. That exception
+requires host-owned provenance; a remote source cannot claim it with a tool name
+or source ID. Hosted wrappers and child forks preserve provenance. Managed
+executor installations carry broker-derived platform source and host-tool
+metadata, then restore provenance on the executor-local facades.
+
 ## Try a tool directly
 
 Agents usually invoke tools, but direct execution is useful for testing and for API routes that expose a specific action:

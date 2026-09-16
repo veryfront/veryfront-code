@@ -1,4 +1,8 @@
 import {
+  inheritTrustedPlatformSource,
+  markTrustedPlatformSource,
+} from "#veryfront/tool/platform-source-provenance.ts";
+import {
   createProjectScopedRemoteToolCatalog,
   createRemoteMCPToolSource,
   isProjectNavigationRemoteTool,
@@ -269,7 +273,7 @@ export function createHostedProjectRemoteToolSource(
     }
   }
 
-  return {
+  return inheritTrustedPlatformSource(input.source, {
     id: input.source.id,
     listTools: (context) => toolCatalog.listTools(context),
     async executeTool(toolName, args, context) {
@@ -347,7 +351,7 @@ export function createHostedProjectRemoteToolSource(
 
       return result;
     },
-  };
+  });
 }
 
 /** Input payload for create hosted project remote tool sources. */
@@ -399,6 +403,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
   source: RemoteToolSource,
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
 ): RemoteToolSource {
+  if (server.kind === "veryfront-api") markTrustedPlatformSource(source);
   const policySource = createHostedMcpToolPolicySource(source, server.toolPolicy);
 
   return createHostedProjectRemoteToolSource({

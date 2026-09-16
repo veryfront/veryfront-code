@@ -1,3 +1,8 @@
+import { applySourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import {
+  filterRemoteToolsBySourcePolicy,
+  isToolAllowedBySourcePolicy,
+} from "#veryfront/tool/platform-tool-policy.ts";
 import { observePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
@@ -41,7 +46,6 @@ import {
 } from "./runtime-essential-tools.ts";
 import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
 import {
-  applySourceIntegrationPolicy,
   isIntegrationToolAllowedBySourcePolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
@@ -522,7 +526,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const providerNativeToolNames = getProviderNativeToolNames({ model: input.taskContext.model });
   const sortedLocalToolEntries = filterValues(
     ownEntries(selectedLocalTools),
-    (entry) => isIntegrationToolAllowedBySourcePolicy(entry[0], input.sourceIntegrationPolicy),
+    (entry) => isToolAllowedBySourcePolicy(entry[0], input.sourceIntegrationPolicy, entry[1]),
   );
   if (
     !hasOwn(selectedLocalTools, "web_fetch") &&
@@ -612,9 +616,14 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     ...("remoteToolSources" in input ? { context: { abortSignal: input.signal } } : {}),
   });
-  const remoteToolNames = applySourceIntegrationPolicy(
+  const remoteToolNames = await filterRemoteToolsBySourcePolicy(
     listedRemoteToolNames,
+    remoteToolSources,
     input.sourceIntegrationPolicy,
+    {
+      projectId: activeProjectId(input.taskContext) ?? undefined,
+      ...("signal" in input ? { abortSignal: input.signal } : {}),
+    },
   );
   const localProviderToolNames = createPrivateSet(
     filterValues(

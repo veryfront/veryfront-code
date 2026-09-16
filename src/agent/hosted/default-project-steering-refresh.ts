@@ -1,6 +1,6 @@
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type { AgentSystem } from "../types.ts";
-import { applySourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { filterRemoteToolsBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import {
   listProjectScopedRemoteToolNames,
   type ProjectScopedRemoteToolOptions,
@@ -262,9 +262,11 @@ export function createDefaultHostedProjectSteeringRefresh(
       Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
         ? skillSelectorSnapshot.skillSourcePaths
         : undefined;
-    const sourceAllowedRemoteToolNames = applySourceIntegrationPolicy(
+    const sourceAllowedRemoteToolNames = await filterRemoteToolsBySourcePolicy(
       remoteToolNames,
+      input.toolAssembly.remoteToolSources,
       input.toolAssembly.sourceIntegrationPolicy,
+      { projectId: projectId ?? undefined },
     );
     const allToolNames = [
       ...new Set([

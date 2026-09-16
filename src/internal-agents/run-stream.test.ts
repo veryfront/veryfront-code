@@ -216,6 +216,46 @@ describe("internal-agents/run-stream", () => {
     toolRegistryInternal.clearAll();
   });
 
+  it("dispatches canonical control-plane wrappers under an integration deny-all policy", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const runId = "canonical-form";
+    sessionManager.startRun({ runId, threadId: "thread" });
+    const agent = {
+      id: "agent",
+      config: { tools: { veryfront__form_input: true } },
+    } as unknown as Agent;
+    const tools = buildMergedTools(agent, {
+      runId,
+      threadId: "thread",
+      messages: [],
+      context: [],
+      tools: [{
+        name: "veryfront__form_input",
+        description: "Ask for input",
+        parameters: { type: "object", properties: {} },
+      }],
+    }, sessionManager);
+    const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+    assertEquals(
+      (await getAvailableTools(tools, {
+        includeIntegrationTools: false,
+        sourceIntegrationPolicy: policy,
+      })).map((tool) => tool.name),
+      ["veryfront__form_input"],
+    );
+    const result = executeConfiguredTool(
+      "veryfront__form_input",
+      {},
+      tools,
+      { toolCallId: "form" },
+      undefined,
+      undefined,
+      policy,
+    );
+    sessionManager.submitToolResult(runId, { toolCallId: "form", result: { approved: true } });
+    assertEquals(await result, { approved: true });
+  });
+
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
     toolRegistryInternal.clearAll();
     try {

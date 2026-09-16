@@ -1,3 +1,4 @@
+import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { getTrustedProjectEnvIdentity } from "#veryfront/server/project-env/storage.ts";
@@ -2912,11 +2913,30 @@ describe("server/handlers/request/agent-stream.handler", () => {
                 projectId: "untrusted-project",
               }))?.map((tool) => tool.name) ?? [];
               assertExists(platformSource);
+              const sourcePolicy = {
+                schemaVersion: 1 as const,
+                mode: "allowlist" as const,
+                integrations: {},
+              };
+              if (!denied) {
+                assertEquals(
+                  (await getAvailableTools({ [selectedName]: true }, {
+                    remoteToolSources: [platformSource],
+                    includeIntegrationTools: false,
+                    sourceIntegrationPolicy: sourcePolicy,
+                  })).map((tool) => tool.name),
+                  [selectedName],
+                );
+              }
               const execute = async () =>
-                await platformSource.executeTool(
+                await executeConfiguredTool(
                   selectedName,
                   { project_reference: "untrusted-project", limit: 10 },
+                  { [selectedName]: true },
                   { projectId: "untrusted-project" },
+                  capturedAllowedRemoteTools,
+                  [platformSource],
+                  sourcePolicy,
                 );
               if (denied) await assertRejects(execute);
               else await execute();

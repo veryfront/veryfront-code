@@ -1,3 +1,4 @@
+import { inheritTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { PERMISSION_DENIED } from "#veryfront/errors";
 import type { HostToolSet, RemoteToolSource, ToolExecutionContext } from "#veryfront/tool";
 import type { AgentMcpToolPolicy } from "./types.ts";
@@ -72,7 +73,7 @@ export function wrapRemoteToolSourceWithMcpPolicy(
         defaultDeniedDetail(toolName),
   });
 
-  return {
+  return inheritTrustedPlatformSource(source, {
     ...source,
     id: source.id,
     listTools: async (context) => gate.filterDefinitions(await source.listTools(context)),
@@ -80,7 +81,7 @@ export function wrapRemoteToolSourceWithMcpPolicy(
       gate.assertAllowed(toolName);
       return source.executeTool(toolName, args, context);
     },
-  };
+  });
 }
 
 export function wrapHostToolSetWithMcpPolicy(

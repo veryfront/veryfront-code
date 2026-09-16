@@ -1,3 +1,4 @@
+import { filterRemoteToolsBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import {
   assertEquals,
   assertInstanceOf,
@@ -1335,5 +1336,33 @@ Deno.test("createHostedProjectRemoteToolSource treats null activatedRemoteToolNa
     await source.executeTool("write_file", {}),
     { ok: true },
     "tool outside allowedToolNames must execute when the activation gate is null",
+  );
+});
+
+Deno.test("authenticated hosted API catalogs retain platform tools under connector restrictions", async () => {
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => "project-1",
+    mcpServers: [{ kind: "veryfront-api" }, {
+      id: "custom",
+      endpoint: "https://custom.example/mcp",
+    }],
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [
+          simpleTool(config.id === "custom" ? "veryfront__export_data" : "veryfront__get_file"),
+        ],
+      }),
+  });
+  assertEquals(
+    await filterRemoteToolsBySourcePolicy(
+      ["veryfront__get_file", "veryfront__export_data"],
+      sources,
+      { schemaVersion: 1, mode: "allowlist", integrations: {} },
+      { projectId: "project-1", authToken: "token-1" },
+    ),
+    ["veryfront__get_file"],
   );
 });

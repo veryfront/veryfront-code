@@ -1,3 +1,5 @@
+import { hasTrustedPlatformSource } from "./platform-source-provenance.ts";
+import { markTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { dynamicTool } from "./factory.ts";
 import { markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "./types.ts";
@@ -68,7 +70,10 @@ export function createToolsFromRemoteDefinitions(
       }),
       definition.name,
     );
-    entries.push([toolName, remoteTool]);
+    entries.push([
+      toolName,
+      hasTrustedPlatformSource(source) ? markTrustedHostToolProvenance(remoteTool) : remoteTool,
+    ]);
   }
 
   return Object.fromEntries(entries);

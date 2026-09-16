@@ -296,11 +296,6 @@ export function isIntegrationToolAllowedBySourcePolicy(
   const identity = parseIntegrationToolIdentity(toolName);
   if (!identity) return !toolName.includes("__");
 
-  // Platform tools are selected and authorized by their owning catalog. This
-  // restriction only narrows integrations and must not reclassify the reserved
-  // platform namespace as an unconfigured connector.
-  if (identity.integration === "veryfront") return true;
-
   const restriction = policy.integrations[identity.integration];
   if (!restriction) return false;
   return restriction.allowedToolIds === null ||

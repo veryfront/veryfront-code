@@ -1,3 +1,4 @@
+import { filterRemoteToolsBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { it } from "#veryfront/testing/bdd.ts";
 import type {
@@ -1281,4 +1282,49 @@ it("ignores inherited array slots when classifying remote source ownership", asy
     .flat()
     .map((tool) => tool.name);
   assertEquals(names, ["list_files"]);
+});
+
+it("preserves trusted bootstrap platform sources through nested credential and tool ceilings", async () => {
+  const calls: Array<ToolExecutionContext | undefined> = [];
+  const sources = getRuntimeRemoteToolSources({
+    system: "Read a project file",
+    tools: { veryfront__get_file: true },
+    mcpServers: [{ kind: "veryfront-api" }],
+  }, {
+    getVeryfrontBootstrap: () => ({
+      apiBaseUrl: "https://api.example",
+      apiToken: "server-token",
+      projectSlug: "server-project",
+      hasRequestContext: false,
+      usesVeryfrontFs: false,
+    }),
+    createRemoteToolSource: () => ({
+      id: VERYFRONT_API_MCP_SOURCE_ID,
+      listTools: () =>
+        Promise.resolve([{
+          name: "veryfront__get_file",
+          description: "Read file",
+          parameters: { type: "object", properties: {} },
+        }]),
+      executeTool: (_name, _args, context) => {
+        calls.push(context);
+        return Promise.resolve({ text: "file content" });
+      },
+    }),
+  })!;
+  const bound = bindRuntimeRemoteToolSourcesToCredentialOwner(sources, {
+    authToken: "owner-token",
+  })!;
+  const constrained = constrainRuntimeRemoteToolSources(bound, ["veryfront__get_file"])!;
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  for (const selected of [sources, bound, constrained]) {
+    assertEquals(await filterRemoteToolsBySourcePolicy(["veryfront__get_file"], selected, policy), [
+      "veryfront__get_file",
+    ]);
+  }
+  assertEquals(
+    await constrained[0]!.executeTool("veryfront__get_file", {}, { authToken: "untrusted-token" }),
+    { text: "file content" },
+  );
+  assertEquals(calls[0]?.authToken, "owner-token");
 });

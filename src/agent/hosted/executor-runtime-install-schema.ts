@@ -37,6 +37,13 @@ export const getExecutorRuntimeInstallSchema = defineSchema((v) =>
     binding: getExecutorBindingSchema(),
     grant: getExecutorRuntimeGrantDataSchema(),
     /** Trusted ownership metadata for selected host tools, independent of source listings. */
+    platformToolSourceIds: v.array(getExecutorToolIdSchema()).max(128).optional(),
+    platformHostTools: v.array(
+      v.object({
+        sourceId: getExecutorToolIdSchema(),
+        toolName: getExecutorToolIdSchema(),
+      }).strict(),
+    ).max(4096).optional(),
     hostToolAliases: v.array(
       v.object({
         sourceId: getExecutorToolIdSchema(),
@@ -50,39 +57,52 @@ export const getExecutorRuntimeInstallSchema = defineSchema((v) =>
       projectSteering: getExecutorDiscoveryIdSchema().optional(),
       conversationUserText: getExecutorDiscoveryIdSchema().optional(),
     }).strict(),
-  }).strict().refine(({ grant, capabilities, hostToolAliases }) => {
-    const aliases = new Set<string>();
-    for (const alias of hostToolAliases ?? []) {
-      const key = JSON.stringify([alias.sourceId, alias.toolName]);
+  }).strict().refine(
+    ({ grant, capabilities, hostToolAliases, platformToolSourceIds, platformHostTools }) => {
+      if (platformToolSourceIds?.some((id) => !grant.remoteToolSourceIds.includes(id))) {
+        return false;
+      }
       if (
-        aliases.has(key) || alias.ownerAgentId !== grant.agentId ||
-        !grant.hostToolFacadeIds.includes(alias.sourceId) ||
-        !grant.allowedToolNames.includes(alias.toolName)
+        platformHostTools?.some((entry) =>
+          !grant.hostToolFacadeIds.includes(entry.sourceId) ||
+          !grant.allowedToolNames.includes(entry.toolName)
+        )
       ) return false;
-      aliases.add(key);
-    }
-    const execution = grant.execution;
-    if (
-      (execution.projectId !== null || grant.requiredCapabilities?.includes("project-steering")) &&
-      !capabilities.projectSteering
-    ) return false;
-    if (
-      grant.requiredCapabilities?.includes("conversation-user-text") &&
-      !capabilities.conversationUserText
-    ) return false;
-    if (execution.kind === "canonical") {
+      const aliases = new Set<string>();
+      for (const alias of hostToolAliases ?? []) {
+        const key = JSON.stringify([alias.sourceId, alias.toolName]);
+        if (
+          aliases.has(key) || alias.ownerAgentId !== grant.agentId ||
+          !grant.hostToolFacadeIds.includes(alias.sourceId) ||
+          !grant.allowedToolNames.includes(alias.toolName)
+        ) return false;
+        aliases.add(key);
+      }
+      const execution = grant.execution;
       if (
-        !capabilities.persistence.publishParentRunEvents ||
-        !capabilities.persistence.toolExposureCheckpoint
+        (execution.projectId !== null ||
+          grant.requiredCapabilities?.includes("project-steering")) &&
+        !capabilities.projectSteering
       ) return false;
       if (
-        execution.providerReplay === "required" &&
-        !capabilities.persistence.providerReplayCheckpoint
+        grant.requiredCapabilities?.includes("conversation-user-text") &&
+        !capabilities.conversationUserText
       ) return false;
-    }
-    return new Set(grant.models.map((model) => model.id)).size === grant.models.length &&
-      grant.models.some((model) => model.id === grant.defaultModelId);
-  }, "Missing or ambiguous executor installation authority")
+      if (execution.kind === "canonical") {
+        if (
+          !capabilities.persistence.publishParentRunEvents ||
+          !capabilities.persistence.toolExposureCheckpoint
+        ) return false;
+        if (
+          execution.providerReplay === "required" &&
+          !capabilities.persistence.providerReplayCheckpoint
+        ) return false;
+      }
+      return new Set(grant.models.map((model) => model.id)).size === grant.models.length &&
+        grant.models.some((model) => model.id === grant.defaultModelId);
+    },
+    "Missing or ambiguous executor installation authority",
+  )
 );
 
 /** Project-only installation. Host capabilities and private runtime state stay on the broker. */

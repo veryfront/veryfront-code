@@ -1,4 +1,8 @@
 import {
+  inheritTrustedPlatformSource,
+  markTrustedPlatformSource,
+} from "#veryfront/tool/platform-source-provenance.ts";
+import {
   concatPrivateArrays,
   filterPrivateArray,
   flatMapPrivateArray,
@@ -173,9 +177,12 @@ function propagateBootstrapIdentity(
   input: RemoteToolSource,
   output: RemoteToolSource,
 ): RemoteToolSource {
-  return isBootstrapIdentityRemoteToolSource(input)
-    ? markBootstrapIdentityRemoteToolSource(output)
-    : output;
+  return inheritTrustedPlatformSource(
+    input,
+    isBootstrapIdentityRemoteToolSource(input)
+      ? markBootstrapIdentityRemoteToolSource(output)
+      : output,
+  );
 }
 
 export function constrainRuntimeRemoteToolSources(
@@ -298,7 +305,7 @@ export function bindRemoteToolSourceToProject(
     defaultProjectId: projectId,
   });
 
-  return {
+  return inheritTrustedPlatformSource(source, {
     id: source.id,
     listTools: (context) => catalog.listTools(withServerProject(context, projectId)),
     async executeTool(toolName, args, context) {
@@ -313,7 +320,7 @@ export function bindRemoteToolSourceToProject(
         execution.executeContext,
       );
     },
-  };
+  });
 }
 
 function createVeryfrontApiMcpServerToolSource(
@@ -361,9 +368,9 @@ function createVeryfrontApiMcpServerToolSource(
       : {}),
   });
   const policySource = createMcpToolPolicySource(source, server.toolPolicy);
-  return markBootstrapIdentityRemoteToolSource(
+  return markTrustedPlatformSource(markBootstrapIdentityRemoteToolSource(
     bindRemoteToolSourceToProject(policySource, projectId),
-  );
+  ));
 }
 
 function requiresInjectedStudioMcpServerToolSource(server: AgentVeryfrontMcpServerConfig): never {

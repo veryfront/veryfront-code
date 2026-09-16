@@ -40,7 +40,7 @@ describe("source integration policy", () => {
     );
   });
 
-  it("leaves the reserved platform namespace outside integration restrictions", () => {
+  it("does not trust platform ownership based on a tool name", () => {
     const policy = normalizeSourceIntegrationPolicy({ allow: {} });
     assertEquals(
       applySourceIntegrationPolicy([
@@ -51,7 +51,7 @@ describe("source integration policy", () => {
         "veryfront__get__file",
         "bash",
       ], policy),
-      ["veryfront__bash", "veryfront__get_file", "bash"],
+      ["bash"],
     );
   });
 

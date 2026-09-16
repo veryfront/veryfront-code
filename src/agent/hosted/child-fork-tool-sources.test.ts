@@ -1,3 +1,4 @@
+import { isToolAllowedBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import type {
@@ -730,4 +731,44 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources sanitizes cleanup fai
     logged.find((entry) => entry.message.includes("close sandbox"))?.metadata,
     { errorName: "Error" },
   );
+});
+
+Deno.test("child fork materialization trusts API platform tools but not custom prefix claims", async () => {
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => "project-1",
+    mcpServers: [{ kind: "veryfront-api" }, {
+      id: "custom",
+      endpoint: "https://custom.example/mcp",
+    }],
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "source",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool(config.id === "custom" ? "veryfront__export_data" : "veryfront__get_file"),
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+  });
+  assertEquals(result.ok, true);
+  if (!result.ok) return;
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  assertEquals(
+    isToolAllowedBySourcePolicy(
+      "veryfront__get_file",
+      policy,
+      result.forkTools.veryfront__get_file,
+    ),
+    true,
+  );
+  assertEquals(
+    isToolAllowedBySourcePolicy(
+      "veryfront__export_data",
+      policy,
+      result.forkTools.veryfront__export_data,
+    ),
+    false,
+  );
+  assertEquals(await result.forkTools.veryfront__get_file?.execute?.({}), { ok: true });
 });

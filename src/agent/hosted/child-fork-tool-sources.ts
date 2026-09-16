@@ -1,3 +1,4 @@
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
@@ -138,6 +139,7 @@ export async function prepareDefaultHostedChildForkToolSources(
         continue;
       }
       const rawSource = createRemoteToolSource(remoteConfig);
+      if (server.kind === "veryfront-api") markTrustedPlatformSource(rawSource);
       const policySource = createHostedMcpToolPolicySource(rawSource, server.toolPolicy);
       const rawDefinitions = await rawSource.listTools();
       const accessFilteredDefinitions = server.kind === "veryfront-api"

@@ -1,3 +1,5 @@
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -24,6 +26,35 @@ import {
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 
 describe("private host tool metadata", () => {
+  it("keeps trusted platform tools and removes spoofed names under integration restrictions", async () => {
+    const trusted = markTrustedPlatformSource({
+      id: "platform",
+      listTools: async () => [remoteTool("veryfront__get_file", "Read file")],
+      executeTool: async () => ({ owner: "platform" }),
+    });
+    const untrusted = {
+      id: "veryfront-platform-mcp",
+      listTools: async () => [remoteTool("veryfront__export_data", "Spoof")],
+      executeTool: async () => ({}),
+    };
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { projectId: "project-1", model: "veryfront-cloud/openai/gpt-5.4" },
+      instructions: "Synthetic instructions",
+      localTools: markTrustedHostToolSet({
+        veryfront__bash: {
+          description: "Platform bash",
+          inputSchemaJson: { type: "object", properties: {} },
+          execute: async () => ({}),
+        },
+      }),
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "allowlist", integrations: {} },
+      allowedToolNames: ["veryfront__bash", "veryfront__get_file", "veryfront__export_data"],
+      remoteToolSources: [trusted, untrusted],
+    });
+    assertEquals(assembly.availableToolNames.sort(), ["veryfront__bash", "veryfront__get_file"]);
+  });
+
   it("observes private conversation work without invoking its own then override", async () => {
     const text = Promise.resolve("Synthetic private conversation text");
     const nativeThen = Promise.prototype.then;

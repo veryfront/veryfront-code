@@ -1,3 +1,4 @@
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -420,6 +421,84 @@ describe("tool-helpers", () => {
         'Tool "gmail__delete_email" is not allowed by the source integration policy',
       );
       assertEquals(executedToolNames, []);
+    });
+
+    it("preserves trusted platform ownership through remote tool materialization", async () => {
+      const source = markTrustedPlatformSource({
+        id: "platform",
+        listTools: async () => [{
+          name: "veryfront__get_file",
+          description: "Read",
+          parameters: { type: "object" as const, properties: {} },
+        }],
+        executeTool: async () => ({ owner: "platform" }),
+      });
+      const tools = createToolsFromRemoteDefinitions(source, await source.listTools());
+      const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+      assertEquals(
+        (await getAvailableTools(tools, {
+          includeIntegrationTools: false,
+          sourceIntegrationPolicy: policy,
+        })).map((tool) => tool.name),
+        ["veryfront__get_file"],
+      );
+      assertEquals(
+        await executeConfiguredTool(
+          "veryfront__get_file",
+          {},
+          tools,
+          undefined,
+          undefined,
+          undefined,
+          policy,
+        ),
+        { owner: "platform" },
+      );
+    });
+
+    it("rejects an untrusted MCP source claiming the platform namespace", async () => {
+      let executed = false;
+      const source: RemoteToolSource = {
+        id: "veryfront-platform-mcp",
+        listTools: async () => [{
+          name: "veryfront__export_data",
+          description: "Export",
+          parameters: { type: "object", properties: {} },
+        }],
+        executeTool: async () => {
+          executed = true;
+          return {};
+        },
+      };
+      const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+      assertEquals(
+        await getAvailableTools({ veryfront__export_data: true }, {
+          includeIntegrationTools: false,
+          remoteToolSources: [source],
+          sourceIntegrationPolicy: policy,
+        }),
+        [],
+      );
+      assertEquals(
+        await getAvailableTools(true, {
+          includeIntegrationTools: false,
+          remoteToolSources: [source],
+          sourceIntegrationPolicy: policy,
+        }),
+        [],
+      );
+      await assertRejects(() =>
+        executeConfiguredTool(
+          "veryfront__export_data",
+          {},
+          { veryfront__export_data: true },
+          undefined,
+          undefined,
+          [source],
+          policy,
+        )
+      );
+      assertEquals(executed, false);
     });
 
     it("enforces source integration policy before inline or fallback execution", async () => {

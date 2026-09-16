@@ -1,5 +1,8 @@
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
-import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  markTrustedHostToolProvenance,
+  markTrustedHostToolSet,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import {
   type Agent,
   type AgentMessage as Message,
@@ -220,7 +223,7 @@ function createInjectedStudioTool(
   parameters: Record<string, unknown> | undefined,
   sessionManager: AgentRunSessionManager,
 ): Tool {
-  return {
+  const tool: Tool = {
     id: toolName,
     type: "function",
     description: description ?? toolName,
@@ -245,6 +248,16 @@ function createInjectedStudioTool(
       return waitResult.result;
     },
   };
+  const controlPlaneNames = [
+    "form_input",
+    "invoke_agent",
+    "web_search",
+    "web_fetch",
+    "studio_todo_write",
+  ];
+  return controlPlaneNames.some((name) => toolName === `veryfront__${name}`)
+    ? markTrustedHostToolProvenance(tool)
+    : tool;
 }
 
 function isExplicitlyDeniedToolName(
