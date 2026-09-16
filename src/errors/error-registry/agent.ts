@@ -109,6 +109,19 @@ export const EVAL_MODEL_ACCESS_DENIED = defineError({
     "Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits",
 });
 
+/**
+ * An eval stopped because the Veryfront Cloud gateway rejected its model
+ * requests for naming no project (HTTP 400, `gateway_project_required`).
+ */
+export const EVAL_PROJECT_REQUIRED = defineError({
+  slug: "eval-project-required",
+  category: "AGENT",
+  status: 400,
+  title: "No project for eval model requests",
+  suggestion:
+    "Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -122,4 +135,5 @@ export const AGENT_REGISTRY = {
   "default-model-credential-mismatch": DEFAULT_MODEL_CREDENTIAL_MISMATCH,
   "provider-replay-checkpoint-invalid": PROVIDER_REPLAY_CHECKPOINT_INVALID,
   "eval-model-access-denied": EVAL_MODEL_ACCESS_DENIED,
+  "eval-project-required": EVAL_PROJECT_REQUIRED,
 } as const;

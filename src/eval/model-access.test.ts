@@ -80,6 +80,48 @@ describe("eval/model-access", () => {
     assertEquals(classifyEvalModelAccessDenial(runLimit), undefined);
   });
 
+  it("classifies the gateway project-required 400 with the gateway message", async () => {
+    const error = await buildProviderError(
+      "anthropic",
+      jsonResponse(400, {
+        error: "A project is required to use Veryfront-managed AI inference",
+        code: "gateway_project_required",
+      }),
+    );
+    const denial = classifyEvalModelAccessDenial(error);
+    if (!denial) throw new Error("expected a project-required denial");
+    const evalError = createEvalModelAccessDeniedError("eval:triage", denial, error);
+
+    assertEquals(denial.kind, "project-required");
+    assertEquals(evalError.slug, "eval-project-required");
+    assertEquals(
+      evalError.detail,
+      'Eval "eval:triage" stopped at its first refused model request: A project is required to use Veryfront-managed AI inference',
+    );
+    assertEquals(
+      evalError.suggestion,
+      "Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)",
+    );
+    assertEquals(isEvalModelAccessDeniedError(evalError), true);
+  });
+
+  it("keeps other 400 responses as record failures", async () => {
+    const otherCode = await buildProviderError(
+      "anthropic",
+      jsonResponse(400, { error: "Bad request", code: "invalid_model" }),
+    );
+    const invalidRequest = await buildProviderError(
+      "anthropic",
+      jsonResponse(400, {
+        type: "error",
+        error: { type: "invalid_request_error", message: "gateway_project_required" },
+      }),
+    );
+
+    assertEquals(classifyEvalModelAccessDenial(otherCode), undefined);
+    assertEquals(classifyEvalModelAccessDenial(invalidRequest), undefined);
+  });
+
   it("keeps direct-provider 402 responses as record failures", async () => {
     const anthropic = await buildProviderError(
       "anthropic",

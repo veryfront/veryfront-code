@@ -1249,7 +1249,11 @@ Result: \`1/4 passed\`
             return Promise.reject(
               createEvalModelAccessDeniedError(
                 evalItem.id,
-                { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+                {
+                  kind: "billing",
+                  code: "INSUFFICIENT_CREDITS",
+                  message: "Insufficient AI credits",
+                },
                 undefined,
               ),
             );

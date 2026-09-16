@@ -427,6 +427,12 @@ function shouldPreserveStructuredResponseBody(context: ProviderErrorBodyContext)
     return true;
   }
 
+  // The Veryfront Cloud gateway rejects a request that names no project with a
+  // 400 and this code. Eval classification needs it to fail fast.
+  if (context.status === 400 && context.parsedBody.code === "gateway_project_required") {
+    return true;
+  }
+
   const problemSlug = typeof context.parsedBody.slug === "string"
     ? context.parsedBody.slug
     : undefined;

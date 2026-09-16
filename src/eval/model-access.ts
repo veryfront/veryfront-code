@@ -1,13 +1,27 @@
-import { EVAL_MODEL_ACCESS_DENIED, VeryfrontError } from "#veryfront/errors";
+import { EVAL_MODEL_ACCESS_DENIED, EVAL_PROJECT_REQUIRED, VeryfrontError } from "#veryfront/errors";
 import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
 import { registeredProviderFailure } from "#veryfront/chat/provider-error-registry.ts";
 import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
-/** Billing and entitlement denial reported by the model gateway. */
+/** Why the model gateway refused an eval's model requests. */
+export type EvalModelAccessDenialKind = "billing" | "project-required";
+
+/** Refusal that every later eval record would hit the same way. */
 export interface EvalModelAccessDenial {
+  kind: EvalModelAccessDenialKind;
   code: string;
   message: string;
 }
+
+const DENIAL_ERRORS = {
+  billing: EVAL_MODEL_ACCESS_DENIED,
+  "project-required": EVAL_PROJECT_REQUIRED,
+} as const;
+
+const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
+const GATEWAY_PROJECT_REQUIRED_FALLBACK_MESSAGE =
+  "A project is required to use Veryfront-managed AI inference";
+const MAX_GATEWAY_MESSAGE_LENGTH = 200;
 
 /**
  * Account-wide billing or entitlement denials. `RESOURCE_LIMIT_EXCEEDED` is
@@ -38,7 +52,7 @@ function readProperty(value: unknown, key: string): unknown {
 function toDenial(failure: { code: string; message: string }): EvalModelAccessDenial | undefined {
   if (!MODEL_ACCESS_DENIAL_CODES.has(failure.code)) return undefined;
   if (isAgentRunCreditLimit(failure.message)) return undefined;
-  return { code: failure.code, message: failure.message };
+  return { kind: "billing", code: failure.code, message: failure.message };
 }
 
 function parseJsonBody(body: string): unknown {
@@ -56,8 +70,29 @@ function parseJsonBody(body: string): unknown {
  * provider carries no such body and stays a record failure, so it never gets
  * Veryfront billing advice. Message text is never consulted.
  */
+/**
+ * The gateway's project-required rejection, identified by its structured
+ * `code` in the preserved response body. The gateway's own `error` text is kept
+ * when it is a short string, so the user sees the gateway's wording.
+ */
+function classifyProjectRequired(responseBody: string): EvalModelAccessDenial | undefined {
+  const body = parseJsonBody(responseBody);
+  if (readProperty(body, "code") !== GATEWAY_PROJECT_REQUIRED_CODE) return undefined;
+  const gatewayMessage = readProperty(body, "error");
+  return {
+    kind: "project-required",
+    code: GATEWAY_PROJECT_REQUIRED_CODE,
+    message: typeof gatewayMessage === "string" && gatewayMessage.trim() &&
+        gatewayMessage.length <= MAX_GATEWAY_MESSAGE_LENGTH
+      ? gatewayMessage.trim()
+      : GATEWAY_PROJECT_REQUIRED_FALLBACK_MESSAGE,
+  };
+}
+
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
-  if (error.status !== 402 || typeof error.responseBody !== "string") return undefined;
+  if (typeof error.responseBody !== "string") return undefined;
+  if (error.status === 400) return classifyProjectRequired(error.responseBody);
+  if (error.status !== 402) return undefined;
   const parsed = parseKnownProblemBody(parseJsonBody(error.responseBody));
   return parsed ? toDenial(parsed) : undefined;
 }
@@ -138,19 +173,29 @@ export function createEvalModelAccessDeniedError(
   denial: EvalModelAccessDenial,
   cause: unknown,
 ): VeryfrontError {
-  return EVAL_MODEL_ACCESS_DENIED.create({
+  return DENIAL_ERRORS[denial.kind].create({
     detail: `Eval "${evalId}" stopped at its first refused model request: ${denial.message}`,
     context: { evalId, denialCode: denial.code },
     cause,
   });
 }
 
-/** Return true when an error is the eval fail-fast model access error. */
-export function isEvalModelAccessDeniedError(error: unknown): error is VeryfrontError {
+/** Return the denial kind when an error is one of the eval fail-fast errors. */
+export function getEvalModelAccessDenialKind(
+  error: unknown,
+): EvalModelAccessDenialKind | undefined {
   try {
-    return error instanceof VeryfrontError && error.slug === EVAL_MODEL_ACCESS_DENIED.slug;
+    if (!(error instanceof VeryfrontError)) return undefined;
+    for (const [kind, definition] of Object.entries(DENIAL_ERRORS)) {
+      if (error.slug === definition.slug) return kind as EvalModelAccessDenialKind;
+    }
   } catch {
     // Hostile thrown values (revoked proxies) are never the fail-fast error.
-    return false;
   }
+  return undefined;
+}
+
+/** Return true when an error is one of the eval fail-fast model access errors. */
+export function isEvalModelAccessDeniedError(error: unknown): error is VeryfrontError {
+  return getEvalModelAccessDenialKind(error) !== undefined;
 }

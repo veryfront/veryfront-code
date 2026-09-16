@@ -840,6 +840,13 @@ No model access for eval run.
 - **HTTP status:** 402
 - **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits
 
+### eval-project-required
+
+No project for eval model requests.
+
+- **HTTP status:** 400
+- **What to do:** Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.

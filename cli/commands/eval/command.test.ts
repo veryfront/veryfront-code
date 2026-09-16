@@ -2200,7 +2200,7 @@ describe("eval CLI command helpers", () => {
     });
     const denied = createEvalModelAccessDeniedError(
       "eval:denied",
-      { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+      { kind: "billing", code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
       undefined,
     );
 
@@ -2252,7 +2252,7 @@ describe("eval CLI command helpers", () => {
     );
     const denied = createEvalModelAccessDeniedError(
       "eval:denied-later",
-      { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+      { kind: "billing", code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
       undefined,
     );
 
@@ -2272,6 +2272,56 @@ describe("eval CLI command helpers", () => {
         line.includes("Gateway billing finalization skipped for evalrun_denied_later: 404")
       ),
       true,
+    );
+  });
+
+  it("does not warn about finalization refusals that repeat a missing project", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    const responses = [
+      new Response(
+        JSON.stringify({
+          error: "Gateway billing group not found",
+          code: "gateway_billing_group_not_found",
+        }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      ),
+      new Response(
+        JSON.stringify({
+          error: "A project is required to finalize gateway billing groups",
+          code: "gateway_project_required",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+    ];
+    installMockFetch(() => Promise.resolve(responses.shift()!));
+    const denied = createEvalModelAccessDeniedError(
+      "eval:no-project",
+      {
+        kind: "project-required",
+        code: "gateway_project_required",
+        message: "A project is required to use Veryfront-managed AI inference",
+      },
+      undefined,
+    );
+    const run = (billingGroupId: string) =>
+      captureConsoleOutput(() =>
+        assertRejects(() =>
+          runEvalWithGatewayBillingGroup(billingGroupId, async () => {
+            markCurrentVeryfrontCloudBillingGroupUsed();
+            throw denied;
+          })
+        )
+      );
+
+    const outputs = [await run("evalrun_no_project_404"), await run("evalrun_no_project_400")];
+
+    assertEquals(responses.length, 0);
+    assertEquals(
+      outputs.flatMap((output) => [...output.stdout, ...output.stderr]).some((line) =>
+        line.includes("Gateway billing finalization skipped")
+      ),
+      false,
     );
   });
 

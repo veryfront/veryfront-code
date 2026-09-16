@@ -633,6 +633,44 @@ describe("eval/runner", () => {
     assertEquals(checkCalls, 0);
   });
 
+  it("stops at the first gateway project-required rejection", async () => {
+    let adapterCalls = 0;
+    const definition = evalAgent({
+      id: "eval:no-project",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+    const rejection = await buildProviderError(
+      "anthropic",
+      new Response(
+        JSON.stringify({
+          error: "A project is required to use Veryfront-managed AI inference",
+          code: "gateway_project_required",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: {
+            agent: async () => {
+              adapterCalls += 1;
+              throw rejection;
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-project-required");
+    assertEquals(adapterCalls, 1);
+  });
+
   it("stops when a judge metric is refused model access", async () => {
     const denial = await createGatewayCreditDenial();
     const judge = metrics.answer.exactMatch().gate();
