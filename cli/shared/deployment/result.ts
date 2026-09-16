@@ -43,8 +43,19 @@ export interface LiveSourceResult {
   environment: string;
   environmentId: string;
   url: string;
-  /** Same meaning as {@link DeployResult.urlVerification}. */
-  urlVerification: "served" | "gated" | "unprobed";
+  /**
+   * What the readiness probe established about {@link LiveSourceResult.url}.
+   *
+   * `responded` means the Preview URL answered with the app, not that it
+   * answered with the source just pushed: a replica can still serve the
+   * previous source for a moment. `gated` and `unprobed` mean the same as in
+   * {@link DeployResult.urlVerification}.
+   *
+   * TODO(veryfront/veryfront-issue-inbox#1457): once Preview exposes the
+   * revision it serves, confirm it matches `sourceDigest` and report that
+   * instead of a bare response.
+   */
+  urlVerification: "responded" | "gated" | "unprobed";
   protected: boolean;
   commitSha: string | null;
   sourceDigest: string;

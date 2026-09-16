@@ -550,7 +550,7 @@ describe("DeployProject", () => {
           assertEquals(outcome.result.environment, "preview");
           assertEquals(outcome.result.environmentId, ENVIRONMENT_ID);
           assertEquals(outcome.result.url, "https://my-project.preview.veryfront.com");
-          assertEquals(outcome.result.urlVerification, "served");
+          assertEquals(outcome.result.urlVerification, "responded");
           assertEquals(outcome.result.commitSha, commitSha);
           assertEquals(outcome.result.branch, "main");
         } finally {

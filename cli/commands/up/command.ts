@@ -444,10 +444,16 @@ export async function upCommand(
     return;
   }
 
-  logSuccess(`${result.projectSlug} is ready`);
+  // The probe cannot yet tell the pushed source from the previous one
+  // (veryfront/veryfront-issue-inbox#1457), so the output never claims the
+  // new code is live.
+  logSuccess(`Pushed ${result.projectSlug} to Preview`);
   console.log();
   console.log(`  Studio:  ${brand(studioUrl)}`);
   console.log(`  Preview: ${brand(result.url)}`);
+  if (result.urlVerification === "responded") {
+    console.log(`  ${dim("Preview URL responds; new source may take a moment to appear.")}`);
+  }
   console.log();
   console.log(`  Deploy:  ${brand("veryfront deploy")}`);
   console.log();

@@ -159,7 +159,7 @@ const VERIFIED_RESULT: LiveSourceResult = {
   environment: "preview",
   environmentId: "environment-1",
   url: "https://verified.example.test/dashboard",
-  urlVerification: "served",
+  urlVerification: "responded",
   protected: false,
   commitSha: "a".repeat(40),
   sourceDigest: "sha256:verified",
@@ -427,7 +427,14 @@ describe("Up Command", () => {
           true,
         );
         assertEquals(lines.includes("  Deploy:  veryfront deploy"), true);
-        assertEquals(lines.includes("  ✓ verified-slug is ready"), true);
+        assertEquals(lines.includes("  ✓ Pushed verified-slug to Preview"), true);
+        // A response from the Preview URL does not prove the new source is live
+        // (veryfront/veryfront-issue-inbox#1457), so the output must not claim it.
+        assertEquals(
+          lines.includes("  Preview URL responds; new source may take a moment to appear."),
+          true,
+        );
+        assertEquals(lines.some((line) => line.includes("is ready")), false);
         // The printed preview URL is the deployment that was verified, never a
         // hostname rebuilt from the local slug.
         assertEquals(lines.some((line) => line.includes("preview.veryfront.com")), false);
@@ -461,7 +468,7 @@ describe("Up Command", () => {
             dryRun: false,
             studioUrl: "https://veryfront.com/projects/verified-slug?branch=main",
             previewUrl: VERIFIED_RESULT.url,
-            urlVerification: "served",
+            urlVerification: "responded",
             warnings: [],
             nextCommand: "veryfront deploy",
           },
@@ -794,7 +801,7 @@ describe("Up Command", () => {
         assertEquals(requests.length, 1);
         assertEquals(requests[0]?.source, { kind: "ensure-pushed", refreshStaleSource: true });
         assertEquals(await exists(join(projectDir, "veryfront.json")), false);
-        assertEquals(output.map(stripAnsi).includes("  ✓ pulled-up is ready"), true);
+        assertEquals(output.map(stripAnsi).includes("  ✓ Pushed pulled-up to Preview"), true);
       } finally {
         restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
         restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);

@@ -382,7 +382,7 @@ describe("up end to end", () => {
     assertEquals(run.controlPlane.createdDeployments, []);
 
     const lines = run.output.map(stripAnsi);
-    assertEquals(lines.includes(`  ✓ ${PROJECT_SLUG} is ready`), true);
+    assertEquals(lines.includes(`  ✓ Pushed ${PROJECT_SLUG} to Preview`), true);
     // The URL printed is the environment domain the control plane returned and
     // the deploy probed, not a hostname rebuilt from the local slug.
     assertEquals(lines.includes(`  Preview: ${PREVIEW_DOMAIN}`), true);
@@ -402,7 +402,7 @@ describe("up end to end", () => {
         dryRun: false,
         studioUrl: `https://veryfront.com/projects/${PROJECT_SLUG}?branch=main`,
         previewUrl: PREVIEW_DOMAIN,
-        urlVerification: "served",
+        urlVerification: "responded",
         warnings: [],
         nextCommand: "veryfront deploy",
       },
@@ -448,6 +448,6 @@ describe("up end to end", () => {
     assertEquals(run.uploadedPaths, []);
     assertEquals(run.controlPlane.createdReleases, []);
     assertEquals(run.controlPlane.createdDeployments, []);
-    assertEquals(run.output.some((line) => line.includes("is ready")), false);
+    assertEquals(run.output.some((line) => line.includes("Pushed")), false);
   });
 });

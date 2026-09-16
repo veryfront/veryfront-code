@@ -2080,7 +2080,11 @@ export function createDeployProject(options: {
             environment: environment.name,
             environmentId: environment.id,
             url: environmentUrl,
-            urlVerification: readiness.kind,
+            // A 2xx proves the Preview answers, not that it serves this push:
+            // nothing yet ties the response to source.sourceDigest.
+            // TODO(veryfront/veryfront-issue-inbox#1457): verify the served
+            // revision once the platform exposes it.
+            urlVerification: readiness.kind === "served" ? "responded" : readiness.kind,
             protected: environment.protected,
             commitSha: source.commitSha,
             sourceDigest: source.sourceDigest,
