@@ -66,6 +66,7 @@ import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-
 import type { EvalArgs } from "./handler.ts";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
+  OutboundRequestBlockedError,
   trustOperatorConfiguredVeryfrontApiOrigins,
 } from "#cli/outbound-fetch";
 
@@ -374,11 +375,19 @@ export async function finalizeGatewayBillingGroup(
         },
       );
     } catch (error) {
-      cliLogger.warn(
-        `Gateway billing finalization skipped for ${billingGroupId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      const message = `Gateway billing finalization skipped for ${billingGroupId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      // The eval already stopped with a classified egress block, and the same
+      // host policy refuses the finalization request too.
+      if (
+        options.stoppedByDenial === "egress-blocked" &&
+        error instanceof OutboundRequestBlockedError
+      ) {
+        cliLogger.debug(message);
+      } else {
+        cliLogger.warn(message);
+      }
       return undefined;
     }
 

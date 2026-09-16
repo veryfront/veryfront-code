@@ -63,6 +63,7 @@ import {
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
 import { createEvalModelAccessDeniedError } from "../../../src/eval/model-access.ts";
+import { __installOutboundFetchTransportForTests } from "#cli/outbound-fetch";
 import { buildProviderError } from "../../../src/provider/runtime-loader/provider-http.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -2273,6 +2274,63 @@ describe("eval CLI command helpers", () => {
       ),
       true,
     );
+  });
+
+  it("does not warn when finalization hits the egress block that stopped the eval", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.staging.example");
+    let transportCalls = 0;
+    const recordCall = () => {
+      transportCalls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    const restoreTransport = __installOutboundFetchTransportForTests({
+      fetch: recordCall,
+      pinnedFetch: recordCall,
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    });
+    const blocked = createEvalModelAccessDeniedError(
+      "eval:blocked",
+      { kind: "egress-blocked", code: "EGRESS_BLOCKED", message: "Blocked" },
+      undefined,
+    );
+
+    try {
+      const blockedOutput = await captureConsoleOutput(() =>
+        assertRejects(() =>
+          runEvalWithGatewayBillingGroup("evalrun_blocked", async () => {
+            markCurrentVeryfrontCloudBillingGroupUsed();
+            throw blocked;
+          })
+        )
+      );
+      const otherFailureOutput = await captureConsoleOutput(() =>
+        assertRejects(() =>
+          runEvalWithGatewayBillingGroup("evalrun_other_blocked", async () => {
+            markCurrentVeryfrontCloudBillingGroupUsed();
+            throw new Error("custom metric failed");
+          })
+        )
+      );
+
+      assertEquals(
+        [...blockedOutput.stdout, ...blockedOutput.stderr].some((line) =>
+          line.includes("Gateway billing finalization skipped")
+        ),
+        false,
+      );
+      assertEquals(
+        [...otherFailureOutput.stdout, ...otherFailureOutput.stderr].some((line) =>
+          line.includes(
+            "Gateway billing finalization skipped for evalrun_other_blocked: Outbound network egress blocked for host: api.staging.example",
+          )
+        ),
+        true,
+      );
+      assertEquals(transportCalls, 0);
+    } finally {
+      restoreTransport();
+    }
   });
 
   it("does not warn about finalization refusals that repeat a missing project", async () => {

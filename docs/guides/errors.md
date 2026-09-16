@@ -861,6 +861,13 @@ AI provider spend limit reached for eval run.
 - **HTTP status:** 402
 - **What to do:** Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit
 
+### eval-model-egress-blocked
+
+Veryfront API blocked by network egress policy.
+
+- **HTTP status:** 403
+- **What to do:** Veryfront blocks requests to hosts that resolve to private network addresses. If the Veryfront API runs on a private network you trust, such as a staging, VPN, or self-hosted deployment, add its exact origin (for example https://api.example.com) to VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS in the environment that runs veryfront eval, then run the eval again
+
 ### eval-model-unauthorized
 
 Veryfront Cloud rejected the eval credential.

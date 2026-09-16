@@ -16,6 +16,7 @@ import {
   guardedWorkerConnectTls,
   isInternalEgressIp,
   isInternalEgressOverrideEnabled,
+  isPrivateAddressEgressBlock,
   startWorkerEgressBroker,
   startWorkerEgressSocksProxy,
   WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV,
@@ -123,6 +124,38 @@ describe("worker-egress-guard", () => {
     assertEquals(isInternalEgressIp("::ffff:6440:1"), true);
     assertEquals(isInternalEgressIp("::ffff:c612:1"), true);
     assertEquals(isInternalEgressIp("::ffff:5db8:d822"), false);
+  });
+
+  it("records private-address blocks structurally and nothing else", async () => {
+    const capture = async (operation: () => Promise<unknown>) => {
+      try {
+        await operation();
+      } catch (error) {
+        return error;
+      }
+      throw new Error("expected egress to be blocked");
+    };
+
+    const privateAnswer = await capture(() =>
+      assertWorkerHostEgressAllowed("api.example", {
+        resolveHost: () => Promise.resolve(["10.255.128.3"]),
+      })
+    );
+    const internalLiteral = await capture(() => assertWorkerEgressAllowed("http://127.0.0.1/"));
+    const unresolved = await capture(() =>
+      assertWorkerHostEgressAllowed("api.example", { resolveHost: () => Promise.resolve([]) })
+    );
+
+    assertEquals(isPrivateAddressEgressBlock(privateAnswer), true);
+    assertEquals(isPrivateAddressEgressBlock(internalLiteral), true);
+    assertEquals(isPrivateAddressEgressBlock(unresolved), false);
+    // A proxy or broker failure reuses the wording but carries no provenance.
+    assertEquals(
+      isPrivateAddressEgressBlock(
+        new WorkerEgressBlockedError("Worker network egress blocked for host: api.example"),
+      ),
+      false,
+    );
   });
 
   it("blocks a URL containing a hexadecimal IPv4-mapped loopback address", async () => {

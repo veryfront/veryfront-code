@@ -161,6 +161,20 @@ export const EVAL_MODEL_PROJECT_ACCESS_DENIED = defineError({
     "Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again",
 });
 
+/**
+ * An eval stopped because the host egress policy blocked its model gateway
+ * request: the Veryfront API host resolves to a private network address. The
+ * policy blocks every later record the same way.
+ */
+export const EVAL_MODEL_EGRESS_BLOCKED = defineError({
+  slug: "eval-model-egress-blocked",
+  category: "AGENT",
+  status: 403,
+  title: "Veryfront API blocked by network egress policy",
+  suggestion:
+    "Veryfront blocks requests to hosts that resolve to private network addresses. If the Veryfront API runs on a private network you trust, such as a staging, VPN, or self-hosted deployment, add its exact origin (for example https://api.example.com) to VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS in the environment that runs veryfront eval, then run the eval again",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -176,6 +190,7 @@ export const AGENT_REGISTRY = {
   "eval-model-access-denied": EVAL_MODEL_ACCESS_DENIED,
   "eval-project-required": EVAL_PROJECT_REQUIRED,
   "eval-model-spend-limit-exceeded": EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
+  "eval-model-egress-blocked": EVAL_MODEL_EGRESS_BLOCKED,
   "eval-model-unauthorized": EVAL_MODEL_UNAUTHORIZED,
   "eval-model-project-access-denied": EVAL_MODEL_PROJECT_ACCESS_DENIED,
 } as const;

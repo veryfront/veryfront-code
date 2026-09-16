@@ -79,6 +79,14 @@ when it returns HTTP 403 for the linked project. A 401 or 403 from a
 third-party provider, or from an agent service used through
 `createAgentServiceEvalAdapter`, still fails only the affected record.
 
+It rejects with `eval-model-egress-blocked` when the host egress policy blocks a
+model gateway request to the configured Veryfront API because its host resolves
+to a private network address. The error points to the
+`VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS` setting that allows a trusted
+private API, without naming the private host. A block of any other request, such as a local provider or a tool or
+custom metric endpoint, still fails only the affected record. A refusal thrown by an
+eval `check` now stops the eval too.
+
 ### Deprecated: the `event` key on conversation-scoped run event rows
 
 The Veryfront API now serves every run event row keyed `payload`, on the
