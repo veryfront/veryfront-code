@@ -80,8 +80,9 @@ Ignored files and unsupported extensions are not reconciled with Veryfront. A
 `.git` paths: those stay ignored so local secrets and CLI state are never
 uploaded. Push prints a warning naming each path whose negation was dropped.
 Pull does the same for protected `.env` paths, and rejects remote `.git` or
-`.veryfront` metadata before changing local files. Names that only begin with `.env`, such as `.envoy/` or `.environments/`,
-are not protected and stay negatable. Run `veryfront push --prune` once after
+`.veryfront` metadata before changing local files. Names that only begin with
+`.env`, such as `.envoy/` or `.environments/`, are not protected and stay
+negatable. Run `veryfront push --prune` once after
 upgrading to remove any protected path that an older CLI uploaded. Rotate any
 credential that was previously exposed.
 
@@ -93,6 +94,19 @@ prints the paths it removes, and `--json` runs carry the same list as
 `--dry-run`). Use `veryfront push --prune --dry-run` to review the list before
 a real prune, and move any file you must keep to a path outside the protected
 set.
+
+### Git ignore limitations
+
+Git ignore rules are read when a command scans the project. A rule that
+changes while a push or pull is running applies from the next run; the
+command does not fail.
+
+Checked-out submodules, and Git repositories created inside the project
+directory, follow their own ignore rules. A nested repository inside a
+directory the enclosing repository ignores stays ignored as a whole. Other
+nested repository layouts are not guaranteed to follow the nested repository's
+rules; list anything that must or must not be uploaded from such a repository
+in `.vfignore`, which always applies.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked

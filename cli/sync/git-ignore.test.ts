@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CommandResult } from "#cli/process-command";
-import { type GitIgnoreDependencies, loadGitIgnoreContext, unquoteGitPath } from "./git-ignore.ts";
+import {
+  type GitIgnoreDependencies,
+  loadGitIgnoreContext,
+  trimTrailingSlashes,
+  unquoteGitPath,
+} from "./git-ignore.ts";
 import { createDefaultIgnoreChecker, createIgnoreChecker } from "./ignore.ts";
 
 const NOTHING_IGNORED: CommandResult = { success: false, code: 1, stdout: "" };
@@ -517,6 +522,15 @@ describe("cli/sync/git-ignore", () => {
         Error,
         "Could not read Git ignore rules for this project.",
       );
+    });
+  });
+
+  describe("trimTrailingSlashes", () => {
+    it("removes only trailing slashes", () => {
+      assertEquals(trimTrailingSlashes("dist///"), "dist");
+      assertEquals(trimTrailingSlashes("a/b"), "a/b");
+      assertEquals(trimTrailingSlashes("/"), "");
+      assertEquals(trimTrailingSlashes(""), "");
     });
   });
 

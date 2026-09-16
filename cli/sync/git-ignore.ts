@@ -180,7 +180,7 @@ const C_STYLE_ESCAPES: Readonly<Record<string, number>> = {
 /** Undo Git's C-style quoting of a path it prints outside `-z` mode. */
 export function unquoteGitPath(line: string): string {
   if (line.length < 2 || !line.startsWith('"') || !line.endsWith('"')) return line;
-  const characters = [...line.slice(1, -1)];
+  const characters = Array.from(line.slice(1, -1));
   const encoder = new TextEncoder();
   const bytes: number[] = [];
   for (let index = 0; index < characters.length; index++) {
@@ -232,34 +232,44 @@ interface NestedRepositoryContext {
   context: GitIgnoreContext;
 }
 
-const GITLINK_ENTRY = /^160000 [0-9a-f]+ \d+\t(.+)$/;
+/** Drop trailing `/` characters without a backtracking regular expression. */
+export function trimTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end--;
+  return path.slice(0, end);
+}
 
-/**
- * Load the Git ignore context of every repository nested below `projectDir`:
- * checked-out submodules, and Git repositories that are not registered as
- * submodules. The enclosing repository lists an untracked nested repository as
- * one directory entry, but lists its files one by one when the directory also
- * holds files the enclosing repository tracks, so every directory above an
- * untracked path is probed for a `.git` boundary.
- */
-async function loadNestedRepositories(
+/** Split one `git ls-files --stage -z` record into its mode and path. */
+function parseIndexEntry(entry: string): { mode: string; path: string } | null {
+  const tab = entry.indexOf("\t");
+  if (tab <= 0) return null;
+  const mode = entry.slice(0, entry.indexOf(" "));
+  const path = entry.slice(tab + 1);
+  return mode && path ? { mode, path } : null;
+}
+
+const GITLINK_MODE = "160000";
+
+/** Add every directory above `path` (and `path` itself when asked) to `into`. */
+function addAncestorDirectories(into: Set<string>, path: string, includeSelf: boolean): void {
+  const segments = trimTrailingSlashes(path).split("/");
+  // Git lists paths below the query directory; anything else is not a nested
+  // repository location.
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return;
+  }
+  const depth = includeSelf ? segments.length : segments.length - 1;
+  for (let length = 1; length <= depth; length++) {
+    into.add(segments.slice(0, length).join("/"));
+  }
+}
+
+/** Directories that may hold a nested repository, from Git's own listings. */
+async function nestedRepositoryCandidates(
   baseDir: string,
-  projectDir: string,
   dependencies: GitIgnoreDependencies,
-): Promise<NestedRepositoryContext[]> {
+): Promise<Set<string>> {
   const candidates = new Set<string>();
-  const addAncestors = (path: string, includeSelf: boolean) => {
-    const segments = path.replace(/\/+$/, "").split("/");
-    // Git lists paths below the query directory; anything else is not a
-    // nested repository location.
-    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-      return;
-    }
-    const depth = includeSelf ? segments.length : segments.length - 1;
-    for (let length = 1; length <= depth; length++) {
-      candidates.add(segments.slice(0, length).join("/"));
-    }
-  };
   const index = await runGitIgnoreQuery(
     baseDir,
     ["ls-files", "--stage", "-z"],
@@ -267,17 +277,12 @@ async function loadNestedRepositories(
     [],
     GIT_LISTING_OUTPUT_LIMIT_BYTES,
   );
-  if (index.kind !== "output") return [];
-  for (const entry of index.stdout.split("\0")) {
-    const gitlink = GITLINK_ENTRY.exec(entry)?.[1];
-    if (gitlink) {
-      addAncestors(gitlink, true);
-      continue;
-    }
-    // A repository can be initialised over files the enclosing repository
+  if (index.kind !== "output") return candidates;
+  for (const record of index.stdout.split("\0")) {
+    const entry = parseIndexEntry(record);
+    // A repository can also be initialised over files the enclosing repository
     // already tracks, so directories of tracked files are candidates too.
-    const tracked = /^\d+ [0-9a-f]+ \d+\t(.+)$/.exec(entry)?.[1];
-    if (tracked) addAncestors(tracked, false);
+    if (entry) addAncestorDirectories(candidates, entry.path, entry.mode === GITLINK_MODE);
   }
   const untracked = await runGitIgnoreQuery(
     baseDir,
@@ -286,13 +291,32 @@ async function loadNestedRepositories(
     [],
     GIT_LISTING_OUTPUT_LIMIT_BYTES,
   );
-  if (untracked.kind !== "output") return [];
+  if (untracked.kind !== "output") return candidates;
   for (const entry of untracked.stdout.split("\0")) {
-    if (entry) addAncestors(entry, entry.endsWith("/"));
+    if (entry) addAncestorDirectories(candidates, entry, entry.endsWith("/"));
   }
+  return candidates;
+}
 
+/**
+ * Load the Git ignore context of every repository nested below `projectDir`:
+ * checked-out submodules, and Git repositories that are not registered as
+ * submodules. The enclosing repository lists an untracked nested repository as
+ * one directory entry, but lists its files one by one when the directory also
+ * holds files the enclosing repository tracks, so every directory above an
+ * indexed or untracked path is probed for a `.git` boundary. A nested
+ * repository inside a directory the enclosing repository ignores is not
+ * probed; that directory stays ignored.
+ */
+async function loadNestedRepositories(
+  baseDir: string,
+  projectDir: string,
+  dependencies: GitIgnoreDependencies,
+): Promise<NestedRepositoryContext[]> {
+  const candidates = Array.from(await nestedRepositoryCandidates(baseDir, dependencies))
+    .sort((left, right) => left.length - right.length);
   const found: string[] = [];
-  for (const path of [...candidates].sort((left, right) => left.length - right.length)) {
+  for (const path of candidates) {
     // An inner repository is resolved by the outer nested repository's context.
     if (found.some((outer) => path.startsWith(`${outer}/`))) continue;
     if (await dependencies.pathExists(join(projectDir, path, ".git"))) found.push(path);
@@ -334,6 +358,209 @@ function toPosix(path: string): string {
   return path.replaceAll("\\", "/");
 }
 
+/** Group `check-ignore` arguments so no command line exceeds the budget. */
+function batchArguments(arguments_: readonly string[]): string[][] {
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let batchLength = 0;
+  for (const argument of arguments_) {
+    if (batch.length > 0 && batchLength + argument.length > CHECK_IGNORE_ARGUMENT_BUDGET) {
+      batches.push(batch);
+      batch = [];
+      batchLength = 0;
+    }
+    batch.push(argument);
+    batchLength += argument.length + 1;
+  }
+  batches.push(batch);
+  return batches;
+}
+
+/** Paths `check-ignore` printed, with the query's argument prefix removed. */
+function parseCheckIgnoreOutput(stdout: string, outputPrefix: string): string[] {
+  const ignored: string[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line) continue;
+    const path = unquoteGitPath(line);
+    if (path.startsWith(outputPrefix)) ignored.push(path.slice(outputPrefix.length));
+  }
+  return ignored;
+}
+
+/** Where and how one project directory's `check-ignore` queries run. */
+interface CheckIgnoreScope {
+  baseDir: string;
+  /** Argument prefix naming the project directory from `baseDir`, e.g. `./app/`. */
+  argumentPrefix: string;
+  dependencies: GitIgnoreDependencies;
+  repositoryPrefix: () => Promise<string>;
+}
+
+/**
+ * Run `check-ignore` for one batch. Git refuses the whole query when a path
+ * lies in a submodule that is not checked out (checked-out ones are routed to
+ * their own context); no local files exist there, so that submodule's paths
+ * are dropped and the rest asked again.
+ */
+async function checkIgnoreBatch(
+  scope: CheckIgnoreScope,
+  batch: readonly string[],
+): Promise<string[] | "no-repository"> {
+  let arguments_ = [...batch];
+  while (arguments_.length > 0) {
+    const run = await runGitIgnoreQuery(
+      scope.baseDir,
+      ["-c", "core.quotePath=false", "check-ignore", ...arguments_],
+      scope.dependencies,
+      [1],
+    );
+    if (run.kind === "no-repository") return "no-repository";
+    if (run.kind === "output") {
+      return run.code === 1 ? [] : parseCheckIgnoreOutput(run.stdout, scope.argumentPrefix);
+    }
+    const { pathspec } = run;
+    const submoduleRoot = submoduleArgumentRoot(
+      pathspec,
+      run.submodule,
+      await scope.repositoryPrefix(),
+    );
+    const remaining = arguments_.filter((argument) =>
+      argument !== pathspec && !(submoduleRoot && argument.startsWith(`${submoduleRoot}/`))
+    );
+    if (remaining.length === arguments_.length) throw gitIgnoreUnavailableError();
+    arguments_ = remaining;
+  }
+  return [];
+}
+
+/** Ask the project directory's own repository about candidate paths. */
+async function checkOwnPaths(
+  scope: CheckIgnoreScope,
+  candidates: readonly string[],
+): Promise<string[]> {
+  if (candidates.length === 0) return [];
+  // `./` keeps Git from reading a leading `:` as pathspec magic or a leading
+  // `-` as an option.
+  const arguments_ = candidates.map((path) => `${scope.argumentPrefix}${path}`);
+  const ignored: string[] = [];
+  for (const batch of batchArguments(arguments_)) {
+    const result = await checkIgnoreBatch(scope, batch);
+    if (result === "no-repository") return [];
+    ignored.push(...result);
+  }
+  return ignored;
+}
+
+/**
+ * Report whether a project-relative path lies beneath a local symbolic link.
+ * Git refuses such paths, and sync never reads through the link, so they are
+ * left to the defaults and `.vfignore` rather than failing the whole query.
+ */
+function createSymlinkProbe(
+  projectDir: string,
+  dependencies: GitIgnoreDependencies,
+): (path: string) => Promise<boolean> {
+  const symlinkedDirectories = new Map<string, Promise<boolean>>();
+  return (path) => {
+    const segments = path.split("/");
+    const checks: Promise<boolean>[] = [];
+    for (let length = 1; length < segments.length; length++) {
+      const directory = segments.slice(0, length).join("/");
+      let check = symlinkedDirectories.get(directory);
+      if (!check) {
+        check = dependencies.isSymlink(join(projectDir, directory));
+        symlinkedDirectories.set(directory, check);
+      }
+      checks.push(check);
+    }
+    return Promise.all(checks).then((results) => results.some(Boolean));
+  };
+}
+
+/** Route candidates to nested repositories and the project's own repository. */
+function createPathChecker(
+  scope: CheckIgnoreScope,
+  nestedRepositories: readonly NestedRepositoryContext[],
+  isBeneathSymlink: (path: string) => Promise<boolean>,
+): (paths: Iterable<string>) => Promise<string[]> {
+  return async (paths) => {
+    const ownCandidates: string[] = [];
+    const nestedCandidates = new Map<NestedRepositoryContext, string[]>();
+    for (const path of new Set(paths)) {
+      if (!path || await isBeneathSymlink(path)) continue;
+      const repository = nestedRepositories.find((entry) => path.startsWith(`${entry.path}/`));
+      if (repository) {
+        const grouped = nestedCandidates.get(repository) ?? [];
+        grouped.push(path.slice(repository.path.length + 1));
+        nestedCandidates.set(repository, grouped);
+      } else {
+        ownCandidates.push(path);
+      }
+    }
+    const ignored: string[] = [];
+    for (const [repository, grouped] of nestedCandidates) {
+      for (const path of await repository.context.checkPaths(grouped)) {
+        ignored.push(`${repository.path}/${path}`);
+      }
+    }
+    ignored.push(...await checkOwnPaths(scope, ownCandidates));
+    return ignored;
+  };
+}
+
+/** Local paths Git ignores below `baseDir`, from `ls-files --ignored`. */
+async function listIgnoredPaths(
+  baseDir: string,
+  dependencies: GitIgnoreDependencies,
+): Promise<string[] | "no-repository"> {
+  const listing = await runGitIgnoreQuery(
+    baseDir,
+    // `ls-files` prints paths relative to its working directory and limits
+    // the listing to it, which matches the relative paths sync scans.
+    ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+    dependencies,
+    [],
+    GIT_LISTING_OUTPUT_LIMIT_BYTES,
+  );
+  if (listing.kind === "no-repository") return "no-repository";
+  if (listing.kind !== "output") throw gitIgnoreUnavailableError();
+  return listing.stdout
+    .split("\0")
+    .map(trimTrailingSlashes)
+    .filter((path) => path.length > 0 && path !== ".");
+}
+
+/** Replace enclosing matches beneath each nested repository with its own. */
+function mergeNestedIgnoredPaths(
+  ignoredPaths: readonly string[],
+  nestedRepositories: readonly NestedRepositoryContext[],
+): string[] {
+  // Inside a nested repository its own rules decide: drop what the enclosing
+  // listing reported beneath it (for example a file the enclosing repository
+  // ignores but the nested one tracks), then add the nested repository's own.
+  const merged = ignoredPaths.filter((path) =>
+    !nestedRepositories.some((repository) => path.startsWith(`${repository.path}/`))
+  );
+  for (const repository of nestedRepositories) {
+    for (const path of repository.context.ignoredPaths) merged.push(`${repository.path}/${path}`);
+  }
+  return merged;
+}
+
+/** Nearest existing directory at or above `path`, or `null` at the root. */
+async function nearestExistingDirectory(
+  path: string,
+  dependencies: GitIgnoreDependencies,
+): Promise<string | null> {
+  let directory = path;
+  while (!(await dependencies.pathExists(directory))) {
+    const parent = dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+  return directory;
+}
+
 /**
  * Resolve Git's ignore rules for `projectDir`: `.gitignore` at any level,
  * `.git/info/exclude`, and `core.excludesFile`.
@@ -350,21 +577,17 @@ export async function loadGitIgnoreContext(
   dependencies: GitIgnoreDependencies = defaultDependencies,
 ): Promise<GitIgnoreContext> {
   const resolvedProjectDir = resolve(projectDir);
-  let baseDir = resolvedProjectDir;
-  while (!(await dependencies.pathExists(baseDir))) {
-    const parent = dirname(baseDir);
-    if (parent === baseDir) return DISABLED_CONTEXT;
-    baseDir = parent;
-  }
+  const baseDir = await nearestExistingDirectory(resolvedProjectDir, dependencies);
+  if (baseDir === null) return DISABLED_CONTEXT;
   const relativeProjectDir = toPosix(relative(baseDir, resolvedProjectDir));
-  const prefix = relativeProjectDir === "." ? "" : relativeProjectDir;
-  const baseArgument = (path: string) => `./${prefix ? `${prefix}/` : ""}${path}`;
+  const projectExists = relativeProjectDir === ".";
+  const argumentPrefix = projectExists ? "./" : `./${relativeProjectDir}/`;
 
   // `./` names the directory itself; the trailing slash lets directory-only
   // rules such as `generated/` match a directory that does not exist yet.
   const rootCheck = await runGitIgnoreQuery(
     baseDir,
-    ["check-ignore", "--quiet", baseArgument("")],
+    ["check-ignore", "--quiet", argumentPrefix],
     dependencies,
     [1],
   );
@@ -376,159 +599,34 @@ export async function loadGitIgnoreContext(
   }
 
   let ignoredPaths: string[] = [];
-  if (!prefix) {
-    const listing = await runGitIgnoreQuery(
-      baseDir,
-      // `ls-files` prints paths relative to its working directory and limits
-      // the listing to it, which matches the relative paths sync scans.
-      ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-      dependencies,
-      [],
-      GIT_LISTING_OUTPUT_LIMIT_BYTES,
-    );
-    if (listing.kind === "no-repository") return DISABLED_CONTEXT;
-    if (listing.kind !== "output") throw gitIgnoreUnavailableError();
-    ignoredPaths = listing.stdout
-      .split("\0")
-      .map((path) => path.replace(/\/+$/, ""))
-      .filter((path) => path.length > 0 && path !== ".");
-  }
-
-  // The enclosing repository's listing and `check-ignore` stop at a submodule
-  // or nested repository, but sync still reads the files beneath it. Resolve
-  // each one against its own Git context.
-  const nestedRepositories = prefix ? [] : await loadNestedRepositories(
-    baseDir,
-    resolvedProjectDir,
-    dependencies,
-  );
-  // Inside a nested repository its own rules decide: drop what the enclosing
-  // listing reported beneath it (for example a file the enclosing repository
-  // ignores but the nested one tracks), then add the nested repository's own.
-  ignoredPaths = ignoredPaths.filter((path) =>
-    !nestedRepositories.some((repository) => path.startsWith(`${repository.path}/`))
-  );
-  for (const repository of nestedRepositories) {
-    ignoredPaths.push(
-      ...repository.context.ignoredPaths.map((path) => `${repository.path}/${path}`),
-    );
-  }
-
-  // Git refuses a path beyond a local symbolic link. Sync never reads through
-  // such a link, so a remote path beneath one is left to the defaults and
-  // `.vfignore` rather than failing the whole query.
-  const symlinkedDirectories = new Map<string, Promise<boolean>>();
-  function isBeneathSymlink(path: string): Promise<boolean> {
-    if (prefix) return Promise.resolve(false);
-    const segments = path.split("/");
-    const checks: Promise<boolean>[] = [];
-    for (let length = 1; length < segments.length; length++) {
-      const directory = segments.slice(0, length).join("/");
-      let check = symlinkedDirectories.get(directory);
-      if (!check) {
-        check = dependencies.isSymlink(join(resolvedProjectDir, directory));
-        symlinkedDirectories.set(directory, check);
-      }
-      checks.push(check);
-    }
-    return Promise.all(checks).then((results) => results.some(Boolean));
-  }
-
-  async function checkPaths(paths: Iterable<string>): Promise<string[]> {
-    const ownCandidates: string[] = [];
-    const ignored: string[] = [];
-    const nestedCandidates = new Map<NestedRepositoryContext, string[]>();
-    for (const path of new Set(paths)) {
-      if (!path || await isBeneathSymlink(path)) continue;
-      const repository = nestedRepositories.find((entry) => path.startsWith(`${entry.path}/`));
-      if (!repository) {
-        ownCandidates.push(path);
-        continue;
-      }
-      const grouped = nestedCandidates.get(repository) ?? [];
-      grouped.push(path.slice(repository.path.length + 1));
-      nestedCandidates.set(repository, grouped);
-    }
-    for (const [repository, grouped] of nestedCandidates) {
-      for (const path of await repository.context.checkPaths(grouped)) {
-        ignored.push(`${repository.path}/${path}`);
-      }
-    }
-    ignored.push(...await checkOwnPaths(ownCandidates));
-    return ignored;
+  let nestedRepositories: NestedRepositoryContext[] = [];
+  if (projectExists) {
+    const listed = await listIgnoredPaths(baseDir, dependencies);
+    if (listed === "no-repository") return DISABLED_CONTEXT;
+    // The enclosing repository's listing and `check-ignore` stop at a
+    // submodule or nested repository, but sync still reads the files beneath
+    // it. Resolve each one against its own Git context.
+    nestedRepositories = await loadNestedRepositories(baseDir, resolvedProjectDir, dependencies);
+    ignoredPaths = mergeNestedIgnoredPaths(listed, nestedRepositories);
   }
 
   let repositoryPrefix: Promise<string> | undefined;
-  function loadRepositoryPrefix(): Promise<string> {
-    repositoryPrefix ??= runGitIgnoreQuery(baseDir, ["rev-parse", "--show-prefix"], dependencies)
-      .then((run) => run.kind === "output" ? run.stdout.trim() : "");
-    return repositoryPrefix;
-  }
+  const scope: CheckIgnoreScope = {
+    baseDir,
+    argumentPrefix,
+    dependencies,
+    repositoryPrefix: () => {
+      repositoryPrefix ??= runGitIgnoreQuery(baseDir, ["rev-parse", "--show-prefix"], dependencies)
+        .then((run) => run.kind === "output" ? run.stdout.trim() : "");
+      return repositoryPrefix;
+    },
+  };
+  const isBeneathSymlink = projectExists
+    ? createSymlinkProbe(resolvedProjectDir, dependencies)
+    : () => Promise.resolve(false);
 
-  async function checkOwnPaths(candidates: readonly string[]): Promise<string[]> {
-    if (candidates.length === 0) return [];
-
-    const batches: string[][] = [];
-    let batch: string[] = [];
-    let batchLength = 0;
-    for (const path of candidates) {
-      // `./` keeps Git from reading a leading `:` as pathspec magic or a
-      // leading `-` as an option.
-      const argument = baseArgument(path);
-      if (batch.length > 0 && batchLength + argument.length > CHECK_IGNORE_ARGUMENT_BUDGET) {
-        batches.push(batch);
-        batch = [];
-        batchLength = 0;
-      }
-      batch.push(argument);
-      batchLength += argument.length + 1;
-    }
-    batches.push(batch);
-
-    const outputPrefix = baseArgument("");
-    const ignored: string[] = [];
-    for (let arguments_ of batches) {
-      let run = await runGitIgnoreQuery(
-        baseDir,
-        ["-c", "core.quotePath=false", "check-ignore", ...arguments_],
-        dependencies,
-        [1],
-      );
-      // Git refuses the whole query when a path lies in a submodule that is
-      // not checked out (checked-out ones were routed above). No local files
-      // exist there, so drop that submodule's paths and ask again.
-      while (run.kind === "submodule-path") {
-        const { pathspec } = run;
-        const submoduleRoot = submoduleArgumentRoot(
-          pathspec,
-          run.submodule,
-          await loadRepositoryPrefix(),
-        );
-        const remaining = arguments_.filter((argument) =>
-          argument !== pathspec &&
-          !(submoduleRoot && argument.startsWith(`${submoduleRoot}/`))
-        );
-        if (remaining.length === arguments_.length) throw gitIgnoreUnavailableError();
-        arguments_ = remaining;
-        if (arguments_.length === 0) break;
-        run = await runGitIgnoreQuery(
-          baseDir,
-          ["-c", "core.quotePath=false", "check-ignore", ...arguments_],
-          dependencies,
-          [1],
-        );
-      }
-      if (run.kind === "submodule-path") continue;
-      if (run.kind === "no-repository") return [];
-      if (run.code === 1) continue;
-      for (const line of run.stdout.split("\n")) {
-        if (!line) continue;
-        const path = unquoteGitPath(line);
-        if (path.startsWith(outputPrefix)) ignored.push(path.slice(outputPrefix.length));
-      }
-    }
-    return ignored;
-  }
-
-  return { ignoredPaths, checkPaths };
+  return {
+    ignoredPaths,
+    checkPaths: createPathChecker(scope, nestedRepositories, isBeneathSymlink),
+  };
 }

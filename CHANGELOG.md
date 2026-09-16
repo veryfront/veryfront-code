@@ -28,6 +28,14 @@ rule also reaches a file inside a directory Git ignores as a whole. The first
 file set changes. Remote copies of newly ignored paths are preserved, not
 pruned; delete them in Studio if they should go.
 
+Git ignore rules are read when a command scans the project, so a rule changed
+during a push or pull applies from the next run. Nested Git repositories other
+than checked-out submodules and repositories created inside the project are a
+known limitation: a nested repository inside a directory the enclosing
+repository ignores stays ignored, and other layouts may not follow the nested
+repository's rules. Use `.vfignore` for exact control there. See
+[Git ignore limitations](./docs/guides/deploy-from-ci.md#git-ignore-limitations).
+
 If the enclosing repository ignores the project directory itself, Git ignore
 rules are not applied for that project and the CLI prints a warning; with
 `--json` it emits a `warning` line with code `git-ignore-rules-not-applied`. The

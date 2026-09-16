@@ -8,7 +8,7 @@ import { cliLogger, logWarning } from "#cli/utils";
 import { isJsonMode } from "../shared/json-output.ts";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
-import { type GitIgnoreContext, loadGitIgnoreContext } from "./git-ignore.ts";
+import { type GitIgnoreContext, loadGitIgnoreContext, trimTrailingSlashes } from "./git-ignore.ts";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
@@ -325,7 +325,7 @@ const PROTECTED_RULES = toRules(PROTECTED_IGNORE_PATTERNS, true);
 function toGitIgnoredPathSet(paths: Iterable<string>): Set<string> {
   const set = new Set<string>();
   for (const path of paths) {
-    const normalized = normalizeIgnorePath(path).replace(/\/+$/, "");
+    const normalized = trimTrailingSlashes(normalizeIgnorePath(path));
     if (normalized) set.add(normalized);
   }
   return set;
@@ -615,7 +615,7 @@ export function createIgnoreChecker(
     }
     if (pending.length === 0) return;
     for (const ignoredPath of await checkGitIgnoredPaths(pending)) {
-      const normalized = normalizeIgnorePath(ignoredPath).replace(/\/+$/, "");
+      const normalized = trimTrailingSlashes(normalizeIgnorePath(ignoredPath));
       if (normalized) gitIgnoredPaths.add(normalized);
     }
   }
@@ -624,7 +624,7 @@ export function createIgnoreChecker(
     const reload = options.loadGitIgnoreContext;
     if (!reload) return;
     const context = await reload();
-    const previouslyChecked = [...checkedGitCandidates];
+    const previouslyChecked = Array.from(checkedGitCandidates);
     gitIgnoredPaths = toGitIgnoredPathSet(context.ignoredPaths);
     checkGitIgnoredPaths = (paths) => context.checkPaths(paths);
     checkedGitCandidates = new Set();
