@@ -534,23 +534,24 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
  * Stop the eval when the agent service reports an account-wide model access
  * denial, instead of resolving a failed record for every remaining example.
  */
-/** True when the example chooses its own project through `input.projectId`. */
-function hasExampleProjectOverride(input: unknown): boolean {
-  return isRecord(input) && readString(input.projectId) !== undefined;
-}
-
 /**
  * Stop on an access rejection as soon as the status is known, so a body that
  * fails to read cannot turn it into an ordinary failed record.
  */
-async function throwIfAgentServiceAccessRejected(
+function throwIfAgentServiceAccessRejected(
   evalId: string,
   response: Response,
   options: { projectScopeFixed: boolean },
-): Promise<void> {
+): void {
   const denial = classifyAgentServiceAccessStatus(response.status, options);
   if (!denial) return;
-  await response.body?.cancel().catch(() => {});
+  // Best-effort cleanup: a cancel hook that never settles must not delay the
+  // error, so cancellation is started and not awaited.
+  try {
+    response.body?.cancel().catch(() => {});
+  } catch {
+    // A locked or already-closed body needs no cancellation.
+  }
   throw createEvalModelAccessDeniedError(evalId, denial, undefined);
 }
 
@@ -910,9 +911,10 @@ export function createAgentServiceEvalAdapter(
           : {}),
       };
       const response = await requestFetch(endpoint, createRequestInit(config, body));
-      await throwIfAgentServiceAccessRejected(context.definition.id, response, {
-        projectScopeFixed: config.projectId !== undefined ||
-          !hasExampleProjectOverride(context.example.input),
+      throwIfAgentServiceAccessRejected(context.definition.id, response, {
+        // Only the adapter fixes the project for the whole eval. Without it,
+        // any later example can still choose an accessible project.
+        projectScopeFixed: config.projectId !== undefined,
       });
       const run = await parseAgUiSseResponse(response, parseOptions);
       const completed = response.ok && run.runError === null &&

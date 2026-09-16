@@ -48,8 +48,8 @@ const DENIAL_ERRORS = {
  * is read. It concerns the adapter's own token and project, not the model
  * gateway credential, so it gets agent-service guidance. A 401 always stops
  * the eval: the token is the same for every example. A 403 stops it only when
- * the project scope is fixed for the whole eval; when examples choose their own
- * project, one inaccessible project fails only that example.
+ * the adapter fixes the project for the whole eval; otherwise any example can
+ * choose another project, so one inaccessible project fails only that example.
  */
 export function classifyAgentServiceAccessStatus(
   status: number,
