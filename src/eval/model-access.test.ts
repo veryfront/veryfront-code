@@ -223,7 +223,7 @@ describe("eval/model-access", () => {
     );
     assertEquals(
       evalError.suggestion,
-      "Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)",
+      "Set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts, then run veryfront eval again",
     );
     assertEquals(isEvalModelAccessDeniedError(evalError), true);
   });

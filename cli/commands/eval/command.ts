@@ -668,8 +668,9 @@ export async function hydrateEvalRuntimeAuth(
 /**
  * Veryfront Cloud bills managed inference to a project, and its gateway
  * rejects every model request that names none. With a token but no project,
- * every `veryfront-cloud/...` record would fail with the same 400, so say why
- * once before the run starts.
+ * the run stops at its first `veryfront-cloud/...` request with
+ * `EVAL_PROJECT_REQUIRED`, so name the fix before the run starts. The remedy
+ * matches that error's suggestion.
  */
 export function formatMissingEvalProjectWarning(
   runtimeAuth: { apiToken?: string; projectSlug?: string },
