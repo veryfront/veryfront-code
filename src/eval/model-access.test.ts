@@ -7,6 +7,7 @@ import {
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
+  classifyAgentServiceAccessStatus,
   classifyAgentServiceModelAccessDenial,
   classifyEvalModelAccessDenial,
   createEvalModelAccessDeniedError,
@@ -339,9 +340,11 @@ describe("eval/model-access", () => {
   });
 
   it("classifies agent service 401 and 403 responses with agent-service guidance", () => {
-    const unauthorized = classifyAgentServiceModelAccessDenial({ status: 401, body: "x" });
-    const forbidden = classifyAgentServiceModelAccessDenial({ status: 403, body: "x" });
+    const unauthorized = classifyAgentServiceAccessStatus(401, { projectScopeFixed: false });
+    const forbidden = classifyAgentServiceAccessStatus(403, { projectScopeFixed: true });
 
+    assertEquals(classifyAgentServiceAccessStatus(403, { projectScopeFixed: false }), undefined);
+    assertEquals(classifyAgentServiceModelAccessDenial({ status: 403, body: "x" }), undefined);
     assertEquals(unauthorized?.kind, "agent-service-unauthorized");
     assertEquals(forbidden?.kind, "agent-service-forbidden");
     const unauthorizedError = createEvalModelAccessDeniedError("eval:a", unauthorized!, undefined);

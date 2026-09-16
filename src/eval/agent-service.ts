@@ -25,6 +25,7 @@ import {
 } from "./validation.ts";
 import { trustedLocalEvalFetchAgentId } from "./agent-service/trusted-fetch.ts";
 import {
+  classifyAgentServiceAccessStatus,
   classifyAgentServiceModelAccessDenial,
   createEvalModelAccessDeniedError,
   isEvalModelAccessDeniedError,
@@ -533,6 +534,26 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
  * Stop the eval when the agent service reports an account-wide model access
  * denial, instead of resolving a failed record for every remaining example.
  */
+/** True when the example chooses its own project through `input.projectId`. */
+function hasExampleProjectOverride(input: unknown): boolean {
+  return isRecord(input) && readString(input.projectId) !== undefined;
+}
+
+/**
+ * Stop on an access rejection as soon as the status is known, so a body that
+ * fails to read cannot turn it into an ordinary failed record.
+ */
+async function throwIfAgentServiceAccessRejected(
+  evalId: string,
+  response: Response,
+  options: { projectScopeFixed: boolean },
+): Promise<void> {
+  const denial = classifyAgentServiceAccessStatus(response.status, options);
+  if (!denial) return;
+  await response.body?.cancel().catch(() => {});
+  throw createEvalModelAccessDeniedError(evalId, denial, undefined);
+}
+
 function throwIfAgentServiceModelAccessDenied(
   evalId: string,
   response: Response,
@@ -889,6 +910,10 @@ export function createAgentServiceEvalAdapter(
           : {}),
       };
       const response = await requestFetch(endpoint, createRequestInit(config, body));
+      await throwIfAgentServiceAccessRejected(context.definition.id, response, {
+        projectScopeFixed: config.projectId !== undefined ||
+          !hasExampleProjectOverride(context.example.input),
+      });
       const run = await parseAgUiSseResponse(response, parseOptions);
       const completed = response.ok && run.runError === null &&
         run.eventTypes.includes(agUiSseEventTypes.runFinished);

@@ -360,6 +360,98 @@ describe("eval/agent-service", () => {
     assertEquals(await slugFor(403), { slug: "eval-agent-service-access-denied", requests: 1 });
   });
 
+  it("stops on an access rejection before reading a body that fails mid-stream", async () => {
+    let requests = 0;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () => {
+        requests += 1;
+        const brokenBody = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(new Error("connection reset"));
+          },
+        });
+        return new Response(brokenBody, { status: 401 });
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-401-broken-body",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = await assertRejects(() => runEval(definition, { adapters: { agent: adapter } }));
+
+    assertEquals((error as { slug?: string }).slug, "eval-agent-service-unauthorized");
+    assertEquals(requests, 1);
+  });
+
+  it("keeps a 403 for an example-chosen project as that example's failure", async () => {
+    const projectsRequested: unknown[] = [];
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as {
+          forwardedProps?: { veryfront?: { projectId?: unknown } };
+        };
+        const projectId = body.forwardedProps?.veryfront?.projectId;
+        projectsRequested.push(projectId);
+        if (projectId === "project_locked") {
+          return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+        }
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_ok" } },
+          { event: "TextMessageContent", data: { delta: "Done" } },
+          { event: "RunFinished", data: {} },
+        ]);
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-per-example-project",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "locked", input: { message: "First", projectId: "project_locked" } },
+        { id: "open", input: { message: "Second", projectId: "project_open" } },
+      ]),
+    });
+
+    const report = await runEval(definition, { adapters: { agent: adapter } });
+
+    assertEquals(projectsRequested, ["project_locked", "project_open"]);
+    assertEquals(report.records.map((record) => record.completed), [false, true]);
+  });
+
+  it("stops on a 403 when the adapter fixes the project for the whole eval", async () => {
+    let requests = 0;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      projectId: "project_fixed",
+      fetch: async () => {
+        requests += 1;
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-fixed-project-403",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: { message: "First", projectId: "ignored_override" } },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = await assertRejects(() => runEval(definition, { adapters: { agent: adapter } }));
+
+    assertEquals((error as { slug?: string }).slug, "eval-agent-service-access-denied");
+    assertEquals(requests, 1);
+  });
+
   it("keeps request-scoped agent service limits as failed records", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",

@@ -44,10 +44,17 @@ const DENIAL_ERRORS = {
 } as const;
 
 /**
- * An agent service 401 or 403 concerns the adapter's own token and project,
- * not the model gateway credential, so it gets agent-service guidance.
+ * Classify an agent service 401 or 403 from its status alone, before the body
+ * is read. It concerns the adapter's own token and project, not the model
+ * gateway credential, so it gets agent-service guidance. A 401 always stops
+ * the eval: the token is the same for every example. A 403 stops it only when
+ * the project scope is fixed for the whole eval; when examples choose their own
+ * project, one inaccessible project fails only that example.
  */
-function agentServiceAccessDenial(status: number): EvalModelAccessDenial | undefined {
+export function classifyAgentServiceAccessStatus(
+  status: number,
+  options: { projectScopeFixed: boolean },
+): EvalModelAccessDenial | undefined {
   if (status === 401) {
     return {
       kind: "agent-service-unauthorized",
@@ -55,7 +62,7 @@ function agentServiceAccessDenial(status: number): EvalModelAccessDenial | undef
       message: "The agent service rejected the eval request credential (401 Unauthorized)",
     };
   }
-  if (status === 403) {
+  if (status === 403 && options.projectScopeFixed) {
     return {
       kind: "agent-service-forbidden",
       code: "FORBIDDEN",
@@ -247,11 +254,10 @@ export function classifyEvalModelAccessDenial(error: unknown): EvalModelAccessDe
 }
 
 /**
- * Recognize a denial in a failed agent service response: an HTTP 401 or 403 on
- * the agent service request itself (reported with agent-service guidance), an
- * HTTP 400 or 402 gateway body, or a curated account-wide credit code on the
- * AG-UI run error. The agent service is the endpoint the adapter was configured
- * with, which is the provenance.
+ * Recognize a denial in a failed agent service response body: an HTTP 400 or
+ * 402 gateway body, or a curated code on the AG-UI run error. The agent service
+ * is the endpoint the adapter was configured with, which is the provenance.
+ * HTTP 401 and 403 are classified earlier by `classifyAgentServiceAccessStatus`.
  */
 export function classifyAgentServiceModelAccessDenial(input: {
   status: number;
@@ -260,8 +266,6 @@ export function classifyAgentServiceModelAccessDenial(input: {
   runErrorMessage?: unknown;
 }): EvalModelAccessDenial | undefined {
   try {
-    const accessDenial = agentServiceAccessDenial(input.status);
-    if (accessDenial) return accessDenial;
     if (input.status === 400 && input.body) {
       // The endpoint's own text is not trusted for user-facing output.
       const projectRequired = classifyProjectRequired(input.body);
