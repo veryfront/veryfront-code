@@ -888,6 +888,8 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       definition,
       example,
       repetition,
+      // A resolver that awaits network work cancels with the case.
+      ...(signal ? { signal } : {}),
     });
     const response = await agent.generate({
       input: normalizeEvalInputForAgent(example.input),

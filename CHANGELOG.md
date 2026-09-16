@@ -64,6 +64,7 @@ If Git fails while reading ignore rules inside a repository, push (and so `up`
 and `deploy`) stops with an error instead of uploading files the checkout
 ignores. Pull stops the same way. Fix the Git error, then run the command
 again.
+
 ### Added: `veryfront eval` progress, `--concurrency`, and `--record-timeout`
 
 `veryfront eval` now shows which eval and case is running, finished cases, and
@@ -75,8 +76,9 @@ including its metrics and checks, with the `eval-record-timeout` error (default
 open. The failed case keeps its target output, trace, and usage.
 
 `runEval()` from `veryfront/eval` accepts matching `concurrency`,
-`recordTimeoutMs`, and `onProgress` options. Target adapters, metric
-`evaluate()` contexts, check contexts, and LLM judge inputs receive a `signal`
+`recordTimeoutMs`, and `onProgress` options. Target adapters, mock tool
+resolvers, metric `evaluate()` contexts, check contexts, and LLM judge inputs
+receive a `signal`
 that aborts at the record deadline, and the built-in LLM judges pass it to the
 model request. With `LOG_LEVEL=DEBUG`, provider requests log their start,
 status, duration, and retries.

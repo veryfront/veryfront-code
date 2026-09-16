@@ -404,6 +404,8 @@ export interface EvalMockToolsResolverContext {
   definition: EvalDefinition;
   example: EvalExample;
   repetition: number;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Request-scoped mock tool resolver for local `evalAgent` execution. */

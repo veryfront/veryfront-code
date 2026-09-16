@@ -927,6 +927,31 @@ describe("eval CLI command helpers", () => {
     assertEquals(calls, ["q1:1", "q1:2", "q2:1", "q2:2"]);
   });
 
+  it("cancels a stalled mock tool resolver at the record deadline", async () => {
+    let resolverSignal: AbortSignal | undefined;
+    const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
+    const definition = evalAgent({
+      id: "eval:resolver-stall",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "one" }]),
+      mockTools: ({ signal }) => {
+        resolverSignal = signal;
+        return new Promise<never>(() => {});
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:resolver-stall" case "q1" did not finish within 0.05s.',
+    );
+    assertEquals(resolverSignal?.aborted, true);
+  });
+
   it("isolates mock tool resolver errors to the current eval record", async () => {
     const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
     const definition = evalAgent({
