@@ -1036,6 +1036,8 @@ describe("internal-agents/run-stream", () => {
     const body = await response.text();
 
     assertStringIncludes(body, "event: RunError");
+    assertStringIncludes(body, "Provider stream failed");
+    assertEquals(body.includes("Provider replay turn failed before its boundary"), false);
     assertEquals(body.includes("event: RunFinished"), false);
   });
 

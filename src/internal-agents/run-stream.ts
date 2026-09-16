@@ -855,7 +855,7 @@ function createProviderReplayCheckpointRelay(): {
     },
     fail: async () => {
       if (terminalError) return;
-      terminalError = new Error("Provider replay turn failed before its boundary");
+      terminalError = new Error("Provider stream failed");
       buffered.splice(0);
       const reject = rejectPending;
       resolvePending = undefined;
