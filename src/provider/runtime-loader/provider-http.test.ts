@@ -85,6 +85,43 @@ describe("provider-http", () => {
   });
 
   describe("buildProviderError classification", () => {
+    it("names the missing project when the Veryfront Cloud gateway rejects a projectless request", async () => {
+      const responseBody = JSON.stringify({
+        error: "A project is required to use Veryfront-managed AI inference <GATEWAY TEXT>",
+        code: "gateway_project_required",
+      });
+      const err = await buildProviderError("anthropic", jsonResponse(400, responseBody));
+
+      assertEquals(err instanceof ProviderRequestError, true);
+      assertEquals(err.status, 400);
+      assertEquals(err.retryable, false);
+      assertMatch(err.message, /^Provider request failed with status 400: /);
+      assertMatch(err.message, /gateway_project_required/);
+      assertMatch(err.message, /VERYFRONT_PROJECT_SLUG/);
+      assertEquals(err.message.includes("<GATEWAY TEXT>"), false);
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+    });
+
+    it("keeps the generic message for other 400 bodies that carry a code", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(400, { error: "Invalid gateway billing group id", code: "something_else" }),
+      );
+
+      assertEquals(err.message, "Provider request failed with status 400");
+      assertEquals(err.responseBody, undefined);
+    });
+
+    it("keeps the generic message when a gateway_project_required code arrives with another status", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(403, { error: "nope", code: "gateway_project_required" }),
+      );
+
+      assertEquals(err.message, "Provider request failed with status 403");
+    });
+
     it("anthropic 529 -> retryable overloaded", async () => {
       const err = await buildProviderError("anthropic", jsonResponse(529, { error: "overloaded" }));
       assertEquals(err instanceof ProviderOverloadedError, true);

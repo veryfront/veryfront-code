@@ -420,15 +420,42 @@ function createProviderErrorBodyContext(
   rawBody: string,
   truncated: boolean,
 ): ProviderErrorBodyContext {
+  const parsed = parseProviderErrorBody(rawBody);
+  const statusMessage = `Provider request failed with status ${response.status}`;
   return {
     provider,
     status: response.status,
-    message: `Provider request failed with status ${response.status}`,
+    message: isGatewayProjectRequiredBody(response.status, truncated, parsed.parsedBody)
+      ? `${statusMessage}: ${GATEWAY_PROJECT_REQUIRED_MESSAGE}`
+      : statusMessage,
     retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after")),
     rawBody,
     truncated,
-    ...parseProviderErrorBody(rawBody),
+    ...parsed,
   };
+}
+
+/** Error code the Veryfront Cloud gateway returns for a request with no project. */
+const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
+
+/**
+ * Framework-owned wording for a projectless Veryfront Cloud request. The
+ * gateway's own text is never copied: only its stable `code` selects this.
+ */
+const GATEWAY_PROJECT_REQUIRED_MESSAGE =
+  `Veryfront Cloud rejected the request because no project was sent (${GATEWAY_PROJECT_REQUIRED_CODE}). ` +
+  "Set VERYFRONT_PROJECT_SLUG, add projectSlug to veryfront.config.ts, or run 'veryfront link' in the project directory.";
+
+/**
+ * Whether a 400 is the Veryfront Cloud gateway rejecting a request that named
+ * no project. It is a configuration error, not a model, record, or billing one.
+ */
+function isGatewayProjectRequiredBody(
+  status: number,
+  truncated: boolean,
+  parsedBody: Record<string, unknown> | undefined,
+): boolean {
+  return status === 400 && !truncated && parsedBody?.code === GATEWAY_PROJECT_REQUIRED_CODE;
 }
 
 /**
@@ -558,7 +585,8 @@ function shouldPreserveStructuredResponseBody(context: ProviderErrorBodyContext)
   if (context.truncated || context.parsedBody === undefined) return false;
   if (
     context.status === 400 &&
-    isInvalidRequestEnvelope(context.errorType, context.errorRecord)
+    (isInvalidRequestEnvelope(context.errorType, context.errorRecord) ||
+      isGatewayProjectRequiredBody(context.status, context.truncated, context.parsedBody))
   ) {
     return true;
   }
