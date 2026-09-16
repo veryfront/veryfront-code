@@ -52,6 +52,10 @@ import {
 } from "../../../src/agent/project/agent-runtime.ts";
 import { runEvalReport } from "../../../src/eval/run-report.ts";
 import {
+  type EvalModelAccessDenialKind,
+  getEvalModelAccessDenialKind,
+} from "../../../src/eval/model-access.ts";
+import {
   createErrorEnvelope,
   createSuccessEnvelope,
   isJsonMode,
@@ -91,11 +95,20 @@ type GatewayBillingFinalizeError = {
 type GatewayBillingFinalizeOptions = {
   retryDelaysMs?: readonly number[];
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * The refusal that stopped the eval, set only when no earlier request in the
+   * run got past admission. Finalization then expects no recorded usage, and a
+   * missing billing group, or a repeat of that same refusal, is not worth a
+   * warning. Any other failure still warns.
+   */
+  stoppedByDenial?: EvalModelAccessDenialKind;
 };
 
 type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
 
 const GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE = "gateway_billing_group_usage_not_ready";
+const GATEWAY_BILLING_GROUP_NOT_FOUND_CODE = "gateway_billing_group_not_found";
+const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
 const ENV_EVAL_EXPORTERS = "VERYFRONT_EVAL_EXPORTERS";
 const ENV_EVAL_EXPORT = "VERYFRONT_EVAL_EXPORT";
 const ENV_EVAL_EXPORT_REQUIRED = "VERYFRONT_EVAL_EXPORT_REQUIRED";
@@ -277,6 +290,16 @@ function isGatewayBillingUsageNotReady(
   return error.code === GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE;
 }
 
+function isExpectedFinalizeRefusal(
+  denial: EvalModelAccessDenialKind,
+  response: Response,
+  error: GatewayBillingFinalizeError,
+): boolean {
+  if (response.status === 404 && error.code === GATEWAY_BILLING_GROUP_NOT_FOUND_CODE) return true;
+  return denial === "project-required" && response.status === 400 &&
+    error.code === GATEWAY_PROJECT_REQUIRED_CODE;
+}
+
 function formatGatewayBillingFinalizeWarning(
   billingGroupId: string,
   response: Response,
@@ -360,7 +383,15 @@ export async function finalizeGatewayBillingGroup(
         continue;
       }
 
-      cliLogger.warn(formatGatewayBillingFinalizeWarning(billingGroupId, response, error));
+      const message = formatGatewayBillingFinalizeWarning(billingGroupId, response, error);
+      if (
+        options.stoppedByDenial &&
+        isExpectedFinalizeRefusal(options.stoppedByDenial, response, error)
+      ) {
+        cliLogger.debug(message);
+      } else {
+        cliLogger.warn(message);
+      }
       return undefined;
     }
 
@@ -385,7 +416,14 @@ export async function runEvalWithGatewayBillingGroup(
     report = await runWithVeryfrontCloudContextAsync(billingContext, operation);
   } catch (error) {
     if (billingContext.billingGroupUsed) {
-      await finalizeGatewayBillingGroup(billingGroupId);
+      // Still finalize: earlier requests can have been served before the
+      // gateway started refusing them, and those must be reconciled.
+      const denial = getEvalModelAccessDenialKind(error);
+      await finalizeGatewayBillingGroup(billingGroupId, {
+        ...(denial && !billingContext.billingGroupRequestAdmitted
+          ? { stoppedByDenial: denial }
+          : {}),
+      });
     }
     throw error;
   }

@@ -94,6 +94,47 @@ export const PROVIDER_REPLAY_CHECKPOINT_INVALID = defineError({
     "Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state",
 });
 
+/**
+ * An eval stopped because the model gateway refused to serve its model
+ * requests for billing or entitlement reasons (HTTP 402). Every later record
+ * would fail the same way, so the run fails fast with one actionable error
+ * instead of grading empty outputs.
+ */
+export const EVAL_MODEL_ACCESS_DENIED = defineError({
+  slug: "eval-model-access-denied",
+  category: "AGENT",
+  status: 402,
+  title: "No model access for eval run",
+  suggestion:
+    "Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits",
+});
+
+/**
+ * An eval stopped because the Veryfront Cloud gateway rejected its model
+ * requests for naming no project (HTTP 400, `gateway_project_required`).
+ */
+export const EVAL_PROJECT_REQUIRED = defineError({
+  slug: "eval-project-required",
+  category: "AGENT",
+  status: 400,
+  title: "No project for eval model requests",
+  suggestion:
+    "Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)",
+});
+
+/**
+ * An eval stopped because Veryfront reached its AI provider spend limit for the
+ * current window. Buying credits does not clear this limit.
+ */
+export const EVAL_MODEL_SPEND_LIMIT_EXCEEDED = defineError({
+  slug: "eval-model-spend-limit-exceeded",
+  category: "AGENT",
+  status: 402,
+  title: "AI provider spend limit reached for eval run",
+  suggestion:
+    "Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -106,4 +147,7 @@ export const AGENT_REGISTRY = {
   "durable-run-event-persistence-failed": DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
   "default-model-credential-mismatch": DEFAULT_MODEL_CREDENTIAL_MISMATCH,
   "provider-replay-checkpoint-invalid": PROVIDER_REPLAY_CHECKPOINT_INVALID,
+  "eval-model-access-denied": EVAL_MODEL_ACCESS_DENIED,
+  "eval-project-required": EVAL_PROJECT_REQUIRED,
+  "eval-model-spend-limit-exceeded": EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
 } as const;

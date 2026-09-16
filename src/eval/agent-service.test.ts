@@ -242,6 +242,119 @@ describe("eval/agent-service", () => {
     });
   });
 
+  it("stops the eval when the agent service returns a 402 gateway credit problem body", async () => {
+    let requests = 0;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () => {
+        requests += 1;
+        return new Response(
+          JSON.stringify({ slug: "insufficient-credits", error: "AI credit limit exceeded" }),
+          { status: 402, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-no-credits",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = await assertRejects(() => runEval(definition, { adapters: { agent: adapter } }));
+
+    assertEquals((error as { slug?: string }).slug, "eval-model-access-denied");
+    assertEquals(requests, 1);
+  });
+
+  it("keeps a streamed credit code without gateway provenance as a failed record", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_byok" } },
+          {
+            event: "RunError",
+            data: { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+          },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-byok-credit-code",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const report = await runEval(definition, { adapters: { agent: adapter } });
+
+    assertEquals(report.records.map((record) => record.completed), [false, false]);
+  });
+
+  it("stops the eval when a streamed run reports the gateway project-required refusal", async () => {
+    let requests = 0;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () => {
+        requests += 1;
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "RunError",
+            data: {
+              code: "GATEWAY_PROJECT_REQUIRED",
+              message: "A project is required to use Veryfront-managed AI inference",
+            },
+          },
+        ]);
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-no-project",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = await assertRejects(() => runEval(definition, { adapters: { agent: adapter } }));
+
+    assertEquals((error as { slug?: string }).slug, "eval-project-required");
+    assertEquals(requests, 1);
+  });
+
+  it("keeps request-scoped agent service limits as failed records", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        new Response(
+          'event: RunError\ndata: {"message":"Resource limit exceeded","code":"RESOURCE_LIMIT_EXCEEDED"}\n\n',
+          { status: 402, headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-resource-limit",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const report = await runEval(definition, { adapters: { agent: adapter } });
+
+    assertEquals(report.records.map((record) => record.completed), [false, false]);
+  });
+
   it("creates an EvalAgentAdapter for live AG-UI agent-service execution", async () => {
     const requests: Array<{ url: string; init: RequestInit; body: Record<string, unknown> }> = [];
     const adapter = createAgentServiceEvalAdapter({

@@ -6,6 +6,30 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: `runEval()` rejects when the model gateway refuses model access
+
+`runEval()` from `veryfront/eval` now rejects with the
+`eval-model-access-denied` error when a target or metric model request returns
+HTTP 402 from the model gateway for an account-wide denial (insufficient AI
+credits or the AI provider spend limit). Request-scoped limits, such as a
+resource limit or an agent run credit limit, still fail only the affected
+record. Built-in LLM judges stop the eval the same way, and so does the agent service
+adapter when the service returns the gateway's 402 problem body. A credit code
+carried only by an AG-UI run error still fails just that record, because the
+stream does not show whether the Veryfront gateway or another provider raised
+it.
+
+An AI provider spend limit rejects with `eval-model-spend-limit-exceeded`
+instead, because buying credits does not clear it.
+
+It also rejects with `eval-project-required` when the gateway returns HTTP 400
+with code `gateway_project_required` because the model request named no
+project. It previously recorded the refusal on every
+record, ran checks against the empty output, and resolved with a report.
+`veryfront eval` stops at the first refusal and prints one error. If you call
+`runEval()` directly, handle the rejection where you previously inspected
+failed records for credit errors.
+
 ### Deprecated: the `event` key on conversation-scoped run event rows
 
 The Veryfront API now serves every run event row keyed `payload`, on the

@@ -525,6 +525,21 @@ describe("provider-http", () => {
       });
     });
 
+    it("preserves the gateway project-required body on a 400", async () => {
+      const body = JSON.stringify({
+        error: "A project is required to use Veryfront-managed AI inference",
+        code: "gateway_project_required",
+      });
+      const err = await buildProviderError(
+        "anthropic",
+        new Response(body, { status: 400, headers: { "Content-Type": "application/json" } }),
+      );
+
+      assertEquals(err.status, 400);
+      assertEquals(err.responseBody, body);
+      assertEquals(err.message.includes("project"), false);
+    });
+
     it("treats a JSON null error body as an unstructured request error", async () => {
       const err = await buildProviderError("openai", jsonResponse(400, "null"));
 
