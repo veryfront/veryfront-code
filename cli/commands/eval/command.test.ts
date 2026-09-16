@@ -668,9 +668,13 @@ describe("eval CLI command helpers", () => {
     }, { prefix: "vf-eval-list-no-project-" });
   });
 
-  it("treats only dataset evals without judge metrics as model-free", () => {
-    const plainDataset = evalDataset({
-      id: "eval:plain-dataset",
+  it("treats only dataset evals without metrics or checks as model-free", () => {
+    const bareDataset = evalDataset({
+      id: "eval:bare-dataset",
+      dataset: [{ id: "case", input: "value" }],
+    });
+    const deterministicMetricDataset = evalDataset({
+      id: "eval:deterministic-dataset",
       dataset: [{ id: "case", input: "value" }],
       metrics: [metrics.answer.contains({ text: "value" })],
     });
@@ -681,10 +685,10 @@ describe("eval CLI command helpers", () => {
         metrics.judge.rubric({ rubric: "Is it good?", judge: () => Promise.resolve({ score: 1 }) }),
       ],
     });
-    const groundednessDataset = evalDataset({
-      id: "eval:groundedness-dataset",
+    const checkDataset = evalDataset({
+      id: "eval:check-dataset",
       dataset: [{ id: "case", input: "value" }],
-      metrics: [metrics.answer.groundedness({ judge: () => Promise.resolve({ score: 1 }) })],
+      check: () => {},
     });
     const agentEval = evalAgent({
       id: "eval:agent",
@@ -697,13 +701,15 @@ describe("eval CLI command helpers", () => {
       dataset: [{ id: "case", input: {} }],
     });
 
-    assertEquals(evalRunMayCallModel([plainDataset]), false);
-    assertEquals(evalRunMayCallModel([plainDataset, plainDataset]), false);
+    assertEquals(evalRunMayCallModel([bareDataset]), false);
+    assertEquals(evalRunMayCallModel([bareDataset, bareDataset]), false);
+    // Any metric may be custom code that calls a model, so it counts.
+    assertEquals(evalRunMayCallModel([deterministicMetricDataset]), true);
     assertEquals(evalRunMayCallModel([rubricDataset]), true);
-    assertEquals(evalRunMayCallModel([groundednessDataset]), true);
+    assertEquals(evalRunMayCallModel([checkDataset]), true);
     assertEquals(evalRunMayCallModel([agentEval]), true);
     assertEquals(evalRunMayCallModel([toolEval]), true);
-    assertEquals(evalRunMayCallModel([plainDataset, agentEval]), true);
+    assertEquals(evalRunMayCallModel([bareDataset, agentEval]), true);
   });
 
   it("resolves eval export redaction from exact global env toggles", () => {
@@ -2910,7 +2916,6 @@ describe("eval CLI command helpers", () => {
       const definition = evalDataset({
         id: "eval:dataset-only",
         dataset: [{ id: "case", input: "value" }],
-        metrics: [metrics.answer.contains({ text: "value" })],
       });
       definition.source = {
         filePath: `${projectDir}/evals/dataset-only.eval.ts`,
@@ -2949,7 +2954,7 @@ describe("eval CLI command helpers", () => {
     }, { prefix: "vf-eval-dataset-no-project-" });
   });
 
-  it("warns about a missing project for a dataset suite with an LLM-capable judge", async () => {
+  it("warns about a missing project for a dataset suite with metrics", async () => {
     await withTempDir(async (projectDir) => {
       const definition = evalDataset({
         id: "eval:judged-dataset",

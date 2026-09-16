@@ -686,23 +686,16 @@ export function formatMissingEvalProjectWarning(
 }
 
 /**
- * Metrics that can call a model while grading. Judges are opaque functions, so
- * an LLM judge cannot be told apart from a deterministic one: any metric that
- * accepts a judge counts.
- */
-const JUDGE_CAPABLE_METRIC_NAMES: ReadonlySet<string> = new Set(["answer.groundedness"]);
-
-/**
- * Whether running these evals can send a model request. Agent and tool targets
- * execute project code; a dataset eval grades stored values and only reaches a
- * model through a judge metric.
+ * Whether running these evals might send a model request. The warning this
+ * gates is advisory, so the check is deliberately coarse: only a dataset eval
+ * with no metrics and no `check` callback is certainly model-free. Any metric
+ * or check runs code that may call a model.
  */
 export function evalRunMayCallModel(definitions: readonly EvalDefinition[]): boolean {
   return definitions.some((definition) =>
     definition.targetKind !== "dataset" ||
-    definition.metrics.some((metric) =>
-      metric.family === "judge" || JUDGE_CAPABLE_METRIC_NAMES.has(metric.name)
-    )
+    definition.metrics.length > 0 ||
+    definition.check !== undefined
   );
 }
 
