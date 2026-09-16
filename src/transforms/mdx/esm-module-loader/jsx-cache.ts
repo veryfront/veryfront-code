@@ -1254,7 +1254,31 @@ let jsxCachePersistenceRetry: ReturnType<typeof setTimeout> | undefined;
  * of leaving its filesystem work to settle after the caller believed the
  * module was quiet.
  */
-const inFlightJsxCachePrunes = new IntrinsicMap<string, Promise<void>>();
+const inFlightJsxCachePrunes = new IntrinsicMap<number, Promise<void>>();
+let nextJsxCachePrunePassId = 0;
+/**
+ * How many in-flight passes cover each prune key.
+ *
+ * Passes for one directory can overlap, so the persisted-request scan needs a
+ * count rather than a flag: the key is still covered until the last pass
+ * holding it settles.
+ */
+const inFlightJsxCachePruneKeys = new IntrinsicMap<string, number>();
+
+function retainInFlightJsxCachePruneKey(pruneKey: string): void {
+  mapSet(
+    inFlightJsxCachePruneKeys,
+    pruneKey,
+    (mapGet(inFlightJsxCachePruneKeys, pruneKey) ?? 0) + 1,
+  );
+}
+
+function releaseInFlightJsxCachePruneKey(pruneKey: string): void {
+  const held = mapGet(inFlightJsxCachePruneKeys, pruneKey);
+  if (held === undefined) return;
+  if (held <= 1) mapDelete(inFlightJsxCachePruneKeys, pruneKey);
+  else mapSet(inFlightJsxCachePruneKeys, pruneKey, held - 1);
+}
 /**
  * Generation counter for background prune work.
  *
@@ -1505,7 +1529,7 @@ async function promotePersistedJsxCachePruneRequest(
       if (
         mapHas(scheduledJsxCachePrunes, pruneKey) ||
         mapHas(queuedJsxCachePrunes, pruneKey) ||
-        mapHas(inFlightJsxCachePrunes, pruneKey)
+        mapHas(inFlightJsxCachePruneKeys, pruneKey)
       ) {
         continue;
       }
@@ -1814,6 +1838,11 @@ function scheduleJsxCachePruneRetry(
     // occupied, without overflowing to persistence and racing completion.
     fired.timer = undefined;
     const generation = jsxCachePruneGeneration;
+    // Two passes for one directory can overlap: this one holds the map entry
+    // with no timer, so a follow-up is free to arm the next one before this
+    // pass settles. Identity has to be per pass, or whichever settles first
+    // retires the other's bookkeeping and hides it from teardown.
+    const passId = nextJsxCachePrunePassId++;
     const pass = (async () => {
       try {
         await revisitJsxCacheDirectory(esmCacheDir, requestDirectory);
@@ -1830,8 +1859,15 @@ function scheduleJsxCachePruneRetry(
           );
         }
       } finally {
-        mapDelete(inFlightJsxCachePrunes, pruneKey);
-        if (mapGet(scheduledJsxCachePrunes, pruneKey)?.timer === undefined) {
+        mapDelete(inFlightJsxCachePrunes, passId);
+        releaseInFlightJsxCachePruneKey(pruneKey);
+        // Only retire the reserved slot when it is still this pass's. A newer
+        // pass for the same directory owns its own entry, and dropping that
+        // would strand the timer it just armed.
+        if (
+          mapGet(scheduledJsxCachePrunes, pruneKey) === fired &&
+          fired.timer === undefined
+        ) {
           mapDelete(scheduledJsxCachePrunes, pruneKey);
         }
         // Requesting a promotion arms the next timer, so it belongs to the
@@ -1842,7 +1878,8 @@ function scheduleJsxCachePruneRetry(
         }
       }
     })();
-    mapSet(inFlightJsxCachePrunes, pruneKey, pass);
+    mapSet(inFlightJsxCachePrunes, passId, pass);
+    retainInFlightJsxCachePruneKey(pruneKey);
   }, delayMs);
   unrefTimer(timer);
   mapSet(scheduledJsxCachePrunes, pruneKey, {
