@@ -12,7 +12,7 @@ import { env } from "#cli/process-env";
 import { runCommand } from "#cli/process-command";
 import { cliLogger, logWarning } from "#cli/utils";
 import { isNotFoundError, lstat } from "veryfront/fs";
-import { dirname, relative, resolve } from "veryfront/platform/path";
+import { dirname, join, relative, resolve } from "veryfront/platform/path";
 import { hasGitMetadata } from "../shared/deployment-provenance.ts";
 import { isJsonMode } from "../shared/json-output.ts";
 
@@ -179,6 +179,34 @@ function submoduleArgumentRoot(pathspec: string, submodule: string): string | nu
   return null;
 }
 
+interface SubmoduleContext {
+  /** Project-relative path of the submodule. */
+  path: string;
+  context: GitIgnoreContext;
+}
+
+const GITLINK_ENTRY = /^160000 [0-9a-f]+ \d+\t(.+)$/;
+
+/** Load the Git ignore context of every checked-out submodule below `projectDir`. */
+async function loadCheckedOutSubmodules(
+  baseDir: string,
+  projectDir: string,
+  dependencies: GitIgnoreDependencies,
+): Promise<SubmoduleContext[]> {
+  const index = await runGitIgnoreQuery(baseDir, ["ls-files", "--stage", "-z"], dependencies);
+  if (index.kind !== "output") return [];
+  const submodules: SubmoduleContext[] = [];
+  for (const entry of index.stdout.split("\0")) {
+    const path = GITLINK_ENTRY.exec(entry)?.[1];
+    if (!path) continue;
+    const submoduleDir = join(projectDir, path);
+    if (!(await dependencies.pathExists(join(submoduleDir, ".git")))) continue;
+    submodules.push({ path, context: await loadGitIgnoreContext(submoduleDir, dependencies) });
+  }
+  // Longest paths first so a nested submodule wins over its parent.
+  return submodules.sort((left, right) => right.path.length - left.path.length);
+}
+
 /** Git ignore rules resolved for one project directory. */
 export interface GitIgnoreContext {
   /**
@@ -262,8 +290,43 @@ export async function loadGitIgnoreContext(
       .filter((path) => path.length > 0 && path !== ".");
   }
 
+  // The enclosing repository's listing and `check-ignore` stop at a submodule,
+  // but sync still reads the checked-out files beneath it. Resolve each
+  // checked-out submodule against its own Git context.
+  const submodules = prefix ? [] : await loadCheckedOutSubmodules(
+    baseDir,
+    resolvedProjectDir,
+    dependencies,
+  );
+  for (const submodule of submodules) {
+    ignoredPaths.push(...submodule.context.ignoredPaths.map((path) => `${submodule.path}/${path}`));
+  }
+
   async function checkPaths(paths: Iterable<string>): Promise<string[]> {
-    const candidates = [...new Set(paths)].filter((path) => path.length > 0);
+    const ownCandidates: string[] = [];
+    const ignored: string[] = [];
+    const submoduleCandidates = new Map<SubmoduleContext, string[]>();
+    for (const path of new Set(paths)) {
+      if (!path) continue;
+      const submodule = submodules.find((entry) => path.startsWith(`${entry.path}/`));
+      if (!submodule) {
+        ownCandidates.push(path);
+        continue;
+      }
+      const grouped = submoduleCandidates.get(submodule) ?? [];
+      grouped.push(path.slice(submodule.path.length + 1));
+      submoduleCandidates.set(submodule, grouped);
+    }
+    for (const [submodule, grouped] of submoduleCandidates) {
+      for (const path of await submodule.context.checkPaths(grouped)) {
+        ignored.push(`${submodule.path}/${path}`);
+      }
+    }
+    ignored.push(...await checkOwnPaths(ownCandidates));
+    return ignored;
+  }
+
+  async function checkOwnPaths(candidates: readonly string[]): Promise<string[]> {
     if (candidates.length === 0) return [];
 
     const batches: string[][] = [];
@@ -292,9 +355,9 @@ export async function loadGitIgnoreContext(
         dependencies,
         [1],
       );
-      // The enclosing repository's rules do not reach inside a submodule, and
-      // Git refuses the whole query when one path lies in one. Drop every path
-      // under that submodule and ask again.
+      // Git refuses the whole query when a path lies in a submodule that is
+      // not checked out (checked-out ones were routed above). No local files
+      // exist there, so drop that submodule's paths and ask again.
       while (run.kind === "submodule-path") {
         const { pathspec } = run;
         const submoduleRoot = submoduleArgumentRoot(pathspec, run.submodule);

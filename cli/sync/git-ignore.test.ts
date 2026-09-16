@@ -43,7 +43,8 @@ function fakeGit(options: FakeGitOptions = {}): {
 }
 
 const isRootCheck = (args: readonly string[]) => args[0] === "check-ignore";
-const isListing = (args: readonly string[]) => args[0] === "ls-files";
+const isListing = (args: readonly string[]) => args[0] === "ls-files" && args[1] === "--others";
+const isIndexListing = (args: readonly string[]) => args[0] === "ls-files" && args[1] === "--stage";
 
 describe("cli/sync/git-ignore", () => {
   describe("loadGitIgnoreContext", () => {
@@ -64,6 +65,7 @@ describe("cli/sync/git-ignore", () => {
           args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
           cwd: "/repo/app",
         },
+        { args: ["ls-files", "--stage", "-z"], cwd: "/repo/app" },
       ]);
       assertEquals(warnings, []);
     });
@@ -209,9 +211,57 @@ describe("cli/sync/git-ignore", () => {
 
       await context.checkPaths(paths);
 
-      const checks = calls.slice(2);
+      const checks = calls.slice(3);
       assertEquals(checks.length > 1, true);
       assertEquals(checks.flatMap((call) => call.args.slice(3)).length, paths.length);
+    });
+
+    it("resolves paths in a checked-out submodule against the submodule's own rules", async () => {
+      const { dependencies, calls } = fakeGit({
+        existing: ["/repo", "/repo/libs/ui", "/repo/libs/ui/.git"],
+        respond: (args) => {
+          if (isRootCheck(args)) return NOTHING_IGNORED;
+          if (isIndexListing(args)) {
+            return {
+              success: true,
+              code: 0,
+              stdout: [
+                `100644 ${"a".repeat(40)} 0\tapp.ts`,
+                `160000 ${"b".repeat(40)} 0\tlibs/ui`,
+                "",
+              ].join("\0"),
+            };
+          }
+          if (isListing(args)) return { success: true, code: 0, stdout: "" };
+          if (args.includes("./secret.gen.ts")) {
+            return { success: true, code: 0, stdout: "./secret.gen.ts\n" };
+          }
+          if (args.includes("./top.gen.ts")) {
+            return { success: true, code: 0, stdout: "./top.gen.ts\n" };
+          }
+          return NOTHING_IGNORED;
+        },
+      });
+      const dependenciesWithChildListing: GitIgnoreDependencies = {
+        ...dependencies,
+        runCommand: (cmd, commandOptions = {}) =>
+          commandOptions.cwd === "/repo/libs/ui" && isListing(commandOptions.args ?? [])
+            ? Promise.resolve({ success: true, code: 0, stdout: "cache/\0" })
+            : dependencies.runCommand(cmd, commandOptions),
+      };
+
+      const context = await loadGitIgnoreContext("/repo", dependenciesWithChildListing);
+
+      assertEquals(context.ignoredPaths, ["libs/ui/cache"]);
+      assertEquals(
+        await context.checkPaths(["libs/ui/secret.gen.ts", "libs/ui/index.ts", "top.gen.ts"]),
+        ["libs/ui/secret.gen.ts", "top.gen.ts"],
+      );
+      const submoduleCheck = calls.find((call) =>
+        call.cwd === "/repo/libs/ui" && call.args.includes("check-ignore") &&
+        call.args[0] === "-c"
+      );
+      assertEquals(submoduleCheck?.args.slice(3), ["./secret.gen.ts", "./index.ts"]);
     });
 
     it("drops paths inside a submodule and checks the rest again", async () => {
@@ -243,7 +293,7 @@ describe("cli/sync/git-ignore", () => {
         respond: (args) =>
           isRootCheck(args)
             ? NOTHING_IGNORED
-            : isListing(args)
+            : isListing(args) || isIndexListing(args)
             ? { success: true, code: 0, stdout: "" }
             : { success: false, code: 128, stderr: "fatal: detected dubious ownership" },
         gitMetadata: true,

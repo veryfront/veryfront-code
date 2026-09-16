@@ -157,6 +157,67 @@ describe("cli/sync/git-ignore against real Git", () => {
     });
   });
 
+  describe("submodules", () => {
+    it("applies a checked-out submodule's own ignore rules to local and remote paths", async () => {
+      await withTempDir(async (root) => {
+        const childRepo = `${root}/child`;
+        await Deno.mkdir(childRepo);
+        await runGit(childRepo, "init", "-q");
+        await Deno.writeTextFile(`${childRepo}/.gitignore`, "*.gen.ts\n");
+        await writeFile(childRepo, "index.ts");
+        await runGit(childRepo, "add", ".");
+        await runGit(
+          childRepo,
+          "-c",
+          "user.email=test@veryfront.com",
+          "-c",
+          "user.name=Veryfront Test",
+          "commit",
+          "-qm",
+          "child",
+        );
+
+        const repoDir = `${root}/parent`;
+        await Deno.mkdir(repoDir);
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "*.tmp.ts\n");
+        await runGit(
+          repoDir,
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          "-q",
+          childRepo,
+          "libs/ui",
+        );
+        await writeFile(repoDir, "pages/index.tsx");
+        await writeFile(repoDir, "libs/ui/local.gen.ts");
+
+        const context = await loadGitIgnoreContext(repoDir);
+        assertEquals(context.ignoredPaths.includes("libs/ui/local.gen.ts"), true);
+        assertEquals(
+          (await context.checkPaths([
+            "libs/ui/remote.gen.ts",
+            "libs/ui/index.ts",
+            "draft.tmp.ts",
+            "pages/about.tsx",
+          ])).sort(),
+          ["draft.tmp.ts", "libs/ui/remote.gen.ts"],
+        );
+
+        const files = await scanLocalFiles(repoDir, await loadIgnoreChecker(repoDir));
+        assertEquals(
+          files.map((file) => file.path).filter((path) =>
+            path.endsWith(".ts") || path.endsWith(".tsx")
+          )
+            .sort(),
+          ["libs/ui/index.ts", "pages/index.tsx"],
+        );
+      });
+    });
+  });
+
   describe("scanLocalFiles with loadIgnoreChecker", () => {
     it("skips files Git ignores through info/exclude and keeps tracked files", async () => {
       await withTempDir(async (repoDir) => {
