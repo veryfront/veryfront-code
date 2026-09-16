@@ -10,6 +10,15 @@ import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { createVeryfrontCloudInferenceModel } from "./provider.ts";
+import { createVeryfrontCloudFetch } from "./shared.ts";
+import { assertRejects } from "#veryfront/testing/assert.ts";
+import { withEnv } from "#veryfront/testing";
+import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+  OutboundRequestBlockedError,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
 import { GoogleProvider } from "@veryfront/ext-llm-google";
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
@@ -964,5 +973,46 @@ describe("provider/veryfront-cloud", () => {
       Error,
       'Embedding provider "anthropic" is not supported',
     );
+  });
+
+  it("reaches an operator-exported API origin whose DNS answer is private", async () => {
+    const apiBaseUrl = "https://api.staging.example";
+    const seen: Request[] = [];
+    const fetchStub = (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(new Request(input, init));
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    // A pinned transport keeps Node and Bun off a real socket to the private address.
+    const transport = {
+      fetch: fetchStub,
+      pinnedFetch: (url: URL, _addresses: readonly string[], init: RequestInit) =>
+        fetchStub(url, init),
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    };
+    const gatewayUrl = `${apiBaseUrl}/ai/gateway/openai/v1/chat/completions`;
+
+    __resetOperatorVeryfrontApiOriginsForTests();
+    try {
+      await withEnv({ VERYFRONT_API_URL: apiBaseUrl, VERYFRONT_API_BASE_URL: "" }, async () => {
+        const wrappedFetch = createVeryfrontCloudFetch("vf_test_provider", apiBaseUrl);
+        await __runWithOutboundFetchTransportForTests(transport, async () => {
+          await assertRejects(
+            () => wrappedFetch(gatewayUrl),
+            OutboundRequestBlockedError,
+            "Outbound network egress blocked for host: api.staging.example",
+          );
+        });
+        assertEquals(seen.length, 0);
+
+        trustOperatorConfiguredVeryfrontApiOrigins();
+        await __runWithOutboundFetchTransportForTests(transport, async () => {
+          assertEquals((await wrappedFetch(gatewayUrl)).status, 200);
+        });
+      });
+    } finally {
+      __resetOperatorVeryfrontApiOriginsForTests();
+    }
+    assertEquals(seen.length, 1);
+    assertEquals(seen[0]?.headers.get("authorization"), "Bearer vf_test_provider");
   });
 });

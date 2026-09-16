@@ -2090,11 +2090,14 @@ describe("eval CLI command helpers", () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.staging.example");
     const requests: Request[] = [];
+    const fetchStub = (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ ok: true }, { status: 404 }));
+    };
     const transport = {
-      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-        requests.push(new Request(input, init));
-        return Promise.resolve(Response.json({ ok: true }, { status: 404 }));
-      },
+      fetch: fetchStub,
+      pinnedFetch: (url: URL, _addresses: readonly string[], init: RequestInit) =>
+        fetchStub(url, init),
       resolveHost: () => Promise.resolve(["10.255.128.3"]),
     };
 

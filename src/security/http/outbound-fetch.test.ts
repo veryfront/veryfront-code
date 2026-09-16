@@ -608,14 +608,14 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
     addresses: readonly string[] = [PRIVATE_ADDRESS],
   ): Promise<T> {
     const seen: string[] = [];
-    const fetchImpl: typeof fetch = (input) => {
+    const recordRequest = (input: RequestInfo | URL): Promise<Response> => {
       seen.push(input instanceof Request ? input.url : String(input));
       return Promise.resolve(Response.json({ ok: true }));
     };
     return await __runWithOutboundFetchTransportForTests(
       {
-        fetch: fetchImpl,
-        pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+        fetch: recordRequest,
+        pinnedFetch: (url) => recordRequest(url),
         resolveHost: () => Promise.resolve([...addresses]),
       },
       () => fn(seen),
@@ -733,17 +733,19 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
   it("rejects redirects from the trusted API origin", async () => {
     await withSealedOrigins({ VERYFRONT_API_URL: STAGING_API }, async () => {
       let calls = 0;
+      const redirectFetch = () => {
+        calls++;
+        return Promise.resolve(
+          new Response(null, {
+            status: 307,
+            headers: { location: `${STAGING_API}/elsewhere` },
+          }),
+        );
+      };
       await __runWithOutboundFetchTransportForTests(
         {
-          fetch: () => {
-            calls++;
-            return Promise.resolve(
-              new Response(null, {
-                status: 307,
-                headers: { location: `${STAGING_API}/elsewhere` },
-              }),
-            );
-          },
+          fetch: redirectFetch,
+          pinnedFetch: redirectFetch,
           resolveHost: () => Promise.resolve([PRIVATE_ADDRESS]),
         },
         async () => {
