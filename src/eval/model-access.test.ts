@@ -11,6 +11,7 @@ import {
   createOutboundFetchBoundary,
   OutboundRequestBlockedError,
 } from "#veryfront/security/http/outbound-fetch.ts";
+import { markVeryfrontGatewayTransportFailure } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { WorkerEgressBlockedError } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import {
   classifyAgentServiceModelAccessDenial,
@@ -514,5 +515,20 @@ describe("eval/model-access", () => {
     );
 
     assertEquals(classifyEvalModelAccessDenial(boundaryError), undefined);
+  });
+
+  it("classifies a block from a gateway transport with an explicit base URL", async () => {
+    // createVeryfrontCloudInferenceModel(..., { apiBaseUrl }) builds a gateway
+    // transport for a run-scoped API URL that no globally configured route
+    // matches. The gateway fetch marks what it throws, so provenance holds.
+    const explicitGateway = "https://run-scoped.example:8443";
+    const blocked = await blockedModelRequest(
+      `${explicitGateway}/ai/gateway/openai/v1/chat/completions`,
+      ["10.255.128.3"],
+    );
+    assertEquals(classifyEvalModelAccessDenial(blocked), undefined);
+
+    markVeryfrontGatewayTransportFailure(blocked);
+    assertEquals(classifyEvalModelAccessDenial(blocked)?.kind, "egress-blocked");
   });
 });

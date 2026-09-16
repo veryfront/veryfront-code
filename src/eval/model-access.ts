@@ -11,6 +11,7 @@ import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
 import { registeredProviderFailure } from "#veryfront/chat/provider-error-registry.ts";
 import {
   getModelRequestTransportFailureUrl,
+  isVeryfrontGatewayTransportFailure,
   ProviderError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
@@ -173,10 +174,11 @@ const EGRESS_BLOCKED_DENIAL: EvalModelAccessDenial = {
 
 /**
  * Classify the host egress guard's private-address block of a model gateway
- * request, with the same gateway provenance the HTTP refusals use: a model
- * provider transport threw the block for a request on the gateway route of a
- * configured Veryfront API. A tool, agent tool, custom metric, local provider,
- * another port on the API host, or a non-gateway path stays a record failure.
+ * request, with the same gateway provenance the HTTP refusals use: the gateway
+ * fetch threw the block, or a model provider transport threw it for a request
+ * on the gateway route of a configured Veryfront API. A tool, agent tool,
+ * custom metric, local provider, another port on the API host, or a
+ * non-gateway path stays a record failure.
  *
  * The guard must also have recorded the cause as a private-address block,
  * because proxy and broker connection failures reuse its wording. The denial
@@ -186,7 +188,12 @@ const EGRESS_BLOCKED_DENIAL: EvalModelAccessDenial = {
 function classifyOutboundRequestBlocked(
   error: OutboundRequestBlockedError,
 ): EvalModelAccessDenial | undefined {
-  if (!isVeryfrontGatewayRoute(getModelRequestTransportFailureUrl(error))) return undefined;
+  // The gateway fetch marks what it throws, which covers a gateway built with
+  // an explicit per-model or run-scoped base URL; the configured route is the
+  // fallback, matching how the HTTP refusals resolve provenance.
+  const fromGateway = isVeryfrontGatewayTransportFailure(error) ||
+    isVeryfrontGatewayRoute(getModelRequestTransportFailureUrl(error));
+  if (!fromGateway) return undefined;
   if (!isPrivateAddressEgressBlock(readProperty(error, "cause"))) return undefined;
   return EGRESS_BLOCKED_DENIAL;
 }

@@ -169,6 +169,30 @@ export function isVeryfrontGatewayResponse(response: Response): boolean {
   ]) as boolean;
 }
 
+const veryfrontGatewayTransportFailures = new WeakSet<object>();
+
+/**
+ * @internal Record that the Veryfront Cloud gateway fetch threw this error
+ * before any response arrived, the no-response counterpart of
+ * {@link markVeryfrontGatewayResponse}. It keeps gateway provenance for a
+ * transport that a run-scoped or per-model base URL configured, which no
+ * globally configured route matches.
+ */
+export function markVeryfrontGatewayTransportFailure(error: unknown): unknown {
+  if (typeof error === "object" && error !== null) {
+    IntrinsicReflectApply(WeakSetPrototypeAdd, veryfrontGatewayTransportFailures, [error]);
+  }
+  return error;
+}
+
+/** @internal Return true when the Veryfront Cloud gateway fetch threw this error. */
+export function isVeryfrontGatewayTransportFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    IntrinsicReflectApply(WeakSetPrototypeHas, veryfrontGatewayTransportFailures, [
+      error,
+    ]) as boolean;
+}
+
 const NativeWeakMap = WeakMap;
 const WeakMapPrototypeGet = NativeWeakMap.prototype.get;
 const WeakMapPrototypeSet = NativeWeakMap.prototype.set;
