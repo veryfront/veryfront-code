@@ -148,6 +148,7 @@ function readRequestRoute(url: string): string | undefined {
 // Captured at module load: project code sharing this runtime can replace
 // WeakSet methods later, and a poisoned add or has must not break gateway calls.
 const IntrinsicReflectApply = Reflect.apply;
+const ObjectDefineProperty = Object.defineProperty;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
 const veryfrontGatewayResponses = new WeakSet<Response>();
@@ -176,7 +177,7 @@ function labelProviderResponseError(
 ): ProviderError {
   error.message = `${providerLabel} request failed: ${error.message}`;
   if (isVeryfrontGatewayResponse(response)) {
-    Object.defineProperty(error, "viaVeryfrontGateway", {
+    ObjectDefineProperty(error, "viaVeryfrontGateway", {
       value: true,
       enumerable: false,
       configurable: false,
@@ -185,7 +186,7 @@ function labelProviderResponseError(
   }
   const requestRoute = readRequestRoute(requestUrl);
   if (requestRoute !== undefined) {
-    Object.defineProperty(error, "requestUrl", {
+    ObjectDefineProperty(error, "requestUrl", {
       value: requestRoute,
       enumerable: false,
       configurable: false,
@@ -199,7 +200,7 @@ function preserveStructuredResponseBody<T extends ProviderError>(
   error: T,
   responseBody: string,
 ): T {
-  Object.defineProperty(error, "responseBody", {
+  ObjectDefineProperty(error, "responseBody", {
     value: responseBody,
     enumerable: false,
     configurable: false,

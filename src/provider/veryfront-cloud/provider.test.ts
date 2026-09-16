@@ -11,7 +11,11 @@ import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { createVeryfrontCloudInferenceModel } from "./provider.ts";
 import { createVeryfrontCloudFetch } from "./shared.ts";
-import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  isVeryfrontGatewayResponse,
+  markVeryfrontGatewayResponse,
+  requestJson,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { assertRejects } from "#veryfront/testing/assert.ts";
 import { withEnv } from "#veryfront/testing";
 import {
@@ -102,6 +106,32 @@ describe("provider/veryfront-cloud", () => {
       restoreMockFetch();
     }
     assertEquals(response?.status, 204);
+  });
+
+  it("keeps gateway rejection provenance when Object.defineProperty is replaced", async () => {
+    const originalDefineProperty = Object.defineProperty;
+    let rejection: unknown;
+    const request = requestJson({
+      url: "https://93.184.216.34/ai/gateway/openai/v1/chat/completions",
+      fetchImpl: () =>
+        Promise.resolve(
+          markVeryfrontGatewayResponse(new Response('{"error":"Unauthorized"}', { status: 401 })),
+        ),
+      init: { method: "POST", body: "{}" },
+      providerLabel: "veryfront-cloud",
+      providerKind: "openai",
+    });
+    try {
+      Object.defineProperty = (() => {
+        throw new Error("poisoned defineProperty");
+      }) as typeof Object.defineProperty;
+      rejection = await request.then(() => undefined, (error: unknown) => error);
+    } finally {
+      Object.defineProperty = originalDefineProperty;
+    }
+
+    assertEquals((rejection as { status?: number }).status, 401);
+    assertEquals((rejection as { viaVeryfrontGateway?: boolean }).viaVeryfrontGateway, true);
   });
 
   it("resolves veryfront-cloud openai models without project ext-llm-openai installed", () => {
