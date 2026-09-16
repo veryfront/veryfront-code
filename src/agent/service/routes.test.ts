@@ -108,6 +108,7 @@ function createRouteSet(input: {
   startDetachedExecution?: (
     input: HostedAgentServiceDetachedExecutionInput<{ executionId: string }>,
   ) => Promise<void>;
+  resolveRuntimeOwnerInvokeUrl?: (request: Request) => Promise<string | null>;
 } = {}) {
   const tracker = createDetachedRunTracker<AgUiResumeValue>();
   const preparedRequests: ParsedHostedChatRequest[] = [];
@@ -141,6 +142,8 @@ function createRouteSet(input: {
       return input.streamResponse ?? new Response("streamed");
     },
     startDetachedExecution: input.startDetachedExecution ?? (async () => {}),
+    resolveRuntimeOwnerInvokeUrl: input.resolveRuntimeOwnerInvokeUrl ??
+      (() => Promise.resolve(null)),
   });
 
   return { routeSet, tracker, preparedRequests, streamInputs };
@@ -632,6 +635,75 @@ Deno.test("agent service routes reject unsigned request-scoped agent config", as
   assertEquals(response.status, 403);
   assertEquals(await response.json(), { errorCode: "CONTROL_PLANE_AUTH_REQUIRED" });
   assertEquals(preparedRequests.length, 0);
+});
+
+function createDefaultChatStartRequest(): Request {
+  return createAuthenticatedRequest(
+    "/api/runs",
+    {
+      messages: [],
+      context: {
+        conversationId: "00000000-0000-4000-8000-000000000001",
+        projectId: "00000000-0000-4000-8000-000000000005",
+        branchId: null,
+      },
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "00000000-0000-4000-8000-000000000002",
+      },
+    },
+    "POST",
+    { "X-Veryfront-Run-Event-Token": "run-event-service-token" },
+  );
+}
+
+// A run's session lives in the memory of the replica that accepted its start,
+// and starts arrive through a load-balanced address. The accepted start names
+// this replica so later run control for the run can reach it.
+it("agent service routes advertise the replica that accepted a default-chat start", async () => {
+  const { routeSet } = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve(true),
+    resolveRuntimeOwnerInvokeUrl: () => Promise.resolve("http://10.0.0.7:3001/channels/invoke"),
+  });
+
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createDefaultChatStartRequest(),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(
+    response.headers.get("x-veryfront-runtime-owner-invoke-url"),
+    "http://10.0.0.7:3001/channels/invoke",
+  );
+});
+
+it("agent service routes do not advertise a replica for a start they did not accept", async () => {
+  const { routeSet } = createRouteSet({
+    authenticateRequest: () =>
+      Promise.resolve(Response.json({ errorCode: "UNAUTHENTICATED" }, { status: 401 })),
+    resolveRuntimeOwnerInvokeUrl: () => Promise.resolve("http://10.0.0.7:3001/channels/invoke"),
+  });
+
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createDefaultChatStartRequest(),
+  });
+
+  assertEquals(response.status, 401);
+  assertEquals(response.headers.get("x-veryfront-runtime-owner-invoke-url"), null);
+});
+
+it("agent service routes accept a default-chat start when the replica address cannot be resolved", async () => {
+  const { routeSet } = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve(true),
+    resolveRuntimeOwnerInvokeUrl: () => Promise.reject(new Error("no network interface")),
+  });
+
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createDefaultChatStartRequest(),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(response.headers.get("x-veryfront-runtime-owner-invoke-url"), null);
 });
 
 it("agent service routes bind verified run-event tokens on both production launch paths", async () => {
