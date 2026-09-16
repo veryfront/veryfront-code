@@ -107,7 +107,10 @@ export interface DeployProjectRequest {
     | {
       kind: "ensure-pushed";
       /**
-       * Push the working tree again when it no longer matches the receipt.
+       * Push the working tree again when it no longer matches the receipt,
+       * whether the difference is uncommitted edits or commits made since the
+       * push. A receipt for another control plane, project, or branch is still
+       * refused: it describes an upload this deploy never targets.
        *
        * Only a command whose job is to publish what is on disk may do this.
        * `veryfront up` does: it exists to make the current directory live, so
@@ -450,20 +453,21 @@ function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget)
  * sight. A caller that asked to refresh therefore publishes what is on disk
  * rather than deploying a stale upload.
  *
- * Every refusal {@link validatePushReceipt} owns is checked *before* dirtiness
- * can select a push, because the push rewrites the receipt those refusals read.
- * A different control plane, project, or branch, and a HEAD that has moved off
- * the pushed commit, therefore still reach the operator as an error telling
- * them to push, exactly as they do from a clean checkout. The moved-HEAD check
- * applies to dirty receipts too: as long as a receipt names a commit, the
- * current commit is compared against it before any refresh. That keeps
- * deploy's standing contract intact: committed work is never uploaded behind
- * the operator's back, and neither a dirty tree nor a dirty receipt converts a
- * refusal into an upload.
+ * A receipt for a different control plane, project, or branch describes an
+ * upload this deploy never targets. That refusal is checked *before* drift can
+ * select a push, because the push would rewrite the receipt it reads, and it
+ * still reaches the operator as an error telling them to push, exactly as it
+ * does from a clean checkout. A HEAD that has moved off the pushed commit is
+ * different: the receipt targets this deploy and merely predates committed
+ * work, so a refreshing caller pushes that work the same way it pushes
+ * uncommitted edits. Refusing it sent `veryfront up` operators to a separate
+ * `veryfront push` before the preview showed what they had committed
+ * (veryfront/veryfront-issue-inbox#1470).
  *
  * Only a source that asked for it is refreshed. Without
  * `refreshStaleSource`, a stale receipt selects `"none"` and reaches
- * {@link validatePushReceipt} as a refusal instead.
+ * {@link validatePushReceipt} as a refusal instead, so `veryfront deploy`
+ * never uploads committed work behind the operator's back.
  */
 function resolveDigestOnlySourceRefresh(
   receipt: PushReceipt,
@@ -471,10 +475,9 @@ function resolveDigestOnlySourceRefresh(
 ): BootstrapPushKind {
   // A digest-only receipt is the normal provenance for a directory outside
   // Git. Keep it when both sides still have no commit and the recomputed source
-  // digest matches. If the directory has since gained a commit, preserve the
-  // existing policy: an unclean legacy receipt refreshes, while a clean one
-  // reaches validatePushReceipt as a commit mismatch.
-  if (local.gitSource.commitSha !== null) return receipt.clean ? "none" : "refresh";
+  // digest matches. A directory that has since gained a commit holds source the
+  // receipt never described, so it is pushed again.
+  if (local.gitSource.commitSha !== null) return "refresh";
   if (receipt.localSourceDigest === undefined) return "refresh-preserving-remote";
   if (local.sourceDigest === null) return "refresh";
   return receipt.localSourceDigest === local.sourceDigest ? "none" : "refresh";
@@ -484,10 +487,12 @@ function resolveMismatchedCommitRefresh(
   receipt: PushReceipt,
   gitSource: LocalSourceObservation["gitSource"],
 ): BootstrapPushKind {
-  // A checkout on a different commit must reach validatePushReceipt holding
-  // the original receipt. A checkout that lost its commit may refresh only
-  // when neither cleanliness nor a source digest still proves that receipt.
-  if (gitSource.commitSha !== null) return "none";
+  // A checkout on another commit holds committed work the push never saw.
+  // The caller asked to publish what is on disk, so that work is pushed rather
+  // than refused: the receipt it replaces described a commit that is no longer
+  // the source. A checkout that lost its commit may refresh only when neither
+  // cleanliness nor a source digest still proves that receipt.
+  if (gitSource.commitSha !== null) return "refresh";
   if (receipt.localSourceDigest !== undefined) return "none";
   return receipt.clean ? "none" : "refresh";
 }
@@ -500,11 +505,10 @@ function resolveStaleSourceRefresh(
   if (!receipt.commitSha) return resolveDigestOnlySourceRefresh(receipt, local);
   const { gitSource } = local;
   if (gitSource.commitSha !== receipt.commitSha) {
-    // A checkout on a different commit must reach {@link validatePushReceipt}
-    // holding the receipt that proves the mismatch; pushing here would rewrite
-    // that receipt into one that matches. When the checkout no longer resolves
-    // to any commit, a clean receipt still fails closed the same way, while a
-    // dirty one proves nothing about the upload and keeps its refresh.
+    // A checkout on another commit holds work the push never saw and is pushed
+    // again. When the checkout no longer resolves to any commit, a receipt that
+    // still proves its source reaches {@link validatePushReceipt} as a refusal,
+    // while one that proves nothing about the upload keeps its refresh.
     return resolveMismatchedCommitRefresh(receipt, gitSource);
   }
   // Digests compare the file set push uploads, so where the receipt has one it

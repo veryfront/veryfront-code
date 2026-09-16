@@ -231,10 +231,11 @@ interface UpRunOptions {
   jsonMode?: boolean;
   relativeProjectDir?: boolean;
   /**
-   * Seed a linked project plus a push receipt for this branch, so the deploy
-   * meets a receipt that does not describe the branch up targets.
+   * Seed a linked project plus a push receipt that no longer describes what up
+   * publishes: one for another branch, or one from an older commit than the
+   * checkout.
    */
-  receiptBranch?: string;
+  receipt?: { branch?: string; commitSha?: string };
 }
 
 /**
@@ -243,7 +244,7 @@ interface UpRunOptions {
  * and deployments go through the in-memory control plane.
  */
 async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
-  const { dryRun = false, jsonMode = false, receiptBranch, relativeProjectDir = false } = options;
+  const { dryRun = false, jsonMode = false, receipt, relativeProjectDir = false } = options;
   const projectDir = await makeTempDir({ prefix: "vf-up-e2e-" });
   const pushedFiles = new Map<string, string>();
   const controlPlane = new PreviewControlPlane(pushedFiles);
@@ -260,7 +261,7 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
     await writeTextFile(join(projectDir, "app", "page.tsx"), APP_PAGE);
     const commitSha = await commitProject(projectDir);
 
-    if (receiptBranch) {
+    if (receipt) {
       await writeProjectLink(projectDir, {
         controlPlane: CONTROL_PLANE,
         projectId: PROJECT_ID,
@@ -270,10 +271,10 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
         controlPlane: CONTROL_PLANE,
         projectId: PROJECT_ID,
         projectSlug: PROJECT_SLUG,
-        branch: receiptBranch,
-        commitSha,
-        // Well-formed but not this tree's pushed digest: the branch check
-        // fires first, which is what this receipt is here to prove.
+        branch: receipt.branch ?? "main",
+        commitSha: receipt.commitSha ?? commitSha,
+        // Well-formed but not this tree's pushed digest: the branch or commit
+        // comparison decides first, which is what these receipts are here to prove.
         sourceDigest: await computeSourceDigest([{ path: "app/page.tsx", content: APP_PAGE }]),
         clean: true,
       });
@@ -432,7 +433,7 @@ describe("up end to end", () => {
   });
 
   it("fails a dry run whose push receipt describes another branch", async () => {
-    const run = await runUp({ dryRun: true, receiptBranch: "feature-x" });
+    const run = await runUp({ dryRun: true, receipt: { branch: "feature-x" } });
 
     // up targets main, the receipt is for feature-x: the deploy it plans could
     // not run, so the plan is refused instead of printed. Before up delegated
@@ -449,5 +450,33 @@ describe("up end to end", () => {
     assertEquals(run.controlPlane.createdReleases, []);
     assertEquals(run.controlPlane.createdDeployments, []);
     assertEquals(run.output.some((line) => line.includes("Pushed")), false);
+  });
+
+  it("pushes committed work the last push never saw", async () => {
+    // The receipt names an older commit of this project. up promises to push
+    // main, so the new commit is uploaded instead of refused with "Run
+    // veryfront push again" (veryfront/veryfront-issue-inbox#1470).
+    const run = await runUp({ receipt: { commitSha: "1".repeat(40) } });
+
+    assertEquals(run.failure, null);
+    assertEquals(run.projectCreates, 0);
+    assertEquals(run.uploadedPaths.includes("app/page.tsx"), true);
+    assertEquals(
+      run.output.map(stripAnsi).includes(`  ✓ Pushed ${PROJECT_SLUG} to Preview`),
+      true,
+    );
+  });
+
+  it("plans the push for committed work the last push never saw", async () => {
+    const run = await runUp({
+      dryRun: true,
+      jsonMode: true,
+      receipt: { commitSha: "1".repeat(40) },
+    });
+
+    assertEquals(run.failure, null);
+    assertEquals(run.uploadedPaths, []);
+    const result = JSON.parse(run.output[0]!) as { data: { plannedActions: string[] } };
+    assertEquals(result.data.plannedActions.includes("push-source"), true);
   });
 });

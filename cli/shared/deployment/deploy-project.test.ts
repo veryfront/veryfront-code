@@ -1633,11 +1633,12 @@ describe("resolveBootstrapPush", () => {
     });
   });
 
-  it("leaves a moved HEAD to the receipt check instead of uploading behind it", async () => {
+  it("refreshes a moved HEAD so committed work reaches the preview", async () => {
     await withGitProject(async (projectDir) => {
-      // Committed work the push never saw is refused by validatePushReceipt
-      // with "came from a different commit"; deploy must not quietly replace
-      // that refusal with an upload.
+      // The receipt targets this deploy but predates the commit on disk. A
+      // caller that publishes what is on disk pushes that work instead of
+      // sending the operator to a separate veryfront push
+      // (veryfront/veryfront-issue-inbox#1470).
       assertEquals(
         resolveBootstrapPush(
           { ...receipt, commitSha: "1".repeat(40), clean: true },
@@ -1645,16 +1646,15 @@ describe("resolveBootstrapPush", () => {
           await observeLocalSource(projectDir),
           target,
         ),
-        "none",
+        "refresh",
       );
     });
   });
 
-  it("keeps the moved-HEAD refusal when the tree is also dirty", async () => {
+  it("refreshes a moved HEAD whose tree is also dirty", async () => {
     await withGitProject(async (projectDir) => {
-      // A dirty tree must not upgrade a refusal into an upload: pushing here
-      // would send the new commit *and* the uncommitted work, and would
-      // overwrite the very receipt validatePushReceipt reads to refuse.
+      // Committed and uncommitted work alike are what the caller asked to
+      // publish, so the push sends both.
       await dirty(projectDir);
 
       assertEquals(
@@ -1664,7 +1664,43 @@ describe("resolveBootstrapPush", () => {
           await observeLocalSource(projectDir),
           target,
         ),
+        "refresh",
+      );
+    });
+  });
+
+  it("leaves a moved HEAD to the deploy gate when the caller does not refresh", async () => {
+    await withGitProject(async (projectDir) => {
+      // veryfront deploy promotes a reviewed push. Committed work it never saw
+      // must reach validatePushReceipt as "came from a different commit", not
+      // become an upload behind the operator's back.
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: true },
+          { kind: "ensure-pushed" },
+          await observeLocalSource(projectDir),
+          target,
+        ),
         "none",
+      );
+    });
+  });
+
+  it("refreshes a digest-only receipt once the directory gained a commit", async () => {
+    await withGitProject(async (projectDir) => {
+      // The receipt was written outside Git. The directory now names a commit
+      // the receipt never described, so the source is pushed again.
+      const local = await observeLocalSource(projectDir);
+      assertExists(local.sourceDigest);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: null, clean: true, localSourceDigest: local.sourceDigest },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          local,
+          target,
+        ),
+        "refresh",
       );
     });
   });
@@ -1812,11 +1848,10 @@ describe("resolveBootstrapPush", () => {
     });
   });
 
-  it("keeps the moved-HEAD refusal when the receipt was dirty", async () => {
+  it("refreshes a moved HEAD when the receipt was dirty", async () => {
     await withGitProject(async (projectDir) => {
-      // A dirty receipt that still names a commit gets the same comparison as
-      // a clean one: refreshing here would upload the new commit and rewrite
-      // the receipt validatePushReceipt reads to refuse the moved HEAD.
+      // A dirty receipt that names a commit gets the same treatment as a clean
+      // one: the checkout moved on, so the new commit is pushed.
       assertEquals(
         resolveBootstrapPush(
           { ...receipt, commitSha: "1".repeat(40), clean: false },
@@ -1824,7 +1859,7 @@ describe("resolveBootstrapPush", () => {
           await observeLocalSource(projectDir),
           target,
         ),
-        "none",
+        "refresh",
       );
     });
   });
