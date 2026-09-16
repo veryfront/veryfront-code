@@ -12,8 +12,9 @@ versions are listed at
 ignores, whether the rule comes from a `.gitignore` at any level,
 `.git/info/exclude`, or `core.excludesFile`. Previously only the built-in
 defaults and `.vfignore` applied, so local-only files such as tooling scratch
-directories were uploaded. Tracked files are never skipped by a Git ignore rule,
-and a directory outside Git behaves as before.
+directories were uploaded. Pull also skips a remote file whose path Git
+ignores, even when no local copy exists yet. Tracked files are never skipped by
+a Git ignore rule, and a directory outside Git behaves as before.
 
 A supported file that Git ignores and earlier versions uploaded, such as
 generated source, is now skipped. To keep uploading it, re-include it in

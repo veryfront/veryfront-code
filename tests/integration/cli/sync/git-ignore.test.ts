@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { scanLocalFiles } from "../../../../cli/commands/push/command.ts";
-import { loadGitIgnoredPaths } from "../../../../cli/sync/git-ignore.ts";
+import { checkGitIgnoredPaths, loadGitIgnoredPaths } from "../../../../cli/sync/git-ignore.ts";
 import { loadIgnoreChecker } from "../../../../cli/sync/ignore.ts";
 
 async function runGit(cwd: string, ...args: string[]): Promise<void> {
@@ -82,6 +82,43 @@ describe("cli/sync/git-ignore against real Git", () => {
           "pages/types.gen.ts",
           "scratch.md",
         ]);
+      });
+    });
+  });
+
+  describe("checkGitIgnoredPaths", () => {
+    it("matches paths that do not exist locally and skips tracked files", async () => {
+      await withTempDir(async (repoDir) => {
+        const projectDir = await createIgnoringRepository(repoDir);
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "*.gen.ts\ndist/\n");
+
+        const ignored = await checkGitIgnoredPaths(projectDir, [
+          "dist/app.js",
+          "lib/remote-only.gen.ts",
+          ".context/new-note.md",
+          "content/drafts/remote.md",
+          "pages/tracked.gen.ts",
+          "pages/about.tsx",
+          ":colon.gen.ts",
+          "-dash.gen.ts",
+          "space name.gen.ts",
+        ]);
+
+        assertEquals(ignored.sort(), [
+          "-dash.gen.ts",
+          ".context/new-note.md",
+          ":colon.gen.ts",
+          "content/drafts/remote.md",
+          "dist/app.js",
+          "lib/remote-only.gen.ts",
+          "space name.gen.ts",
+        ]);
+      });
+    });
+
+    it("reports nothing outside a Git repository", async () => {
+      await withTempDir(async (projectDir) => {
+        assertEquals(await checkGitIgnoredPaths(projectDir, ["dist/app.js"]), []);
       });
     });
   });

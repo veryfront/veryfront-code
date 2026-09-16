@@ -8,7 +8,7 @@ import { cliLogger, logWarning } from "#cli/utils";
 import { isJsonMode } from "../shared/json-output.ts";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
-import { loadGitIgnoredPaths } from "./git-ignore.ts";
+import { checkGitIgnoredPaths, loadGitIgnoredPaths } from "./git-ignore.ts";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
@@ -572,16 +572,33 @@ export function createIgnoreChecker(
   return { isIgnored, isProtected, isSupportedExtension };
 }
 
+export interface LoadIgnoreCheckerOptions {
+  /**
+   * Project-relative paths that may not exist locally, such as the remote
+   * paths a pull is about to write, to check against Git's ignore rules too.
+   */
+  candidatePaths?: Iterable<string>;
+}
+
 /**
  * Create the ignore checker sync uses for a project directory: the default
- * patterns, the project's `.vfignore`, and the paths Git ignores there.
+ * patterns, the project's `.vfignore`, and the paths Git ignores there,
+ * including any `candidatePaths` Git's rules match.
  */
-export async function loadIgnoreChecker(projectPath: string): Promise<IgnoreChecker> {
-  const [patterns, gitIgnoredPaths] = await Promise.all([
+export async function loadIgnoreChecker(
+  projectPath: string,
+  options: LoadIgnoreCheckerOptions = {},
+): Promise<IgnoreChecker> {
+  const [patterns, localIgnoredPaths, candidateIgnoredPaths] = await Promise.all([
     loadIgnorePatterns(projectPath),
     loadGitIgnoredPaths(projectPath),
+    options.candidatePaths === undefined
+      ? Promise.resolve([])
+      : checkGitIgnoredPaths(projectPath, options.candidatePaths),
   ]);
-  return createIgnoreChecker(patterns, { gitIgnoredPaths });
+  return createIgnoreChecker(patterns, {
+    gitIgnoredPaths: [...localIgnoredPaths, ...candidateIgnoredPaths],
+  });
 }
 
 /**

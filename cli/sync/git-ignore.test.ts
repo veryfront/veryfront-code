@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CommandResult } from "#cli/process-command";
-import { type GitIgnoreDependencies, loadGitIgnoredPaths } from "./git-ignore.ts";
+import {
+  checkGitIgnoredPaths,
+  type GitIgnoreDependencies,
+  loadGitIgnoredPaths,
+  unquoteGitPath,
+} from "./git-ignore.ts";
 import { createDefaultIgnoreChecker, createIgnoreChecker } from "./ignore.ts";
 
 interface FakeGitOptions {
@@ -102,6 +107,90 @@ describe("cli/sync/git-ignore", () => {
         Error,
         "Could not read Git ignore rules for this project.",
       );
+    });
+  });
+
+  describe("checkGitIgnoredPaths", () => {
+    it("checks paths that need not exist locally in one git check-ignore call", async () => {
+      const { dependencies, calls } = fakeGit({
+        result: { success: true, code: 0, stdout: "./dist/app.js\n./:odd.gen.ts\n" },
+      });
+
+      assertEquals(
+        await checkGitIgnoredPaths(
+          "/repo/app",
+          ["dist/app.js", "pages/index.tsx", ":odd.gen.ts", "dist/app.js"],
+          dependencies,
+        ),
+        ["dist/app.js", ":odd.gen.ts"],
+      );
+      assertEquals(calls, [{
+        args: [
+          "-c",
+          "core.quotePath=false",
+          "check-ignore",
+          "./dist/app.js",
+          "./pages/index.tsx",
+          "./:odd.gen.ts",
+        ],
+        cwd: "/repo/app",
+      }]);
+    });
+
+    it("treats exit code 1 as nothing ignored", async () => {
+      const { dependencies } = fakeGit({ result: { success: false, code: 1, stdout: "" } });
+      assertEquals(await checkGitIgnoredPaths("/repo", ["pages/index.tsx"], dependencies), []);
+    });
+
+    it("splits very long path lists across several calls", async () => {
+      const { dependencies, calls } = fakeGit({ result: { success: false, code: 1 } });
+      const paths = Array.from({ length: 400 }, (_, index) => `${"x".repeat(100)}/${index}.ts`);
+
+      await checkGitIgnoredPaths("/repo", paths, dependencies);
+
+      assertEquals(calls.length > 1, true);
+      assertEquals(calls.flatMap((call) => call.args.slice(3)).length, paths.length);
+    });
+
+    it("skips Git for no paths or a missing directory", async () => {
+      const empty = fakeGit({});
+      assertEquals(await checkGitIgnoredPaths("/repo", [], empty.dependencies), []);
+      assertEquals(empty.calls.length, 0);
+
+      const missing = fakeGit({ exists: false });
+      assertEquals(await checkGitIgnoredPaths("/missing", ["a.ts"], missing.dependencies), []);
+      assertEquals(missing.calls.length, 0);
+    });
+
+    it("reports nothing outside a Git repository", async () => {
+      const { dependencies } = fakeGit({
+        result: { success: false, code: 128, stderr: "fatal: not a git repository" },
+      });
+      assertEquals(await checkGitIgnoredPaths("/plain", ["a.ts"], dependencies), []);
+    });
+
+    it("refuses to continue when Git fails inside a repository", async () => {
+      const { dependencies } = fakeGit({
+        result: { success: false, code: 128, stderr: "fatal: detected dubious ownership" },
+        gitMetadata: true,
+      });
+      await assertRejects(
+        () => checkGitIgnoredPaths("/repo", ["a.ts"], dependencies),
+        Error,
+        "Could not read Git ignore rules for this project.",
+      );
+    });
+  });
+
+  describe("unquoteGitPath", () => {
+    it("returns unquoted paths unchanged", () => {
+      assertEquals(unquoteGitPath("./dist/ünï.ts"), "./dist/ünï.ts");
+    });
+
+    it("decodes C-style escapes and octal bytes", () => {
+      assertEquals(unquoteGitPath('"./dist/new\\nline.ts"'), "./dist/new\nline.ts");
+      assertEquals(unquoteGitPath('"./tab\\t \\"q\\\\.ts"'), './tab\t "q\\.ts');
+      assertEquals(unquoteGitPath('"./\\303\\251.ts"'), "./é.ts");
     });
   });
 

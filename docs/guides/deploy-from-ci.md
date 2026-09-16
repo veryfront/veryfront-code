@@ -69,12 +69,13 @@ this handoff. Manage those files through another reviewed delivery path.
 
 Both commands use the same `.vfignore` rules. Inside a Git checkout they also
 skip untracked files that Git ignores, whether the rule comes from a
-`.gitignore`, `.git/info/exclude`, or `core.excludesFile`. A `.vfignore`
+`.gitignore`, `.git/info/exclude`, or `core.excludesFile`. Pull applies the
+same rules to remote paths that do not exist locally yet. A `.vfignore`
 negation such as `!dist` re-includes a path Git ignores. Tracked files are
-never skipped by Git ignore rules. `.context/` is ignored by default.
-Ignored files and unsupported extensions are not reconciled with Veryfront. A `.vfignore` negation cannot
-re-include `.env`, `.env.*`, `.veryfront`, or `.git` paths: those stay ignored
-so local secrets and CLI state are never uploaded. Push prints a warning naming
+never skipped by Git ignore rules. `.context/` is ignored by default. Ignored
+files and unsupported extensions are not reconciled with Veryfront. A
+`.vfignore` negation cannot re-include `.env`, `.env.*`, `.veryfront`, or
+`.git` paths: those stay ignored so local secrets and CLI state are never uploaded. Push prints a warning naming
 each path whose negation was dropped. Pull does the same for protected `.env`
 paths, and rejects remote `.git` or `.veryfront` metadata before changing local
 files. Names that only begin with `.env`, such as `.envoy/` or `.environments/`,

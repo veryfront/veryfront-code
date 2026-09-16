@@ -1591,7 +1591,7 @@ describe("pullCommand", () => {
     }
   });
 
-  it("keeps local files Git ignores through info/exclude during a pruning pull", async () => {
+  it("skips remote and local paths Git ignores during a pruning pull", async () => {
     const tempDir = await makeTempDir();
     const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
     const originalProjectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
@@ -1599,6 +1599,8 @@ describe("pullCommand", () => {
     try {
       await Deno.mkdir(join(tempDir, "app"), { recursive: true });
       await Deno.writeTextFile(join(tempDir, "app", "keep.ts"), "old\n");
+      await Deno.writeTextFile(join(tempDir, ".gitignore"), "generated/\n");
+      await Deno.writeTextFile(join(tempDir, ".vfignore"), "!/generated/keep.ts\n");
       await initializeCleanTestGit(tempDir);
       await Deno.writeTextFile(join(tempDir, ".git", "info", "exclude"), ".scratch/\n");
       await Deno.mkdir(join(tempDir, ".scratch"), { recursive: true });
@@ -1631,6 +1633,8 @@ describe("pullCommand", () => {
               data: [
                 remoteFile("app/keep.ts", "export default 1;"),
                 remoteFile(".scratch/todos.md", "remote notes\n"),
+                remoteFile("generated/remote-only.ts", "export const generated = 1;"),
+                remoteFile("generated/keep.ts", "export const kept = 1;"),
               ],
               page_info: {},
             }));
@@ -1653,6 +1657,16 @@ describe("pullCommand", () => {
         await Deno.readTextFile(join(tempDir, ".scratch", "todos.md")),
         "local notes\n",
         "a Git-ignored local file is neither pruned nor overwritten",
+      );
+      assertEquals(
+        await exists(join(tempDir, "generated", "remote-only.ts")),
+        false,
+        "a remote path Git ignores is not written even though it did not exist locally",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "generated", "keep.ts")),
+        "export const kept = 1;",
+        "a .vfignore negation re-includes a Git-ignored remote path",
       );
     } finally {
       if (originalApiToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
