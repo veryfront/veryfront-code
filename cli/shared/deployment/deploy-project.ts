@@ -1762,6 +1762,15 @@ export function createDeployProject(options: {
         });
       }
       const liveSource = request.publish === "live-source";
+      // Preview renders main at <slug>.preview.veryfront.com. Probing that URL
+      // after pushing another branch would verify main, not the pushed branch.
+      if (liveSource && (request.branch ?? "main") !== "main") {
+        throw DEPLOYMENT_ERROR.create({
+          detail:
+            `Live-source publishing only publishes "main" to Preview, not "${request.branch}". Run veryfront push --branch ${request.branch} to update that branch's preview.`,
+          context: { branch: request.branch },
+        });
+      }
       if (liveSource && !isLivePreviewEnvironmentName(request.environment)) {
         throw DEPLOYMENT_ERROR.create({
           detail:

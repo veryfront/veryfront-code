@@ -461,9 +461,49 @@ describe("Up Command", () => {
             dryRun: false,
             studioUrl: "https://veryfront.com/projects/verified-slug?branch=main",
             previewUrl: VERIFIED_RESULT.url,
+            urlVerification: "served",
+            warnings: [],
             nextCommand: "veryfront deploy",
           },
         });
+      } finally {
+        setJsonMode(false);
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("reports a Preview only seen at its access gate in the JSON result", async () => {
+      const projectDir = await createLinkedProjectDir();
+      const gateWarning: DeployEvent = {
+        kind: "warning",
+        code: "environment-url-unverified",
+        message:
+          "Source pushed, but https://verified.example.test/dashboard was never observed serving this app: gated",
+      };
+      const { deployProject } = recordingDeployProject(
+        { kind: "live-source", result: { ...VERIFIED_RESULT, urlVerification: "gated" } },
+        [gateWarning],
+      );
+
+      try {
+        setJsonMode(true);
+        setNonInteractive(true);
+        const { output } = await captureLog(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
+          )
+        );
+
+        assertEquals(output.length, 1);
+        const result = JSON.parse(output[0]!);
+        assertEquals(result.success, true);
+        assertEquals(result.data.urlVerification, "gated");
+        assertEquals(result.data.warnings, [{
+          code: "environment-url-unverified",
+          message: gateWarning.message,
+        }]);
       } finally {
         setJsonMode(false);
         resetInteractiveMode();

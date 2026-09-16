@@ -354,7 +354,7 @@ export async function upCommand(
   const verbose = isVerbose();
   let progressText = initialDeployProgressText(verbose);
   const deploySpinner = jsonOutput ? createNoopSpinner() : createSpinner(progressText);
-  const warnings: string[] = [];
+  const warnings: Array<Extract<DeployEvent, { kind: "warning" }>> = [];
   let sourceUploaded = false;
   let outcome: DeployProjectOutcome;
 
@@ -372,7 +372,7 @@ export async function upCommand(
     }, {
       onEvent(event) {
         if (event.kind === "warning") {
-          warnings.push(event.message);
+          warnings.push(event);
           return;
         }
         if (event.step === "push-source" && event.phase === "completed" && !dryRun) {
@@ -429,6 +429,10 @@ export async function upCommand(
         dryRun: false,
         studioUrl,
         previewUrl: result.url,
+        // "gated" means only the access gate answered: the app itself was
+        // never observed serving, which automation must be able to see.
+        urlVerification: result.urlVerification,
+        warnings: warnings.map(({ code, message }) => ({ code, message })),
         nextCommand: "veryfront deploy",
       },
     });
@@ -442,5 +446,5 @@ export async function upCommand(
   console.log();
   console.log(`  Deploy:  ${brand("veryfront deploy")}`);
   console.log();
-  for (const message of warnings) logWarning(message);
+  for (const warning of warnings) logWarning(warning.message);
 }

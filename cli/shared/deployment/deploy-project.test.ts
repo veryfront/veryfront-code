@@ -582,6 +582,30 @@ describe("DeployProject", () => {
       });
     });
 
+    it("refuses live-source publishing of any branch other than main", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        try {
+          const error = await expectDeployError(() =>
+            executeApply(projectDir, controlPlane, undefined, {
+              environment: "preview",
+              branch: "feature-x",
+              publish: "live-source",
+            })
+          );
+
+          assertEquals(error instanceof VeryfrontError, true);
+          assertEquals((error as VeryfrontError).slug, DEPLOYMENT_ERROR.slug);
+          assertStringIncludes((error as VeryfrontError).detail ?? "", '"feature-x"');
+          assertEquals(controlPlane.projectLookups, []);
+          assertEquals(controlPlane.createdReleases, []);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
     it("refuses live-source publishing to any environment other than Preview", async () => {
       await withDeployEnv(async () => {
         const { projectDir } = await createPushedProject();

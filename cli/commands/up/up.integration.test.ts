@@ -402,6 +402,8 @@ describe("up end to end", () => {
         dryRun: false,
         studioUrl: `https://veryfront.com/projects/${PROJECT_SLUG}?branch=main`,
         previewUrl: PREVIEW_DOMAIN,
+        urlVerification: "served",
+        warnings: [],
         nextCommand: "veryfront deploy",
       },
     });
