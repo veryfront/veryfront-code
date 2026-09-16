@@ -824,6 +824,130 @@ describe("eval/runner", () => {
     assertEquals(checkCalls, 1);
   });
 
+  it("reports progress for every record in dataset order", async () => {
+    const definition = evalAgent({
+      id: "eval:progress",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+      metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+    });
+    const events: string[] = [];
+
+    await runEval(definition, {
+      adapters: { agent: async ({ example }) => example.id === "q1" ? "Paris" : "Lyon" },
+      onProgress: (event) => {
+        events.push(
+          event.type === "eval-started"
+            ? `${event.type} ${event.evalId} total=${event.total}`
+            : event.type === "record-started"
+            ? `${event.type} ${event.recordId} ${event.index + 1}/${event.total}`
+            : `${event.type} ${event.recordId} completed=${event.completed}`,
+        );
+        throw new Error("a failing progress listener must not affect the run");
+      },
+    });
+
+    assertEquals(events, [
+      "eval-started eval:progress total=2",
+      "record-started q1:1 1/2",
+      "record-finished q1:1 completed=true",
+      "record-started q2:1 2/2",
+      "record-finished q2:1 completed=false",
+    ]);
+  });
+
+  it("runs records concurrently up to the limit and keeps report order", async () => {
+    const definition = evalAgent({
+      id: "eval:concurrent",
+      target: "agent:researcher",
+      dataset: datasets.inline(
+        ["q1", "q2", "q3", "q4", "q5"].map((id) => ({ id, input: id })),
+      ),
+    });
+    const releases = new Map<string, () => void>();
+    let active = 0;
+    let peak = 0;
+    const started: string[] = [];
+
+    const run = runEval(definition, {
+      concurrency: 2,
+      adapters: {
+        agent: async ({ example }) => {
+          active += 1;
+          peak = Math.max(peak, active);
+          started.push(example.id);
+          await new Promise<void>((resolve) => releases.set(example.id, resolve));
+          active -= 1;
+          return example.id;
+        },
+      },
+    });
+
+    const releaseWhenStarted = async (id: string): Promise<void> => {
+      while (!releases.has(id)) await new Promise((resolve) => setTimeout(resolve, 0));
+      releases.get(id)!();
+    };
+    // Finish records out of dataset order to prove the report does not follow completion order.
+    await releaseWhenStarted("q2");
+    await releaseWhenStarted("q3");
+    await releaseWhenStarted("q1");
+    await releaseWhenStarted("q5");
+    await releaseWhenStarted("q4");
+    const report = await run;
+
+    assertEquals(peak, 2);
+    assertEquals(started, ["q1", "q2", "q3", "q4", "q5"]);
+    assertEquals(report.records.map((record) => record.exampleId), ["q1", "q2", "q3", "q4", "q5"]);
+  });
+
+  it("starts no new records after a model access denial when running concurrently", async () => {
+    const definition = evalAgent({
+      id: "eval:concurrent-denial",
+      target: "agent:researcher",
+      dataset: datasets.inline(
+        ["q1", "q2", "q3", "q4"].map((id) => ({ id, input: id })),
+      ),
+    });
+    const denial = await createGatewayCreditDenial();
+    const calls: string[] = [];
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          concurrency: 2,
+          adapters: {
+            agent: async ({ example }) => {
+              calls.push(example.id);
+              if (example.id === "q1") throw denial;
+              return "ok";
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-access-denied");
+    assertEquals(calls, ["q1", "q2"]);
+  });
+
+  it("rejects a concurrency that is not a positive integer", async () => {
+    const definition = evalAgent({
+      id: "eval:bad-concurrency",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+    });
+
+    for (const concurrency of [0, 1.5, Number.NaN]) {
+      const error = await assertRejects(
+        () => runEval(definition, { concurrency, adapters: { agent: async () => "ok" } }),
+      ) as Error;
+      assertEquals(error.message.includes("Eval concurrency must be a positive integer"), true);
+    }
+  });
+
   it("stops when a judge metric is refused model access", async () => {
     const denial = await createGatewayCreditDenial();
     const judge = metrics.answer.exactMatch().gate();

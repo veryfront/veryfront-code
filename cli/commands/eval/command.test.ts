@@ -1006,6 +1006,47 @@ describe("eval CLI command helpers", () => {
     assertEquals(modelCalls, 1);
   });
 
+  it("fails a case whose model stream stalls once the record timeout elapses", async () => {
+    let streamSignal: AbortSignal | undefined;
+    const model = {
+      provider: "hosted",
+      modelId: "hosted/eval-stalled-stream",
+      _generateViaStream: true,
+      doGenerate() {
+        return new Promise<never>(() => {});
+      },
+      async doStream(options: { abortSignal?: AbortSignal }) {
+        streamSignal = options.abortSignal;
+        // Headers arrived, then the provider stopped sending data.
+        return { stream: new ReadableStream() };
+      },
+    } as unknown as ModelRuntime;
+    const agent = createAgent({
+      id: "eval-stalled-stream-agent",
+      model: "hosted/eval-stalled-stream",
+      system: "Answer.",
+      resolveModelTransport: async () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:stalled",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: createAgentAdapter(agent, createEvalOptions({ recordTimeout: 0.2 })),
+      },
+    });
+
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:stalled" case "q1" did not finish within 0.2s.',
+    );
+    assertEquals(streamSignal?.aborted, true);
+  });
+
   it("retains only skill loader tools for skills agents when mock tools are active", async () => {
     const observedToolNames: string[][] = [];
     const model: ModelRuntime = {
@@ -1404,6 +1445,83 @@ describe("eval CLI command helpers", () => {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
+  });
+
+  it("reports suite progress per eval and passes the case concurrency to the runner", async () => {
+    await withTempDir(async (projectDir) => {
+      await withTempDir(async (configHome) => {
+        let inFlight = 0;
+        let peak = 0;
+        const fixtureAgent = {
+          id: "fixture",
+          config: {},
+          generate: async () => {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            inFlight -= 1;
+            return { text: "expected", messages: [], status: "completed", toolCalls: [] };
+          },
+        } as unknown as Agent;
+        const runtime = createProjectRuntimeDiscovery(
+          normalizeSourceIntegrationPolicy({ allow: {} }),
+        );
+        runtime.agents.set(fixtureAgent.id, fixtureAgent);
+        for (const id of ["beta", "alpha"]) {
+          const definition = evalAgent({
+            id: `eval:${id}`,
+            target: "agent:fixture",
+            dataset: [{ id: `${id}-1`, input: id }, { id: `${id}-2`, input: id }],
+            metrics: [metrics.answer.contains({ text: "expected" }).gate()],
+          });
+          definition.source = {
+            filePath: `${projectDir}/evals/${id}.eval.ts`,
+            exportName: "default",
+          };
+          runtime.evals.set(definition.id, definition);
+        }
+        const progress: string[] = [];
+
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+        Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+        Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+        await captureConsoleOutput(() =>
+          runEvalCommand(
+            createEvalOptions({ projectDir, reportDir: `${projectDir}/suite`, concurrency: 2 }),
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              createProgressReporter: () => ({
+                startEval: ({ name, position, count }) =>
+                  progress.push(`start ${position}/${count} ${name}`),
+                onEvent: (event) => {
+                  if (event.type === "record-finished") {
+                    progress.push(`finished ${event.exampleId}`);
+                  }
+                },
+                onRetry: () => {},
+                setPhase: () => {},
+                stop: () => progress.push("stop"),
+              }),
+            },
+          )
+        );
+
+        assertEquals(peak, 2);
+        assertEquals(progress.filter((line) => !line.startsWith("finished")), [
+          "start 1/2 alpha",
+          "start 2/2 beta",
+          "stop",
+          "stop",
+        ]);
+        assertEquals(
+          progress.filter((line) => line.startsWith("finished")).sort(),
+          ["finished alpha-1", "finished alpha-2", "finished beta-1", "finished beta-2"],
+        );
+      });
+    });
   });
 
   it("describes each metric in prose, naming the tool it asserted on", async () => {

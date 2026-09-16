@@ -10,6 +10,10 @@ import { DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS } from "../../agent/ho
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
 import {
+  type ProviderRequestRetryEvent,
+  runWithProviderRequestObserver,
+} from "./provider-request-observer.ts";
+import {
   buildProviderError,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
@@ -939,6 +943,44 @@ describe("provider-http", () => {
 
       assertEquals(attempts, 2);
       assertEquals(await new Response(stream).text(), "chunk");
+    });
+
+    it("reports each stream retry to the active request observer", async () => {
+      let attempts = 0;
+      const retries: ProviderRequestRetryEvent[] = [];
+      const stream = await runWithProviderRequestObserver(
+        { onRetry: (event) => retries.push(event) },
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                attempts === 1
+                  ? jsonResponse(
+                    429,
+                    { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                    { "retry-after": "0" },
+                  )
+                  : new Response("chunk"),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            modelId: "kimi-k2.6",
+          }),
+      );
+
+      assertEquals(await new Response(stream).text(), "chunk");
+      assertEquals(retries, [{
+        providerLabel: "veryfront-cloud",
+        modelId: "kimi-k2.6",
+        reason: "429",
+        attempt: 2,
+        maxAttempts: 3,
+        delayMs: 0,
+      }]);
     });
 
     it("bounds rate-limit retries", async () => {

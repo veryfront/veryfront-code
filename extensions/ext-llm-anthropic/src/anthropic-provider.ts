@@ -20,6 +20,7 @@ import {
   getAnthropicMessagesUrl,
   isNumberArray,
   mergeUsage,
+  notifyProviderRequestRetry,
   parseRetryAfterMs,
   ProviderError,
   ProviderOverloadedError,
@@ -761,8 +762,17 @@ export function createAnthropicModelRuntime(
             ) {
               throw error;
             }
+            const replayDelayMs = ANTHROPIC_STREAM_REPLAY_DELAY_MS * 2 ** streamReplayCount;
+            notifyProviderRequestRetry({
+              providerLabel: providerName,
+              modelId,
+              reason: "stream interrupted",
+              attempt: streamReplayCount + 2,
+              maxAttempts: MAX_ANTHROPIC_STREAM_REPLAYS + 1,
+              delayMs: replayDelayMs,
+            });
             await waitForProviderStreamRetry(
-              ANTHROPIC_STREAM_REPLAY_DELAY_MS * 2 ** streamReplayCount,
+              replayDelayMs,
               providerAbortScope.controller.signal,
             );
             streamReplayCount++;

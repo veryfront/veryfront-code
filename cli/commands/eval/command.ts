@@ -3,7 +3,7 @@
  */
 
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
-import { INVALID_ARGUMENT } from "veryfront/errors";
+import { EVAL_RECORD_TIMEOUT, INVALID_ARGUMENT } from "veryfront/errors";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
 import {
@@ -71,6 +71,8 @@ import {
   OutboundRequestBlockedError,
   trustOperatorConfiguredVeryfrontApiOrigins,
 } from "#cli/outbound-fetch";
+import { runWithProviderRequestObserver } from "../../../src/provider/runtime-loader/provider-request-observer.ts";
+import { createEvalProgressReporter, type EvalProgressReporter } from "./progress.ts";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -79,6 +81,7 @@ export interface EvalOptions extends EvalArgs {
 interface EvalCommandDependencies {
   discoverProjectAgentRuntime?: typeof discoverProjectAgentRuntime;
   hydrateEvalRuntimeAuth?: typeof hydrateEvalRuntimeAuth;
+  createProgressReporter?: () => EvalProgressReporter;
 }
 
 type GatewayBillingGroupFinalization = {
@@ -106,6 +109,10 @@ type GatewayBillingFinalizeOptions = {
    * warning. Any other failure still warns.
    */
   stoppedByDenial?: EvalModelAccessDenialKind;
+  /** Per-attempt deadline for the finalization request. */
+  requestTimeoutMs?: number;
+  /** Called before a warning prints, so a live progress line can clear first. */
+  beforeWarning?: () => void;
 };
 
 type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
@@ -126,6 +133,17 @@ const ENV_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS =
   "VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS";
 const ENV_EVAL_EXPORT_METADATA_ALLOWLIST = "VERYFRONT_EVAL_EXPORT_METADATA_ALLOWLIST";
 // Gateway usage capture is eventually consistent after model streams close.
+/**
+ * Finalization is a small bookkeeping call. Without a deadline, a gateway that accepts the
+ * connection and never answers would hold the command open after every record already finished.
+ */
+const DEFAULT_GATEWAY_BILLING_FINALIZE_REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * Default time one agent eval case may run. Measured multi-agent cases take about a minute, so ten
+ * minutes leaves room for slow orchestrators while still ending a case whose model stream stopped
+ * sending data (provider streams have no idle deadline once response headers arrive).
+ */
+export const DEFAULT_EVAL_RECORD_TIMEOUT_SECONDS = 600;
 const DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS = [
   500,
   1_000,
@@ -360,7 +378,13 @@ export async function finalizeGatewayBillingGroup(
 
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS;
   const sleepFn = options.sleep ?? sleep;
+  const warn = (message: string): void => {
+    options.beforeWarning?.();
+    cliLogger.warn(message);
+  };
   const hostTransport = createVeryfrontApiOriginBoundOutboundFetch(bootstrap.apiBaseUrl);
+  const requestTimeoutMs = options.requestTimeoutMs ??
+    DEFAULT_GATEWAY_BILLING_FINALIZE_REQUEST_TIMEOUT_MS;
 
   for (let attempt = 0;; attempt += 1) {
     let response: Response;
@@ -375,6 +399,7 @@ export async function finalizeGatewayBillingGroup(
             ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
           },
           body: JSON.stringify({ billing_group_id: billingGroupId }),
+          signal: AbortSignal.timeout(requestTimeoutMs),
         },
       );
     } catch (error) {
@@ -389,7 +414,7 @@ export async function finalizeGatewayBillingGroup(
       ) {
         cliLogger.debug(message);
       } else {
-        cliLogger.warn(message);
+        warn(message);
       }
       return undefined;
     }
@@ -409,14 +434,14 @@ export async function finalizeGatewayBillingGroup(
       ) {
         cliLogger.debug(message);
       } else {
-        cliLogger.warn(message);
+        warn(message);
       }
       return undefined;
     }
 
     const finalization = parseGatewayBillingGroupFinalization(await response.json());
     if (!finalization) {
-      cliLogger.warn(
+      warn(
         `Gateway billing finalization skipped for ${billingGroupId}: invalid response`,
       );
     }
@@ -427,6 +452,7 @@ export async function finalizeGatewayBillingGroup(
 export async function runEvalWithGatewayBillingGroup(
   billingGroupId: string,
   operation: () => Promise<EvalReport>,
+  hooks: { onFinalize?: () => void; beforeWarning?: () => void } = {},
 ): Promise<EvalReport> {
   const currentContext = getCurrentVeryfrontCloudContext();
   const billingContext = { ...(currentContext ?? {}), billingGroupId };
@@ -439,6 +465,7 @@ export async function runEvalWithGatewayBillingGroup(
   } catch (caught) {
     const error = explainConfiguredProjectDenial(caught, sentProjectSlug);
     if (billingContext.billingGroupUsed) {
+      hooks.onFinalize?.();
       // Still finalize: earlier requests can have been served before the
       // gateway started refusing them, and those must be reconciled.
       const denial = getEvalModelAccessDenialKind(error);
@@ -446,12 +473,17 @@ export async function runEvalWithGatewayBillingGroup(
         ...(denial && !billingContext.billingGroupRequestAdmitted
           ? { stoppedByDenial: denial }
           : {}),
+        ...(hooks.beforeWarning ? { beforeWarning: hooks.beforeWarning } : {}),
       });
     }
     throw error;
   }
   if (!billingContext.billingGroupUsed && !hasGatewayUsage(report)) return report;
-  const finalization = await finalizeGatewayBillingGroup(billingGroupId);
+  hooks.onFinalize?.();
+  const finalization = await finalizeGatewayBillingGroup(
+    billingGroupId,
+    hooks.beforeWarning ? { beforeWarning: hooks.beforeWarning } : {},
+  );
   return finalization ? applyGatewayBillingGroupFinalization(report, finalization) : report;
 }
 
@@ -816,7 +848,50 @@ async function resolveEvalMockTools(
   return typeof mockTools === "function" ? await mockTools(context) : mockTools;
 }
 
+function resolveEvalRecordTimeoutMs(options: Pick<EvalOptions, "recordTimeout">): number {
+  const seconds = options.recordTimeout ?? DEFAULT_EVAL_RECORD_TIMEOUT_SECONDS;
+  return seconds > 0 ? Math.round(seconds * 1000) : 0;
+}
+
+/**
+ * Run `operation` with an abort signal that fires once the case exceeds its time limit. The race
+ * also returns control when the operation ignores the signal, so one stalled case cannot block the
+ * rest of the eval.
+ */
+async function withEvalRecordTimeout<T>(
+  timeoutMs: number,
+  context: { evalId: string; exampleId: string; repetition: number },
+  operation: (signal: AbortSignal | undefined) => Promise<T>,
+): Promise<T> {
+  if (timeoutMs <= 0) return await operation(undefined);
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = EVAL_RECORD_TIMEOUT.create({
+        detail: `Eval "${context.evalId}" case "${context.exampleId}" did not finish within ${
+          formatSeconds(timeoutMs)
+        }.`,
+        context: { ...context, timeoutMs },
+      });
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function formatSeconds(ms: number): string {
+  const seconds = ms / 1000;
+  return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)}s`;
+}
+
 export function createAgentAdapter(agent: Agent, options: EvalOptions) {
+  const recordTimeoutMs = resolveEvalRecordTimeoutMs(options);
   return async ({ definition, example, repetition }: EvalAgentAdapterContext) => {
     const started = Date.now();
     const mockTools = await resolveEvalMockTools(definition.mockTools, {
@@ -824,22 +899,28 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       example,
       repetition,
     });
-    const response = await agent.generate({
-      input: normalizeEvalInputForAgent(example.input),
-      context: {
-        eval: {
-          definitionId: definition.id,
-          exampleId: example.id,
-          repetition,
-          metadata: example.metadata ?? {},
+    const response = await withEvalRecordTimeout(recordTimeoutMs, {
+      evalId: definition.id,
+      exampleId: example.id,
+      repetition,
+    }, (abortSignal) =>
+      agent.generate({
+        input: normalizeEvalInputForAgent(example.input),
+        context: {
+          eval: {
+            definitionId: definition.id,
+            exampleId: example.id,
+            repetition,
+            metadata: example.metadata ?? {},
+          },
         },
-      },
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
-      ...(definition.mockTools !== undefined
-        ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
-        : {}),
-    });
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+        ...(definition.mockTools !== undefined
+          ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
+          : {}),
+        ...(abortSignal ? { abortSignal } : {}),
+      }));
     return {
       text: response.text,
       trace: {
@@ -1334,12 +1415,23 @@ async function outputEvalUsageError(message: string): Promise<2> {
   return 2;
 }
 
+function evalDisplayName(evalItem: DiscoveredEval): string {
+  return (evalItem.name || evalItem.id).replace(/^eval:/, "");
+}
+
 function createEvalReportCommandAdapters(input: {
   options: EvalOptions;
   config: EvalRuntimeAuthConfig | null | undefined;
   projectRuntime: ProjectAgentRuntimeDiscovery;
   modelComparisonAgent?: Agent;
+  progress: EvalProgressReporter;
+  /** Evals in run order, used to label suite progress as `[eval 2/3]`. */
+  evalOrder?: DiscoveredEval[];
+  /** Models in run order, used to label model comparison progress. */
+  modelOrder?: string[];
 }) {
+  const { progress } = input;
+  let runsStarted = 0;
   return {
     targets: {
       runEval: (evalItem: DiscoveredEval, options: {
@@ -1348,17 +1440,40 @@ function createEvalReportCommandAdapters(input: {
         targetKind: EvalReport["targetKind"];
         targetAdapter: unknown;
         metadata: EvalReport["metadata"];
-      }) =>
-        runEval(evalItem.definition, {
-          baseDir: options.baseDir,
-          runId: options.runId,
-          adapters: options.targetKind === "tool"
-            ? { tool: options.targetAdapter as ReturnType<typeof createToolAdapter> }
-            : options.targetKind === "agent"
-            ? { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> }
-            : {},
-          metadata: options.metadata,
-        }),
+        selectedModel?: string;
+      }) => {
+        runsStarted += 1;
+        const models = input.modelOrder ?? [];
+        const evals = input.evalOrder ?? [];
+        const name = options.selectedModel && models.length > 0
+          ? `${evalDisplayName(evalItem)} (${options.selectedModel})`
+          : evalDisplayName(evalItem);
+        const count = models.length > 0 ? models.length : Math.max(evals.length, 1);
+        const evalIndex = evals.indexOf(evalItem);
+        progress.startEval({
+          name,
+          position: models.length > 0 || evalIndex < 0 ? runsStarted : evalIndex + 1,
+          count,
+        });
+        return runWithProviderRequestObserver(
+          { onRetry: (event) => progress.onRetry(event) },
+          () =>
+            runEval(evalItem.definition, {
+              baseDir: options.baseDir,
+              runId: options.runId,
+              adapters: options.targetKind === "tool"
+                ? { tool: options.targetAdapter as ReturnType<typeof createToolAdapter> }
+                : options.targetKind === "agent"
+                ? { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> }
+                : {},
+              metadata: options.metadata,
+              ...(input.options.concurrency !== undefined
+                ? { concurrency: input.options.concurrency }
+                : {}),
+              onProgress: (event) => progress.onEvent(event),
+            }),
+        );
+      },
       resolveTarget: (evalItem: DiscoveredEval) => {
         const agentId = evalItem.definition.targetKind === "agent"
           ? resolveAgentTargetId(evalItem.definition.target)
@@ -1393,7 +1508,11 @@ function createEvalReportCommandAdapters(input: {
       writeTextFileEnsuringDir,
     },
     billing: {
-      runWithGatewayBillingGroup: runEvalWithGatewayBillingGroup,
+      runWithGatewayBillingGroup: (billingGroupId: string, operation: () => Promise<EvalReport>) =>
+        runEvalWithGatewayBillingGroup(billingGroupId, operation, {
+          onFinalize: () => progress.setPhase("finalizing usage"),
+          beforeWarning: () => progress.stop(),
+        }),
     },
     exporters: {
       exportReport: (report: EvalReport, config?: EvalReportExportConfig) =>
@@ -1409,6 +1528,20 @@ export async function runEvalCommand(
   const projectDir = options.projectDir ?? Deno.cwd();
   const discoverRuntime = dependencies.discoverProjectAgentRuntime ?? discoverProjectAgentRuntime;
 
+  const progress = dependencies.createProgressReporter?.() ?? createEvalProgressReporter();
+  try {
+    return await runEvalCommandWithProgress(options, projectDir, discoverRuntime, progress);
+  } finally {
+    progress.stop();
+  }
+}
+
+async function runEvalCommandWithProgress(
+  options: EvalOptions,
+  projectDir: string,
+  discoverRuntime: typeof discoverProjectAgentRuntime,
+  progress: EvalProgressReporter,
+): Promise<number | undefined> {
   return await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey } = context;
     const runtimeAuth = await (dependencies.hydrateEvalRuntimeAuth ?? hydrateEvalRuntimeAuth)(
@@ -1527,8 +1660,11 @@ export async function runEvalCommand(
                 options,
                 config,
                 projectRuntime,
+                progress,
+                evalOrder: sortEvals(evals),
               }),
             );
+            progress.stop();
 
             if (outcome.kind !== "suite") {
               throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);
@@ -1649,8 +1785,11 @@ export async function runEvalCommand(
                 config,
                 projectRuntime,
                 modelComparisonAgent: agent!,
+                progress,
+                modelOrder: modelComparisonConfig.config.models,
               }),
             );
+            progress.stop();
 
             if (outcome.kind !== "model-comparison") {
               throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);
@@ -1735,9 +1874,11 @@ export async function runEvalCommand(
               options,
               config,
               projectRuntime,
+              progress,
             }),
           ),
       );
+      progress.stop();
 
       if (outcome.kind !== "single") {
         throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);

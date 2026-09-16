@@ -48,6 +48,7 @@ export {
   isNumberArray,
   jsonValuesEqual,
   mergeUsage,
+  notifyProviderRequestRetry,
   parseRetryAfterMs,
   ProviderError,
   ProviderOverloadedError,

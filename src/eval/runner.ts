@@ -23,6 +23,7 @@ import type {
   EvalAgentAdapterResult,
   EvalDefinition,
   EvalMetricResult,
+  EvalProgressEvent,
   EvalRecord,
   EvalReport,
   EvalReportExportConfig,
@@ -618,6 +619,23 @@ async function runRecord(
   return record;
 }
 
+function normalizeEvalConcurrency(value: number | undefined): number {
+  if (value === undefined) return 1;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw createEvalValidationError("Eval concurrency must be a positive integer");
+  }
+  return value;
+}
+
+function notifyEvalProgress(options: RunEvalOptions, event: EvalProgressEvent): void {
+  if (!options.onProgress) return;
+  try {
+    options.onProgress(event);
+  } catch {
+    // Progress is advisory: a failing listener must not change the eval result.
+  }
+}
+
 /** Execute an eval locally with injected target adapters. */
 export async function runEval(
   definition: EvalDefinition,
@@ -640,13 +658,53 @@ export async function runEval(
     `dataset "${definition.dataset.path ?? definition.dataset.kind}"`,
   );
   const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
-  const records: EvalRecord[] = [];
-
+  const concurrency = normalizeEvalConcurrency(options.concurrency);
+  const jobs: Array<{ example: (typeof examples)[number]; repetition: number }> = [];
   for (const example of examples) {
     for (let repetition = 1; repetition <= definition.repetitions; repetition += 1) {
-      records.push(await runRecord(definition, options, example, repetition, runId));
+      jobs.push({ example, repetition });
     }
   }
+  const total = jobs.length;
+  // Records keep dataset order whatever order they finish in, so reports stay
+  // deterministic at any concurrency.
+  const slots: EvalRecord[] = new Array(total);
+  notifyEvalProgress(options, { type: "eval-started", evalId: definition.id, total });
+
+  let nextIndex = 0;
+  let failure: { error: unknown } | undefined;
+  const worker = async (): Promise<void> => {
+    while (failure === undefined && nextIndex < total) {
+      const index = nextIndex++;
+      const { example, repetition } = jobs[index]!;
+      const progress = {
+        evalId: definition.id,
+        recordId: `${example.id}:${repetition}`,
+        exampleId: example.id,
+        repetition,
+        index,
+        total,
+      };
+      notifyEvalProgress(options, { type: "record-started", ...progress });
+      try {
+        const record = await runRecord(definition, options, example, repetition, runId);
+        slots[index] = record;
+        notifyEvalProgress(options, {
+          type: "record-finished",
+          ...progress,
+          completed: record.completed,
+          durationMs: record.durationMs,
+        });
+      } catch (error) {
+        // Fail-fast errors (such as refused model access) stop new records from
+        // starting. Records already in flight finish before the run rejects.
+        failure ??= { error };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(total, 1)) }, worker));
+  if (failure !== undefined) throw failure.error;
+  const records: EvalRecord[] = slots;
 
   const endedAt = options.now?.() ?? new Date();
   if (!(endedAt instanceof Date) || !Number.isFinite(endedAt.getTime())) {

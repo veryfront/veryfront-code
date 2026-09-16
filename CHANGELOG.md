@@ -64,6 +64,17 @@ If Git fails while reading ignore rules inside a repository, push (and so `up`
 and `deploy`) stops with an error instead of uploading files the checkout
 ignores. Pull stops the same way. Fix the Git error, then run the command
 again.
+### Added: `veryfront eval` progress, `--concurrency`, and `--record-timeout`
+
+`veryfront eval` now shows which eval and case is running, finished cases, and
+elapsed time while cases run, and prints a notice when a model request is
+retried. `--concurrency <count>` runs several cases of one eval at the same
+time (default 1). `--record-timeout <seconds>` fails an agent eval case that
+runs too long with the `eval-record-timeout` error (default 600, `0` disables
+it), so a stalled model stream can no longer hold the run open. `runEval()`
+from `veryfront/eval` accepts matching `concurrency` and `onProgress` options.
+With `LOG_LEVEL=DEBUG`, provider requests log their start, status, duration,
+and retries.
 
 ### Changed: `runEval()` rejects when the model gateway refuses model access
 

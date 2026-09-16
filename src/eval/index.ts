@@ -141,6 +141,7 @@ export type {
   EvalModelComparisonObjective,
   EvalModelComparisonOptions,
   EvalModelReportSummary,
+  EvalProgressEvent,
   EvalRecord,
   EvalReport,
   EvalReportComparison,

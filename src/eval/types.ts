@@ -535,6 +535,40 @@ export type EvalToolAdapter = (
   context: EvalToolAdapterContext,
 ) => EvalMaybePromise<EvalToolAdapterResult>;
 
+/**
+ * Progress notification emitted by `runEval` while it executes records.
+ *
+ * `index` is the zero-based position of the record in execution order, and
+ * `total` is the number of records the run executes (examples times
+ * repetitions).
+ */
+export type EvalProgressEvent =
+  | {
+    type: "eval-started";
+    evalId: string;
+    total: number;
+  }
+  | {
+    type: "record-started";
+    evalId: string;
+    recordId: string;
+    exampleId: string;
+    repetition: number;
+    index: number;
+    total: number;
+  }
+  | {
+    type: "record-finished";
+    evalId: string;
+    recordId: string;
+    exampleId: string;
+    repetition: number;
+    index: number;
+    total: number;
+    completed: boolean;
+    durationMs: number;
+  };
+
 /** Options for running an eval locally. */
 export interface RunEvalOptions {
   adapters: {
@@ -546,6 +580,19 @@ export interface RunEvalOptions {
   now?: () => Date;
   export?: EvalReportExportConfig;
   metadata?: EvalReportMetadata;
+  /**
+   * Most records to run at the same time. Defaults to 1, which runs records
+   * one after another. Report records keep dataset order at any concurrency.
+   * Agents configured with `memory` share conversation history across
+   * records, so keep those at 1.
+   */
+  concurrency?: number;
+  /**
+   * Receives progress while records run. With `concurrency` above 1,
+   * `record-finished` events can arrive out of dataset order. A listener that
+   * throws does not affect the run.
+   */
+  onProgress?: (event: EvalProgressEvent) => void;
 }
 
 /** Export configuration for a completed eval report. */
