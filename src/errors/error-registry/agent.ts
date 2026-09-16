@@ -176,9 +176,10 @@ export const EVAL_MODEL_EGRESS_BLOCKED = defineError({
 });
 
 /**
- * An eval record ran past its time limit. A model stream that stops sending
- * data after its response headers has no deadline of its own, so the record
- * limit is what keeps an eval run from waiting forever.
+ * An eval record ran past its time limit. The limit covers the whole record:
+ * target execution, tools, model requests, metrics, and checks. A model stream
+ * that stops sending data after its response headers has no deadline of its
+ * own, so the record limit is what keeps an eval run from waiting forever.
  */
 export const EVAL_RECORD_TIMEOUT = defineError({
   slug: "eval-record-timeout",
@@ -186,7 +187,7 @@ export const EVAL_RECORD_TIMEOUT = defineError({
   status: 504,
   title: "Eval record timed out",
   suggestion:
-    "Run the eval again with LOG_LEVEL=DEBUG to see which model request stopped responding. If the agent legitimately needs longer, raise the limit with --record-timeout <seconds>, or pass --record-timeout 0 to disable it.",
+    "The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout <seconds>, or pass --record-timeout 0 to disable it.",
 });
 
 /** Registry fragment for AGENT errors (slug → definition). */

@@ -163,6 +163,7 @@ export type {
   EvalToolCallMatchOptions,
   EvalToolCallStatus,
   EvalToolInput,
+  EvalToolInputContext,
   EvalToolInputMatchMode,
   EvalTrace,
   EvalUsage,

@@ -949,7 +949,11 @@ describe("provider-http", () => {
       let attempts = 0;
       const retries: ProviderRequestRetryEvent[] = [];
       const stream = await runWithProviderRequestObserver(
-        { onRetry: (event) => retries.push(event) },
+        {
+          onRetry: (event) => {
+            retries.push(event);
+          },
+        },
         () =>
           requestStream({
             url: "https://provider.test/stream",
@@ -981,6 +985,68 @@ describe("provider-http", () => {
         maxAttempts: 3,
         delayMs: 0,
       }]);
+    });
+
+    it("reports no retry when the provider delay outlasts the header budget", async () => {
+      let attempts = 0;
+      const retries: ProviderRequestRetryEvent[] = [];
+      await runWithProviderRequestObserver(
+        {
+          onRetry: (event) => {
+            retries.push(event);
+          },
+        },
+        async () => {
+          await assertRejects(() =>
+            requestStream({
+              url: "https://provider.test/stream",
+              fetchImpl: () => {
+                attempts++;
+                return Promise.resolve(jsonResponse(
+                  429,
+                  { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                  { "retry-after": "30" },
+                ));
+              },
+              init: { method: "POST" },
+              providerLabel: "veryfront-cloud",
+              providerKind: "moonshotai",
+            })
+          );
+        },
+      );
+
+      assertEquals(attempts, 1);
+      assertEquals(retries, []);
+    });
+
+    it("contains a rejected async retry observer", async () => {
+      let attempts = 0;
+      const stream = await runWithProviderRequestObserver(
+        { onRetry: () => Promise.reject(new Error("observer failed")) },
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                attempts === 1
+                  ? jsonResponse(
+                    429,
+                    { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                    { "retry-after": "0" },
+                  )
+                  : new Response("chunk"),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+      );
+
+      assertEquals(attempts, 2);
+      assertEquals(await new Response(stream).text(), "chunk");
     });
 
     it("bounds rate-limit retries", async () => {

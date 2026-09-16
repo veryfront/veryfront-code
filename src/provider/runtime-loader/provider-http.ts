@@ -1,7 +1,7 @@
 import { readRecord } from "./provider-records.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
-import { logger } from "#veryfront/utils";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 import { notifyProviderRequestRetry } from "./provider-request-observer.ts";
 
 /**
@@ -1332,8 +1332,14 @@ export async function requestStream(options: {
       // A provider-specified wait that cannot fit the current attempt's
       // remaining deadline cannot be honored. Report the provider failure we
       // actually received instead of rewriting it as a false timeout.
+      // A wait that outlasts either the attempt deadline or the shared header
+      // budget leaves no time to send the replay. Report the provider failure
+      // instead of announcing an attempt that never happens.
       if (retryDelayMs > 0) {
-        if (retryDelayMs >= attemptTimeoutMs - (monotonicMilliseconds() - startedAt)) {
+        if (
+          retryDelayMs >= attemptTimeoutMs - (monotonicMilliseconds() - startedAt) ||
+          retryDelayMs >= remainingBudgetMs
+        ) {
           throw failure;
         }
       }

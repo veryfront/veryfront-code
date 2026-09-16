@@ -1015,6 +1015,39 @@ describe("eval/runner", () => {
     assertEquals(checks, 0);
   });
 
+  it("does not execute a tool when its input mapper outlives the record deadline", async () => {
+    let mapperSignal: AbortSignal | undefined;
+    let executions = 0;
+    const definition = evalTool({
+      id: "eval:slow-input",
+      target: "tool:lookup",
+      dataset: datasets.inline([{ id: "q1", input: { query: "one" } }]),
+      input: (example, context) => {
+        mapperSignal = context?.signal;
+        // Resolves after the deadline, the way an I/O-bound mapper would.
+        return new Promise((resolve) => setTimeout(() => resolve(example.input), 40));
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 20,
+      adapters: {
+        tool: () => {
+          executions += 1;
+          return { output: { ok: true } };
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:slow-input" case "q1" did not finish within 0.02s.',
+    );
+    assertEquals(mapperSignal?.aborted, true);
+    assertEquals(executions, 0);
+  });
+
   it("passes the record signal to a stalled check", async () => {
     let checkSignal: AbortSignal | undefined;
     const definition = evalAgent({

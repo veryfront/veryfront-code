@@ -436,7 +436,10 @@ export interface EvalDefinition {
   tags: string[];
   metadata: Record<string, unknown>;
   source?: EvalSource;
-  input?: (example: EvalExample) => EvalMaybePromise<unknown>;
+  input?: (
+    example: EvalExample,
+    context?: EvalToolInputContext,
+  ) => EvalMaybePromise<unknown>;
   mockTools?: EvalMockTools;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
@@ -484,7 +487,10 @@ export interface EvalToolInput {
    * Optional mapper from dataset example to tool input. When omitted, the
    * dataset example's `input` value is passed to the tool adapter unchanged.
    */
-  input?: (example: EvalExample) => EvalMaybePromise<unknown>;
+  input?: (
+    example: EvalExample,
+    context?: EvalToolInputContext,
+  ) => EvalMaybePromise<unknown>;
   metrics?: EvalMetric[];
   repetitions?: number;
   tags?: string[];
@@ -519,6 +525,12 @@ export interface EvalAgentAdapterResult {
 export type EvalAgentAdapter = (
   context: EvalAgentAdapterContext,
 ) => EvalMaybePromise<string | EvalAgentAdapterResult>;
+
+/** Context passed to an `evalTool` input mapper. */
+export interface EvalToolInputContext {
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
+}
 
 /** Context passed to a tool adapter when `runEval` executes an example. */
 export interface EvalToolAdapterContext {

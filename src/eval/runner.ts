@@ -236,7 +236,11 @@ async function runToolTarget(
   if (!adapter) {
     throw new Error(`No tool adapter configured for eval target "${definition.target}".`);
   }
-  const input = definition.input ? await definition.input(example) : example.input;
+  const input = definition.input
+    ? await definition.input(example, signal ? { signal } : undefined)
+    : example.input;
+  // The mapper can outlive the record deadline; do not execute the tool after it.
+  if (signal?.aborted) throw signal.reason;
   markInvoked?.();
   const result = normalizeToolAdapterResult(
     await adapter({
