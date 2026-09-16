@@ -14,12 +14,14 @@ import { cliLogger, logWarning } from "#cli/utils";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { dirname, join, relative, resolve } from "veryfront/platform/path";
 import { hasGitMetadata } from "../shared/deployment-provenance.ts";
-import { isJsonMode } from "../shared/json-output.ts";
+import { isJsonMode, streamJsonLine } from "../shared/json-output.ts";
 
 const GIT_IGNORE_TIMEOUT_MS = 30_000;
 
 /** Keep each `git check-ignore` command line well under the Windows limit. */
 const CHECK_IGNORE_ARGUMENT_BUDGET = 24_000;
+
+export const IGNORED_PROJECT_DIRECTORY_WARNING_CODE = "git-ignore-rules-not-applied";
 
 export const IGNORED_PROJECT_DIRECTORY_WARNING =
   "Project directory is ignored by the enclosing Git repository; Git ignore rules were not " +
@@ -30,6 +32,7 @@ export interface GitIgnoreDependencies {
   runCommand: typeof runCommand;
   hasGitMetadata: (directory: string) => Promise<boolean>;
   pathExists: (path: string) => Promise<boolean>;
+  isSymlink: (path: string) => Promise<boolean>;
   warnIgnoredProjectDirectory: (projectDir: string) => void;
 }
 
@@ -43,11 +46,33 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function isSymlink(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isSymlink;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
+}
+
 const warnedIgnoredProjectDirectories = new Set<string>();
 
+/**
+ * Report, once per directory, that Git ignore rules were skipped. JSON mode
+ * gets a structured warning line, so automation can tell that files the
+ * enclosing repository ignores may be uploaded.
+ */
 function warnIgnoredProjectDirectory(projectDir: string): void {
-  if (isJsonMode() || warnedIgnoredProjectDirectories.has(projectDir)) return;
+  if (warnedIgnoredProjectDirectories.has(projectDir)) return;
   warnedIgnoredProjectDirectories.add(projectDir);
+  if (isJsonMode()) {
+    streamJsonLine({
+      type: "warning",
+      code: IGNORED_PROJECT_DIRECTORY_WARNING_CODE,
+      message: IGNORED_PROJECT_DIRECTORY_WARNING,
+    });
+    return;
+  }
   logWarning(IGNORED_PROJECT_DIRECTORY_WARNING);
 }
 
@@ -55,6 +80,7 @@ const defaultDependencies: GitIgnoreDependencies = {
   runCommand,
   hasGitMetadata,
   pathExists,
+  isSymlink,
   warnIgnoredProjectDirectory,
 };
 
@@ -323,12 +349,32 @@ export async function loadGitIgnoreContext(
     );
   }
 
+  // Git refuses a path beyond a local symbolic link. Sync never reads through
+  // such a link, so a remote path beneath one is left to the defaults and
+  // `.vfignore` rather than failing the whole query.
+  const symlinkedDirectories = new Map<string, Promise<boolean>>();
+  function isBeneathSymlink(path: string): Promise<boolean> {
+    if (prefix) return Promise.resolve(false);
+    const segments = path.split("/");
+    const checks: Promise<boolean>[] = [];
+    for (let length = 1; length < segments.length; length++) {
+      const directory = segments.slice(0, length).join("/");
+      let check = symlinkedDirectories.get(directory);
+      if (!check) {
+        check = dependencies.isSymlink(join(resolvedProjectDir, directory));
+        symlinkedDirectories.set(directory, check);
+      }
+      checks.push(check);
+    }
+    return Promise.all(checks).then((results) => results.some(Boolean));
+  }
+
   async function checkPaths(paths: Iterable<string>): Promise<string[]> {
     const ownCandidates: string[] = [];
     const ignored: string[] = [];
     const nestedCandidates = new Map<NestedRepositoryContext, string[]>();
     for (const path of new Set(paths)) {
-      if (!path) continue;
+      if (!path || await isBeneathSymlink(path)) continue;
       const repository = nestedRepositories.find((entry) => path.startsWith(`${entry.path}/`));
       if (!repository) {
         ownCandidates.push(path);

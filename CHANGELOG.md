@@ -29,7 +29,8 @@ file set changes. Remote copies of newly ignored paths are preserved, not
 pruned; delete them in Studio if they should go.
 
 If the enclosing repository ignores the project directory itself, Git ignore
-rules are not applied for that project and the CLI prints a warning. The
+rules are not applied for that project and the CLI prints a warning; with
+`--json` it emits a `warning` line with code `git-ignore-rules-not-applied`. The
 defaults and `.vfignore` still apply.
 
 `.context` is now ignored by default, and a `.vfignore` negation can re-include

@@ -5,6 +5,7 @@ import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { scanLocalFiles } from "../../../../cli/commands/push/command.ts";
 import { loadGitIgnoreContext } from "../../../../cli/sync/git-ignore.ts";
 import { loadIgnoreChecker } from "../../../../cli/sync/ignore.ts";
+import { setJsonMode } from "../../../../cli/shared/json-output.ts";
 
 async function runGit(cwd: string, ...args: string[]): Promise<void> {
   const result = await new Deno.Command("git", {
@@ -102,6 +103,47 @@ describe("cli/sync/git-ignore against real Git", () => {
           "lib/types.gen.ts",
           "pages/index.tsx",
         ]);
+      });
+    });
+
+    it("emits a structured warning in JSON mode when Git rules are skipped", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "app/\n");
+        await writeFile(repoDir, "app/pages/index.tsx");
+
+        const output: string[] = [];
+        const originalLog = console.log;
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        setJsonMode(true);
+        try {
+          await loadGitIgnoreContext(`${repoDir}/app`);
+        } finally {
+          setJsonMode(false);
+          console.log = originalLog;
+        }
+
+        assertEquals(output.map((line) => JSON.parse(line)), [{
+          type: "warning",
+          code: "git-ignore-rules-not-applied",
+          message:
+            "Project directory is ignored by the enclosing Git repository; Git ignore rules were not applied. Default ignores and .vfignore still apply.",
+        }]);
+      });
+    });
+
+    it("checks remote paths without failing on a local directory symlink", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "*.gen.ts\n");
+        await Deno.mkdir(`${repoDir}/elsewhere`);
+        await Deno.symlink(`${repoDir}/elsewhere`, `${repoDir}/linked`);
+
+        const context = await loadGitIgnoreContext(repoDir);
+        assertEquals(
+          await context.checkPaths(["linked/file.ts", "linked/remote.gen.ts", "lib/a.gen.ts"]),
+          ["lib/a.gen.ts"],
+        );
       });
     });
 

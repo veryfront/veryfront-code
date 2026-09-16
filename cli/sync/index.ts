@@ -25,5 +25,6 @@ export {
 export {
   type GitIgnoreContext,
   IGNORED_PROJECT_DIRECTORY_WARNING,
+  IGNORED_PROJECT_DIRECTORY_WARNING_CODE,
   loadGitIgnoreContext,
 } from "./git-ignore.ts";

@@ -10,6 +10,8 @@ const NOTHING_IGNORED: CommandResult = { success: false, code: 1, stdout: "" };
 interface FakeGitOptions {
   /** Directories that exist; defaults to every path. */
   existing?: readonly string[];
+  /** Paths that are symbolic links. */
+  symlinks?: readonly string[];
   gitMetadata?: boolean;
   /** Answer each Git invocation; defaults to "nothing ignored". */
   respond?: (args: readonly string[]) => CommandResult | Error;
@@ -37,6 +39,7 @@ function fakeGit(options: FakeGitOptions = {}): {
     hasGitMetadata: () => Promise.resolve(options.gitMetadata ?? false),
     pathExists: (path) =>
       Promise.resolve(options.existing === undefined || options.existing.includes(path)),
+    isSymlink: (path) => Promise.resolve(options.symlinks?.includes(path) ?? false),
     warnIgnoredProjectDirectory: (projectDir) => warnings.push(projectDir),
   };
   return { dependencies, calls, warnings };
@@ -296,6 +299,34 @@ describe("cli/sync/git-ignore", () => {
         calls.some((call) => call.cwd === "/repo/tools" && call.args.includes("./local.json")),
         true,
       );
+    });
+
+    it("leaves paths beneath a local symbolic link out of the Git query", async () => {
+      const { dependencies, calls } = fakeGit({
+        symlinks: ["/repo/linked"],
+        respond: (args) => {
+          if (isRootCheck(args)) return NOTHING_IGNORED;
+          if (isListing(args) || isIndexListing(args) || isUntrackedListing(args)) {
+            return { success: true, code: 0, stdout: "" };
+          }
+          if (args.some((arg) => arg.startsWith("./linked/"))) {
+            return {
+              success: false,
+              code: 128,
+              stderr: "fatal: pathspec './linked/file.ts' is beyond a symbolic link",
+            };
+          }
+          return { success: true, code: 0, stdout: "./x.gen.ts\n" };
+        },
+        gitMetadata: true,
+      });
+      const context = await loadGitIgnoreContext("/repo", dependencies);
+
+      assertEquals(
+        await context.checkPaths(["linked/file.ts", "linked/deep/a.ts", "x.gen.ts"]),
+        ["x.gen.ts"],
+      );
+      assertEquals(calls.at(-1)?.args.slice(3), ["./x.gen.ts"]);
     });
 
     it("drops paths inside a submodule and checks the rest again", async () => {
