@@ -1,4 +1,5 @@
 import {
+  EVAL_AGENT_SERVICE_ACCESS_DENIED,
   EVAL_MODEL_ACCESS_DENIED,
   EVAL_MODEL_PROJECT_ACCESS_DENIED,
   EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
@@ -20,7 +21,8 @@ export type EvalModelAccessDenialKind =
   | "spend-limit"
   | "project-required"
   | "unauthorized"
-  | "forbidden";
+  | "forbidden"
+  | "agent-service-access";
 
 /** Refusal that every later eval record would hit the same way. */
 export interface EvalModelAccessDenial {
@@ -35,7 +37,30 @@ const DENIAL_ERRORS = {
   "project-required": EVAL_PROJECT_REQUIRED,
   unauthorized: EVAL_MODEL_UNAUTHORIZED,
   forbidden: EVAL_MODEL_PROJECT_ACCESS_DENIED,
+  "agent-service-access": EVAL_AGENT_SERVICE_ACCESS_DENIED,
 } as const;
+
+/**
+ * An agent service 401 or 403 concerns the adapter's own token and project,
+ * not the model gateway credential, so it gets agent-service guidance.
+ */
+function agentServiceAccessDenial(status: number): EvalModelAccessDenial | undefined {
+  if (status === 401) {
+    return {
+      kind: "agent-service-access",
+      code: "UNAUTHORIZED",
+      message: "The agent service rejected the eval request credential (401 Unauthorized)",
+    };
+  }
+  if (status === 403) {
+    return {
+      kind: "agent-service-access",
+      code: "FORBIDDEN",
+      message: "The agent service denied the eval request access (403 Forbidden)",
+    };
+  }
+  return undefined;
+}
 
 const UNAUTHORIZED_DENIAL: EvalModelAccessDenial = {
   kind: "unauthorized",
@@ -220,9 +245,10 @@ export function classifyEvalModelAccessDenial(error: unknown): EvalModelAccessDe
 
 /**
  * Recognize a denial in a failed agent service response: an HTTP 401 or 403 on
- * the agent service request itself, an HTTP 402 problem body, or a curated
- * account-wide credit code on the AG-UI run error. The agent service is the
- * Veryfront endpoint the adapter was configured with, which is the provenance.
+ * the agent service request itself (reported with agent-service guidance), an
+ * HTTP 400 or 402 gateway body, or a curated account-wide credit code on the
+ * AG-UI run error. The agent service is the endpoint the adapter was configured
+ * with, which is the provenance.
  */
 export function classifyAgentServiceModelAccessDenial(input: {
   status: number;
@@ -231,7 +257,7 @@ export function classifyAgentServiceModelAccessDenial(input: {
   runErrorMessage?: unknown;
 }): EvalModelAccessDenial | undefined {
   try {
-    const accessDenial = statusDenial(input.status);
+    const accessDenial = agentServiceAccessDenial(input.status);
     if (accessDenial) return accessDenial;
     if (input.status === 400 && input.body) {
       // The endpoint's own text is not trusted for user-facing output.

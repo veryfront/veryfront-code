@@ -338,14 +338,17 @@ describe("eval/model-access", () => {
     );
   });
 
-  it("classifies agent service 401 and 403 responses", () => {
+  it("classifies agent service 401 and 403 responses with agent-service guidance", () => {
+    const unauthorized = classifyAgentServiceModelAccessDenial({ status: 401, body: "x" });
+    const forbidden = classifyAgentServiceModelAccessDenial({ status: 403, body: "x" });
+
+    assertEquals(unauthorized?.kind, "agent-service-access");
+    assertEquals(forbidden?.kind, "agent-service-access");
+    const error = createEvalModelAccessDeniedError("eval:a", unauthorized!, undefined);
+    assertEquals(error.slug, "eval-agent-service-access-denied");
     assertEquals(
-      classifyAgentServiceModelAccessDenial({ status: 401, body: "Unauthorized" })?.kind,
-      "unauthorized",
-    );
-    assertEquals(
-      classifyAgentServiceModelAccessDenial({ status: 403, body: "Forbidden" })?.kind,
-      "forbidden",
+      error.suggestion,
+      "Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and can access the configured project, then run the eval again",
     );
   });
 

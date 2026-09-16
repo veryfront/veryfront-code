@@ -356,8 +356,8 @@ describe("eval/agent-service", () => {
       return { slug: (error as { slug?: string }).slug, requests };
     };
 
-    assertEquals(await slugFor(401), { slug: "eval-model-unauthorized", requests: 1 });
-    assertEquals(await slugFor(403), { slug: "eval-model-project-access-denied", requests: 1 });
+    assertEquals(await slugFor(401), { slug: "eval-agent-service-access-denied", requests: 1 });
+    assertEquals(await slugFor(403), { slug: "eval-agent-service-access-denied", requests: 1 });
   });
 
   it("keeps request-scoped agent service limits as failed records", async () => {

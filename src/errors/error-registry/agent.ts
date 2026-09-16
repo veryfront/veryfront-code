@@ -161,6 +161,19 @@ export const EVAL_MODEL_PROJECT_ACCESS_DENIED = defineError({
     "Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again",
 });
 
+/**
+ * An eval stopped because the agent service it runs against rejected the eval
+ * request's credential or project access (HTTP 401 or 403).
+ */
+export const EVAL_AGENT_SERVICE_ACCESS_DENIED = defineError({
+  slug: "eval-agent-service-access-denied",
+  category: "AGENT",
+  status: 403,
+  title: "Agent service rejected the eval request",
+  suggestion:
+    "Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and can access the configured project, then run the eval again",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -178,4 +191,5 @@ export const AGENT_REGISTRY = {
   "eval-model-spend-limit-exceeded": EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
   "eval-model-unauthorized": EVAL_MODEL_UNAUTHORIZED,
   "eval-model-project-access-denied": EVAL_MODEL_PROJECT_ACCESS_DENIED,
+  "eval-agent-service-access-denied": EVAL_AGENT_SERVICE_ACCESS_DENIED,
 } as const;

@@ -875,6 +875,13 @@ No access to the linked project for eval run.
 - **HTTP status:** 403
 - **What to do:** Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again
 
+### eval-agent-service-access-denied
+
+Agent service rejected the eval request.
+
+- **HTTP status:** 403
+- **What to do:** Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and can access the configured project, then run the eval again
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.
