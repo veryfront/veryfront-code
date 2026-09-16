@@ -864,6 +864,63 @@ describe("Up Command", () => {
       }
     });
 
+    it("does not repeat the retry instruction a readiness failure already gives", async () => {
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+      const projectDir = await makeTempDir();
+      const expectedSlug = normalizeProjectSlug(projectDir.split(/[/\\]/).pop() ?? "");
+      const deployProject: DeployProject = {
+        execute() {
+          return Promise.reject(DEPLOYMENT_ERROR.create({
+            detail:
+              "Environment URL https://x.test did not become ready within 120s (last response: HTTP 404). Check the project in Studio and run veryfront up again.",
+          }));
+        },
+      };
+
+      try {
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
+        Deno.env.set("VERYFRONT_API_TOKEN", "env-token");
+        Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.from-env.test");
+        Deno.env.delete("VERYFRONT_API_URL");
+        _resetEnvironmentConfig();
+        setNonInteractive(true);
+
+        const error = await captureRejection(() =>
+          captureLog(() =>
+            withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+              const request = input instanceof Request ? input : new Request(input, init);
+              const url = new URL(request.url);
+              if (url.pathname === "/me") return Promise.resolve(identityResponse());
+              if (request.method === "POST" && url.pathname === "/projects") {
+                return Promise.resolve(Response.json({ id: "project-1", slug: expectedSlug }));
+              }
+              throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+            }, () => upCommand({ projectDir }, undefined, { deployProject }))
+          )
+        ) as VeryfrontError;
+
+        const detail = error.detail ?? "";
+        assertEquals(detail.match(/run veryfront up again/gi)?.length, 1, detail);
+        assertEquals(detail.includes("deploy again"), false, detail);
+        assertEquals(
+          detail.endsWith(
+            `Completed before the failure: project ${expectedSlug} was created and linked to this directory. Rerunning veryfront up reuses the linked project and does not create another.`,
+          ),
+          true,
+          detail,
+        );
+      } finally {
+        restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+        restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+        restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+        resetInteractiveMode();
+        _resetEnvironmentConfig();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("says what already succeeded when Preview fails after creating the project and pushing", async () => {
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");

@@ -559,6 +559,48 @@ describe("DeployProject", () => {
       });
     });
 
+    it("gives live-source gate warnings up retry guidance, never deploy guidance", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        controlPlane.environmentProtected = true;
+        controlPlane.environmentDomains = ["https://my-project.preview.veryfront.com"];
+        const events: DeployEvent[] = [];
+        try {
+          const outcome = await withFetchStub(
+            () =>
+              new Response(null, {
+                status: 302,
+                headers: { location: "https://veryfront.com/sign-in" },
+              }),
+            () =>
+              createDeployment(controlPlane).execute({
+                projectDir,
+                environment: "preview",
+                publish: "live-source",
+                mode: "apply",
+                source: { kind: "already-pushed" },
+              }, {
+                onEvent(event) {
+                  events.push(event);
+                },
+              }),
+          );
+
+          assertEquals(outcome.kind, "live-source");
+          const warning = events.find((event) =>
+            event.kind === "warning" && event.code === "environment-url-unverified"
+          );
+          const message = warning?.kind === "warning" ? warning.message : "";
+          assertStringIncludes(message, "Source pushed, but");
+          assertStringIncludes(message, "run veryfront up again");
+          assertEquals(message.includes("deploy again"), false, message);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
     it("plans a live-source dry run without release or deploy actions", async () => {
       await withDeployEnv(async () => {
         const { projectDir } = await createPushedProject();
@@ -2398,6 +2440,36 @@ describe("environment URL readiness", () => {
       error,
       "Environment URL https://my-project.production.veryfront.com did not become ready within 1s (last response: HTTP 404). Check the deployment and run deploy again.",
     );
+  });
+
+  it("tells an up caller to rerun up, not deploy, when readiness fails", async () => {
+    const timeout = await withMockFetch(
+      () => Promise.resolve(new Response("not ready", { status: 404 })),
+      () =>
+        expectErrorMessage(
+          () =>
+            waitForEnvironmentReady({ ...hostedTarget, retry: "up" }, {
+              pollIntervalMs: 1,
+              timeoutMs: 2,
+            }),
+        ),
+    );
+    const challenge = await withMockFetch(
+      () => Promise.resolve(new Response(null, { status: 403 })),
+      () =>
+        expectErrorMessage(
+          () =>
+            waitForEnvironmentReady({ ...hostedTarget, protected: true, retry: "up" }, {
+              pollIntervalMs: 1,
+              timeoutMs: 1_000,
+            }),
+        ),
+    );
+
+    for (const message of [timeout, challenge]) {
+      assertStringIncludes(message ?? "", "run veryfront up again");
+      assertEquals((message ?? "").includes("deploy again"), false, message);
+    }
   });
 });
 

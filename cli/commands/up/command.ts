@@ -193,11 +193,16 @@ function describeUpFailure(
   if (progress.sourceUploaded) {
     completed.push(`source was uploaded to main of project ${progress.projectSlug}`);
   }
+  // Readiness failures already tell the operator to run veryfront up again;
+  // repeating it would read as a second, separate instruction.
+  const retryNamed = /veryfront up again/i.test(reason);
   const partial = completed.length === 0
     ? ""
-    : ` Completed before the failure: ${
-      completed.join("; ")
-    }. Run veryfront up again to retry. It reuses the linked project and does not create another.`;
+    : ` Completed before the failure: ${completed.join("; ")}.${
+      retryNamed
+        ? " Rerunning veryfront up reuses the linked project and does not create another."
+        : " Run veryfront up again to retry. It reuses the linked project and does not create another."
+    }`;
   const sentence = partial && !/[.!?]$/.test(reason) ? `${reason}.` : reason;
   const detail = `Preview publish failed: ${sentence}${partial}`;
 

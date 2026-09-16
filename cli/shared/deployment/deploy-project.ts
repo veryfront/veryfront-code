@@ -1223,22 +1223,44 @@ function buildEnvironmentUrl(projectSlug: string, environment: DeployEnvironment
     buildCanonicalEnvironmentUrl(projectSlug, environment.name);
 }
 
+/**
+ * Which command an operator reruns after a readiness failure.
+ *
+ * A release deploy is retried with `veryfront deploy`. A live-source publish
+ * belongs to `veryfront up`: `deploy --env preview` is refused, and a bare
+ * `deploy` targets production, so "deploy again" would send that operator to
+ * the wrong environment.
+ */
+type ReadinessRetry = "deploy" | "up";
+
+function retryInstruction(retry: ReadinessRetry): string {
+  return retry === "up" ? "run veryfront up again" : "deploy again";
+}
+
 function buildCanonicalEnvironmentUrl(projectSlug: string, environmentName: string): string {
   return `https://${projectSlug}.${environmentName}.veryfront.com`;
 }
 
-function buildEnvironmentProbeUrl(baseUrl: string, route: string): string {
+function buildEnvironmentProbeUrl(
+  baseUrl: string,
+  route: string,
+  retry: ReadinessRetry = "deploy",
+): string {
   let url: URL;
   try {
     url = new URL(baseUrl);
   } catch {
     throw new Error(
-      `Environment URL "${baseUrl}" is invalid. Check the environment configuration and deploy again.`,
+      `Environment URL "${baseUrl}" is invalid. Check the environment configuration and ${
+        retryInstruction(retry)
+      }.`,
     );
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(
-      `Environment URL "${baseUrl}" must use HTTP or HTTPS. Check the environment configuration and deploy again.`,
+      `Environment URL "${baseUrl}" must use HTTP or HTTPS. Check the environment configuration and ${
+        retryInstruction(retry)
+      }.`,
     );
   }
   if (!route.startsWith("/")) {
@@ -1249,8 +1271,12 @@ function buildEnvironmentProbeUrl(baseUrl: string, route: string): string {
   return route === "/" ? probeUrl.origin : probeUrl.href;
 }
 
-function buildReadyEnvironmentUrl(baseUrl: string, route: string | null): string {
-  return route ? buildEnvironmentProbeUrl(baseUrl, route) : baseUrl;
+function buildReadyEnvironmentUrl(
+  baseUrl: string,
+  route: string | null,
+  retry: ReadinessRetry = "deploy",
+): string {
+  return route ? buildEnvironmentProbeUrl(baseUrl, route, retry) : baseUrl;
 }
 
 function secureEnvironmentProbeUrl(url: string): string {
@@ -1265,6 +1291,8 @@ interface EnvironmentReadinessTarget {
   url: string;
   route?: string | null;
   protected: boolean;
+  /** The command the operator reruns after a failure; defaults to deploy. */
+  retry?: ReadinessRetry;
   apiToken: string;
   /**
    * A token bound to this environment, obtained by exchanging `apiToken`, and
@@ -1349,7 +1377,7 @@ function buildEnvironmentReadinessProbes(
   // that reads as gated rather than failing the deploy.
   const tolerateChallenge = !canAuthenticate || target.environmentAccessToken !== undefined;
 
-  const targetUrl = buildEnvironmentProbeUrl(target.url, route);
+  const targetUrl = buildEnvironmentProbeUrl(target.url, route, target.retry);
   if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
     const challengeProbe = {
       url: targetUrl,
@@ -1367,6 +1395,7 @@ function buildEnvironmentReadinessProbes(
         url: buildEnvironmentProbeUrl(
           buildCanonicalEnvironmentUrl(target.projectSlug, target.environmentName),
           route,
+          target.retry,
         ),
         authenticate: canAuthenticate,
         acceptAuthenticationChallenge: tolerateChallenge,
@@ -1471,14 +1500,16 @@ function describeAuthenticationChallenge(
   probe: EnvironmentReadinessProbe,
   status: number,
   signInRedirect: boolean,
+  retry: ReadinessRetry = "deploy",
 ): string {
+  const again = retryInstruction(retry);
   if (probe.authenticate) {
-    return `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`;
+    return `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and ${again}.`;
   }
   if (signInRedirect) {
-    return `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`;
+    return `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and ${again}.`;
   }
-  return `Environment URL ${probe.url} returned HTTP ${status}. Check its protection settings and deploy again.`;
+  return `Environment URL ${probe.url} returned HTTP ${status}. Check its protection settings and ${again}.`;
 }
 
 function isTransientEnvironmentStatus(status: number): boolean {
@@ -1566,14 +1597,21 @@ export async function waitForEnvironmentReady(
         if (authenticationChallenge) {
           // A bare Error here reaches the operator as `unknown-error`.
           throw DEPLOYMENT_ERROR.create({
-            detail: describeAuthenticationChallenge(probe, response.status, signInRedirect),
+            detail: describeAuthenticationChallenge(
+              probe,
+              response.status,
+              signInRedirect,
+              target.retry,
+            ),
             context: { url: probe.url, status: response.status },
           });
         }
         if (!isTransientEnvironmentStatus(response.status)) {
           throw DEPLOYMENT_ERROR.create({
             detail:
-              `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and deploy again.`,
+              `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and ${
+                retryInstruction(target.retry ?? "deploy")
+              }.`,
             context: { url: probe.url, status: response.status },
           });
         }
@@ -1584,7 +1622,11 @@ export async function waitForEnvironmentReady(
         throw DEPLOYMENT_ERROR.create({
           detail: `Environment URL ${probe.url} did not become ready within ${
             Math.ceil(timeoutMs / 1000)
-          }s (last response: ${lastResponse}). Check the deployment and run deploy again.`,
+          }s (last response: ${lastResponse}). ${
+            target.retry === "up"
+              ? "Check the project in Studio and run veryfront up again."
+              : "Check the deployment and run deploy again."
+          }`,
           context: { url: probe.url, timeoutMs },
         });
       }
@@ -1610,14 +1652,18 @@ export async function waitForEnvironmentReady(
  * store, so for those two sources signing in leaves the next deploy gated the
  * same way. Naming the overriding key is the only step an operator can act on.
  */
-function getProbeCredentialRemedy(source: ResolvedConfig["apiTokenSource"]): string {
+function getProbeCredentialRemedy(
+  source: ResolvedConfig["apiTokenSource"],
+  retry: ReadinessRetry,
+): string {
+  const again = retryInstruction(retry);
   if (source === "env") {
-    return "VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and deploy again, to confirm the app responds.";
+    return `VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and ${again}, to confirm the app responds.`;
   }
   if (source === "config-file") {
-    return "The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and deploy again, to confirm the app responds.";
+    return `The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and ${again}, to confirm the app responds.`;
   }
-  return "Open the URL signed in, or run veryfront login and deploy again, to confirm the app responds.";
+  return `Open the URL signed in, or run veryfront login and ${again}, to confirm the app responds.`;
 }
 
 /**
@@ -1632,9 +1678,10 @@ function getEnvironmentUrlWarning(
   readiness: EnvironmentReadiness,
   apiTokenSource: ResolvedConfig["apiTokenSource"],
   access: EnvironmentAccess,
-  published: "Deployment committed" | "Source pushed",
+  retry: ReadinessRetry,
 ): string | null {
   if (readiness.kind !== "gated") return null;
+  const published = retry === "up" ? "Source pushed" : "Deployment committed";
   const prefix = `${published}, but ${readiness.url} was never observed serving this app:`;
   if (access.kind === "exchanged") {
     return `${prefix} the access gate refused the environment access token with HTTP ${readiness.status}. Check that the API key owner is a member of this project, or open the URL signed in, to confirm the app responds.`;
@@ -1642,13 +1689,13 @@ function getEnvironmentUrlWarning(
   if (access.kind === "unavailable") {
     const remedy = access.failure === "refused"
       ? "Use an API key for this project whose owner can read it, or open the URL signed in, to confirm the app responds."
-      : getProbeCredentialRemedy(apiTokenSource);
+      : getProbeCredentialRemedy(apiTokenSource, retry);
     return `${prefix} the access gate answered HTTP ${readiness.status} and ${
       describeEnvironmentAccessFailure(access)
     }. ${remedy}`;
   }
   return `${prefix} the access gate answered HTTP ${readiness.status} and this CLI has no session credential to probe past it. ${
-    getProbeCredentialRemedy(apiTokenSource)
+    getProbeCredentialRemedy(apiTokenSource, retry)
   }`;
 }
 
@@ -1969,11 +2016,12 @@ export function createDeployProject(options: {
       /** Probes the environment URL and warns when only its access gate answered. */
       const waitForEnvironmentUrl = async (
         projectSlug: string,
-        published: "Deployment committed" | "Source pushed",
+        retry: ReadinessRetry,
       ) => {
         const environmentUrl = buildReadyEnvironmentUrl(
           buildEnvironmentUrl(projectSlug, environment),
           readinessRoute,
+          retry,
         );
         let access: EnvironmentAccess = { kind: "session" };
         const readiness = await step(
@@ -1993,6 +2041,7 @@ export function createDeployProject(options: {
               route: readinessRoute,
               protected: environment.protected,
               apiToken: config.apiToken,
+              retry,
               ...(access.kind === "exchanged" ? { environmentAccessToken: access.token } : {}),
             }, {
               pollIntervalMs: polling.environmentPollIntervalMs,
@@ -2005,7 +2054,7 @@ export function createDeployProject(options: {
           readiness,
           config.apiTokenSource,
           access,
-          published,
+          retry,
         );
         if (urlWarning) {
           await emit(observer, {
@@ -2020,7 +2069,7 @@ export function createDeployProject(options: {
       if (liveSource) {
         const { environmentUrl, readiness } = await waitForEnvironmentUrl(
           project!.slug,
-          "Source pushed",
+          "up",
         );
 
         return {
@@ -2107,7 +2156,7 @@ export function createDeployProject(options: {
 
       const { environmentUrl, readiness } = await waitForEnvironmentUrl(
         verification.projectSlug,
-        "Deployment committed",
+        "deploy",
       );
 
       const warning = getDeploymentRoutingConvergenceWarning(deployment);
