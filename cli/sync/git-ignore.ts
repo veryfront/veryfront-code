@@ -10,22 +10,32 @@
 
 import { env } from "#cli/process-env";
 import { runCommand } from "#cli/process-command";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, logWarning } from "#cli/utils";
 import { isNotFoundError, lstat } from "veryfront/fs";
+import { dirname, relative, resolve } from "veryfront/platform/path";
 import { hasGitMetadata } from "../shared/deployment-provenance.ts";
+import { isJsonMode } from "../shared/json-output.ts";
 
 const GIT_IGNORE_TIMEOUT_MS = 30_000;
 
-/** Process and filesystem seams, replaceable so the fallback rules unit test hermetically. */
+/** Keep each `git check-ignore` command line well under the Windows limit. */
+const CHECK_IGNORE_ARGUMENT_BUDGET = 24_000;
+
+export const IGNORED_PROJECT_DIRECTORY_WARNING =
+  "Project directory is ignored by the enclosing Git repository; Git ignore rules were not " +
+  "applied. Default ignores and .vfignore still apply.";
+
+/** Process, filesystem, and output seams, replaceable so the rules unit test hermetically. */
 export interface GitIgnoreDependencies {
   runCommand: typeof runCommand;
-  hasGitMetadata: (projectDir: string) => Promise<boolean>;
-  projectDirExists: (projectDir: string) => Promise<boolean>;
+  hasGitMetadata: (directory: string) => Promise<boolean>;
+  pathExists: (path: string) => Promise<boolean>;
+  warnIgnoredProjectDirectory: (projectDir: string) => void;
 }
 
-async function projectDirExists(projectDir: string): Promise<boolean> {
+async function pathExists(path: string): Promise<boolean> {
   try {
-    await lstat(projectDir);
+    await lstat(path);
     return true;
   } catch (error) {
     if (isNotFoundError(error)) return false;
@@ -33,10 +43,19 @@ async function projectDirExists(projectDir: string): Promise<boolean> {
   }
 }
 
+const warnedIgnoredProjectDirectories = new Set<string>();
+
+function warnIgnoredProjectDirectory(projectDir: string): void {
+  if (isJsonMode() || warnedIgnoredProjectDirectories.has(projectDir)) return;
+  warnedIgnoredProjectDirectories.add(projectDir);
+  logWarning(IGNORED_PROJECT_DIRECTORY_WARNING);
+}
+
 const defaultDependencies: GitIgnoreDependencies = {
   runCommand,
   hasGitMetadata,
-  projectDirExists,
+  pathExists,
+  warnIgnoredProjectDirectory,
 };
 
 function gitIgnoreUnavailableError(cause?: unknown): Error {
@@ -48,19 +67,22 @@ function gitIgnoreUnavailableError(cause?: unknown): Error {
 
 type GitIgnoreRun =
   | { kind: "output"; stdout: string; code: number }
-  | { kind: "no-repository" };
+  | { kind: "no-repository" }
+  | { kind: "submodule-path"; pathspec: string; submodule: string };
+
+const SUBMODULE_PATHSPEC_ERROR = /Pathspec '(.+)' is in submodule '(.+)'/;
 
 /**
- * Run one Git ignore query from the project directory.
+ * Run one Git ignore query from `directory`.
  *
  * `acceptedFailureCodes` lists exit codes that are answers rather than errors
  * (`git check-ignore` exits 1 when nothing is ignored). Outside a repository,
- * or when Git is missing and no repository surrounds the project, the query
+ * or when Git is missing and no repository surrounds the directory, the query
  * reports `no-repository`. Any other failure inside a repository throws, so
  * sync never silently treats ignored files as project source.
  */
 async function runGitIgnoreQuery(
-  projectDir: string,
+  directory: string,
   args: string[],
   dependencies: GitIgnoreDependencies,
   acceptedFailureCodes: readonly number[] = [],
@@ -74,7 +96,7 @@ async function runGitIgnoreQuery(
   try {
     result = await dependencies.runCommand("git", {
       args,
-      cwd: projectDir,
+      cwd: directory,
       clearEnv: true,
       env: gitEnv,
       capture: true,
@@ -83,7 +105,7 @@ async function runGitIgnoreQuery(
   } catch (error) {
     // Git is not installed or could not start. That only matters when there
     // is a repository whose ignore rules we would otherwise skip.
-    if (!(await dependencies.hasGitMetadata(projectDir))) return { kind: "no-repository" };
+    if (!(await dependencies.hasGitMetadata(directory))) return { kind: "no-repository" };
     cliLogger.debug("Failed to run git for ignore rules:", error);
     throw gitIgnoreUnavailableError(error);
   }
@@ -95,47 +117,15 @@ async function runGitIgnoreQuery(
   if (result.success || acceptedFailureCodes.includes(result.code)) {
     return { kind: "output", stdout: result.stdout ?? "", code: result.code };
   }
+  const submodulePath = SUBMODULE_PATHSPEC_ERROR.exec(result.stderr ?? "");
+  if (submodulePath) {
+    return { kind: "submodule-path", pathspec: submodulePath[1]!, submodule: submodulePath[2]! };
+  }
   if (/not a git repository/i.test(result.stderr ?? "")) return { kind: "no-repository" };
-  if (!(await dependencies.hasGitMetadata(projectDir))) return { kind: "no-repository" };
+  if (!(await dependencies.hasGitMetadata(directory))) return { kind: "no-repository" };
   cliLogger.debug("git for ignore rules failed:", result.stderr);
   throw gitIgnoreUnavailableError();
 }
-
-/**
- * List the untracked local paths Git ignores below `projectDir`, relative to it.
- *
- * A directory Git ignores in full is listed once, without a trailing slash, and
- * stands for everything beneath it. Tracked files are never listed, even when
- * they match an ignore rule, because Git keeps managing them.
- *
- * Outside a Git repository this returns an empty list, so the `.vfignore` and
- * default rules alone decide. Inside one, a Git failure throws instead of
- * silently uploading files the checkout ignores.
- */
-export async function loadGitIgnoredPaths(
-  projectDir: string,
-  dependencies: GitIgnoreDependencies = defaultDependencies,
-): Promise<string[]> {
-  // Pull may target a directory it has not created yet: nothing is ignored.
-  if (!(await dependencies.projectDirExists(projectDir))) return [];
-
-  const run = await runGitIgnoreQuery(
-    projectDir,
-    // `ls-files` prints paths relative to its working directory and limits the
-    // listing to it, which matches the relative paths sync scans.
-    ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-    dependencies,
-  );
-  if (run.kind === "no-repository") return [];
-
-  return run.stdout
-    .split("\0")
-    .map((path) => path.replace(/\/+$/, ""))
-    .filter((path) => path.length > 0);
-}
-
-/** Keep each `git check-ignore` command line well under the Windows limit. */
-const CHECK_IGNORE_ARGUMENT_BUDGET = 24_000;
 
 const C_STYLE_ESCAPES: Readonly<Record<string, number>> = {
   a: 7,
@@ -177,56 +167,162 @@ export function unquoteGitPath(line: string): string {
 }
 
 /**
- * Return the given project-relative paths that Git's ignore rules match,
- * whether or not they exist locally.
- *
- * Pull uses this for remote paths: `git ls-files` only reports files already on
- * disk, so a remote file the checkout ignores would otherwise be written on
- * first pull. Tracked paths are never reported. Paths are checked in as few
- * `git check-ignore` processes as the command-line budget allows, normally one.
- * Outside a repository, or for a directory that does not exist yet, nothing is
- * reported; a Git failure inside a repository throws.
+ * Find the leading part of a `./`-prefixed argument that names the submodule
+ * Git reported, whose path Git gives relative to the repository root.
  */
-export async function checkGitIgnoredPaths(
+function submoduleArgumentRoot(pathspec: string, submodule: string): string | null {
+  const segments = pathspec.split("/");
+  for (let length = 1; length < segments.length; length++) {
+    const candidate = segments.slice(0, length).join("/");
+    if (candidate === `./${submodule}` || candidate.endsWith(`/${submodule}`)) return candidate;
+  }
+  return null;
+}
+
+/** Git ignore rules resolved for one project directory. */
+export interface GitIgnoreContext {
+  /**
+   * Untracked local paths Git ignores, relative to the project directory. A
+   * directory Git ignores in full is listed once, without a trailing slash, and
+   * stands for everything beneath it. Tracked files are never listed.
+   */
+  readonly ignoredPaths: readonly string[];
+  /**
+   * Return the given project-relative paths Git's rules match, whether or not
+   * they exist locally. Sync uses this for remote paths. Tracked paths are never
+   * reported.
+   */
+  checkPaths(paths: Iterable<string>): Promise<string[]>;
+}
+
+const DISABLED_CONTEXT: GitIgnoreContext = {
+  ignoredPaths: [],
+  checkPaths: () => Promise.resolve([]),
+};
+
+function toPosix(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+/**
+ * Resolve Git's ignore rules for `projectDir`: `.gitignore` at any level,
+ * `.git/info/exclude`, and `core.excludesFile`.
+ *
+ * Git is queried from the nearest existing directory, so a pull into a
+ * directory it has not created yet still honours the enclosing repository.
+ * Outside a repository, nothing is ignored. When the enclosing repository
+ * ignores the project directory itself, Git rules are not applied at all, with
+ * one warning, rather than hiding the whole project. Any other Git failure
+ * inside a repository throws.
+ */
+export async function loadGitIgnoreContext(
   projectDir: string,
-  paths: Iterable<string>,
   dependencies: GitIgnoreDependencies = defaultDependencies,
-): Promise<string[]> {
-  const candidates = [...new Set(paths)].filter((path) => path.length > 0);
-  if (candidates.length === 0) return [];
-  if (!(await dependencies.projectDirExists(projectDir))) return [];
-
-  const batches: string[][] = [];
-  let batch: string[] = [];
-  let batchLength = 0;
-  for (const path of candidates) {
-    // `./` keeps Git from reading a leading `:` as pathspec magic or a leading
-    // `-` as an option.
-    const argument = `./${path}`;
-    if (batch.length > 0 && batchLength + argument.length > CHECK_IGNORE_ARGUMENT_BUDGET) {
-      batches.push(batch);
-      batch = [];
-      batchLength = 0;
-    }
-    batch.push(argument);
-    batchLength += argument.length + 1;
+): Promise<GitIgnoreContext> {
+  const resolvedProjectDir = resolve(projectDir);
+  let baseDir = resolvedProjectDir;
+  while (!(await dependencies.pathExists(baseDir))) {
+    const parent = dirname(baseDir);
+    if (parent === baseDir) return DISABLED_CONTEXT;
+    baseDir = parent;
   }
-  batches.push(batch);
+  const relativeProjectDir = toPosix(relative(baseDir, resolvedProjectDir));
+  const prefix = relativeProjectDir === "." ? "" : relativeProjectDir;
+  const baseArgument = (path: string) => `./${prefix ? `${prefix}/` : ""}${path}`;
 
-  const ignored: string[] = [];
-  for (const arguments_ of batches) {
-    const run = await runGitIgnoreQuery(
-      projectDir,
-      ["-c", "core.quotePath=false", "check-ignore", ...arguments_],
+  // `./` names the directory itself; the trailing slash lets directory-only
+  // rules such as `generated/` match a directory that does not exist yet.
+  const rootCheck = await runGitIgnoreQuery(
+    baseDir,
+    ["check-ignore", "--quiet", baseArgument("")],
+    dependencies,
+    [1],
+  );
+  if (rootCheck.kind === "no-repository") return DISABLED_CONTEXT;
+  if (rootCheck.kind !== "output") throw gitIgnoreUnavailableError();
+  if (rootCheck.code === 0) {
+    dependencies.warnIgnoredProjectDirectory(resolvedProjectDir);
+    return DISABLED_CONTEXT;
+  }
+
+  let ignoredPaths: string[] = [];
+  if (!prefix) {
+    const listing = await runGitIgnoreQuery(
+      baseDir,
+      // `ls-files` prints paths relative to its working directory and limits
+      // the listing to it, which matches the relative paths sync scans.
+      ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
       dependencies,
-      [1],
     );
-    if (run.kind === "no-repository") return [];
-    if (run.code === 1) continue;
-    for (const line of run.stdout.split("\n")) {
-      if (!line) continue;
-      ignored.push(unquoteGitPath(line).replace(/^\.\//, ""));
-    }
+    if (listing.kind === "no-repository") return DISABLED_CONTEXT;
+    if (listing.kind !== "output") throw gitIgnoreUnavailableError();
+    ignoredPaths = listing.stdout
+      .split("\0")
+      .map((path) => path.replace(/\/+$/, ""))
+      .filter((path) => path.length > 0 && path !== ".");
   }
-  return ignored;
+
+  async function checkPaths(paths: Iterable<string>): Promise<string[]> {
+    const candidates = [...new Set(paths)].filter((path) => path.length > 0);
+    if (candidates.length === 0) return [];
+
+    const batches: string[][] = [];
+    let batch: string[] = [];
+    let batchLength = 0;
+    for (const path of candidates) {
+      // `./` keeps Git from reading a leading `:` as pathspec magic or a
+      // leading `-` as an option.
+      const argument = baseArgument(path);
+      if (batch.length > 0 && batchLength + argument.length > CHECK_IGNORE_ARGUMENT_BUDGET) {
+        batches.push(batch);
+        batch = [];
+        batchLength = 0;
+      }
+      batch.push(argument);
+      batchLength += argument.length + 1;
+    }
+    batches.push(batch);
+
+    const outputPrefix = baseArgument("");
+    const ignored: string[] = [];
+    for (let arguments_ of batches) {
+      let run = await runGitIgnoreQuery(
+        baseDir,
+        ["-c", "core.quotePath=false", "check-ignore", ...arguments_],
+        dependencies,
+        [1],
+      );
+      // The enclosing repository's rules do not reach inside a submodule, and
+      // Git refuses the whole query when one path lies in one. Drop every path
+      // under that submodule and ask again.
+      while (run.kind === "submodule-path") {
+        const { pathspec } = run;
+        const submoduleRoot = submoduleArgumentRoot(pathspec, run.submodule);
+        const remaining = arguments_.filter((argument) =>
+          argument !== pathspec &&
+          !(submoduleRoot && argument.startsWith(`${submoduleRoot}/`))
+        );
+        if (remaining.length === arguments_.length) throw gitIgnoreUnavailableError();
+        arguments_ = remaining;
+        if (arguments_.length === 0) break;
+        run = await runGitIgnoreQuery(
+          baseDir,
+          ["-c", "core.quotePath=false", "check-ignore", ...arguments_],
+          dependencies,
+          [1],
+        );
+      }
+      if (run.kind === "submodule-path") continue;
+      if (run.kind === "no-repository") return [];
+      if (run.code === 1) continue;
+      for (const line of run.stdout.split("\n")) {
+        if (!line) continue;
+        const path = unquoteGitPath(line);
+        if (path.startsWith(outputPrefix)) ignored.push(path.slice(outputPrefix.length));
+      }
+    }
+    return ignored;
+  }
+
+  return { ignoredPaths, checkPaths };
 }

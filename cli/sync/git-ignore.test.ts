@@ -2,85 +2,139 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CommandResult } from "#cli/process-command";
-import {
-  checkGitIgnoredPaths,
-  type GitIgnoreDependencies,
-  loadGitIgnoredPaths,
-  unquoteGitPath,
-} from "./git-ignore.ts";
+import { type GitIgnoreDependencies, loadGitIgnoreContext, unquoteGitPath } from "./git-ignore.ts";
 import { createDefaultIgnoreChecker, createIgnoreChecker } from "./ignore.ts";
 
+const NOTHING_IGNORED: CommandResult = { success: false, code: 1, stdout: "" };
+
 interface FakeGitOptions {
-  exists?: boolean;
+  /** Directories that exist; defaults to every path. */
+  existing?: readonly string[];
   gitMetadata?: boolean;
-  result?: CommandResult;
-  spawnError?: Error;
+  /** Answer each Git invocation; defaults to "nothing ignored". */
+  respond?: (args: readonly string[]) => CommandResult | Error;
 }
 
-function fakeGit(options: FakeGitOptions): {
+interface FakeGitCall {
+  args: readonly string[];
+  cwd?: string;
+}
+
+function fakeGit(options: FakeGitOptions = {}): {
   dependencies: GitIgnoreDependencies;
-  calls: { args: readonly string[]; cwd?: string }[];
+  calls: FakeGitCall[];
+  warnings: string[];
 } {
-  const calls: { args: readonly string[]; cwd?: string }[] = [];
+  const calls: FakeGitCall[] = [];
+  const warnings: string[] = [];
   const dependencies: GitIgnoreDependencies = {
     runCommand: (_cmd, commandOptions = {}) => {
-      calls.push({ args: commandOptions.args ?? [], cwd: commandOptions.cwd });
-      if (options.spawnError) return Promise.reject(options.spawnError);
-      return Promise.resolve(options.result ?? { success: true, code: 0, stdout: "" });
+      const args = commandOptions.args ?? [];
+      calls.push({ args, cwd: commandOptions.cwd });
+      const answer = options.respond?.(args) ?? NOTHING_IGNORED;
+      return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
     },
     hasGitMetadata: () => Promise.resolve(options.gitMetadata ?? false),
-    projectDirExists: () => Promise.resolve(options.exists ?? true),
+    pathExists: (path) =>
+      Promise.resolve(options.existing === undefined || options.existing.includes(path)),
+    warnIgnoredProjectDirectory: (projectDir) => warnings.push(projectDir),
   };
-  return { dependencies, calls };
+  return { dependencies, calls, warnings };
 }
 
+const isRootCheck = (args: readonly string[]) => args[0] === "check-ignore";
+const isListing = (args: readonly string[]) => args[0] === "ls-files";
+
 describe("cli/sync/git-ignore", () => {
-  describe("loadGitIgnoredPaths", () => {
-    it("asks Git for every ignore source from the project directory", async () => {
-      const { dependencies, calls } = fakeGit({
-        result: { success: true, code: 0, stdout: ".context/\0dist/y.js\0scratch.md\0" },
+  describe("loadGitIgnoreContext", () => {
+    it("lists ignored local paths once the project directory itself is not ignored", async () => {
+      const { dependencies, calls, warnings } = fakeGit({
+        respond: (args) =>
+          isListing(args)
+            ? { success: true, code: 0, stdout: ".context/\0dist/y.js\0scratch.md\0" }
+            : NOTHING_IGNORED,
       });
 
-      assertEquals(await loadGitIgnoredPaths("/repo/app", dependencies), [
-        ".context",
-        "dist/y.js",
-        "scratch.md",
-      ]);
-      assertEquals(calls, [{
-        args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-        cwd: "/repo/app",
-      }]);
-    });
+      const context = await loadGitIgnoreContext("/repo/app", dependencies);
 
-    it("returns no paths for a project directory that does not exist yet", async () => {
-      const { dependencies, calls } = fakeGit({ exists: false });
-      assertEquals(await loadGitIgnoredPaths("/missing", dependencies), []);
-      assertEquals(calls.length, 0);
-    });
-
-    it("returns no paths outside a Git repository", async () => {
-      const { dependencies } = fakeGit({
-        result: {
-          success: false,
-          code: 128,
-          stderr: "fatal: not a git repository (or any of the parent directories): .git",
+      assertEquals(context.ignoredPaths, [".context", "dist/y.js", "scratch.md"]);
+      assertEquals(calls, [
+        { args: ["check-ignore", "--quiet", "./"], cwd: "/repo/app" },
+        {
+          args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+          cwd: "/repo/app",
         },
-      });
-      assertEquals(await loadGitIgnoredPaths("/plain", dependencies), []);
+      ]);
+      assertEquals(warnings, []);
     });
 
-    it("returns no paths when Git is missing and no repository surrounds the project", async () => {
-      const { dependencies } = fakeGit({ spawnError: new Error("git: not found") });
-      assertEquals(await loadGitIgnoredPaths("/plain", dependencies), []);
+    it("skips Git rules with one warning when the enclosing repository ignores the project", async () => {
+      const { dependencies, calls, warnings } = fakeGit({
+        respond: (args) => isRootCheck(args) ? { success: true, code: 0 } : NOTHING_IGNORED,
+      });
+
+      const context = await loadGitIgnoreContext("/repo/app", dependencies);
+
+      assertEquals(context.ignoredPaths, []);
+      assertEquals(await context.checkPaths(["index.ts"]), []);
+      assertEquals(calls.length, 1, "neither the listing nor candidate checks run");
+      assertEquals(warnings, ["/repo/app"]);
+    });
+
+    it("resolves rules from the nearest existing directory for a project not created yet", async () => {
+      const { dependencies, calls } = fakeGit({
+        existing: ["/repo/apps"],
+        respond: (args) =>
+          args.includes("./web/lib/a.gen.ts")
+            ? { success: true, code: 0, stdout: "./web/lib/a.gen.ts\n" }
+            : NOTHING_IGNORED,
+      });
+
+      const context = await loadGitIgnoreContext("/repo/apps/web", dependencies);
+
+      assertEquals(context.ignoredPaths, []);
+      assertEquals(await context.checkPaths(["lib/a.gen.ts", "pages/index.tsx"]), [
+        "lib/a.gen.ts",
+      ]);
+      assertEquals(calls, [
+        { args: ["check-ignore", "--quiet", "./web/"], cwd: "/repo/apps" },
+        {
+          args: [
+            "-c",
+            "core.quotePath=false",
+            "check-ignore",
+            "./web/lib/a.gen.ts",
+            "./web/pages/index.tsx",
+          ],
+          cwd: "/repo/apps",
+        },
+      ]);
+    });
+
+    it("applies nothing outside a Git repository", async () => {
+      const { dependencies, calls } = fakeGit({
+        respond: () => ({ success: false, code: 128, stderr: "fatal: not a git repository" }),
+      });
+
+      const context = await loadGitIgnoreContext("/plain", dependencies);
+
+      assertEquals(context.ignoredPaths, []);
+      assertEquals(await context.checkPaths(["a.ts"]), []);
+      assertEquals(calls.length, 1);
+    });
+
+    it("applies nothing when Git is missing and no repository surrounds the project", async () => {
+      const { dependencies } = fakeGit({ respond: () => new Error("git: not found") });
+      assertEquals((await loadGitIgnoreContext("/plain", dependencies)).ignoredPaths, []);
     });
 
     it("refuses to continue when Git is missing inside a repository", async () => {
       const { dependencies } = fakeGit({
-        spawnError: new Error("git: not found"),
+        respond: () => new Error("git: not found"),
         gitMetadata: true,
       });
       await assertRejects(
-        () => loadGitIgnoredPaths("/repo", dependencies),
+        () => loadGitIgnoreContext("/repo", dependencies),
         Error,
         "Could not read Git ignore rules for this project.",
       );
@@ -88,11 +142,14 @@ describe("cli/sync/git-ignore", () => {
 
     it("refuses to continue when Git fails inside a repository", async () => {
       const { dependencies } = fakeGit({
-        result: { success: false, code: 128, stderr: "fatal: detected dubious ownership" },
+        respond: (args) =>
+          isListing(args)
+            ? { success: false, code: 128, stderr: "fatal: detected dubious ownership" }
+            : NOTHING_IGNORED,
         gitMetadata: true,
       });
       await assertRejects(
-        () => loadGitIgnoredPaths("/repo", dependencies),
+        () => loadGitIgnoreContext("/repo", dependencies),
         Error,
         "Could not read Git ignore rules for this project.",
       );
@@ -100,31 +157,36 @@ describe("cli/sync/git-ignore", () => {
 
     it("refuses a truncated Git listing", async () => {
       const { dependencies } = fakeGit({
-        result: { success: true, code: 0, stdout: ".context/\0", outputTruncated: true },
+        respond: (args) =>
+          isListing(args)
+            ? { success: true, code: 0, stdout: ".context/\0", outputTruncated: true }
+            : NOTHING_IGNORED,
       });
       await assertRejects(
-        () => loadGitIgnoredPaths("/repo", dependencies),
+        () => loadGitIgnoreContext("/repo", dependencies),
         Error,
         "Could not read Git ignore rules for this project.",
       );
     });
   });
 
-  describe("checkGitIgnoredPaths", () => {
+  describe("GitIgnoreContext.checkPaths", () => {
     it("checks paths that need not exist locally in one git check-ignore call", async () => {
       const { dependencies, calls } = fakeGit({
-        result: { success: true, code: 0, stdout: "./dist/app.js\n./:odd.gen.ts\n" },
+        respond: (args) =>
+          isRootCheck(args)
+            ? NOTHING_IGNORED
+            : isListing(args)
+            ? { success: true, code: 0, stdout: "" }
+            : { success: true, code: 0, stdout: "./dist/app.js\n./:odd.gen.ts\n" },
       });
+      const context = await loadGitIgnoreContext("/repo/app", dependencies);
 
       assertEquals(
-        await checkGitIgnoredPaths(
-          "/repo/app",
-          ["dist/app.js", "pages/index.tsx", ":odd.gen.ts", "dist/app.js"],
-          dependencies,
-        ),
+        await context.checkPaths(["dist/app.js", "pages/index.tsx", ":odd.gen.ts", "dist/app.js"]),
         ["dist/app.js", ":odd.gen.ts"],
       );
-      assertEquals(calls, [{
+      assertEquals(calls.at(-1), {
         args: [
           "-c",
           "core.quotePath=false",
@@ -134,48 +196,62 @@ describe("cli/sync/git-ignore", () => {
           "./:odd.gen.ts",
         ],
         cwd: "/repo/app",
-      }]);
-    });
-
-    it("treats exit code 1 as nothing ignored", async () => {
-      const { dependencies } = fakeGit({ result: { success: false, code: 1, stdout: "" } });
-      assertEquals(await checkGitIgnoredPaths("/repo", ["pages/index.tsx"], dependencies), []);
+      });
     });
 
     it("splits very long path lists across several calls", async () => {
-      const { dependencies, calls } = fakeGit({ result: { success: false, code: 1 } });
+      const { dependencies, calls } = fakeGit({
+        respond: (args) =>
+          isListing(args) ? { success: true, code: 0, stdout: "" } : NOTHING_IGNORED,
+      });
+      const context = await loadGitIgnoreContext("/repo", dependencies);
       const paths = Array.from({ length: 400 }, (_, index) => `${"x".repeat(100)}/${index}.ts`);
 
-      await checkGitIgnoredPaths("/repo", paths, dependencies);
+      await context.checkPaths(paths);
 
-      assertEquals(calls.length > 1, true);
-      assertEquals(calls.flatMap((call) => call.args.slice(3)).length, paths.length);
+      const checks = calls.slice(2);
+      assertEquals(checks.length > 1, true);
+      assertEquals(checks.flatMap((call) => call.args.slice(3)).length, paths.length);
     });
 
-    it("skips Git for no paths or a missing directory", async () => {
-      const empty = fakeGit({});
-      assertEquals(await checkGitIgnoredPaths("/repo", [], empty.dependencies), []);
-      assertEquals(empty.calls.length, 0);
-
-      const missing = fakeGit({ exists: false });
-      assertEquals(await checkGitIgnoredPaths("/missing", ["a.ts"], missing.dependencies), []);
-      assertEquals(missing.calls.length, 0);
-    });
-
-    it("reports nothing outside a Git repository", async () => {
-      const { dependencies } = fakeGit({
-        result: { success: false, code: 128, stderr: "fatal: not a git repository" },
-      });
-      assertEquals(await checkGitIgnoredPaths("/plain", ["a.ts"], dependencies), []);
-    });
-
-    it("refuses to continue when Git fails inside a repository", async () => {
-      const { dependencies } = fakeGit({
-        result: { success: false, code: 128, stderr: "fatal: detected dubious ownership" },
+    it("drops paths inside a submodule and checks the rest again", async () => {
+      const { dependencies, calls } = fakeGit({
+        respond: (args) => {
+          if (isRootCheck(args)) return NOTHING_IGNORED;
+          if (isListing(args)) return { success: true, code: 0, stdout: "" };
+          if (args.some((arg) => arg.startsWith("./sub/"))) {
+            return {
+              success: false,
+              code: 128,
+              stderr: "fatal: Pathspec './sub/a.ts' is in submodule 'sub'",
+            };
+          }
+          return { success: true, code: 0, stdout: "./x.gen.ts\n" };
+        },
         gitMetadata: true,
       });
+      const context = await loadGitIgnoreContext("/repo", dependencies);
+
+      assertEquals(await context.checkPaths(["sub/a.ts", "sub/b.gen.ts", "x.gen.ts"]), [
+        "x.gen.ts",
+      ]);
+      assertEquals(calls.at(-1)?.args.slice(3), ["./x.gen.ts"]);
+    });
+
+    it("refuses to continue when a check fails inside a repository", async () => {
+      const { dependencies } = fakeGit({
+        respond: (args) =>
+          isRootCheck(args)
+            ? NOTHING_IGNORED
+            : isListing(args)
+            ? { success: true, code: 0, stdout: "" }
+            : { success: false, code: 128, stderr: "fatal: detected dubious ownership" },
+        gitMetadata: true,
+      });
+      const context = await loadGitIgnoreContext("/repo", dependencies);
+
       await assertRejects(
-        () => checkGitIgnoredPaths("/repo", ["a.ts"], dependencies),
+        () => context.checkPaths(["a.ts"]),
         Error,
         "Could not read Git ignore rules for this project.",
       );
@@ -221,9 +297,65 @@ describe("cli/sync/git-ignore", () => {
       assertEquals(reincluded.isIgnored("generated/data.json"), false);
     });
 
+    it("walks into a wholly Git-ignored directory only when a negation can reach inside", () => {
+      const checker = createIgnoreChecker(["!generated/data.json"], {
+        gitIgnoredPaths: ["generated", "cache"],
+      });
+
+      assertEquals(checker.isIgnored("generated", { isDirectory: true }), false);
+      assertEquals(checker.isIgnored("generated/data.json"), false);
+      assertEquals(checker.isIgnored("generated/other.json"), true);
+
+      const anchored = createIgnoreChecker(["!/generated/data.json"], {
+        gitIgnoredPaths: ["generated", "cache"],
+      });
+      assertEquals(anchored.isIgnored("generated", { isDirectory: true }), false);
+      assertEquals(anchored.isIgnored("cache", { isDirectory: true }), true);
+
+      const withoutNegation = createIgnoreChecker([], { gitIgnoredPaths: ["generated"] });
+      assertEquals(withoutNegation.isIgnored("generated", { isDirectory: true }), true);
+    });
+
     it("keeps protected paths ignored regardless of Git", () => {
       const checker = createIgnoreChecker(["!.env.local"], { gitIgnoredPaths: [] });
       assertEquals(checker.isIgnored(".env.local"), true);
+    });
+  });
+
+  describe("resolveGitIgnoredCandidates", () => {
+    it("asks Git once per path and ignores the matches", async () => {
+      const asked: string[][] = [];
+      const checker = createIgnoreChecker(["!generated/keep.ts"], {
+        checkGitIgnoredPaths: (paths) => {
+          asked.push(paths);
+          return Promise.resolve(
+            paths.filter((path) => path.startsWith("generated/") || path === "remote.gen.ts"),
+          );
+        },
+      });
+
+      await checker.resolveGitIgnoredCandidates([
+        "generated/remote-only.ts",
+        "generated/keep.ts",
+        "pages/index.tsx",
+        "remote.gen.ts",
+      ]);
+      await checker.resolveGitIgnoredCandidates(["pages/index.tsx", "lib/new.ts"]);
+
+      assertEquals(asked, [
+        ["generated/remote-only.ts", "generated/keep.ts", "pages/index.tsx", "remote.gen.ts"],
+        ["lib/new.ts"],
+      ]);
+      assertEquals(checker.isIgnored("generated/remote-only.ts"), true);
+      assertEquals(checker.isIgnored("remote.gen.ts"), true);
+      assertEquals(checker.isIgnored("generated/keep.ts"), false);
+      assertEquals(checker.isIgnored("pages/index.tsx"), false);
+    });
+
+    it("does nothing for a checker without Git context", async () => {
+      const checker = createDefaultIgnoreChecker();
+      await checker.resolveGitIgnoredCandidates(["generated/remote-only.ts"]);
+      assertEquals(checker.isIgnored("generated/remote-only.ts"), false);
     });
   });
 

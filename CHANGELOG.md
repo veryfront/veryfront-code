@@ -12,16 +12,23 @@ versions are listed at
 ignores, whether the rule comes from a `.gitignore` at any level,
 `.git/info/exclude`, or `core.excludesFile`. Previously only the built-in
 defaults and `.vfignore` applied, so local-only files such as tooling scratch
-directories were uploaded. Pull also skips a remote file whose path Git
-ignores, even when no local copy exists yet. Tracked files are never skipped by
-a Git ignore rule, and a directory outside Git behaves as before.
+directories were uploaded. Remote paths Git ignores are treated like paths
+`.vfignore` ignores even when no local copy exists: pull does not write them and
+`push --prune` does not delete them. Pull into a directory that does not exist
+yet applies the enclosing repository's rules. Tracked files are never skipped
+by a Git ignore rule, and a directory outside Git behaves as before.
 
 A supported file that Git ignores and earlier versions uploaded, such as
 generated source, is now skipped. To keep uploading it, re-include it in
-`.vfignore` with a `!` rule, for example `!dist` or `!generated/data.json`. The
-first `veryfront up` or `deploy` after upgrading re-pushes a project whose
-uploaded file set changes. Remote copies of newly ignored paths are preserved,
-not pruned; delete them in Studio if they should go.
+`.vfignore` with a `!` rule, for example `!dist` or `!generated/data.json`; the
+rule also reaches a file inside a directory Git ignores as a whole. The first
+`veryfront up` or `deploy` after upgrading re-pushes a project whose uploaded
+file set changes. Remote copies of newly ignored paths are preserved, not
+pruned; delete them in Studio if they should go.
+
+If the enclosing repository ignores the project directory itself, Git ignore
+rules are not applied for that project and the CLI prints a warning. The
+defaults and `.vfignore` still apply.
 
 `.context` is now ignored by default, and a `.vfignore` negation can re-include
 it.

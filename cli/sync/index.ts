@@ -19,8 +19,11 @@ export {
   type IgnoreChecker,
   type IgnoreCheckerOptions,
   loadIgnoreChecker,
-  type LoadIgnoreCheckerOptions,
   loadIgnorePatterns,
 } from "./ignore.ts";
 
-export { checkGitIgnoredPaths, loadGitIgnoredPaths } from "./git-ignore.ts";
+export {
+  type GitIgnoreContext,
+  IGNORED_PROJECT_DIRECTORY_WARNING,
+  loadGitIgnoreContext,
+} from "./git-ignore.ts";

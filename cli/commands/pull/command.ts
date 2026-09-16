@@ -712,7 +712,8 @@ async function pullSingleProject(
   // Remote paths may not exist locally yet, so ask Git about them directly:
   // listing ignored local files alone would let pull write a file the checkout
   // ignores, which `.vfignore` rules already prevent.
-  const ignoreChecker = await loadIgnoreChecker(projectDir, { candidatePaths: remotePaths });
+  const ignoreChecker = await loadIgnoreChecker(projectDir);
+  await ignoreChecker.resolveGitIgnoredCandidates(remotePaths);
   const writeOps: WriteOp[] = [];
   for (const { file, op } of validatedFiles) {
     if (

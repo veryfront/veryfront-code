@@ -69,16 +69,18 @@ this handoff. Manage those files through another reviewed delivery path.
 
 Both commands use the same `.vfignore` rules. Inside a Git checkout they also
 skip untracked files that Git ignores, whether the rule comes from a
-`.gitignore`, `.git/info/exclude`, or `core.excludesFile`. Pull applies the
-same rules to remote paths that do not exist locally yet. A `.vfignore`
-negation such as `!dist` re-includes a path Git ignores. Tracked files are
-never skipped by Git ignore rules. `.context/` is ignored by default. Ignored
-files and unsupported extensions are not reconciled with Veryfront. A
+`.gitignore`, `.git/info/exclude`, or `core.excludesFile`. Remote paths Git
+ignores are preserved like `.vfignore` matches, even without a local copy. A
+`.vfignore` negation such as `!dist` or `!generated/data.json` re-includes a
+path Git ignores. Tracked files are never skipped by Git ignore rules. If the
+enclosing repository ignores the project directory itself, Git rules are not
+applied and the CLI prints a warning. `.context/` is ignored by default.
+Ignored files and unsupported extensions are not reconciled with Veryfront. A
 `.vfignore` negation cannot re-include `.env`, `.env.*`, `.veryfront`, or
-`.git` paths: those stay ignored so local secrets and CLI state are never uploaded. Push prints a warning naming
-each path whose negation was dropped. Pull does the same for protected `.env`
-paths, and rejects remote `.git` or `.veryfront` metadata before changing local
-files. Names that only begin with `.env`, such as `.envoy/` or `.environments/`,
+`.git` paths: those stay ignored so local secrets and CLI state are never
+uploaded. Push prints a warning naming each path whose negation was dropped.
+Pull does the same for protected `.env` paths, and rejects remote `.git` or
+`.veryfront` metadata before changing local files. Names that only begin with `.env`, such as `.envoy/` or `.environments/`,
 are not protected and stay negatable. Run `veryfront push --prune` once after
 upgrading to remove any protected path that an older CLI uploaded. Rotate any
 credential that was previously exposed.
@@ -180,7 +182,8 @@ commands across CI jobs or clean the checkout between them.
 A receipt written by a CLI older than the source digest carries no digest to
 recompute, so Deploy falls back to the recorded Git cleanliness for it.
 
-That fallback cannot see an edit to a file that Git ignores but a `.vfignore` negation re-includes.
+That fallback cannot see an edit to a file that Git ignores but a `.vfignore`
+negation re-includes.
 Run Push once after upgrading: the receipt it writes carries the digest, and the
 full check applies from then on.
 

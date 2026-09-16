@@ -1161,6 +1161,16 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       spinner.update("Loading ignore patterns...");
       const ignoreChecker = await loadIgnoreChecker(projectDir);
+      // Remote files need not exist locally, so ask Git about each listing:
+      // otherwise a remote path the checkout ignores would count as managed
+      // and prune would delete it, which `.vfignore` rules already prevent.
+      const listRemoteFiles = async (
+        ...args: Parameters<typeof listAllFiles>
+      ): Promise<RemoteFile[]> => {
+        const files = await listAllFiles(...args);
+        await ignoreChecker.resolveGitIgnoredCandidates(files.map((file) => file.path));
+        return files;
+      };
 
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);
@@ -1227,7 +1237,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           // A just-created project has no files yet; a listing failure here is
           // not a reason to fail the push.
           try {
-            mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
+            mainFiles = await listRemoteFiles(client, projectApiReference(config), {
+              type: "main",
+            });
           } catch {
             mainFiles = [];
           }
@@ -1238,7 +1250,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               config.projectId
             ? outcome.config
             : config;
-          mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
+          mainFiles = await listRemoteFiles(client, projectApiReference(config), { type: "main" });
         }
       }
 
@@ -1276,6 +1288,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           source: { type: "main" } satisfies PullSource,
           branchExists: isMainBranch,
         };
+      await ignoreChecker.resolveGitIgnoredCandidates(target.remoteFiles.map((file) => file.path));
       let remoteFilesAreBaseline = !isMainBranch && !target.branchExists;
 
       if (!dryRun && !isMainBranch && !target.branchId) {
@@ -1291,7 +1304,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             branchName,
           );
           const branchSource = { type: "branch", name: branchName } satisfies PullSource;
-          const branchRemoteFiles = await listAllFiles(
+          const branchRemoteFiles = await listRemoteFiles(
             client,
             projectApiReference(config),
             branchSource,
@@ -1504,7 +1517,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           ? createNoopSpinner()
           : createSpinner("Checking remote files...");
         try {
-          const latestRemoteFiles = await listAllFiles(
+          const latestRemoteFiles = await listRemoteFiles(
             client,
             projectApiReference(config),
             target.source,
@@ -1527,7 +1540,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           if (!dryRun) {
             if (!force) {
               spinner.update("Checking remote files...");
-              const latestRemoteFiles = await listAllFiles(
+              const latestRemoteFiles = await listRemoteFiles(
                 client,
                 projectApiReference(config),
                 target.source,
@@ -1546,7 +1559,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
             } else if (pruneRemoteMissing) {
               spinner.update("Verifying push target...");
-              let latestRemoteFiles = await listAllFiles(
+              let latestRemoteFiles = await listRemoteFiles(
                 client,
                 projectApiReference(config),
                 target.source,
@@ -1585,7 +1598,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               if (lateDeleteResult.deleted > 0) {
                 try {
-                  latestRemoteFiles = await listAllFiles(
+                  latestRemoteFiles = await listRemoteFiles(
                     client,
                     projectApiReference(config),
                     target.source,
@@ -1607,7 +1620,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
             } else {
-              let latestRemoteFiles = await listAllFiles(
+              let latestRemoteFiles = await listRemoteFiles(
                 client,
                 projectApiReference(config),
                 target.source,
@@ -1636,7 +1649,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               for (const file of lateSelectedFiles) deletePaths.add(file.path);
               if (lateDeleteResult.deleted > 0) {
-                latestRemoteFiles = await listAllFiles(
+                latestRemoteFiles = await listRemoteFiles(
                   client,
                   projectApiReference(config),
                   target.source,
@@ -1804,7 +1817,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       };
       const listAllFilesForVerification = async () => {
         try {
-          return await listAllFiles(
+          return await listRemoteFiles(
             client,
             projectApiReference(config),
             target.source,

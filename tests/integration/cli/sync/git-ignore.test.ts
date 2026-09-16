@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { scanLocalFiles } from "../../../../cli/commands/push/command.ts";
-import { checkGitIgnoredPaths, loadGitIgnoredPaths } from "../../../../cli/sync/git-ignore.ts";
+import { loadGitIgnoreContext } from "../../../../cli/sync/git-ignore.ts";
 import { loadIgnoreChecker } from "../../../../cli/sync/ignore.ts";
 
 async function runGit(cwd: string, ...args: string[]): Promise<void> {
@@ -58,17 +58,13 @@ async function createIgnoringRepository(repoDir: string): Promise<string> {
 }
 
 describe("cli/sync/git-ignore against real Git", () => {
-  describe("loadGitIgnoredPaths", () => {
-    it("returns no paths outside a Git repository", async () => {
+  describe("loadGitIgnoreContext", () => {
+    it("applies nothing outside a Git repository", async () => {
       await withTempDir(async (projectDir) => {
         await writeFile(projectDir, ".context/todos.md");
-        assertEquals(await loadGitIgnoredPaths(projectDir), []);
-      });
-    });
-
-    it("returns no paths for a project directory that does not exist yet", async () => {
-      await withTempDir(async (root) => {
-        assertEquals(await loadGitIgnoredPaths(`${root}/missing`), []);
+        const context = await loadGitIgnoreContext(projectDir);
+        assertEquals(context.ignoredPaths, []);
+        assertEquals(await context.checkPaths(["dist/app.js"]), []);
       });
     });
 
@@ -76,7 +72,7 @@ describe("cli/sync/git-ignore against real Git", () => {
       await withTempDir(async (repoDir) => {
         const projectDir = await createIgnoringRepository(repoDir);
 
-        assertEquals((await loadGitIgnoredPaths(projectDir)).sort(), [
+        assertEquals([...(await loadGitIgnoreContext(projectDir)).ignoredPaths].sort(), [
           ".context",
           "content/drafts",
           "pages/types.gen.ts",
@@ -84,15 +80,59 @@ describe("cli/sync/git-ignore against real Git", () => {
         ]);
       });
     });
+
+    it("skips Git rules when the enclosing repository ignores the project directory", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "app/\n*.gen.ts\n");
+        await writeFile(repoDir, "app/web/pages/index.tsx");
+        await writeFile(repoDir, "app/web/lib/types.gen.ts");
+
+        for (const projectDir of [`${repoDir}/app`, `${repoDir}/app/web`]) {
+          const context = await loadGitIgnoreContext(projectDir);
+          assertEquals(context.ignoredPaths, []);
+          assertEquals(await context.checkPaths(["lib/remote.gen.ts"]), []);
+        }
+
+        const files = await scanLocalFiles(
+          `${repoDir}/app/web`,
+          await loadIgnoreChecker(`${repoDir}/app/web`),
+        );
+        assertEquals(files.map((file) => file.path).sort(), [
+          "lib/types.gen.ts",
+          "pages/index.tsx",
+        ]);
+      });
+    });
+
+    it("resolves the enclosing repository's rules for a project directory not created yet", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "*.gen.ts\ngenerated/\n");
+        await Deno.mkdir(`${repoDir}/apps`);
+
+        const context = await loadGitIgnoreContext(`${repoDir}/apps/web/site`);
+
+        assertEquals(context.ignoredPaths, []);
+        assertEquals(
+          (await context.checkPaths([
+            "lib/remote.gen.ts",
+            "generated/data.json",
+            "pages/index.tsx",
+          ])).sort(),
+          ["generated/data.json", "lib/remote.gen.ts"],
+        );
+      });
+    });
   });
 
-  describe("checkGitIgnoredPaths", () => {
+  describe("GitIgnoreContext.checkPaths", () => {
     it("matches paths that do not exist locally and skips tracked files", async () => {
       await withTempDir(async (repoDir) => {
         const projectDir = await createIgnoringRepository(repoDir);
         await Deno.writeTextFile(`${repoDir}/.gitignore`, "*.gen.ts\ndist/\n");
 
-        const ignored = await checkGitIgnoredPaths(projectDir, [
+        const ignored = await (await loadGitIgnoreContext(projectDir)).checkPaths([
           "dist/app.js",
           "lib/remote-only.gen.ts",
           ".context/new-note.md",
@@ -115,12 +155,6 @@ describe("cli/sync/git-ignore against real Git", () => {
         ]);
       });
     });
-
-    it("reports nothing outside a Git repository", async () => {
-      await withTempDir(async (projectDir) => {
-        assertEquals(await checkGitIgnoredPaths(projectDir, ["dist/app.js"]), []);
-      });
-    });
   });
 
   describe("scanLocalFiles with loadIgnoreChecker", () => {
@@ -129,7 +163,6 @@ describe("cli/sync/git-ignore against real Git", () => {
         const projectDir = await createIgnoringRepository(repoDir);
         // Drop the `.context` default so only `.git/info/exclude` can hide it.
         await Deno.writeTextFile(`${projectDir}/.vfignore`, "!.context\n");
-        await Deno.writeTextFile(`${repoDir}/.git/info/exclude`, ".context/\n");
 
         const withNegation = await scanLocalFiles(projectDir, await loadIgnoreChecker(projectDir));
         assertEquals(
@@ -144,6 +177,24 @@ describe("cli/sync/git-ignore against real Git", () => {
           "content/post.md",
           "pages/index.tsx",
           "pages/tracked.gen.ts",
+        ]);
+      });
+    });
+
+    it("re-includes a file inside a directory Git ignores as a whole", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "generated/\n");
+        await Deno.writeTextFile(`${repoDir}/.vfignore`, "!generated/data.json\n");
+        await writeFile(repoDir, "pages/index.tsx");
+        await writeFile(repoDir, "generated/data.json");
+        await writeFile(repoDir, "generated/other.json");
+        await writeFile(repoDir, "generated/nested/deep.json");
+
+        const files = await scanLocalFiles(repoDir, await loadIgnoreChecker(repoDir));
+        assertEquals(files.map((file) => file.path).sort(), [
+          "generated/data.json",
+          "pages/index.tsx",
         ]);
       });
     });
