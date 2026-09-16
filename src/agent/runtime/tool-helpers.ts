@@ -1,3 +1,4 @@
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
@@ -123,7 +124,7 @@ function isRemoteToolAllowed(
  * name first, then an exact registry id — returning only tools visible to the
  * caller (owner-aware).
  */
-function resolveVisibleRegistryTool(
+export function resolveVisibleRegistryTool(
   name: string,
   callerAgentId?: string,
   // deno-lint-ignore no-explicit-any -- generic erasure: registry tools carry any input/output types
@@ -295,7 +296,8 @@ export function resolveConfiguredTool(
   if (configuredEntry && typeof configuredEntry === "object") {
     if (
       options?.allowIntegrationStyleConcreteTools !== true &&
-      getConfiguredRemoteToolName(configuredEntry) === undefined
+      getConfiguredRemoteToolName(configuredEntry) === undefined &&
+      !hasTrustedHostToolProvenance(configuredEntry)
     ) {
       assertLocalToolId(toolName);
       assertLocalToolId(configuredEntry.id);
@@ -556,7 +558,10 @@ export async function getAvailableTools(
       ) {
         continue;
       }
-      if (!strictConfiguredToolsOnly && configuredRemoteToolName === undefined) {
+      if (
+        !strictConfiguredToolsOnly && configuredRemoteToolName === undefined &&
+        !hasTrustedHostToolProvenance(entry)
+      ) {
         assertLocalToolId(name);
         assertLocalToolId(entry.id);
       }

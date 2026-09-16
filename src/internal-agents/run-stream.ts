@@ -1,3 +1,5 @@
+import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
+import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
 import {
   type Agent,
   type AgentMessage as Message,
@@ -335,12 +337,7 @@ export function buildMergedTools(
     if (entry === true) {
       // Registry lookups are owner-aware: another agent's owned tool behaves
       // as if it does not exist for this agent.
-      const visibleRegistryTool = (() => {
-        const registryTool = toolRegistry.get(toolName);
-        return registryTool && isToolVisibleTo(registryTool, { agentId: agent.id })
-          ? registryTool
-          : undefined;
-      })();
+      const visibleRegistryTool = resolveVisibleRegistryTool(toolName, agent.id);
       const serverResolvedProjectTool = serverResolvedProjectToolNames.has(toolName)
         ? visibleRegistryTool
         : undefined;
@@ -351,7 +348,8 @@ export function buildMergedTools(
         availableForwardedToolNames?.includes(toolName) ||
         sourceAllowedRemoteToolNames.includes(toolName)
       ) {
-        merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ?? true;
+        merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ??
+          (visibleRegistryTool?.ownerAgentId ? visibleRegistryTool : true);
       }
       continue;
     }
@@ -457,16 +455,30 @@ function createIdempotentAsyncCleanup(
   };
 }
 
-function shouldExposeSandboxBash(agent: Agent): boolean {
+function selectedSandboxToolName(
+  toolName: string,
+  agent: Agent,
+  deps: RuntimeAgentStreamExecutionDeps,
+): string | null {
   const tools = agent.config.tools;
-  return isRecord(tools) && tools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME] === true;
+  if (!isRecord(tools)) return null;
+  const canonicalName = `veryfront__${toolName}`;
+  if (tools[canonicalName] === false) return null;
+  const projectTool = deps.localTools?.[toolName] ?? resolveVisibleRegistryTool(toolName, agent.id);
+  const hasProjectTool = Boolean(
+    projectTool &&
+      (projectTool === true || isToolVisibleTo(projectTool, { agentId: agent.id })),
+  );
+  if (!hasProjectTool && tools[toolName] === false) return null;
+  if (tools[canonicalName] === true) return canonicalName;
+  return !hasProjectTool && tools[toolName] === true ? toolName : null;
 }
 
 async function buildProjectAgentSandboxTools(input: {
   agent: Agent;
   deps: RuntimeAgentStreamExecutionDeps;
 }): Promise<{ tools?: Record<string, Tool | boolean>; closeSandbox?: () => Promise<void> }> {
-  if (!shouldExposeSandboxBash(input.agent)) {
+  if (!selectedSandboxToolName(PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME, input.agent, input.deps)) {
     return {};
   }
 
@@ -497,13 +509,21 @@ async function buildProjectAgentSandboxTools(input: {
 
   try {
     const declaredTools = input.agent.config.tools;
-    const materializedTools = createToolsFromHostDefinitions(sandboxResult.tools);
-    const configuredTools = isRecord(declaredTools)
+    const selectedHostTools = isRecord(declaredTools)
       ? Object.fromEntries(
-        Object.entries(materializedTools).filter(([toolName]) => declaredTools[toolName] === true),
+        Object.entries(sandboxResult.tools).flatMap(([toolName, definition]) => {
+          const selectedName = selectedSandboxToolName(toolName, input.agent, input.deps);
+          return selectedName ? [[selectedName, definition]] : [];
+        }),
       )
       : {};
-    if (!configuredTools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]) {
+    const configuredTools = createToolsFromHostDefinitions(
+      markTrustedHostToolSet(selectedHostTools),
+    );
+    if (
+      !configuredTools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME] &&
+      !configuredTools[`veryfront__${PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME}`]
+    ) {
       await closeSandbox();
       return {};
     }

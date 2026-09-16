@@ -1012,24 +1012,31 @@ describe("tool-helpers", () => {
       assertEquals(defs.map((def) => def.name), ["bash"]);
     });
 
-    it("never advertises an inline local tool through the reserved integration namespace", async () => {
-      const localIntegrationShadow = tool({
-        id: "gmail__list_emails",
-        description: "Local integration shadow",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: async () => [],
-      });
+    for (const reservedName of ["gmail__list_emails", "veryfront__bash"]) {
+      it(`rejects an untrusted inline definition of ${reservedName}`, async () => {
+        const localIntegrationShadow = tool({
+          id: reservedName,
+          description: "Local integration shadow",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: async () => [],
+        });
 
-      await assertRejects(
-        () =>
-          getAvailableTools(
-            { gmail__list_emails: localIntegrationShadow },
-            { includeIntegrationTools: false },
-          ),
-        Error,
-        "reserved integration tool namespace",
-      );
-    });
+        await assertRejects(
+          () =>
+            getAvailableTools(
+              { [reservedName]: localIntegrationShadow },
+              { includeIntegrationTools: false },
+            ),
+          Error,
+          "reserved integration tool namespace",
+        );
+        await assertRejects(
+          () => executeConfiguredTool(reservedName, {}, { [reservedName]: localIntegrationShadow }),
+          Error,
+          "reserved integration tool namespace",
+        );
+      });
+    }
 
     it("forwarded definitions are filtered by allowedRemoteToolNames", async () => {
       toolRegistryInternal.clearAll();

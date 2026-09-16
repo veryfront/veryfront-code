@@ -40,6 +40,21 @@ describe("source integration policy", () => {
     );
   });
 
+  it("leaves the reserved platform namespace outside integration restrictions", () => {
+    const policy = normalizeSourceIntegrationPolicy({ allow: {} });
+    assertEquals(
+      applySourceIntegrationPolicy([
+        "veryfront__bash",
+        "veryfront__get_file",
+        "github__list_repos",
+        "veryfront__",
+        "veryfront__get__file",
+        "bash",
+      ], policy),
+      ["veryfront__bash", "veryfront__get_file", "bash"],
+    );
+  });
+
   it("allows every tool for a listed integration when allowedTools is omitted", () => {
     const policy = normalizeSourceIntegrationPolicy({
       allow: { confluence: {} },
