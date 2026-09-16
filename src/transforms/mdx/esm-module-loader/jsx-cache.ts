@@ -1265,6 +1265,18 @@ let nextJsxCachePrunePassId = 0;
  */
 const inFlightJsxCachePruneKeys = new IntrinsicMap<string, number>();
 
+/**
+ * Whether work belonging to `pruneGeneration` may still arm a retry.
+ *
+ * A scan that resumes after a cancellation would otherwise re-arm the timers
+ * teardown just retired, and `waitForJsxCacheMaintenance` would then settle the
+ * pass while maintenance was armed again. Callers outside a scheduled pass pass
+ * no generation and are never fenced.
+ */
+function mayArmJsxCachePruneRetry(pruneGeneration: number | undefined): boolean {
+  return pruneGeneration === undefined || pruneGeneration === jsxCachePruneGeneration;
+}
+
 function retainInFlightJsxCachePruneKey(pruneKey: string): void {
   mapSet(
     inFlightJsxCachePruneKeys,
@@ -1759,6 +1771,7 @@ function queueJsxCachePrune(
 async function revisitJsxCacheDirectory(
   esmCacheDir: string,
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
+  pruneGeneration?: number,
 ): Promise<void> {
   try {
     await scheduledJsxCachePruneSemaphore.acquire(async () => {
@@ -1768,6 +1781,7 @@ async function revisitJsxCacheDirectory(
         hostNow(),
         0,
         requestDirectory,
+        pruneGeneration,
       );
     });
   } catch (error) {
@@ -1845,7 +1859,7 @@ function scheduleJsxCachePruneRetry(
     const passId = nextJsxCachePrunePassId++;
     const pass = (async () => {
       try {
-        await revisitJsxCacheDirectory(esmCacheDir, requestDirectory);
+        await revisitJsxCacheDirectory(esmCacheDir, requestDirectory, generation);
         const followUp = mapGet(scheduledJsxCachePrunes, pruneKey);
         if (
           followUp?.timer === undefined &&
@@ -2209,6 +2223,7 @@ async function collectExcessJsxArtifacts(
   nowMs: number,
   reservedSlots = 0,
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
+  pruneGeneration?: number,
 ): Promise<number | undefined> {
   const localFs = getLocalFs();
 
@@ -2256,7 +2271,7 @@ async function collectExcessJsxArtifacts(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to scan JSX cache artifacts for pruning`, {
       error: cacheFilesystemErrorCode(error),
     });
-    if (!isNotFoundError(error)) {
+    if (!isNotFoundError(error) && mayArmJsxCachePruneRetry(pruneGeneration)) {
       scheduleJsxCachePruneRetry(
         esmCacheDir,
         JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
@@ -2387,7 +2402,7 @@ async function collectExcessJsxArtifacts(
     }
   }
 
-  if (retryAtMs !== undefined) {
+  if (retryAtMs !== undefined && mayArmJsxCachePruneRetry(pruneGeneration)) {
     scheduleJsxCachePruneRetry(
       esmCacheDir,
       mathMax(retryAtMs - nowMs, 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
@@ -2453,6 +2468,7 @@ export const __jsxCacheInternals = {
   },
   runLazyJsxArtifactHeartbeat,
   revisitJsxCacheDirectory,
+  currentJsxCachePruneGeneration: (): number => jsxCachePruneGeneration,
   servedArtifactMemoSize: (): number => mapSize(servedArtifactTimestamps),
   withJsxArtifactRefreshSlot,
   waitForJsxCacheMaintenance,
