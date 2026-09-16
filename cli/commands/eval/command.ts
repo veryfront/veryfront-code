@@ -440,7 +440,20 @@ export async function finalizeGatewayBillingGroup(
       return undefined;
     }
 
-    const finalization = parseGatewayBillingGroupFinalization(await response.json());
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      // A body that stalls past the request deadline, or is not JSON, must not
+      // fail an eval whose records already finished.
+      warn(
+        `Gateway billing finalization skipped for ${billingGroupId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return undefined;
+    }
+    const finalization = parseGatewayBillingGroupFinalization(payload);
     if (!finalization) {
       warn(
         `Gateway billing finalization skipped for ${billingGroupId}: invalid response`,

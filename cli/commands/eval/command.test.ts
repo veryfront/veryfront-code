@@ -2712,6 +2712,33 @@ describe("eval CLI command helpers", () => {
     assertEquals(thrown.cause, denied);
   });
 
+  it("skips billing finalization with a warning when the response body cannot be read", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(new Error("body stalled past the request deadline"));
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    let warnings = 0;
+
+    const finalization = await finalizeGatewayBillingGroup("evalrun_body_stall", {
+      beforeWarning: () => {
+        warnings += 1;
+      },
+    });
+
+    assertEquals(finalization, undefined);
+    assertEquals(warnings, 1);
+  });
+
   it("retries gateway billing finalization while usage capture is not ready", async () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");

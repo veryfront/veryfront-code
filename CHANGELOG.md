@@ -69,13 +69,17 @@ again.
 `veryfront eval` now shows which eval and case is running, finished cases, and
 elapsed time while cases run, and prints a notice when a model request is
 retried. `--concurrency <count>` runs several cases of one eval at the same
-time (default 1). `--record-timeout <seconds>` fails a case, including its
-metrics and checks, that runs too long with the `eval-record-timeout` error (default 600, `0` disables
-it), so a stalled model stream can no longer hold the run open. `runEval()`
-from `veryfront/eval` accepts matching `concurrency`, `recordTimeoutMs`, and `onProgress` options,
-and adapters receive a `signal` that aborts at the record deadline.
-With `LOG_LEVEL=DEBUG`, provider requests log their start, status, duration,
-and retries.
+time (default 1). `--record-timeout <seconds>` fails a case that runs too long,
+including its metrics and checks, with the `eval-record-timeout` error (default
+600, `0` disables it), so a stalled model stream can no longer hold the run
+open. The failed case keeps its target output, trace, and usage.
+
+`runEval()` from `veryfront/eval` accepts matching `concurrency`,
+`recordTimeoutMs`, and `onProgress` options. Target adapters, metric
+`evaluate()` contexts, check contexts, and LLM judge inputs receive a `signal`
+that aborts at the record deadline, and the built-in LLM judges pass it to the
+model request. With `LOG_LEVEL=DEBUG`, provider requests log their start,
+status, duration, and retries.
 
 ### Changed: `runEval()` rejects when the model gateway refuses model access
 

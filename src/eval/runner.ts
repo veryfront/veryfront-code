@@ -522,6 +522,7 @@ async function runRecord(
   repetition: number,
   runId: string,
   signal?: AbortSignal,
+  onTargetFinished?: (record: EvalRecord) => void,
 ): Promise<EvalRecord> {
   const started = Date.now();
   let result: EvalAgentAdapterResult | EvalToolAdapterResult;
@@ -593,11 +594,18 @@ async function runRecord(
     ...(result.error ? { error: result.error } : {}),
   };
 
+  onTargetFinished?.(record);
+
   const metricResults = [];
   const evaluationErrors: string[] = [];
   for (const metric of definition.metrics) {
     try {
-      metricResults.push(normalizeMetricResult(metric, await metric.evaluate(record)));
+      metricResults.push(
+        normalizeMetricResult(
+          metric,
+          await metric.evaluate(record, signal ? { signal } : undefined),
+        ),
+      );
     } catch (error) {
       throwIfModelAccessDenied(definition, error);
       const failure = metricEvaluationFailure(metric, error);
@@ -616,6 +624,7 @@ async function runRecord(
         repetition,
         record,
         checks,
+        ...(signal ? { signal } : {}),
       }));
     } catch (error) {
       throwIfModelAccessDenied(definition, error);
@@ -672,6 +681,9 @@ async function runRecordWithinTimeout(
 
   const started = Date.now();
   const controller = new AbortController();
+  // Set once the target finished, so a timeout during grading keeps its output,
+  // trace, and usage instead of discarding them.
+  let targetRecord: EvalRecord | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<EvalRecord>((resolve) => {
     timer = setTimeout(() => {
@@ -682,6 +694,19 @@ async function runRecordWithinTimeout(
         context: { evalId: definition.id, exampleId: example.id, repetition, timeoutMs },
       });
       controller.abort(error);
+      const timeoutMessage = error.detail ?? error.message;
+      if (targetRecord) {
+        resolve({
+          ...targetRecord,
+          durationMs: Date.now() - started,
+          completed: false,
+          error: [targetRecord.error, timeoutMessage].filter(Boolean).join("; "),
+          // Grading never finished, so no metric or check result is reported.
+          metrics: [],
+          checks: [],
+        });
+        return;
+      }
       resolve({
         id: `${example.id}:${repetition}`,
         evalId: definition.id,
@@ -695,13 +720,23 @@ async function runRecordWithinTimeout(
         usage: {},
         durationMs: Date.now() - started,
         completed: false,
-        error: error.detail ?? error.message,
+        error: timeoutMessage,
         metrics: [],
         checks: [],
       });
     }, timeoutMs);
   });
-  const work = runRecord(definition, options, example, repetition, runId, controller.signal);
+  const work = runRecord(
+    definition,
+    options,
+    example,
+    repetition,
+    runId,
+    controller.signal,
+    (record) => {
+      targetRecord = { ...record };
+    },
+  );
   // A record abandoned at its deadline may still settle later; nothing waits for it.
   work.catch(() => {});
   try {

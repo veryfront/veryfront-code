@@ -270,6 +270,8 @@ export interface EvalAnswerGroundednessMetricOptions {
     metadata: Record<string, unknown>;
     evidence: string[];
     sources: string[];
+    /** Aborts when the eval record exceeds its time limit. */
+    signal?: AbortSignal;
   }) => EvalMaybePromise<{ score: number; pass?: boolean; explanation?: string }>;
 }
 
@@ -352,6 +354,8 @@ export interface EvalMetricResult {
 /** Optional runtime context passed to metric evaluators. */
 export interface EvalMetricContext {
   now?: () => Date;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Metric contract used by eval definitions. */
@@ -391,6 +395,8 @@ export interface EvalCheckContext {
   repetition: number;
   record: EvalRecord;
   expect: EvalExpect;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Context passed to an agent eval mock tool resolver. */

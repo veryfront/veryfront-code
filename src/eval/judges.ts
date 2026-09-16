@@ -19,6 +19,7 @@ type RubricJudge = (input: {
   output: Record<string, unknown>;
   reference?: unknown;
   metadata: Record<string, unknown>;
+  signal?: AbortSignal;
 }) => Promise<{ score: number; pass?: boolean; explanation?: string }>;
 
 /** Options for the built-in general-purpose LLM rubric judge. */
@@ -384,6 +385,7 @@ function createLlmRubricJudge(
         maxOutputTokens,
         temperature: options.temperature ?? 0,
         ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
+        ...(input.signal ? { abortSignal: input.signal } : {}),
       });
 
       return parseJudgeResponse(response.text, threshold);
@@ -444,6 +446,7 @@ function createLlmGroundednessJudge(
         ...(validatedOptions.providerOptions
           ? { providerOptions: validatedOptions.providerOptions }
           : {}),
+        ...(input.signal ? { abortSignal: input.signal } : {}),
       });
 
       return parseJudgeResponse(response.text, threshold);

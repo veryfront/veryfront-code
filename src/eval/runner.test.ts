@@ -933,9 +933,13 @@ describe("eval/runner", () => {
     assertEquals(calls, ["q1", "q2"]);
   });
 
-  it("fails a record whose metric stalls past the record timeout and aborts its signal", async () => {
+  it("fails a record whose metric stalls past the record timeout and keeps its target data", async () => {
+    const metricSignals: AbortSignal[] = [];
     const stalled = metrics.answer.exactMatch().gate();
-    stalled.evaluate = () => new Promise<never>(() => {});
+    stalled.evaluate = (_record, context) => {
+      if (context?.signal) metricSignals.push(context.signal);
+      return new Promise<never>(() => {});
+    };
     const definition = evalAgent({
       id: "eval:stalled-metric",
       target: "agent:researcher",
@@ -952,7 +956,7 @@ describe("eval/runner", () => {
       adapters: {
         agent: ({ signal }) => {
           if (signal) signals.push(signal);
-          return "Paris";
+          return { text: "Paris", usage: { totalTokens: 7 } };
         },
       },
     });
@@ -963,6 +967,37 @@ describe("eval/runner", () => {
     ]);
     assertEquals(report.summary.failed, 2);
     assertEquals(signals.map((signal) => signal.aborted), [true, true]);
+    assertEquals(metricSignals.map((signal) => signal.aborted), [true, true]);
+    assertEquals(report.records.map((record) => record.output), [
+      { text: "Paris" },
+      { text: "Paris" },
+    ]);
+    assertEquals(report.records.map((record) => record.usage.totalTokens), [7, 7]);
+    assertEquals(report.records.map((record) => record.metrics), [[], []]);
+  });
+
+  it("passes the record signal to a stalled check", async () => {
+    let checkSignal: AbortSignal | undefined;
+    const definition = evalAgent({
+      id: "eval:stalled-check",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+      check({ signal }) {
+        checkSignal = signal;
+        return new Promise<never>(() => {});
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: { agent: () => "Paris" },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:stalled-check" case "q1" did not finish within 0.05s.',
+    );
+    assertEquals(checkSignal?.aborted, true);
   });
 
   it("rejects a record timeout outside the timer range", async () => {
