@@ -1,4 +1,8 @@
 import { CONTROL_PLANE_RUN_STREAM_PATH } from "../../channels/control-plane.ts";
+import {
+  resolveRuntimeOwnerInvokeUrl as resolveDefaultRuntimeOwnerInvokeUrl,
+  RUNTIME_OWNER_INVOKE_URL_HEADER,
+} from "../../internal-agents/runtime-owner.ts";
 import type { AgentServiceRoute } from "./definition.ts";
 import { createAgUiRunErrorEvent, createAgUiSseErrorResponse } from "../ag-ui/host-support.ts";
 import { createAgUiRuntimeHandler } from "../ag-ui/runtime-handler.ts";
@@ -180,6 +184,14 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   setActiveSpanAttributes?: (attributes: HostedAgentServiceActiveSpanAttributes) => void;
   trace?: HostedAgentServiceRoutesTrace;
   logger?: HostedAgentServiceRoutesLogger;
+  /**
+   * Resolves the address of this replica for an accepted run start. A run's
+   * session lives in the memory of the replica that accepted it, so the caller
+   * uses this address to reach that replica for later run control. Defaults to
+   * the pod address (`POD_IP`, `VERYFRONT_RUNTIME_OWNER_HOST`, or a network
+   * interface).
+   */
+  resolveRuntimeOwnerInvokeUrl?: (request: Request) => Promise<string | null>;
 };
 
 export type AgentServiceRouteSetOptions<TExecution extends object> =
@@ -429,11 +441,38 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         return req;
       }
 
-      return executeParsedDurableChatRun({
+      const response = await executeParsedDurableChatRun({
         req,
         request: applicationRequest,
         requestOrCtx: input.requestOrCtx,
       });
+      return await withRuntimeOwner(response, input.request);
+    });
+  }
+
+  /** Names the replica that accepted a run start; leaves any other response unchanged. */
+  async function withRuntimeOwner(response: Response, request: Request): Promise<Response> {
+    if (response.status !== 202) {
+      return response;
+    }
+    const resolve = options.resolveRuntimeOwnerInvokeUrl ?? resolveDefaultRuntimeOwnerInvokeUrl;
+    let ownerInvokeUrl: string | null = null;
+    try {
+      ownerInvokeUrl = await resolve(request);
+    } catch {
+      // The run is accepted either way; without an address, run control keeps
+      // reaching it through the load-balanced service address.
+      return response;
+    }
+    if (!ownerInvokeUrl) {
+      return response;
+    }
+    const headers = new Headers(response.headers);
+    headers.set(RUNTIME_OWNER_INVOKE_URL_HEADER, ownerInvokeUrl);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
     });
   }
 
