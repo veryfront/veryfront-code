@@ -976,6 +976,45 @@ describe("eval/runner", () => {
     assertEquals(report.records.map((record) => record.metrics), [[], []]);
   });
 
+  it("starts no grading work once a target rejects at the record deadline", async () => {
+    const evaluated: string[] = [];
+    let checks = 0;
+    const lateMetric = metrics.answer.exactMatch().gate();
+    lateMetric.evaluate = (record) => {
+      evaluated.push(record.exampleId);
+      return { name: "answer.exactMatch", family: "answer", severity: "gate", pass: true };
+    };
+    const definition = evalAgent({
+      id: "eval:aborted-target",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+      metrics: [lateMetric],
+      check() {
+        checks += 1;
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 20,
+      adapters: {
+        // A target that honors the signal rejects as soon as the deadline passes.
+        agent: ({ signal }) =>
+          new Promise((_, reject) => {
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      },
+    });
+    // Give the abandoned record a chance to run any grading it would still start.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:aborted-target" case "q1" did not finish within 0.02s.',
+    );
+    assertEquals(evaluated, []);
+    assertEquals(checks, 0);
+  });
+
   it("passes the record signal to a stalled check", async () => {
     let checkSignal: AbortSignal | undefined;
     const definition = evalAgent({

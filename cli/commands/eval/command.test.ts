@@ -1485,7 +1485,7 @@ describe("eval CLI command helpers", () => {
     const error = assertThrows(
       () => resolveEvalRecordTimeoutMs({ recordTimeout: 10_000_000 }),
       VeryfrontError,
-    );
+    ) as VeryfrontError;
     assertEquals(
       error.detail,
       "Invalid --record-timeout: use 0 to disable the limit, or a number of seconds up to 2147483.",

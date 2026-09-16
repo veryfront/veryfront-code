@@ -596,9 +596,16 @@ async function runRecord(
 
   onTargetFinished?.(record);
 
+  // Once the record deadline passed, the record is already reported as timed
+  // out. Stop before each grading stage so no evaluator starts new work.
+  const stopIfTimedOut = (): void => {
+    if (signal?.aborted) throw signal.reason;
+  };
+
   const metricResults = [];
   const evaluationErrors: string[] = [];
   for (const metric of definition.metrics) {
+    stopIfTimedOut();
     try {
       metricResults.push(
         normalizeMetricResult(
@@ -617,6 +624,7 @@ async function runRecord(
 
   const checks: EvalMetricResult[] = [];
   if (definition.check) {
+    stopIfTimedOut();
     try {
       await definition.check(createEvalCheckContext({
         definition,

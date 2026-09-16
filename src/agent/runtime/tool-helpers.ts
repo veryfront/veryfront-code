@@ -10,7 +10,7 @@ import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
  * @module ai/agent/runtime/tool-helpers
  */
 
-import { privateJsonParse } from "#veryfront/security/private-json.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
@@ -382,10 +382,10 @@ export async function executeConfiguredTool(
 }
 
 function logToolDefinition(name: string, def: ToolDefinition): void {
-  // The logger keeps plain-object context and drops string arguments, so pass
-  // the definition as context. That also skips serializing it when debug
-  // logging is off.
-  logger.debug(`[AGENT] Tool definition for "${name}"`, { definition: def });
+  logger.debug(
+    `[AGENT] Tool definition for "${name}":`,
+    privateJsonStringify(def, null, 2),
+  );
 }
 
 function addToolDefinition(
