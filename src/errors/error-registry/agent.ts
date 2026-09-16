@@ -122,6 +122,19 @@ export const EVAL_PROJECT_REQUIRED = defineError({
     "Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)",
 });
 
+/**
+ * An eval stopped because Veryfront reached its AI provider spend limit for the
+ * current window. Buying credits does not clear this limit.
+ */
+export const EVAL_MODEL_SPEND_LIMIT_EXCEEDED = defineError({
+  slug: "eval-model-spend-limit-exceeded",
+  category: "AGENT",
+  status: 402,
+  title: "AI provider spend limit reached for eval run",
+  suggestion:
+    "Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -136,4 +149,5 @@ export const AGENT_REGISTRY = {
   "provider-replay-checkpoint-invalid": PROVIDER_REPLAY_CHECKPOINT_INVALID,
   "eval-model-access-denied": EVAL_MODEL_ACCESS_DENIED,
   "eval-project-required": EVAL_PROJECT_REQUIRED,
+  "eval-model-spend-limit-exceeded": EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
 } as const;

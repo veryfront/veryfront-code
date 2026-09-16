@@ -16,6 +16,9 @@ resource limit or an agent run credit limit, still fail only the affected
 record. Built-in LLM judges and the agent service adapter stop the eval the
 same way.
 
+An AI provider spend limit rejects with `eval-model-spend-limit-exceeded`
+instead, because buying credits does not clear it.
+
 It also rejects with `eval-project-required` when the gateway returns HTTP 400
 with code `gateway_project_required` because the model request named no
 project. It previously recorded the refusal on every

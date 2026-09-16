@@ -55,7 +55,16 @@ describe("eval/model-access", () => {
       }),
     );
 
-    assertEquals(classifyEvalModelAccessDenial(error)?.code, "AI_PROVIDER_SPEND_LIMIT_EXCEEDED");
+    const denial = classifyEvalModelAccessDenial(error);
+    assertEquals(denial?.code, "AI_PROVIDER_SPEND_LIMIT_EXCEEDED");
+    assertEquals(denial?.kind, "spend-limit");
+    const evalError = createEvalModelAccessDeniedError("eval:triage", denial!, error);
+    assertEquals(evalError.slug, "eval-model-spend-limit-exceeded");
+    assertEquals(
+      evalError.suggestion,
+      "Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit",
+    );
+    assertEquals(isEvalModelAccessDeniedError(evalError), true);
   });
 
   it("rebuilds agent service denial messages from the curated code", () => {

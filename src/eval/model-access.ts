@@ -1,4 +1,9 @@
-import { EVAL_MODEL_ACCESS_DENIED, EVAL_PROJECT_REQUIRED, VeryfrontError } from "#veryfront/errors";
+import {
+  EVAL_MODEL_ACCESS_DENIED,
+  EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
+  EVAL_PROJECT_REQUIRED,
+  VeryfrontError,
+} from "#veryfront/errors";
 import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
 import {
   CURATED_PROVIDER_FAILURE_CODES,
@@ -9,7 +14,7 @@ import {
 import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 /** Why the model gateway refused an eval's model requests. */
-export type EvalModelAccessDenialKind = "billing" | "project-required";
+export type EvalModelAccessDenialKind = "billing" | "spend-limit" | "project-required";
 
 /** Refusal that every later eval record would hit the same way. */
 export interface EvalModelAccessDenial {
@@ -20,6 +25,7 @@ export interface EvalModelAccessDenial {
 
 const DENIAL_ERRORS = {
   billing: EVAL_MODEL_ACCESS_DENIED,
+  "spend-limit": EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
   "project-required": EVAL_PROJECT_REQUIRED,
 } as const;
 
@@ -56,7 +62,9 @@ function readProperty(value: unknown, key: string): unknown {
 function toDenial(failure: { code: string; message: string }): EvalModelAccessDenial | undefined {
   if (!MODEL_ACCESS_DENIAL_CODES.has(failure.code)) return undefined;
   if (isAgentRunCreditLimit(failure.message)) return undefined;
-  return { kind: "billing", code: failure.code, message: failure.message };
+  // The platform spend limit clears with time or an administrator, not credits.
+  const kind = failure.code === "AI_PROVIDER_SPEND_LIMIT_EXCEEDED" ? "spend-limit" : "billing";
+  return { kind, code: failure.code, message: failure.message };
 }
 
 function parseJsonBody(body: string): unknown {

@@ -847,6 +847,13 @@ No project for eval model requests.
 - **HTTP status:** 400
 - **What to do:** Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)
 
+### eval-model-spend-limit-exceeded
+
+AI provider spend limit reached for eval run.
+
+- **HTTP status:** 402
+- **What to do:** Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.
