@@ -24,6 +24,7 @@ import {
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import type { ModelRuntime } from "veryfront/provider";
 import {
+  getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { type Tool, tool } from "veryfront/tool";
@@ -2230,6 +2231,45 @@ describe("eval CLI command helpers", () => {
     assertEquals(
       [...otherFailureOutput.stdout, ...otherFailureOutput.stderr].some((line) =>
         line.includes("Gateway billing finalization skipped for evalrun_other: 404")
+      ),
+      true,
+    );
+  });
+
+  it("keeps the missing billing group warning when an earlier request got past admission", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "Gateway billing group not found",
+            code: "gateway_billing_group_not_found",
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    const denied = createEvalModelAccessDeniedError(
+      "eval:denied-later",
+      { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+      undefined,
+    );
+
+    const output = await captureConsoleOutput(() =>
+      assertRejects(() =>
+        runEvalWithGatewayBillingGroup("evalrun_denied_later", async () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          const context = getCurrentVeryfrontCloudContext();
+          if (context) context.billingGroupRequestAdmitted = true;
+          throw denied;
+        })
+      )
+    );
+
+    assertEquals(
+      [...output.stdout, ...output.stderr].some((line) =>
+        line.includes("Gateway billing finalization skipped for evalrun_denied_later: 404")
       ),
       true,
     );

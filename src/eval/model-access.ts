@@ -1,5 +1,5 @@
 import { EVAL_MODEL_ACCESS_DENIED, VeryfrontError } from "#veryfront/errors";
-import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
+import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
 import { registeredProviderFailure } from "#veryfront/chat/provider-error-registry.ts";
 import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
@@ -9,18 +9,22 @@ export interface EvalModelAccessDenial {
   message: string;
 }
 
+/**
+ * Account-wide billing or entitlement denials. `RESOURCE_LIMIT_EXCEEDED` is
+ * left out on purpose: it also covers per-request limits (output tokens,
+ * concurrency, model-call counts) that a later record can stay within.
+ */
 const MODEL_ACCESS_DENIAL_CODES: ReadonlySet<string> = new Set([
   "INSUFFICIENT_CREDITS",
-  "RESOURCE_LIMIT_EXCEEDED",
   "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
 ]);
 
-const MAX_ERROR_CHAIN_DEPTH = 8;
+/** Run-scoped credit cap: a later record starts a new run with its own budget. */
+function isAgentRunCreditLimit(message: string): boolean {
+  return message.toLowerCase().startsWith("agent run credit limit");
+}
 
-const GENERIC_PAYMENT_REQUIRED_DENIAL: EvalModelAccessDenial = {
-  code: "PAYMENT_REQUIRED",
-  message: "The model gateway returned 402 Payment Required",
-};
+const MAX_ERROR_CHAIN_DEPTH = 8;
 
 function readProperty(value: unknown, key: string): unknown {
   if (typeof value !== "object" || value === null) return undefined;
@@ -31,12 +35,31 @@ function readProperty(value: unknown, key: string): unknown {
   }
 }
 
+function toDenial(failure: { code: string; message: string }): EvalModelAccessDenial | undefined {
+  if (!MODEL_ACCESS_DENIAL_CODES.has(failure.code)) return undefined;
+  if (isAgentRunCreditLimit(failure.message)) return undefined;
+  return { code: failure.code, message: failure.message };
+}
+
+function parseJsonBody(body: string): unknown {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Gateway provenance comes from the Veryfront Cloud problem body the gateway
+ * returns with a 402 (`slug: "insufficient-credits"`), which the provider
+ * runtime keeps as the typed `responseBody`. A 402 from a direct or BYOK
+ * provider carries no such body and stays a record failure, so it never gets
+ * Veryfront billing advice. Message text is never consulted.
+ */
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
-  if (error.status !== 402) return undefined;
-  const parsed = parseProviderError(error);
-  return MODEL_ACCESS_DENIAL_CODES.has(parsed.code)
-    ? { code: parsed.code, message: parsed.message }
-    : GENERIC_PAYMENT_REQUIRED_DENIAL;
+  if (error.status !== 402 || typeof error.responseBody !== "string") return undefined;
+  const parsed = parseKnownProblemBody(parseJsonBody(error.responseBody));
+  return parsed ? toDenial(parsed) : undefined;
 }
 
 function findDenial(
@@ -53,9 +76,7 @@ function findDenial(
   if (error instanceof ProviderError) return classifyProviderError(error);
 
   const registered = registeredProviderFailure(error);
-  if (registered && MODEL_ACCESS_DENIAL_CODES.has(registered.code)) {
-    return { code: registered.code, message: registered.message };
-  }
+  if (registered) return toDenial(registered);
 
   for (const key of ["lastError", "cause"]) {
     const nested = findDenial(readProperty(error, key), seen, depth + 1);
@@ -84,6 +105,33 @@ export function classifyEvalModelAccessDenial(error: unknown): EvalModelAccessDe
   }
 }
 
+/**
+ * Recognize an account-wide billing denial in a failed agent service response:
+ * an HTTP 402 problem body, or a curated provider code on the AG-UI run error.
+ */
+export function classifyAgentServiceModelAccessDenial(input: {
+  status: number;
+  body: string | null;
+  runErrorCode?: unknown;
+  runErrorMessage?: unknown;
+}): EvalModelAccessDenial | undefined {
+  try {
+    if (input.status === 402 && input.body) {
+      const parsed = parseKnownProblemBody(parseJsonBody(input.body));
+      if (parsed) return toDenial(parsed);
+    }
+    if (typeof input.runErrorCode === "string") {
+      const message = typeof input.runErrorMessage === "string"
+        ? input.runErrorMessage
+        : input.runErrorCode;
+      return toDenial({ code: input.runErrorCode, message });
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 /** Build the fail-fast error for an eval whose model requests are refused. */
 export function createEvalModelAccessDeniedError(
   evalId: string,
@@ -99,5 +147,10 @@ export function createEvalModelAccessDeniedError(
 
 /** Return true when an error is the eval fail-fast model access error. */
 export function isEvalModelAccessDeniedError(error: unknown): error is VeryfrontError {
-  return error instanceof VeryfrontError && error.slug === EVAL_MODEL_ACCESS_DENIED.slug;
+  try {
+    return error instanceof VeryfrontError && error.slug === EVAL_MODEL_ACCESS_DENIED.slug;
+  } catch {
+    // Hostile thrown values (revoked proxies) are never the fail-fast error.
+    return false;
+  }
 }

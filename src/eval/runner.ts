@@ -2,7 +2,11 @@ import { createEvalCheckContext } from "./expect.ts";
 import { isEvalDefinition } from "./factory.ts";
 import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
-import { classifyEvalModelAccessDenial, createEvalModelAccessDeniedError } from "./model-access.ts";
+import {
+  classifyEvalModelAccessDenial,
+  createEvalModelAccessDeniedError,
+  isEvalModelAccessDeniedError,
+} from "./model-access.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import {
@@ -491,6 +495,8 @@ export async function exportEvalReport(
  * way, and grading the empty output only buries the cause.
  */
 function throwIfModelAccessDenied(definition: EvalDefinition, error: unknown): void {
+  // Adapters and judges that already classified the denial pass it through.
+  if (isEvalModelAccessDeniedError(error)) throw error;
   const denial = classifyEvalModelAccessDenial(error);
   if (denial) throw createEvalModelAccessDeniedError(definition.id, denial, error);
 }

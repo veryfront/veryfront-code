@@ -6,6 +6,12 @@ export interface VeryfrontCloudContext {
   apiToken?: string;
   billingGroupId?: string;
   billingGroupUsed?: boolean;
+  /**
+   * Set once a billed gateway request got past admission, meaning the gateway
+   * could have recorded usage under `billingGroupId`. A 401, 402, or 403
+   * admission rejection does not set it.
+   */
+  billingGroupRequestAdmitted?: boolean;
   projectSlug?: string;
   serviceLayer?: string;
 }

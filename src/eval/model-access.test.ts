@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
+  classifyAgentServiceModelAccessDenial,
   classifyEvalModelAccessDenial,
   createEvalModelAccessDeniedError,
   isEvalModelAccessDeniedError,
@@ -57,10 +58,76 @@ describe("eval/model-access", () => {
     assertEquals(classifyEvalModelAccessDenial(error)?.code, "AI_PROVIDER_SPEND_LIMIT_EXCEEDED");
   });
 
-  it("classifies a 402 without a recognized body as payment required", async () => {
-    const error = await buildProviderError("anthropic", new Response("", { status: 402 }));
+  it("keeps request-scoped and unrecognized 402 responses as record failures", async () => {
+    const bodyless = await buildProviderError("anthropic", new Response("", { status: 402 }));
+    const resourceLimit = await buildProviderError(
+      "anthropic",
+      jsonResponse(402, { slug: "resource-limit-exceeded", error: "Too many output tokens" }),
+    );
+    const runLimit = await buildProviderError(
+      "anthropic",
+      jsonResponse(402, {
+        slug: "insufficient-credits",
+        error: "Agent run credit limit exceeded",
+        suggestion: "Start a new reviewed run or reduce the scope of this run.",
+        balance: 0,
+        required: 1,
+      }),
+    );
 
-    assertEquals(classifyEvalModelAccessDenial(error)?.code, "PAYMENT_REQUIRED");
+    assertEquals(classifyEvalModelAccessDenial(bodyless), undefined);
+    assertEquals(classifyEvalModelAccessDenial(resourceLimit), undefined);
+    assertEquals(classifyEvalModelAccessDenial(runLimit), undefined);
+  });
+
+  it("keeps direct-provider 402 responses as record failures", async () => {
+    const anthropic = await buildProviderError(
+      "anthropic",
+      jsonResponse(402, {
+        type: "error",
+        error: { type: "billing_error", message: "Your credit balance is too low" },
+      }),
+    );
+    const openai = await buildProviderError(
+      "openai",
+      jsonResponse(402, { error: { code: "insufficient_quota", message: "Payment required" } }),
+    );
+    anthropic.message = `anthropic request failed: ${anthropic.message}: payment required`;
+
+    assertEquals(classifyEvalModelAccessDenial(anthropic), undefined);
+    assertEquals(classifyEvalModelAccessDenial(openai), undefined);
+  });
+
+  it("classifies agent service RUN_ERROR codes and 402 problem bodies", () => {
+    assertEquals(
+      classifyAgentServiceModelAccessDenial({
+        status: 402,
+        body: null,
+        runErrorCode: "INSUFFICIENT_CREDITS",
+        runErrorMessage: "Insufficient AI credits",
+      })?.code,
+      "INSUFFICIENT_CREDITS",
+    );
+    assertEquals(
+      classifyAgentServiceModelAccessDenial({
+        status: 402,
+        body: JSON.stringify({ slug: "insufficient-credits", error: "AI credit limit exceeded" }),
+      })?.code,
+      "INSUFFICIENT_CREDITS",
+    );
+    assertEquals(
+      classifyAgentServiceModelAccessDenial({
+        status: 402,
+        body: null,
+        runErrorCode: "RESOURCE_LIMIT_EXCEEDED",
+        runErrorMessage: "Resource limit exceeded",
+      }),
+      undefined,
+    );
+    assertEquals(
+      classifyAgentServiceModelAccessDenial({ status: 500, body: "Payment required" }),
+      undefined,
+    );
   });
 
   it("finds a denial wrapped by retry and cause chains", async () => {

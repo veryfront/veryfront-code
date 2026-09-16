@@ -10,8 +10,11 @@ versions are listed at
 
 `runEval()` from `veryfront/eval` now rejects with the
 `eval-model-access-denied` error when a target or metric model request returns
-HTTP 402 from the model gateway (insufficient AI credits, a resource limit, or
-the AI provider spend limit). It previously recorded the refusal on every
+HTTP 402 from the model gateway for an account-wide denial (insufficient AI
+credits or the AI provider spend limit). Request-scoped limits, such as a
+resource limit or an agent run credit limit, still fail only the affected
+record. Built-in LLM judges and the agent service adapter stop the eval the
+same way. It previously recorded the refusal on every
 record, ran checks against the empty output, and resolved with a report.
 `veryfront eval` stops at the first refusal and prints one error. If you call
 `runEval()` directly, handle the rejection where you previously inspected

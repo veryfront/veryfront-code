@@ -39,6 +39,10 @@ const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeTrim = String.prototype.trim;
 const HeadersDelete = NativeHeaders.prototype.delete;
 const HeadersSet = NativeHeaders.prototype.set;
+const PromisePrototypeThen = Promise.prototype.then;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
+/** Gateway admission rejections that return before any usage is recorded. */
+const GATEWAY_ADMISSION_REJECTION_STATUSES: ReadonlySet<number> = new Set([401, 402, 403]);
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
 const URLHashSet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.set;
 const URLHostnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
@@ -326,7 +330,8 @@ export function createVeryfrontCloudFetch(
       IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
     }
 
-    const billingGroup = getCurrentVeryfrontCloudContext()?.billingGroupId;
+    const cloudContext = getCurrentVeryfrontCloudContext();
+    const billingGroup = cloudContext?.billingGroupId;
     const billingGroupId = billingGroup === undefined
       ? undefined
       : IntrinsicReflectApply(StringPrototypeTrim, billingGroup, []) as string;
@@ -340,8 +345,18 @@ export function createVeryfrontCloudFetch(
 
     // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
     // origin; resolved per call since it snapshots the host transport eagerly.
-    return createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
+    const responsePromise = createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
       new NativeRequest(request, { headers }),
     );
+    if (!billingGroupId || !cloudContext || !ResponseStatusGet) return responsePromise;
+    return IntrinsicReflectApply(PromisePrototypeThen, responsePromise, [
+      (response: Response) => {
+        const status = IntrinsicReflectApply(ResponseStatusGet, response, []) as number;
+        if (!GATEWAY_ADMISSION_REJECTION_STATUSES.has(status)) {
+          cloudContext.billingGroupRequestAdmitted = true;
+        }
+        return response;
+      },
+    ]) as Promise<Response>;
   };
 }

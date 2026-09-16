@@ -93,8 +93,9 @@ type GatewayBillingFinalizeOptions = {
   retryDelaysMs?: readonly number[];
   sleep?: (ms: number) => Promise<void>;
   /**
-   * The gateway refused every model request before recording usage, so a
-   * missing billing group is expected and not worth a warning.
+   * The eval stopped at a gateway refusal and no earlier request in the run got
+   * past admission, so a missing billing group is expected and not worth a
+   * warning.
    */
   expectNoRecordedUsage?: boolean;
 };
@@ -407,7 +408,8 @@ export async function runEvalWithGatewayBillingGroup(
       // Still finalize: earlier requests can have been served before the
       // gateway started refusing them, and those must be reconciled.
       await finalizeGatewayBillingGroup(billingGroupId, {
-        expectNoRecordedUsage: isEvalModelAccessDeniedError(error),
+        expectNoRecordedUsage: isEvalModelAccessDeniedError(error) &&
+          !billingContext.billingGroupRequestAdmitted,
       });
     }
     throw error;
