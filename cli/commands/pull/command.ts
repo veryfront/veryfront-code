@@ -394,11 +394,10 @@ async function writeFiles(
 
 async function listManagedLocalFiles(
   projectDir: string,
-  loadedIgnoreChecker: IgnoreChecker,
+  ignoreChecker: IgnoreChecker,
 ): Promise<DeleteOp[]> {
   const fs = createFileSystem();
   if (!(await fs.exists(projectDir))) return [];
-  const ignoreChecker = await loadedIgnoreChecker.withCurrentGitIgnores();
 
   const files: DeleteOp[] = [];
   const supportedSymlinks: string[] = [];

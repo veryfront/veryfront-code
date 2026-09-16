@@ -215,9 +215,11 @@ const GITLINK_ENTRY = /^160000 [0-9a-f]+ \d+\t(.+)$/;
 
 /**
  * Load the Git ignore context of every repository nested below `projectDir`:
- * checked-out submodules, and untracked Git repositories that are not
- * registered as submodules. Git lists an untracked nested repository once, as
- * a directory entry, and does not look inside it.
+ * checked-out submodules, and Git repositories that are not registered as
+ * submodules. The enclosing repository lists an untracked nested repository as
+ * one directory entry, but lists its files one by one when the directory also
+ * holds files the enclosing repository tracks, so every directory above an
+ * untracked path is probed for a `.git` boundary.
  */
 async function loadNestedRepositories(
   baseDir: string,
@@ -238,15 +240,33 @@ async function loadNestedRepositories(
   );
   if (untracked.kind !== "output") return [];
   for (const entry of untracked.stdout.split("\0")) {
-    if (entry.endsWith("/")) candidates.add(entry.replace(/\/+$/, ""));
+    if (!entry) continue;
+    const isDirectoryEntry = entry.endsWith("/");
+    const segments = entry.replace(/\/+$/, "").split("/");
+    // Git lists paths below the query directory; anything else is not a
+    // nested repository location.
+    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+      continue;
+    }
+    const depth = isDirectoryEntry ? segments.length : segments.length - 1;
+    for (let length = 1; length <= depth; length++) {
+      candidates.add(segments.slice(0, length).join("/"));
+    }
+  }
+
+  const found: string[] = [];
+  for (const path of [...candidates].sort((left, right) => left.length - right.length)) {
+    // An inner repository is resolved by the outer nested repository's context.
+    if (found.some((outer) => path.startsWith(`${outer}/`))) continue;
+    if (await dependencies.pathExists(join(projectDir, path, ".git"))) found.push(path);
   }
 
   const repositories: NestedRepositoryContext[] = [];
-  for (const path of candidates) {
-    if (!path) continue;
-    const repositoryDir = join(projectDir, path);
-    if (!(await dependencies.pathExists(join(repositoryDir, ".git")))) continue;
-    repositories.push({ path, context: await loadGitIgnoreContext(repositoryDir, dependencies) });
+  for (const path of found) {
+    repositories.push({
+      path,
+      context: await loadGitIgnoreContext(join(projectDir, path), dependencies),
+    });
   }
   // Longest paths first so an inner repository wins over its parent.
   return repositories.sort((left, right) => right.path.length - left.path.length);

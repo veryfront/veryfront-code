@@ -211,11 +211,12 @@ interface RemoteFile {
 
 export async function scanLocalFiles(
   projectDir: string,
-  loadedIgnoreChecker: IgnoreChecker,
+  ignoreChecker: IgnoreChecker,
 ): Promise<UploadOp[]> {
   // Push does long remote work between loading ignore rules and scanning, so
-  // classify the filesystem against Git's ignore state as it is now.
-  const ignoreChecker = await loadedIgnoreChecker.withCurrentGitIgnores();
+  // bring Git's ignore state up to date for both this scan and the remote
+  // classification that follows it.
+  await ignoreChecker.refreshGitIgnores();
   const fs = createFileSystem();
   const ops: UploadOp[] = [];
   const supportedSymlinks: string[] = [];

@@ -286,6 +286,23 @@ describe("cli/sync/git-ignore against real Git", () => {
         ]);
       });
     });
+    it("applies a nested repository's rules when the parent also tracks files there", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await writeFile(repoDir, "tools/tracked.ts");
+        await runGit(repoDir, "add", ".");
+        await runGit(`${repoDir}/tools`, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/tools/.git/info/exclude`, "cred.json\n");
+        await writeFile(repoDir, "tools/cred.json", "{}");
+        await writeFile(repoDir, "tools/new.ts");
+
+        const context = await loadGitIgnoreContext(repoDir);
+        assertEquals(context.ignoredPaths.includes("tools/cred.json"), true);
+
+        const files = await scanLocalFiles(repoDir, await loadIgnoreChecker(repoDir));
+        assertEquals(files.map((file) => file.path).sort(), ["tools/new.ts", "tools/tracked.ts"]);
+      });
+    });
   });
 
   describe("scanLocalFiles with loadIgnoreChecker", () => {
@@ -359,6 +376,8 @@ describe("cli/sync/git-ignore against real Git", () => {
         await writeFile(repoDir, "forced/data.ts");
 
         const checker = await loadIgnoreChecker(repoDir);
+        await checker.resolveGitIgnoredCandidates(["remote/only.gen.ts"]);
+        assertEquals(checker.isIgnored("remote/only.gen.ts"), true);
         assertEquals(
           (await scanLocalFiles(repoDir, checker)).map((file) => file.path).sort(),
           ["pages/index.tsx"],
@@ -373,6 +392,11 @@ describe("cli/sync/git-ignore against real Git", () => {
           "lib/types.gen.ts",
           "pages/index.tsx",
         ]);
+        assertEquals(
+          checker.isIgnored("remote/only.gen.ts"),
+          false,
+          "remote classification follows the refreshed rules too",
+        );
       });
     });
 

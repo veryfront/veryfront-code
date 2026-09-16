@@ -108,11 +108,12 @@ export interface IgnoreChecker {
   resolveGitIgnoredCandidates(paths: Iterable<string>): Promise<void>;
 
   /**
-   * Return a checker with the same patterns and Git ignore state read afresh,
-   * for classifying the filesystem right now. A checker without Git context
-   * returns itself.
+   * Read Git ignore state afresh, in place: the local listing is reloaded and
+   * every candidate path resolved so far is asked about again, so local and
+   * remote classification both follow the current rules. A checker without Git
+   * context is left unchanged.
    */
-  withCurrentGitIgnores(): Promise<IgnoreChecker>;
+  refreshGitIgnores(): Promise<void>;
 }
 
 export interface IgnoreCheckerOptions {
@@ -129,7 +130,7 @@ export interface IgnoreCheckerOptions {
   gitIgnoredPaths?: Iterable<string>;
   /** Return the given paths Git's rules match; backs `resolveGitIgnoredCandidates`. */
   checkGitIgnoredPaths?: (paths: string[]) => Promise<string[]>;
-  /** Read Git ignore state again; backs `withCurrentGitIgnores`. */
+  /** Read Git ignore state again; backs `refreshGitIgnores`. */
   loadGitIgnoreContext?: () => Promise<GitIgnoreContext>;
 }
 
@@ -320,6 +321,15 @@ function toRules(
 }
 
 const PROTECTED_RULES = toRules(PROTECTED_IGNORE_PATTERNS, true);
+
+function toGitIgnoredPathSet(paths: Iterable<string>): Set<string> {
+  const set = new Set<string>();
+  for (const path of paths) {
+    const normalized = normalizeIgnorePath(path).replace(/\/+$/, "");
+    if (normalized) set.add(normalized);
+  }
+  return set;
+}
 
 function normalizeIgnorePath(path: string): string {
   return path.replaceAll("\\", "/");
@@ -536,12 +546,8 @@ export function createIgnoreChecker(
   // at the default log level. Deduplicated per checker because every path is
   // tested many times during a single scan.
   const warnedOverrides = new Set<string>();
-  const checkGitIgnoredPaths = options.checkGitIgnoredPaths;
-  const gitIgnoredPaths = new Set<string>();
-  for (const path of options.gitIgnoredPaths ?? []) {
-    const normalized = normalizeIgnorePath(path).replace(/\/+$/, "");
-    if (normalized) gitIgnoredPaths.add(normalized);
-  }
+  let checkGitIgnoredPaths = options.checkGitIgnoredPaths;
+  let gitIgnoredPaths = toGitIgnoredPathSet(options.gitIgnoredPaths ?? []);
 
   function isGitIgnored(normalizedPath: string): boolean {
     if (gitIgnoredPaths.size === 0) return false;
@@ -597,7 +603,7 @@ export function createIgnoreChecker(
     return SUPPORTED_EXTENSIONS.has(filename.slice(lastDot).toLowerCase());
   }
 
-  const checkedGitCandidates = new Set<string>();
+  let checkedGitCandidates = new Set<string>();
   async function resolveGitIgnoredCandidates(paths: Iterable<string>): Promise<void> {
     if (!checkGitIgnoredPaths) return;
     const pending: string[] = [];
@@ -614,20 +620,24 @@ export function createIgnoreChecker(
     }
   }
 
-  async function withCurrentGitIgnores(): Promise<IgnoreChecker> {
+  async function refreshGitIgnores(): Promise<void> {
     const reload = options.loadGitIgnoreContext;
-    if (!reload) return checker;
-    return createIgnoreCheckerWithGitContext(patterns, await reload(), reload);
+    if (!reload) return;
+    const context = await reload();
+    const previouslyChecked = [...checkedGitCandidates];
+    gitIgnoredPaths = toGitIgnoredPathSet(context.ignoredPaths);
+    checkGitIgnoredPaths = (paths) => context.checkPaths(paths);
+    checkedGitCandidates = new Set();
+    await resolveGitIgnoredCandidates(previouslyChecked);
   }
 
-  const checker: IgnoreChecker = {
+  return {
     isIgnored,
     isProtected,
     isSupportedExtension,
     resolveGitIgnoredCandidates,
-    withCurrentGitIgnores,
+    refreshGitIgnores,
   };
-  return checker;
 }
 
 /**
@@ -638,14 +648,6 @@ export function createIgnoreChecker(
 export async function loadIgnoreChecker(projectPath: string): Promise<IgnoreChecker> {
   const reload = () => loadGitIgnoreContext(projectPath);
   const [patterns, gitContext] = await Promise.all([loadIgnorePatterns(projectPath), reload()]);
-  return createIgnoreCheckerWithGitContext(patterns, gitContext, reload);
-}
-
-function createIgnoreCheckerWithGitContext(
-  patterns: readonly string[],
-  gitContext: GitIgnoreContext,
-  reload: () => Promise<GitIgnoreContext>,
-): IgnoreChecker {
   return createIgnoreChecker(patterns, {
     gitIgnoredPaths: gitContext.ignoredPaths,
     checkGitIgnoredPaths: (paths) => gitContext.checkPaths(paths),

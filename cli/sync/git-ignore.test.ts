@@ -183,7 +183,7 @@ describe("cli/sync/git-ignore", () => {
         respond: (args) =>
           isRootCheck(args)
             ? NOTHING_IGNORED
-            : isListing(args)
+            : isListing(args) || isIndexListing(args) || isUntrackedListing(args)
             ? { success: true, code: 0, stdout: "" }
             : { success: true, code: 0, stdout: "./dist/app.js\n./:odd.gen.ts\n" },
       });
@@ -329,6 +329,35 @@ describe("cli/sync/git-ignore", () => {
       assertEquals(calls.at(-1)?.args.slice(3), ["./x.gen.ts"]);
     });
 
+    it("finds a nested repository whose directory also holds parent-tracked files", async () => {
+      const { dependencies, calls } = fakeGit({
+        existing: ["/repo", "/repo/tools", "/repo/tools/.git"],
+        respond: (args) => {
+          if (isRootCheck(args)) return NOTHING_IGNORED;
+          if (isIndexListing(args) || isListing(args)) {
+            return { success: true, code: 0, stdout: "" };
+          }
+          if (isUntrackedListing(args)) {
+            return { success: true, code: 0, stdout: "tools/cred.json\0tools/new.ts\0src/a.ts\0" };
+          }
+          if (args.includes("./cred.json")) {
+            return { success: true, code: 0, stdout: "./cred.json\n" };
+          }
+          return NOTHING_IGNORED;
+        },
+      });
+
+      const context = await loadGitIgnoreContext("/repo", dependencies);
+
+      assertEquals(await context.checkPaths(["tools/cred.json", "tools/new.ts"]), [
+        "tools/cred.json",
+      ]);
+      assertEquals(
+        calls.some((call) => call.cwd === "/repo/tools" && call.args.includes("./cred.json")),
+        true,
+      );
+    });
+
     it("drops paths inside a submodule and checks the rest again", async () => {
       const { dependencies, calls } = fakeGit({
         respond: (args) => {
@@ -467,35 +496,47 @@ describe("cli/sync/git-ignore", () => {
       assertEquals(checker.isIgnored("pages/index.tsx"), false);
     });
 
-    it("reads Git ignore state again for withCurrentGitIgnores", async () => {
-      let loads = 0;
+    it("refreshes Git ignore state in place and rechecks resolved candidates", async () => {
+      let generation = 0;
+      const asked: string[][] = [];
       const checker = createIgnoreChecker(["!generated/keep.ts"], {
         gitIgnoredPaths: ["generated"],
+        checkGitIgnoredPaths: (paths) => {
+          asked.push(paths);
+          return Promise.resolve(paths.filter((path) => path === "remote.gen.ts"));
+        },
         loadGitIgnoreContext: () => {
-          loads++;
+          generation++;
           return Promise.resolve({
             ignoredPaths: ["cache"],
-            checkPaths: () => Promise.resolve([]),
+            checkPaths: (paths: Iterable<string>) => {
+              asked.push([...paths]);
+              return Promise.resolve([...paths].filter((path) => path === "other.gen.ts"));
+            },
           });
         },
       });
-
-      const current = await checker.withCurrentGitIgnores();
-
-      assertEquals(loads, 1);
+      await checker.resolveGitIgnoredCandidates(["remote.gen.ts", "other.gen.ts"]);
+      assertEquals(checker.isIgnored("remote.gen.ts"), true);
       assertEquals(checker.isIgnored("generated/other.ts"), true);
-      assertEquals(current.isIgnored("generated/other.ts"), false);
-      assertEquals(current.isIgnored("cache/entry.ts"), true);
-      assertEquals(current.isIgnored("generated/keep.ts"), false);
-      assertEquals((await current.withCurrentGitIgnores()).isIgnored("cache/entry.ts"), true);
-      assertEquals(loads, 2);
+
+      await checker.refreshGitIgnores();
+
+      assertEquals(generation, 1);
+      assertEquals(asked.at(-1), ["remote.gen.ts", "other.gen.ts"]);
+      assertEquals(checker.isIgnored("remote.gen.ts"), false);
+      assertEquals(checker.isIgnored("other.gen.ts"), true);
+      assertEquals(checker.isIgnored("generated/other.ts"), false);
+      assertEquals(checker.isIgnored("cache/entry.ts"), true);
+      assertEquals(checker.isIgnored("generated/keep.ts"), false);
     });
 
     it("does nothing for a checker without Git context", async () => {
       const checker = createDefaultIgnoreChecker();
       await checker.resolveGitIgnoredCandidates(["generated/remote-only.ts"]);
       assertEquals(checker.isIgnored("generated/remote-only.ts"), false);
-      assertEquals(await checker.withCurrentGitIgnores(), checker);
+      await checker.refreshGitIgnores();
+      assertEquals(checker.isIgnored("generated/remote-only.ts"), false);
     });
   });
 
