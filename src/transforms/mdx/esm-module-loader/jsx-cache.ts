@@ -1664,10 +1664,15 @@ function pumpPersistedJsxCachePrunePromotions(): void {
       unrefTimer(persistedJsxCachePrunePromotionRetry);
       return;
     }
-    // Cancellation retired this pass's own retry. A request that arrived after
-    // it is still live and must not be stranded in the pending set unpumped.
-    if (!requestedAgain) return;
-    setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+    // Cancellation retired this pass's own retry, but the promotion slot it
+    // held is now free. Anything still pending has to be pumped from here --
+    // a request for this directory that arrived after the cancellation, or one
+    // for an unrelated directory that could not start while this pass held the
+    // slot. Neither will be pumped by its own caller, which short-circuited on
+    // "already pending".
+    if (requestedAgain) {
+      setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+    }
     pumpPersistedJsxCachePrunePromotions();
   });
 }
