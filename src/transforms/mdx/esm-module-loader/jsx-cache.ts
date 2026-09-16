@@ -1795,7 +1795,10 @@ async function revisitJsxCacheDirectory(
     });
     // A pass that throws, rather than preserving an artifact and naming a
     // retry, never reaches the scheduling at its end. Re-arm the directory so
-    // transient lease or filesystem failures cannot strand its excess files.
+    // transient lease or filesystem failures cannot strand its excess files --
+    // unless a cancellation retired this pass while the throwing operation was
+    // in flight, in which case re-arming would outlive teardown.
+    if (!mayArmJsxCachePruneRetry(pruneGeneration)) return;
     scheduleJsxCachePruneRetry(
       esmCacheDir,
       JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
