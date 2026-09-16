@@ -427,7 +427,10 @@ async function listManagedLocalFiles(
   }
 
   await walk(projectDir);
-  return files;
+  // Recheck files created since the checker's Git listing so pruning never
+  // deletes a local file the checkout ignores.
+  await ignoreChecker.resolveGitIgnoredCandidates(files.map((file) => file.relativePath));
+  return files.filter((file) => !ignoreChecker.isIgnored(file.relativePath));
 }
 
 async function deleteLocalFiles(

@@ -248,7 +248,11 @@ export async function scanLocalFiles(
   }
 
   await walk(projectDir);
-  return ops;
+  // The Git ignore listing is a snapshot taken when the checker was loaded. Ask
+  // Git about every file this scan found, so one created since then is still
+  // excluded when the checkout ignores it.
+  await ignoreChecker.resolveGitIgnoredCandidates(ops.map((op) => op.path));
+  return ops.filter((op) => !ignoreChecker.isIgnored(op.path));
 }
 
 function gitSourcesMatch(left: GitSource, right: GitSource): boolean {
