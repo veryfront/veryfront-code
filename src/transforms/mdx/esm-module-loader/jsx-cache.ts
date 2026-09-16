@@ -1610,21 +1610,29 @@ function pumpPersistedJsxCachePrunePromotions(): void {
     activeJsxCachePrunePromotionDirectory = undefined;
     activeJsxCachePrunePromotionRequestedAgain = false;
     persistedJsxCachePrunePromotion = undefined;
-    // A cancellation during the promotion already emptied the pending set, so
-    // pumping again here would rebuild the backlog teardown just drained.
-    if (generation !== jsxCachePruneGeneration) return;
+    // No generation check: the directory is re-queued above only when someone
+    // asked for it again, and cancellation clears that flag, so a set flag is
+    // a live request. Timer arming is fenced inside the promotion itself.
     pumpPersistedJsxCachePrunePromotions();
   }, () => {
+    const requestedAgain = activeJsxCachePrunePromotionRequestedAgain;
     activeJsxCachePrunePromotionDirectory = undefined;
     activeJsxCachePrunePromotionRequestedAgain = false;
     persistedJsxCachePrunePromotion = undefined;
-    if (generation !== jsxCachePruneGeneration) return;
+    if (generation === jsxCachePruneGeneration) {
+      setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+      persistedJsxCachePrunePromotionRetry = hostSetTimeout(() => {
+        persistedJsxCachePrunePromotionRetry = undefined;
+        pumpPersistedJsxCachePrunePromotions();
+      }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+      unrefTimer(persistedJsxCachePrunePromotionRetry);
+      return;
+    }
+    // Cancellation retired this pass's own retry. A request that arrived after
+    // it is still live and must not be stranded in the pending set unpumped.
+    if (!requestedAgain) return;
     setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
-    persistedJsxCachePrunePromotionRetry = hostSetTimeout(() => {
-      persistedJsxCachePrunePromotionRetry = undefined;
-      pumpPersistedJsxCachePrunePromotions();
-    }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
-    unrefTimer(persistedJsxCachePrunePromotionRetry);
+    pumpPersistedJsxCachePrunePromotions();
   });
 }
 
