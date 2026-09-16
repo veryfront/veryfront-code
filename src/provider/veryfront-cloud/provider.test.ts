@@ -11,6 +11,7 @@ import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { createVeryfrontCloudInferenceModel } from "./provider.ts";
 import { createVeryfrontCloudFetch } from "./shared.ts";
+import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { assertRejects } from "#veryfront/testing/assert.ts";
 import { withEnv } from "#veryfront/testing";
 import {
@@ -73,6 +74,34 @@ describe("provider/veryfront-cloud", () => {
     clearModelProviders();
     clearEmbeddingProviders();
     deleteHostSecret("VERYFRONT_API_TOKEN");
+  });
+
+  it("keeps gateway provenance marks working when WeakSet methods are replaced", async () => {
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://93.184.216.34/ai/gateway/openai/v1",
+    );
+    const originalAdd = WeakSet.prototype.add;
+    const originalHas = WeakSet.prototype.has;
+    let response: Response | undefined;
+    installMockFetch(async () => new Response(null, { status: 204 }));
+    try {
+      WeakSet.prototype.add = () => {
+        throw new Error("poisoned add");
+      };
+      WeakSet.prototype.has = () => {
+        throw new Error("poisoned has");
+      };
+      response = await wrappedFetch(
+        "https://93.184.216.34/ai/gateway/openai/v1/chat/completions",
+      );
+      assertEquals(isVeryfrontGatewayResponse(response), true);
+    } finally {
+      WeakSet.prototype.add = originalAdd;
+      WeakSet.prototype.has = originalHas;
+      restoreMockFetch();
+    }
+    assertEquals(response?.status, 204);
   });
 
   it("resolves veryfront-cloud openai models without project ext-llm-openai installed", () => {

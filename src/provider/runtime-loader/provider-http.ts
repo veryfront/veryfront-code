@@ -145,6 +145,11 @@ function readRequestRoute(url: string): string | undefined {
   }
 }
 
+// Captured at module load: project code sharing this runtime can replace
+// WeakSet methods later, and a poisoned add or has must not break gateway calls.
+const IntrinsicReflectApply = Reflect.apply;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
 const veryfrontGatewayResponses = new WeakSet<Response>();
 
 /**
@@ -152,13 +157,15 @@ const veryfrontGatewayResponses = new WeakSet<Response>();
  * response. Provider errors built from it carry `viaVeryfrontGateway`.
  */
 export function markVeryfrontGatewayResponse(response: Response): Response {
-  veryfrontGatewayResponses.add(response);
+  IntrinsicReflectApply(WeakSetPrototypeAdd, veryfrontGatewayResponses, [response]);
   return response;
 }
 
 /** @internal Return true when the Veryfront Cloud gateway fetch produced this response. */
 export function isVeryfrontGatewayResponse(response: Response): boolean {
-  return veryfrontGatewayResponses.has(response);
+  return IntrinsicReflectApply(WeakSetPrototypeHas, veryfrontGatewayResponses, [
+    response,
+  ]) as boolean;
 }
 
 function labelProviderResponseError(
