@@ -8,7 +8,7 @@ import { cliLogger, logWarning } from "#cli/utils";
 import { isJsonMode } from "../shared/json-output.ts";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
-import { loadGitIgnoreContext } from "./git-ignore.ts";
+import { type GitIgnoreContext, loadGitIgnoreContext } from "./git-ignore.ts";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
@@ -106,6 +106,13 @@ export interface IgnoreChecker {
    * context resolves immediately.
    */
   resolveGitIgnoredCandidates(paths: Iterable<string>): Promise<void>;
+
+  /**
+   * Return a checker with the same patterns and Git ignore state read afresh,
+   * for classifying the filesystem right now. A checker without Git context
+   * returns itself.
+   */
+  withCurrentGitIgnores(): Promise<IgnoreChecker>;
 }
 
 export interface IgnoreCheckerOptions {
@@ -122,6 +129,8 @@ export interface IgnoreCheckerOptions {
   gitIgnoredPaths?: Iterable<string>;
   /** Return the given paths Git's rules match; backs `resolveGitIgnoredCandidates`. */
   checkGitIgnoredPaths?: (paths: string[]) => Promise<string[]>;
+  /** Read Git ignore state again; backs `withCurrentGitIgnores`. */
+  loadGitIgnoreContext?: () => Promise<GitIgnoreContext>;
 }
 
 interface IgnoreRule {
@@ -605,7 +614,20 @@ export function createIgnoreChecker(
     }
   }
 
-  return { isIgnored, isProtected, isSupportedExtension, resolveGitIgnoredCandidates };
+  async function withCurrentGitIgnores(): Promise<IgnoreChecker> {
+    const reload = options.loadGitIgnoreContext;
+    if (!reload) return checker;
+    return createIgnoreCheckerWithGitContext(patterns, await reload(), reload);
+  }
+
+  const checker: IgnoreChecker = {
+    isIgnored,
+    isProtected,
+    isSupportedExtension,
+    resolveGitIgnoredCandidates,
+    withCurrentGitIgnores,
+  };
+  return checker;
 }
 
 /**
@@ -614,13 +636,20 @@ export function createIgnoreChecker(
  * `resolveGitIgnoredCandidates` with remote paths before classifying them.
  */
 export async function loadIgnoreChecker(projectPath: string): Promise<IgnoreChecker> {
-  const [patterns, gitContext] = await Promise.all([
-    loadIgnorePatterns(projectPath),
-    loadGitIgnoreContext(projectPath),
-  ]);
+  const reload = () => loadGitIgnoreContext(projectPath);
+  const [patterns, gitContext] = await Promise.all([loadIgnorePatterns(projectPath), reload()]);
+  return createIgnoreCheckerWithGitContext(patterns, gitContext, reload);
+}
+
+function createIgnoreCheckerWithGitContext(
+  patterns: readonly string[],
+  gitContext: GitIgnoreContext,
+  reload: () => Promise<GitIgnoreContext>,
+): IgnoreChecker {
   return createIgnoreChecker(patterns, {
     gitIgnoredPaths: gitContext.ignoredPaths,
     checkGitIgnoredPaths: (paths) => gitContext.checkPaths(paths),
+    loadGitIgnoreContext: reload,
   });
 }
 

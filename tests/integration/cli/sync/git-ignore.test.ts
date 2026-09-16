@@ -350,6 +350,32 @@ describe("cli/sync/git-ignore against real Git", () => {
       });
     });
 
+    it("includes a file Git stopped ignoring after the checker was loaded", async () => {
+      await withTempDir(async (repoDir) => {
+        await runGit(repoDir, "init", "-q");
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "*.gen.ts\nforced/\n");
+        await writeFile(repoDir, "pages/index.tsx");
+        await writeFile(repoDir, "lib/types.gen.ts");
+        await writeFile(repoDir, "forced/data.ts");
+
+        const checker = await loadIgnoreChecker(repoDir);
+        assertEquals(
+          (await scanLocalFiles(repoDir, checker)).map((file) => file.path).sort(),
+          ["pages/index.tsx"],
+        );
+
+        await Deno.writeTextFile(`${repoDir}/.gitignore`, "forced/\n");
+        await runGit(repoDir, "add", "-f", "forced/data.ts");
+
+        const files = await scanLocalFiles(repoDir, checker);
+        assertEquals(files.map((file) => file.path).sort(), [
+          "forced/data.ts",
+          "lib/types.gen.ts",
+          "pages/index.tsx",
+        ]);
+      });
+    });
+
     it("re-includes a file inside a directory Git ignores as a whole", async () => {
       await withTempDir(async (repoDir) => {
         await runGit(repoDir, "init", "-q");

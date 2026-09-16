@@ -467,10 +467,35 @@ describe("cli/sync/git-ignore", () => {
       assertEquals(checker.isIgnored("pages/index.tsx"), false);
     });
 
+    it("reads Git ignore state again for withCurrentGitIgnores", async () => {
+      let loads = 0;
+      const checker = createIgnoreChecker(["!generated/keep.ts"], {
+        gitIgnoredPaths: ["generated"],
+        loadGitIgnoreContext: () => {
+          loads++;
+          return Promise.resolve({
+            ignoredPaths: ["cache"],
+            checkPaths: () => Promise.resolve([]),
+          });
+        },
+      });
+
+      const current = await checker.withCurrentGitIgnores();
+
+      assertEquals(loads, 1);
+      assertEquals(checker.isIgnored("generated/other.ts"), true);
+      assertEquals(current.isIgnored("generated/other.ts"), false);
+      assertEquals(current.isIgnored("cache/entry.ts"), true);
+      assertEquals(current.isIgnored("generated/keep.ts"), false);
+      assertEquals((await current.withCurrentGitIgnores()).isIgnored("cache/entry.ts"), true);
+      assertEquals(loads, 2);
+    });
+
     it("does nothing for a checker without Git context", async () => {
       const checker = createDefaultIgnoreChecker();
       await checker.resolveGitIgnoredCandidates(["generated/remote-only.ts"]);
       assertEquals(checker.isIgnored("generated/remote-only.ts"), false);
+      assertEquals(await checker.withCurrentGitIgnores(), checker);
     });
   });
 
