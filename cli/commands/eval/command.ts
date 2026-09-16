@@ -663,6 +663,21 @@ export async function hydrateEvalRuntimeAuth(
   );
 }
 
+/**
+ * Veryfront Cloud bills managed inference to a project, and its gateway
+ * rejects every model request that names none. With a token but no project,
+ * every `veryfront-cloud/...` record would fail with the same 400, so say why
+ * once before the run starts.
+ */
+export function formatMissingEvalProjectWarning(
+  runtimeAuth: { apiToken?: string; projectSlug?: string },
+): string | undefined {
+  if (!runtimeAuth.apiToken || runtimeAuth.projectSlug) return undefined;
+  return "No Veryfront project is configured, so Veryfront Cloud will reject veryfront-cloud model requests " +
+    "(gateway_project_required). Set VERYFRONT_PROJECT_SLUG, add projectSlug to veryfront.config.ts, " +
+    "or run 'veryfront link' in the project directory.";
+}
+
 export function createEvalToolExecutionContext(
   config: EvalRuntimeAuthConfig | null | undefined,
 ): ToolExecutionContext {
@@ -1375,7 +1390,9 @@ export async function runEvalCommand(
 
   return await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey } = context;
-    await hydrateEvalRuntimeAuth(projectDir, config);
+    const runtimeAuth = await hydrateEvalRuntimeAuth(projectDir, config);
+    const missingProjectWarning = formatMissingEvalProjectWarning(runtimeAuth);
+    if (missingProjectWarning) cliLogger.warn(missingProjectWarning);
 
     const projectRuntime = await discoverRuntime({
       projectDir,

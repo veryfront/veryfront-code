@@ -48,6 +48,7 @@ import {
   exportEvalReportForCli,
   finalizeGatewayBillingGroup,
   findEvalForCliId,
+  formatMissingEvalProjectWarning,
   hydrateEvalRuntimeAuth,
   loadEvalModelComparisonPolicy,
   normalizeEvalCliId,
@@ -2034,6 +2035,19 @@ describe("eval CLI command helpers", () => {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
+  });
+
+  it("warns before the run when a Veryfront token has no project to bill", () => {
+    const warning = formatMissingEvalProjectWarning({ apiToken: "token" });
+
+    assertEquals(typeof warning, "string");
+    assertEquals(warning?.includes("gateway_project_required"), true);
+    assertEquals(warning?.includes("VERYFRONT_PROJECT_SLUG"), true);
+    assertEquals(
+      formatMissingEvalProjectWarning({ apiToken: "token", projectSlug: "eval-project" }),
+      undefined,
+    );
+    assertEquals(formatMissingEvalProjectWarning({}), undefined);
   });
 
   it("keeps the stored login token out of the project tool execution context", async () => {
