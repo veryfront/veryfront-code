@@ -1,4 +1,8 @@
 import {
+  createLivePlatformMcpSource,
+  withPlatformMcpPolicyAliases,
+} from "../platform-mcp-tool-source.ts";
+import {
   inheritTrustedPlatformSource,
   markTrustedPlatformSource,
 } from "#veryfront/tool/platform-source-provenance.ts";
@@ -367,7 +371,9 @@ function createVeryfrontApiMcpServerToolSource(
       }
       : {}),
   });
-  const policySource = createMcpToolPolicySource(source, server.toolPolicy);
+  const policySource = createLivePlatformMcpSource(
+    createMcpToolPolicySource(source, withPlatformMcpPolicyAliases(server.toolPolicy)),
+  );
   return markTrustedPlatformSource(markBootstrapIdentityRemoteToolSource(
     bindRemoteToolSourceToProject(policySource, projectId),
   ));

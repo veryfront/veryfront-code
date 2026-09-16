@@ -4,7 +4,8 @@ import {
   createAgentServiceSandboxTools,
 } from "#veryfront/sandbox";
 import type { HostToolSet } from "#veryfront/tool";
-import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
 import type { DefaultHostedChatRuntimeTaskContext } from "./default-chat-runtime.ts";
 
 const HOSTED_ROOT_SANDBOX_TOOL_NAMES = new Set([
@@ -60,7 +61,9 @@ export async function prepareHostedRootSandboxToolSource(
   } = input;
   if (
     allowedToolNames !== undefined &&
-    !allowedToolNames.some((toolName) => HOSTED_ROOT_SANDBOX_TOOL_NAMES.has(toolName))
+    !allowedToolNames.some((toolName) =>
+      HOSTED_ROOT_SANDBOX_TOOL_NAMES.has(platformMcpLegacyName(toolName))
+    )
   ) {
     return { tools: {} };
   }
@@ -91,10 +94,7 @@ export function createHostedRootLocalToolRuntime(
           getProjectId: () => taskContext.projectId,
         });
         closeRuntime = sandboxSource.closeRuntime;
-        return {
-          ...baseTools,
-          ...markTrustedHostToolSet(sandboxSource.tools),
-        };
+        return withPlatformHostToolAliases(sandboxSource.tools, baseTools);
       })();
       return localToolsPromise;
     },

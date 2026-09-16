@@ -2769,6 +2769,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       allowAll = false,
       allTools = false,
       legacyAllow = false,
+      canonicalAllow = false,
       ownedProjectDenial = false,
     } of [
       { canonical: false, denied: false },
@@ -2780,10 +2781,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       { canonical: true, denied: false, allowAll: true },
       { canonical: true, denied: false, allowAll: true, allTools: true },
       { canonical: true, denied: false, legacyAllow: true },
+      { canonical: false, denied: false, canonicalAllow: true },
       { canonical: true, denied: false, toolMapDenial: true, ownedProjectDenial: true },
     ]
   ) {
-    it(`preserves ${canonical ? "canonical" : "legacy"} platform identities through MCP dispatch (denied: ${denied}, map: ${toolMapDenial}, all: ${allowAll}, tools: ${allTools}, legacy allow: ${legacyAllow}, owned denial: ${ownedProjectDenial})`, async () => {
+    it(`preserves ${canonical ? "canonical" : "legacy"} platform identities through MCP dispatch (denied: ${denied}, map: ${toolMapDenial}, all: ${allowAll}, tools: ${allTools}, legacy allow: ${legacyAllow}, canonical allow: ${canonicalAllow}, owned denial: ${ownedProjectDenial})`, async () => {
       const selectedName = canonical ? "veryfront__list_uploads" : "list_uploads";
       let capturedAllowedRemoteTools: string[] | undefined;
       let capturedRemoteToolNames: string[] = [];
@@ -2885,7 +2887,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
                   toolPolicy: {
                     ...(allowAll ? {} : {
                       allow: [
-                        legacyAllow ? "list_uploads" : selectedName,
+                        legacyAllow
+                          ? "list_uploads"
+                          : canonicalAllow
+                          ? "veryfront__list_uploads"
+                          : selectedName,
                         "veryfront__unknown_tool",
                       ],
                     }),
@@ -2992,11 +2998,23 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertEquals(result.response.status, 200);
         assertEquals(
           capturedAllowedRemoteTools,
-          denied ? [] : allowAll || legacyAllow ? ["list_uploads", selectedName] : [selectedName],
+          denied
+            ? []
+            : canonicalAllow
+            ? ["list_uploads", "veryfront__list_uploads"]
+            : allowAll || legacyAllow
+            ? ["list_uploads", selectedName]
+            : [selectedName],
         );
         assertEquals(
           capturedRemoteToolNames,
-          denied ? [] : allowAll || legacyAllow ? ["list_uploads", selectedName] : [selectedName],
+          denied
+            ? []
+            : canonicalAllow
+            ? ["list_uploads", "veryfront__list_uploads"]
+            : allowAll || legacyAllow
+            ? ["list_uploads", selectedName]
+            : [selectedName],
         );
         assertEquals(
           capturedToolArguments,

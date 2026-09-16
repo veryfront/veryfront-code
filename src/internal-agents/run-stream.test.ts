@@ -256,6 +256,36 @@ describe("internal-agents/run-stream", () => {
     assertEquals(await result, { approved: true });
   });
 
+  for (const projectCollision of [false, true]) {
+    it(`applies legacy denials to injected canonical controls (project collision: ${projectCollision})`, () => {
+      const agent = {
+        id: "agent",
+        config: { tools: { form_input: false, veryfront__form_input: true } },
+      } as unknown as Agent;
+      const merged = buildMergedTools(
+        agent,
+        {
+          runId: "denied-form",
+          threadId: "thread",
+          messages: [],
+          context: [],
+          tools: [{
+            name: "veryfront__form_input",
+            description: "Form",
+            parameters: { type: "object", properties: {} },
+          }],
+        },
+        new AgentRunSessionManager(),
+        undefined,
+        projectCollision ? { form_input: true } : {},
+      );
+      assertEquals(
+        Boolean(merged && typeof merged.veryfront__form_input === "object"),
+        projectCollision,
+      );
+    });
+  }
+
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
     toolRegistryInternal.clearAll();
     try {
@@ -2561,6 +2591,7 @@ describe("internal-agents/run-stream", () => {
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           invoke_agent: { description: "Delegate to another agent" },
+          veryfront__invoke_agent: true,
         },
       },
     } as unknown as Agent;
@@ -2570,7 +2601,11 @@ describe("internal-agents/run-stream", () => {
       threadId: crypto.randomUUID(),
       runId: "run_1",
       messages: [],
-      tools: [],
+      tools: [{
+        name: "veryfront__invoke_agent",
+        description: "Delegate",
+        parameters: { type: "object", properties: {} },
+      }],
       context: [],
       allowDelegation: false,
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
@@ -2604,10 +2639,11 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
-        __vfAllowedRemoteTools: ["invoke_agent"],
+        __vfAllowedRemoteTools: ["invoke_agent", "veryfront__invoke_agent"],
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           invoke_agent: { description: "Delegate to another agent" },
+          veryfront__invoke_agent: true,
         },
       },
     } as unknown as Agent;
@@ -2617,7 +2653,11 @@ describe("internal-agents/run-stream", () => {
       threadId: crypto.randomUUID(),
       runId: "run_1",
       messages: [],
-      tools: [],
+      tools: [{
+        name: "veryfront__invoke_agent",
+        description: "Delegate",
+        parameters: { type: "object", properties: {} },
+      }],
       context: [],
       allowDelegation: false,
       forwardedProps: {
@@ -2651,6 +2691,7 @@ describe("internal-agents/run-stream", () => {
       "a signed request denying delegation must strip invoke_agent from the remote grants too",
     );
     assertEquals(capturedToolNames.includes("invoke_agent"), false);
+    assertEquals(capturedToolNames.includes("veryfront__invoke_agent"), false);
   });
 
   it("preserves invoke_agent delegation when visible skills are hidden from the catalog", async () => {
@@ -2974,8 +3015,10 @@ describe("internal-agents/run-stream", () => {
       includePlatformBash,
       ownedProjectDenial = false,
       ownedProject = false,
+      legacyPlatform = false,
     } of [
       { includeProjectBash: false, includePlatformBash: true },
+      { includeProjectBash: false, includePlatformBash: true, legacyPlatform: true },
       { includeProjectBash: true, includePlatformBash: true },
       { includeProjectBash: true, includePlatformBash: false },
       { includeProjectBash: false, includePlatformBash: true, ownedProjectDenial: true },
@@ -2985,7 +3028,7 @@ describe("internal-agents/run-stream", () => {
   ) {
     it(`executes distinct bash tools (platform: ${includePlatformBash}, project: ${includeProjectBash}, owned denial: ${ownedProjectDenial}, owned project: ${ownedProject})`, async () => {
       const expectedNames = [
-        ...(includeProjectBash ? ["bash"] : []),
+        ...(includeProjectBash || legacyPlatform ? ["bash"] : []),
         ...(includePlatformBash ? ["veryfront__bash"] : []),
       ];
       const sessionManager = new AgentRunSessionManager();
@@ -3014,7 +3057,7 @@ describe("internal-agents/run-stream", () => {
           system: "test",
           tools: {
             ...(includePlatformBash ? { veryfront__bash: true } : {}),
-            ...(includeProjectBash ? { bash: true } : {}),
+            ...(includeProjectBash || legacyPlatform ? { bash: true } : {}),
             ...(ownedProjectDenial ? { bash: false } : {}),
           },
         },
@@ -3071,7 +3114,11 @@ describe("internal-agents/run-stream", () => {
       for (
         const [name, owner] of Object.entries({
           ...(includePlatformBash ? { veryfront__bash: "platform" } : {}),
-          ...(includeProjectBash ? { bash: "project" } : {}),
+          ...(includeProjectBash
+            ? { bash: "project" }
+            : legacyPlatform
+            ? { bash: "platform" }
+            : {}),
         })
       ) {
         const selected = capturedTools[name];

@@ -59,18 +59,20 @@ function isAllowedBySourcePolicy(
   return false;
 }
 
-async function isTrustedPlatformSelection(
+async function resolveTrustedPlatformSource(
   name: string,
   sources: RemoteToolSource[] = [],
   context?: ToolExecutionContext,
-): Promise<boolean> {
-  if (!isPlatformName(name)) return false;
+): Promise<RemoteToolSource | undefined> {
+  if (!isPlatformName(name)) return undefined;
   for (let index = 0; index < sources.length; index++) {
     if (!intrinsicHasOwn(sources, index)) continue;
     const source = sources[index]!;
-    if (hasTrustedPlatformSource(source) && await sourceHasTool(source, name, context)) return true;
+    if (hasTrustedPlatformSource(source) && await sourceHasTool(source, name, context)) {
+      return source;
+    }
   }
-  return false;
+  return undefined;
 }
 
 const logger = serverLogger.component("agent");
@@ -292,13 +294,14 @@ async function executeRemoteToolFromSources(
   allowedRemoteToolNames: string[] | undefined,
   remoteToolSources: RemoteToolSource[] | undefined,
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
+  selectedSource?: RemoteToolSource,
 ): Promise<{ handled: boolean; result?: unknown }> {
-  const sources = remoteToolSources ?? [];
+  const sources = selectedSource ? [selectedSource] : remoteToolSources ?? [];
   for (let index = 0; index < sources.length; index++) {
     if (!intrinsicHasOwn(sources, index)) continue;
     const source = sources[index]!;
     if (isPlatformName(toolName) && !hasTrustedPlatformSource(source)) continue;
-    if (!(await sourceHasTool(source, toolName, context))) {
+    if (source !== selectedSource && !(await sourceHasTool(source, toolName, context))) {
       continue;
     }
 
@@ -379,6 +382,7 @@ export async function executeConfiguredTool(
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
   const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
   const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);
+  let selectedSource: RemoteToolSource | undefined;
 
   if (
     sourceIntegrationPolicy &&
@@ -390,7 +394,11 @@ export async function executeConfiguredTool(
         : configuredEntry,
     ) &&
     !((configuredEntry === undefined || configuredEntry === true) &&
-      await isTrustedPlatformSelection(authorizationToolName, remoteToolSources, context))
+      (selectedSource = await resolveTrustedPlatformSource(
+        authorizationToolName,
+        remoteToolSources,
+        context,
+      )))
   ) {
     throw new Error(
       `Tool "${authorizationToolName}" is not allowed by the source integration policy`,
@@ -432,6 +440,7 @@ export async function executeConfiguredTool(
     allowedRemoteToolNames,
     remoteToolSources,
     sourceIntegrationPolicy,
+    selectedSource,
   );
   if (remoteSourceResult.handled) {
     return remoteSourceResult.result;

@@ -1,3 +1,7 @@
+import {
+  createPlatformMcpCatalogSource,
+  withPlatformMcpPolicyAliases,
+} from "#veryfront/agent/platform-mcp-tool-source.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { Agent } from "#veryfront/agent";
@@ -390,19 +394,6 @@ function hasVeryfrontPlatformRemoteToolSource(
     false;
 }
 
-function createStaticRemoteToolSource(
-  source: RemoteToolSource,
-  toolDefinitions: ToolDefinition[],
-  aliases: ReadonlyMap<string, string> = new Map(),
-): RemoteToolSource {
-  return {
-    id: source.id,
-    listTools: async () => toolDefinitions,
-    executeTool: (toolName, args, context) =>
-      source.executeTool(aliases.get(toolName) ?? toolName, args, context),
-  };
-}
-
 /**
  * Environment label bound to one agent source.
  *
@@ -522,33 +513,6 @@ function isPlatformToolDeniedByAgent(
   return !projectTool && configuredTools[legacyName] === false;
 }
 
-function withPlatformMcpPolicyAliases(
-  servers: Agent["config"]["mcpServers"],
-  aliases: ReadonlyMap<string, string>,
-): Agent["config"]["mcpServers"] {
-  return servers?.map((server) => {
-    if (server.kind !== "veryfront-api" || !server.toolPolicy) return server;
-    const expand = (names: readonly string[] | undefined): string[] | undefined => {
-      if (names === undefined) return undefined;
-      const expanded = new Set(names);
-      for (const [canonicalName, legacyName] of aliases) {
-        if (expanded.has(legacyName)) expanded.add(canonicalName);
-      }
-      return [...expanded];
-    };
-    return {
-      ...server,
-      toolPolicy: {
-        ...server.toolPolicy,
-        ...(server.toolPolicy.allow === undefined
-          ? {}
-          : { allow: expand(server.toolPolicy.allow) }),
-        ...(server.toolPolicy.deny === undefined ? {} : { deny: expand(server.toolPolicy.deny) }),
-      },
-    };
-  });
-}
-
 async function withVeryfrontPlatformRemoteTools(input: {
   agent: Agent;
   token?: string | null;
@@ -597,22 +561,23 @@ async function withVeryfrontPlatformRemoteTools(input: {
     return input.agent;
   }
 
-  const aliases = new Map<string, string>();
-  for (const definition of [...platformToolDefinitions]) {
-    if (definition.name.includes("__")) continue;
-    const canonicalName = `veryfront__${definition.name}`;
-    const configuredAlias = isRecord(input.agent.config.tools) &&
-      input.agent.config.tools[canonicalName] === true &&
-      (veryfrontApiMcpPolicy.allowAll || requestedToolNames.includes(definition.name));
-    if (
-      !veryfrontApiMcpPolicy.allowAll && !requestedToolNames.includes(canonicalName) &&
-      !configuredAlias
-    ) continue;
-    if (configuredAlias && !requestedToolNames.includes(canonicalName)) {
-      requestedToolNames.push(canonicalName);
+  const platformCatalog = createPlatformMcpCatalogSource(
+    platformRemoteToolSource,
+    platformToolDefinitions,
+  );
+  const { aliases } = platformCatalog;
+  platformToolDefinitions = platformCatalog.definitions;
+  for (const [canonicalName, legacyName] of aliases) {
+    if (!isRecord(input.agent.config.tools)) continue;
+    if (!requestedToolNames.includes(canonicalName) && !requestedToolNames.includes(legacyName)) {
+      continue;
     }
-    aliases.set(canonicalName, definition.name);
-    platformToolDefinitions.push({ ...definition, name: canonicalName });
+    for (const selectedName of [canonicalName, legacyName]) {
+      if (
+        input.agent.config.tools[selectedName] === true &&
+        !requestedToolNames.includes(selectedName)
+      ) requestedToolNames.push(selectedName);
+    }
   }
 
   const platformToolNames = new Set(platformToolDefinitions.map((tool) => tool.name));
@@ -631,14 +596,18 @@ async function withVeryfrontPlatformRemoteTools(input: {
   const platformRemoteToolSources = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
     markTrustedPlatformSource(bindRemoteToolSourceToProject(
       wrapRemoteToolSourceWithMcpPolicy(
-        createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions, aliases),
+        platformCatalog.source,
         { allow: requestedPlatformToolNames },
       ),
       input.projectId,
     )),
   ];
 
-  const mcpServers = withPlatformMcpPolicyAliases(input.agent.config.mcpServers, aliases);
+  const mcpServers = input.agent.config.mcpServers?.map((server) =>
+    server.kind === "veryfront-api"
+      ? { ...server, toolPolicy: withPlatformMcpPolicyAliases(server.toolPolicy) }
+      : server
+  );
   const runtimeConfig: Agent["config"] & RuntimeRemoteToolConfig = {
     ...input.agent.config,
     ...(mcpServers === undefined ? {} : { mcpServers }),

@@ -189,3 +189,16 @@ Deno.test("withHostedChildRerunnableFileWriteFallbacks keeps original result whe
   assertEquals(result, originalResult);
   assertEquals(updateCallCount, 0);
 });
+
+Deno.test("canonical child file writes report artifact paths", () => {
+  for (const toolName of ["veryfront__create_file", "veryfront__update_file"]) {
+    assertEquals(
+      getHostedChildWrittenArtifactPath({
+        toolName,
+        toolInput: { path: "report.md" },
+        toolOutput: { structuredContent: { success: true } },
+      }),
+      "/report.md",
+    );
+  }
+});

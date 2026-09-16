@@ -1,3 +1,4 @@
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -899,5 +900,47 @@ it("created invoke tools preserve distinct writer capabilities across concurrent
     );
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+it("child denials apply to both platform spellings without denying a colliding project tool", () => {
+  const platform = markTrustedHostToolProvenance({ description: "Platform" });
+  const project = { description: "Project" };
+  for (const denied of ["update_file", "veryfront__update_file"]) {
+    const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools({
+      ok: true,
+      forkTools: { update_file: platform, veryfront__update_file: platform },
+    }, [denied]);
+    assert(filtered.ok);
+    assertEquals(Object.keys(filtered.forkTools), []);
+  }
+  for (const denied of ["update_file", "veryfront__update_file"]) {
+    const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools({
+      ok: true,
+      forkTools: { update_file: project, veryfront__update_file: platform },
+    }, [denied]);
+    assert(filtered.ok);
+    assertEquals(Object.keys(filtered.forkTools), [
+      denied === "update_file" ? "veryfront__update_file" : "update_file",
+    ]);
+  }
+});
+
+it("child platform denials respect owner-qualified project short names", () => {
+  const platform = markTrustedHostToolProvenance({ description: "Platform" });
+  const project = { description: "Project", ownerAgentId: "researcher", shortName: "update_file" };
+  for (const denied of ["update_file", "veryfront__update_file"]) {
+    const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools({
+      ok: true,
+      forkTools: {
+        update_file: platform,
+        veryfront__update_file: platform,
+        "researcher--update_file": project,
+      },
+    }, [denied]);
+    assert(filtered.ok);
+    assertEquals(Object.keys(filtered.forkTools), [
+      denied === "update_file" ? "veryfront__update_file" : "researcher--update_file",
+    ]);
   }
 });

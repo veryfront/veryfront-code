@@ -1,4 +1,10 @@
 import {
+  createLivePlatformMcpSource,
+  platformMcpLegacyName,
+  withPlatformMcpPolicyAliases,
+} from "../platform-mcp-tool-source.ts";
+import {
+  hasTrustedPlatformSource,
   inheritTrustedPlatformSource,
   markTrustedPlatformSource,
 } from "#veryfront/tool/platform-source-provenance.ts";
@@ -338,7 +344,9 @@ export function createHostedProjectRemoteToolSource(
       }
 
       const mutation = getProjectSteeringMutation({
-        toolName,
+        toolName: hasTrustedPlatformSource(input.source)
+          ? platformMcpLegacyName(toolName)
+          : toolName,
         toolInput: hydratedToolInput,
         activeProjectId,
         activeBranchId,
@@ -368,7 +376,10 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     clientProfile?: RuntimeClientProfile | null;
     getProjectId: () => string | null | undefined;
     conversationId?: string;
-    createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+    createRemoteToolSource?: (
+      config: RemoteMCPToolSourceConfig,
+      server?: AgentServiceMcpServerConfig,
+    ) => RemoteToolSource;
     onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   };
 
@@ -404,16 +415,24 @@ function createHostedProjectRemoteToolSourceFromConfig(
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
 ): RemoteToolSource {
   if (server.kind === "veryfront-api") markTrustedPlatformSource(source);
-  const policySource = createHostedMcpToolPolicySource(source, server.toolPolicy);
-
-  return createHostedProjectRemoteToolSource({
+  const isPlatform = server.kind === "veryfront-api";
+  const policySource = createHostedMcpToolPolicySource(
+    source,
+    isPlatform ? withPlatformMcpPolicyAliases(server.toolPolicy) : server.toolPolicy,
+  );
+  const allowedNames = input.activatedRemoteToolNames !== undefined
+    ? input.activatedRemoteToolNames
+    : input.allowedToolNames;
+  const hostedSource = createHostedProjectRemoteToolSource({
     source: policySource,
     ...(input.defaultProjectId !== undefined ? { defaultProjectId: input.defaultProjectId } : {}),
     ...(input.getActiveBranchId !== undefined
       ? { getActiveBranchId: input.getActiveBranchId }
       : {}),
-    ...(input.allowedToolNames !== undefined ? { allowedToolNames: input.allowedToolNames } : {}),
-    ...(input.activatedRemoteToolNames !== undefined
+    ...(!isPlatform && input.allowedToolNames !== undefined
+      ? { allowedToolNames: input.allowedToolNames }
+      : {}),
+    ...(!isPlatform && input.activatedRemoteToolNames !== undefined
       ? { activatedRemoteToolNames: input.activatedRemoteToolNames }
       : {}),
     ...(input.projectScopedRemoteToolOptions !== undefined
@@ -421,13 +440,17 @@ function createHostedProjectRemoteToolSourceFromConfig(
       : {}),
     ...(server.kind === "veryfront-api"
       ? {
-        filterToolDefinitions: ({ source, toolDefinitions, activeProjectId, context }) =>
-          filterVeryfrontApiToolDefinitionsWithAccessProfile({
+        filterToolDefinitions: async ({ source, toolDefinitions, activeProjectId, context }) => {
+          const visible = await filterVeryfrontApiToolDefinitionsWithAccessProfile({
             source,
             toolDefinitions,
             projectId: activeProjectId,
             context,
-          }),
+          });
+          return visible.filter(({ name }) =>
+            !allowedNames || allowedNames.has(name) || allowedNames.has(`veryfront__${name}`)
+          );
+        },
       }
       : {}),
     ...(input.prepareToolInput !== undefined ? { prepareToolInput: input.prepareToolInput } : {}),
@@ -440,6 +463,21 @@ function createHostedProjectRemoteToolSourceFromConfig(
       ? { onSteeringMutation: input.onSteeringMutation }
       : {}),
     ...(onProjectSwitch !== undefined ? { onProjectSwitch } : {}),
+  });
+  if (!isPlatform) return hostedSource;
+  const platformSource = createLivePlatformMcpSource(hostedSource);
+  return inheritTrustedPlatformSource(platformSource, {
+    id: platformSource.id,
+    listTools: async (context) =>
+      (await platformSource.listTools(context)).filter(({ name }) =>
+        !allowedNames || allowedNames.has(name)
+      ),
+    executeTool: (name, args, context) => {
+      if (allowedNames && !allowedNames.has(name)) {
+        throw PERMISSION_DENIED.create({ detail: `Tool "${name}" is not allowed for this run` });
+      }
+      return platformSource.executeTool(name, args, context);
+    },
   });
 }
 
@@ -482,7 +520,7 @@ export function createHostedProjectRemoteToolSources(
       createHostedProjectRemoteToolSourceFromConfig(
         input,
         server,
-        createRemoteToolSource(remoteConfig),
+        createRemoteToolSource(remoteConfig, server),
         server.kind === "veryfront-studio" ? input.onStudioProjectSwitch : undefined,
       ),
     );

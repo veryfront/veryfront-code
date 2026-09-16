@@ -69,6 +69,11 @@ metadata, then restore provenance on the executor-local facades.
 Reserved platform names resolve only through trusted sources, regardless of
 custom server ordering. Hosted discovery applies connector policy to the same
 catalog snapshot it lists, without fetching each catalog a second time.
+Parent, child, hosted-project, and standalone API sources derive canonical aliases
+from the authenticated legacy catalog. API MCP allow/deny entries apply to both
+spellings; a run's tool-name ceiling still grants only its exact selected names.
+Canonical calls use the legacy wire name after project and access checks. Runtime
+dispatch reuses the source selected during authorization for that call.
 
 ## Try a tool directly
 

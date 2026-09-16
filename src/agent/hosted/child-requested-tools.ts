@@ -1,3 +1,4 @@
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import type { HostToolSet } from "#veryfront/tool";
 
 import {
@@ -48,6 +49,8 @@ export const DEFAULT_HOSTED_CHILD_REQUESTED_TOOL_COMPANIONS: Readonly<
 > = {
   create_file: ["update_file"],
   update_file: ["create_file"],
+  veryfront__create_file: ["veryfront__update_file"],
+  veryfront__update_file: ["veryfront__create_file"],
 };
 
 /** Default value for hosted child sandbox required cue pattern. */
@@ -307,11 +310,19 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
     excludedTools: input.excludedTools,
   });
 
+  const explicitNames = new Set(input.requestedTools ?? []);
+  const availableNames = new Set(getForkRuntimeAllowedToolNames({
+    provider: input.provider,
+    forkModel: input.forkModel,
+    forkTools: input.forkTools,
+  }));
   return selectHostedChildForkRuntimeTools({
     provider: input.provider,
     forkModel: input.forkModel,
     forkTools: input.forkTools,
-    requestedTools: effectiveRequestedTools,
+    requestedTools: effectiveRequestedTools?.filter((name) =>
+      explicitNames.has(name) || availableNames.has(name)
+    ),
   });
 }
 
@@ -343,25 +354,28 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
 
   let forkTools = selectedTools.forkTools;
   const availableToolNames = selectedTools.availableToolNames ?? Object.keys(forkTools);
-  forkTools = withHostedChildRerunnableFileWriteFallbacks({
-    tools: forkTools,
-    logger: input.logger,
-  });
-
-  for (const toolName of PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES) {
-    const toolDefinition = forkTools[toolName];
-    if (!toolDefinition) {
-      continue;
-    }
-
-    forkTools[toolName] = wrapHostedChildSteeringMutationTool({
-      toolName,
-      toolDefinition,
-      activeProjectId: input.activeProjectId,
-      activeBranchId: input.activeBranchId,
-      steeringPaths: input.steeringPaths,
-      onMutation: input.onSteeringMutation,
+  for (const prefix of ["", "veryfront__"]) {
+    forkTools = withHostedChildRerunnableFileWriteFallbacks({
+      tools: forkTools,
+      createToolName: `${prefix}create_file`,
+      updateToolName: `${prefix}update_file`,
+      logger: input.logger,
     });
+  }
+
+  for (const legacyName of PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES) {
+    for (const toolName of [legacyName, `veryfront__${legacyName}`]) {
+      const toolDefinition = forkTools[toolName];
+      if (!toolDefinition) continue;
+      forkTools[toolName] = wrapHostedChildSteeringMutationTool({
+        toolName: legacyName,
+        toolDefinition,
+        activeProjectId: input.activeProjectId,
+        activeBranchId: input.activeBranchId,
+        steeringPaths: input.steeringPaths,
+        onMutation: input.onSteeringMutation,
+      });
+    }
   }
 
   return {
@@ -425,7 +439,10 @@ export function buildDefaultHostedChildForkToolSet(
 ): HostToolSet {
   const allTools: HostToolSet = {};
   for (const toolSet of toolSets) {
-    Object.assign(allTools, toolSet);
+    for (const [name, definition] of Object.entries(toolSet)) {
+      if (name.startsWith("veryfront__") && !hasTrustedHostToolProvenance(definition)) continue;
+      allTools[name] = definition;
+    }
   }
 
   const forkTools: HostToolSet = {};
@@ -434,7 +451,11 @@ export function buildDefaultHostedChildForkToolSet(
       left.localeCompare(right)
     )
   ) {
-    if (DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has(toolName)) {
+    if (
+      DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has(toolName) ||
+      (toolName.startsWith("veryfront__") &&
+        DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has(toolName.slice("veryfront__".length)))
+    ) {
       continue;
     }
 

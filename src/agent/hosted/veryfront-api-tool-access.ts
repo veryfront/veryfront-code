@@ -1,3 +1,4 @@
+import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 
 export type VeryfrontApiToolAccessVisibility = "visible" | "hidden";
@@ -222,7 +223,7 @@ export function shouldExposeVeryfrontApiTool(
   toolName: string,
   mode: FilterMode = "open",
 ): boolean {
-  const rule = toolAccessRules.get(toolName);
+  const rule = toolAccessRules.get(platformMcpLegacyName(toolName));
   if (!rule) {
     return true;
   }

@@ -1426,3 +1426,34 @@ it("discovers and executes the trusted platform source past an earlier reserved-
     { owner: "platform" },
   );
 });
+
+it("reuses the authorized platform source without a second catalog listing", async () => {
+  let listings = 0;
+  const source = markTrustedPlatformSource({
+    id: "platform",
+    listTools: async () => {
+      listings++;
+      if (listings > 1) throw new Error("Repeated catalog request");
+      return [{
+        name: "veryfront__get_file",
+        description: "Read",
+        parameters: { type: "object" as const, properties: {} },
+      }];
+    },
+    executeTool: async () => ({ owner: "platform" }),
+  });
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  assertEquals(
+    await executeConfiguredTool(
+      "veryfront__get_file",
+      {},
+      { veryfront__get_file: true },
+      undefined,
+      ["veryfront__get_file"],
+      [source],
+      policy,
+    ),
+    { owner: "platform" },
+  );
+  assertEquals(listings, 1);
+});

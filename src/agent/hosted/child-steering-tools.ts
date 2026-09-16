@@ -1,3 +1,4 @@
+import { inheritTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import type { HostToolDefinition, HostToolSet, ToolExecutionContext } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import {
@@ -51,7 +52,7 @@ export function wrapHostedChildSteeringMutationTool(
 
   const originalExecute = input.toolDefinition.execute;
 
-  return {
+  return inheritTrustedHostToolProvenance(input.toolDefinition, {
     ...input.toolDefinition,
     execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
       const normalizedToolInput = toChildRunToolInputRecord(toolInput);
@@ -72,7 +73,7 @@ export function wrapHostedChildSteeringMutationTool(
 
       return result;
     },
-  };
+  });
 }
 
 /** Wrap hosted child project switch tool helper. */

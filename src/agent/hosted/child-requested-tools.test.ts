@@ -1,3 +1,7 @@
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -415,6 +419,8 @@ Deno.test("buildDefaultHostedChildForkToolSet merges tool sets deterministically
   const result = buildDefaultHostedChildForkToolSet(
     {
       studio_suggestions: { description: "Suggest UI actions" },
+      veryfront__studio_suggestions: { description: "Suggest UI actions" },
+      veryfront__form_input: { description: "Get form input" },
       update_file: updateFileTool,
       create_file: createFileTool,
     },
@@ -431,4 +437,107 @@ Deno.test("buildDefaultHostedChildForkToolSet merges tool sets deterministically
     create_file: replacementCreateFileTool,
     update_file: updateFileTool,
   });
+});
+
+it("canonical child file writes retain steering notifications and provenance", async () => {
+  const mutations: unknown[] = [];
+  const platform = markTrustedHostToolProvenance({
+    description: "Write",
+    execute: async () => ({ structuredContent: { success: true } }),
+  });
+  const prepared = prepareDefaultHostedChildForkRuntimeTools({
+    provider: "anthropic",
+    forkTools: { veryfront__create_file: platform, veryfront__update_file: platform },
+    effectivePrompt: "Update instructions",
+    requestedTools: ["veryfront__update_file"],
+    activeProjectId: "project-1",
+    onSteeringMutation: (mutation) => {
+      mutations.push(mutation);
+    },
+  });
+  if (!prepared.ok) throw new Error(prepared.errorMessage);
+  await prepared.forkTools.veryfront__update_file!.execute!({
+    project_reference: "project-1",
+    path: "AGENTS.md",
+    content: "new",
+  });
+  assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
+  assertEquals(hasTrustedHostToolProvenance(prepared.forkTools.veryfront__update_file), true);
+});
+
+it("canonical child create retries through its selected platform update tool", async () => {
+  let updates = 0;
+  const prepared = prepareDefaultHostedChildForkRuntimeTools({
+    provider: "anthropic",
+    effectivePrompt: "Write report",
+    requestedTools: ["veryfront__create_file"],
+    forkTools: {
+      veryfront__create_file: markTrustedHostToolProvenance({
+        description: "Create",
+        execute: async () => ({
+          isError: true,
+          content: [{ type: "text", text: "file already exists" }],
+        }),
+      }),
+      veryfront__update_file: markTrustedHostToolProvenance({
+        description: "Update",
+        execute: async () => {
+          updates++;
+          return { structuredContent: { success: true } };
+        },
+      }),
+    },
+  });
+  if (!prepared.ok) throw new Error(prepared.errorMessage);
+  assertEquals(
+    await prepared.forkTools.veryfront__create_file!.execute!({
+      project_reference: "project-1",
+      path: "report.md",
+      content: "new",
+    }),
+    { structuredContent: { success: true } },
+  );
+  assertEquals(updates, 1);
+  assertEquals(hasTrustedHostToolProvenance(prepared.forkTools.veryfront__create_file), true);
+});
+
+it("child merging keeps trusted canonical tools when later host sets claim the same name", () => {
+  const platform = markTrustedHostToolProvenance({ description: "Platform" });
+  const untrusted = { description: "Untrusted" };
+  const tools = buildDefaultHostedChildForkToolSet({ veryfront__get_file: platform }, {
+    veryfront__get_file: untrusted,
+    veryfront__unknown: untrusted,
+  });
+  assertEquals(tools.veryfront__get_file, platform);
+  assertEquals(Object.hasOwn(tools, "veryfront__unknown"), false);
+});
+
+it("child write companions stay optional when the effective catalog excludes them", async () => {
+  for (const prefix of ["", "veryfront__"]) {
+    for (const operation of ["create_file", "update_file"]) {
+      const name = `${prefix}${operation}`;
+      const tools = {
+        [name]: markTrustedHostToolProvenance({
+          description: "Write",
+          execute: async () => ({ ok: true }),
+        }),
+      };
+      const prepared = prepareDefaultHostedChildForkRuntimeTools({
+        provider: "anthropic",
+        effectivePrompt: "Write file",
+        forkTools: tools,
+        requestedTools: [name],
+      });
+      if (!prepared.ok) throw new Error(prepared.errorMessage);
+      assertEquals(prepared.availableToolNames, [name]);
+      assertEquals(await prepared.forkTools[name]!.execute!({}), { ok: true });
+      const missing = prepareDefaultHostedChildForkRuntimeTools({
+        provider: "anthropic",
+        effectivePrompt: "Write file",
+        forkTools: tools,
+        requestedTools: [`${prefix}create_file`, `${prefix}update_file`],
+      });
+      assertEquals(missing.ok, false);
+    }
+  }
 });

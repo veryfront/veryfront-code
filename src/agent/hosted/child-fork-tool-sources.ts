@@ -1,4 +1,8 @@
-import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import {
+  createPlatformMcpCatalogSource,
+  withPlatformMcpPolicyAliases,
+} from "../platform-mcp-tool-source.ts";
 import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
@@ -139,8 +143,6 @@ export async function prepareDefaultHostedChildForkToolSources(
         continue;
       }
       const rawSource = createRemoteToolSource(remoteConfig);
-      if (server.kind === "veryfront-api") markTrustedPlatformSource(rawSource);
-      const policySource = createHostedMcpToolPolicySource(rawSource, server.toolPolicy);
       const rawDefinitions = await rawSource.listTools();
       const accessFilteredDefinitions = server.kind === "veryfront-api"
         ? await filterVeryfrontApiToolDefinitionsWithAccessProfile({
@@ -149,9 +151,19 @@ export async function prepareDefaultHostedChildForkToolSources(
           projectId: input.getProjectId() ?? null,
         })
         : rawDefinitions;
-      const definitions = createMcpToolPolicyGate(server.toolPolicy).filterDefinitions(
-        accessFilteredDefinitions,
-      );
+      const catalog = server.kind === "veryfront-api"
+        ? createPlatformMcpCatalogSource(rawSource, accessFilteredDefinitions)
+        : {
+          source: rawSource,
+          definitions: accessFilteredDefinitions.filter(({ name }) =>
+            !name.startsWith("veryfront__")
+          ),
+        };
+      const policy = server.kind === "veryfront-api"
+        ? withPlatformMcpPolicyAliases(server.toolPolicy)
+        : server.toolPolicy;
+      const policySource = createHostedMcpToolPolicySource(catalog.source, policy);
+      const definitions = createMcpToolPolicyGate(policy).filterDefinitions(catalog.definitions);
       remoteMcpTools = {
         ...remoteMcpTools,
         ...materializeRemoteTools(policySource, definitions),
@@ -214,10 +226,7 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
     getProjectId: input.getProjectId,
     createBashTool,
   });
-  const mergedGlobalTools = {
-    ...(globalTools ?? {}),
-    ...sandboxResult.tools,
-  };
+  const mergedGlobalTools = withPlatformHostToolAliases(sandboxResult.tools, globalTools);
 
   try {
     const toolSources = await prepareDefaultHostedChildForkToolSources({

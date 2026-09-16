@@ -1,3 +1,5 @@
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -359,13 +361,26 @@ function withoutDeniedForkTools(
     return toolSources;
   }
   const denied = new Set(deniedToolNames);
+  const entries = Object.entries(toolSources.forkTools);
+  const projectToolNames = new Set<string>();
+  for (const [name, tool] of entries) {
+    if (hasTrustedHostToolProvenance(tool)) continue;
+    projectToolNames.add(name);
+    if (tool.shortName !== undefined) projectToolNames.add(tool.shortName);
+  }
   return {
     ...toolSources,
     forkTools: Object.fromEntries(
-      Object.entries(toolSources.forkTools).filter(([toolName, tool]) =>
-        !denied.has(toolName) &&
-        (tool.shortName === undefined || !denied.has(tool.shortName))
-      ),
+      entries.filter(([toolName, tool]) => {
+        if (denied.has(toolName) || (tool.shortName !== undefined && denied.has(tool.shortName))) {
+          return false;
+        }
+        if (!hasTrustedHostToolProvenance(tool)) return true;
+        const legacyName = platformMcpLegacyName(toolName);
+        const hasProjectCollision = projectToolNames.has(legacyName);
+        return !denied.has(`veryfront__${legacyName}`) &&
+          (hasProjectCollision || !denied.has(legacyName));
+      }),
     ),
   };
 }
