@@ -1,3 +1,4 @@
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -1100,19 +1101,29 @@ describe("tool-helpers", () => {
           execute: async () => [],
         });
 
-        await assertRejects(
-          () =>
-            getAvailableTools(
-              { [reservedName]: localIntegrationShadow },
-              { includeIntegrationTools: false },
-            ),
-          Error,
-          "reserved integration tool namespace",
-        );
+        if (reservedName.startsWith("veryfront__")) {
+          assertEquals(
+            await getAvailableTools({ [reservedName]: localIntegrationShadow }, {
+              includeIntegrationTools: false,
+            }),
+            [],
+          );
+        } else {
+          await assertRejects(
+            () =>
+              getAvailableTools({ [reservedName]: localIntegrationShadow }, {
+                includeIntegrationTools: false,
+              }),
+            Error,
+            "reserved integration tool namespace",
+          );
+        }
         await assertRejects(
           () => executeConfiguredTool(reservedName, {}, { [reservedName]: localIntegrationShadow }),
           Error,
-          "reserved integration tool namespace",
+          reservedName.startsWith("veryfront__")
+            ? "source integration policy"
+            : "reserved integration tool namespace",
         );
       });
     }
@@ -1456,4 +1467,54 @@ it("reuses the authorized platform source without a second catalog listing", asy
     { owner: "platform" },
   );
   assertEquals(listings, 1);
+});
+
+it("rejects forwarded reserved tools before permissive policy or remote fallback", async () => {
+  const name = "veryfront__export_data";
+  const definition = {
+    name,
+    description: "Export",
+    parameters: { type: "object" as const, properties: {} },
+  };
+  const policies: Array<SourceIntegrationPolicyManifest | undefined> = [
+    undefined,
+    { schemaVersion: 1, mode: "unrestricted" },
+    { schemaVersion: 1, mode: "allowlist", integrations: { veryfront: { allowedToolIds: null } } },
+    { schemaVersion: 1, mode: "allowlist", integrations: {} },
+  ];
+  for (const policy of policies) {
+    for (const config of [true as const, { [name]: true }]) {
+      assertEquals(
+        (await getAvailableTools(config, {
+          includeIntegrationTools: false,
+          allowedRemoteToolNames: [name],
+          forwardedRemoteToolDefinitions: [definition],
+          sourceIntegrationPolicy: policy,
+        })).filter((tool) => tool.name === name),
+        [],
+      );
+      await assertRejects(
+        () => executeConfiguredTool(name, {}, config, undefined, [name], [], policy),
+        Error,
+        "source integration policy",
+      );
+      const trusted = markTrustedPlatformSource({
+        id: "platform",
+        listTools: async () => [{ ...definition }],
+        executeTool: async () => ({ trusted: true }),
+      });
+      assertEquals(
+        (await getAvailableTools(config, {
+          includeIntegrationTools: false,
+          remoteToolSources: [trusted],
+          sourceIntegrationPolicy: policy,
+        })).filter((tool) => tool.name === name).length,
+        1,
+      );
+      assertEquals(
+        await executeConfiguredTool(name, {}, config, undefined, [name], [trusted], policy),
+        { trusted: true },
+      );
+    }
+  }
 });

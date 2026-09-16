@@ -46,8 +46,7 @@ function isAllowedBySourcePolicy(
   entry?: unknown,
   remoteDefinitions: ToolDefinition[] = [],
 ): boolean {
-  if (isIntegrationToolAllowedBySourcePolicy(name, policy)) return true;
-  if (!isPlatformName(name)) return false;
+  if (!isPlatformName(name)) return isIntegrationToolAllowedBySourcePolicy(name, policy);
   if (hasTrustedHostToolProvenance(entry)) return true;
   for (let index = 0; index < remoteDefinitions.length; index++) {
     if (!intrinsicHasOwn(remoteDefinitions, index)) continue;
@@ -374,7 +373,10 @@ export async function executeConfiguredTool(
   context?: ToolExecutionContext,
   allowedRemoteToolNames?: string[],
   remoteToolSources?: RemoteToolSource[],
-  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest = {
+    schemaVersion: 1,
+    mode: "unrestricted",
+  },
   options?: {
     strictConfiguredToolsOnly?: boolean;
   },
@@ -528,7 +530,8 @@ export async function getAvailableTools(
   },
 ): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];
-  const sourceIntegrationPolicy = options?.sourceIntegrationPolicy;
+  const sourceIntegrationPolicy = options?.sourceIntegrationPolicy ??
+    { schemaVersion: 1, mode: "unrestricted" } as const;
   const strictConfiguredToolsOnly = options?.strictConfiguredToolsOnly === true;
 
   if (toolsConfig === true) {
