@@ -25,6 +25,7 @@ import {
   requireInferenceProviderCredential,
   requireProviderCredential,
 } from "../runtime-loader/provider-request-init.ts";
+import { markVeryfrontGatewayResponse } from "../runtime-loader/provider-http.ts";
 
 export type { VeryfrontCloudProviderId } from "./model-catalog.ts";
 
@@ -350,9 +351,13 @@ export function createVeryfrontCloudFetch(
 
     // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
     // origin; resolved per call since it snapshots the host transport eagerly.
-    const responsePromise = createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
-      new NativeRequest(request, { headers }),
-    );
+    const responsePromise = IntrinsicReflectApply(
+      PromisePrototypeThen,
+      createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
+        new NativeRequest(request, { headers }),
+      ),
+      [markVeryfrontGatewayResponse],
+    ) as Promise<Response>;
     if (!billingGroupId || !cloudContext || !ResponseStatusGet) return responsePromise;
     return IntrinsicReflectApply(PromisePrototypeThen, responsePromise, [
       (response: Response) => {

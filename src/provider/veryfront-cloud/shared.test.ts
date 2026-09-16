@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   runWithVeryfrontCloudContext,
   type VeryfrontCloudContext,
@@ -282,7 +283,7 @@ describe("provider/veryfront-cloud/shared", () => {
     );
     const admittedFor = async (status: number) => {
       const context: VeryfrontCloudContext = { billingGroupId: "evalrun_admission" };
-      await withMockFetch(
+      const response = await withMockFetch(
         async () => new Response(null, { status }),
         () =>
           runWithVeryfrontCloudContext(
@@ -290,6 +291,8 @@ describe("provider/veryfront-cloud/shared", () => {
             () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
           ),
       );
+      // Every gateway response is marked, so provider errors keep its provenance.
+      assertEquals(isVeryfrontGatewayResponse(response), true);
       return context.billingGroupRequestAdmitted === true;
     };
 

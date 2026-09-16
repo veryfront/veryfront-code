@@ -88,6 +88,19 @@ export class ProviderError extends Error {
    * Kept non-enumerable so logs and JSON serialization retain the generic error.
    */
   declare readonly responseBody?: string;
+  /**
+   * Origin and path of the request that returned the HTTP error, without
+   * credentials, query, or fragment. Callers compare it with a trusted route to
+   * tell a Veryfront Cloud gateway rejection from a direct provider rejection
+   * without parsing the message. Kept non-enumerable like `responseBody`.
+   */
+  declare readonly requestUrl?: string;
+  /**
+   * True when the Veryfront Cloud gateway fetch issued the failed request, so
+   * the rejection came from the gateway whatever base URL it was built with.
+   * Set only from a response that fetch marked. Kept non-enumerable.
+   */
+  declare readonly viaVeryfrontGateway?: boolean;
 
   constructor(options: {
     provider: ProviderKind;
@@ -123,11 +136,71 @@ export class ProviderQuotaError extends ProviderError {}
 /** Non-retryable 4xx/5xx that doesn't fit another bucket. */
 export class ProviderRequestError extends ProviderError {}
 
+function readRequestRoute(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return undefined;
+  }
+}
+
+// Captured at module load: project code sharing this runtime can replace
+// WeakSet methods later, and a poisoned add or has must not break gateway calls.
+const IntrinsicReflectApply = Reflect.apply;
+const ObjectDefineProperty = Object.defineProperty;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
+const veryfrontGatewayResponses = new WeakSet<Response>();
+
+/**
+ * @internal Record that the Veryfront Cloud gateway fetch produced this
+ * response. Provider errors built from it carry `viaVeryfrontGateway`.
+ */
+export function markVeryfrontGatewayResponse(response: Response): Response {
+  IntrinsicReflectApply(WeakSetPrototypeAdd, veryfrontGatewayResponses, [response]);
+  return response;
+}
+
+/** @internal Return true when the Veryfront Cloud gateway fetch produced this response. */
+export function isVeryfrontGatewayResponse(response: Response): boolean {
+  return IntrinsicReflectApply(WeakSetPrototypeHas, veryfrontGatewayResponses, [
+    response,
+  ]) as boolean;
+}
+
+function labelProviderResponseError(
+  error: ProviderError,
+  providerLabel: string,
+  requestUrl: string,
+  response: Response,
+): ProviderError {
+  error.message = `${providerLabel} request failed: ${error.message}`;
+  if (isVeryfrontGatewayResponse(response)) {
+    ObjectDefineProperty(error, "viaVeryfrontGateway", {
+      value: true,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+  const requestRoute = readRequestRoute(requestUrl);
+  if (requestRoute !== undefined) {
+    ObjectDefineProperty(error, "requestUrl", {
+      value: requestRoute,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return error;
+}
+
 function preserveStructuredResponseBody<T extends ProviderError>(
   error: T,
   responseBody: string,
 ): T {
-  Object.defineProperty(error, "responseBody", {
+  ObjectDefineProperty(error, "responseBody", {
     value: responseBody,
     enumerable: false,
     configurable: false,
@@ -947,6 +1020,9 @@ export async function requestJson(options: {
   const timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_JSON_TIMEOUT_MS;
   const startedAt = Date.now();
   const deadline = createRequestDeadline(options.init, timeoutMs, "timeoutMs");
+  // The HTTP rejection outranks a deadline that expired while its error body
+  // was being read: the status is already known and callers classify on it.
+  let httpRejection: ProviderError | undefined;
 
   try {
     const response = await waitForAbortable(
@@ -955,13 +1031,24 @@ export async function requestJson(options: {
       cancelLateResponse,
     );
     if (!response.ok) {
-      const err = await buildProviderError(
-        options.providerKind,
+      let err: ProviderError;
+      try {
+        err = await buildProviderError(
+          options.providerKind,
+          response,
+          deadline.deadlineSignal,
+        );
+      } catch (error) {
+        if (!deadline.timedOut) throw error;
+        err = buildProviderErrorFromUnreadableBody(options.providerKind, response);
+      }
+      httpRejection = labelProviderResponseError(
+        err,
+        options.providerLabel,
+        options.url,
         response,
-        deadline.deadlineSignal,
       );
-      err.message = `${options.providerLabel} request failed: ${err.message}`;
-      throw err;
+      throw httpRejection;
     }
 
     const text = await readSuccessfulJsonText(
@@ -977,7 +1064,7 @@ export async function requestJson(options: {
       throw providerProtocolError(options, "response body was not valid JSON", response.status);
     }
   } catch (error) {
-    if (deadline.timedOut) {
+    if (deadline.timedOut && error !== httpRejection) {
       throw providerTimeoutError(options, {
         waitingFor: "the JSON response",
         timeoutMs,
@@ -1060,8 +1147,7 @@ export async function requestStream(options: {
           if (!deadline.timedOut) throw error;
           err = buildProviderErrorFromUnreadableBody(options.providerKind, response);
         }
-        err.message = `${options.providerLabel} request failed: ${err.message}`;
-        throw err;
+        throw labelProviderResponseError(err, options.providerLabel, options.url, response);
       }
 
       if (!response.body) {

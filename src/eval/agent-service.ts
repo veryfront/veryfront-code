@@ -533,6 +533,21 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
  * Stop the eval when the agent service reports an account-wide model access
  * denial, instead of resolving a failed record for every remaining example.
  */
+/**
+ * A 401 or 403 fails only this example: an application hook can return either
+ * for one example, and nothing in the response proves the adapter token or
+ * project was rejected. The message still points at the likely cause.
+ */
+function describeFailedRun(
+  response: Response,
+  run: Awaited<ReturnType<typeof parseAgUiSseResponse>>,
+): string {
+  if (response.status === 401 || response.status === 403) {
+    return `Agent service rejected the request (${response.status}); check the adapter token and project access`;
+  }
+  return run.runError ?? `AG-UI response failed with status ${response.status}`;
+}
+
 function throwIfAgentServiceModelAccessDenied(
   evalId: string,
   response: Response,
@@ -906,9 +921,7 @@ export function createAgentServiceEvalAdapter(
         ...(usage ? { usage } : {}),
         durationMs: getNow(config) - started,
         completed,
-        ...(!completed
-          ? { error: run.runError ?? `AG-UI response failed with status ${response.status}` }
-          : {}),
+        ...(!completed ? { error: describeFailedRun(response, run) } : {}),
       };
     } catch (error) {
       if (isEvalModelAccessDeniedError(error)) throw error;

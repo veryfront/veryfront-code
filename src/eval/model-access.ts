@@ -1,15 +1,26 @@
 import {
   EVAL_MODEL_ACCESS_DENIED,
+  EVAL_MODEL_PROJECT_ACCESS_DENIED,
   EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
+  EVAL_MODEL_UNAUTHORIZED,
   EVAL_PROJECT_REQUIRED,
   VeryfrontError,
 } from "#veryfront/errors";
 import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
 import { registeredProviderFailure } from "#veryfront/chat/provider-error-registry.ts";
 import { ProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  getVeryfrontCloudBootstrap,
+  resolveVeryfrontPublicApiBaseUrlFromHostEnv,
+} from "#veryfront/platform/cloud/resolver.ts";
 
 /** Why the model gateway refused an eval's model requests. */
-export type EvalModelAccessDenialKind = "billing" | "spend-limit" | "project-required";
+export type EvalModelAccessDenialKind =
+  | "billing"
+  | "spend-limit"
+  | "project-required"
+  | "unauthorized"
+  | "forbidden";
 
 /** Refusal that every later eval record would hit the same way. */
 export interface EvalModelAccessDenial {
@@ -22,7 +33,53 @@ const DENIAL_ERRORS = {
   billing: EVAL_MODEL_ACCESS_DENIED,
   "spend-limit": EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
   "project-required": EVAL_PROJECT_REQUIRED,
+  unauthorized: EVAL_MODEL_UNAUTHORIZED,
+  forbidden: EVAL_MODEL_PROJECT_ACCESS_DENIED,
 } as const;
+
+const UNAUTHORIZED_DENIAL: EvalModelAccessDenial = {
+  kind: "unauthorized",
+  code: "UNAUTHORIZED",
+  message: "Veryfront Cloud rejected the API credential (401 Unauthorized)",
+};
+
+const FORBIDDEN_DENIAL: EvalModelAccessDenial = {
+  kind: "forbidden",
+  code: "FORBIDDEN",
+  message: "Veryfront Cloud denied the credential access to the linked project (403 Forbidden)",
+};
+
+function statusDenial(status: number): EvalModelAccessDenial | undefined {
+  if (status === 401) return UNAUTHORIZED_DENIAL;
+  if (status === 403) return FORBIDDEN_DENIAL;
+  return undefined;
+}
+
+/**
+ * Gateway provenance for a 401, 403, or project-required 400, whose bodies do
+ * not prove where they came from: the failed request targeted the model
+ * gateway route (`<api base>/ai/gateway/`) under a configured Veryfront API
+ * base URL. A direct or BYOK provider, even one behind a reverse proxy that
+ * shares the API origin, uses a different route and stays a record failure.
+ */
+function isVeryfrontGatewayRoute(requestUrl: string | undefined): boolean {
+  if (requestUrl === undefined) return false;
+  const baseUrls = [
+    getVeryfrontCloudBootstrap().apiBaseUrl,
+    resolveVeryfrontPublicApiBaseUrlFromHostEnv(),
+  ];
+  for (const baseUrl of baseUrls) {
+    if (baseUrl === undefined) continue;
+    try {
+      const base = new URL(baseUrl);
+      const gatewayPrefix = `${base.origin}${base.pathname.replace(/\/+$/, "")}/ai/gateway/`;
+      if (requestUrl.startsWith(gatewayPrefix)) return true;
+    } catch {
+      // An unparseable configured base URL matches nothing.
+    }
+  }
+  return false;
+}
 
 const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
 const GATEWAY_PROJECT_REQUIRED_MESSAGE =
@@ -100,9 +157,16 @@ function classifyProjectRequired(responseBody: string): EvalModelAccessDenial | 
 }
 
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
+  // The gateway fetch marks its own responses, which covers a gateway built
+  // with an explicit per-model base URL; the configured route is the fallback.
+  const fromGateway = error.viaVeryfrontGateway === true ||
+    isVeryfrontGatewayRoute(error.requestUrl);
+  if (error.status === 401 || error.status === 403) {
+    return fromGateway ? statusDenial(error.status) : undefined;
+  }
   if (typeof error.responseBody !== "string") return undefined;
   if (error.status === 400) {
-    return classifyProjectRequired(error.responseBody);
+    return fromGateway ? classifyProjectRequired(error.responseBody) : undefined;
   }
   if (error.status !== 402) return undefined;
   const parsed = parseKnownProblemBody(parseJsonBody(error.responseBody));
@@ -157,8 +221,11 @@ export function classifyEvalModelAccessDenial(error: unknown): EvalModelAccessDe
 }
 
 /**
- * Recognize an account-wide billing denial in a failed agent service response:
- * an HTTP 402 problem body, or a curated provider code on the AG-UI run error.
+ * Recognize a denial in a failed agent service response body: an HTTP 400 or
+ * 402 gateway body, or a curated code on the AG-UI run error. The agent service
+ * is the endpoint the adapter was configured with, which is the provenance.
+ * HTTP 401 and 403 are not classified: an application hook can return either for
+ * one example, so they stay ordinary failures of that example.
  */
 export function classifyAgentServiceModelAccessDenial(input: {
   status: number;

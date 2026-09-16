@@ -331,6 +331,47 @@ describe("eval/agent-service", () => {
     assertEquals(requests, 1);
   });
 
+  it("records agent service 401 and 403 responses as per-example failures", async () => {
+    const statuses = [401, 403];
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      projectId: "project_fixed",
+      fetch: async () => {
+        const status = statuses.shift();
+        if (status !== undefined) {
+          // Indistinguishable from an application beforeStream rejection.
+          return Response.json(
+            { errorCode: status === 401 ? "UNAUTHENTICATED" : "FORBIDDEN" },
+            { status },
+          );
+        }
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_ok" } },
+          { event: "RunFinished", data: {} },
+        ]);
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-access-per-example",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "unauthorized", input: "First" },
+        { id: "forbidden", input: "Second" },
+        { id: "allowed", input: "Third" },
+      ]),
+    });
+
+    const report = await runEval(definition, { adapters: { agent: adapter } });
+
+    assertEquals(report.records.map((record) => record.completed), [false, false, true]);
+    assertEquals(report.records.map((record) => record.error), [
+      "Agent service rejected the request (401); check the adapter token and project access",
+      "Agent service rejected the request (403); check the adapter token and project access",
+      undefined,
+    ]);
+  });
+
   it("keeps request-scoped agent service limits as failed records", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",

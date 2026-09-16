@@ -11,6 +11,11 @@ import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { createVeryfrontCloudInferenceModel } from "./provider.ts";
 import { createVeryfrontCloudFetch } from "./shared.ts";
+import {
+  isVeryfrontGatewayResponse,
+  markVeryfrontGatewayResponse,
+  requestJson,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { assertRejects } from "#veryfront/testing/assert.ts";
 import { withEnv } from "#veryfront/testing";
 import {
@@ -73,6 +78,60 @@ describe("provider/veryfront-cloud", () => {
     clearModelProviders();
     clearEmbeddingProviders();
     deleteHostSecret("VERYFRONT_API_TOKEN");
+  });
+
+  it("keeps gateway provenance marks working when WeakSet methods are replaced", async () => {
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://93.184.216.34/ai/gateway/openai/v1",
+    );
+    const originalAdd = WeakSet.prototype.add;
+    const originalHas = WeakSet.prototype.has;
+    let response: Response | undefined;
+    installMockFetch(async () => new Response(null, { status: 204 }));
+    try {
+      WeakSet.prototype.add = () => {
+        throw new Error("poisoned add");
+      };
+      WeakSet.prototype.has = () => {
+        throw new Error("poisoned has");
+      };
+      response = await wrappedFetch(
+        "https://93.184.216.34/ai/gateway/openai/v1/chat/completions",
+      );
+      assertEquals(isVeryfrontGatewayResponse(response), true);
+    } finally {
+      WeakSet.prototype.add = originalAdd;
+      WeakSet.prototype.has = originalHas;
+      restoreMockFetch();
+    }
+    assertEquals(response?.status, 204);
+  });
+
+  it("keeps gateway rejection provenance when Object.defineProperty is replaced", async () => {
+    const originalDefineProperty = Object.defineProperty;
+    let rejection: unknown;
+    const request = requestJson({
+      url: "https://93.184.216.34/ai/gateway/openai/v1/chat/completions",
+      fetchImpl: () =>
+        Promise.resolve(
+          markVeryfrontGatewayResponse(new Response('{"error":"Unauthorized"}', { status: 401 })),
+        ),
+      init: { method: "POST", body: "{}" },
+      providerLabel: "veryfront-cloud",
+      providerKind: "openai",
+    });
+    try {
+      Object.defineProperty = (() => {
+        throw new Error("poisoned defineProperty");
+      }) as typeof Object.defineProperty;
+      rejection = await request.then(() => undefined, (error: unknown) => error);
+    } finally {
+      Object.defineProperty = originalDefineProperty;
+    }
+
+    assertEquals((rejection as { status?: number }).status, 401);
+    assertEquals((rejection as { viaVeryfrontGateway?: boolean }).viaVeryfrontGateway, true);
   });
 
   it("resolves veryfront-cloud openai models without project ext-llm-openai installed", () => {

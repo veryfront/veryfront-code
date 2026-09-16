@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  buildProviderError,
+  requestJson,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   datasets,
@@ -643,16 +647,6 @@ describe("eval/runner", () => {
         { id: "q2", input: "Second" },
       ]),
     });
-    const rejection = await buildProviderError(
-      "anthropic",
-      new Response(
-        JSON.stringify({
-          error: "A project is required to use Veryfront-managed AI inference",
-          code: "gateway_project_required",
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } },
-      ),
-    );
 
     const error = (await assertRejects(
       () =>
@@ -660,7 +654,24 @@ describe("eval/runner", () => {
           adapters: {
             agent: async () => {
               adapterCalls += 1;
-              throw rejection;
+              return await requestJson({
+                url: `${
+                  new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin
+                }/ai/gateway/anthropic/v1/messages`,
+                fetchImpl: () =>
+                  Promise.resolve(
+                    new Response(
+                      JSON.stringify({
+                        error: "A project is required to use Veryfront-managed AI inference",
+                        code: "gateway_project_required",
+                      }),
+                      { status: 400, headers: { "Content-Type": "application/json" } },
+                    ),
+                  ),
+                init: { method: "POST", body: "{}" },
+                providerLabel: "veryfront-cloud",
+                providerKind: "anthropic",
+              }) as never;
             },
           },
         }),
@@ -668,6 +679,43 @@ describe("eval/runner", () => {
     )) as VeryfrontError;
 
     assertEquals(error.slug, "eval-project-required");
+    assertEquals(adapterCalls, 1);
+  });
+
+  it("stops at the first Veryfront Cloud credential rejection", async () => {
+    let adapterCalls = 0;
+    const definition = evalAgent({
+      id: "eval:rejected-credential",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: {
+            agent: async () => {
+              adapterCalls += 1;
+              return await requestJson({
+                url: `${
+                  new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin
+                }/ai/gateway/anthropic/v1/messages`,
+                fetchImpl: () =>
+                  Promise.resolve(new Response('{"error":"Unauthorized"}', { status: 401 })),
+                init: { method: "POST", body: "{}" },
+                providerLabel: "veryfront-cloud",
+                providerKind: "anthropic",
+              }) as never;
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-unauthorized");
     assertEquals(adapterCalls, 1);
   });
 

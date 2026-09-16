@@ -73,6 +73,12 @@ record, ran checks against the empty output, and resolved with a report.
 `runEval()` directly, handle the rejection where you previously inspected
 failed records for credit errors.
 
+It also rejects with `eval-model-unauthorized` when the Veryfront Cloud gateway
+returns HTTP 401 for the credential, and with `eval-model-project-access-denied`
+when it returns HTTP 403 for the linked project. A 401 or 403 from a
+third-party provider, or from an agent service used through
+`createAgentServiceEvalAdapter`, still fails only the affected record.
+
 ### Deprecated: the `event` key on conversation-scoped run event rows
 
 The Veryfront API now serves every run event row keyed `payload`, on the

@@ -1,11 +1,17 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  buildProviderError,
+  markVeryfrontGatewayResponse,
+  requestJson,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
   classifyAgentServiceModelAccessDenial,
   classifyEvalModelAccessDenial,
   createEvalModelAccessDeniedError,
+  getEvalModelAccessDenialKind,
   isEvalModelAccessDeniedError,
 } from "./model-access.ts";
 
@@ -30,6 +36,29 @@ async function gatewayCreditDenial(): Promise<Error> {
   // The provider runtime prefixes the label onto the same error object.
   error.message = `veryfront-cloud request failed: ${error.message}`;
   return error;
+}
+
+function veryfrontApiOrigin(): string {
+  return new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin;
+}
+
+async function rejectedRequest(
+  origin: string,
+  status: number,
+  options: { path?: string; body?: unknown } = {},
+): Promise<unknown> {
+  try {
+    await requestJson({
+      url: `${origin}${options.path ?? "/ai/gateway/anthropic/v1/messages"}`,
+      fetchImpl: () => Promise.resolve(jsonResponse(status, options.body ?? { error: "Rejected" })),
+      init: { method: "POST", body: "{}" },
+      providerLabel: "veryfront-cloud",
+      providerKind: "anthropic",
+    });
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the request to reject");
 }
 
 describe("eval/model-access", () => {
@@ -142,13 +171,9 @@ describe("eval/model-access", () => {
   });
 
   it("classifies the gateway project-required 400 with fixed gateway wording", async () => {
-    const error = await buildProviderError(
-      "anthropic",
-      jsonResponse(400, {
-        error: "echoed prompt text sk-live-123",
-        code: "gateway_project_required",
-      }),
-    );
+    const error = await rejectedRequest(veryfrontApiOrigin(), 400, {
+      body: { error: "echoed prompt text sk-live-123", code: "gateway_project_required" },
+    });
     const denial = classifyEvalModelAccessDenial(error);
     if (!denial) throw new Error("expected a project-required denial");
     const evalError = createEvalModelAccessDeniedError("eval:triage", denial, error);
@@ -164,6 +189,60 @@ describe("eval/model-access", () => {
       "Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)",
     );
     assertEquals(isEvalModelAccessDeniedError(evalError), true);
+  });
+
+  it("requires the gateway route for 400, 401, and 403 classification", async () => {
+    const projectRequiredBody = { error: "x", code: "gateway_project_required" };
+    // A BYOK provider behind a reverse proxy that shares the Veryfront API origin.
+    const proxiedPath = "/proxy/anthropic/v1/messages";
+    assertEquals(
+      classifyEvalModelAccessDenial(
+        await rejectedRequest(veryfrontApiOrigin(), 401, { path: proxiedPath }),
+      ),
+      undefined,
+    );
+    assertEquals(
+      classifyEvalModelAccessDenial(
+        await rejectedRequest(veryfrontApiOrigin(), 403, { path: proxiedPath }),
+      ),
+      undefined,
+    );
+    assertEquals(
+      classifyEvalModelAccessDenial(
+        await rejectedRequest(veryfrontApiOrigin(), 400, {
+          path: proxiedPath,
+          body: projectRequiredBody,
+        }),
+      ),
+      undefined,
+    );
+    const unrouted = await buildProviderError("anthropic", jsonResponse(400, projectRequiredBody));
+    assertEquals(classifyEvalModelAccessDenial(unrouted), undefined);
+  });
+
+  it("classifies rejections from a gateway fetch built with an explicit base URL", async () => {
+    // A marked response is what the Veryfront Cloud gateway fetch returns,
+    // whatever base URL it was created with (see shared.test.ts).
+    const classifyStatus = async (status: number) => {
+      try {
+        await requestJson({
+          url: "https://93.184.216.40/ai/gateway/anthropic/v1/messages",
+          fetchImpl: () =>
+            Promise.resolve(
+              markVeryfrontGatewayResponse(jsonResponse(status, { error: "Rejected" })),
+            ),
+          init: { method: "POST", body: "{}" },
+          providerLabel: "veryfront-cloud",
+          providerKind: "anthropic",
+        });
+      } catch (error) {
+        return classifyEvalModelAccessDenial(error)?.kind;
+      }
+      throw new Error("expected the request to reject");
+    };
+
+    assertEquals(await classifyStatus(401), "unauthorized");
+    assertEquals(await classifyStatus(403), "forbidden");
   });
 
   it("keeps other 400 responses as record failures", async () => {
@@ -247,6 +326,42 @@ describe("eval/model-access", () => {
     const cyclic: { cause?: unknown } = {};
     cyclic.cause = cyclic;
     assertEquals(classifyEvalModelAccessDenial(cyclic), undefined);
+  });
+
+  it("classifies 401 and 403 rejections from the configured Veryfront API origin", async () => {
+    const unauthorized = classifyEvalModelAccessDenial(
+      await rejectedRequest(veryfrontApiOrigin(), 401),
+    );
+    const forbidden = classifyEvalModelAccessDenial(
+      await rejectedRequest(veryfrontApiOrigin(), 403),
+    );
+
+    assertEquals(unauthorized?.kind, "unauthorized");
+    assertEquals(forbidden?.kind, "forbidden");
+    const unauthorizedError = createEvalModelAccessDeniedError("eval:a", unauthorized!, undefined);
+    const forbiddenError = createEvalModelAccessDeniedError("eval:a", forbidden!, undefined);
+    assertEquals(unauthorizedError.slug, "eval-model-unauthorized");
+    assertEquals(forbiddenError.slug, "eval-model-project-access-denied");
+    assertEquals(getEvalModelAccessDenialKind(forbiddenError), "forbidden");
+    assertEquals(isEvalModelAccessDeniedError(unauthorizedError), true);
+  });
+
+  it("keeps 401 and 403 rejections from other origins as record failures", async () => {
+    // A direct or BYOK provider, even one configured with the veryfront-cloud label.
+    assertEquals(
+      classifyEvalModelAccessDenial(await rejectedRequest("https://api.anthropic.com", 401)),
+      undefined,
+    );
+    assertEquals(
+      classifyEvalModelAccessDenial(await rejectedRequest("https://api.openai.com", 403)),
+      undefined,
+    );
+    const originless = await buildProviderError("anthropic", jsonResponse(401, { error: "x" }));
+    assertEquals(classifyEvalModelAccessDenial(originless), undefined);
+    assertEquals(
+      classifyEvalModelAccessDenial(new Error("veryfront-cloud request failed: 401 Unauthorized")),
+      undefined,
+    );
   });
 
   it("builds one registry error that names the eval and the denial", async () => {

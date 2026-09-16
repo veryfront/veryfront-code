@@ -2325,6 +2325,42 @@ describe("eval CLI command helpers", () => {
     );
   });
 
+  it("suppresses only the finalization refusal that matches the denial that stopped the eval", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    );
+    const finalizeAfter = (billingGroupId: string, kind: "billing" | "unauthorized") =>
+      captureConsoleOutput(() =>
+        assertRejects(() =>
+          runEvalWithGatewayBillingGroup(billingGroupId, async () => {
+            markCurrentVeryfrontCloudBillingGroupUsed();
+            throw createEvalModelAccessDeniedError(
+              "eval:denied",
+              { kind, code: kind.toUpperCase(), message: "Refused" },
+              undefined,
+            );
+          })
+        )
+      );
+    const warned = (output: { stdout: string[]; stderr: string[] }, billingGroupId: string) =>
+      [...output.stdout, ...output.stderr].some((line) =>
+        line.includes(`Gateway billing finalization skipped for ${billingGroupId}: 401`)
+      );
+
+    const afterUnauthorized = await finalizeAfter("evalrun_unauthorized", "unauthorized");
+    const afterCreditDenial = await finalizeAfter("evalrun_credit_then_401", "billing");
+
+    assertEquals(warned(afterUnauthorized, "evalrun_unauthorized"), false);
+    assertEquals(warned(afterCreditDenial, "evalrun_credit_then_401"), true);
+  });
+
   it("retries gateway billing finalization while usage capture is not ready", async () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
