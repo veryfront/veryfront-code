@@ -460,8 +460,11 @@ export async function listProjectScopedRemoteToolNames(
     );
     for (const toolDefinition of toolDefinitions) {
       if (
-        !options.sourceIntegrationPolicy ||
-        isToolAllowedBySourcePolicy(toolDefinition.name, options.sourceIntegrationPolicy, source)
+        isToolAllowedBySourcePolicy(
+          toolDefinition.name,
+          options.sourceIntegrationPolicy ?? { schemaVersion: 1, mode: "unrestricted" },
+          source,
+        )
       ) remoteToolNames.add(toolDefinition.name);
     }
   }

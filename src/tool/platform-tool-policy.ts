@@ -14,8 +14,9 @@ export function isToolAllowedBySourcePolicy(
   policy: SourceIntegrationPolicyManifest,
   provenance?: Tool | ToolDefinition | RemoteToolSource | HostToolDefinition,
 ): boolean {
-  return isIntegrationToolAllowedBySourcePolicy(name, policy) ||
-    (parseIntegrationToolIdentity(name)?.integration === "veryfront" &&
-      provenance !== undefined &&
-      (hasTrustedHostToolProvenance(provenance) || hasTrustedPlatformSource(provenance)));
+  if (parseIntegrationToolIdentity(name)?.integration === "veryfront") {
+    return provenance !== undefined &&
+      (hasTrustedHostToolProvenance(provenance) || hasTrustedPlatformSource(provenance));
+  }
+  return isIntegrationToolAllowedBySourcePolicy(name, policy);
 }
