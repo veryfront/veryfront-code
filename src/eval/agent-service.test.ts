@@ -462,6 +462,32 @@ describe("eval/agent-service", () => {
     assertEquals(report.records.map((record) => record.completed), [false, true]);
   });
 
+  it("stops on a 403 when the adapter fixes the project slug for every request", async () => {
+    let requests = 0;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      projectSlug: "locked-project",
+      fetch: async () => {
+        requests += 1;
+        return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:agent-service-fixed-slug-403",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = await assertRejects(() => runEval(definition, { adapters: { agent: adapter } }));
+
+    assertEquals((error as { slug?: string }).slug, "eval-agent-service-access-denied");
+    assertEquals(requests, 1);
+  });
+
   it("throws an access rejection without waiting for a body cancel that never settles", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",

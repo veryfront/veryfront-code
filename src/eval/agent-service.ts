@@ -535,6 +535,22 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
  * denial, instead of resolving a failed record for every remaining example.
  */
 /**
+ * Whether a 403 on this request concerns a project shared by the whole eval.
+ * The adapter's `projectId` fixes it for every example. The adapter's
+ * `projectSlug` is sent on every request and examples cannot change it, so it
+ * fixes the scope for a request whose example does not choose its own
+ * `projectId`. Otherwise a later example can still choose an accessible project.
+ */
+function isProjectScopeFixed(
+  config: { projectId?: string | null; projectSlug?: string | null },
+  exampleInput: unknown,
+): boolean {
+  if (config.projectId !== undefined) return true;
+  if (!config.projectSlug) return false;
+  return !(isRecord(exampleInput) && readString(exampleInput.projectId) !== undefined);
+}
+
+/**
  * Stop on an access rejection as soon as the status is known, so a body that
  * fails to read cannot turn it into an ordinary failed record.
  */
@@ -912,9 +928,7 @@ export function createAgentServiceEvalAdapter(
       };
       const response = await requestFetch(endpoint, createRequestInit(config, body));
       throwIfAgentServiceAccessRejected(context.definition.id, response, {
-        // Only the adapter fixes the project for the whole eval. Without it,
-        // any later example can still choose an accessible project.
-        projectScopeFixed: config.projectId !== undefined,
+        projectScopeFixed: isProjectScopeFixed(config, context.example.input),
       });
       const run = await parseAgUiSseResponse(response, parseOptions);
       const completed = response.ok && run.runError === null &&
