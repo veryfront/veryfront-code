@@ -156,6 +156,11 @@ export function markVeryfrontGatewayResponse(response: Response): Response {
   return response;
 }
 
+/** @internal Return true when the Veryfront Cloud gateway fetch produced this response. */
+export function isVeryfrontGatewayResponse(response: Response): boolean {
+  return veryfrontGatewayResponses.has(response);
+}
+
 function labelProviderResponseError(
   error: ProviderError,
   providerLabel: string,
@@ -163,7 +168,7 @@ function labelProviderResponseError(
   response: Response,
 ): ProviderError {
   error.message = `${providerLabel} request failed: ${error.message}`;
-  if (veryfrontGatewayResponses.has(response)) {
+  if (isVeryfrontGatewayResponse(response)) {
     Object.defineProperty(error, "viaVeryfrontGateway", {
       value: true,
       enumerable: false,

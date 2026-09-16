@@ -25,7 +25,6 @@ import {
 } from "./validation.ts";
 import { trustedLocalEvalFetchAgentId } from "./agent-service/trusted-fetch.ts";
 import {
-  classifyAgentServiceAccessStatus,
   classifyAgentServiceModelAccessDenial,
   createEvalModelAccessDeniedError,
   isEvalModelAccessDeniedError,
@@ -535,100 +534,18 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
  * denial, instead of resolving a failed record for every remaining example.
  */
 /**
- * Whether a 403 on this request concerns a project shared by the whole eval.
- * The adapter's `projectId` fixes it for every example. The adapter's
- * `projectSlug` is sent on every request and examples cannot change it, so it
- * fixes the scope for a request whose example does not choose its own
- * `projectId`. Otherwise a later example can still choose an accessible project.
+ * A 401 or 403 fails only this example: an application hook can return either
+ * for one example, and nothing in the response proves the adapter token or
+ * project was rejected. The message still points at the likely cause.
  */
-function isProjectScopeFixed(
-  config: { projectId?: string | null; projectSlug?: string | null },
-  exampleInput: unknown,
-): boolean {
-  if (config.projectId !== undefined) return true;
-  if (!config.projectSlug) return false;
-  return !(isRecord(exampleInput) && readString(exampleInput.projectId) !== undefined);
-}
-
-const ACCESS_ERROR_BODY_MAX_BYTES = 4096;
-
-function readAuthErrorCode(text: string): string | undefined {
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    return isRecord(parsed) ? readString(parsed.errorCode) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-const ACCESS_ERROR_BODY_TIMEOUT_MS = 5000;
-
-/**
- * Read the hosted service auth `errorCode` from a copy of a 401 or 403 body.
- * The read is bounded in size and time, and never throws: an unreadable body
- * yields no code, so the response stays an ordinary failed record.
- */
-async function readAgentServiceAuthErrorCode(response: Response): Promise<string | undefined> {
-  let copy: Response;
-  try {
-    copy = response.clone();
-  } catch {
-    return undefined;
-  }
-  const reader = copy.body?.getReader();
-  if (!reader) return undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => resolve(undefined), ACCESS_ERROR_BODY_TIMEOUT_MS);
-  });
-  const read = (async () => {
-    const decoder = new TextDecoder();
-    let text = "";
-    // Parse after every chunk: a complete auth error body is classified even
-    // when the stream then stalls or errors.
-    while (text.length < ACCESS_ERROR_BODY_MAX_BYTES) {
-      let chunk: ReadableStreamReadResult<Uint8Array>;
-      try {
-        chunk = await reader.read();
-      } catch {
-        return undefined;
-      }
-      if (chunk.done) return undefined;
-      text += decoder.decode(chunk.value, { stream: true });
-      const errorCode = readAuthErrorCode(text);
-      if (errorCode !== undefined) return errorCode;
-    }
-    return undefined;
-  })().catch(() => undefined);
-  try {
-    return await Promise.race([read, timeout]);
-  } finally {
-    clearTimeout(timer);
-    // Best-effort cleanup that must not delay the classification.
-    reader.cancel().catch(() => {});
-  }
-}
-
-/**
- * Stop on a definitive agent service access rejection: a 401 or 403 carrying
- * the hosted service auth error code for the adapter's token or project.
- */
-async function throwIfAgentServiceAccessRejected(
-  evalId: string,
+function describeFailedRun(
   response: Response,
-  options: { projectScopeFixed: boolean },
-): Promise<void> {
-  if (response.status !== 401 && response.status !== 403) return;
-  const errorCode = await readAgentServiceAuthErrorCode(response);
-  const denial = classifyAgentServiceAccessStatus(response.status, errorCode, options);
-  if (!denial) return;
-  // Best-effort cleanup: a cancel hook that never settles must not delay the
-  // error, so cancellation is started and not awaited.
-  try {
-    response.body?.cancel().catch(() => {});
-  } catch {
-    // A locked or already-closed body needs no cancellation.
+  run: Awaited<ReturnType<typeof parseAgUiSseResponse>>,
+): string {
+  if (response.status === 401 || response.status === 403) {
+    return `Agent service rejected the request (${response.status}); check the adapter token and project access`;
   }
-  throw createEvalModelAccessDeniedError(evalId, denial, undefined);
+  return run.runError ?? `AG-UI response failed with status ${response.status}`;
 }
 
 function throwIfAgentServiceModelAccessDenied(
@@ -987,9 +904,6 @@ export function createAgentServiceEvalAdapter(
           : {}),
       };
       const response = await requestFetch(endpoint, createRequestInit(config, body));
-      await throwIfAgentServiceAccessRejected(context.definition.id, response, {
-        projectScopeFixed: isProjectScopeFixed(config, context.example.input),
-      });
       const run = await parseAgUiSseResponse(response, parseOptions);
       const completed = response.ok && run.runError === null &&
         run.eventTypes.includes(agUiSseEventTypes.runFinished);
@@ -1007,9 +921,7 @@ export function createAgentServiceEvalAdapter(
         ...(usage ? { usage } : {}),
         durationMs: getNow(config) - started,
         completed,
-        ...(!completed
-          ? { error: run.runError ?? `AG-UI response failed with status ${response.status}` }
-          : {}),
+        ...(!completed ? { error: describeFailedRun(response, run) } : {}),
       };
     } catch (error) {
       if (isEvalModelAccessDeniedError(error)) throw error;

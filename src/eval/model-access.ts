@@ -1,6 +1,4 @@
 import {
-  EVAL_AGENT_SERVICE_ACCESS_DENIED,
-  EVAL_AGENT_SERVICE_UNAUTHORIZED,
   EVAL_MODEL_ACCESS_DENIED,
   EVAL_MODEL_PROJECT_ACCESS_DENIED,
   EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
@@ -22,9 +20,7 @@ export type EvalModelAccessDenialKind =
   | "spend-limit"
   | "project-required"
   | "unauthorized"
-  | "forbidden"
-  | "agent-service-unauthorized"
-  | "agent-service-forbidden";
+  | "forbidden";
 
 /** Refusal that every later eval record would hit the same way. */
 export interface EvalModelAccessDenial {
@@ -39,40 +35,7 @@ const DENIAL_ERRORS = {
   "project-required": EVAL_PROJECT_REQUIRED,
   unauthorized: EVAL_MODEL_UNAUTHORIZED,
   forbidden: EVAL_MODEL_PROJECT_ACCESS_DENIED,
-  "agent-service-unauthorized": EVAL_AGENT_SERVICE_UNAUTHORIZED,
-  "agent-service-forbidden": EVAL_AGENT_SERVICE_ACCESS_DENIED,
 } as const;
-
-/**
- * Classify an agent service 401 or 403 from the service's own auth error code.
- * The status alone is not proof: an application `beforeStream` hook can return
- * any 401 or 403 for one example. Only the hosted service auth layer's
- * `errorCode` (`UNAUTHENTICATED` for 401, `FORBIDDEN` for 403) shows that the
- * adapter's token or project was rejected, which concerns every example, so it
- * gets agent-service guidance. A 403 also stops the eval only when the project
- * scope is fixed for it; otherwise an example can choose another project.
- */
-export function classifyAgentServiceAccessStatus(
-  status: number,
-  errorCode: string | undefined,
-  options: { projectScopeFixed: boolean },
-): EvalModelAccessDenial | undefined {
-  if (status === 401 && errorCode === "UNAUTHENTICATED") {
-    return {
-      kind: "agent-service-unauthorized",
-      code: "UNAUTHORIZED",
-      message: "The agent service rejected the eval request credential (401 Unauthorized)",
-    };
-  }
-  if (status === 403 && errorCode === "FORBIDDEN" && options.projectScopeFixed) {
-    return {
-      kind: "agent-service-forbidden",
-      code: "FORBIDDEN",
-      message: "The agent service denied the eval request access (403 Forbidden)",
-    };
-  }
-  return undefined;
-}
 
 const UNAUTHORIZED_DENIAL: EvalModelAccessDenial = {
   kind: "unauthorized",
@@ -261,7 +224,8 @@ export function classifyEvalModelAccessDenial(error: unknown): EvalModelAccessDe
  * Recognize a denial in a failed agent service response body: an HTTP 400 or
  * 402 gateway body, or a curated code on the AG-UI run error. The agent service
  * is the endpoint the adapter was configured with, which is the provenance.
- * HTTP 401 and 403 are classified earlier by `classifyAgentServiceAccessStatus`.
+ * HTTP 401 and 403 are not classified: an application hook can return either for
+ * one example, so they stay ordinary failures of that example.
  */
 export function classifyAgentServiceModelAccessDenial(input: {
   status: number;

@@ -3,13 +3,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import {
   buildProviderError,
+  markVeryfrontGatewayResponse,
   requestJson,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
-import { createVeryfrontCloudFetch } from "#veryfront/provider/veryfront-cloud/shared.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
-  classifyAgentServiceAccessStatus,
   classifyAgentServiceModelAccessDenial,
   classifyEvalModelAccessDenial,
   createEvalModelAccessDeniedError,
@@ -223,23 +221,20 @@ describe("eval/model-access", () => {
   });
 
   it("classifies rejections from a gateway fetch built with an explicit base URL", async () => {
-    const gatewayFetch = createVeryfrontCloudFetch(
-      "vf_test_provider",
-      "https://93.184.216.40/ai/gateway/anthropic/v1",
-    );
+    // A marked response is what the Veryfront Cloud gateway fetch returns,
+    // whatever base URL it was created with (see shared.test.ts).
     const classifyStatus = async (status: number) => {
       try {
-        await withMockFetch(
-          async () => jsonResponse(status, { error: "Rejected" }),
-          () =>
-            requestJson({
-              url: "https://93.184.216.40/ai/gateway/anthropic/v1/messages",
-              fetchImpl: gatewayFetch,
-              init: { method: "POST", body: "{}" },
-              providerLabel: "veryfront-cloud",
-              providerKind: "anthropic",
-            }),
-        );
+        await requestJson({
+          url: "https://93.184.216.40/ai/gateway/anthropic/v1/messages",
+          fetchImpl: () =>
+            Promise.resolve(
+              markVeryfrontGatewayResponse(jsonResponse(status, { error: "Rejected" })),
+            ),
+          init: { method: "POST", body: "{}" },
+          providerLabel: "veryfront-cloud",
+          providerKind: "anthropic",
+        });
       } catch (error) {
         return classifyEvalModelAccessDenial(error)?.kind;
       }
@@ -367,42 +362,6 @@ describe("eval/model-access", () => {
       classifyEvalModelAccessDenial(new Error("veryfront-cloud request failed: 401 Unauthorized")),
       undefined,
     );
-  });
-
-  it("classifies agent service 401 and 403 responses with agent-service guidance", () => {
-    const unauthorized = classifyAgentServiceAccessStatus(401, "UNAUTHENTICATED", {
-      projectScopeFixed: false,
-    });
-    const forbidden = classifyAgentServiceAccessStatus(403, "FORBIDDEN", {
-      projectScopeFixed: true,
-    });
-
-    // An application 401 or 403 without the service auth error code is not proof.
-    assertEquals(
-      classifyAgentServiceAccessStatus(401, undefined, { projectScopeFixed: true }),
-      undefined,
-    );
-    assertEquals(
-      classifyAgentServiceAccessStatus(403, "CUSTOM", { projectScopeFixed: true }),
-      undefined,
-    );
-    assertEquals(
-      classifyAgentServiceAccessStatus(403, "FORBIDDEN", { projectScopeFixed: false }),
-      undefined,
-    );
-    assertEquals(classifyAgentServiceModelAccessDenial({ status: 403, body: "x" }), undefined);
-    assertEquals(unauthorized?.kind, "agent-service-unauthorized");
-    assertEquals(forbidden?.kind, "agent-service-forbidden");
-    const unauthorizedError = createEvalModelAccessDeniedError("eval:a", unauthorized!, undefined);
-    const forbiddenError = createEvalModelAccessDeniedError("eval:a", forbidden!, undefined);
-    assertEquals(unauthorizedError.slug, "eval-agent-service-unauthorized");
-    assertEquals(unauthorizedError.status, 401);
-    assertEquals(
-      unauthorizedError.suggestion,
-      "Ensure the agent service token (the adapter authToken, or VERYFRONT_TOKEN) is valid and not expired, then run the eval again",
-    );
-    assertEquals(forbiddenError.slug, "eval-agent-service-access-denied");
-    assertEquals(forbiddenError.status, 403);
   });
 
   it("builds one registry error that names the eval and the denial", async () => {
