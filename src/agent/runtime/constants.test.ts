@@ -2,8 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
+import {
+  __resetUnknownModelWarningsForTests,
   FALLBACK_MODEL_MAX_OUTPUT_TOKENS,
   getModelMaxOutputTokens,
   UNKNOWN_MODEL_MAX_OUTPUT_TOKENS_WARNING,
@@ -12,6 +19,11 @@ import {
 /** Capture the unknown-model warning emitted while `run` executes. */
 function captureUnknownModelWarnings(run: () => void): LogEntry[] {
   const records: LogEntry[] = [];
+  // The warning is emitted once per distinct id, and an ambient LOG_LEVEL above
+  // warn would suppress it -- pin both so the assertion means the same thing in
+  // any shell and in CI.
+  __resetUnknownModelWarningsForTests();
+  setLogLevel(LogLevel.WARN);
   const unsubscribe = __subscribeLogRecordEmitter((entry) => {
     if (entry.message === UNKNOWN_MODEL_MAX_OUTPUT_TOKENS_WARNING) records.push(entry);
   });
@@ -19,6 +31,7 @@ function captureUnknownModelWarnings(run: () => void): LogEntry[] {
     run();
   } finally {
     unsubscribe();
+    __resetLoggerConfigForTests();
   }
   return records;
 }

@@ -84,10 +84,12 @@ const UNDATED_MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = (() => {
 })();
 
 function lookupModelMaxOutputTokens(modelString: string): number | undefined {
-  const withoutPrefix = modelString.startsWith("veryfront-cloud/")
-    ? modelString.slice("veryfront-cloud/".length)
-    : modelString;
-  const normalized = withoutPrefix.toLowerCase();
+  // Lowercase first: stripping the prefix case-sensitively would leave
+  // "Veryfront-Cloud/..." unmatched and fall through to the fallback.
+  const lowered = modelString.toLowerCase();
+  const normalized = lowered.startsWith("veryfront-cloud/")
+    ? lowered.slice("veryfront-cloud/".length)
+    : lowered;
   const canonical = readTable(MODEL_MAX_OUTPUT_TOKEN_ALIASES, normalized) ?? normalized;
   const exact = readTable(MODEL_MAX_OUTPUT_TOKENS, canonical);
   if (exact !== undefined) return exact;
@@ -95,6 +97,35 @@ function lookupModelMaxOutputTokens(modelString: string): number | undefined {
   const undated = canonical.replace(MODEL_SNAPSHOT_DATE_SUFFIX, "");
   const undatedCanonical = readTable(MODEL_MAX_OUTPUT_TOKEN_ALIASES, undated) ?? undated;
   return readTable(UNDATED_MODEL_MAX_OUTPUT_TOKENS, undatedCanonical);
+}
+
+/**
+ * Providers the cloud catalog is not expected to cover. A self-hosted or
+ * bring-your-own-endpoint model has no entry here by design, so warning about
+ * it every turn is noise rather than signal.
+ */
+const UNCATALOGUED_MODEL_PREFIXES = ["local/", "custom/", "openai-compatible/"];
+
+/** Ids already warned about, so a long-running agent warns once, not per step. */
+const warnedUnknownModels = new Set<string>();
+/** Bound the set so an attacker-supplied id cannot grow it without limit. */
+const MAX_WARNED_UNKNOWN_MODELS = 256;
+
+function shouldWarnUnknownModel(modelString: string): boolean {
+  const normalized = modelString.toLowerCase();
+  if (UNCATALOGUED_MODEL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+    return false;
+  }
+  if (warnedUnknownModels.has(normalized)) return false;
+  if (warnedUnknownModels.size < MAX_WARNED_UNKNOWN_MODELS) {
+    warnedUnknownModels.add(normalized);
+  }
+  return true;
+}
+
+/** Test-only: forget which ids have already warned. */
+export function __resetUnknownModelWarningsForTests(): void {
+  warnedUnknownModels.clear();
 }
 
 /**
@@ -110,11 +141,13 @@ export function getModelMaxOutputTokens(modelString: string): number {
   const maxOutputTokens = lookupModelMaxOutputTokens(modelString);
   if (maxOutputTokens !== undefined) return maxOutputTokens;
 
-  // The log redactor masks any context key containing "token", so the applied
-  // limit is reported as `max_output_limit` to stay readable in logs.
-  agentLogger.warn(UNKNOWN_MODEL_MAX_OUTPUT_TOKENS_WARNING, {
-    model: modelString,
-    max_output_limit: FALLBACK_MODEL_MAX_OUTPUT_TOKENS,
-  });
+  if (shouldWarnUnknownModel(modelString)) {
+    // The log redactor masks any context key containing "token", so the applied
+    // limit is reported as `max_output_limit` to stay readable in logs.
+    agentLogger.warn(UNKNOWN_MODEL_MAX_OUTPUT_TOKENS_WARNING, {
+      model: modelString,
+      max_output_limit: FALLBACK_MODEL_MAX_OUTPUT_TOKENS,
+    });
+  }
   return FALLBACK_MODEL_MAX_OUTPUT_TOKENS;
 }
