@@ -7,7 +7,6 @@ import {
   requestJson,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   datasets,
   EVAL_REPORT_SCHEMA_VERSION,
@@ -866,78 +865,34 @@ describe("eval/runner", () => {
     ]);
   });
 
-  it("runs records concurrently up to the limit and keeps report order", async () => {
-    const definition = evalAgent({
-      id: "eval:concurrent",
-      target: "agent:researcher",
-      dataset: datasets.inline(
-        ["q1", "q2", "q3", "q4", "q5"].map((id) => ({ id, input: id })),
-      ),
-    });
-    const releases = new Map<string, () => void>();
-    let active = 0;
-    let peak = 0;
-    const started: string[] = [];
-
-    const run = runEval(definition, {
-      concurrency: 2,
-      adapters: {
-        agent: async ({ example }) => {
-          active += 1;
-          peak = Math.max(peak, active);
-          started.push(example.id);
-          await new Promise<void>((resolve) => releases.set(example.id, resolve));
-          active -= 1;
-          return example.id;
-        },
-      },
-    });
-
-    const releaseWhenStarted = async (id: string): Promise<void> => {
-      while (!releases.has(id)) await new Promise((resolve) => setTimeout(resolve, 0));
-      releases.get(id)!();
+  it("reports the whole case duration in progress, not just target execution", async () => {
+    const slowMetric = metrics.answer.exactMatch().gate();
+    slowMetric.evaluate = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return { name: "answer.exactMatch", family: "answer", severity: "gate", pass: true };
     };
-    // Finish records out of dataset order to prove the report does not follow completion order.
-    await releaseWhenStarted("q2");
-    await releaseWhenStarted("q3");
-    await releaseWhenStarted("q1");
-    await releaseWhenStarted("q5");
-    await releaseWhenStarted("q4");
-    const report = await run;
-
-    assertEquals(peak, 2);
-    assertEquals(started, ["q1", "q2", "q3", "q4", "q5"]);
-    assertEquals(report.records.map((record) => record.exampleId), ["q1", "q2", "q3", "q4", "q5"]);
-  });
-
-  it("starts no new records after a model access denial when running concurrently", async () => {
     const definition = evalAgent({
-      id: "eval:concurrent-denial",
+      id: "eval:case-duration",
       target: "agent:researcher",
-      dataset: datasets.inline(
-        ["q1", "q2", "q3", "q4"].map((id) => ({ id, input: id })),
-      ),
+      dataset: datasets.inline([{ id: "q1", input: "First", reference: "Paris" }]),
+      metrics: [slowMetric],
     });
-    const denial = await createGatewayCreditDenial();
-    const calls: string[] = [];
+    let reportedMs = 0;
 
-    const error = (await assertRejects(
-      () =>
-        runEval(definition, {
-          concurrency: 2,
-          adapters: {
-            agent: async ({ example }) => {
-              calls.push(example.id);
-              if (example.id === "q1") throw denial;
-              return "ok";
-            },
-          },
-        }),
-      VeryfrontError,
-    )) as VeryfrontError;
+    const report = await runEval(definition, {
+      onProgress: (event) => {
+        if (event.type === "record-finished") reportedMs = event.durationMs;
+      },
+      // The adapter reports its own duration, which covers the target alone.
+      adapters: { agent: () => ({ text: "Paris", durationMs: 1 }) },
+    });
 
-    assertEquals(error.slug, "eval-model-access-denied");
-    assertEquals(calls, ["q1", "q2"]);
+    assertEquals(report.records[0]?.durationMs, 1);
+    assertEquals(
+      reportedMs >= 30,
+      true,
+      `progress duration ${reportedMs}ms must include grading`,
+    );
   });
 
   it("fails a record whose metric stalls past the record timeout and keeps its target data", async () => {
@@ -1086,50 +1041,6 @@ describe("eval/runner", () => {
     releaseCheck?.();
   });
 
-  it("keeps abandoned work inside the concurrency budget", async () => {
-    let releaseStuck: (() => void) | undefined;
-    const started: string[] = [];
-    const finished: string[] = [];
-    const definition = evalAgent({
-      id: "eval:abandoned-slot",
-      target: "agent:researcher",
-      dataset: datasets.inline([
-        { id: "stuck", input: "First" },
-        { id: "next", input: "Second" },
-      ]),
-    });
-
-    const run = runEval(definition, {
-      concurrency: 1,
-      // The deadline also bounds how long the run waits for abandoned work.
-      recordTimeoutMs: 300,
-      onProgress: (event) => {
-        if (event.type === "record-finished") finished.push(event.exampleId);
-      },
-      adapters: {
-        agent: ({ example }) => {
-          started.push(example.id);
-          if (example.id !== "stuck") return "ok";
-          // Ignores the signal, the way uncancellable work would.
-          return new Promise<string>((resolve) => {
-            releaseStuck = () => resolve("late");
-          });
-        },
-      },
-    });
-
-    // The first record reports its timeout while its work is still running.
-    await waitFor(() => finished.length === 1, { timeout: 5_000, interval: 5 });
-    assertEquals(started, ["stuck"], "the next record waits for the abandoned slot");
-    releaseStuck!();
-    const report = await run;
-
-    assertEquals(started, ["stuck", "next"]);
-    assertEquals(report.records.map((record) => record.exampleId), ["stuck", "next"]);
-    assertEquals(report.records[0]?.completed, false);
-    assertEquals(report.records[1]?.completed, true);
-  });
-
   it("rejects a record timeout outside the timer range", async () => {
     const definition = evalAgent({
       id: "eval:bad-timeout",
@@ -1142,21 +1053,6 @@ describe("eval/runner", () => {
         () => runEval(definition, { recordTimeoutMs, adapters: { agent: async () => "ok" } }),
       ) as Error;
       assertEquals(error.message.includes("Eval record timeout must be finite"), true);
-    }
-  });
-
-  it("rejects a concurrency that is not a positive integer", async () => {
-    const definition = evalAgent({
-      id: "eval:bad-concurrency",
-      target: "agent:researcher",
-      dataset: datasets.inline([{ id: "q1", input: "First" }]),
-    });
-
-    for (const concurrency of [0, 1.5, Number.NaN]) {
-      const error = await assertRejects(
-        () => runEval(definition, { concurrency, adapters: { agent: async () => "ok" } }),
-      ) as Error;
-      assertEquals(error.message.includes("Eval concurrency must be a positive integer"), true);
     }
   });
 

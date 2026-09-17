@@ -65,24 +65,20 @@ and `deploy`) stops with an error instead of uploading files the checkout
 ignores. Pull stops the same way. Fix the Git error, then run the command
 again.
 
-### Added: `veryfront eval` progress, `--concurrency`, and `--record-timeout`
+### Added: `veryfront eval` progress and `--record-timeout`
 
 `veryfront eval` now shows which eval and case is running, finished cases, and
 elapsed time while cases run, and prints a notice when a model request is
-retried. `--concurrency <count>` runs several cases of one eval at the same
-time (default 1). A case that passes its deadline but ignores cancellation
-keeps its place in that budget until it stops, for at most one further
-deadline, so stuck work cannot multiply the requests in flight. `--record-timeout <seconds>` fails a case that runs too long,
+retried. `--record-timeout <seconds>` fails a case that runs too long,
 including its metrics and checks, with the `eval-record-timeout` error (default
 600, `0` disables it), so a stalled model stream can no longer hold the run
 open. The failed case keeps its target output, trace, and usage.
 
-`runEval()` from `veryfront/eval` accepts matching `concurrency`,
-`recordTimeoutMs`, and `onProgress` options. Target adapters, `evalTool` input
-mappers, mock tool resolvers, metric `evaluate()` contexts, check contexts, and
-LLM judge inputs receive a `signal`
-that aborts at the record deadline, and the built-in LLM judges pass it to the
-model request. With `LOG_LEVEL=DEBUG`, provider requests log their start,
+`runEval()` from `veryfront/eval` accepts matching `recordTimeoutMs` and
+`onProgress` options. Target adapters, `evalTool` input mappers, mock tool
+resolvers, metric `evaluate()` contexts, check contexts, and LLM judge inputs
+receive a `signal` that aborts at the record deadline, and the built-in LLM
+judges pass it to the model request. With `LOG_LEVEL=DEBUG`, provider requests log their start,
 status, duration, and retries.
 
 ### Changed: `runEval()` rejects when the model gateway refuses model access

@@ -1561,21 +1561,18 @@ describe("eval CLI command helpers", () => {
     );
   });
 
-  it("reports suite progress per eval and passes the case concurrency to the runner", async () => {
+  it("reports suite progress per eval", async () => {
     await withTempDir(async (projectDir) => {
       await withTempDir(async (configHome) => {
-        let inFlight = 0;
-        let peak = 0;
         const fixtureAgent = {
           id: "fixture",
           config: {},
-          generate: async () => {
-            inFlight += 1;
-            peak = Math.max(peak, inFlight);
-            await new Promise((resolve) => setTimeout(resolve, 5));
-            inFlight -= 1;
-            return { text: "expected", messages: [], status: "completed", toolCalls: [] };
-          },
+          generate: async () => ({
+            text: "expected",
+            messages: [],
+            status: "completed",
+            toolCalls: [],
+          }),
         } as unknown as Agent;
         const runtime = createProjectRuntimeDiscovery(
           normalizeSourceIntegrationPolicy({ allow: {} }),
@@ -1604,7 +1601,7 @@ describe("eval CLI command helpers", () => {
 
         await captureConsoleOutput(() =>
           runEvalCommand(
-            createEvalOptions({ projectDir, reportDir: `${projectDir}/suite`, concurrency: 2 }),
+            createEvalOptions({ projectDir, reportDir: `${projectDir}/suite` }),
             {
               discoverProjectAgentRuntime: () => Promise.resolve(runtime),
               createProgressReporter: () => ({
@@ -1623,7 +1620,6 @@ describe("eval CLI command helpers", () => {
           )
         );
 
-        assertEquals(peak, 2);
         assertEquals(progress.filter((line) => !line.startsWith("finished")), [
           "start 1/2 alpha",
           "start 2/2 beta",
@@ -1631,7 +1627,7 @@ describe("eval CLI command helpers", () => {
           "stop",
         ]);
         assertEquals(
-          progress.filter((line) => line.startsWith("finished")).sort(),
+          progress.filter((line) => line.startsWith("finished")),
           ["finished alpha-1", "finished alpha-2", "finished beta-1", "finished beta-2"],
         );
       });

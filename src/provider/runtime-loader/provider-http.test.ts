@@ -1121,6 +1121,55 @@ describe("provider-http", () => {
       assertEquals(retries.map((event) => event.reason), ["timeout"]);
     });
 
+    it("keeps overlapping observer scopes isolated", async () => {
+      const outer: string[] = [];
+      const inner: string[] = [];
+      const rateLimited = () =>
+        jsonResponse(
+          429,
+          { error: { code: "rate_limit_exceeded", message: "slow down" } },
+          { "retry-after": "0" },
+        );
+      const succeedOnSecondAttempt = () => {
+        let attempts = 0;
+        return () => {
+          attempts++;
+          return Promise.resolve(attempts === 1 ? rateLimited() : new Response("chunk"));
+        };
+      };
+
+      await runWithProviderRequestObserver(
+        { onRetry: () => void outer.push("outer") },
+        async () => {
+          // An inner scope that ends must not take the outer observer with it.
+          await runWithProviderRequestObserver(
+            { onRetry: () => void inner.push("inner") },
+            async () => {
+              const stream = await requestStream({
+                url: "https://provider.test/stream",
+                fetchImpl: succeedOnSecondAttempt(),
+                init: { method: "POST" },
+                providerLabel: "veryfront-cloud",
+                providerKind: "moonshotai",
+              });
+              await new Response(stream).text();
+            },
+          );
+          const stream = await requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: succeedOnSecondAttempt(),
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          });
+          await new Response(stream).text();
+        },
+      );
+
+      assertEquals(inner, ["inner"]);
+      assertEquals(outer, ["outer"]);
+    });
+
     it("bounds rate-limit retries", async () => {
       let attempts = 0;
       const error = await assertRejects(

@@ -605,17 +605,6 @@ export interface RunEvalOptions {
   export?: EvalReportExportConfig;
   metadata?: EvalReportMetadata;
   /**
-   * Most records to run at the same time. Defaults to 1, which runs records
-   * one after another. Report records keep dataset order at any concurrency.
-   * Agents configured with `memory` share conversation history across
-   * records, so keep those at 1.
-   *
-   * Work left behind by a record that hit `recordTimeoutMs` but ignored its
-   * `signal` keeps its place in this budget until it settles, for at most one
-   * further record deadline. After that the run continues without it.
-   */
-  concurrency?: number;
-  /**
    * Most milliseconds one record may take, covering target execution,
    * metrics, and checks. A record past the limit fails with the
    * `eval-record-timeout` error, its adapter `signal` aborts, and the run moves
@@ -623,9 +612,9 @@ export interface RunEvalOptions {
    */
   recordTimeoutMs?: number;
   /**
-   * Receives progress while records run. With `concurrency` above 1,
-   * `record-finished` events can arrive out of dataset order. A listener that
-   * throws does not affect the run.
+   * Receives progress while records run. Records run one after another, so
+   * events arrive in dataset order. A listener that throws does not affect the
+   * run.
    */
   onProgress?: (event: EvalProgressEvent) => void;
 }

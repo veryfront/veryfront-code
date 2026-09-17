@@ -1460,9 +1460,6 @@ function createEvalReportCommandAdapters(input: {
                 ? { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> }
                 : {},
               metadata: options.metadata,
-              ...(input.options.concurrency !== undefined
-                ? { concurrency: input.options.concurrency }
-                : {}),
               recordTimeoutMs: resolveEvalRecordTimeoutMs(input.options),
               onProgress: (event) => progress.onEvent(event),
             }),

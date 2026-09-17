@@ -22,29 +22,30 @@ export interface ProviderRequestObserver {
 }
 
 /**
- * The observer is process-wide rather than async-local on purpose. An
- * `AsyncLocalStorage` here would pull `node:async_hooks` (and with it the Node
- * global types) into the provider type graph, which changes how `fetch` types
- * resolve for unrelated test entry points. A single-command surface such as
- * `veryfront eval` installs one observer for the whole run, so the simpler
- * scope is enough. Nested scopes restore the previous observer on exit.
+ * Observers are held in a stack rather than one variable, and kept out of
+ * `AsyncLocalStorage` on purpose: `node:async_hooks` here would pull the Node
+ * global types into the provider type graph, which changes how `fetch` types
+ * resolve for unrelated test entry points. The newest scope receives the
+ * notifications, and a scope that ends removes its own entry, so overlapping
+ * scopes cannot restore a stale observer over a live one.
  */
-let currentObserver: ProviderRequestObserver | undefined;
+const observerStack: ProviderRequestObserver[] = [];
 
 /**
  * Run `fn` with an observer that sees provider request retries issued while it
- * runs, including retries of nested agent and model calls.
+ * runs, including retries of nested agent and model calls. Notifications go to
+ * the most recently entered scope.
  */
 export async function runWithProviderRequestObserver<T>(
   observer: ProviderRequestObserver,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const previous = currentObserver;
-  currentObserver = observer;
+  observerStack.push(observer);
   try {
     return await fn();
   } finally {
-    currentObserver = previous;
+    const index = observerStack.lastIndexOf(observer);
+    if (index !== -1) observerStack.splice(index, 1);
   }
 }
 
@@ -61,7 +62,7 @@ export function notifyProviderRequestRetry(event: ProviderRequestRetryEvent): vo
     maxAttempts: event.maxAttempts,
     delayMs: event.delayMs,
   });
-  const observer = currentObserver;
+  const observer = observerStack.at(-1);
   if (!observer?.onRetry) return;
   try {
     // An async observer rejects after this frame returns, so contain that too:

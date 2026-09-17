@@ -100,7 +100,7 @@ gate failures, failed examples, flake classification for repeated examples,
 duration aggregates, and usage totals. Use `results.jsonl` when you need the
 full input, output, trace, and per-record metric evidence.
 
-## Progress, concurrency, and timeouts
+## Progress and timeouts
 
 Agent eval cases often take a minute or more each, because every case makes
 real model requests. `veryfront eval` reports progress while cases run:
@@ -115,16 +115,6 @@ real model requests. `veryfront eval` reports progress while cases run:
 
 `--quiet` and `--json` print no progress. Set `LOG_LEVEL=DEBUG` to also log
 each model request with its status, duration, and attempt number.
-
-Cases run one at a time by default. Use `--concurrency <count>` to run several
-cases of one eval at the same time. Report records keep dataset order at any
-concurrency. Keep agents configured with `memory` at the default of 1, because
-their cases share conversation history. Higher concurrency sends more model
-requests at once, so rate limits (HTTP 429) become more likely.
-
-```bash
-veryfront eval disposition-agent --concurrency 3
-```
 
 Each case, including its metrics and checks, fails after 600 seconds by
 default with the `eval-record-timeout` error, and the eval continues with the

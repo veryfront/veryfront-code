@@ -688,7 +688,6 @@ async function runRecordWithinTimeout(
   repetition: number,
   runId: string,
   timeoutMs: number,
-  onAbandoned?: (work: Promise<unknown>) => void,
 ): Promise<EvalRecord> {
   if (timeoutMs === 0) return await runRecord(definition, options, example, repetition, runId);
 
@@ -750,40 +749,14 @@ async function runRecordWithinTimeout(
       targetRecord = { ...record };
     },
   );
-  // A record abandoned at its deadline may still settle later. It keeps its
-  // place in the concurrency budget until it does, so a target or grader that
-  // ignores cancellation cannot multiply the work running at once.
+  // A record abandoned at its deadline may still settle later; nothing waits
+  // for it, and the run moves on to the next record.
   work.catch(() => {});
   try {
-    const record = await Promise.race([work, timedOut]);
-    if (controller.signal.aborted) onAbandoned?.(work);
-    return record;
+    return await Promise.race([work, timedOut]);
   } finally {
     clearTimeout(timer);
   }
-}
-
-/**
- * Bound the wait for abandoned work by one record deadline. The timer is the
- * only thing keeping the run alive while it waits for work that may never
- * settle, so it stays referenced and is always cancelled once the wait ends.
- */
-function createRecordSlotGrace(
-  timeoutMs: number,
-): { elapsed: Promise<void>; cancel: () => void } {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const elapsed = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, Math.max(timeoutMs, 1));
-  });
-  return { elapsed, cancel: () => clearTimeout(timer) };
-}
-
-function normalizeEvalConcurrency(value: number | undefined): number {
-  if (value === undefined) return 1;
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw createEvalValidationError("Eval concurrency must be a positive integer");
-  }
-  return value;
 }
 
 function notifyEvalProgress(options: RunEvalOptions, event: EvalProgressEvent): void {
@@ -817,7 +790,6 @@ export async function runEval(
     `dataset "${definition.dataset.path ?? definition.dataset.kind}"`,
   );
   const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
-  const concurrency = normalizeEvalConcurrency(options.concurrency);
   const recordTimeoutMs = normalizeEvalRecordTimeoutMs(options.recordTimeoutMs);
   const jobs: Array<{ example: (typeof examples)[number]; repetition: number }> = [];
   for (const example of examples) {
@@ -826,86 +798,39 @@ export async function runEval(
     }
   }
   const total = jobs.length;
-  // Records keep dataset order whatever order they finish in, so reports stay
-  // deterministic at any concurrency.
-  const slots: EvalRecord[] = new Array(total);
+  const records: EvalRecord[] = [];
   notifyEvalProgress(options, { type: "eval-started", evalId: definition.id, total });
 
-  let nextIndex = 0;
-  let failure: { error: unknown } | undefined;
-  let running = 0;
-  // Work left over from a timed-out record, still counted against `concurrency`
-  // until it settles or its grace elapses.
-  const abandoned = new Set<Promise<unknown>>();
-  const trackAbandoned = (work: Promise<unknown>): void => {
-    const settled = work.then(() => {}, () => {});
-    abandoned.add(settled);
-    void settled.finally(() => abandoned.delete(settled));
-  };
-  /**
-   * Wait until the run has room for another record. Work that ignores
-   * cancellation cannot be stopped, so the wait is bounded by one record
-   * deadline: after that the run continues and leaves the stuck work behind.
-   */
-  const waitForRecordSlot = async (): Promise<void> => {
-    while (running + abandoned.size >= concurrency && abandoned.size > 0) {
-      const grace = createRecordSlotGrace(recordTimeoutMs);
-      try {
-        const freed = await Promise.race([
-          Promise.race([...abandoned]).then(() => true),
-          grace.elapsed.then(() => false),
-        ]);
-        if (!freed) return;
-      } finally {
-        grace.cancel();
-      }
-    }
-  };
-  const worker = async (): Promise<void> => {
-    while (failure === undefined && nextIndex < total) {
-      await waitForRecordSlot();
-      if (failure !== undefined) return;
-      const index = nextIndex++;
-      const { example, repetition } = jobs[index]!;
-      const progress = {
-        evalId: definition.id,
-        recordId: `${example.id}:${repetition}`,
-        exampleId: example.id,
-        repetition,
-        index,
-        total,
-      };
-      notifyEvalProgress(options, { type: "record-started", ...progress });
-      running += 1;
-      try {
-        const record = await runRecordWithinTimeout(
-          definition,
-          options,
-          example,
-          repetition,
-          runId,
-          recordTimeoutMs,
-          trackAbandoned,
-        );
-        slots[index] = record;
-        notifyEvalProgress(options, {
-          type: "record-finished",
-          ...progress,
-          completed: record.completed,
-          durationMs: record.durationMs,
-        });
-      } catch (error) {
-        // Fail-fast errors (such as refused model access) stop new records from
-        // starting. Records already in flight finish before the run rejects.
-        failure ??= { error };
-      } finally {
-        running -= 1;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(total, 1)) }, worker));
-  if (failure !== undefined) throw failure.error;
-  const records: EvalRecord[] = slots;
+  for (const [index, { example, repetition }] of jobs.entries()) {
+    const progress = {
+      evalId: definition.id,
+      recordId: `${example.id}:${repetition}`,
+      exampleId: example.id,
+      repetition,
+      index,
+      total,
+    };
+    notifyEvalProgress(options, { type: "record-started", ...progress });
+    // The record's own `durationMs` can come from the adapter, which measures
+    // target execution alone. Progress reports the whole case, grading
+    // included, because that is the wait a reader is watching.
+    const startedAt = Date.now();
+    const record = await runRecordWithinTimeout(
+      definition,
+      options,
+      example,
+      repetition,
+      runId,
+      recordTimeoutMs,
+    );
+    records.push(record);
+    notifyEvalProgress(options, {
+      type: "record-finished",
+      ...progress,
+      completed: record.completed,
+      durationMs: Date.now() - startedAt,
+    });
+  }
 
   const endedAt = options.now?.() ?? new Date();
   if (!(endedAt instanceof Date) || !Number.isFinite(endedAt.getTime())) {
