@@ -2805,12 +2805,12 @@ describe("scheduled prune bound", () => {
     retirePersistedJsxCachePruneRequest,
     scheduleJsxCachePruneRetry,
     scheduledJsxCachePruneCount,
-    waitForJsxCacheMaintenanceForTests,
+    waitForJsxCacheMaintenance,
   } = __jsxCacheInternals;
 
   afterEach(async () => {
     cancelScheduledJsxCachePrunes();
-    await waitForJsxCacheMaintenanceForTests();
+    await waitForJsxCacheMaintenance();
     cancelScheduledJsxCachePrunes();
     await clearPersistedJsxCachePruneRequestsForTests(persistedTestPrefix);
   });
@@ -3249,6 +3249,63 @@ describe("scheduled prune bound", () => {
     assertEquals(await hasPersistedJsxCachePrune(directory), true);
     await retirePersistedJsxCachePruneRequest(directory, replacementGeneration);
     assertEquals(await hasPersistedJsxCachePrune(directory), false);
+  });
+
+  it("should leave no armed timer when cancellation lands mid-scan", async () => {
+    // Arrange: a scan whose directory cannot be read, which is the path that
+    // arms a retry from inside the pass rather than from its follow-up.
+    const directory = `${persistedTestPrefix}cancel-during-scan`;
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    (localFs as { readDir: unknown }).readDir = (path: string) => {
+      if (path !== directory) return originalReadDir(path);
+      // Cancel while the scan is suspended, then fail it.
+      cancelScheduledJsxCachePrunes();
+      // deno-lint-ignore require-yield
+      return (async function* () {
+        throw new Error("scan failed after cancellation");
+      })();
+    };
+
+    try {
+      // Act
+      await __jsxCacheInternals.revisitJsxCacheDirectory(
+        directory,
+        undefined,
+        __jsxCacheInternals.currentJsxCachePruneGeneration(),
+      );
+
+      // Assert: the failed scan must not re-arm what teardown just retired.
+      assertEquals(
+        scheduledJsxCachePruneCount(),
+        0,
+        "a scan that fails after cancellation must not arm a retry timer",
+      );
+    } finally {
+      (localFs as { readDir: unknown }).readDir = originalReadDir;
+      cancelScheduledJsxCachePrunes();
+    }
+  });
+
+  it("should leave no armed timer when cancellation lands mid-promotion", async () => {
+    // Arrange: persisted work that a promotion pass will want to schedule.
+    const directory = `${persistedTestPrefix}cancel-during-promotion`;
+    await persistJsxCachePruneRequest(directory, Date.now());
+
+    // Act: cancel while the promotion is suspended on its filesystem scan.
+    // The pass resumes into a superseded generation and must not arm the
+    // follow-up timer, which would otherwise fire inside an unrelated test.
+    const promotion = promotePersistedJsxCachePruneRequest();
+    cancelScheduledJsxCachePrunes();
+    await promotion;
+    await waitForJsxCacheMaintenance();
+
+    // Assert: teardown really did leave the module quiet.
+    assertEquals(
+      scheduledJsxCachePruneCount(),
+      0,
+      "a cancelled promotion must not arm a prune timer after teardown drained",
+    );
   });
 });
 

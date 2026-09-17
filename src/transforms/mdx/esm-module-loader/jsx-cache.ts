@@ -1246,7 +1246,62 @@ const pendingJsxCachePersistence = new IntrinsicMap<
 >();
 let jsxCachePersistencePump: Promise<void> | undefined;
 let jsxCachePersistenceRetry: ReturnType<typeof setTimeout> | undefined;
-const inFlightJsxCachePrunes = new IntrinsicSet<string>();
+/**
+ * In-flight scheduled prune passes, keyed by prune key.
+ *
+ * A pass is started from a timer callback, so nothing in the call stack owns
+ * its promise. Retaining it here is what lets teardown await the pass instead
+ * of leaving its filesystem work to settle after the caller believed the
+ * module was quiet.
+ */
+const inFlightJsxCachePrunes = new IntrinsicMap<number, Promise<void>>();
+let nextJsxCachePrunePassId = 0;
+/**
+ * How many in-flight passes cover each prune key.
+ *
+ * Passes for one directory can overlap, so the persisted-request scan needs a
+ * count rather than a flag: the key is still covered until the last pass
+ * holding it settles.
+ */
+const inFlightJsxCachePruneKeys = new IntrinsicMap<string, number>();
+
+/**
+ * Whether work belonging to `pruneGeneration` may still arm a retry.
+ *
+ * A scan that resumes after a cancellation would otherwise re-arm the timers
+ * teardown just retired, and `waitForJsxCacheMaintenance` would then settle the
+ * pass while maintenance was armed again. Callers outside a scheduled pass pass
+ * no generation and are never fenced.
+ */
+function mayArmJsxCachePruneRetry(pruneGeneration: number | undefined): boolean {
+  return pruneGeneration === undefined || pruneGeneration === jsxCachePruneGeneration;
+}
+
+function retainInFlightJsxCachePruneKey(pruneKey: string): void {
+  mapSet(
+    inFlightJsxCachePruneKeys,
+    pruneKey,
+    (mapGet(inFlightJsxCachePruneKeys, pruneKey) ?? 0) + 1,
+  );
+}
+
+function releaseInFlightJsxCachePruneKey(pruneKey: string): void {
+  const held = mapGet(inFlightJsxCachePruneKeys, pruneKey);
+  if (held === undefined) return;
+  if (held <= 1) mapDelete(inFlightJsxCachePruneKeys, pruneKey);
+  else mapSet(inFlightJsxCachePruneKeys, pruneKey, held - 1);
+}
+/**
+ * Generation counter for background prune work.
+ *
+ * Clearing a timer unschedules a pass that has not started, but a pass already
+ * running cannot be unscheduled: it resumes at its next await and arms the
+ * follow-up work its own bookkeeping asks for. Each pass captures the
+ * generation it began in and re-arms only while that generation is current, so
+ * cancellation is a fence the running pass observes rather than a race it can
+ * lose.
+ */
+let jsxCachePruneGeneration = 0;
 let persistedJsxCachePrunePromotion: Promise<void> | undefined;
 let persistedJsxCachePrunePromotionRetry: ReturnType<typeof setTimeout> | undefined;
 const pendingJsxCachePrunePromotionDirectories = new IntrinsicSet<string>();
@@ -1407,6 +1462,7 @@ async function retirePersistedJsxCachePruneRequest(
 async function promotePersistedJsxCachePruneRequest(
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): Promise<void> {
+  const generation = jsxCachePruneGeneration;
   const queuedCandidates = primordialArraySort(
     mapEntries(queuedJsxCachePrunes),
     (left, right) => left[1].fireAtMs - right[1].fireAtMs,
@@ -1485,7 +1541,7 @@ async function promotePersistedJsxCachePruneRequest(
       if (
         mapHas(scheduledJsxCachePrunes, pruneKey) ||
         mapHas(queuedJsxCachePrunes, pruneKey) ||
-        setHas(inFlightJsxCachePrunes, pruneKey)
+        mapHas(inFlightJsxCachePruneKeys, pruneKey)
       ) {
         continue;
       }
@@ -1499,6 +1555,11 @@ async function promotePersistedJsxCachePruneRequest(
       requestTombstoneRetryAtMs = hostNow() + JSX_CACHE_VARIANT_MIN_AGE_MS;
     }
   }
+  // The scan above is the only awaiting part of this pass. A cancellation that
+  // landed while it ran has already cleared the timers this pass was promoting
+  // work into, so arming fresh ones now would reintroduce exactly the timers
+  // teardown just retired.
+  if (generation !== jsxCachePruneGeneration) return;
   let queuedIndex = 0;
   let persistedIndex = 0;
   if (mapSize(scheduledJsxCachePrunes) >= MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES) {
@@ -1575,6 +1636,7 @@ function pumpPersistedJsxCachePrunePromotions(): void {
   setDelete(pendingJsxCachePrunePromotionDirectories, requestDirectory);
   activeJsxCachePrunePromotionDirectory = requestDirectory;
   activeJsxCachePrunePromotionRequestedAgain = false;
+  const generation = jsxCachePruneGeneration;
   const promotion = promotePersistedJsxCachePruneRequest(requestDirectory);
   persistedJsxCachePrunePromotion = promotion;
   void primordialPromiseThen(promotion, () => {
@@ -1584,17 +1646,34 @@ function pumpPersistedJsxCachePrunePromotions(): void {
     activeJsxCachePrunePromotionDirectory = undefined;
     activeJsxCachePrunePromotionRequestedAgain = false;
     persistedJsxCachePrunePromotion = undefined;
+    // No generation check: the directory is re-queued above only when someone
+    // asked for it again, and cancellation clears that flag, so a set flag is
+    // a live request. Timer arming is fenced inside the promotion itself.
     pumpPersistedJsxCachePrunePromotions();
   }, () => {
-    setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+    const requestedAgain = activeJsxCachePrunePromotionRequestedAgain;
     activeJsxCachePrunePromotionDirectory = undefined;
     activeJsxCachePrunePromotionRequestedAgain = false;
     persistedJsxCachePrunePromotion = undefined;
-    persistedJsxCachePrunePromotionRetry = hostSetTimeout(() => {
-      persistedJsxCachePrunePromotionRetry = undefined;
-      pumpPersistedJsxCachePrunePromotions();
-    }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
-    unrefTimer(persistedJsxCachePrunePromotionRetry);
+    if (generation === jsxCachePruneGeneration) {
+      setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+      persistedJsxCachePrunePromotionRetry = hostSetTimeout(() => {
+        persistedJsxCachePrunePromotionRetry = undefined;
+        pumpPersistedJsxCachePrunePromotions();
+      }, JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+      unrefTimer(persistedJsxCachePrunePromotionRetry);
+      return;
+    }
+    // Cancellation retired this pass's own retry, but the promotion slot it
+    // held is now free. Anything still pending has to be pumped from here --
+    // a request for this directory that arrived after the cancellation, or one
+    // for an unrelated directory that could not start while this pass held the
+    // slot. Neither will be pumped by its own caller, which short-circuited on
+    // "already pending".
+    if (requestedAgain) {
+      setAdd(pendingJsxCachePrunePromotionDirectories, requestDirectory);
+    }
+    pumpPersistedJsxCachePrunePromotions();
   });
 }
 
@@ -1697,6 +1776,7 @@ function queueJsxCachePrune(
 async function revisitJsxCacheDirectory(
   esmCacheDir: string,
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
+  pruneGeneration?: number,
 ): Promise<void> {
   try {
     await scheduledJsxCachePruneSemaphore.acquire(async () => {
@@ -1706,6 +1786,7 @@ async function revisitJsxCacheDirectory(
         hostNow(),
         0,
         requestDirectory,
+        pruneGeneration,
       );
     });
   } catch (error) {
@@ -1714,7 +1795,10 @@ async function revisitJsxCacheDirectory(
     });
     // A pass that throws, rather than preserving an artifact and naming a
     // retry, never reaches the scheduling at its end. Re-arm the directory so
-    // transient lease or filesystem failures cannot strand its excess files.
+    // transient lease or filesystem failures cannot strand its excess files --
+    // unless a cancellation retired this pass while the throwing operation was
+    // in flight, in which case re-arming would outlive teardown.
+    if (!mayArmJsxCachePruneRetry(pruneGeneration)) return;
     scheduleJsxCachePruneRetry(
       esmCacheDir,
       JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
@@ -1775,10 +1859,15 @@ function scheduleJsxCachePruneRetry(
     // the pass schedules can then replace it even when every other slot is
     // occupied, without overflowing to persistence and racing completion.
     fired.timer = undefined;
-    void (async () => {
-      setAdd(inFlightJsxCachePrunes, pruneKey);
+    const generation = jsxCachePruneGeneration;
+    // Two passes for one directory can overlap: this one holds the map entry
+    // with no timer, so a follow-up is free to arm the next one before this
+    // pass settles. Identity has to be per pass, or whichever settles first
+    // retires the other's bookkeeping and hides it from teardown.
+    const passId = nextJsxCachePrunePassId++;
+    const pass = (async () => {
       try {
-        await revisitJsxCacheDirectory(esmCacheDir, requestDirectory);
+        await revisitJsxCacheDirectory(esmCacheDir, requestDirectory, generation);
         const followUp = mapGet(scheduledJsxCachePrunes, pruneKey);
         if (
           followUp?.timer === undefined &&
@@ -1792,13 +1881,27 @@ function scheduleJsxCachePruneRetry(
           );
         }
       } finally {
-        setDelete(inFlightJsxCachePrunes, pruneKey);
-        if (mapGet(scheduledJsxCachePrunes, pruneKey)?.timer === undefined) {
+        mapDelete(inFlightJsxCachePrunes, passId);
+        releaseInFlightJsxCachePruneKey(pruneKey);
+        // Only retire the reserved slot when it is still this pass's. A newer
+        // pass for the same directory owns its own entry, and dropping that
+        // would strand the timer it just armed.
+        if (
+          mapGet(scheduledJsxCachePrunes, pruneKey) === fired &&
+          fired.timer === undefined
+        ) {
           mapDelete(scheduledJsxCachePrunes, pruneKey);
         }
-        requestPersistedJsxCachePrunePromotion(requestDirectory);
+        // Requesting a promotion arms the next timer, so it belongs to the
+        // generation this pass started in. After a cancellation it would hand
+        // the following test a timer it never scheduled.
+        if (generation === jsxCachePruneGeneration) {
+          requestPersistedJsxCachePrunePromotion(requestDirectory);
+        }
       }
     })();
+    mapSet(inFlightJsxCachePrunes, passId, pass);
+    retainInFlightJsxCachePruneKey(pruneKey);
   }, delayMs);
   unrefTimer(timer);
   mapSet(scheduledJsxCachePrunes, pruneKey, {
@@ -1835,8 +1938,17 @@ export function ensureJsxCacheSweepArmed(esmCacheDir: string): void {
   requestPersistedJsxCachePrunePromotion(requestDirectory);
 }
 
-/** Drop every pending follow-up prune (test isolation only). */
+/**
+ * Drop every pending follow-up prune and fence the passes already running.
+ *
+ * Bumping the generation is what makes this a cancellation rather than a
+ * sweep: a pass suspended at an await resumes into a superseded generation and
+ * declines to arm the follow-up timer or promotion it would otherwise schedule.
+ * Passes still have to be awaited -- see {@link waitForJsxCacheMaintenance} --
+ * because this cannot unwind filesystem work already issued.
+ */
 function cancelScheduledJsxCachePrunes(): void {
+  jsxCachePruneGeneration++;
   for (const pending of primordialArrayValues(mapValues(scheduledJsxCachePrunes))) {
     if (pending.timer !== undefined) hostClearTimeout(pending.timer);
   }
@@ -1860,13 +1972,24 @@ function cancelScheduledJsxCachePrunes(): void {
   mapClear(lazyJsxArtifactExpirations);
 }
 
-async function waitForJsxCacheMaintenanceForTests(): Promise<void> {
+/**
+ * Settle every background prune pass this module still owns.
+ *
+ * Scheduled passes run from timer callbacks, so their promises have no caller
+ * to await them. Draining them here is what lets a process -- or a test -- know
+ * the module has stopped touching the filesystem, instead of discovering it
+ * from a leaked pending promise once the event loop has already resolved.
+ */
+async function waitForJsxCacheMaintenance(): Promise<void> {
   while (
-    jsxCachePersistencePump !== undefined || persistedJsxCachePrunePromotion !== undefined
+    jsxCachePersistencePump !== undefined || persistedJsxCachePrunePromotion !== undefined ||
+    mapSize(inFlightJsxCachePrunes) > 0
   ) {
-    await primordialPromiseAllSettled(
-      [jsxCachePersistencePump, persistedJsxCachePrunePromotion],
-    );
+    await primordialPromiseAllSettled([
+      jsxCachePersistencePump,
+      persistedJsxCachePrunePromotion,
+      ...primordialArrayValues(mapValues(inFlightJsxCachePrunes)),
+    ]);
   }
 }
 
@@ -2108,6 +2231,7 @@ async function collectExcessJsxArtifacts(
   nowMs: number,
   reservedSlots = 0,
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
+  pruneGeneration?: number,
 ): Promise<number | undefined> {
   const localFs = getLocalFs();
 
@@ -2155,7 +2279,7 @@ async function collectExcessJsxArtifacts(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to scan JSX cache artifacts for pruning`, {
       error: cacheFilesystemErrorCode(error),
     });
-    if (!isNotFoundError(error)) {
+    if (!isNotFoundError(error) && mayArmJsxCachePruneRetry(pruneGeneration)) {
       scheduleJsxCachePruneRetry(
         esmCacheDir,
         JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
@@ -2286,7 +2410,7 @@ async function collectExcessJsxArtifacts(
     }
   }
 
-  if (retryAtMs !== undefined) {
+  if (retryAtMs !== undefined && mayArmJsxCachePruneRetry(pruneGeneration)) {
     scheduleJsxCachePruneRetry(
       esmCacheDir,
       mathMax(retryAtMs - nowMs, 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
@@ -2352,8 +2476,9 @@ export const __jsxCacheInternals = {
   },
   runLazyJsxArtifactHeartbeat,
   revisitJsxCacheDirectory,
+  currentJsxCachePruneGeneration: (): number => jsxCachePruneGeneration,
   servedArtifactMemoSize: (): number => mapSize(servedArtifactTimestamps),
   withJsxArtifactRefreshSlot,
-  waitForJsxCacheMaintenanceForTests,
+  waitForJsxCacheMaintenance,
   wasJsxArtifactRecentlyServed,
 };
