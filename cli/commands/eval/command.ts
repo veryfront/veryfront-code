@@ -891,6 +891,9 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       // A resolver that awaits network work cancels with the case.
       ...(signal ? { signal } : {}),
     });
+    // A resolver that ignored the signal can return after the deadline. The
+    // record is already reported as timed out, so start no model request.
+    if (signal?.aborted) throw signal.reason;
     const response = await agent.generate({
       input: normalizeEvalInputForAgent(example.input),
       context: {
@@ -1521,7 +1524,13 @@ export async function runEvalCommand(
 
   const progress = dependencies.createProgressReporter?.() ?? createEvalProgressReporter();
   try {
-    return await runEvalCommandWithProgress(options, projectDir, discoverRuntime, progress);
+    return await runEvalCommandWithProgress(
+      options,
+      projectDir,
+      discoverRuntime,
+      progress,
+      dependencies,
+    );
   } finally {
     progress.stop();
   }
@@ -1532,6 +1541,7 @@ async function runEvalCommandWithProgress(
   projectDir: string,
   discoverRuntime: typeof discoverProjectAgentRuntime,
   progress: EvalProgressReporter,
+  dependencies: EvalCommandDependencies,
 ): Promise<number | undefined> {
   return await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey } = context;

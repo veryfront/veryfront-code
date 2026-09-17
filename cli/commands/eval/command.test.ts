@@ -927,6 +927,37 @@ describe("eval CLI command helpers", () => {
     assertEquals(calls, ["q1:1", "q1:2", "q2:1", "q2:2"]);
   });
 
+  it("starts no model request when a mock tool resolver returns after the record deadline", async () => {
+    let generateCalls = 0;
+    const agent = makeAgentStub(async () => {
+      generateCalls += 1;
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:resolver-late",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "one" }]),
+      // A resolver that ignores the signal and resolves past the deadline.
+      mockTools: () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ search_docs: makeEvalTool("search_docs") }), 60)
+        ),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 20,
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+    // Give the abandoned record time to reach the point where it would generate.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:resolver-late" case "q1" did not finish within 0.02s.',
+    );
+    assertEquals(generateCalls, 0);
+  });
+
   it("cancels a stalled mock tool resolver at the record deadline", async () => {
     let resolverSignal: AbortSignal | undefined;
     const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
