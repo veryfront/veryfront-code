@@ -20,6 +20,7 @@ import {
   getAnthropicMessagesUrl,
   isNumberArray,
   mergeUsage,
+  notifyProviderRequestRetry,
   parseRetryAfterMs,
   ProviderError,
   ProviderOverloadedError,
@@ -761,8 +762,26 @@ export function createAnthropicModelRuntime(
             ) {
               throw error;
             }
+            const replayDelayMs = ANTHROPIC_STREAM_REPLAY_DELAY_MS * 2 ** streamReplayCount;
+            // A wait longer than the remaining budget leaves the replay no time
+            // to return headers, and a cancelled caller gets no replay at all:
+            // the wait below rejects on its signal. Neither is announced as an
+            // upcoming attempt.
+            if (
+              replayDelayMs < remainingStreamHeadersBudgetMs() &&
+              !providerAbortScope.controller.signal.aborted
+            ) {
+              notifyProviderRequestRetry({
+                providerLabel: providerName,
+                modelId,
+                reason: "stream interrupted",
+                attempt: streamReplayCount + 2,
+                maxAttempts: MAX_ANTHROPIC_STREAM_REPLAYS + 1,
+                delayMs: replayDelayMs,
+              });
+            }
             await waitForProviderStreamRetry(
-              ANTHROPIC_STREAM_REPLAY_DELAY_MS * 2 ** streamReplayCount,
+              replayDelayMs,
               providerAbortScope.controller.signal,
             );
             streamReplayCount++;

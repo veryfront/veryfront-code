@@ -882,6 +882,13 @@ No access to the linked project for eval run.
 - **HTTP status:** 403
 - **What to do:** Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again
 
+### eval-record-timeout
+
+Eval record timed out.
+
+- **HTTP status:** 504
+- **What to do:** The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout \<seconds>, or pass --record-timeout 0 to disable it.
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.

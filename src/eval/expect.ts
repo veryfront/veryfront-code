@@ -106,6 +106,7 @@ export function createEvalCheckContext(input: {
   repetition: number;
   record: EvalRecord;
   checks: EvalMetricResult[];
+  signal?: AbortSignal;
 }) {
   return {
     definition: input.definition,
@@ -113,5 +114,6 @@ export function createEvalCheckContext(input: {
     repetition: input.repetition,
     record: input.record,
     expect: createEvalExpect(input.record, input.checks),
+    ...(input.signal ? { signal: input.signal } : {}),
   };
 }

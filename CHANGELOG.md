@@ -65,6 +65,23 @@ and `deploy`) stops with an error instead of uploading files the checkout
 ignores. Pull stops the same way. Fix the Git error, then run the command
 again.
 
+### Added: `veryfront eval` progress and `--record-timeout`
+
+`veryfront eval` now shows which eval and case is running, finished cases, and
+elapsed time while cases run, and prints a notice when a model request is
+retried. `--record-timeout <seconds>` fails a case that runs too long,
+including its metrics and checks, with the `eval-record-timeout` error (default
+600). While the limit is active, a stalled model stream can no longer hold the
+run open; `--record-timeout 0` disables it and restores the previous unbounded
+wait. The failed case keeps its target output, trace, and usage.
+
+`runEval()` from `veryfront/eval` accepts matching `recordTimeoutMs` and
+`onProgress` options. Target adapters, `evalTool` input mappers, mock tool
+resolvers, metric `evaluate()` contexts, check contexts, and LLM judge inputs
+receive a `signal` that aborts at the record deadline, and the built-in LLM
+judges pass it to the model request. With `LOG_LEVEL=DEBUG`, provider requests log their start,
+status, duration, and retries.
+
 ### Changed: `runEval()` rejects when the model gateway refuses model access
 
 `runEval()` from `veryfront/eval` now rejects with the

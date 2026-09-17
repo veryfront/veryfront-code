@@ -175,6 +175,21 @@ export const EVAL_MODEL_EGRESS_BLOCKED = defineError({
     "Veryfront blocks requests to hosts that resolve to private network addresses. If the Veryfront API runs on a private network you trust, such as a staging, VPN, or self-hosted deployment, add its exact origin (for example https://api.example.com) to VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS in the environment that runs veryfront eval, then run the eval again",
 });
 
+/**
+ * An eval record ran past its time limit. The limit covers the whole record:
+ * target execution, tools, model requests, metrics, and checks. A model stream
+ * that stops sending data after its response headers has no deadline of its
+ * own, so the record limit is what keeps an eval run from waiting forever.
+ */
+export const EVAL_RECORD_TIMEOUT = defineError({
+  slug: "eval-record-timeout",
+  category: "AGENT",
+  status: 504,
+  title: "Eval record timed out",
+  suggestion:
+    "The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout <seconds>, or pass --record-timeout 0 to disable it.",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -193,4 +208,5 @@ export const AGENT_REGISTRY = {
   "eval-model-egress-blocked": EVAL_MODEL_EGRESS_BLOCKED,
   "eval-model-unauthorized": EVAL_MODEL_UNAUTHORIZED,
   "eval-model-project-access-denied": EVAL_MODEL_PROJECT_ACCESS_DENIED,
+  "eval-record-timeout": EVAL_RECORD_TIMEOUT,
 } as const;

@@ -83,6 +83,11 @@ export const evalHelp: CommandHelp = {
       flag: "--max-output-tokens <count>",
       description: "Limit target agent output tokens",
     },
+    {
+      flag: "--record-timeout <seconds>",
+      description:
+        "Fail a case, including its metrics and checks, that runs longer than this (default: 600, 0 disables the limit)",
+    },
   ],
   examples: [
     "veryfront eval --list",
@@ -98,5 +103,6 @@ export const evalHelp: CommandHelp = {
     "VERYFRONT_EVAL_EXPORTERS=mlflow VERYFRONT_EVAL_EXPORT_REQUIRED=true veryfront eval",
     "MLFLOW_TRACKING_URI=https://mlflow.example.com veryfront eval",
     "veryfront eval deep-research --json",
+    "veryfront eval deep-research --record-timeout 300",
   ],
 };

@@ -5,6 +5,7 @@ import type {
   EvalKnowledgeMrrMetricOptions,
   EvalKnowledgeRetrievalMetricOptions,
   EvalMetric,
+  EvalMetricContext,
   EvalMetricFamily,
   EvalMetricResult,
   EvalMetricThreshold,
@@ -31,7 +32,10 @@ import {
 } from "./validation.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
-type MetricEvaluator = (record: EvalRecord) => EvalMetricResult | Promise<EvalMetricResult>;
+type MetricEvaluator = (
+  record: EvalRecord,
+  context?: EvalMetricContext,
+) => EvalMetricResult | Promise<EvalMetricResult>;
 
 type KnowledgeEntry = {
   source: string;
@@ -60,6 +64,8 @@ type JudgeRubricInput = {
     output: Record<string, unknown>;
     reference?: unknown;
     metadata: Record<string, unknown>;
+    /** Aborts when the eval record exceeds its time limit. */
+    signal?: AbortSignal;
   }) => Promise<{ score: number; pass?: boolean; explanation?: string }>;
 };
 
@@ -729,8 +735,8 @@ function createMetric(
     family,
     severity: "gate" as const,
     ...(config ? { config } : {}),
-    async evaluate(record: EvalRecord): Promise<EvalMetricResult> {
-      const result = await evaluator(record);
+    async evaluate(record: EvalRecord, context?: EvalMetricContext): Promise<EvalMetricResult> {
+      const result = await evaluator(record, context);
       return {
         ...result,
         name,
@@ -853,7 +859,7 @@ export const metrics = {
       ) {
         throw createEvalValidationError("answer.groundedness judge must be a function");
       }
-      return createMetric("answer.groundedness", "answer", async (record) => {
+      return createMetric("answer.groundedness", "answer", async (record, context) => {
         const entries = getKnowledgeEntries(record, tool);
         const evidence = uniqueStrings(entries.flatMap((entry) => entry.evidenceCandidates));
         const sources = uniqueStrings(retrievedSources(entries));
@@ -880,6 +886,7 @@ export const metrics = {
           metadata: record.metadata,
           evidence,
           sources,
+          ...(context?.signal ? { signal: context.signal } : {}),
         });
         assertFiniteEvalNumber(judged.score, "answer.groundedness judge score", {
           min: 0,
@@ -1301,7 +1308,7 @@ export const metrics = {
       if (rubricOptions.judge !== undefined && typeof rubricOptions.judge !== "function") {
         throw createEvalValidationError("judge.rubric judge must be a function");
       }
-      return createMetric("judge.rubric", "judge", async (record) => {
+      return createMetric("judge.rubric", "judge", async (record, context) => {
         if (!rubricOptions.judge) {
           return {
             name: "judge.rubric",
@@ -1321,6 +1328,7 @@ export const metrics = {
           output,
           reference: record.reference,
           metadata: record.metadata,
+          ...(context?.signal ? { signal: context.signal } : {}),
         });
         assertFiniteEvalNumber(judged.score, "judge.rubric score", { min: 0, max: 1 });
         const min = 0;
