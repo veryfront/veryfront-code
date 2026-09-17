@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
 /** A provider request that failed transiently and is about to be sent again. */
@@ -21,32 +22,19 @@ export interface ProviderRequestObserver {
   onRetry?: (event: ProviderRequestRetryEvent) => void | Promise<void>;
 }
 
-/**
- * Observers are held in a stack rather than one variable, and kept out of
- * `AsyncLocalStorage` on purpose: `node:async_hooks` here would pull the Node
- * global types into the provider type graph, which changes how `fetch` types
- * resolve for unrelated test entry points. The newest scope receives the
- * notifications, and a scope that ends removes its own entry, so overlapping
- * scopes cannot restore a stale observer over a live one.
- */
-const observerStack: ProviderRequestObserver[] = [];
+const observerStorage = new AsyncLocalStorage<ProviderRequestObserver>();
 
 /**
  * Run `fn` with an observer that sees provider request retries issued while it
- * runs, including retries of nested agent and model calls. Notifications go to
- * the most recently entered scope.
+ * runs, including retries of nested agent and model calls. The observer is
+ * bound to the async execution context, so overlapping scopes each see only
+ * their own requests.
  */
 export async function runWithProviderRequestObserver<T>(
   observer: ProviderRequestObserver,
   fn: () => Promise<T>,
 ): Promise<T> {
-  observerStack.push(observer);
-  try {
-    return await fn();
-  } finally {
-    const index = observerStack.lastIndexOf(observer);
-    if (index !== -1) observerStack.splice(index, 1);
-  }
+  return await observerStorage.run(observer, fn);
 }
 
 /**
@@ -62,7 +50,7 @@ export function notifyProviderRequestRetry(event: ProviderRequestRetryEvent): vo
     maxAttempts: event.maxAttempts,
     delayMs: event.delayMs,
   });
-  const observer = observerStack.at(-1);
+  const observer = observerStorage.getStore();
   if (!observer?.onRetry) return;
   try {
     // An async observer rejects after this frame returns, so contain that too:

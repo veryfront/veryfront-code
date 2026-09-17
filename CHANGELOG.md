@@ -71,8 +71,9 @@ again.
 elapsed time while cases run, and prints a notice when a model request is
 retried. `--record-timeout <seconds>` fails a case that runs too long,
 including its metrics and checks, with the `eval-record-timeout` error (default
-600, `0` disables it), so a stalled model stream can no longer hold the run
-open. The failed case keeps its target output, trace, and usage.
+600). While the limit is active, a stalled model stream can no longer hold the
+run open; `--record-timeout 0` disables it and restores the previous unbounded
+wait. The failed case keeps its target output, trace, and usage.
 
 `runEval()` from `veryfront/eval` accepts matching `recordTimeoutMs` and
 `onProgress` options. Target adapters, `evalTool` input mappers, mock tool
