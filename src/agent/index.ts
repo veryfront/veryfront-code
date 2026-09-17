@@ -1121,6 +1121,7 @@ export {
   resolveRuntimeMessageFileUrls,
   type RuntimeFileUrlResolver,
   type RuntimeFileUrlResolverInput,
+  type UnresolvableRuntimeAttachment,
 } from "./runtime/message-file-url-refresh.ts";
 export {
   prepareAgentRuntimeMessagesFromUiMessages,
