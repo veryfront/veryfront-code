@@ -251,20 +251,73 @@ export function describeUnresolvableNpmImport(error: unknown): string | null {
 const ESM_CDN_ORIGIN = new URL(ESM_CDN_BASE).origin;
 
 /**
- * The package an esm.sh module path pins, or `null` for anything off the CDN.
- * esm.sh addresses a package as `/zod@3.25.76/es2022/zod.mjs` and a scoped one
- * as `/@scope/pkg@1.0.0/mod.js`, optionally behind a `/v135/` build prefix.
- *
- * @internal Exported for testing only.
+ * The build-target directory esm.sh puts between a package pin and the module
+ * file it built: `/react@19.2.4/es2022/jsx-runtime.mjs`. It addresses esm.sh's
+ * own output layout, not the package's export map, so it is not part of the
+ * subpath the package itself publishes.
  */
-export function esmCdnPackageName(url: URL): string | null {
+const ESM_CDN_BUILD_TARGET = /^(?:es(?:next|\d{4})|denonext|deno|node|bun|browser)$/;
+
+/** The extension esm.sh gives a built module file. */
+const ESM_CDN_MODULE_EXTENSION = /\.(?:m|c)?js$/;
+
+/**
+ * The package, and the package subpath, an esm.sh module path addresses.
+ * `null` for anything off the CDN.
+ *
+ * esm.sh addresses a package as `/zod@3.25.76/es2022/zod.mjs` and a scoped one
+ * as `/@scope/pkg@1.0.0/es2022/pkg.mjs`, optionally behind a `/v135/` build
+ * prefix. What follows the pin is the built file, so the package's own subpath
+ * is what is left after the build-target directory and the file extension come
+ * off: `/react@19.2.4/es2022/jsx-runtime.mjs` is `react/jsx-runtime`, while
+ * `/react@19.2.4/es2022/react.mjs` -- whose file is named after the package
+ * itself -- is the package root.
+ */
+function parseEsmCdnModule(url: URL): { name: string; subpath: string } | null {
   if (url.origin !== ESM_CDN_ORIGIN) return null;
   const segments = url.pathname.replace(/^\/(?:v\d+|stable)\//, "/").split("/").filter(Boolean);
   if (segments.length === 0) return null;
   const scoped = segments[0]!.startsWith("@") && segments.length > 1;
   const pinned = scoped ? `${segments[0]}/${segments[1]}` : segments[0]!;
   const name = pinned.replace(/@[^@/]+$/, "");
-  return name.length > 0 ? name : null;
+  if (name.length === 0) return null;
+
+  let rest = segments.slice(scoped ? 2 : 1);
+  if (rest.length > 0 && ESM_CDN_BUILD_TARGET.test(rest[0]!)) rest = rest.slice(1);
+  const file = rest.join("/").replace(ESM_CDN_MODULE_EXTENSION, "");
+  // esm.sh names the root module after the package, so a file matching the
+  // package's own last name segment is the root rather than a subpath.
+  const rootModuleName = name.slice(name.lastIndexOf("/") + 1);
+  const subpath = file.length === 0 || file === rootModuleName ? "" : file;
+  return { name, subpath };
+}
+
+/**
+ * The package an esm.sh module path pins, or `null` for anything off the CDN.
+ *
+ * @internal Exported for testing only.
+ */
+export function esmCdnPackageName(url: URL): string | null {
+  return parseEsmCdnModule(url)?.name ?? null;
+}
+
+/**
+ * The bare specifier an esm.sh module path stands in for -- `react` for the
+ * package root, `react/jsx-runtime` for a subpath -- or `null` for anything
+ * off the CDN.
+ *
+ * This is what the http-url guard externalizes in place of a fetched URL, and
+ * the subpath is the whole point: collapsing every matching URL to the bare
+ * package name turned an inlined dependency's `react/jsx-runtime` import into
+ * an import of `react`, whose root export has no `jsx` or `jsxs`. Every JSX
+ * element in that module then failed at load time.
+ *
+ * @internal Exported for testing only.
+ */
+export function esmCdnModuleSpecifier(url: URL): string | null {
+  const parsed = parseEsmCdnModule(url);
+  if (!parsed) return null;
+  return parsed.subpath.length > 0 ? `${parsed.name}/${parsed.subpath}` : parsed.name;
 }
 
 /**
@@ -365,9 +418,12 @@ function createProjectDependencyCdnPlugin(
           /* expected: a non-URL specifier is the HTTP plugin's to resolve */
           return undefined;
         }
-        const name = esmCdnPackageName(url);
-        if (!name || !isFrameworkProvidedPackage(name)) return undefined;
-        return { path: name, external: true };
+        const parsed = parseEsmCdnModule(url);
+        if (!parsed || !isFrameworkProvidedPackage(parsed.name)) return undefined;
+        // The SUBPATH has to survive: `react/jsx-runtime` externalized as
+        // `react` imports a module with no `jsx` or `jsxs` export, so every
+        // JSX element in the inlined dependency fails when it loads.
+        return { path: esmCdnModuleSpecifier(url)!, external: true };
       });
 
       build.onResolve({ filter: /^[^./]/ }, (args) => {
@@ -438,10 +494,56 @@ function describeBundleFailure(failure: unknown): string {
 }
 
 /**
+ * The name to give a discovered file in user-facing error detail.
+ *
+ * Hosted discovery already addresses its VFS with project-relative paths, but
+ * a local filesystem run resolves the `file://` entry to an absolute machine
+ * path -- `/Users/<name>/...` -- and AGENTS.md's secret and internal-detail
+ * safety rules put a user home directory and a machine-specific filesystem
+ * layout on the list of things user-facing output must never carry. The file
+ * still has to be named, or the classified error is no more actionable than
+ * the raw `Build failed with 1 error` text it replaced, so this renders the
+ * path relative to the project root and falls back to the bare file name when
+ * there is no root to render it against.
+ *
+ * @internal Exported for testing only.
+ */
+export function discoveryPathForDisplay(filePath: string, baseDir?: string): string {
+  const root = (baseDir ?? "").replace(/\/+$/, "");
+  if (root.length > 0 && filePath.startsWith(`${root}/`)) {
+    return filePath.slice(root.length + 1);
+  }
+  // A relative path is already free of machine layout; leave it as written.
+  if (!filePath.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(filePath)) return filePath;
+  return pathHelper.basename(filePath);
+}
+
+/** The raw entry path, and the only form of it that may reach the user. */
+interface DiscoveryPathNames {
+  raw: string;
+  display: string;
+}
+
+/**
+ * `text` with every mention of the raw entry path replaced by its display
+ * form. A platform or bundler message quotes the path it was handed -- Deno's
+ * `readTextFile '<absolute path>'`, esbuild's resolve diagnostics -- which
+ * would put the machine layout back into detail {@link discoveryPathForDisplay}
+ * just took out.
+ */
+function withDisplayPath(text: string, paths: DiscoveryPathNames): string {
+  return paths.raw === paths.display ? text : text.split(paths.raw).join(paths.display);
+}
+
+/**
  * Classify a bundle failure. Every failure leaves here classified: an
  * unclassified esbuild rejection reaching the user as raw
  * `Build failed with 1 error` text, with no slug and no file path, is the
  * surface #1440 asked to stop showing.
+ *
+ * Everything built here is user-facing detail, so the file is named through
+ * `paths.display` and the bundler's own text is run through
+ * {@link withDisplayPath}; `paths.raw` is never interpolated.
  *
  * The bundler wrapper rethrows esbuild's rejection instead of returning its
  * diagnostics, so this has to be reached from a catch -- the `result.errors`
@@ -449,7 +551,7 @@ function describeBundleFailure(failure: unknown): string {
  */
 function classifyBundleFailure(
   failure: unknown,
-  filePath: string,
+  paths: DiscoveryPathNames,
   missing: readonly MissingProjectDependency[],
 ): Error {
   const cause = failure instanceof Error ? failure : undefined;
@@ -457,15 +559,15 @@ function classifyBundleFailure(
   if (missing.length > 0) {
     const listed = missing.map(({ specifier, reason }) => `"${specifier}" (${reason})`).join("; ");
     return DEPENDENCY_MISSING.create({
-      detail: `${filePath} imports ${listed}. Declare the package in the project's ` +
+      detail: `${paths.display} imports ${listed}. Declare the package in the project's ` +
         `package.json with an exact version and import that same version, or move the ` +
         `work to an extension or a sandbox session.`,
       cause,
     });
   }
 
-  const text = describeBundleFailure(failure);
-  const detail = `Failed to transpile ${filePath}: ${text}`;
+  const text = withDisplayPath(describeBundleFailure(failure), paths);
+  const detail = `Failed to transpile ${paths.display}: ${text}`;
   // A CDN failure names an unreachable project dependency, not broken source.
   if (text.includes(ESM_CDN_BASE)) {
     return DEPENDENCY_MISSING.create({ detail, cause });
@@ -491,6 +593,12 @@ export async function importModule(
   await ensureVeryfrontGlobals();
 
   const filePath = file.replace("file://", "");
+  // Everything below names the file to the user through this, never through
+  // `filePath`: on a local filesystem run that is an absolute machine path.
+  const paths: DiscoveryPathNames = {
+    raw: filePath,
+    display: discoveryPathForDisplay(filePath, context.baseDir),
+  };
 
   let source: string;
   try {
@@ -499,7 +607,7 @@ export async function importModule(
       : await createFileSystem().readTextFile(filePath);
   } catch (error) {
     throw FILE_NOT_FOUND.create({
-      detail: `Failed to read file ${filePath}: ${error}`,
+      detail: `Failed to read file ${paths.display}: ${withDisplayPath(String(error), paths)}`,
       cause: error,
     });
   }
@@ -609,13 +717,13 @@ export async function importModule(
       },
     });
   } catch (error) {
-    throw classifyBundleFailure(error, filePath, missingDependencies);
+    throw classifyBundleFailure(error, paths, missingDependencies);
   }
 
   if (result.errors.length > 0) {
     // Defensive: the bundler wrapper rejects rather than returning errors, so
     // this path is not the one classification normally arrives through.
-    throw classifyBundleFailure(result, filePath, missingDependencies);
+    throw classifyBundleFailure(result, paths, missingDependencies);
   }
 
   const js = result.outputFiles?.[0]?.text ?? "export {}";
@@ -640,7 +748,7 @@ export async function importModule(
       const unresolvable = describeUnresolvableNpmImport(error);
       if (!unresolvable) throw error;
       throw DEPENDENCY_MISSING.create({
-        detail: `${filePath} imports "${unresolvable}", which this runtime cannot resolve. ` +
+        detail: `${paths.display} imports "${unresolvable}", which this runtime cannot resolve. ` +
           `Declare the package in the project's package.json with an exact version so its ` +
           `source is bundled with the module, or move the work to an extension or a sandbox session.`,
         cause: error,

@@ -5,6 +5,8 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   clearTranspileCache,
   describeUnresolvableNpmImport,
+  discoveryPathForDisplay,
+  esmCdnModuleSpecifier,
   esmCdnPackageName,
   importModule as importModuleRaw,
   readDependencyPins,
@@ -437,6 +439,98 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
     it("ignores anything that is not on the CDN", () => {
       assertEquals(esmCdnPackageName(new URL("https://example.com/zod@3.25.76/zod.mjs")), null);
       assertEquals(esmCdnPackageName(new URL("https://esm.sh/")), null);
+    });
+  });
+
+  describe("esmCdnModuleSpecifier", () => {
+    // This is what the http-url guard externalizes in place of the URL. The
+    // package name alone is not enough: `react/jsx-runtime` handed back as
+    // `react` imports a module with no `jsx` or `jsxs` export, so every JSX
+    // element in a CDN-inlined dependency fails the moment the module loads.
+    it("keeps the framework subpath a CDN module addresses", () => {
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/react@19.2.4/es2022/jsx-runtime.mjs")),
+        "react/jsx-runtime",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/react@19.2.4/denonext/jsx-dev-runtime.mjs")),
+        "react/jsx-dev-runtime",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/react-dom@19.2.4/es2022/client.mjs")),
+        "react-dom/client",
+      );
+      // A scoped package's subpath survives the extra name segment.
+      assertEquals(
+        esmCdnModuleSpecifier(
+          new URL("https://esm.sh/@opentelemetry/api@1.9.0/es2022/experimental.mjs"),
+        ),
+        "@opentelemetry/api/experimental",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/v135/react@19.2.4/es2022/jsx-runtime.mjs")),
+        "react/jsx-runtime",
+      );
+    });
+
+    it("reads the package root as the bare package name", () => {
+      // esm.sh names the root module after the package, so `es2022/zod.mjs`
+      // under `zod@3.25.76` is the root and must not become `zod/zod`.
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/zod@3.25.76/es2022/zod.mjs")),
+        "zod",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/@opentelemetry/api@1.9.0/es2022/api.mjs")),
+        "@opentelemetry/api",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/react@19.2.4?target=es2022")),
+        "react",
+      );
+      assertEquals(esmCdnModuleSpecifier(new URL("https://esm.sh/unpdf")), "unpdf");
+    });
+
+    it("ignores anything that is not on the CDN", () => {
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://example.com/react@19.2.4/es2022/jsx-runtime.mjs")),
+        null,
+      );
+      assertEquals(esmCdnModuleSpecifier(new URL("https://esm.sh/")), null);
+    });
+  });
+
+  describe("discoveryPathForDisplay", () => {
+    // AGENTS.md's secret and internal-detail safety rules put a user home
+    // directory and a machine-specific filesystem layout on the list of things
+    // user-facing output must never carry, and a local discovery run resolves
+    // its `file://` entry to exactly that.
+    it("renders a discovered file relative to the project root", () => {
+      assertEquals(
+        discoveryPathForDisplay("/srv/projects/acme/tools/extract.ts", "/srv/projects/acme"),
+        "tools/extract.ts",
+      );
+      assertEquals(
+        discoveryPathForDisplay("/srv/projects/acme/tools/extract.ts", "/srv/projects/acme/"),
+        "tools/extract.ts",
+      );
+    });
+
+    it("keeps a path that is already relative", () => {
+      assertEquals(discoveryPathForDisplay("tools/extract.ts", ""), "tools/extract.ts");
+      assertEquals(discoveryPathForDisplay("tools/extract.ts", undefined), "tools/extract.ts");
+    });
+
+    it("discloses no machine layout when there is no root to render against", () => {
+      assertEquals(discoveryPathForDisplay("/home/someone/work/tools/extract.ts"), "extract.ts");
+      assertEquals(
+        discoveryPathForDisplay("/home/someone/work/tools/extract.ts", "/srv/other"),
+        "extract.ts",
+      );
+      assertEquals(
+        discoveryPathForDisplay("C:\\Users\\someone\\work\\extract.ts", ""),
+        "extract.ts",
+      );
     });
   });
 

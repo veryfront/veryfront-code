@@ -136,14 +136,49 @@ export function isFrameworkProvidedPackage(name: string): boolean {
  */
 const NPM_PACKAGE_NAME = /^(?:@[a-z0-9~][a-z0-9-._~]*\/)?[a-z0-9~][a-z0-9-._~]*$/;
 
-/** A single version, as opposed to a range. */
-const EXACT_VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*$/;
+/**
+ * A single version, as opposed to a range: semver's `major.minor.patch` with
+ * at most one pre-release part and at most one build part, in that order.
+ *
+ * Written so it cannot backtrack. The earlier form repeated one alternation
+ * over both parts -- `(?:[-+][0-9A-Za-z.-]+)*` -- whose separator `-` is also
+ * inside the body's character class, so a run of dashes could be split between
+ * the repetitions in exponentially many ways and a non-matching tail made the
+ * engine try all of them (CodeQL js/redos; `0.0.0+` followed by 40 dashes and
+ * one invalid character took 4.7s to reject). Here each part appears at most
+ * once and the two are told apart by a leading character the other part's body
+ * cannot contain -- `+` is absent from the pre-release class -- so every
+ * character has exactly one way to be consumed and matching is linear in the
+ * length of the input.
+ */
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 /**
- * The comparison operators an npm range may put in front of the one version it
- * names. `^1.8.1`, `~1.8.1`, `>=1.8.1`, `=1.8.1` and `v1.8.1` all name 1.8.1.
+ * The comparison operators an npm range may put in front of a version, longest
+ * first so `>=` is never read as `>`.
  */
-const RANGE_OPERATOR = /^(?:\^|~>?|>=?|=|v)\s*/;
+const RANGE_OPERATORS = ["<=", ">=", "~>", "^", "~", "=", "v", "<", ">"] as const;
+
+/**
+ * The operators whose range does NOT let the version they mention be served.
+ *
+ * `^1.8.1`, `~1.8.1`, `~>1.8.1`, `>=1.8.1`, `=1.8.1`, `v1.8.1` and a bare
+ * `1.8.1` all ADMIT 1.8.1, so fetching it serves a version the project both
+ * wrote down and accepts. The three here do not:
+ *
+ * - `>1.8.1` and `<1.8.1` exclude 1.8.1 outright. Stripping the operator and
+ *   fetching it served the one version the declaration had ruled out.
+ * - `<=1.8.1` admits 1.8.1 but names it as a ceiling rather than as the
+ *   version the project installed, so it is not this module's to pick either.
+ *
+ * All three route to the caller's conservative branch instead, exactly as an
+ * unresolvable range such as `1.x` does.
+ */
+// `<` and `>` mention a version and exclude it, so reducing to it would fetch
+// the one version the project ruled out. `<=` is NOT in this set: it admits the
+// version it names, so serving that version is within the declaration -- and
+// refusing it would turn a valid, satisfiable entry into a hard failure.
+const OPERATORS_NAMING_NO_FETCHABLE_VERSION: ReadonlySet<string> = new Set(["<", ">"]);
 
 /** Anything carrying its own URL scheme (`https:`, `jsr:`, `data:`, ...). */
 const URL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
@@ -164,6 +199,11 @@ const URL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
  * falls back to the runtime or reports a classified failure. Guessing a
  * version for those is the failure mode this whole path exists to stop.
  *
+ * A version the range EXCLUDES is that same failure mode wearing a valid
+ * declaration: `">1.8.1"` mentions 1.8.1 and refuses it, so reducing it to
+ * 1.8.1 fetched the one version the project had ruled out. See
+ * {@link OPERATORS_NAMING_NO_FETCHABLE_VERSION}.
+ *
  * @internal Exported for testing only.
  */
 export function exactVersionNamedByRange(range: unknown): string | null {
@@ -172,7 +212,11 @@ export function exactVersionNamedByRange(range: unknown): string | null {
   // A scheme (`workspace:`, `file:`, `npm:alias@x`, `git+ssh://`) is an alias,
   // not a version: whatever follows it is not this project's to fetch.
   if (URL_SCHEME.test(trimmed)) return null;
-  const candidate = trimmed.replace(RANGE_OPERATOR, "");
+  const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
+  if (operator !== undefined && OPERATORS_NAMING_NO_FETCHABLE_VERSION.has(operator)) return null;
+  const candidate = operator === undefined
+    ? trimmed
+    : trimmed.slice(operator.length).trimStart();
   return EXACT_VERSION.test(candidate) ? candidate : null;
 }
 

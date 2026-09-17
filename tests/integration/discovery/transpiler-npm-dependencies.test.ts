@@ -32,6 +32,28 @@ function importModule(file: string, context: FileDiscoveryContext) {
 }
 
 /**
+ * A JavaScript string literal for `value`, for the module sources these tests
+ * generate.
+ *
+ * `JSON.stringify` is not one: JSON and JavaScript disagree about which
+ * characters may appear raw inside a quoted string -- U+2028 and U+2029 are
+ * legal in JSON and terminate a line in JavaScript source -- so its output can
+ * be a well-formed JSON string and a malformed JavaScript literal at once
+ * (CodeQL js/bad-code-sanitization). Escaping everything outside printable
+ * ASCII removes the disagreement: whatever the value holds, the literal built
+ * here parses as that exact string.
+ */
+function jsStringLiteral(value: string): string {
+  let literal = '"';
+  for (const char of value) {
+    const code = char.codePointAt(0)!;
+    const printable = code >= 0x20 && code <= 0x7e && char !== '"' && char !== "\\";
+    literal += printable ? char : `\\u{${code.toString(16)}}`;
+  }
+  return `${literal}"`;
+}
+
+/**
  * An in-memory FileSystemAdapter, as in src/discovery/transpiler.test.ts.
  *
  * `projectDir` converts absolute paths back to project-relative keys, mirroring
@@ -317,7 +339,7 @@ describe(
         const { mod, requested } = await bundleTool(
           "src/discovery/__fixtures__/specifier-forms.ts",
           [
-            `import { extractText } from ${JSON.stringify(specifier)};`,
+            `import { extractText } from ${jsStringLiteral(specifier)};`,
             `export default { name: "extract", text: extractText() };`,
           ].join("\n"),
           { "veryfront-fixture-pdf-text": "1.8.1", "@veryfront-fixture/pdf-text": "1.8.1" },
@@ -354,8 +376,8 @@ describe(
         [
           `export default {`,
           `  name: "uses-embedded",`,
-          `  loadBare: () => import(${JSON.stringify(name)}),`,
-          `  loadPinned: () => import(${JSON.stringify(`npm:${name}@${version}`)}),`,
+          `  loadBare: () => import(${jsStringLiteral(name)}),`,
+          `  loadPinned: () => import(${jsStringLiteral(`npm:${name}@${version}`)}),`,
           `};`,
         ].join("\n"),
         { [name]: version },
@@ -499,6 +521,96 @@ describe(
       );
     });
 
+    it("keeps the framework subpath when it externalizes a CDN framework import", async () => {
+      // esm.sh compiles JSX against `react/jsx-runtime`, so an inlined
+      // dependency that renders anything imports the SUBPATH, not the package
+      // root. Handing the http-url guard's match back as the bare package name
+      // rewrote that to `react` -- which exports no `jsx` and no `jsxs` -- and
+      // the module threw the moment it loaded, in any project whose declared
+      // dependency reaches JSX.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({
+            dependencies: { "@veryfront-fixture/pdf-text": "1.8.1" },
+          }),
+          [toolPath]: [
+            `import { renderLabel } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", label: renderLabel() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          requested.push(String(input));
+          return Promise.resolve(
+            new Response(
+              [
+                // Exactly what esm.sh emits for a dependency built with JSX.
+                `import { jsx } from "https://esm.sh/react@19.2.4/es2022/jsx-runtime.mjs";`,
+                `export function renderLabel() { return jsx("span", { children: "pdf text" }); }`,
+              ].join("\n"),
+              { headers: { "content-type": "application/javascript" } },
+            ),
+          );
+        },
+        () =>
+          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
+            { default: { label: { type: string; props: { children: string } } } }
+          >,
+      );
+
+      // The element only exists if `jsx` was a real function, which it is only
+      // when the externalized specifier kept the `/jsx-runtime` subpath.
+      assertEquals(mod.default.label.type, "span");
+      assertEquals(mod.default.label.props.children, "pdf text");
+      assertEquals(
+        requested.some((url) => url.includes("/react@")),
+        false,
+        `react must stay external, got ${JSON.stringify(requested)}`,
+      );
+    });
+
+    it("names a missing dependency's file without disclosing the machine path", async () => {
+      // Local filesystem discovery resolves the `file://` entry to an absolute
+      // path, so putting it straight into DEPENDENCY_MISSING detail published
+      // the user's home directory and the machine's filesystem layout --
+      // AGENTS.md's secret and internal-detail safety rules forbid both in
+      // user-facing output. The file still has to be named to be actionable.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ dependencies: {} }),
+          [toolPath]: [
+            `import { extractText } from "@veryfront-fixture/never-declared";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const error = await assertRejects(
+        () => importModule(`file://${projectDir}/${toolPath}`, context),
+        Error,
+        "@veryfront-fixture/never-declared",
+      );
+      const message = error instanceof Error ? error.message : String(error);
+      assertEquals((error as { slug?: string }).slug, "dependency-missing");
+      assert(
+        message.includes(toolPath),
+        `the detail must name the file project-relative, got ${message}`,
+      );
+      assert(
+        !message.includes(projectDir),
+        "the detail must not disclose the absolute project path",
+      );
+    });
+
     it("keeps bare Node builtins external instead of failing the file", async () => {
       // `import { Buffer } from "buffer"` reaches the same resolver as a
       // project dependency. Classifying it as a missing npm package failed
@@ -563,7 +675,7 @@ describe(
       const source = (name: string) =>
         [
           `import { extractText } from "@veryfront-fixture/pdf-text";`,
-          `export default { name: ${JSON.stringify(name)}, text: extractText() };`,
+          `export default { name: ${jsStringLiteral(name)}, text: extractText() };`,
         ].join("\n");
 
       const first = await bundleTool(

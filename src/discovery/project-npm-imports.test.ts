@@ -106,6 +106,46 @@ describe("exactVersionNamedByRange", () => {
     assertEquals(exactVersionNamedByRange(undefined), null);
     assertEquals(exactVersionNamedByRange(1), null);
   });
+
+  it("names no version a strict bound excludes", () => {
+    // `">1.8.1"` is a valid declaration that mentions 1.8.1 and refuses it.
+    // Stripping the operator reduced it to 1.8.1 and fetched the one version
+    // the project had ruled out -- a worse failure than resolving nothing,
+    // because it looks like it worked.
+    assertEquals(exactVersionNamedByRange(">1.8.1"), null);
+    assertEquals(exactVersionNamedByRange("> 1.8.1"), null);
+    assertEquals(exactVersionNamedByRange("<1.8.1"), null);
+    // `<=` admits the version it names, so it is servable; `<` and `>` are not.
+    assertEquals(exactVersionNamedByRange("<=1.8.1"), "1.8.1");
+    // The inclusive sibling still names its version: `>=` must not be read as
+    // `>` with a stray `=`, which is the mistake the longest-match order stops.
+    assertEquals(exactVersionNamedByRange(">=1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange("~>1.8.1"), "1.8.1");
+  });
+
+  it("rejects a version-shaped string without backtracking over it", () => {
+    // CodeQL js/redos: the earlier `(?:[-+][0-9A-Za-z.-]+)*` repeated a group
+    // whose separator was also inside its own body, so a run of dashes could
+    // be split between the repetitions exponentially many ways and an invalid
+    // tail made the engine try every one. This exact input took 4.7 seconds to
+    // reject; package.json is project-supplied, so that is the whole discovery
+    // pass stalled by a declaration.
+    const pathological = `0.0.0+${"-".repeat(40)}!`;
+    const started = performance.now();
+    assertEquals(exactVersionNamedByRange(pathological), null);
+    const elapsed = performance.now() - started;
+    assertEquals(
+      elapsed < 1000,
+      true,
+      `matching must stay linear, took ${elapsed.toFixed(1)}ms`,
+    );
+    // The versions the rewritten expression still has to admit and refuse.
+    assertEquals(exactVersionNamedByRange("1.8.1-rc.1"), "1.8.1-rc.1");
+    assertEquals(exactVersionNamedByRange("1.8.1+build.5"), "1.8.1+build.5");
+    assertEquals(exactVersionNamedByRange("1.8.1-rc.1+build.5"), "1.8.1-rc.1+build.5");
+    assertEquals(exactVersionNamedByRange("1.8"), null);
+    assertEquals(exactVersionNamedByRange("1.8.1-"), null);
+  });
 });
 
 describe("isFrameworkProvidedPackage", () => {
@@ -281,5 +321,28 @@ describe("classifyProjectNpmImport", () => {
       'this runtime does not carry unpdf and package.json declares "^1.0.0 || ^2.0.0", ' +
         "which names no single version to fetch -- declare an exact version",
     );
+  });
+
+  it("never fetches the version a strict lower bound excludes", () => {
+    // The declaration is valid and names a version, so nothing upstream of
+    // here refuses it -- it reached the CDN branch and inlined unpdf@1.8.1 for
+    // a project that had written down that 1.8.1 is not good enough.
+    const decision = classify("unpdf", { unpdf: ">1.8.1" });
+    assertEquals(decision.kind, "missing");
+    assertEquals(
+      decision.kind === "missing" ? decision.reason : "",
+      'this runtime does not carry unpdf and package.json declares ">1.8.1", ' +
+        "which names no single version to fetch -- declare an exact version",
+    );
+    // A package the runtime does carry keeps falling back to the runtime copy
+    // rather than being reported, exactly as any unresolvable range does.
+    assertEquals(classify("yaml", { yaml: ">2.9.0" }), { kind: "runtime" });
+    // The inclusive bound is unchanged: 1.8.1 satisfies `>=1.8.1`.
+    assertEquals(classify("unpdf", { unpdf: ">=1.8.1" }), {
+      kind: "cdn",
+      name: "unpdf",
+      version: "1.8.1",
+      subpath: ".",
+    });
   });
 });
