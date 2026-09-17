@@ -5,7 +5,7 @@ import extSandboxShellTools, {
   createBashSandboxShellToolsProvider,
   createSandboxShellToolsProvider,
 } from "./index.ts";
-import { normalizeBashToolSet } from "../../../src/sandbox/shell-tools.ts";
+import { normalizeBashToolSet } from "#veryfront/sandbox/shell-tools.ts";
 
 describe("ext-sandbox-shell-tools", () => {
   it("exposes the real bash command schema to the runtime", async () => {
