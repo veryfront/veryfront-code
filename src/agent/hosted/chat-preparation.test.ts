@@ -2404,6 +2404,7 @@ Deno.test("prepareHostedChatExecution keeps customer data out of the unreadable-
         tokenBudget: 100_000,
         reserveTokens: 20,
         recentTailTokens: 20,
+        summaryGenerator: () => ({ text: "Older context summarized." }),
         logger: {
           warn: (message: string, context?: Record<string, unknown>) => {
             warnings.push({ message, context });
