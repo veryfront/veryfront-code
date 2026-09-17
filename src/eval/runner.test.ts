@@ -1013,6 +1013,36 @@ describe("eval/runner", () => {
     assertEquals(executions, 0);
   });
 
+  it("keeps the target duration when grading times out", async () => {
+    let releaseMetric: (() => void) | undefined;
+    const stalled = metrics.answer.exactMatch().gate();
+    stalled.evaluate = () =>
+      new Promise((resolve) => {
+        releaseMetric = () => resolve(stalledMetricResult);
+      });
+    const definition = evalAgent({
+      id: "eval:target-duration",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First", reference: "Paris" }]),
+      metrics: [stalled],
+    });
+    let progressMs = 0;
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 40,
+      onProgress: (event) => {
+        if (event.type === "record-finished") progressMs = event.durationMs;
+      },
+      adapters: { agent: () => ({ text: "Paris", durationMs: 7 }) },
+    });
+    releaseMetric?.();
+
+    // The record keeps the adapter's target measure, as a graded record does.
+    assertEquals(report.records[0]?.durationMs, 7);
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(progressMs >= 40, true, `progress duration ${progressMs}ms covers the wait`);
+  });
+
   it("keeps the mapped tool input when the tool times out", async () => {
     let releaseTool: (() => void) | undefined;
     const definition = evalTool({

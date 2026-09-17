@@ -714,8 +714,9 @@ async function runRecordWithinTimeout(
       const timeoutMessage = error.detail ?? error.message;
       if (targetRecord) {
         resolve({
+          // `durationMs` stays the target's own measure, as on a record that
+          // finished grading. The whole-case wait is reported through progress.
           ...targetRecord,
-          durationMs: Date.now() - started,
           completed: false,
           error: [targetRecord.error, timeoutMessage].filter(Boolean).join("; "),
           // Grading never finished, so no metric or check result is reported.
