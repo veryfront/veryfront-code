@@ -613,10 +613,10 @@ export interface RunEvalOptions {
   recordTimeoutMs?: number;
   /**
    * Receives progress while records run. Records run one after another, so
-   * events arrive in dataset order. A listener that throws does not affect the
-   * run.
+   * events arrive in dataset order. A listener that throws, or whose promise
+   * rejects, does not affect the run.
    */
-  onProgress?: (event: EvalProgressEvent) => void;
+  onProgress?: (event: EvalProgressEvent) => void | Promise<void>;
 }
 
 /** Export configuration for a completed eval report. */

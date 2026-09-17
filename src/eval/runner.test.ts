@@ -830,6 +830,29 @@ describe("eval/runner", () => {
     assertEquals(checkCalls, 1);
   });
 
+  it("contains a rejecting async progress listener", async () => {
+    const definition = evalAgent({
+      id: "eval:async-progress",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+      metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+    });
+    const seen: string[] = [];
+
+    const report = await runEval(definition, {
+      adapters: { agent: () => "Paris" },
+      onProgress: (event) => {
+        seen.push(event.type);
+        return Promise.reject(new Error("listener failed"));
+      },
+    });
+    // Let the rejected listener promises settle before the test ends.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assertEquals(seen, ["eval-started", "record-started", "record-finished"]);
+    assertEquals(report.summary.passed, 1);
+  });
+
   it("reports progress for every record in dataset order", async () => {
     const definition = evalAgent({
       id: "eval:progress",

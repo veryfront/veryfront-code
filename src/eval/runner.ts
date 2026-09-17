@@ -772,7 +772,9 @@ async function runRecordWithinTimeout(
 function notifyEvalProgress(options: RunEvalOptions, event: EvalProgressEvent): void {
   if (!options.onProgress) return;
   try {
-    options.onProgress(event);
+    // An async listener rejects after this frame returns, so contain that too:
+    // an unhandled rejection can take the process down.
+    void Promise.resolve(options.onProgress(event)).catch(() => {});
   } catch {
     // Progress is advisory: a failing listener must not change the eval result.
   }
