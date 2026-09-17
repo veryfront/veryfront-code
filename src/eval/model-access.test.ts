@@ -553,9 +553,13 @@ describe("eval/model-access", () => {
       assertEquals(
         explained.detail,
         'Eval "eval:triage" stopped at its first refused model request: Veryfront Cloud rejected the ' +
-          "configured project (VERYFRONT_PROJECT_SLUG, or projectSlug in veryfront.config.ts): it does not " +
-          "exist or this credential has no access to it",
+          "project this run is configured with: it does not exist or this credential has no access to it",
       );
+      // The slug can come from the environment, the module config, veryfront.json
+      // or the project link, and only the resolved value reaches here.
+      for (const source of ["VERYFRONT_PROJECT_SLUG", "veryfront.config.ts", "veryfront.json"]) {
+        assertEquals(explained.detail?.includes(source), false);
+      }
       assertEquals(explained.detail?.includes("agentic-email-processing-outlok"), false);
       assertEquals(JSON.stringify(explained).includes("agentic-email-processing-outlok"), false);
       assertEquals(explained.cause, original);

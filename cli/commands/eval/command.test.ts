@@ -2544,7 +2544,7 @@ describe("eval CLI command helpers", () => {
 
     assertInstanceOf(thrown, VeryfrontError);
     assertEquals(thrown.slug, "eval-project-required");
-    assertStringIncludes(thrown.detail ?? "", "rejected the configured project");
+    assertStringIncludes(thrown.detail ?? "", "rejected the project this run is configured with");
     assertEquals(thrown.detail?.includes("typo-project"), false);
     assertEquals(thrown.cause, denied);
   });

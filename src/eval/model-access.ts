@@ -335,10 +335,14 @@ export function getEvalModelAccessDenialKind(
  * The gateway answers `gateway_project_required` both when no project was sent
  * and when the sent slug names no project the credential can use. When the
  * caller knows it sent one, say that the configured project was rejected
- * instead of implying none was set. The slug itself stays out of the message:
- * naming where it came from is just as actionable, and the value is an account
- * identifier that lands in terminal and CI logs. The wording covers "missing"
- * and "not accessible" alike, as the gateway does.
+ * instead of implying none was set.
+ *
+ * The slug stays out of the message: it is an account identifier that would
+ * land in terminal and CI logs. So does its origin, because the caller passes
+ * only the resolved value, and it can come from the environment, the module
+ * config, `veryfront.json` or `.veryfront/project.json`. The error's own
+ * suggestion lists the places to correct. The wording covers "missing" and
+ * "not accessible" alike, as the gateway does.
  */
 export function explainConfiguredProjectDenial(
   error: unknown,
@@ -353,8 +357,8 @@ export function explainConfiguredProjectDenial(
     kind: "project-required",
     code: GATEWAY_PROJECT_REQUIRED_CODE,
     message:
-      "Veryfront Cloud rejected the configured project (VERYFRONT_PROJECT_SLUG, or projectSlug in " +
-      "veryfront.config.ts): it does not exist or this credential has no access to it",
+      "Veryfront Cloud rejected the project this run is configured with: it does not exist or this " +
+      "credential has no access to it",
   }, error);
 }
 
