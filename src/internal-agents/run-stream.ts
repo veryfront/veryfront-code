@@ -867,8 +867,12 @@ function createProviderReplayCheckpointRelay(): {
       if (terminalError) return;
       // Carry the runtime's already-sanitized cause instead of manufacturing a
       // message: the parked boundary waiter is what the consumer surfaces, so a
-      // fixed string here masks the real provider failure.
-      terminalError = new Error(failure?.message ?? "Provider stream failed");
+      // fixed string here masks the real provider failure. The fallback stays
+      // neutral — a caller that reports no cause (a cancellation, a Veryfront
+      // persistence failure) must not be attributed to the provider.
+      terminalError = new Error(
+        failure?.message ?? "Provider replay turn failed before its boundary",
+      );
       if (failure?.code) terminalError.vfRunErrorCode = failure.code;
       buffered.splice(0);
       const reject = rejectPending;

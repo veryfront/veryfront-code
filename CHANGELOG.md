@@ -17,14 +17,27 @@ turn failed before its boundary", neither of which named the real cause.
 
 The failure is terminal, not retryable: the same request and the same output
 token budget truncate again. Raise the model output token limit, or ask for a
-shorter response. Code that treated this failure as an unknown, retryable
-provider error now sees a terminal known error, and the incomplete tool call is
-dropped rather than replayed, so no partial tool input reaches a tool.
+shorter response. This is a deliberate retry-semantics change and needs your
+decision if you depend on the old behaviour: `PROVIDER_OUTPUT_TRUNCATED` joins
+the curated provider failure codes, so `resolveKnownProviderTerminalError`
+classifies it as a known terminal error and the hosted child lifecycle
+(`src/agent/hosted/child-lifecycle.ts`) and durable child fork execution
+(`src/agent/hosted/durable-child-fork-execution.ts`) stop retrying it, where a
+truncation previously landed in the unknown, retryable `PROVIDER_STREAM_ERROR`
+bucket. A retry above temperature 0 could occasionally have produced a shorter
+tool input and succeeded; that accidental recovery is gone, in exchange for a
+named failure instead of a retry loop against a budget that cannot fit the
+response. The incomplete tool call is also dropped rather than replayed, so no
+partial tool input reaches a tool, and no later tool call from the same
+truncated turn is dispatched.
 
 A replay checkpoint boundary that fails now reports the provider failure the
 stream reports instead of a fixed message. Anything that matched on the literal
 string "Provider replay turn failed before its boundary" must match on the run
-error code instead.
+error code instead. That string remains only as the neutral fallback for a turn
+that ends with no reported cause, such as a client cancellation, and a failure
+to persist a durable run event now reports
+`DURABLE_RUN_EVENT_PERSISTENCE_FAILED` rather than a provider failure.
 
 ### Changed: `veryfront up` pushes committed work again
 

@@ -58,7 +58,7 @@ import {
   type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
-import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, isVeryfrontError } from "#veryfront/errors";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
 import {
@@ -1238,9 +1238,33 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
   try {
     await persistProviderReplayCheckpointAfterTurnUnsafe(input);
   } catch (error) {
-    await failProviderReplayCheckpointTurn(input.emission);
+    await failProviderReplayCheckpointTurn(
+      input.emission,
+      resolveProviderReplayPersistenceFailure(error),
+    );
     throw error;
   }
+}
+
+/**
+ * Attribute a checkpoint persistence failure to Veryfront, not to the provider.
+ *
+ * Only the curated title and code of our own durable-run-event error cross the
+ * boundary; anything else falls back to the relay's neutral default.
+ */
+function resolveProviderReplayPersistenceFailure(
+  error: unknown,
+): ProviderReplayTurnFailure | undefined {
+  if (
+    !isVeryfrontError(error) ||
+    error.slug !== DURABLE_RUN_EVENT_PERSISTENCE_FAILED.slug
+  ) {
+    return undefined;
+  }
+  return {
+    message: error.title,
+    code: "DURABLE_RUN_EVENT_PERSISTENCE_FAILED",
+  };
 }
 
 async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
@@ -2428,11 +2452,20 @@ export class AgentRuntime {
         await turnPersistence.commit();
         return response;
       }).catch(async (error) => {
-        const errorEvent = resolveRuntimeExecutionErrorEvent(error);
-        await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission, {
-          message: errorEvent.error,
-          ...(errorEvent.code ? { code: errorEvent.code } : {}),
-        });
+        // A cancellation keeps the relay's neutral default: only a real
+        // failure hands the relay the sanitized provider cause.
+        const errorEvent = isAbortError(error, abortSignal)
+          ? undefined
+          : resolveRuntimeExecutionErrorEvent(error);
+        await failProviderReplayCheckpointTurn(
+          providerReplayCheckpointEmission,
+          errorEvent
+            ? {
+              message: errorEvent.error,
+              ...(errorEvent.code ? { code: errorEvent.code } : {}),
+            }
+            : undefined,
+        );
         throw error;
       });
     } finally {
@@ -2684,18 +2717,26 @@ export class AgentRuntime {
             }
             // Resolve the sanitized event first so the replay relay fails with
             // the same cause the stream reports, instead of a manufactured one.
-            const errorEvent = resolveRuntimeExecutionErrorEvent(error);
+            // A cancellation is not a provider failure: it keeps the relay's
+            // neutral default rather than surfacing the raw abort reason.
+            const aborted = isAbortError(error, streamAbortSignal);
+            const errorEvent = aborted ? undefined : resolveRuntimeExecutionErrorEvent(error);
             try {
-              await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission, {
-                message: errorEvent.error,
-                ...(errorEvent.code ? { code: errorEvent.code } : {}),
-              });
+              await failProviderReplayCheckpointTurn(
+                providerReplayCheckpointEmission,
+                errorEvent
+                  ? {
+                    message: errorEvent.error,
+                    ...(errorEvent.code ? { code: errorEvent.code } : {}),
+                  }
+                  : undefined,
+              );
             } catch (failureHookError) {
               logger.debug("Provider replay failure hook rejected", {
                 error: failureHookError,
               });
             }
-            if (isAbortError(error, streamAbortSignal)) {
+            if (!errorEvent) {
               closeSSEStream(controller);
               return;
             }

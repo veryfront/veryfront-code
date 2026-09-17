@@ -29,7 +29,9 @@ import type {
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
+import { tool } from "#veryfront/tool";
 import type { RemoteToolSource, Tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getActiveRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
@@ -1036,9 +1038,107 @@ describe("internal-agents/run-stream", () => {
     }
   });
 
+  /**
+   * Regression coverage for #1467, end to end on the real call path: a real
+   * `ProviderOutputTruncatedError` raised inside a replay-checkpoint run, with
+   * the relay parked at a tool boundary that never reached its checkpoint.
+   * This is the staging shape, and it exercises the runtime wiring (the only
+   * production code that carries the sanitized cause into the relay) instead
+   * of invoking the failure hook by hand.
+   */
+  it("surfaces a truncated provider response parked at a replay boundary", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const privateProviderDetail = "incomplete tool_use input <PRIVATE>";
+    const truncationError = new ProviderOutputTruncatedError({
+      provider: "anthropic",
+      status: 200,
+      message:
+        `Anthropic request failed: provider output truncated at the max output token limit (${privateProviderDetail})`,
+      retryable: false,
+    });
+    const unregister = registerModelProvider("issue-1467-parked", () => ({
+      provider: "issue-1467-parked",
+      modelId: "issue-1467-parked/truncating",
+      doGenerate: () => Promise.reject(new Error("generate must not be called")),
+      doStream: () => {
+        // The turn produced one complete tool call before the provider cut the
+        // response at its output token limit, so the consumer reaches that tool
+        // boundary with no checkpoint frame behind it. The parts are delivered
+        // from `pull` because erroring a stream discards whatever is queued.
+        const parts: unknown[] = [
+          { type: "tool-input-start", id: "tool-1", toolName: "lookup" },
+          { type: "tool-input-available", toolCallId: "tool-1", toolName: "lookup", input: {} },
+        ];
+        let delivered = 0;
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            pull(controller) {
+              if (delivered < parts.length) {
+                controller.enqueue(parts[delivered++]);
+                return;
+              }
+              controller.error(truncationError);
+            },
+          }),
+        });
+      },
+    }));
+
+    try {
+      const runtimeAgent = createAgent({
+        id: "issue-1467-parked-truncation",
+        model: "issue-1467-parked/truncating",
+        system: "Reply to the user.",
+        skills: false,
+        tools: {
+          lookup: tool({
+            id: "lookup",
+            description: "Look up a value",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ value: "found" }),
+          }),
+        },
+      });
+      const response = await createRuntimeAgentStreamResponse(
+        {
+          threadId: crypto.randomUUID(),
+          runId: "run_issue_1467_parked",
+          messageId: crypto.randomUUID(),
+          messages: [{ id: "message-1", role: "user", content: "Hello" }],
+          tools: [],
+          context: [],
+        },
+        runtimeAgent,
+        {
+          sessionManager,
+          providerReplayCheckpointEmissionEnabled: true,
+          persistProviderReplayCheckpoint: () => Promise.resolve(),
+        },
+      );
+      const body = await response.text();
+      const frames = parseSseFrames(body);
+      const runError = frames.find((frame) => frame.event === "RunError")?.data as
+        | Record<string, unknown>
+        | undefined;
+
+      assertEquals(runError?.code, "PROVIDER_OUTPUT_TRUNCATED");
+      assertEquals(
+        runError?.message,
+        "The model stopped at its output token limit before it finished the response. Raise the model output token limit, or ask for a shorter response.",
+      );
+      assertEquals(body.includes("Provider replay turn failed before its boundary"), false);
+      assertEquals(body.includes(privateProviderDetail), false);
+      assertEquals(frames.some((frame) => frame.event === "RunFinished"), false);
+    } finally {
+      unregister();
+    }
+  });
+
   it("releases a pending tool boundary when the runtime turn fails", async () => {
     const sessionManager = new AgentRunSessionManager();
-    let failProviderReplayTurn: (() => void | Promise<void>) | undefined;
+    let failProviderReplayTurn:
+      | ((failure?: { message: string; code?: string }) => void | Promise<void>)
+      | undefined;
     const agent = {
       id: "test",
       config: {
@@ -1064,7 +1164,9 @@ describe("internal-agents/run-stream", () => {
         persistProviderReplayCheckpoint: () => Promise.resolve(),
         createRuntime: (runtimeAgent) => {
           failProviderReplayTurn = (runtimeAgent.config as Agent["config"] & {
-            __vfProviderReplayCheckpointTurnFailed?: () => void | Promise<void>;
+            __vfProviderReplayCheckpointTurnFailed?: (
+              failure?: { message: string; code?: string },
+            ) => void | Promise<void>;
           }).__vfProviderReplayCheckpointTurnFailed;
           return {
             stream: async () =>
@@ -1076,7 +1178,10 @@ describe("internal-agents/run-stream", () => {
                     ),
                   );
                   setTimeout(async () => {
-                    await failProviderReplayTurn?.();
+                    // The runtime always reports the cause it is about to send
+                    // on the stream; an unclassified provider failure is the
+                    // sanitized "Provider stream failed".
+                    await failProviderReplayTurn?.({ message: "Provider stream failed" });
                     controller.enqueue(
                       new TextEncoder().encode(
                         'data: {"type":"error","error":"provider stream failed"}\n\n',
@@ -1094,6 +1199,7 @@ describe("internal-agents/run-stream", () => {
     const body = await response.text();
 
     assertStringIncludes(body, "event: RunError");
+    assertStringIncludes(body, "Provider stream failed");
     assertEquals(body.includes("event: RunFinished"), false);
     assertEquals(body.includes("Provider replay turn failed before its boundary"), false);
   });

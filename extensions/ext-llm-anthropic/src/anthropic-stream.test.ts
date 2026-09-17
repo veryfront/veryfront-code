@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   ProviderOutputTruncatedError,
@@ -940,9 +940,10 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       ProviderOutputTruncatedError,
       "provider output truncated at the max output token limit",
     );
+    assertInstanceOf(error, ProviderOutputTruncatedError);
     assertEquals(error.retryable, false);
     assertEquals(
-      String(error.message).includes("tool call arguments were not valid JSON object text"),
+      error.message.includes("tool call arguments were not valid JSON object text"),
       false,
     );
   });
@@ -970,6 +971,127 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       ProviderRequestError,
       "tool call arguments were not valid JSON object text",
     );
+  });
+
+  it("yields no tool call after a deferred tool input failure", async () => {
+    const mixedToolStream = [
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "toolu_truncated", name: "create_file", input: {} },
+      }),
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "input_json_delta",
+          partial_json: '{"path":"/inbox/mail-1.json","content":',
+        },
+      }),
+      data({ type: "content_block_stop", index: 0 }),
+      data({
+        type: "content_block_start",
+        index: 1,
+        content_block: { type: "tool_use", id: "toolu_complete", name: "bash", input: {} },
+      }),
+      data({
+        type: "content_block_delta",
+        index: 1,
+        delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+      }),
+      data({ type: "content_block_stop", index: 1 }),
+      data({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+      data({ type: "message_stop" }),
+    ].join("");
+
+    const parts: unknown[] = [];
+    await assertRejects(
+      async () => {
+        for await (const part of streamAnthropicCompatibleParts(streamFromText(mixedToolStream))) {
+          parts.push(part);
+        }
+      },
+      ProviderRequestError,
+      "tool call arguments were not valid JSON object text",
+    );
+
+    // Deferring the failure must not let a later, well-formed tool call reach
+    // the caller: the turn throws either way, and a dispatched tool call from
+    // a failed turn would be a side effect the pre-deferral parser never had.
+    assertEquals(
+      parts.some((part) => (part as { type?: string }).type === "tool-call"),
+      false,
+    );
+    // Streaming progress parts (`tool-input-start` / `tool-input-delta`) still
+    // flow, as they do for any tool block; only the dispatchable `tool-call`
+    // part is withheld.
+    assertEquals(
+      parts.every((part) =>
+        (part as { type?: string }).type === "tool-input-start" ||
+        (part as { type?: string }).type === "tool-input-delta"
+      ),
+      true,
+    );
+  });
+
+  it("classifies a truncation resolved from a buffered trailing message_delta", async () => {
+    // The `message_delta` handler refuses to run while a content block is open,
+    // so the only way a deferred failure survives to `validateCompletion()` is
+    // the client tool-use read timeout: the trailing event is still in the SSE
+    // buffer and `mergeTrailingBufferUsage()` applies it first.
+    let cancelCount = 0;
+    const stream = streamFromChunksWithCancelSpy([
+      [
+        data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+        data({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_done", name: "bash", input: {} },
+        }),
+        data({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+        }),
+        data({ type: "content_block_stop", index: 0 }),
+        data({
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "toolu_cut", name: "create_file", input: {} },
+        }),
+        data({
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "input_json_delta", partial_json: '{"path":"/inbox/mail-1.json","c' },
+        }),
+        data({ type: "content_block_stop", index: 1 }),
+        // Deliberately unterminated: only the trailing-buffer flush sees it.
+        `event: message_delta\r\ndata: ${
+          JSON.stringify({
+            type: "message_delta",
+            delta: { stop_reason: "max_tokens" },
+            usage: { output_tokens: 4096 },
+          })
+        }`,
+      ].join(""),
+    ], {
+      closeDelayMs: 600,
+      onCancel: () => cancelCount++,
+    });
+
+    await assertRejects(
+      () =>
+        collectParts(stream, {
+          clientToolUseTrailingUsageGraceMs: 5,
+          allowPostTerminalUsage: true,
+        }),
+      ProviderOutputTruncatedError,
+      "provider output truncated at the max output token limit",
+    );
+
+    await waitForCondition(() => cancelCount === 1 && !stream.locked, 500);
+    assertEquals(stream.locked, false);
   });
 
   it("accepts a complete empty assistant stream", async () => {

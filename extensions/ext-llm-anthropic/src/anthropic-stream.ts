@@ -1470,6 +1470,15 @@ export async function* streamAnthropicCompatibleParts(
           if (!current) {
             continue;
           }
+          if (sawUnparsableToolInput) {
+            // The stream is already going to throw once `stop_reason` arrives.
+            // Before the deferral the first unparsable input threw right here,
+            // so no later tool call was ever yielded; keep that guarantee so a
+            // consumer can never dispatch a tool call from a doomed turn.
+            toolCalls.delete(index);
+            rawContentBlocks.delete(index);
+            continue;
+          }
           const input = joinAnthropicToolInput(current) || "{}";
           let parsedInput: Record<string, unknown>;
           try {
