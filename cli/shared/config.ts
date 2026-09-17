@@ -750,7 +750,7 @@ async function resolveConfigBase(
         // refuse to execute, so fail closed instead of guessing.
         throw new Error(
           `${configFileResolution.skippedModuleConfigFile} is the only project reference in this directory, and this command never executes local project code. ` +
-            "Set VERYFRONT_PROJECT_SLUG, add projectSlug to veryfront.json, or link the project with 'veryfront link'.",
+            "Set VERYFRONT_PROJECT_SLUG or add projectSlug to veryfront.json.",
         );
       } else {
         projectSlug = await inferProjectSlug(dir);

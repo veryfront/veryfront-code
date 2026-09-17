@@ -540,6 +540,21 @@ describe("provider-http", () => {
       assertEquals(err.message.includes("project"), false);
     });
 
+    it("classifies the gateway project-required rejection for streaming and hosted surfaces", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(400, { error: "echoed <GATEWAY TEXT>", code: "gateway_project_required" }),
+      );
+      const expected = {
+        code: "GATEWAY_PROJECT_REQUIRED",
+        message: "A project is required to use Veryfront-managed AI inference",
+        status: 400,
+      };
+
+      assertEquals(parseProviderError(err), expected);
+      assertEquals(parseProviderError({ lastError: err }), expected);
+    });
+
     it("treats a JSON null error body as an unstructured request error", async () => {
       const err = await buildProviderError("openai", jsonResponse(400, "null"));
 

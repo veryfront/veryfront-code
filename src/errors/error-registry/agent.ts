@@ -119,7 +119,7 @@ export const EVAL_PROJECT_REQUIRED = defineError({
   status: 400,
   title: "No project for eval model requests",
   suggestion:
-    "Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)",
+    "Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again",
 });
 
 /**

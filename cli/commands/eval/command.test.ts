@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { cliLogger } from "#cli/utils";
 import {
   assertEquals,
   assertInstanceOf,
@@ -45,9 +46,11 @@ import {
   createResolvedEvalModelComparisonConfig,
   createToolAdapter,
   type EvalOptions,
+  evalRunMayCallModel,
   exportEvalReportForCli,
   finalizeGatewayBillingGroup,
   findEvalForCliId,
+  formatMissingEvalProjectWarning,
   hydrateEvalRuntimeAuth,
   loadEvalModelComparisonPolicy,
   normalizeEvalCliId,
@@ -638,6 +641,75 @@ describe("eval CLI command helpers", () => {
         }
       }, { prefix: "vf-eval-list-json-auth-" });
     }, { prefix: "vf-eval-list-json-" });
+  });
+
+  it("does not warn about a missing project when only listing evals", async () => {
+    await withTempDir(async (projectDir) => {
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await runEvalCommand(
+          { list: true, exporters: [], debug: false, candidateModels: [], projectDir },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            // A token without a project: the state that would warn before a run.
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-list-no-project-" });
+  });
+
+  it("treats only dataset evals without metrics or checks as model-free", () => {
+    const bareDataset = evalDataset({
+      id: "eval:bare-dataset",
+      dataset: [{ id: "case", input: "value" }],
+    });
+    const deterministicMetricDataset = evalDataset({
+      id: "eval:deterministic-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      metrics: [metrics.answer.contains({ text: "value" })],
+    });
+    const rubricDataset = evalDataset({
+      id: "eval:rubric-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      metrics: [
+        metrics.judge.rubric({ rubric: "Is it good?", judge: () => Promise.resolve({ score: 1 }) }),
+      ],
+    });
+    const checkDataset = evalDataset({
+      id: "eval:check-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      check: () => {},
+    });
+    const agentEval = evalAgent({
+      id: "eval:agent",
+      target: "agent:fixture",
+      dataset: [{ id: "case", input: "value" }],
+    });
+    const toolEval = evalTool({
+      id: "eval:tool",
+      target: "tool:fixture",
+      dataset: [{ id: "case", input: {} }],
+    });
+
+    assertEquals(evalRunMayCallModel([bareDataset]), false);
+    assertEquals(evalRunMayCallModel([bareDataset, bareDataset]), false);
+    // Any metric may be custom code that calls a model, so it counts.
+    assertEquals(evalRunMayCallModel([deterministicMetricDataset]), true);
+    assertEquals(evalRunMayCallModel([rubricDataset]), true);
+    assertEquals(evalRunMayCallModel([checkDataset]), true);
+    assertEquals(evalRunMayCallModel([agentEval]), true);
+    assertEquals(evalRunMayCallModel([toolEval]), true);
+    assertEquals(evalRunMayCallModel([bareDataset, agentEval]), true);
   });
 
   it("resolves eval export redaction from exact global env toggles", () => {
@@ -2036,6 +2108,20 @@ describe("eval CLI command helpers", () => {
     }
   });
 
+  it("warns before the run when a Veryfront token has no project to bill", () => {
+    const warning = formatMissingEvalProjectWarning({ apiToken: "token" });
+
+    assertEquals(typeof warning, "string");
+    assertEquals(warning?.includes("gateway_project_required"), true);
+    assertEquals(warning?.includes("VERYFRONT_PROJECT_SLUG"), true);
+    assertEquals(warning?.includes("veryfront link"), false);
+    assertEquals(
+      formatMissingEvalProjectWarning({ apiToken: "token", projectSlug: "eval-project" }),
+      undefined,
+    );
+    assertEquals(formatMissingEvalProjectWarning({}), undefined);
+  });
+
   it("keeps the stored login token out of the project tool execution context", async () => {
     // `createToolAdapter` passes this context straight to a project-defined
     // `tool.execute()`. The stored login token is host-private so project code
@@ -2419,6 +2505,50 @@ describe("eval CLI command helpers", () => {
     assertEquals(warned(afterCreditDenial, "evalrun_credit_then_401"), true);
   });
 
+  it("reports a refused configured project without echoing the slug", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    Deno.env.set("VERYFRONT_PROJECT_SLUG", "typo-project");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "Gateway billing group not found",
+            code: "gateway_billing_group_not_found",
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    const denied = createEvalModelAccessDeniedError(
+      "eval:typo",
+      {
+        kind: "project-required",
+        code: "gateway_project_required",
+        message: "A project is required to use Veryfront-managed AI inference",
+      },
+      undefined,
+    );
+
+    let thrown: unknown;
+    await captureConsoleOutput(async () => {
+      try {
+        await runEvalWithGatewayBillingGroup("evalrun_typo_project", () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          throw denied;
+        });
+      } catch (error) {
+        thrown = error;
+      }
+    });
+
+    assertInstanceOf(thrown, VeryfrontError);
+    assertEquals(thrown.slug, "eval-project-required");
+    assertStringIncludes(thrown.detail ?? "", "rejected the project this run is configured with");
+    assertEquals(thrown.detail?.includes("typo-project"), false);
+    assertEquals(thrown.cause, denied);
+  });
+
   it("retries gateway billing finalization while usage capture is not ready", async () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
@@ -2780,5 +2910,139 @@ describe("eval CLI command helpers", () => {
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+
+  it("does not warn about a missing project for a dataset-only suite", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:dataset-only",
+        dataset: [{ id: "case", input: "value" }],
+      });
+      definition.source = {
+        filePath: `${projectDir}/evals/dataset-only.eval.ts`,
+        exportName: "default",
+      };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        for (const id of [undefined, "eval:dataset-only"]) {
+          await runEvalCommand(
+            {
+              ...(id ? { id } : {}),
+              list: false,
+              exporters: [],
+              debug: false,
+              candidateModels: [],
+              projectDir,
+              reportDir: `${projectDir}/reports-${id ?? "suite"}`,
+            },
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+            },
+          );
+        }
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-dataset-no-project-" });
+  });
+
+  it("warns about a missing project for a dataset suite with metrics", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:judged-dataset",
+        dataset: [{ id: "case", input: "value" }],
+        metrics: [
+          metrics.judge.rubric({
+            rubric: "Is it good?",
+            judge: () => Promise.resolve({ score: 1 }),
+          }),
+        ],
+      });
+      definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/reports`,
+          },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.filter((line) => line.includes("gateway_project_required")).length,
+        1,
+      );
+    }, { prefix: "vf-eval-judged-no-project-" });
+  });
+
+  it("does not warn about a missing project in JSON mode", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:judged-dataset",
+        dataset: [{ id: "case", input: "value" }],
+        metrics: [
+          metrics.judge.rubric({
+            rubric: "Is it good?",
+            judge: () => Promise.resolve({ score: 1 }),
+          }),
+        ],
+      });
+      definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      setJsonMode(true);
+      try {
+        await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/reports`,
+          },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        setJsonMode(false);
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-json-no-project-" });
   });
 });

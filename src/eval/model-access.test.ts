@@ -17,6 +17,7 @@ import {
   classifyAgentServiceModelAccessDenial,
   classifyEvalModelAccessDenial,
   createEvalModelAccessDeniedError,
+  explainConfiguredProjectDenial,
   getEvalModelAccessDenialKind,
   isEvalModelAccessDeniedError,
 } from "./model-access.ts";
@@ -223,7 +224,7 @@ describe("eval/model-access", () => {
     );
     assertEquals(
       evalError.suggestion,
-      "Run veryfront eval from a linked project directory, or set VERYFRONT_PROJECT_SLUG (see .env.example)",
+      "Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again",
     );
     assertEquals(isEvalModelAccessDeniedError(evalError), true);
   });
@@ -530,5 +531,54 @@ describe("eval/model-access", () => {
 
     markVeryfrontGatewayTransportFailure(blocked);
     assertEquals(classifyEvalModelAccessDenial(blocked)?.kind, "egress-blocked");
+  });
+
+  describe("explainConfiguredProjectDenial", () => {
+    const projectRequired = () =>
+      createEvalModelAccessDeniedError("eval:triage", {
+        kind: "project-required",
+        code: "gateway_project_required",
+        message: "A project is required to use Veryfront-managed AI inference",
+      }, undefined);
+
+    it("reports the configured project without echoing the slug", () => {
+      const original = projectRequired();
+      const explained = explainConfiguredProjectDenial(
+        original,
+        " agentic-email-processing-outlok ",
+      );
+
+      if (!(explained instanceof VeryfrontError)) throw new Error("expected a VeryfrontError");
+      assertEquals(explained.slug, "eval-project-required");
+      assertEquals(
+        explained.detail,
+        'Eval "eval:triage" stopped at its first refused model request: Veryfront Cloud rejected the ' +
+          "project this run is configured with: it does not exist or this credential has no access to it",
+      );
+      // The slug can come from the environment, the module config, veryfront.json
+      // or the project link, and only the resolved value reaches here.
+      for (const source of ["VERYFRONT_PROJECT_SLUG", "veryfront.config.ts", "veryfront.json"]) {
+        assertEquals(explained.detail?.includes(source), false);
+      }
+      assertEquals(explained.detail?.includes("agentic-email-processing-outlok"), false);
+      assertEquals(JSON.stringify(explained).includes("agentic-email-processing-outlok"), false);
+      assertEquals(explained.cause, original);
+      assertEquals(isEvalModelAccessDeniedError(explained), true);
+    });
+
+    it("leaves the error alone without a slug or for other denials", () => {
+      const original = projectRequired();
+      const billing = createEvalModelAccessDeniedError("eval:triage", {
+        kind: "billing",
+        code: "INSUFFICIENT_CREDITS",
+        message: "Insufficient AI credits",
+      }, undefined);
+      const other = new Error("boom");
+
+      assertEquals(explainConfiguredProjectDenial(original, undefined), original);
+      assertEquals(explainConfiguredProjectDenial(original, "  "), original);
+      assertEquals(explainConfiguredProjectDenial(billing, "some-project"), billing);
+      assertEquals(explainConfiguredProjectDenial(other, "some-project"), other);
+    });
   });
 });

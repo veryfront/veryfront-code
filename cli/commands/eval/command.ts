@@ -15,6 +15,7 @@ import {
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
+  EvalDefinition,
   EvalGateFailureSummary,
   EvalMockTools,
   EvalModelComparisonMetricName,
@@ -53,6 +54,7 @@ import {
 import { runEvalReport } from "../../../src/eval/run-report.ts";
 import {
   type EvalModelAccessDenialKind,
+  explainConfiguredProjectDenial,
   getEvalModelAccessDenialKind,
 } from "../../../src/eval/model-access.ts";
 import {
@@ -76,6 +78,7 @@ export interface EvalOptions extends EvalArgs {
 
 interface EvalCommandDependencies {
   discoverProjectAgentRuntime?: typeof discoverProjectAgentRuntime;
+  hydrateEvalRuntimeAuth?: typeof hydrateEvalRuntimeAuth;
 }
 
 type GatewayBillingGroupFinalization = {
@@ -427,10 +430,14 @@ export async function runEvalWithGatewayBillingGroup(
 ): Promise<EvalReport> {
   const currentContext = getCurrentVeryfrontCloudContext();
   const billingContext = { ...(currentContext ?? {}), billingGroupId };
+  // The slug the model requests carried, so a project-required refusal can
+  // name it rather than suggest setting one that is already set.
+  const sentProjectSlug = getVeryfrontCloudBootstrap().projectSlug;
   let report: EvalReport;
   try {
     report = await runWithVeryfrontCloudContextAsync(billingContext, operation);
-  } catch (error) {
+  } catch (caught) {
+    const error = explainConfiguredProjectDenial(caught, sentProjectSlug);
     if (billingContext.billingGroupUsed) {
       // Still finalize: earlier requests can have been served before the
       // gateway started refusing them, and those must be reconciled.
@@ -660,6 +667,35 @@ export async function hydrateEvalRuntimeAuth(
       projectDir,
       resolveEvalRuntimeProjectSlug(config),
     ),
+  );
+}
+
+/**
+ * Veryfront Cloud bills managed inference to a project, and its gateway
+ * rejects every model request that names none. With a token but no project,
+ * the run stops at its first `veryfront-cloud/...` request with
+ * `EVAL_PROJECT_REQUIRED`, so name the fix before the run starts. The remedy
+ * matches that error's suggestion.
+ */
+export function formatMissingEvalProjectWarning(
+  runtimeAuth: { apiToken?: string; projectSlug?: string },
+): string | undefined {
+  if (!runtimeAuth.apiToken || runtimeAuth.projectSlug) return undefined;
+  return "No Veryfront project is configured, so Veryfront Cloud will reject veryfront-cloud model requests " +
+    "(gateway_project_required). Set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
+}
+
+/**
+ * Whether running these evals might send a model request. The warning this
+ * gates is advisory, so the check is deliberately coarse: only a dataset eval
+ * with no metrics and no `check` callback is certainly model-free. Any metric
+ * or check runs code that may call a model.
+ */
+export function evalRunMayCallModel(definitions: readonly EvalDefinition[]): boolean {
+  return definitions.some((definition) =>
+    definition.targetKind !== "dataset" ||
+    definition.metrics.length > 0 ||
+    definition.check !== undefined
   );
 }
 
@@ -1375,7 +1411,19 @@ export async function runEvalCommand(
 
   return await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey } = context;
-    await hydrateEvalRuntimeAuth(projectDir, config);
+    const runtimeAuth = await (dependencies.hydrateEvalRuntimeAuth ?? hydrateEvalRuntimeAuth)(
+      projectDir,
+      config,
+    );
+    // Emitted only once a run is certain and it can reach a model: listing,
+    // usage errors, and model-free dataset evals never send a model request.
+    const warnIfNoProject = (definitions: readonly EvalDefinition[]) => {
+      // JSON output must stay machine-readable; the refusal itself still
+      // arrives in the envelope if the run reaches the gateway.
+      if (isJsonMode() || !evalRunMayCallModel(definitions)) return;
+      const warning = formatMissingEvalProjectWarning(runtimeAuth);
+      if (warning) cliLogger.warn(warning);
+    };
 
     const projectRuntime = await discoverRuntime({
       projectDir,
@@ -1445,6 +1493,7 @@ export async function runEvalCommand(
         return 0;
       }
 
+      warnIfNoProject(evals.map((item) => item.definition));
       const selectedExporterIds = resolveEvalExporterIds(options);
       const extensionSetup = await setupEvalCliExtensions(
         projectDir,
@@ -1563,6 +1612,7 @@ export async function runEvalCommand(
       if (toolId && !tool) {
         return await outputToolNotFound(toolId);
       }
+      warnIfNoProject([evalItem.definition]);
 
       if (modelComparisonConfig) {
         return await runWithProjectAgentRuntime(
