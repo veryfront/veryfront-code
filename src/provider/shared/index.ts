@@ -51,6 +51,7 @@ export {
   notifyProviderRequestRetry,
   parseRetryAfterMs,
   ProviderError,
+  ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderQuotaError,
   ProviderRateLimitError,

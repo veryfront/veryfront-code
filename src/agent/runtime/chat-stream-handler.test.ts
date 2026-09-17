@@ -11,6 +11,12 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { createMockResult, createSSECollector } from "./chat-stream-handler.test-helpers.ts";
 import {
+  resolveRelayableExecutionFailure,
+  resolveRuntimeExecutionErrorEvent,
+} from "./chat-stream-handler.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { ProviderOutputTruncatedError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
   announceStreamedToolCallInput,
   createRuntimeStreamSource,
   createStreamState,
@@ -3661,5 +3667,37 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       events.filter((event) => event.type === "tool-output-error").map((event) => event.toolCallId),
       ["srvtoolu_11"],
     );
+  });
+});
+
+// Codex P1 on veryfront-code#4516: the replay relay writes a PUBLIC RunError, so
+// a non-provider failure must not carry its own message across. A persistence
+// error can contain a database URL or an internal path, which AGENTS.md forbids
+// in user-facing output.
+describe("resolveRelayableExecutionFailure", () => {
+  it("withholds a non-provider failure's message from the relay", () => {
+    const persistenceFailure = new Error(
+      "finalize failed: postgres://user:pw@db.internal:5432/veryfront timed out",
+    );
+
+    // The SSE fallback path may still show it; the relay may not.
+    assertEquals(
+      resolveRuntimeExecutionErrorEvent(persistenceFailure).error,
+      "finalize failed: postgres://user:pw@db.internal:5432/veryfront timed out",
+    );
+    assertStrictEquals(resolveRelayableExecutionFailure(persistenceFailure), undefined);
+  });
+
+  it("relays a curated provider terminal error", () => {
+    const truncated = new ProviderOutputTruncatedError({
+      provider: "anthropic",
+      status: 200,
+      message: "anthropic request failed: provider output truncated at the max output token limit",
+      retryable: false,
+    });
+    const relayed = resolveRelayableExecutionFailure(createRuntimeProviderStreamFailure(truncated));
+
+    // The whole point of #1467: the real classified cause reaches the run error.
+    assertEquals(relayed?.code, "PROVIDER_OUTPUT_TRUNCATED");
   });
 });
