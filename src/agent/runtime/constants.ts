@@ -134,6 +134,21 @@ function shouldWarnUnknownModel(modelString: string): boolean {
   return true;
 }
 
+/**
+ * A model id bounded for logging.
+ *
+ * `respond()` without `allowedModels` accepts a caller-controlled model string
+ * up to the request body limit, so emitting it whole would put untrusted request
+ * content in the logs and let a handful of requests produce megabytes of them.
+ * AGENTS.md forbids raw request payloads in logs and asks for a redaction
+ * marker, so an oversized id is cut with its dropped length named.
+ */
+function formatModelIdForLog(modelString: string): string {
+  if (modelString.length <= MAX_WARNED_MODEL_ID_LENGTH) return modelString;
+  const dropped = modelString.length - MAX_WARNED_MODEL_ID_LENGTH;
+  return `${modelString.slice(0, MAX_WARNED_MODEL_ID_LENGTH)}[...${dropped} more characters]`;
+}
+
 /** Test-only: forget which ids have already warned. */
 export function __resetUnknownModelWarningsForTests(): void {
   warnedUnknownModels.clear();
@@ -156,7 +171,7 @@ export function getModelMaxOutputTokens(modelString: string): number {
     // The log redactor masks any context key containing "token", so the applied
     // limit is reported as `max_output_limit` to stay readable in logs.
     agentLogger.warn(UNKNOWN_MODEL_MAX_OUTPUT_TOKENS_WARNING, {
-      model: modelString,
+      model: formatModelIdForLog(modelString),
       max_output_limit: FALLBACK_MODEL_MAX_OUTPUT_TOKENS,
     });
   }

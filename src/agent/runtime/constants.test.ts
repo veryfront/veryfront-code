@@ -185,7 +185,12 @@ describe("MODEL_MAX_OUTPUT_TOKENS covers the catalog", () => {
       getModelMaxOutputTokens(huge);
     });
     assertEquals(records.length, 1);
-    // The warning still reports the id the caller sent; only the retained key is bounded.
-    assertEquals(records[0]?.context?.model, huge);
+    // The emitted value is bounded too: logging a caller-controlled id whole
+    // would put untrusted request content in the logs and let a few requests
+    // produce megabytes of them.
+    const logged = String(records[0]?.context?.model ?? "");
+    assertEquals(logged.length < 400, true);
+    assertEquals(logged.includes("more characters]"), true);
+    assertEquals(logged.startsWith("unknown/xxx"), true);
   });
 });
