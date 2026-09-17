@@ -1,5 +1,5 @@
 import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
-import { concatPrivateArrays, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { flatMapPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   type ChatUiMessage,
   type FileUIPartWithUpload,
@@ -153,12 +153,13 @@ export async function resolveRuntimeMessageFileUrls(
       // Array.prototype.flat is observable: project code can replace it, and it
       // would receive the raw message parts. This file already uses
       // mapPrivateArray for that reason, so the flatten stays private too.
-      let flattened: ChatUiMessage["parts"][number][] = [];
-      for (let index = 0; index < parts.length; index++) {
-        flattened = concatPrivateArrays(flattened, parts[index] ?? []);
-      }
-
-      return { ...message, parts: flattened };
+      //
+      // flatMapPrivateArray appends into one output array. Folding with
+      // concatPrivateArrays instead recopies the whole prefix per part, which is
+      // quadratic -- the hosted schema allows 1,000 parts per message across
+      // 1,000 messages, so a legitimate attachment history reaches hundreds of
+      // millions of element copies before the provider request is even built.
+      return { ...message, parts: flatMapPrivateArray(parts, (group) => group) };
     }),
   );
 }
