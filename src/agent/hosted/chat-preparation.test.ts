@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 import type { Message } from "#veryfront/agent/types.ts";
@@ -2342,8 +2342,10 @@ Deno.test("prepareHostedChatRuntimeCreationOptions uses the exact selector snaps
 // user-controlled, so the degrade warning must not put either in the logs.
 Deno.test("prepareHostedChatExecution keeps customer data out of the unreadable-attachment warning", async () => {
   const warnings: Array<{ message: string; context?: Record<string, unknown> }> = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input, _init): Promise<Response> => {
+  // withMockFetch routes through the guarded outbound transport; a bare
+  // globalThis.fetch assignment would leave transport-routed code on the real
+  // network (scripts/lint/check-testing-front-door.ts).
+  await withMockFetch((input): Promise<Response> => {
     const url = input.toString();
     if (url.includes("/uploads/")) {
       return Promise.resolve(
@@ -2353,9 +2355,7 @@ Deno.test("prepareHostedChatExecution keeps customer data out of the unreadable-
       );
     }
     return Promise.resolve(new Response("{}", { status: 200 }));
-  };
-
-  try {
+  }, async () => {
     await prepareHostedChatExecution({
       request: createParsedHostedChatRequest({
         durableRootRun: {
@@ -2425,7 +2425,5 @@ Deno.test("prepareHostedChatExecution keeps customer data out of the unreadable-
     assertEquals(serialized.includes("Q3-payroll-jane-doe.pdf"), false);
     assertEquals(serialized.includes("patient-records@example.com"), false);
     assertEquals(serialized.includes("filename"), false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  });
 });
