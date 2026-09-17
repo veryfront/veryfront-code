@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
@@ -2336,4 +2336,95 @@ Deno.test("prepareHostedChatRuntimeCreationOptions uses the exact selector snaps
   assertEquals(result.creationOptions.skillSelectorPolicy, { kind: "none" });
   assertEquals(result.creationOptions.instructions, [{ role: "system", content: "0" }]);
   assertEquals(result.steering.skills, []);
+});
+
+// A provider error message can carry the response body and the filename is
+// user-controlled, so the degrade warning must not put either in the logs.
+Deno.test("prepareHostedChatExecution keeps customer data out of the unreadable-attachment warning", async () => {
+  const warnings: Array<{ message: string; context?: Record<string, unknown> }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, _init): Promise<Response> => {
+    const url = input.toString();
+    if (url.includes("/uploads/")) {
+      return Promise.resolve(
+        new Response("Access denied for patient-records@example.com (account 4587)", {
+          status: 403,
+        }),
+      );
+    }
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    await prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "message-1",
+          latestEventId: 3,
+          latestExternalEventSequence: 2,
+        },
+        messages: [
+          {
+            id: "user-1",
+            role: "user",
+            parts: [
+              { type: "text", text: "Summarize this." },
+              {
+                type: "file",
+                mediaType: "application/pdf",
+                filename: "Q3-payroll-jane-doe.pdf",
+                uploadId: "upload-secret-1",
+                url: "https://files.example.com/original.pdf",
+              },
+            ],
+          },
+        ],
+      }),
+      agentConfig: { id: "agent-1", model: "configured-model", maxSteps: 25 },
+      apiUrl: "https://api.example.com",
+      abortSignal: new AbortController().signal,
+      resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+      fetchSteering: () => Promise.resolve({ instructions: "Project instructions", skills: [] }),
+      buildInstructions: () => [],
+      createRuntime: (options) =>
+        Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "resolved:configured-model",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        }),
+      contextBudget: {
+        tokenBudget: 100_000,
+        reserveTokens: 20,
+        recentTailTokens: 20,
+        logger: {
+          warn: (message: string, context?: Record<string, unknown>) => {
+            warnings.push({ message, context });
+          },
+        },
+      },
+    });
+
+    const warning = warnings.find((entry) => entry.message.includes("attachment unreadable"));
+    assertExists(warning);
+    // Our own identifiers and the error class stay -- they are what makes the
+    // log actionable without naming the customer's file or echoing the body.
+    assertEquals(warning.context?.uploadId, "upload-secret-1");
+    assertEquals(warning.context?.projectId, "project-from-context");
+    assertEquals(typeof warning.context?.errorKind, "string");
+
+    const serialized = JSON.stringify(warnings);
+    assertEquals(serialized.includes("Q3-payroll-jane-doe.pdf"), false);
+    assertEquals(serialized.includes("patient-records@example.com"), false);
+    assertEquals(serialized.includes("filename"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

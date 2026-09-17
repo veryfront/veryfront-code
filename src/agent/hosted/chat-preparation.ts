@@ -685,14 +685,17 @@ export async function prepareHostedChatExecution<
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
       },
-      onUnresolvableAttachment: ({ uploadId, filename, error }) => {
+      onUnresolvableAttachment: ({ uploadId, error }) => {
+        // Deliberately narrow: the filename is user-controlled, and a provider
+        // error message can carry the response body, so neither is logged. The
+        // uploadId identifies the file for anyone investigating, and the error
+        // class separates a permission failure from a network one.
         input.contextBudget?.logger?.warn?.(
           "Hosted chat attachment unreadable; continuing without it",
           {
             uploadId,
-            ...(filename ? { filename } : {}),
             projectId: input.request.projectId,
-            error,
+            errorKind: error instanceof Error ? error.name : typeof error,
           },
         );
       },
