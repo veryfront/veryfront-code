@@ -1548,9 +1548,16 @@ export async function* streamAnthropicCompatibleParts(
           if (normalizedFinishReason) {
             finishReason = normalizedFinishReason;
           }
-          const deferredToolInputFailure = resolveDeferredToolInputFailure();
-          if (deferredToolInputFailure) {
-            throw deferredToolInputFailure;
+          // Only decide once a stop reason has actually arrived. A usage-only
+          // message_delta carries no stop_reason, and resolving here would
+          // classify the deferred failure as a malformed stream before the
+          // later delta that says max_tokens -- turning the truncation this
+          // change exists to identify back into the generic error.
+          if (sawStopReason) {
+            const deferredToolInputFailure = resolveDeferredToolInputFailure();
+            if (deferredToolInputFailure) {
+              throw deferredToolInputFailure;
+            }
           }
           continue;
         }

@@ -19,12 +19,10 @@ The failure is terminal, not retryable: the same request and the same output
 token budget truncate again. Raise the model output token limit, or ask for a
 shorter response. This is a deliberate retry-semantics change and needs your
 decision if you depend on the old behaviour: `PROVIDER_OUTPUT_TRUNCATED` joins
-the curated provider failure codes, so `resolveKnownProviderTerminalError`
-classifies it as a known terminal error and the hosted child lifecycle
-(`src/agent/hosted/child-lifecycle.ts`) and durable child fork execution
-(`src/agent/hosted/durable-child-fork-execution.ts`) stop retrying it, where a
-truncation previously landed in the unknown, retryable `PROVIDER_STREAM_ERROR`
-bucket. A retry above temperature 0 could occasionally have produced a shorter
+the curated provider failure codes, so it is classified as a known terminal
+error and hosted child runs -- including durable child forks -- stop retrying
+it, where a truncation previously landed in the unknown, retryable
+`PROVIDER_STREAM_ERROR` bucket. A retry above temperature 0 could occasionally have produced a shorter
 tool input and succeeded; that accidental recovery is gone, in exchange for a
 named failure instead of a retry loop against a budget that cannot fit the
 response. The incomplete tool call is also dropped rather than replayed, so no

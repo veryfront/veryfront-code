@@ -948,6 +948,44 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     );
   });
 
+  // Codex P2 on veryfront-code#4516: a usage-only message_delta carries no
+  // stop_reason, and deciding there would classify the truncation as a
+  // malformed stream before the delta that actually says max_tokens.
+  it("waits for a stop reason when a usage-only delta arrives first", async () => {
+    const lateStopReasonStream = [
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "toolu_z", name: "create_file", input: {} },
+      }),
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "input_json_delta",
+          partial_json: '{"path":"/inbox/mail-2.json","content":"<html>trunc',
+        },
+      }),
+      data({ type: "content_block_stop", index: 0 }),
+      // Usage only -- no stop_reason yet.
+      data({ type: "message_delta", delta: {}, usage: { output_tokens: 2048 } }),
+      data({
+        type: "message_delta",
+        delta: { stop_reason: "max_tokens" },
+        usage: { output_tokens: 4096 },
+      }),
+      data({ type: "message_stop" }),
+    ].join("");
+
+    const error = await assertRejects(
+      () => collectParts(streamFromText(lateStopReasonStream)),
+      ProviderOutputTruncatedError,
+      "provider output truncated at the max output token limit",
+    );
+    assertInstanceOf(error, ProviderOutputTruncatedError);
+  });
+
   it("still reports a malformed tool stream when the stop reason is not max_tokens", async () => {
     const malformedToolStream = [
       data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
