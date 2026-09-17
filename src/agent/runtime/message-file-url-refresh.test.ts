@@ -324,3 +324,71 @@ Deno.test("resolveRuntimeMessageFileUrls rethrows an unresolvable attachment whe
     "Access denied",
   );
 });
+
+// Codex P2 on veryfront-code#4513: a resolver can fail before it returns a
+// promise -- synchronous validation, client setup -- and that throw used to
+// escape the degrade and fail the turn, which is the bug #1414 is about.
+Deno.test("resolveRuntimeMessageFileUrls degrades a resolver that throws synchronously", async () => {
+  const reported: string[] = [];
+  const messages = await resolveRuntimeMessageFileUrls(
+    [
+      userMessage([
+        { type: "text", text: "Summarize this." },
+        {
+          type: "file",
+          mediaType: "text/plain",
+          filename: "notes.txt",
+          uploadId: "upload-sync-throw",
+          url: "https://files.example.com/notes.txt",
+        },
+      ]),
+    ],
+    () => {
+      throw new Error("resolver misconfigured");
+    },
+    { onUnresolvableAttachment: ({ uploadId }) => reported.push(uploadId) },
+  );
+
+  // The turn survives and the model is told the file was there.
+  assertEquals(reported, ["upload-sync-throw"]);
+  const texts = messages[0]?.parts.filter((part) => part.type === "text").map((part) =>
+    (part as { text: string }).text
+  );
+  assertEquals(texts?.includes("[attachment unavailable: notes.txt]"), true);
+});
+
+// Codex P1: Array.prototype.flat is observable, and a patched one would receive
+// the raw message parts.
+Deno.test("resolveRuntimeMessageFileUrls does not invoke a patched Array.prototype.flat", async () => {
+  const originalFlat = Array.prototype.flat;
+  let sawParts = false;
+  // deno-lint-ignore no-explicit-any
+  (Array.prototype as any).flat = function (this: unknown[], ...args: unknown[]) {
+    sawParts = true;
+    // deno-lint-ignore no-explicit-any
+    return (originalFlat as any).apply(this, args);
+  };
+
+  try {
+    const messages = await resolveRuntimeMessageFileUrls(
+      [
+        userMessage([
+          { type: "text", text: "Private prompt text." },
+          {
+            type: "file",
+            mediaType: "text/plain",
+            filename: "notes.txt",
+            uploadId: "upload-1",
+            url: "https://files.example.com/notes.txt",
+          },
+        ]),
+      ],
+      () => Promise.resolve("https://signed.example.com/notes.txt"),
+    );
+
+    assertEquals(sawParts, false);
+    assertEquals(messages[0]?.parts.length, 2);
+  } finally {
+    Array.prototype.flat = originalFlat;
+  }
+});

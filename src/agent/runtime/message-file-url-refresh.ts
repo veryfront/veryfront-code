@@ -1,5 +1,5 @@
 import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
-import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { concatPrivateArrays, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   type ChatUiMessage,
   type FileUIPartWithUpload,
@@ -99,11 +99,16 @@ export async function resolveRuntimeMessageFileUrls(
 
           let urlPromise = urlByUploadId.get(uploadId);
           if (!urlPromise) {
-            urlPromise = resolveFileUrl({
-              uploadId,
-              part: toResolverPart(part, uploadId),
-              message,
-            });
+            // The async wrapper is load-bearing: a resolver that throws
+            // SYNCHRONOUSLY (validation, client setup) would otherwise escape
+            // the catch below, reject Promise.all and fail the whole turn --
+            // the exact failure this degrade exists to prevent.
+            urlPromise = (async () =>
+              await resolveFileUrl({
+                uploadId,
+                part: toResolverPart(part, uploadId),
+                message,
+              }))();
             urlByUploadId.set(uploadId, urlPromise);
           }
 
@@ -145,7 +150,15 @@ export async function resolveRuntimeMessageFileUrls(
         }),
       );
 
-      return { ...message, parts: parts.flat() };
+      // Array.prototype.flat is observable: project code can replace it, and it
+      // would receive the raw message parts. This file already uses
+      // mapPrivateArray for that reason, so the flatten stays private too.
+      let flattened: ChatUiMessage["parts"][number][] = [];
+      for (let index = 0; index < parts.length; index++) {
+        flattened = concatPrivateArrays(flattened, parts[index] ?? []);
+      }
+
+      return { ...message, parts: flattened };
     }),
   );
 }
