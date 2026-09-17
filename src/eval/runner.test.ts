@@ -1013,6 +1013,34 @@ describe("eval/runner", () => {
     assertEquals(executions, 0);
   });
 
+  it("keeps the mapped tool input when the tool times out", async () => {
+    let releaseTool: (() => void) | undefined;
+    const definition = evalTool({
+      id: "eval:tool-timeout",
+      target: "tool:lookup",
+      dataset: datasets.inline([{ id: "q1", input: { orderId: "A1" } }]),
+      input: (example) => ({ mapped: (example.input as { orderId: string }).orderId }),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 30,
+      adapters: {
+        tool: () =>
+          new Promise((resolve) => {
+            releaseTool = () => resolve({ output: { late: true } });
+          }),
+      },
+    });
+    releaseTool?.();
+
+    assertEquals(report.records[0]?.executionInput, { mapped: "A1" });
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:tool-timeout" case "q1" did not finish within 0.03s.',
+    );
+  });
+
   it("passes the record signal to a stalled check", async () => {
     let checkSignal: AbortSignal | undefined;
     let releaseCheck: (() => void) | undefined;

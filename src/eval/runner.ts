@@ -230,7 +230,7 @@ async function runToolTarget(
   repetition: number,
   runId: string,
   signal: AbortSignal | undefined,
-  markInvoked?: () => void,
+  markInvoked?: (input: unknown) => void,
 ): Promise<{ input: unknown; result: EvalToolAdapterResult }> {
   const adapter = options.adapters.tool;
   if (!adapter) {
@@ -241,7 +241,7 @@ async function runToolTarget(
     : example.input;
   // The mapper can outlive the record deadline; do not execute the tool after it.
   if (signal?.aborted) throw signal.reason;
-  markInvoked?.();
+  markInvoked?.(input);
   const result = normalizeToolAdapterResult(
     await adapter({
       definition,
@@ -527,6 +527,7 @@ async function runRecord(
   runId: string,
   signal?: AbortSignal,
   onTargetFinished?: (record: EvalRecord) => void,
+  onToolInvoked?: (input: unknown) => void,
 ): Promise<EvalRecord> {
   const started = Date.now();
   let result: EvalAgentAdapterResult | EvalToolAdapterResult;
@@ -545,8 +546,9 @@ async function runRecord(
         repetition,
         runId,
         signal,
-        () => {
+        (invokedInput) => {
           toolInvoked = true;
+          onToolInvoked?.(invokedInput);
         },
       );
       result = toolRun.result;
@@ -696,6 +698,9 @@ async function runRecordWithinTimeout(
   // Set once the target finished, so a timeout during grading keeps its output,
   // trace, and usage instead of discarding them.
   let targetRecord: EvalRecord | undefined;
+  // Set once a tool target was invoked, so a timeout still reports the mapped
+  // input the tool actually received.
+  let executionInput: { value: unknown } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<EvalRecord>((resolve) => {
     timer = setTimeout(() => {
@@ -727,6 +732,7 @@ async function runRecordWithinTimeout(
         input: example.input,
         output: undefined,
         ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
+        ...(executionInput ? { executionInput: executionInput.value } : {}),
         metadata: example.metadata ?? {},
         trace: normalizeTrace(),
         usage: {},
@@ -747,6 +753,9 @@ async function runRecordWithinTimeout(
     controller.signal,
     (record) => {
       targetRecord = { ...record };
+    },
+    (input) => {
+      executionInput = { value: input };
     },
   );
   // A record abandoned at its deadline may still settle later; nothing waits
