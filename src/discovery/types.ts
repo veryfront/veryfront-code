@@ -32,6 +32,13 @@ export interface FileDiscoveryContext {
   baseDir?: string;
   /** Explicit host-owned capability for trusted local/dedicated runtimes only. */
   allowHostProjectCodeExecution?: boolean;
+  /**
+   * Overrides compiled-binary detection for the discovery bundler; defaults to
+   * `isDenoCompiled`. A compiled binary's npm package set is frozen at build
+   * time from the framework's own lock, so project-declared dependencies are
+   * inlined from their pinned CDN source instead of left as `npm:` specifiers.
+   */
+  compiledRuntime?: boolean;
 }
 
 /**

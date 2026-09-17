@@ -2,8 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
-import { clearTranspileCache, importModule as importModuleRaw } from "./transpiler.ts";
+import {
+  clearTranspileCache,
+  describeUnresolvableNpmImport,
+  importModule as importModuleRaw,
+  readDependencyPins,
+} from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
@@ -385,6 +391,167 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(third === first, true);
     });
 
+    // Hosted discovery bundles from a VFS while esbuild still resolves bare
+    // specifiers against a real directory, so these fixtures live under an
+    // existing repo path the way a deployed project's files do.
+    const projectDir = Deno.cwd();
+    const toolPath = "src/discovery/__fixtures__/extract-pdf-text.ts";
+
+    it("loads a project-declared npm dependency on a compiled runtime", async () => {
+      // A compiled binary's npm package set is frozen at build time from the
+      // framework's own lock, so an `npm:` specifier for a project dependency
+      // fails with "Could not find constraint '<pkg>@<version>'". The declared
+      // pin must be inlined from its CDN source at bundle time instead.
+      const files: Record<string, string> = {
+        "package.json": JSON.stringify({
+          dependencies: { "@veryfront-fixture/pdf-text": "1.8.1" },
+        }),
+        [toolPath]: [
+          `import { extractText } from "@veryfront-fixture/pdf-text";`,
+          `export default { name: "extract-pdf-text", run: () => extractText() };`,
+        ].join("\n"),
+      };
+
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          requested.push(String(input));
+          return Promise.resolve(
+            new Response(`export function extractText() { return "pdf text"; }`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        },
+        () =>
+          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
+            { default: { name: string; run: () => string } }
+          >,
+      );
+
+      assertEquals(mod.default.name, "extract-pdf-text");
+      assertEquals(mod.default.run(), "pdf text");
+      assertEquals(
+        requested.some((url) => url.startsWith("https://esm.sh/@veryfront-fixture/pdf-text@1.8.1")),
+        true,
+        `expected a pinned esm.sh fetch, got ${JSON.stringify(requested)}`,
+      );
+    });
+
+    it("leaves bare npm imports alone when the runtime is not compiled", async () => {
+      // A plain `deno run` resolves `npm:` specifiers natively against the
+      // project's node_modules, so nothing is fetched from the CDN there.
+      const files: Record<string, string> = {
+        "package.json": JSON.stringify({
+          dependencies: { "@veryfront-fixture/pdf-text": "1.8.1" },
+        }),
+        [toolPath]: `export default { name: "noop" };`,
+      };
+
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files, { projectDir }),
+        baseDir: projectDir,
+      };
+
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          requested.push(String(input));
+          return Promise.resolve(new Response("export {}"));
+        },
+        () =>
+          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
+            { default: { name: string } }
+          >,
+      );
+
+      assertEquals(mod.default.name, "noop");
+      assertEquals(requested, []);
+    });
+
+    it("never redirects framework-provided packages to the CDN", async () => {
+      // A project that pins `zod` still shares the framework's instance: the
+      // registries compare schemas against it, so a second copy from a CDN
+      // would break discovery rather than fix a dependency.
+      const files: Record<string, string> = {
+        "package.json": JSON.stringify({ dependencies: { zod: "3.25.76" } }),
+        [toolPath]: [
+          `import { z } from "zod";`,
+          `export default { name: "schema", shape: typeof z.object };`,
+        ].join("\n"),
+      };
+
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          requested.push(String(input));
+          return Promise.resolve(new Response("export {}"));
+        },
+        () =>
+          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
+            { default: { name: string; shape: string } }
+          >,
+      );
+
+      assertEquals(mod.default.name, "schema");
+      assertEquals(mod.default.shape, "function");
+      assertEquals(requested, []);
+    });
+  });
+
+  describe("readDependencyPins", () => {
+    it("keeps exact versions and drops ranges and aliases", () => {
+      assertEquals(
+        readDependencyPins(JSON.stringify({
+          dependencies: { unpdf: "1.8.1", mammoth: "^1.8.0", local: "file:../local" },
+          devDependencies: { "@scope/pkg": "2.0.0-rc.1", star: "*" },
+        })),
+        { unpdf: "1.8.1", "@scope/pkg": "2.0.0-rc.1" },
+      );
+    });
+
+    it("returns no pins for malformed package.json", () => {
+      assertEquals(readDependencyPins("{ not json"), {});
+    });
+  });
+
+  describe("describeUnresolvableNpmImport", () => {
+    it("names the package a compiled binary could not resolve", () => {
+      assertEquals(
+        describeUnresolvableNpmImport(
+          new Error("Could not find constraint 'unpdf@1.8.1' in the list of packages"),
+        ),
+        "unpdf@1.8.1",
+      );
+    });
+
+    it("names a package the local npm resolver rejected", () => {
+      assertEquals(
+        describeUnresolvableNpmImport(new Error("npm package 'unpdf' does not exist.")),
+        "unpdf",
+      );
+    });
+
+    it("ignores unrelated import failures", () => {
+      assertEquals(describeUnresolvableNpmImport(new Error("boom")), null);
+    });
+  });
+
+  describe("importModule failures", () => {
     it("should throw when file is not found via fsAdapter", async () => {
       const adapter = createMockAdapter({});
       const context: FileDiscoveryContext = {

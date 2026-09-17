@@ -15,7 +15,11 @@ import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
-import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
+import { splitPackageSubpath } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
+import { createHTTPPlugin } from "#veryfront/transforms/esm/http-bundler.ts";
+import { ESM_CDN_BASE } from "#veryfront/utils/constants/cdn.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { COMPILATION_ERROR, DEPENDENCY_MISSING, FILE_NOT_FOUND } from "#veryfront/errors";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
@@ -173,6 +177,148 @@ function createFsAdapterPlugin(
 }
 
 /**
+ * A project dependency pin is only usable as a CDN coordinate when it names an
+ * exact version. Ranges, aliases (`workspace:`, `file:`, `npm:`) and `*` would
+ * have to be resolved against a registry, and resolving them to `latest` would
+ * silently change which code a project runs between two discovery passes.
+ */
+function toExactVersion(range: unknown): string | null {
+  if (typeof range !== "string") return null;
+  const trimmed = range.trim().replace(/^[v=]/, "");
+  return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*$/.test(trimmed) ? trimmed : null;
+}
+
+/**
+ * Exact-version dependency pins declared by a project's package.json.
+ *
+ * @internal Exported for testing only.
+ */
+export function readDependencyPins(packageJsonText: string): Record<string, string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(packageJsonText);
+  } catch (_) {
+    /* expected: a project may ship an unparseable or absent package.json */
+    return {};
+  }
+
+  const pkg = parsed as { dependencies?: unknown; devDependencies?: unknown };
+  const pins: Record<string, string> = {};
+  for (const group of [pkg?.dependencies, pkg?.devDependencies]) {
+    if (!group || typeof group !== "object") continue;
+    for (const [name, range] of Object.entries(group as Record<string, unknown>)) {
+      const version = toExactVersion(range);
+      if (version) pins[name] = version;
+    }
+  }
+  return pins;
+}
+
+async function readProjectDependencyPins(
+  context: FileDiscoveryContext,
+): Promise<Record<string, string>> {
+  const packageJsonPath = pathHelper.join(context.baseDir ?? ".", "package.json");
+  try {
+    const text = context.fsAdapter
+      ? await context.fsAdapter.readFile(packageJsonPath)
+      : await createFileSystem().readTextFile(packageJsonPath);
+    return readDependencyPins(text);
+  } catch (_) {
+    /* expected: a project without a package.json declares no dependencies */
+    return {};
+  }
+}
+
+/**
+ * The `<pkg>@<version>` a compiled binary refused to resolve, or `null` when
+ * the failure is unrelated. Deno answers an `npm:` specifier that is not in a
+ * compiled binary's frozen package set with
+ * `Could not find constraint 'unpdf@1.8.1' in the list of packages.`
+ *
+ * @internal Exported for testing only.
+ */
+export function describeUnresolvableNpmImport(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const constraint = /Could not find constraint '([^']+)'/.exec(message);
+  if (constraint?.[1]) return constraint[1];
+  const resolution = /Could not resolve ["']npm:([^"']+)["']/.exec(message);
+  if (resolution?.[1]) return resolution[1];
+  const missing = /npm package '([^']+)' does not exist/.exec(message);
+  return missing?.[1] ?? null;
+}
+
+const ESM_CDN_ORIGIN = new URL(ESM_CDN_BASE).origin;
+
+/**
+ * Specifiers the framework itself hands to discovered modules. Serving these
+ * from a CDN would bind a discovered tool to a second copy of the framework,
+ * of React, or of the schema library whose instance the registries compare
+ * against, so a project pin never redirects them.
+ */
+const FRAMEWORK_PROVIDED_PACKAGES = new Set(["veryfront", "react", "react-dom", "zod", "path"]);
+
+function isFrameworkProvidedPackage(name: string): boolean {
+  return FRAMEWORK_PROVIDED_PACKAGES.has(name) ||
+    name.startsWith("veryfront/") ||
+    name.startsWith("@opentelemetry/") ||
+    name.startsWith("node:");
+}
+
+/**
+ * Project dependency sources are fetched through the host egress ceiling and
+ * only from the pinned ESM CDN: a project supplies the package name and the
+ * version it declared, never the host.
+ */
+function fetchProjectDependencySource(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  return guardedOutboundFetch(input, init, {
+    authorizeUrl: (url) => {
+      if (url.origin !== ESM_CDN_ORIGIN) {
+        throw new TypeError(`Project dependency source blocked by allow-list: ${url.origin}`);
+      }
+    },
+  });
+}
+
+/**
+ * Resolve project-declared npm dependencies to their pinned CDN source so the
+ * discovery bundle inlines them.
+ *
+ * `packages: "external"` leaves every bare specifier in the emitted module,
+ * where `rewriteForDeno` prefixes it with `npm:`. A compiled binary resolves
+ * that against the npm package set frozen into it at build time from the
+ * framework's own lock, which a project's own dependency is never part of, and
+ * answers `Could not find constraint '<pkg>@<version>' in the list of
+ * packages`. Inlining the declared pin is what makes the dependency loadable.
+ */
+function createProjectDependencyCdnPlugin(
+  pins: Record<string, string>,
+  onInlined: (specifier: string) => void,
+): Plugin {
+  return {
+    name: "veryfront-project-npm-cdn",
+    setup(build: PluginBuild) {
+      build.onResolve({ filter: /^[^./]/ }, (args) => {
+        // Imports reached through a fetched module are the HTTP plugin's.
+        if (args.namespace === "http-url") return undefined;
+
+        const { name, subpath } = splitPackageSubpath(args.path);
+        const version = pins[name];
+        if (!version || isFrameworkProvidedPackage(name)) return undefined;
+
+        onInlined(args.path);
+        return {
+          path: `${ESM_CDN_BASE}/${name}@${version}${subpath === "." ? "" : subpath.slice(1)}`,
+          namespace: "http-url",
+        };
+      });
+    },
+  };
+}
+
+/**
  * Import and transpile a module for discovery
  */
 export async function importModule(
@@ -202,13 +348,24 @@ export async function importModule(
     });
   }
 
+  // A compiled binary cannot resolve `npm:` specifiers for project code, so its
+  // declared dependency pins decide what the bundler inlines below.
+  const compiled = context.compiledRuntime ?? isDenoCompiled;
+  const dependencyPins = compiled ? await readProjectDependencyPins(context) : {};
+
   // A shared hosted runtime serves many projects and source generations, so
   // namespace identical relative paths before considering entry contents.
   // The entry hash alone is still not enough: bundled relative imports are
   // inlined, so cached entries are only served after their recorded dependency
-  // contents re-verify.
+  // contents re-verify, and a pin bump changes the inlined package source
+  // without touching the entry file.
   const cacheNamespace = context.cacheNamespace ?? context.baseDir ?? "";
-  const cacheKey = JSON.stringify([cacheNamespace, file, await computeHash(source)]);
+  const cacheKey = JSON.stringify([
+    cacheNamespace,
+    file,
+    await computeHash(source),
+    dependencyPins,
+  ]);
   const cachedEntries = transpileCache.get(cacheKey);
   if (cachedEntries) {
     const cached = await findCachedModuleWithFreshDeps(cachedEntries, context);
@@ -231,13 +388,24 @@ export async function importModule(
   // Use fsAdapter plugin whenever a VFS adapter is available (regardless of
   // runtime), recording every bundled dependency for cache re-validation.
   const bundledDeps: Array<{ path: string; content: string }> = [];
-  const plugins = hasFsAdapter
+  const plugins: Plugin[] = hasFsAdapter
     ? [
       createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
         bundledDeps.push({ path, content });
       }),
     ]
     : [];
+
+  const inlinedDependencies = new Set<string>();
+  if (Object.keys(dependencyPins).length > 0) {
+    plugins.push(
+      createProjectDependencyCdnPlugin(
+        dependencyPins,
+        (specifier) => inlinedDependencies.add(specifier),
+      ),
+      createHTTPPlugin({ fetchFn: fetchProjectDependencySource }),
+    );
+  }
 
   const result = await build({
     bundle: true,
@@ -280,9 +448,13 @@ export async function importModule(
   });
 
   if (result.errors.length > 0) {
-    throw COMPILATION_ERROR.create({
-      detail: `Failed to transpile ${filePath}: ${result.errors[0]?.text ?? "unknown error"}`,
-    });
+    const text = result.errors[0]?.text ?? "unknown error";
+    const detail = `Failed to transpile ${filePath}: ${text}`;
+    // A CDN failure names an unreachable project dependency, not broken source.
+    if (text.includes(ESM_CDN_BASE)) {
+      throw DEPENDENCY_MISSING.create({ detail });
+    }
+    throw COMPILATION_ERROR.create({ detail });
   }
 
   const js = result.outputFiles?.[0]?.text ?? "export {}";
@@ -300,7 +472,19 @@ export async function importModule(
   try {
     const moduleUrl = pathHelper.toFileUrl(tempFile);
     moduleUrl.searchParams.set("v", String(Date.now()));
-    const module = await import(moduleUrl.href);
+    let module: unknown;
+    try {
+      module = await import(moduleUrl.href);
+    } catch (error) {
+      const unresolvable = describeUnresolvableNpmImport(error);
+      if (!unresolvable) throw error;
+      throw DEPENDENCY_MISSING.create({
+        detail: `${filePath} imports "${unresolvable}", which this runtime cannot resolve. ` +
+          `Declare the package in the project's package.json with an exact version so its ` +
+          `source is bundled with the module, or move the work to an extension or a sandbox session.`,
+        cause: error,
+      });
+    }
     const deps = await Promise.all(
       bundledDeps.map(async ({ path, content }) => ({ path, hash: await computeHash(content) })),
     );
