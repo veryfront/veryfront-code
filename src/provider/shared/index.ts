@@ -61,6 +61,7 @@ export {
   readTextParts,
   requestJson,
   requestStream,
+  runWithProviderRequestObserver,
   snapshotJsonValue,
   snapshotProviderJsonValue,
   stringifyJsonValue,
