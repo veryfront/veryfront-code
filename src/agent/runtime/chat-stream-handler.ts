@@ -206,6 +206,38 @@ function resolveRuntimeFallbackErrorEvent(error: unknown): RuntimeStreamErrorEve
   }
 }
 
+/**
+ * The subset of an execution failure that may cross into a PUBLIC RunError.
+ *
+ * The SSE stream may carry a fallback `Error.message`, but the relay writes into
+ * a durable, client-visible RunError. A non-provider failure there -- a
+ * persistence error from `turnPersistence.finalize()`, say -- can carry database
+ * URLs or internal paths, which AGENTS.md forbids in user-facing output. Only
+ * curated provider diagnostics and explicitly public lifecycle messages are
+ * relayed; anything else returns undefined so the relay keeps its neutral
+ * boundary message.
+ */
+export function resolveRelayableExecutionFailure(
+  error: unknown,
+): { message: string; code?: string } | undefined {
+  const providerFailure = readRuntimeProviderStreamFailureCause(error);
+  if (providerFailure.found) {
+    const knownProviderError = resolveKnownProviderTerminalError(providerFailure.cause);
+    if (!knownProviderError) return undefined;
+    return {
+      message: knownProviderError.message,
+      ...(knownProviderError.code ? { code: knownProviderError.code } : {}),
+    };
+  }
+
+  if (isStreamLifecycleFailure(error)) {
+    const event = resolveRuntimeStreamErrorEvent(error);
+    return { message: event.error, ...(event.code ? { code: event.code } : {}) };
+  }
+
+  return undefined;
+}
+
 /** Serialize an outer runtime failure without inferring provider provenance. */
 export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStreamErrorEvent {
   const providerFailure = readRuntimeProviderStreamFailureCause(error);

@@ -96,6 +96,7 @@ import {
   createRuntimeStreamSource,
   createStreamState,
   processStream,
+  resolveRelayableExecutionFailure,
   resolveRuntimeExecutionErrorEvent,
   type StreamingToolCall,
   type StreamingToolResult,
@@ -2454,18 +2455,13 @@ export class AgentRuntime {
       }).catch(async (error) => {
         // A cancellation keeps the relay's neutral default: only a real
         // failure hands the relay the sanitized provider cause.
-        const errorEvent = isAbortError(error, abortSignal)
+        // Same rule as the stream path: the relay writes a public RunError, so
+        // only curated diagnostics cross it. A persistence failure keeps the
+        // neutral boundary message rather than exposing its own text.
+        const relayFailure = isAbortError(error, abortSignal)
           ? undefined
-          : resolveRuntimeExecutionErrorEvent(error);
-        await failProviderReplayCheckpointTurn(
-          providerReplayCheckpointEmission,
-          errorEvent
-            ? {
-              message: errorEvent.error,
-              ...(errorEvent.code ? { code: errorEvent.code } : {}),
-            }
-            : undefined,
-        );
+          : resolveRelayableExecutionFailure(error);
+        await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission, relayFailure);
         throw error;
       });
     } finally {
@@ -2721,15 +2717,15 @@ export class AgentRuntime {
             // neutral default rather than surfacing the raw abort reason.
             const aborted = isAbortError(error, streamAbortSignal);
             const errorEvent = aborted ? undefined : resolveRuntimeExecutionErrorEvent(error);
+            // The relay writes a PUBLIC RunError, so it takes only curated
+            // diagnostics -- a persistence failure's raw message can carry
+            // internal detail the SSE fallback path is allowed to show but a
+            // durable client-visible error is not.
+            const relayFailure = aborted ? undefined : resolveRelayableExecutionFailure(error);
             try {
               await failProviderReplayCheckpointTurn(
                 providerReplayCheckpointEmission,
-                errorEvent
-                  ? {
-                    message: errorEvent.error,
-                    ...(errorEvent.code ? { code: errorEvent.code } : {}),
-                  }
-                  : undefined,
+                relayFailure,
               );
             } catch (failureHookError) {
               logger.debug("Provider replay failure hook rejected", {
