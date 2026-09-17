@@ -1,8 +1,27 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { FALLBACK_MODEL_MAX_OUTPUT_TOKENS, getModelMaxOutputTokens } from "./constants.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import {
+  FALLBACK_MODEL_MAX_OUTPUT_TOKENS,
+  getModelMaxOutputTokens,
+  UNKNOWN_MODEL_MAX_OUTPUT_TOKENS_WARNING,
+} from "./constants.ts";
+
+/** Capture the unknown-model warning emitted while `run` executes. */
+function captureUnknownModelWarnings(run: () => void): LogEntry[] {
+  const records: LogEntry[] = [];
+  const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+    if (entry.message === UNKNOWN_MODEL_MAX_OUTPUT_TOKENS_WARNING) records.push(entry);
+  });
+  try {
+    run();
+  } finally {
+    unsubscribe();
+  }
+  return records;
+}
 
 describe("getModelMaxOutputTokens", () => {
   it("returns known limit for Anthropic Opus", () => {
@@ -46,6 +65,44 @@ describe("getModelMaxOutputTokens", () => {
   it("returns the safe fallback limit for unknown models", () => {
     assertEquals(getModelMaxOutputTokens("unknown/model"), FALLBACK_MODEL_MAX_OUTPUT_TOKENS);
   });
+
+  // veryfront-issue-inbox#1480: the table is keyed by exact model id, so the
+  // undated spelling of a dated model missed it and silently collapsed to the
+  // 4_096 fallback while its dated sibling got 64_000.
+  it("resolves an undated model id to the same limit as its dated sibling", () => {
+    assertEquals(getModelMaxOutputTokens("anthropic/claude-haiku-4-5-20251001"), 64_000);
+    assertEquals(getModelMaxOutputTokens("anthropic/claude-haiku-4-5"), 64_000);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/anthropic/claude-haiku-4-5"), 64_000);
+  });
+
+  it("resolves an unlisted snapshot date to the model's limit", () => {
+    assertEquals(getModelMaxOutputTokens("anthropic/claude-haiku-4-5-20260101"), 64_000);
+  });
+
+  it("matches model ids case-insensitively", () => {
+    assertEquals(getModelMaxOutputTokens("Anthropic/Claude-Haiku-4-5"), 64_000);
+  });
+
+  it("warns with the model id when an unknown model falls back", () => {
+    const records = captureUnknownModelWarnings(() => {
+      assertEquals(getModelMaxOutputTokens("unknown/model"), FALLBACK_MODEL_MAX_OUTPUT_TOKENS);
+    });
+    assertEquals(records.length, 1);
+    const warning = records[0];
+    assertExists(warning);
+    assertEquals(warning.level, "warn");
+    assertEquals(warning.context?.model, "unknown/model");
+    assertEquals(warning.context?.max_output_limit, FALLBACK_MODEL_MAX_OUTPUT_TOKENS);
+  });
+
+  it("stays quiet for models the table covers", () => {
+    const records = captureUnknownModelWarnings(() => {
+      getModelMaxOutputTokens("anthropic/claude-haiku-4-5");
+      getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.5");
+      getModelMaxOutputTokens("google/gemini-2.5-pro");
+    });
+    assertEquals(records, []);
+  });
 });
 
 describe("MODEL_MAX_OUTPUT_TOKENS covers the catalog", () => {
@@ -61,6 +118,21 @@ describe("MODEL_MAX_OUTPUT_TOKENS covers the catalog", () => {
       )
       .map((model) => model.modelId);
     assertEquals(missing, []);
+  });
+
+  // veryfront-issue-inbox#1480: agent definitions are written with the undated
+  // spelling as often as the dated one. Both must carry the same budget.
+  it("every dated catalog model gives its undated id the same budget", () => {
+    const mismatched = VERYFRONT_CLOUD_CHAT_MODELS
+      .filter((model) => /-\d{8}$/.test(model.modelId))
+      .map((model) => ({
+        modelId: model.modelId,
+        dated: getModelMaxOutputTokens(model.modelId),
+        undated: getModelMaxOutputTokens(model.modelId.replace(/-\d{8}$/, "")),
+      }))
+      .filter((entry) => entry.dated !== entry.undated)
+      .map((entry) => `${entry.modelId}=${entry.dated} vs undated=${entry.undated}`);
+    assertEquals(mismatched, []);
   });
 
   it("every thinking model gets enough budget for reasoning plus an answer", () => {
