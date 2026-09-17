@@ -960,6 +960,7 @@ describe("eval CLI command helpers", () => {
 
   it("cancels a stalled mock tool resolver at the record deadline", async () => {
     let resolverSignal: AbortSignal | undefined;
+    let releaseResolver: (() => void) | undefined;
     const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
     const definition = evalAgent({
       id: "eval:resolver-stall",
@@ -967,7 +968,9 @@ describe("eval CLI command helpers", () => {
       dataset: datasets.inline([{ id: "q1", input: "one" }]),
       mockTools: ({ signal }) => {
         resolverSignal = signal;
-        return new Promise<never>(() => {});
+        return new Promise((resolve) => {
+          releaseResolver = () => resolve({});
+        });
       },
     });
 
@@ -981,6 +984,7 @@ describe("eval CLI command helpers", () => {
       'Eval "eval:resolver-stall" case "q1" did not finish within 0.05s.',
     );
     assertEquals(resolverSignal?.aborted, true);
+    releaseResolver?.();
   });
 
   it("isolates mock tool resolver errors to the current eval record", async () => {
@@ -1066,12 +1070,16 @@ describe("eval CLI command helpers", () => {
 
   it("fails a case whose model stream stalls once the record timeout elapses", async () => {
     let streamSignal: AbortSignal | undefined;
+    // Released at the end of the test so no promise outlives it.
+    let releaseModel: (() => void) | undefined;
     const model = {
       provider: "hosted",
       modelId: "hosted/eval-stalled-stream",
       _generateViaStream: true,
       doGenerate() {
-        return new Promise<never>(() => {});
+        return new Promise((resolve) => {
+          releaseModel = () => resolve({ text: "late" });
+        });
       },
       async doStream(options: { abortSignal?: AbortSignal }) {
         streamSignal = options.abortSignal;
@@ -1102,6 +1110,7 @@ describe("eval CLI command helpers", () => {
       'Eval "eval:stalled" case "q1" did not finish within 0.2s.',
     );
     assertEquals(streamSignal?.aborted, true);
+    releaseModel?.();
   });
 
   it("retains only skill loader tools for skills agents when mock tools are active", async () => {
@@ -1232,6 +1241,7 @@ describe("eval CLI command helpers", () => {
 
   it("forwards the record timeout signal into tool execution", async () => {
     let executionSignal: AbortSignal | undefined;
+    let releaseExecution: (() => void) | undefined;
     const tool = {
       id: "slow_lookup",
       type: "function",
@@ -1239,7 +1249,9 @@ describe("eval CLI command helpers", () => {
       inputSchema: {} as Tool["inputSchema"],
       execute: (_input: unknown, context?: Parameters<Tool["execute"]>[1]) => {
         executionSignal = context?.abortSignal;
-        return new Promise<never>(() => {});
+        return new Promise((resolve) => {
+          releaseExecution = () => resolve({ ok: true });
+        });
       },
     } as Tool;
     const definition = evalTool({
@@ -1258,6 +1270,7 @@ describe("eval CLI command helpers", () => {
       'Eval "eval:slow-tool" case "q1" did not finish within 0.05s.',
     );
     assertEquals(executionSignal?.aborted, true);
+    releaseExecution?.();
   });
 
   it("creates a CLI tool adapter for direct tool evals", async () => {

@@ -7,6 +7,7 @@ import {
   requestJson,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   datasets,
   EVAL_REPORT_SCHEMA_VERSION,
@@ -74,6 +75,12 @@ function blockedModelRequest(): Promise<unknown> {
     providerKind: "openai",
   });
 }
+
+const stalledMetricResult = {
+  name: "answer.exactMatch",
+  family: "answer",
+  severity: "gate",
+} as const;
 
 describe("eval/runner", () => {
   afterEach(() => {
@@ -935,10 +942,12 @@ describe("eval/runner", () => {
 
   it("fails a record whose metric stalls past the record timeout and keeps its target data", async () => {
     const metricSignals: AbortSignal[] = [];
+    // Released at the end of the test so no promise outlives it.
+    const releases: Array<() => void> = [];
     const stalled = metrics.answer.exactMatch().gate();
     stalled.evaluate = (_record, context) => {
       if (context?.signal) metricSignals.push(context.signal);
-      return new Promise<never>(() => {});
+      return new Promise((resolve) => releases.push(() => resolve(stalledMetricResult)));
     };
     const definition = evalAgent({
       id: "eval:stalled-metric",
@@ -974,6 +983,7 @@ describe("eval/runner", () => {
     ]);
     assertEquals(report.records.map((record) => record.usage.totalTokens), [7, 7]);
     assertEquals(report.records.map((record) => record.metrics), [[], []]);
+    for (const release of releases) release();
   });
 
   it("starts no grading work once a target rejects at the record deadline", async () => {
@@ -1050,13 +1060,16 @@ describe("eval/runner", () => {
 
   it("passes the record signal to a stalled check", async () => {
     let checkSignal: AbortSignal | undefined;
+    let releaseCheck: (() => void) | undefined;
     const definition = evalAgent({
       id: "eval:stalled-check",
       target: "agent:researcher",
       dataset: datasets.inline([{ id: "q1", input: "First" }]),
       check({ signal }) {
         checkSignal = signal;
-        return new Promise<never>(() => {});
+        return new Promise<void>((resolve) => {
+          releaseCheck = resolve;
+        });
       },
     });
 
@@ -1070,6 +1083,51 @@ describe("eval/runner", () => {
       'Eval "eval:stalled-check" case "q1" did not finish within 0.05s.',
     );
     assertEquals(checkSignal?.aborted, true);
+    releaseCheck?.();
+  });
+
+  it("keeps abandoned work inside the concurrency budget", async () => {
+    let releaseStuck: (() => void) | undefined;
+    const started: string[] = [];
+    const finished: string[] = [];
+    const definition = evalAgent({
+      id: "eval:abandoned-slot",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "stuck", input: "First" },
+        { id: "next", input: "Second" },
+      ]),
+    });
+
+    const run = runEval(definition, {
+      concurrency: 1,
+      // The deadline also bounds how long the run waits for abandoned work.
+      recordTimeoutMs: 300,
+      onProgress: (event) => {
+        if (event.type === "record-finished") finished.push(event.exampleId);
+      },
+      adapters: {
+        agent: ({ example }) => {
+          started.push(example.id);
+          if (example.id !== "stuck") return "ok";
+          // Ignores the signal, the way uncancellable work would.
+          return new Promise<string>((resolve) => {
+            releaseStuck = () => resolve("late");
+          });
+        },
+      },
+    });
+
+    // The first record reports its timeout while its work is still running.
+    await waitFor(() => finished.length === 1, { timeout: 5_000, interval: 5 });
+    assertEquals(started, ["stuck"], "the next record waits for the abandoned slot");
+    releaseStuck!();
+    const report = await run;
+
+    assertEquals(started, ["stuck", "next"]);
+    assertEquals(report.records.map((record) => record.exampleId), ["stuck", "next"]);
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(report.records[1]?.completed, true);
   });
 
   it("rejects a record timeout outside the timer range", async () => {

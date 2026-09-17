@@ -1085,6 +1085,42 @@ describe("provider-http", () => {
       assertEquals(retries, []);
     });
 
+    it("reports the retry that follows a per-attempt header timeout", async () => {
+      let attempts = 0;
+      const retries: ProviderRequestRetryEvent[] = [];
+      const stream = await runWithProviderRequestObserver(
+        {
+          onRetry: (event) => {
+            retries.push(event);
+          },
+        },
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (_input, init) => {
+              attempts++;
+              // The first attempt never returns headers, so its deadline fires.
+              if (attempts === 1) {
+                return new Promise<Response>((_resolve, reject) => {
+                  const signal = (init as RequestInit | undefined)?.signal;
+                  signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+                });
+              }
+              return Promise.resolve(new Response("chunk"));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 20,
+            totalHeadersBudgetMs: 5_000,
+          }),
+      );
+
+      assertEquals(attempts, 2);
+      assertEquals(await new Response(stream).text(), "chunk");
+      assertEquals(retries.map((event) => event.reason), ["timeout"]);
+    });
+
     it("bounds rate-limit retries", async () => {
       let attempts = 0;
       const error = await assertRejects(

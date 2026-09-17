@@ -688,6 +688,7 @@ async function runRecordWithinTimeout(
   repetition: number,
   runId: string,
   timeoutMs: number,
+  onAbandoned?: (work: Promise<unknown>) => void,
 ): Promise<EvalRecord> {
   if (timeoutMs === 0) return await runRecord(definition, options, example, repetition, runId);
 
@@ -749,13 +750,32 @@ async function runRecordWithinTimeout(
       targetRecord = { ...record };
     },
   );
-  // A record abandoned at its deadline may still settle later; nothing waits for it.
+  // A record abandoned at its deadline may still settle later. It keeps its
+  // place in the concurrency budget until it does, so a target or grader that
+  // ignores cancellation cannot multiply the work running at once.
   work.catch(() => {});
   try {
-    return await Promise.race([work, timedOut]);
+    const record = await Promise.race([work, timedOut]);
+    if (controller.signal.aborted) onAbandoned?.(work);
+    return record;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Bound the wait for abandoned work by one record deadline. The timer is the
+ * only thing keeping the run alive while it waits for work that may never
+ * settle, so it stays referenced and is always cancelled once the wait ends.
+ */
+function createRecordSlotGrace(
+  timeoutMs: number,
+): { elapsed: Promise<void>; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const elapsed = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, Math.max(timeoutMs, 1));
+  });
+  return { elapsed, cancel: () => clearTimeout(timer) };
 }
 
 function normalizeEvalConcurrency(value: number | undefined): number {
@@ -813,8 +833,38 @@ export async function runEval(
 
   let nextIndex = 0;
   let failure: { error: unknown } | undefined;
+  let running = 0;
+  // Work left over from a timed-out record, still counted against `concurrency`
+  // until it settles or its grace elapses.
+  const abandoned = new Set<Promise<unknown>>();
+  const trackAbandoned = (work: Promise<unknown>): void => {
+    const settled = work.then(() => {}, () => {});
+    abandoned.add(settled);
+    void settled.finally(() => abandoned.delete(settled));
+  };
+  /**
+   * Wait until the run has room for another record. Work that ignores
+   * cancellation cannot be stopped, so the wait is bounded by one record
+   * deadline: after that the run continues and leaves the stuck work behind.
+   */
+  const waitForRecordSlot = async (): Promise<void> => {
+    while (running + abandoned.size >= concurrency && abandoned.size > 0) {
+      const grace = createRecordSlotGrace(recordTimeoutMs);
+      try {
+        const freed = await Promise.race([
+          Promise.race([...abandoned]).then(() => true),
+          grace.elapsed.then(() => false),
+        ]);
+        if (!freed) return;
+      } finally {
+        grace.cancel();
+      }
+    }
+  };
   const worker = async (): Promise<void> => {
     while (failure === undefined && nextIndex < total) {
+      await waitForRecordSlot();
+      if (failure !== undefined) return;
       const index = nextIndex++;
       const { example, repetition } = jobs[index]!;
       const progress = {
@@ -826,6 +876,7 @@ export async function runEval(
         total,
       };
       notifyEvalProgress(options, { type: "record-started", ...progress });
+      running += 1;
       try {
         const record = await runRecordWithinTimeout(
           definition,
@@ -834,6 +885,7 @@ export async function runEval(
           repetition,
           runId,
           recordTimeoutMs,
+          trackAbandoned,
         );
         slots[index] = record;
         notifyEvalProgress(options, {
@@ -846,6 +898,8 @@ export async function runEval(
         // Fail-fast errors (such as refused model access) stop new records from
         // starting. Records already in flight finish before the run rejects.
         failure ??= { error };
+      } finally {
+        running -= 1;
       }
     }
   };

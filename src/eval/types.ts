@@ -609,6 +609,10 @@ export interface RunEvalOptions {
    * one after another. Report records keep dataset order at any concurrency.
    * Agents configured with `memory` share conversation history across
    * records, so keep those at 1.
+   *
+   * Work left behind by a record that hit `recordTimeoutMs` but ignored its
+   * `signal` keeps its place in this budget until it settles, for at most one
+   * further record deadline. After that the run continues without it.
    */
   concurrency?: number;
   /**

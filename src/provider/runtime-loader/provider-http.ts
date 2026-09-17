@@ -1346,7 +1346,10 @@ export async function requestStream(options: {
       // A caller that cancelled while the failed response was read gets no
       // replay: the wait rejects, or the next attempt's deadline is already
       // aborted. Announcing one would claim a request that is never sent.
-      if (!deadline.deadlineSignal.aborted) {
+      // The per-attempt deadline signal is not that test: a header timeout
+      // aborts it and still replays on a fresh deadline, so ask the caller's
+      // own signal.
+      if (!options.init.signal?.aborted) {
         notifyProviderRequestRetry({
           providerLabel: options.providerLabel,
           ...(options.modelId === undefined ? {} : { modelId: options.modelId }),
