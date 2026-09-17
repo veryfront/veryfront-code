@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
 import { composeAbortSignals, resolveRuntimeMessageFileUrls } from "./message-file-url-refresh.ts";
@@ -146,4 +146,181 @@ Deno.test("composeAbortSignals propagates aborts from any source signal", () => 
 
   assertEquals(signal.aborted, true);
   assertEquals(signal.reason, reason);
+});
+
+Deno.test("resolveRuntimeMessageFileUrls degrades an unresolvable attachment instead of failing the turn", async () => {
+  const reported: { uploadId: string; filename?: string; mediaType?: string }[] = [];
+
+  const messages = await resolveRuntimeMessageFileUrls(
+    [
+      userMessage([
+        { type: "text", text: "Use this file." },
+        {
+          type: "file",
+          mediaType: "text/plain",
+          filename: "notes.txt",
+          uploadId: "upload-denied",
+          uploadPath: "_chat/user/notes.txt",
+          url: "https://files.example.com/expired.txt",
+        },
+      ]),
+    ],
+    ({ uploadId }) => {
+      return Promise.reject(
+        new Error(`Failed to fetch signed upload URL for ${uploadId}: Access denied`),
+      );
+    },
+    {
+      onUnresolvableAttachment: ({ uploadId, filename, mediaType }) => {
+        reported.push({
+          uploadId,
+          ...(filename ? { filename } : {}),
+          ...(mediaType ? { mediaType } : {}),
+        });
+      },
+    },
+  );
+
+  assertEquals(
+    messages[0]?.parts,
+    [
+      { type: "text", text: "Use this file." },
+      {
+        type: "file",
+        mediaType: "text/plain",
+        filename: "notes.txt",
+        uploadId: "upload-denied",
+        uploadPath: "_chat/user/notes.txt",
+      },
+      { type: "text", text: "[attachment unavailable: notes.txt]" },
+    ] as unknown as ChatUiMessage["parts"],
+    "an unresolvable upload must drop its dead url and leave a note beside it",
+  );
+  assertEquals(reported, [{
+    uploadId: "upload-denied",
+    filename: "notes.txt",
+    mediaType: "text/plain",
+  }]);
+});
+
+Deno.test("resolveRuntimeMessageFileUrls reports an unresolvable upload once per upload", async () => {
+  const reportedUploadIds: string[] = [];
+  let resolverCalls = 0;
+
+  const messages = await resolveRuntimeMessageFileUrls(
+    [
+      userMessage([
+        {
+          type: "file",
+          mediaType: "text/plain",
+          uploadId: "upload-denied",
+          url: "https://files.example.com/a.txt",
+        },
+        {
+          type: "image",
+          mediaType: "image/png",
+          uploadId: "upload-denied",
+          url: "https://files.example.com/b.png",
+        } as unknown as ChatUiMessage["parts"][number],
+      ]),
+    ],
+    () => {
+      resolverCalls++;
+      return Promise.reject(new Error("Access denied"));
+    },
+    {
+      onUnresolvableAttachment: ({ uploadId }) => {
+        reportedUploadIds.push(uploadId);
+      },
+    },
+  );
+
+  assertEquals(resolverCalls, 1);
+  assertEquals(reportedUploadIds, ["upload-denied"]);
+  assertEquals(
+    messages[0]?.parts,
+    [
+      { type: "file", mediaType: "text/plain", uploadId: "upload-denied" },
+      { type: "text", text: "[attachment unavailable: upload-denied]" },
+      { type: "image", mediaType: "image/png", uploadId: "upload-denied" },
+      { type: "text", text: "[attachment unavailable: upload-denied]" },
+    ] as unknown as ChatUiMessage["parts"],
+    "an unresolvable image part must degrade the same way a file part does",
+  );
+});
+
+Deno.test("resolveRuntimeMessageFileUrls still refreshes readable uploads when one is denied", async () => {
+  const messages = await resolveRuntimeMessageFileUrls(
+    [
+      userMessage([
+        {
+          type: "file",
+          mediaType: "text/plain",
+          filename: "denied.txt",
+          uploadId: "upload-denied",
+          url: "https://files.example.com/denied.txt",
+        },
+        {
+          type: "file",
+          mediaType: "text/plain",
+          filename: "ok.txt",
+          uploadId: "upload-ok",
+          url: "https://files.example.com/ok.txt",
+        },
+      ]),
+    ],
+    ({ uploadId }) => {
+      if (uploadId === "upload-denied") {
+        return Promise.reject(new Error("Access denied"));
+      }
+      return Promise.resolve("https://signed.example.com/ok.txt");
+    },
+  );
+
+  assertEquals(
+    messages[0]?.parts,
+    [
+      {
+        type: "file",
+        mediaType: "text/plain",
+        filename: "denied.txt",
+        uploadId: "upload-denied",
+      },
+      { type: "text", text: "[attachment unavailable: denied.txt]" },
+      {
+        type: "file",
+        mediaType: "text/plain",
+        filename: "ok.txt",
+        uploadId: "upload-ok",
+        url: "https://signed.example.com/ok.txt",
+      },
+    ] as unknown as ChatUiMessage["parts"],
+    "a denied upload must not stop a readable upload from being refreshed",
+  );
+});
+
+Deno.test("resolveRuntimeMessageFileUrls rethrows an unresolvable attachment when the caller aborted", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("caller aborted"));
+
+  await assertRejects(
+    () =>
+      resolveRuntimeMessageFileUrls(
+        [
+          userMessage([
+            {
+              type: "file",
+              mediaType: "text/plain",
+              filename: "notes.txt",
+              uploadId: "upload-denied",
+              url: "https://files.example.com/notes.txt",
+            },
+          ]),
+        ],
+        () => Promise.reject(new Error("Access denied")),
+        { abortSignal: controller.signal },
+      ),
+    Error,
+    "Access denied",
+  );
 });

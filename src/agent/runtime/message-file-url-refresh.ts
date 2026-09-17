@@ -66,12 +66,25 @@ export function createRuntimeFileContentFetcher(
   };
 }
 
+/** Details of an upload whose url could not be resolved. */
+export type UnresolvableRuntimeAttachment = {
+  uploadId: string;
+  filename?: string;
+  mediaType?: string;
+  error: unknown;
+};
+
 /** Resolves runtime message file urls. */
 export async function resolveRuntimeMessageFileUrls(
   messages: readonly ChatUiMessage[],
   resolveFileUrl: RuntimeFileUrlResolver,
+  options: {
+    abortSignal?: AbortSignal;
+    onUnresolvableAttachment?: (attachment: UnresolvableRuntimeAttachment) => void;
+  } = {},
 ): Promise<ChatUiMessage[]> {
   const urlByUploadId = new Map<string, Promise<string | undefined>>();
+  const reportedUploadIds = new Set<string>();
 
   return Promise.all(
     mapPrivateArray(messages, async (message) => {
@@ -82,7 +95,7 @@ export async function resolveRuntimeMessageFileUrls(
       const parts = await Promise.all(
         mapPrivateArray(message.parts, async (part) => {
           const uploadId = getUploadId(part);
-          if (!uploadId) return part;
+          if (!uploadId) return [part];
 
           let urlPromise = urlByUploadId.get(uploadId);
           if (!urlPromise) {
@@ -94,17 +107,45 @@ export async function resolveRuntimeMessageFileUrls(
             urlByUploadId.set(uploadId, urlPromise);
           }
 
-          const signedUrl = await urlPromise;
-          if (!signedUrl) return normalizeUploadedFilePart(part, uploadId);
+          let signedUrl: string | undefined;
+          try {
+            signedUrl = await urlPromise;
+          } catch (error) {
+            // Caller aborts stay hard failures; an upload whose url cannot be
+            // resolved degrades to a reference-only part plus a note so the
+            // turn still runs and the model knows a file was there.
+            if (options.abortSignal?.aborted) throw error;
 
-          return {
+            const filename = getStringField(part, "filename");
+            if (!reportedUploadIds.has(uploadId)) {
+              reportedUploadIds.add(uploadId);
+              const mediaType = getMediaType(part);
+              options.onUnresolvableAttachment?.({
+                uploadId,
+                ...(filename ? { filename } : {}),
+                ...(mediaType ? { mediaType } : {}),
+                error,
+              });
+            }
+
+            return [
+              toUnresolvedUploadPart(part, uploadId),
+              {
+                type: "text",
+                text: `[attachment unavailable: ${filename ?? uploadId}]`,
+              } as ChatUiMessage["parts"][number],
+            ];
+          }
+          if (!signedUrl) return [normalizeUploadedFilePart(part, uploadId)];
+
+          return [{
             ...normalizeUploadedFilePart(part, uploadId),
             url: signedUrl,
-          };
+          }];
         }),
       );
 
-      return { ...message, parts };
+      return { ...message, parts: parts.flat() };
     }),
   );
 }
@@ -271,6 +312,31 @@ function normalizeUploadedFilePart(
     type: partType === "image" ? "image" : "file",
     mediaType,
     url,
+    ...(filename ? { filename } : {}),
+    uploadId,
+    ...(uploadPath ? { uploadPath } : {}),
+  } as ChatUiMessage["parts"][number];
+}
+
+function toUnresolvedUploadPart(
+  part: ChatUiMessage["parts"][number],
+  uploadId: string,
+): ChatUiMessage["parts"][number] {
+  if (!isRecord(part)) return part;
+
+  const partRecord: Record<string, unknown> = part;
+  const partType = partRecord.type;
+  if (partType !== "file" && partType !== "image") return part;
+
+  const mediaType = getMediaType(part);
+  const filename = getStringField(part, "filename");
+  const uploadPath = getUploadPath(part);
+
+  // The url is dropped on purpose: a resolver failure means the previous
+  // signed url is dead, and handing it to a provider fails a second time.
+  return {
+    type: partType === "image" ? "image" : "file",
+    ...(mediaType ? { mediaType } : {}),
     ...(filename ? { filename } : {}),
     uploadId,
     ...(uploadPath ? { uploadPath } : {}),
