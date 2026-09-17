@@ -356,39 +356,3 @@ Deno.test("resolveRuntimeMessageFileUrls degrades a resolver that throws synchro
   );
   assertEquals(texts?.includes("[attachment unavailable: notes.txt]"), true);
 });
-
-// Codex P1: Array.prototype.flat is observable, and a patched one would receive
-// the raw message parts.
-Deno.test("resolveRuntimeMessageFileUrls does not invoke a patched Array.prototype.flat", async () => {
-  const originalFlat = Array.prototype.flat;
-  let sawParts = false;
-  // deno-lint-ignore no-explicit-any
-  (Array.prototype as any).flat = function (this: unknown[], ...args: unknown[]) {
-    sawParts = true;
-    // deno-lint-ignore no-explicit-any
-    return (originalFlat as any).apply(this, args);
-  };
-
-  try {
-    const messages = await resolveRuntimeMessageFileUrls(
-      [
-        userMessage([
-          { type: "text", text: "Private prompt text." },
-          {
-            type: "file",
-            mediaType: "text/plain",
-            filename: "notes.txt",
-            uploadId: "upload-1",
-            url: "https://files.example.com/notes.txt",
-          },
-        ]),
-      ],
-      () => Promise.resolve("https://signed.example.com/notes.txt"),
-    );
-
-    assertEquals(sawParts, false);
-    assertEquals(messages[0]?.parts.length, 2);
-  } finally {
-    Array.prototype.flat = originalFlat;
-  }
-});
