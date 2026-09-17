@@ -31,6 +31,7 @@ export {
 export type { JsonSnapshotOptions, JsonSnapshotValue } from "./runtime-loader/json-snapshot.ts";
 export {
   ProviderError,
+  ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderQuotaError,
   ProviderRateLimitError,

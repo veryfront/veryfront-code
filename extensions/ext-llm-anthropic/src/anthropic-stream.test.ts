@@ -1,6 +1,10 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ProviderOverloadedError, ProviderRequestError } from "veryfront/provider/shared";
+import {
+  ProviderOutputTruncatedError,
+  ProviderOverloadedError,
+  ProviderRequestError,
+} from "veryfront/provider/shared";
 import {
   addAnthropicUsage,
   extractAnthropicUsage,
@@ -903,6 +907,68 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         ].join(""))),
       ProviderRequestError,
       "signature delta was malformed",
+    );
+  });
+
+  it("classifies a max_tokens-truncated tool_use as a provider output truncation", async () => {
+    const truncatedToolStream = [
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "toolu_x", name: "create_file", input: {} },
+      }),
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "input_json_delta",
+          partial_json: '{"path":"/inbox/mail-1.json","content":"<html>truncated',
+        },
+      }),
+      data({ type: "content_block_stop", index: 0 }),
+      data({
+        type: "message_delta",
+        delta: { stop_reason: "max_tokens" },
+        usage: { output_tokens: 4096 },
+      }),
+      data({ type: "message_stop" }),
+    ].join("");
+
+    const error = await assertRejects(
+      () => collectParts(streamFromText(truncatedToolStream)),
+      ProviderOutputTruncatedError,
+      "provider output truncated at the max output token limit",
+    );
+    assertEquals(error.retryable, false);
+    assertEquals(
+      String(error.message).includes("tool call arguments were not valid JSON object text"),
+      false,
+    );
+  });
+
+  it("still reports a malformed tool stream when the stop reason is not max_tokens", async () => {
+    const malformedToolStream = [
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "toolu_y", name: "create_file", input: {} },
+      }),
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: '{"path":' },
+      }),
+      data({ type: "content_block_stop", index: 0 }),
+      data({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+      data({ type: "message_stop" }),
+    ].join("");
+
+    await assertRejects(
+      () => collectParts(streamFromText(malformedToolStream)),
+      ProviderRequestError,
+      "tool call arguments were not valid JSON object text",
     );
   });
 

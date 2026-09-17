@@ -167,6 +167,7 @@ import {
   getRuntimeToolExposureCheckpointPersister,
   isRuntimeProviderReplayCheckpointPersistenceRequired,
   isRuntimeToolExposureCheckpointPersistenceRequired,
+  type ProviderReplayTurnFailure,
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
@@ -1188,7 +1189,7 @@ type RuntimeProviderReplayCheckpointEmission = {
   state: ProviderReplayCheckpointEmissionState | undefined;
   persist: ((checkpoint: ProviderReplayCheckpoint) => void | Promise<void>) | undefined;
   complete: (() => void | Promise<void>) | undefined;
-  fail: (() => void | Promise<void>) | undefined;
+  fail: ((failure?: ProviderReplayTurnFailure) => void | Promise<void>) | undefined;
   failed: boolean;
   required: boolean;
 };
@@ -1223,10 +1224,11 @@ function resolveRuntimeProviderReplayCheckpointEmission(
 
 async function failProviderReplayCheckpointTurn(
   emission: RuntimeProviderReplayCheckpointEmission,
+  failure?: ProviderReplayTurnFailure,
 ): Promise<void> {
   if (emission.failed) return;
   emission.failed = true;
-  await emission.fail?.();
+  await emission.fail?.(failure);
 }
 
 async function persistProviderReplayCheckpointAfterTurn(input: {
@@ -2426,7 +2428,11 @@ export class AgentRuntime {
         await turnPersistence.commit();
         return response;
       }).catch(async (error) => {
-        await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
+        const errorEvent = resolveRuntimeExecutionErrorEvent(error);
+        await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission, {
+          message: errorEvent.error,
+          ...(errorEvent.code ? { code: errorEvent.code } : {}),
+        });
         throw error;
       });
     } finally {
@@ -2676,8 +2682,14 @@ export class AgentRuntime {
             } catch (finalizationError) {
               error = finalizationError;
             }
+            // Resolve the sanitized event first so the replay relay fails with
+            // the same cause the stream reports, instead of a manufactured one.
+            const errorEvent = resolveRuntimeExecutionErrorEvent(error);
             try {
-              await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
+              await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission, {
+                message: errorEvent.error,
+                ...(errorEvent.code ? { code: errorEvent.code } : {}),
+              });
             } catch (failureHookError) {
               logger.debug("Provider replay failure hook rejected", {
                 error: failureHookError,
@@ -2690,7 +2702,7 @@ export class AgentRuntime {
 
             this.status = "error";
             logger.error("Agent stream error", { error });
-            sendSSE(controller, encoder, resolveRuntimeExecutionErrorEvent(error));
+            sendSSE(controller, encoder, errorEvent);
             closeSSEStream(controller);
           } finally {
             try {

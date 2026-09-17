@@ -50,6 +50,7 @@ export {
   mergeUsage,
   parseRetryAfterMs,
   ProviderError,
+  ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderQuotaError,
   ProviderRateLimitError,

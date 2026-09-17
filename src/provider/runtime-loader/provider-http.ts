@@ -136,6 +136,15 @@ export class ProviderQuotaError extends ProviderError {}
 /** Non-retryable 4xx/5xx that doesn't fit another bucket. */
 export class ProviderRequestError extends ProviderError {}
 
+/**
+ * Provider stopped generating at the output token limit, leaving the response
+ * incomplete (for example a `tool_use` block whose input JSON never closed).
+ *
+ * Non-retryable: the same request and the same output token budget truncate
+ * again. Raise the budget or shorten the requested output instead.
+ */
+export class ProviderOutputTruncatedError extends ProviderError {}
+
 function readRequestRoute(url: string): string | undefined {
   try {
     const parsed = new URL(url);

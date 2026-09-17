@@ -1,5 +1,6 @@
 import { safeJsonParse } from "#veryfront/utils/json.ts";
 import {
+  ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderQuotaError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
@@ -11,6 +12,7 @@ import {
   MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR,
   OUTPUT_SCHEMA_NOT_CLOSED_ERROR,
   PROJECT_SCHEMA_ERROR,
+  PROVIDER_OUTPUT_TRUNCATED_ERROR,
   registeredProviderFailure,
 } from "./provider-error-registry.ts";
 export { safeJsonParse };
@@ -463,6 +465,9 @@ function parseProviderErrorInner(
 
   if (error instanceof ProviderQuotaError) {
     return AI_PROVIDER_BILLING_ERROR;
+  }
+  if (error instanceof ProviderOutputTruncatedError) {
+    return PROVIDER_OUTPUT_TRUNCATED_ERROR;
   }
   if (error instanceof ProviderOverloadedError) {
     return {

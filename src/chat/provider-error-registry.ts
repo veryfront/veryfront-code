@@ -41,6 +41,13 @@ export const AI_PROVIDER_BILLING_ERROR = {
   status: 502,
 } as const;
 
+export const PROVIDER_OUTPUT_TRUNCATED_ERROR = {
+  code: "PROVIDER_OUTPUT_TRUNCATED",
+  message:
+    "The model stopped at its output token limit before it finished the response. Raise the model output token limit, or ask for a shorter response.",
+  status: 502,
+} as const;
+
 export const GATEWAY_PROJECT_REQUIRED_ERROR = {
   code: "GATEWAY_PROJECT_REQUIRED",
   message: "A project is required to use Veryfront-managed AI inference",
@@ -61,6 +68,7 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
   "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED",
   "AI_PROVIDER_BILLING_ERROR",
   "GATEWAY_PROJECT_REQUIRED",
+  "PROVIDER_OUTPUT_TRUNCATED",
 ] as const;
 export type CuratedProviderFailureCode = typeof CURATED_PROVIDER_FAILURE_CODES[number];
 
@@ -100,6 +108,7 @@ const failures = {
   AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED: AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   AI_PROVIDER_BILLING_ERROR: AI_PROVIDER_BILLING_ERROR,
   GATEWAY_PROJECT_REQUIRED: GATEWAY_PROJECT_REQUIRED_ERROR,
+  PROVIDER_OUTPUT_TRUNCATED: PROVIDER_OUTPUT_TRUNCATED_ERROR,
 } as const;
 
 /** Return fixed local diagnostics; provider payload/status values are never forwarded. */
