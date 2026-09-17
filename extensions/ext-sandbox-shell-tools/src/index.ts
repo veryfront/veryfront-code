@@ -5,6 +5,7 @@
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
+import { asSchema, type FlexibleSchema } from "ai";
 import {
   type CreateSandboxShellToolsInput,
   type SandboxShellToolsProvider,
@@ -23,7 +24,16 @@ export function createSandboxShellToolsProvider(
 
 const provider = createSandboxShellToolsProvider(async (input) => {
   const { createBashTool: createBashToolImpl } = await import("bash-tool");
-  return await createBashToolImpl(input);
+  const result = await createBashToolImpl(input);
+  const tools = Object.fromEntries(
+    await Promise.all(
+      Object.entries(result.tools).map(async ([name, tool]) => [name, {
+        ...tool,
+        inputSchemaJson: await asSchema(tool.inputSchema as FlexibleSchema<unknown>).jsonSchema,
+      }]),
+    ),
+  );
+  return { ...result, tools };
 });
 
 const extSandboxShellTools: ExtensionFactory = () => ({
