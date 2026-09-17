@@ -108,18 +108,29 @@ const UNCATALOGUED_MODEL_PREFIXES = ["local/", "custom/", "openai-compatible/"];
 
 /** Ids already warned about, so a long-running agent warns once, not per step. */
 const warnedUnknownModels = new Set<string>();
-/** Bound the set so an attacker-supplied id cannot grow it without limit. */
+/** Bound the number of retained ids. */
 const MAX_WARNED_UNKNOWN_MODELS = 256;
+/**
+ * Bound the size of each retained id too. A model id is caller-supplied and can
+ * be as large as the request body allows, so an entry-count cap alone does not
+ * bound the memory this set holds.
+ */
+const MAX_WARNED_MODEL_ID_LENGTH = 200;
 
 function shouldWarnUnknownModel(modelString: string): boolean {
   const normalized = modelString.toLowerCase();
   if (UNCATALOGUED_MODEL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
     return false;
   }
-  if (warnedUnknownModels.has(normalized)) return false;
-  if (warnedUnknownModels.size < MAX_WARNED_UNKNOWN_MODELS) {
-    warnedUnknownModels.add(normalized);
-  }
+
+  const key = normalized.slice(0, MAX_WARNED_MODEL_ID_LENGTH);
+  if (warnedUnknownModels.has(key)) return false;
+  // Once the cap is reached, stop warning altogether. Continuing to warn for
+  // every id past the cap is precisely the log flood the cap exists to prevent,
+  // and a process seeing 256 distinct unknown models has already said so.
+  if (warnedUnknownModels.size >= MAX_WARNED_UNKNOWN_MODELS) return false;
+
+  warnedUnknownModels.add(key);
   return true;
 }
 

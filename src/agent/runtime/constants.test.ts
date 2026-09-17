@@ -158,4 +158,34 @@ describe("MODEL_MAX_OUTPUT_TOKENS covers the catalog", () => {
       .map((model) => `${model.modelId}=${getModelMaxOutputTokens(model.modelId)}`);
     assertEquals(tooLow, []);
   });
+
+  // Codex P2 on veryfront-code#4514: the first version stopped INSERTING at the
+  // cap but still returned true, so every id past it warned on every call --
+  // the exact log flood the cap exists to prevent.
+  it("stops warning once the dedup cap is reached", () => {
+    const records = captureUnknownModelWarnings(() => {
+      for (let i = 0; i < 300; i++) getModelMaxOutputTokens(`unknown/model-${i}`);
+      // Well past the 256 cap: these must be silent, not warn every call.
+      for (let i = 0; i < 5; i++) getModelMaxOutputTokens("unknown/model-well-past-the-cap");
+    });
+    assertEquals(records.length <= 256, true);
+    const pastCap = records.filter((entry) =>
+      entry.context?.model === "unknown/model-well-past-the-cap"
+    );
+    assertEquals(pastCap.length, 0);
+  });
+
+  // Codex P2: a model id is caller-supplied and can be as large as the request
+  // body allows, so the entry count alone does not bound retained memory.
+  it("bounds the retained length of an oversized model id", () => {
+    const huge = `unknown/${"x".repeat(50_000)}`;
+    const records = captureUnknownModelWarnings(() => {
+      getModelMaxOutputTokens(huge);
+      // Same id: deduped on the truncated key, so exactly one warning.
+      getModelMaxOutputTokens(huge);
+    });
+    assertEquals(records.length, 1);
+    // The warning still reports the id the caller sent; only the retained key is bounded.
+    assertEquals(records[0]?.context?.model, huge);
+  });
 });
