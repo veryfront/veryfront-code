@@ -6,6 +6,44 @@ import {
   findMissingEmbeddedWorkers,
   UNTRACEABLE_WORKER_INCLUDES,
 } from "../../../scripts/build/compile-binary.ts";
+import {
+  EMBEDDED_NPM_PACKAGES,
+  PROXY_EMBEDDED_NPM_PACKAGES,
+} from "#veryfront/discovery/embedded-npm-packages.generated.ts";
+import { PROXY_BINARY_PROFILE_GLOBAL } from "#veryfront/discovery/project-npm-imports.ts";
+
+describe("proxy binary npm profile", () => {
+  const projectRoot = new URL("../../../", import.meta.url);
+
+  it("marks the proxy profile from the one entrypoint compiled against its lock", async () => {
+    // `deno compile --lock scripts/build/proxy-deno.lock` freezes a different,
+    // much smaller npm set than the full binary's, and src/discovery is inside
+    // cli/proxy-main.ts's graph. cli/ may not deep-import framework internals
+    // (scripts/lint/enforce-cli-boundary.ts), so the flag name is written out
+    // there; if the two spellings drift the proxy binary silently claims the
+    // full binary's package set and leaves packages external that it cannot
+    // resolve.
+    const source = await Deno.readTextFile(new URL("cli/proxy-main.ts", projectRoot));
+    assertEquals(
+      source.includes(PROXY_BINARY_PROFILE_GLOBAL),
+      true,
+      `cli/proxy-main.ts must set globalThis.${PROXY_BINARY_PROFILE_GLOBAL}`,
+    );
+  });
+
+  it("keeps the proxy package set a real subset of the full one", () => {
+    // A vacuity guard: if the generator ever emitted the same set twice the
+    // marker above would be testing nothing.
+    const full = Object.keys(EMBEDDED_NPM_PACKAGES).length;
+    const proxy = Object.keys(PROXY_EMBEDDED_NPM_PACKAGES).length;
+    assertEquals(proxy > 0, true, "the proxy package set is empty");
+    assertEquals(
+      proxy < full,
+      true,
+      `the proxy set (${proxy}) must be smaller than the full set (${full})`,
+    );
+  });
+});
 
 describe("compile-binary includes", () => {
   function getIncludeFlags(profile: "full" | "proxy" = "full"): string[] {

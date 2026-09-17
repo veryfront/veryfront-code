@@ -7,7 +7,6 @@ import {
   describeUnresolvableNpmImport,
   esmCdnPackageName,
   importModule as importModuleRaw,
-  parseNpmImportSpecifier,
   readDependencyPins,
 } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
@@ -394,13 +393,23 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
   });
 
   describe("readDependencyPins", () => {
-    it("keeps exact versions and drops ranges and aliases", () => {
+    it("keeps every declaration verbatim, ranges and aliases included", () => {
+      // Filtering ranges out here is what discarded `"mammoth": "^1.8.0"` --
+      // the shape `npm install` writes by default -- and left the import with
+      // nothing to inline. Reducing a declaration to the one version it names
+      // is classifyProjectNpmImport's job, not this one's.
       assertEquals(
         readDependencyPins(JSON.stringify({
           dependencies: { unpdf: "1.8.1", mammoth: "^1.8.0", local: "file:../local" },
-          devDependencies: { "@scope/pkg": "2.0.0-rc.1", star: "*" },
+          devDependencies: { "@scope/pkg": "2.0.0-rc.1", star: "*", blank: "  ", nested: 3 },
         })),
-        { unpdf: "1.8.1", "@scope/pkg": "2.0.0-rc.1" },
+        {
+          unpdf: "1.8.1",
+          mammoth: "^1.8.0",
+          local: "file:../local",
+          "@scope/pkg": "2.0.0-rc.1",
+          star: "*",
+        },
       );
     });
 
@@ -409,45 +418,12 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
     });
   });
 
-  describe("parseNpmImportSpecifier", () => {
-    it("reads bare specifiers, subpaths and scopes", () => {
-      assertEquals(parseNpmImportSpecifier("unpdf"), {
-        name: "unpdf",
-        subpath: ".",
-        requestedVersion: null,
-      });
-      assertEquals(parseNpmImportSpecifier("unpdf/dist/core"), {
-        name: "unpdf",
-        subpath: "./dist/core",
-        requestedVersion: null,
-      });
-      assertEquals(parseNpmImportSpecifier("@scope/pkg/sub"), {
-        name: "@scope/pkg",
-        subpath: "./sub",
-        requestedVersion: null,
-      });
-    });
-
-    it("reads the versioned npm: form a project falls back to", () => {
-      assertEquals(parseNpmImportSpecifier("npm:unpdf@1.8.1"), {
-        name: "unpdf",
-        subpath: ".",
-        requestedVersion: "1.8.1",
-      });
-      assertEquals(parseNpmImportSpecifier("npm:@scope/pkg@1.2.3/sub"), {
-        name: "@scope/pkg",
-        subpath: "./sub",
-        requestedVersion: "1.2.3",
-      });
-      assertEquals(parseNpmImportSpecifier("npm:unpdf"), {
-        name: "unpdf",
-        subpath: ".",
-        requestedVersion: null,
-      });
-    });
-  });
-
   describe("esmCdnPackageName", () => {
+    // This is what the http-url namespace guard reads. Without it a
+    // CDN-inlined project dependency that transitively imports zod,
+    // @opentelemetry/* or veryfront pulls a SECOND copy into the discovery
+    // bundle, and the schema and element registries compare identities
+    // against the framework's own copy.
     it("names the package an esm.sh module path pins", () => {
       assertEquals(esmCdnPackageName(new URL("https://esm.sh/zod@3.25.76/es2022/zod.mjs")), "zod");
       assertEquals(esmCdnPackageName(new URL("https://esm.sh/v135/react@19.2.4/mod.js")), "react");

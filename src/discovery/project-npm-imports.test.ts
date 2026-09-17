@@ -1,0 +1,285 @@
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  classifyProjectNpmImport,
+  exactVersionNamedByRange,
+  isFrameworkProvidedPackage,
+  parseNpmSpecifier,
+  type ProjectNpmImport,
+} from "./project-npm-imports.ts";
+
+/**
+ * A stand-in for the generated package set. Tests state the frozen snapshot
+ * they mean instead of reading the live deno.lock, which moves with every
+ * framework dependency bump.
+ */
+const EMBEDDED = {
+  lodash: ["3.10.1"],
+  yaml: ["2.9.0"],
+  sharp: ["0.34.5", "0.35.4"],
+} as const;
+
+function classify(
+  specifier: string,
+  pins: Record<string, string> = {},
+): ProjectNpmImport {
+  return classifyProjectNpmImport(specifier, pins, EMBEDDED);
+}
+
+describe("parseNpmSpecifier", () => {
+  it("splits every form a project can import a package under", () => {
+    assertEquals(parseNpmSpecifier("unpdf"), { name: "unpdf", version: null, subpath: "." });
+    assertEquals(parseNpmSpecifier("unpdf/dist/core"), {
+      name: "unpdf",
+      version: null,
+      subpath: "./dist/core",
+    });
+    assertEquals(parseNpmSpecifier("@scope/pkg"), {
+      name: "@scope/pkg",
+      version: null,
+      subpath: ".",
+    });
+    assertEquals(parseNpmSpecifier("@scope/pkg/sub"), {
+      name: "@scope/pkg",
+      version: null,
+      subpath: "./sub",
+    });
+    assertEquals(parseNpmSpecifier("npm:unpdf@1.8.1"), {
+      name: "unpdf",
+      version: "1.8.1",
+      subpath: ".",
+    });
+    assertEquals(parseNpmSpecifier("npm:unpdf@1.8.1/dist/core"), {
+      name: "unpdf",
+      version: "1.8.1",
+      subpath: "./dist/core",
+    });
+    assertEquals(parseNpmSpecifier("npm:@scope/pkg@2.0.0"), {
+      name: "@scope/pkg",
+      version: "2.0.0",
+      subpath: ".",
+    });
+    assertEquals(parseNpmSpecifier("npm:unpdf"), { name: "unpdf", version: null, subpath: "." });
+    assertEquals(parseNpmSpecifier("npm:unpdf@^1.8.0"), {
+      name: "unpdf",
+      version: "^1.8.0",
+      subpath: ".",
+    });
+  });
+
+  it("claims nothing that is not an npm package specifier", () => {
+    // These reach the same esbuild filter and belong to other resolvers: the
+    // framework's own subpath imports, URLs, and other schemes.
+    assertEquals(parseNpmSpecifier("#veryfront/utils"), null);
+    assertEquals(parseNpmSpecifier("https://esm.sh/unpdf@1.8.1"), null);
+    assertEquals(parseNpmSpecifier("jsr:@std/path"), null);
+    assertEquals(parseNpmSpecifier("node:fs"), null);
+    assertEquals(parseNpmSpecifier("@scope"), null);
+  });
+});
+
+describe("exactVersionNamedByRange", () => {
+  it("reads the one version a range names", () => {
+    // `npm install` writes the caret form by default, so this is the common
+    // package.json entry -- and 1.8.1 is a version the project wrote down.
+    assertEquals(exactVersionNamedByRange("^1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange("~1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange(">=1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange("=1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange("v1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange("1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange(" ^1.8.1-rc.1 "), "1.8.1-rc.1");
+  });
+
+  it("names no version for a range that names none", () => {
+    // Choosing a version for any of these would need a registry, and choosing
+    // `latest` would change which code a project runs between two passes.
+    assertEquals(exactVersionNamedByRange("*"), null);
+    assertEquals(exactVersionNamedByRange("1.x"), null);
+    assertEquals(exactVersionNamedByRange(">=1.0.0 <2.0.0"), null);
+    assertEquals(exactVersionNamedByRange("^1.0.0 || ^2.0.0"), null);
+    assertEquals(exactVersionNamedByRange("latest"), null);
+    assertEquals(exactVersionNamedByRange("workspace:*"), null);
+    assertEquals(exactVersionNamedByRange("file:../local"), null);
+    assertEquals(exactVersionNamedByRange("npm:other@1.0.0"), null);
+    assertEquals(exactVersionNamedByRange("git+ssh://git@github.com/o/r.git"), null);
+    assertEquals(exactVersionNamedByRange(undefined), null);
+    assertEquals(exactVersionNamedByRange(1), null);
+  });
+});
+
+describe("isFrameworkProvidedPackage", () => {
+  it("claims the specifiers only the runtime may answer", () => {
+    assertEquals(isFrameworkProvidedPackage("zod"), true);
+    assertEquals(isFrameworkProvidedPackage("react"), true);
+    assertEquals(isFrameworkProvidedPackage("react-dom"), true);
+    assertEquals(isFrameworkProvidedPackage("veryfront"), true);
+    assertEquals(isFrameworkProvidedPackage("veryfront/agents"), true);
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api"), true);
+    assertEquals(isFrameworkProvidedPackage("node:fs"), true);
+  });
+
+  it("claims bare Node builtins, which have no npm coordinate at all", () => {
+    // A project writes `import { readFile } from "fs"` as often as the
+    // prefixed form. Classifying these as project dependencies told the user
+    // to declare `fs` in package.json, which is advice that cannot work.
+    for (
+      const builtin of [
+        "fs",
+        "crypto",
+        "stream",
+        "os",
+        "util",
+        "url",
+        "process",
+        "http",
+        "https",
+        "net",
+        "zlib",
+        "child_process",
+        "assert",
+        "worker_threads",
+        "path",
+        "buffer",
+        "events",
+        "timers",
+      ]
+    ) {
+      assertEquals(isFrameworkProvidedPackage(builtin), true, builtin);
+    }
+    assertEquals(isFrameworkProvidedPackage("fs/promises"), true);
+    assertEquals(isFrameworkProvidedPackage("stream/web"), true);
+    assertEquals(isFrameworkProvidedPackage("timers/promises"), true);
+  });
+
+  it("claims nothing else", () => {
+    assertEquals(isFrameworkProvidedPackage("unpdf"), false);
+    assertEquals(isFrameworkProvidedPackage("path-to-regexp"), false);
+    assertEquals(isFrameworkProvidedPackage("@scope/pkg"), false);
+  });
+});
+
+describe("classifyProjectNpmImport", () => {
+  it("keeps framework-provided packages on the runtime whatever the project declares", () => {
+    // A second copy would break the identity comparisons the schema and
+    // element registries make against the framework's own objects, so neither
+    // a pin nor an explicit version redirects these.
+    assertEquals(classify("zod", { zod: "4.0.0" }), { kind: "runtime" });
+    assertEquals(classify("npm:react@18.0.0", { react: "18.0.0" }), { kind: "runtime" });
+    assertEquals(classify("veryfront/agents"), { kind: "runtime" });
+    assertEquals(classify("@opentelemetry/api"), { kind: "runtime" });
+  });
+
+  it("keeps bare Node builtins on the runtime instead of calling them missing", () => {
+    assertEquals(classify("fs"), { kind: "runtime" });
+    assertEquals(classify("crypto"), { kind: "runtime" });
+    assertEquals(classify("fs/promises"), { kind: "runtime" });
+    assertEquals(classify("child_process"), { kind: "runtime" });
+  });
+
+  it("keeps a declared package on the runtime when the runtime embeds that exact version", () => {
+    // The binary already carries it: rerouting would turn an offline
+    // resolution into a network fetch of a second copy.
+    assertEquals(classify("yaml", { yaml: "2.9.0" }), { kind: "runtime" });
+    assertEquals(classify("npm:yaml@2.9.0", { yaml: "2.9.0" }), { kind: "runtime" });
+    // ...including when the declaration is the caret range npm writes.
+    assertEquals(classify("yaml", { yaml: "^2.9.0" }), { kind: "runtime" });
+  });
+
+  it("inlines a declared package the runtime does not carry, in every specifier form", () => {
+    const cdn = { kind: "cdn", name: "unpdf", version: "1.8.1", subpath: "." } as const;
+    const pins = { unpdf: "1.8.1" };
+
+    assertEquals(classify("unpdf", pins), cdn);
+    assertEquals(classify("npm:unpdf", pins), cdn);
+    assertEquals(classify("npm:unpdf@1.8.1", pins), cdn);
+    assertEquals(classify("unpdf/dist/core", pins), { ...cdn, subpath: "./dist/core" });
+    assertEquals(classify("npm:unpdf@1.8.1/dist/core", pins), { ...cdn, subpath: "./dist/core" });
+    assertEquals(classify("@scope/pkg", { "@scope/pkg": "2.0.0" }), {
+      kind: "cdn",
+      name: "@scope/pkg",
+      version: "2.0.0",
+      subpath: ".",
+    });
+    assertEquals(classify("npm:@scope/pkg@2.0.0", { "@scope/pkg": "2.0.0" }), {
+      kind: "cdn",
+      name: "@scope/pkg",
+      version: "2.0.0",
+      subpath: ".",
+    });
+  });
+
+  it("inlines the caret range npm writes by default", () => {
+    // `npm install unpdf` writes `"unpdf": "^1.8.1"`, so this -- not the exact
+    // pin -- is the shape the reported production failure actually has. Under
+    // exact-only matching the declaration was discarded and the import failed.
+    const cdn = { kind: "cdn", name: "unpdf", version: "1.8.1", subpath: "." } as const;
+    assertEquals(classify("unpdf", { unpdf: "^1.8.1" }), cdn);
+    assertEquals(classify("npm:unpdf", { unpdf: "^1.8.1" }), cdn);
+    assertEquals(classify("npm:unpdf@1.8.1", { unpdf: "^1.8.1" }), cdn);
+    assertEquals(classify("unpdf/dist/core", { unpdf: "~1.8.1" }), {
+      ...cdn,
+      subpath: "./dist/core",
+    });
+    assertEquals(classify("unpdf", { unpdf: ">=1.8.1" }), cdn);
+  });
+
+  it("serves the declared version for an import that carries a range", () => {
+    // There is no semver resolver here, so a range in the specifier cannot be
+    // checked against the pin. The declared pin is the conservative answer:
+    // it is a version the project wrote, and it is what an exact import of the
+    // same package would have got.
+    assertEquals(classify("npm:unpdf@^1.8.0", { unpdf: "1.8.1" }), {
+      kind: "cdn",
+      name: "unpdf",
+      version: "1.8.1",
+      subpath: ".",
+    });
+    // An embedded declared version still wins, so no network round trip.
+    assertEquals(classify("npm:yaml@^2.0.0", { yaml: "2.9.0" }), { kind: "runtime" });
+  });
+
+  it("inlines a declared version the runtime carries only at another version", () => {
+    // Name-only membership would call this embedded and leave it external, and
+    // the runtime would then refuse `lodash@4.17.21` outright -- with the one
+    // chance to inline it already spent.
+    assertEquals(classify("lodash", { lodash: "4.17.21" }), {
+      kind: "cdn",
+      name: "lodash",
+      version: "4.17.21",
+      subpath: ".",
+    });
+  });
+
+  it("refuses an import whose exact version contradicts the declared pin", () => {
+    // Serving 1.8.1 here would run code the import did not ask for.
+    const decision = classify("npm:unpdf@2.0.0", { unpdf: "1.8.1" });
+    assertEquals(decision.kind, "missing");
+    assertEquals(
+      decision.kind === "missing" ? decision.reason : "",
+      "the import asks for unpdf@2.0.0 but package.json declares unpdf@1.8.1",
+    );
+  });
+
+  it("leaves an undeclared package to the runtime only when the runtime carries it", () => {
+    assertEquals(classify("yaml"), { kind: "runtime" });
+    assertEquals(classify("npm:sharp@0.35.4"), { kind: "runtime" });
+    assertEquals(classify("npm:sharp@0.30.0").kind, "missing");
+    assertEquals(classify("unpdf").kind, "missing");
+  });
+
+  it("reports a declaration that names no version to fetch", () => {
+    // `*`, `1.x`, `>=1 <2` and dist-tags cannot be turned into a CDN
+    // coordinate without a registry, so they fall back to the runtime when the
+    // runtime has the package and are reported, never guessed at, when it does
+    // not.
+    assertEquals(classify("yaml", { yaml: "*" }), { kind: "runtime" });
+    const decision = classify("unpdf", { unpdf: "^1.0.0 || ^2.0.0" });
+    assertEquals(decision.kind, "missing");
+    assertEquals(
+      decision.kind === "missing" ? decision.reason : "",
+      'this runtime does not carry unpdf and package.json declares "^1.0.0 || ^2.0.0", ' +
+        "which names no single version to fetch -- declare an exact version",
+    );
+  });
+});
