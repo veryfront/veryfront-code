@@ -214,9 +214,7 @@ export function exactVersionNamedByRange(range: unknown): string | null {
   if (URL_SCHEME.test(trimmed)) return null;
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
   if (operator !== undefined && OPERATORS_NAMING_NO_FETCHABLE_VERSION.has(operator)) return null;
-  const candidate = operator === undefined
-    ? trimmed
-    : trimmed.slice(operator.length).trimStart();
+  const candidate = operator === undefined ? trimmed : trimmed.slice(operator.length).trimStart();
   return EXACT_VERSION.test(candidate) ? candidate : null;
 }
 

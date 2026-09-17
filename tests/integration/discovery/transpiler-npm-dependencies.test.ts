@@ -117,7 +117,6 @@ function createMockAdapter(
 
 describe(
   "discovery npm dependency loading",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterEach(() => {
       clearTranspileCache();
