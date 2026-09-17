@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { setQuietMode } from "../../utils/index.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
@@ -112,6 +113,61 @@ describe("eval progress", () => {
       '[eval 2/3] disposition-agent 1/2 · case "archive" · 1m 1s',
     );
     assertEquals(live.at(-1)?.split("\r").at(-1), "", "stop clears the live line");
+  });
+
+  it("prints a heartbeat while one case keeps running outside a terminal", async () => {
+    const { output, lines } = createOutput(false);
+    const reporter = createEvalProgressRenderer({
+      ...output,
+      // Real elapsed time, so the heartbeat interval can observe it.
+      now: () => Date.now(),
+      heartbeatMs: 20,
+    });
+    try {
+      reporter.startEval({ name: "orchestrator-agent", position: 1, count: 1 });
+      reporter.onEvent({ type: "eval-started", evalId: "eval:orchestrator-agent", total: 1 });
+      reporter.onEvent({
+        type: "record-started",
+        evalId: "eval:orchestrator-agent",
+        recordId: "long-case:1",
+        exampleId: "long-case",
+        repetition: 1,
+        index: 0,
+        total: 1,
+      });
+      await waitFor(() => lines.some((line) => line.includes("still running")), {
+        timeout: 5_000,
+        interval: 10,
+      });
+    } finally {
+      reporter.stop();
+    }
+
+    const heartbeat = lines.find((line) => line.includes("still running"));
+    assertEquals(
+      heartbeat?.replace(/\([^)]*\)$/, "").trim(),
+      '○ orchestrator-agent 0/1 · still running case "long-case"',
+    );
+  });
+
+  it("advances the spinner and shows the current phase in a terminal", async () => {
+    const { output, live } = createOutput(true);
+    const reporter = createEvalProgressRenderer({ ...output, now: () => Date.now() });
+    try {
+      reporter.startEval({ name: "orchestrator-agent", position: 1, count: 1 });
+      reporter.onEvent({ type: "eval-started", evalId: "eval:orchestrator-agent", total: 1 });
+      const framesAtStart = live.length;
+      await waitFor(() => live.length > framesAtStart, { timeout: 5_000, interval: 10 });
+      reporter.setPhase("finalizing usage");
+    } finally {
+      reporter.stop();
+    }
+
+    assertEquals(
+      live.some((frame) => frame.includes("· finalizing usage ·")),
+      true,
+      "the live line names the current phase",
+    );
   });
 
   it("prints a retry notice above the live line", () => {
