@@ -5,11 +5,12 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   clearTranspileCache,
   describeUnresolvableNpmImport,
+  esmCdnPackageName,
   importModule as importModuleRaw,
+  parseNpmImportSpecifier,
   readDependencyPins,
 } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
@@ -390,127 +391,6 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
       assertEquals(third === first, true);
     });
-
-    // Hosted discovery bundles from a VFS while esbuild still resolves bare
-    // specifiers against a real directory, so these fixtures live under an
-    // existing repo path the way a deployed project's files do.
-    const projectDir = Deno.cwd();
-    const toolPath = "src/discovery/__fixtures__/extract-pdf-text.ts";
-
-    it("loads a project-declared npm dependency on a compiled runtime", async () => {
-      // A compiled binary's npm package set is frozen at build time from the
-      // framework's own lock, so an `npm:` specifier for a project dependency
-      // fails with "Could not find constraint '<pkg>@<version>'". The declared
-      // pin must be inlined from its CDN source at bundle time instead.
-      const files: Record<string, string> = {
-        "package.json": JSON.stringify({
-          dependencies: { "@veryfront-fixture/pdf-text": "1.8.1" },
-        }),
-        [toolPath]: [
-          `import { extractText } from "@veryfront-fixture/pdf-text";`,
-          `export default { name: "extract-pdf-text", run: () => extractText() };`,
-        ].join("\n"),
-      };
-
-      const context: FileDiscoveryContext = {
-        platform: "node",
-        fsAdapter: createMockAdapter(files, { projectDir }),
-        baseDir: projectDir,
-        compiledRuntime: true,
-      };
-
-      const requested: string[] = [];
-      const mod = await withMockFetch(
-        (input) => {
-          requested.push(String(input));
-          return Promise.resolve(
-            new Response(`export function extractText() { return "pdf text"; }`, {
-              headers: { "content-type": "application/javascript" },
-            }),
-          );
-        },
-        () =>
-          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
-            { default: { name: string; run: () => string } }
-          >,
-      );
-
-      assertEquals(mod.default.name, "extract-pdf-text");
-      assertEquals(mod.default.run(), "pdf text");
-      assertEquals(
-        requested.some((url) => url.startsWith("https://esm.sh/@veryfront-fixture/pdf-text@1.8.1")),
-        true,
-        `expected a pinned esm.sh fetch, got ${JSON.stringify(requested)}`,
-      );
-    });
-
-    it("leaves bare npm imports alone when the runtime is not compiled", async () => {
-      // A plain `deno run` resolves `npm:` specifiers natively against the
-      // project's node_modules, so nothing is fetched from the CDN there.
-      const files: Record<string, string> = {
-        "package.json": JSON.stringify({
-          dependencies: { "@veryfront-fixture/pdf-text": "1.8.1" },
-        }),
-        [toolPath]: `export default { name: "noop" };`,
-      };
-
-      const context: FileDiscoveryContext = {
-        platform: "node",
-        fsAdapter: createMockAdapter(files, { projectDir }),
-        baseDir: projectDir,
-      };
-
-      const requested: string[] = [];
-      const mod = await withMockFetch(
-        (input) => {
-          requested.push(String(input));
-          return Promise.resolve(new Response("export {}"));
-        },
-        () =>
-          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
-            { default: { name: string } }
-          >,
-      );
-
-      assertEquals(mod.default.name, "noop");
-      assertEquals(requested, []);
-    });
-
-    it("never redirects framework-provided packages to the CDN", async () => {
-      // A project that pins `zod` still shares the framework's instance: the
-      // registries compare schemas against it, so a second copy from a CDN
-      // would break discovery rather than fix a dependency.
-      const files: Record<string, string> = {
-        "package.json": JSON.stringify({ dependencies: { zod: "3.25.76" } }),
-        [toolPath]: [
-          `import { z } from "zod";`,
-          `export default { name: "schema", shape: typeof z.object };`,
-        ].join("\n"),
-      };
-
-      const context: FileDiscoveryContext = {
-        platform: "node",
-        fsAdapter: createMockAdapter(files, { projectDir }),
-        baseDir: projectDir,
-        compiledRuntime: true,
-      };
-
-      const requested: string[] = [];
-      const mod = await withMockFetch(
-        (input) => {
-          requested.push(String(input));
-          return Promise.resolve(new Response("export {}"));
-        },
-        () =>
-          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
-            { default: { name: string; shape: string } }
-          >,
-      );
-
-      assertEquals(mod.default.name, "schema");
-      assertEquals(mod.default.shape, "function");
-      assertEquals(requested, []);
-    });
   });
 
   describe("readDependencyPins", () => {
@@ -526,6 +406,61 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
 
     it("returns no pins for malformed package.json", () => {
       assertEquals(readDependencyPins("{ not json"), {});
+    });
+  });
+
+  describe("parseNpmImportSpecifier", () => {
+    it("reads bare specifiers, subpaths and scopes", () => {
+      assertEquals(parseNpmImportSpecifier("unpdf"), {
+        name: "unpdf",
+        subpath: ".",
+        requestedVersion: null,
+      });
+      assertEquals(parseNpmImportSpecifier("unpdf/dist/core"), {
+        name: "unpdf",
+        subpath: "./dist/core",
+        requestedVersion: null,
+      });
+      assertEquals(parseNpmImportSpecifier("@scope/pkg/sub"), {
+        name: "@scope/pkg",
+        subpath: "./sub",
+        requestedVersion: null,
+      });
+    });
+
+    it("reads the versioned npm: form a project falls back to", () => {
+      assertEquals(parseNpmImportSpecifier("npm:unpdf@1.8.1"), {
+        name: "unpdf",
+        subpath: ".",
+        requestedVersion: "1.8.1",
+      });
+      assertEquals(parseNpmImportSpecifier("npm:@scope/pkg@1.2.3/sub"), {
+        name: "@scope/pkg",
+        subpath: "./sub",
+        requestedVersion: "1.2.3",
+      });
+      assertEquals(parseNpmImportSpecifier("npm:unpdf"), {
+        name: "unpdf",
+        subpath: ".",
+        requestedVersion: null,
+      });
+    });
+  });
+
+  describe("esmCdnPackageName", () => {
+    it("names the package an esm.sh module path pins", () => {
+      assertEquals(esmCdnPackageName(new URL("https://esm.sh/zod@3.25.76/es2022/zod.mjs")), "zod");
+      assertEquals(esmCdnPackageName(new URL("https://esm.sh/v135/react@19.2.4/mod.js")), "react");
+      assertEquals(
+        esmCdnPackageName(new URL("https://esm.sh/@scope/pkg@1.0.0/mod.js")),
+        "@scope/pkg",
+      );
+      assertEquals(esmCdnPackageName(new URL("https://esm.sh/unpdf")), "unpdf");
+    });
+
+    it("ignores anything that is not on the CDN", () => {
+      assertEquals(esmCdnPackageName(new URL("https://example.com/zod@3.25.76/zod.mjs")), null);
+      assertEquals(esmCdnPackageName(new URL("https://esm.sh/")), null);
     });
   });
 

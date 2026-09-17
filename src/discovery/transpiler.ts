@@ -17,6 +17,8 @@ import type { FileDiscoveryContext } from "./types.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
 import { splitPackageSubpath } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 import { createHTTPPlugin } from "#veryfront/transforms/esm/http-bundler.ts";
+import { readHttpModuleText } from "#veryfront/transforms/shared/http-module-response.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { ESM_CDN_BASE } from "#veryfront/utils/constants/cdn.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { COMPILATION_ERROR, DEPENDENCY_MISSING, FILE_NOT_FOUND } from "#veryfront/errors";
@@ -250,6 +252,14 @@ export function describeUnresolvableNpmImport(error: unknown): string | null {
 const ESM_CDN_ORIGIN = new URL(ESM_CDN_BASE).origin;
 
 /**
+ * Upper bound on how many project dependencies one module may fall back to the
+ * CDN for. Each fallback costs a bundle pass, and a tool file that needs more
+ * than a handful of packages the runtime cannot resolve belongs in an
+ * extension rather than in discovery.
+ */
+const MAX_CDN_DEPENDENCY_FALLBACKS = 4;
+
+/**
  * Specifiers the framework itself hands to discovered modules. Serving these
  * from a CDN would bind a discovered tool to a second copy of the framework,
  * of React, or of the schema library whose instance the registries compare
@@ -265,25 +275,82 @@ function isFrameworkProvidedPackage(name: string): boolean {
 }
 
 /**
+ * The package an esm.sh module path pins, or `null` for anything off the CDN.
+ * esm.sh addresses a package as `/zod@3.25.76/es2022/zod.mjs` and a scoped one
+ * as `/@scope/pkg@1.0.0/mod.js`, optionally behind a `/v135/` build prefix.
+ *
+ * @internal Exported for testing only.
+ */
+export function esmCdnPackageName(url: URL): string | null {
+  if (url.origin !== ESM_CDN_ORIGIN) return null;
+  const segments = url.pathname.replace(/^\/(?:v\d+|stable)\//, "/").split("/").filter(Boolean);
+  if (segments.length === 0) return null;
+  const scoped = segments[0]!.startsWith("@") && segments.length > 1;
+  const pinned = scoped ? `${segments[0]}/${segments[1]}` : segments[0]!;
+  const name = pinned.replace(/@[^@/]+$/, "");
+  return name.length > 0 ? name : null;
+}
+
+/**
+ * Pinned CDN sources are immutable, so one process fetches each URL once even
+ * when the module cache is missed by a source edit or a second project that
+ * declares the same pin. This is a latency cache only: it is not durable, so
+ * a restart still re-fetches (see the follow-up on an on-disk dependency cache).
+ */
+const MAX_CACHED_DEPENDENCY_SOURCES = 256;
+const dependencySourceCache = new Map<string, { body: string; contentType: string }>();
+
+function cacheableSourceKey(input: RequestInfo | URL): string | null {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return null;
+}
+
+/**
  * Project dependency sources are fetched through the host egress ceiling and
  * only from the pinned ESM CDN: a project supplies the package name and the
  * version it declared, never the host.
+ *
+ * @internal Exported for testing only.
  */
-function fetchProjectDependencySource(
+export async function fetchProjectDependencySource(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  return guardedOutboundFetch(input, init, {
+  const key = cacheableSourceKey(input);
+  const cached = key ? dependencySourceCache.get(key) : undefined;
+  if (cached) {
+    return new Response(cached.body, { headers: { "content-type": cached.contentType } });
+  }
+
+  const response = await guardedOutboundFetch(input, init, {
     authorizeUrl: (url) => {
       if (url.origin !== ESM_CDN_ORIGIN) {
         throw new TypeError(`Project dependency source blocked by allow-list: ${url.origin}`);
       }
     },
   });
+  if (!key || !response.ok) return response;
+
+  // Read through the same bounded reader the bundler plugin uses, so caching
+  // never buffers more of a CDN response than the plugin would have accepted.
+  const contentType = response.headers.get("content-type") ?? "application/javascript";
+  const body = await readHttpModuleText(response, MAX_BUNDLE_CHUNK_SIZE_BYTES);
+  // An esm.sh build failure is served as HTML with a 200; caching it would
+  // pin that failure for the life of the process.
+  const isHtml = contentType.includes("text/html") || body.trimStart().startsWith("<");
+  if (!isHtml) {
+    if (dependencySourceCache.size >= MAX_CACHED_DEPENDENCY_SOURCES) {
+      const oldest = dependencySourceCache.keys().next();
+      if (!oldest.done) dependencySourceCache.delete(oldest.value);
+    }
+    dependencySourceCache.set(key, { body, contentType });
+  }
+  return new Response(body, { headers: { "content-type": contentType } });
 }
 
 /**
- * Resolve project-declared npm dependencies to their pinned CDN source so the
+ * Resolve the named project dependencies to their pinned CDN source so the
  * discovery bundle inlines them.
  *
  * `packages: "external"` leaves every bare specifier in the emitted module,
@@ -292,23 +359,94 @@ function fetchProjectDependencySource(
  * framework's own lock, which a project's own dependency is never part of, and
  * answers `Could not find constraint '<pkg>@<version>' in the list of
  * packages`. Inlining the declared pin is what makes the dependency loadable.
+ *
+ * `packages` holds only the names the runtime has already refused, so a
+ * dependency the binary can resolve natively — any of the hundreds of packages
+ * frozen into it — is never rerouted to the network.
  */
+/**
+ * The package a discovery import names, whether written bare (`unpdf`,
+ * `unpdf/dist/core`) or as a Deno npm specifier (`npm:unpdf@1.8.1`).
+ *
+ * Both forms reach the same frozen package set in a compiled binary, so both
+ * have to be recognised against the project's declared pins. A project that
+ * hit the bare-import failure typically rewrites it to the versioned `npm:`
+ * form, which must not then fall through unrecognised.
+ * `requestedVersion` is whatever the specifier itself pinned, else `null`.
+ *
+ * @internal Exported for testing only.
+ */
+export function parseNpmImportSpecifier(
+  specifier: string,
+): { name: string; subpath: string; requestedVersion: string | null } {
+  const bare = specifier.startsWith("npm:") ? specifier.slice("npm:".length) : specifier;
+
+  // A version sits between the package name and any subpath (`pkg@1.2.3/sub`,
+  // `@scope/pkg@1.2.3/sub`); the `@` opening a scope is not a separator.
+  const at = bare.indexOf("@", bare.startsWith("@") ? 1 : 0);
+  if (at === -1) return { ...splitPackageSubpath(bare), requestedVersion: null };
+
+  const slash = bare.indexOf("/", at);
+  const rest = slash === -1 ? "" : bare.slice(slash + 1);
+  return {
+    name: bare.slice(0, at),
+    subpath: rest ? `./${rest}` : ".",
+    requestedVersion: bare.slice(at + 1, slash === -1 ? undefined : slash) || null,
+  };
+}
+
 function createProjectDependencyCdnPlugin(
   pins: Record<string, string>,
-  onInlined: (specifier: string) => void,
+  packages: ReadonlySet<string>,
 ): Plugin {
   return {
     name: "veryfront-project-npm-cdn",
     setup(build: PluginBuild) {
+      // Registered before the HTTP plugin's own http-url resolver so a
+      // framework-provided package reached transitively from fetched CDN
+      // source (esm.sh emits `/zod@3.25.76/es2022/zod.mjs`) is handed back to
+      // the runtime instead of inlined as a second copy. The registries
+      // compare schema and element identities against the framework's
+      // instance, which a duplicate would fail.
+      build.onResolve({ filter: /.*/, namespace: "http-url" }, (args) => {
+        let url: URL;
+        try {
+          url = new URL(args.path, args.importer);
+        } catch (_) {
+          /* expected: a non-URL specifier is the HTTP plugin's to resolve */
+          return undefined;
+        }
+        const name = esmCdnPackageName(url);
+        if (!name || !isFrameworkProvidedPackage(name)) return undefined;
+        return { path: name, external: true };
+      });
+
       build.onResolve({ filter: /^[^./]/ }, (args) => {
         // Imports reached through a fetched module are the HTTP plugin's.
         if (args.namespace === "http-url") return undefined;
 
-        const { name, subpath } = splitPackageSubpath(args.path);
+        const { name, subpath, requestedVersion } = parseNpmImportSpecifier(args.path);
+        if (isFrameworkProvidedPackage(name)) return undefined;
         const version = pins[name];
-        if (!version || isFrameworkProvidedPackage(name)) return undefined;
+        if (!version) return undefined;
 
-        onInlined(args.path);
+        // A statically imported bare specifier waits for the runtime to
+        // actually refuse it, so a package the binary can resolve natively is
+        // never sent to the network. Two forms cannot wait, because their
+        // refusal arrives after discovery has returned and so never reaches
+        // the retry below: an `await import()` evaluated inside a handler, and
+        // the explicit `npm:pkg@version` form a project reaches for once its
+        // bare import has failed. Both named a package the project declared.
+        const deferred = args.kind === "dynamic-import" || args.path.startsWith("npm:");
+        if (!deferred && !packages.has(name)) return undefined;
+        // The package.json declaration is what authorizes a CDN fetch, so a
+        // specifier pinning a *different* version is not this plugin's to
+        // serve: inlining the declared pin under the requested coordinate runs
+        // code the import did not ask for, and honouring the request fetches a
+        // version the project never declared. Left unresolved it surfaces the
+        // classified DEPENDENCY_MISSING naming the package.
+        if (requestedVersion && requestedVersion !== version) return undefined;
+
         return {
           path: `${ESM_CDN_BASE}/${name}@${version}${subpath === "." ? "" : subpath.slice(1)}`,
           namespace: "http-url",
@@ -316,6 +454,48 @@ function createProjectDependencyCdnPlugin(
       });
     },
   };
+}
+
+/** Longest text esbuild hands back for a failed build, used for classification. */
+function describeBundleFailure(error: unknown): string {
+  const failure = error as { errors?: ReadonlyArray<{ text?: unknown }> } | null;
+  const first = failure?.errors?.[0]?.text;
+  if (typeof first === "string" && first.length > 0) return first;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Classify a failed discovery bundle.
+ *
+ * The bundler wrapper throws on build errors rather than returning them, so
+ * this must be reached from a `catch`; a `result.errors` guard never fires.
+ */
+function bundleFailureError(filePath: string, error: unknown): Error {
+  const text = describeBundleFailure(error);
+  const detail = `Failed to transpile ${filePath}: ${text}`;
+  // A CDN failure names an unreachable project dependency, not broken source.
+  if (text.includes(ESM_CDN_BASE)) {
+    return DEPENDENCY_MISSING.create({ detail, cause: error });
+  }
+  return COMPILATION_ERROR.create({ detail, cause: error });
+}
+
+/**
+ * The project dependency to retry from its pinned CDN source, or `null` when
+ * the failure is not a runtime npm resolution the project can answer.
+ */
+function nextCdnFallbackPackage(
+  error: unknown,
+  pins: Record<string, string>,
+  attempted: ReadonlySet<string>,
+): string | null {
+  const unresolvable = describeUnresolvableNpmImport(error);
+  if (!unresolvable) return null;
+  // The runtime names the specifier it refused: `unpdf@1.8.1`, `unpdf/dist`
+  // or `@scope/pkg@1.0.0`.
+  const pkg = parseNpmImportSpecifier(unresolvable).name;
+  if (attempted.has(pkg) || isFrameworkProvidedPackage(pkg) || !pins[pkg]) return null;
+  return pkg;
 }
 
 /**
@@ -385,97 +565,131 @@ export async function importModule(
     ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)].map((m) => m[1]!).filter(Boolean)
     : [];
 
-  // Use fsAdapter plugin whenever a VFS adapter is available (regardless of
-  // runtime), recording every bundled dependency for cache re-validation.
-  const bundledDeps: Array<{ path: string; content: string }> = [];
-  const plugins: Plugin[] = hasFsAdapter
-    ? [
-      createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
-        bundledDeps.push({ path, content });
-      }),
-    ]
-    : [];
-
-  const inlinedDependencies = new Set<string>();
-  if (Object.keys(dependencyPins).length > 0) {
-    plugins.push(
-      createProjectDependencyCdnPlugin(
-        dependencyPins,
-        (specifier) => inlinedDependencies.add(specifier),
-      ),
-      createHTTPPlugin({ fetchFn: fetchProjectDependencySource }),
-    );
-  }
-
-  const result = await build({
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "neutral",
-    target: "es2022",
-    jsx: "automatic",
-    jsxImportSource: "react",
-    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
-    plugins,
-    // Externalize all bare-specifier imports so npm packages a tool/agent file
-    // depends on (e.g. `pdf-parse`, `mammoth`) are not pulled into the
-    // discovery bundle. Discovery only needs the module's exports; the
-    // implementation runs server-side at request time and can resolve npm
-    // packages natively via the project's node_modules / import map.
-    // Without this, esbuild under platform: "neutral" tries to bundle CJS
-    // npm packages and fails on their Node built-in references (fs, http, ...).
-    packages: "external",
-    external: [
-      "zod",
-      "node:*",
-      "veryfront",
-      "veryfront/*",
-      "@opentelemetry/*",
-      "path",
-      ...relativeImports,
-    ],
-    stdin: {
-      contents: source,
-      loader,
-      resolveDir: fileDir,
-      // Must be a basename: esbuild joins resolveDir + sourcefile to form the
-      // entry module path when sourcefile is relative. Passing the full
-      // relative filePath (e.g. "tools/foo.ts") on VFS runs (baseDir === "")
-      // doubles the prefix to "tools/tools/foo.ts", which anchors ../ imports
-      // one directory too deep.
-      sourcefile: pathHelper.basename(filePath),
-    },
-  });
-
-  if (result.errors.length > 0) {
-    const text = result.errors[0]?.text ?? "unknown error";
-    const detail = `Failed to transpile ${filePath}: ${text}`;
-    // A CDN failure names an unreachable project dependency, not broken source.
-    if (text.includes(ESM_CDN_BASE)) {
-      throw DEPENDENCY_MISSING.create({ detail });
-    }
-    throw COMPILATION_ERROR.create({ detail });
-  }
-
-  const js = result.outputFiles?.[0]?.text ?? "export {}";
-
   const localFs = createFileSystem();
-  const tempDir = await localFs.makeTempDir({ prefix: "vf-discovery-" });
-  const tempFile = pathHelper.join(tempDir, "module.mjs");
 
-  const transformedCode = isDeno
-    ? rewriteForDeno(js, fileDir)
-    : await rewriteDiscoveryImports(js, context.baseDir ?? ".", localFs, fileDir);
+  /**
+   * One bundle-and-import pass. `cdnPackages` names the project dependencies
+   * this pass resolves from their pinned CDN source; it is empty on the first
+   * pass, so an unchanged runtime resolves exactly what it resolves today.
+   */
+  const attemptImport = async (
+    cdnPackages: ReadonlySet<string>,
+  ): Promise<{ module: unknown; deps: ReadonlyArray<{ path: string; hash: string }> }> => {
+    // Use fsAdapter plugin whenever a VFS adapter is available (regardless of
+    // runtime), recording every bundled dependency for cache re-validation.
+    const bundledDeps: Array<{ path: string; content: string }> = [];
+    const plugins: Plugin[] = hasFsAdapter
+      ? [
+        createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
+          bundledDeps.push({ path, content });
+        }),
+      ]
+      : [];
 
-  await localFs.writeTextFile(tempFile, transformedCode);
+    // Registered whenever the project declares a pin, not only on a retry
+    // pass: an explicit `npm:` specifier is resolved eagerly (see the plugin),
+    // and a deferred `await import("npm:pkg@x")` never produces the refusal
+    // that would trigger a retry. With an empty `cdnPackages` a bare specifier
+    // still falls through, so an unchanged runtime resolves what it does today.
+    if (Object.keys(dependencyPins).length > 0) {
+      plugins.push(
+        createProjectDependencyCdnPlugin(dependencyPins, cdnPackages),
+        createHTTPPlugin({ fetchFn: fetchProjectDependencySource }),
+      );
+    }
 
-  try {
-    const moduleUrl = pathHelper.toFileUrl(tempFile);
-    moduleUrl.searchParams.set("v", String(Date.now()));
-    let module: unknown;
+    let result;
     try {
-      module = await import(moduleUrl.href);
+      result = await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "neutral",
+        target: "es2022",
+        jsx: "automatic",
+        jsxImportSource: "react",
+        resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+        plugins,
+        // Externalize all bare-specifier imports so npm packages a tool/agent
+        // file depends on (e.g. `pdf-parse`, `mammoth`) are not pulled into the
+        // discovery bundle. Discovery only needs the module's exports; the
+        // implementation runs server-side at request time and can resolve npm
+        // packages natively via the project's node_modules / import map.
+        // Without this, esbuild under platform: "neutral" tries to bundle CJS
+        // npm packages and fails on their Node built-in references (fs, http).
+        packages: "external",
+        external: [
+          "zod",
+          "node:*",
+          "veryfront",
+          "veryfront/*",
+          "@opentelemetry/*",
+          "path",
+          ...relativeImports,
+        ],
+        stdin: {
+          contents: source,
+          loader,
+          resolveDir: fileDir,
+          // Must be a basename: esbuild joins resolveDir + sourcefile to form
+          // the entry module path when sourcefile is relative. Passing the full
+          // relative filePath (e.g. "tools/foo.ts") on VFS runs (baseDir === "")
+          // doubles the prefix to "tools/tools/foo.ts", which anchors ../
+          // imports one directory too deep.
+          sourcefile: pathHelper.basename(filePath),
+        },
+      });
     } catch (error) {
+      // The bundler wrapper throws a build failure instead of returning it.
+      throw bundleFailureError(filePath, error);
+    }
+    if (result.errors.length > 0) throw bundleFailureError(filePath, result);
+
+    const js = result.outputFiles?.[0]?.text ?? "export {}";
+
+    const tempDir = await localFs.makeTempDir({ prefix: "vf-discovery-" });
+    const tempFile = pathHelper.join(tempDir, "module.mjs");
+
+    const transformedCode = isDeno
+      ? rewriteForDeno(js, fileDir)
+      : await rewriteDiscoveryImports(js, context.baseDir ?? ".", localFs, fileDir);
+
+    await localFs.writeTextFile(tempFile, transformedCode);
+
+    try {
+      const moduleUrl = pathHelper.toFileUrl(tempFile);
+      moduleUrl.searchParams.set("v", String(Date.now()));
+      const module = await import(moduleUrl.href);
+      const deps = await Promise.all(
+        bundledDeps.map(async ({ path, content }) => ({ path, hash: await computeHash(content) })),
+      );
+      return { module, deps };
+    } finally {
+      await localFs.remove(tempDir, { recursive: true });
+    }
+  };
+
+  // Only a dependency the runtime has actually refused is refetched from the
+  // CDN, so packages frozen into a compiled binary keep resolving offline and
+  // an outage cannot break a module that loads today. Each pass can only name
+  // the first specifier that failed, so a module with several unresolvable
+  // dependencies converges over a bounded number of passes.
+  const cdnPackages = new Set<string>();
+  for (;;) {
+    try {
+      const { module, deps } = await attemptImport(cdnPackages);
+      const entries = transpileCache.get(cacheKey) ?? [];
+      entries.push({ deps, module });
+      transpileCache.set(cacheKey, entries);
+      return module;
+    } catch (error) {
+      const fallback = cdnPackages.size < MAX_CDN_DEPENDENCY_FALLBACKS
+        ? nextCdnFallbackPackage(error, dependencyPins, cdnPackages)
+        : null;
+      if (fallback) {
+        cdnPackages.add(fallback);
+        continue;
+      }
       const unresolvable = describeUnresolvableNpmImport(error);
       if (!unresolvable) throw error;
       throw DEPENDENCY_MISSING.create({
@@ -485,15 +699,6 @@ export async function importModule(
         cause: error,
       });
     }
-    const deps = await Promise.all(
-      bundledDeps.map(async ({ path, content }) => ({ path, hash: await computeHash(content) })),
-    );
-    const entries = transpileCache.get(cacheKey) ?? [];
-    entries.push({ deps, module });
-    transpileCache.set(cacheKey, entries);
-    return module;
-  } finally {
-    await localFs.remove(tempDir, { recursive: true });
   }
 }
 
@@ -502,4 +707,5 @@ export async function importModule(
  */
 export function clearTranspileCache(): void {
   transpileCache.clear();
+  dependencySourceCache.clear();
 }
