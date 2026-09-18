@@ -11,20 +11,25 @@ import { loadMiddlewareFile } from "./middleware.ts";
 
 function createVirtualAdapter(
   source: string | undefined,
+  filesOrOnFileAccess: Record<string, string> | ((operation: "exists" | "read") => void) = {},
   onFileAccess?: (operation: "exists" | "read") => void,
 ): RuntimeAdapter {
+  const files = typeof filesOrOnFileAccess === "function" ? {} : filesOrOnFileAccess;
+  const fileAccess = typeof filesOrOnFileAccess === "function" ? filesOrOnFileAccess : onFileAccess;
   const fs = {
     getUnderlyingAdapter: () => fs,
     getAdapterType: () => "MultiProjectFSAdapter",
     isVeryfrontAdapter: () => true,
     isMultiProjectMode: () => true,
     exists: (path: string) => {
-      onFileAccess?.("exists");
-      return Promise.resolve(source !== undefined && path.endsWith("/middleware.ts"));
+      fileAccess?.("exists");
+      return Promise.resolve(
+        (source !== undefined && path.endsWith("/middleware.ts")) || Object.hasOwn(files, path),
+      );
     },
-    readFile: () => {
-      onFileAccess?.("read");
-      return Promise.resolve(source ?? "");
+    readFile: (path: string) => {
+      fileAccess?.("read");
+      return Promise.resolve(files[path] ?? source ?? "");
     },
   } as unknown as RuntimeAdapter["fs"];
 
@@ -253,6 +258,22 @@ describe("dev-server/middleware: actionable rejection", () => {
       throwOnError: true,
       allowHostProjectCodeExecution: true,
     });
+    assertEquals(middleware.length, 1);
+  });
+
+  it("resolves project-local imports from a virtual filesystem", async () => {
+    const adapter = createVirtualAdapter(
+      'import middleware from "./lib/pmo-auth"; export default middleware;',
+      {
+        "/app/lib/pmo-auth.ts": "export default async function (c, next) { return await next(); }",
+      },
+    );
+
+    const middleware = await loadMiddlewareFile("/app", adapter, {
+      throwOnError: true,
+      allowHostProjectCodeExecution: true,
+    });
+
     assertEquals(middleware.length, 1);
   });
 
