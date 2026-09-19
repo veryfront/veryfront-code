@@ -753,6 +753,12 @@ const MISSING_TARBALL_ONLY_E404 = [
   `npm error 404 Not Found - GET https://registry.npmjs.org/@veryfront/ext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz - Not found`,
 ];
 
+/** The same tarball 404 with the scope separator URL-encoded. */
+const MISSING_ENCODED_TARBALL_E404 = [
+  "npm error code E404",
+  `npm error 404 Not Found - GET https://registry.npmjs.org/@veryfront%2fext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz - Not found`,
+];
+
 describe("exact-version registry install propagation retry", () => {
   it("retries a stale-packument install and continues once npm sees the version", async () => {
     const result = await runScriptedRegistryInstall(
@@ -760,14 +766,15 @@ describe("exact-version registry install propagation retry", () => {
         STALE_PACKUMENT_ERESOLVE,
         MISSING_VERSION_ETARGET,
         MISSING_TARBALL_ONLY_E404,
+        MISSING_ENCODED_TARBALL_E404,
       ],
       5,
     );
 
-    // Root install: three skewed attempts, then success; the behavior phase
+    // Root install: four skewed attempts, then success; the behavior phase
     // (stubbed node) then fails, proving the install itself passed.
     assertEquals(result.code, 21, result.stderr);
-    assertEquals(result.installArgs.length, 4);
+    assertEquals(result.installArgs.length, 5);
     assertStringIncludes(
       result.stderr,
       "attempt 1/5 hit npm registry propagation skew (ERESOLVE: veryfront@undefined)",
@@ -779,6 +786,10 @@ describe("exact-version registry install propagation retry", () => {
     assertStringIncludes(
       result.stderr,
       `attempt 3/5 hit npm registry propagation skew (E404: @veryfront/ext-blob-gcs@${SKEW_VERSION})`,
+    );
+    assertStringIncludes(
+      result.stderr,
+      `attempt 4/5 hit npm registry propagation skew (E404: @veryfront/ext-blob-gcs@${SKEW_VERSION})`,
     );
     // Each retry starts from a clean project and revalidates cached metadata.
     assertEquals(result.leftovers, []);
@@ -810,6 +821,20 @@ describe("exact-version registry install propagation retry", () => {
         [
           "npm error code E404",
           "npm error 404 Not Found - GET https://registry.npmjs.org/veryfront-typo",
+        ],
+        // Same basename and version, different scope: not a package under test.
+        [
+          "npm error code E404",
+          `npm error 404 Not Found - GET https://registry.npmjs.org/@other/ext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz`,
+        ],
+        [
+          "npm error code E404",
+          `npm error 404 Not Found - GET https://registry.npmjs.org/@other%2fext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz`,
+        ],
+        // A scoped package whose name equals the unscoped package under test.
+        [
+          "npm error code E404",
+          `npm error 404 Not Found - GET https://registry.npmjs.org/@other/veryfront/-/veryfront-${SKEW_VERSION}.tgz`,
         ],
       ]
     ) {

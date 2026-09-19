@@ -127,6 +127,28 @@ function failRegistryInstall(
 /** Matches the end of an exact version: `1.2.3-rc.4` must not match `1.2.3-rc.45`. */
 const VERSION_END = String.raw`(?![0-9A-Za-z-]|\.[0-9A-Za-z])`;
 
+/**
+ * Match the registry tarball URL of exactly `name@version`: the full package
+ * path before `/-/` must be the package under test, so `@other/ext-x` never
+ * matches `@veryfront/ext-x` and `@other/veryfront` never matches `veryfront`.
+ * A scoped name may appear with its separator literal or URL-encoded (`%2f`).
+ */
+function tarballUrlPattern(name: string, version: string): RegExp {
+  const scoped = /^(@[^/]+)\/(.+)$/.exec(name);
+  const basename = scoped ? scoped[2] : name;
+  const packagePath = scoped
+    ? `${escapeRegExp(scoped[1])}(?:/|%2[fF])${escapeRegExp(basename)}`
+    : // An unscoped name is its own path segment, not the tail of a scope.
+      `(?<!@[^/\\s]*/)${escapeRegExp(name)}`;
+  // The .tgz suffix already bounds the version, and VERSION_END would reject
+  // it as a longer prerelease identifier.
+  return new RegExp(
+    `/${packagePath}/-/${escapeRegExp(basename)}-${
+      escapeRegExp(version)
+    }\\.tgz\\b`,
+  );
+}
+
 function npmErrorCode(output: string): string | undefined {
   return /^npm (?:error|ERR!) code (\w+)/m.exec(output)?.[1];
 }
@@ -168,14 +190,10 @@ export function registryPropagationSkew(
         }
         break;
       case "E404": {
-        const basename = escapeRegExp(name.replace(/^@[^/]+\//, ""));
         if (
           new RegExp(`'${packageName}@${exactVersion}' is not in this registry`)
             .test(output) ||
-          // The .tgz suffix already bounds the version, and VERSION_END would
-          // reject it as a longer prerelease identifier.
-          new RegExp(`/-/${basename}-${escapeRegExp(version)}\\.tgz\\b`)
-            .test(output)
+          tarballUrlPattern(name, version).test(output)
         ) {
           return `E404: ${spec}`;
         }
