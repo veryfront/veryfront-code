@@ -86,6 +86,19 @@ function intrinsicIncludes<T>(values: readonly T[], value: T): boolean {
   return intrinsicReflectApply(intrinsicArrayIncludes, values, [value]);
 }
 
+function filterToolDefinitions(
+  definitions: readonly ToolDefinition[],
+  predicate: (definition: ToolDefinition) => boolean,
+): ToolDefinition[] {
+  const filtered: ToolDefinition[] = [];
+  for (let index = 0; index < definitions.length; index++) {
+    if (!intrinsicHasOwn(definitions, index)) continue;
+    const definition = definitions[index]!;
+    if (predicate(definition)) intrinsicReflectApply(intrinsicArrayPush, filtered, [definition]);
+  }
+  return filtered;
+}
+
 /**
  * Result of parsing tool arguments.
  */
@@ -565,16 +578,13 @@ export async function getAvailableTools(
       intrinsicReflectApply(intrinsicArrayPush, tools, remoteDefs);
     }
 
-    return sourceIntegrationPolicy
-      ? tools.filter((definition) =>
-        isAllowedBySourcePolicy(
-          definition.name,
-          sourceIntegrationPolicy,
-          resolveVisibleRegistryTool(definition.name, options?.callerAgentId),
-          tools,
-        )
-      )
-      : tools;
+    return filterToolDefinitions(tools, (definition) =>
+      isAllowedBySourcePolicy(
+        definition.name,
+        sourceIntegrationPolicy,
+        resolveVisibleRegistryTool(definition.name, options?.callerAgentId),
+        tools,
+      ));
   }
 
   const tools: ToolDefinition[] = [];
@@ -694,16 +704,13 @@ export async function getAvailableTools(
     );
   }
 
-  return sourceIntegrationPolicy
-    ? tools.filter((definition) =>
-      isAllowedBySourcePolicy(
-        configuredAuthorizationToolNames.get(definition.name) ?? definition.name,
-        sourceIntegrationPolicy,
-        toolsConfig[definition.name] === true
-          ? resolveVisibleRegistryTool(definition.name, options?.callerAgentId)
-          : toolsConfig[definition.name],
-        remoteDefs,
-      )
-    )
-    : tools;
+  return filterToolDefinitions(tools, (definition) =>
+    isAllowedBySourcePolicy(
+      configuredAuthorizationToolNames.get(definition.name) ?? definition.name,
+      sourceIntegrationPolicy,
+      toolsConfig[definition.name] === true
+        ? resolveVisibleRegistryTool(definition.name, options?.callerAgentId)
+        : toolsConfig[definition.name],
+      remoteDefs,
+    ));
 }
