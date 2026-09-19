@@ -545,6 +545,8 @@ export async function ensureHttpBundlesExist(
   cacheDir: string,
   cacheHttpModule: CacheHttpModuleFn,
   fallbackIdentity?: HttpCacheIdentityOptions,
+  /** Internal: false inside the re-check of bundles another caller wrote. */
+  recheckMaterializedFailures = true,
 ): Promise<string[]> {
   if (bundlePaths.length === 0) return [];
 
@@ -661,6 +663,34 @@ export async function ensureHttpBundlesExist(
 
     // Last resort after the claim rounds: fetch whatever is still missing.
     await fetchMissingBundles(outstanding, fetchContext);
+  }
+
+  if (failed.size > 0 && recheckMaterializedFailures) {
+    // A concurrent caller may have materialized a bundle this caller could not
+    // fetch. Accept it only once its own dependencies are present too.
+    const materialized: Array<{ path: string; hash: string }> = [];
+    for (const hash of failed) {
+      if (!isValidHttpBundleHash(hash)) continue;
+      const canonicalPath = join(absoluteCacheDir, `http-${hash}.mjs`);
+      const bundle = await readCachedHttpBundleFile(fs, canonicalPath);
+      if (bundle && !isDegradedArtifact(bundle.code)) {
+        materialized.push({ path: canonicalPath, hash });
+      }
+    }
+    if (materialized.length > 0) {
+      const stillFailed = new Set(
+        await ensureHttpBundlesExist(
+          materialized,
+          cacheDir,
+          cacheHttpModule,
+          fallbackIdentity,
+          false,
+        ),
+      );
+      for (const { hash } of materialized) {
+        if (!stillFailed.has(hash)) failed.delete(hash);
+      }
+    }
   }
 
   if (failed.size > 0) {

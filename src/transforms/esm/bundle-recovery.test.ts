@@ -559,7 +559,9 @@ describe("transforms/esm/bundle-recovery", () => {
             )),
         );
 
-        assertEquals(results.map((failed) => failed.join(",")).sort(), ["", "", hash]);
+        // The caller whose read missed reports the bundle unless the retry
+        // owner materialized it before that caller finished.
+        assertEquals(results.filter((failed) => failed.length > 0).length <= 1, true);
         assertEquals(
           backend.batchReads.filter((key) => key === `code:${hash}`).length,
           2,
@@ -570,6 +572,25 @@ describe("transforms/esm/bundle-recovery", () => {
           "export const late = true;\n",
         );
         assertEquals(getBundleFetchesInFlightCount(), 0);
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("stops reporting a bundle another caller materialized", async () => {
+      const cacheDir = await makeTempDir();
+      const hash = "904";
+      const code = "export const written = true;\n";
+      const backend = createCountingBatchBackend({}, { latencyMs: 20 });
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+      try {
+        const bundles = [{ path: join(cacheDir, `http-${hash}.mjs`), hash }];
+        const pending = ensureHttpBundlesExist(bundles, cacheDir, () => Promise.resolve(null));
+        // Another caller writes the bundle while this call is fetching.
+        await writeTextFile(join(cacheDir, `http-${hash}.mjs`), code);
+
+        assertEquals(await pending, [], "a bundle present at the end is not reported as failed");
       } finally {
         await remove(cacheDir, { recursive: true });
       }
