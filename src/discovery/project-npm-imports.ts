@@ -106,6 +106,26 @@ const NODE_BUILTIN_MODULES = new Set([
 ]);
 
 /**
+ * The builtin subpaths Node exposes without the `node:` prefix
+ * (`require("node:module").builtinModules`); any other path under a builtin
+ * root is not a builtin.
+ */
+const NODE_BUILTIN_SUBPATHS = new Set([
+  "assert/strict",
+  "dns/promises",
+  "fs/promises",
+  "inspector/promises",
+  "path/posix",
+  "path/win32",
+  "readline/promises",
+  "stream/consumers",
+  "stream/promises",
+  "stream/web",
+  "timers/promises",
+  "util/types",
+]);
+
+/**
  * The `node:`-prefixed form of a bare Node builtin specifier, or `null` when
  * the specifier is not one.
  *
@@ -117,9 +137,12 @@ const NODE_BUILTIN_MODULES = new Set([
  */
 export function nodeBuiltinSpecifier(name: string): string | null {
   if (name.startsWith("node:")) return name;
-  // A Node builtin subpath is written `fs/promises`, never `fs/anything-else`.
-  const root = name.includes("/") ? name.slice(0, name.indexOf("/")) : name;
-  return NODE_BUILTIN_MODULES.has(root) ? `node:${name}` : null;
+  // Only the exact subpaths Node exposes are builtins: `buffer/` is the npm
+  // `buffer` package and `fs/custom` is nothing, so neither has a `node:` form.
+  const builtin = name.includes("/")
+    ? NODE_BUILTIN_SUBPATHS.has(name)
+    : NODE_BUILTIN_MODULES.has(name);
+  return builtin ? `node:${name}` : null;
 }
 
 /**

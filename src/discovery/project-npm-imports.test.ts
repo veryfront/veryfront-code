@@ -5,6 +5,7 @@ import {
   describeNpmImport,
   exactVersionNamedByRange,
   isFrameworkProvidedPackage,
+  nodeBuiltinSpecifier,
   parseNpmSpecifier,
   type ProjectNpmImport,
   rangeAdmitsVersion,
@@ -279,6 +280,18 @@ describe("isFrameworkProvidedPackage", () => {
     assertEquals(isFrameworkProvidedPackage("unpdf"), false);
     assertEquals(isFrameworkProvidedPackage("path-to-regexp"), false);
     assertEquals(isFrameworkProvidedPackage("@scope/pkg"), false);
+  });
+
+  it("claims only the subpaths Node actually exposes under a builtin", () => {
+    // `buffer/` is the npm `buffer` package (the documented way to bypass the
+    // builtin); `fs/custom` is no builtin. Neither has a `node:` form.
+    for (const specifier of ["buffer/", "fs/custom", "events/", "path/to/file"]) {
+      assertEquals(nodeBuiltinSpecifier(specifier), null, specifier);
+      assertEquals(isFrameworkProvidedPackage(specifier), false, specifier);
+    }
+    assertEquals(nodeBuiltinSpecifier("path/posix"), "node:path/posix");
+    assertEquals(nodeBuiltinSpecifier("util/types"), "node:util/types");
+    assertEquals(nodeBuiltinSpecifier("assert/strict"), "node:assert/strict");
   });
 });
 
