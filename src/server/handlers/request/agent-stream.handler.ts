@@ -80,6 +80,10 @@ import {
   PERMISSION_DENIED,
   SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
+import {
+  createSourceSnapshotChangedError,
+  isSourceSnapshotChangedError,
+} from "#veryfront/errors/source-snapshot-change.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
@@ -1138,9 +1142,9 @@ export class AgentStreamHandler extends BaseHandler {
                   "agent-source-config-identity",
                 );
                 if (configSourceFingerprint !== requestSourceFingerprint) {
-                  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                    detail: "The branch source changed while its agent configuration was evaluated",
-                  });
+                  throw createSourceSnapshotChangedError(
+                    "The branch source changed while its agent configuration was evaluated",
+                  );
                 }
               }
               const sourceScopedContext: HandlerContext = {
@@ -1172,10 +1176,9 @@ export class AgentStreamHandler extends BaseHandler {
                         "agent-source-credential-handoff",
                       );
                       if (runtimeSourceFingerprint !== requestSourceFingerprint) {
-                        throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                          detail:
-                            "The branch source changed while credentials were isolated for agent execution",
-                        });
+                        throw createSourceSnapshotChangedError(
+                          "The branch source changed while credentials were isolated for agent execution",
+                        );
                       }
                     }
 
@@ -1190,10 +1193,9 @@ export class AgentStreamHandler extends BaseHandler {
                               "agent-source-discovery-identity",
                             );
                           if (discoverySourceFingerprint !== requestSourceFingerprint) {
-                            throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                              detail:
-                                "The branch source changed while project agents were discovered",
-                            });
+                            throw createSourceSnapshotChangedError(
+                              "The branch source changed while project agents were discovered",
+                            );
                           }
                         }
 
@@ -1364,7 +1366,10 @@ export class AgentStreamHandler extends BaseHandler {
         // reported event are the only places it survives.
         if (response.status >= 500 && !replayed) {
           const cause = describeErrorCause(error.cause);
-          logger.error("Internal agent stream request failed", {
+          // A branch edit landing mid-request is retried by the control plane
+          // on the next generation; only other 5xx failures are errors here.
+          const log = isSourceSnapshotChangedError(error) ? logger.warn : logger.error;
+          log.call(logger, "Internal agent stream request failed", {
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
             status: response.status,

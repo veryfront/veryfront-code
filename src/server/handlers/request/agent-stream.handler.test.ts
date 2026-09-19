@@ -5440,6 +5440,78 @@ describe("agent stream handler application-error reporting", () => {
     assertEquals(attributes["project.id"], "proj-1");
   });
 
+  // A branch edit landing while agents are discovered is expected on a mutable
+  // source. The 503 is correct (the control plane retries the run on the next
+  // generation), but it is not a framework fault and must not page as one.
+  it("reports a branch source change during discovery as a tagged warning", async () => {
+    const entries: LogEntry[] = [];
+    const previousLogLevel = Deno.env.get("LOG_LEVEL");
+    const { captures, restore } = stubApplicationErrorReporter();
+    let sourceFingerprint = "request-snapshot";
+    try {
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => {
+          sourceFingerprint = "discovery-snapshot";
+          return createEmptyDiscoveryResult();
+        },
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+      const ctx = createCtx(publicKeyPem);
+      ctx.proxyToken = "run-scoped-token";
+      const fs = createNoopFsAdapter([]);
+      fs.getSourceSnapshotFingerprint = () => sourceFingerprint;
+      ctx.adapter = { ...ctx.adapter, fs };
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+
+      assertExists(result.response);
+      await result.response.body?.cancel();
+      assertEquals(result.response.status, 503);
+
+      assertEquals(captures.length, 1);
+      const captured = captures[0];
+      assertExists(captured);
+      assertEquals(captured.context.boundary, "agent.stream.request");
+      assertEquals(captured.context.level, "warning");
+      assertEquals(captured.context.errorClass, "source-snapshot-changed");
+
+      const logged = entries.filter(
+        (entry) => entry.message === "Internal agent stream request failed",
+      );
+      assertEquals(logged.length, 1);
+      assertEquals(logged[0]?.level, "warn");
+    } finally {
+      restore();
+      __resetLogRecordEmitterForTests();
+      if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", previousLogLevel);
+      refreshLoggerConfig();
+    }
+  });
+
   it("stays silent for a 4xx VeryfrontError so Sentry is not flooded", async () => {
     const thrown = INVALID_ARGUMENT.create({
       detail: "Agent source branch is not a known branch",

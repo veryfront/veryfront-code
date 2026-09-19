@@ -14,6 +14,7 @@ import {
 } from "./application-errors.ts";
 import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
 import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
+import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import {
   ASSET_OPTIMIZATION_ERROR,
   BUILD_FAILED,
@@ -26,6 +27,7 @@ import {
   MARKDOWN_COMPILE_ERROR,
   MDX_COMPILE_ERROR,
   RENDER_ERROR,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
   SOURCEMAP_ERROR,
   SSG_GENERATION_ERROR,
   toError,
@@ -189,6 +191,60 @@ it("application error reporter ignores client-class veryfront errors", () => {
     "event-id",
   );
   assertEquals(captures, [serverError, plainError]);
+});
+
+it("application error reporter downgrades mid-request source snapshot changes to tagged warnings", () => {
+  const captures: Array<{ error: unknown; context: SharedApplicationErrorContext }> = [];
+  setApplicationErrorReporter({
+    capture(error, context) {
+      captures.push({ error, context });
+      return "event-id";
+    },
+    flush: () => Promise.resolve(true),
+  });
+
+  const changed = createSourceSnapshotChangedError(
+    "The branch source changed while project agents were discovered",
+  );
+  // Same slug, but the adapter cannot establish freshness at all: a real
+  // framework or adapter defect that must keep paging at error level.
+  const unavailable = SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+    detail: "The project filesystem cannot verify the branch source snapshot identity",
+  });
+  const forged = SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+    detail: "changed",
+    context: { sourceSnapshotChanged: "true" },
+  });
+
+  try {
+    assertEquals(
+      captureApplicationError(changed, { boundary: "agent.stream.request" }),
+      "event-id",
+    );
+    assertEquals(
+      captureApplicationError(unavailable, { boundary: "agent.stream.request" }),
+      "event-id",
+    );
+    assertEquals(captureApplicationError(forged, { boundary: "renderer.request" }), "event-id");
+    assertEquals(
+      captureApplicationError(changed, { boundary: "renderer.request", level: "error" }),
+      "event-id",
+    );
+  } finally {
+    setApplicationErrorReporter(undefined);
+  }
+
+  assertEquals(captures.length, 4);
+  assertEquals(changed.slug, SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug);
+  assertEquals(changed.status, 503);
+  assertEquals(captures[0]?.context.errorClass, "source-snapshot-changed");
+  assertEquals(captures[0]?.context.level, "warning");
+  assertEquals(captures[1]?.context.errorClass, undefined);
+  assertEquals(captures[1]?.context.level, undefined);
+  assertEquals(captures[2]?.context.errorClass, undefined);
+  assertEquals(captures[2]?.context.level, undefined);
+  // An explicit caller level still wins.
+  assertEquals(captures[3]?.context.level, "error");
 });
 
 it("application error reporter downgrades tenant build errors to tagged warnings", () => {

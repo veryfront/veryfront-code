@@ -51,8 +51,8 @@ import { isProductionMode, shouldHideRouteInProduction } from "../route-visibili
 import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
-  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
+import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 import {
@@ -403,10 +403,9 @@ export class SSRHandler extends BaseHandler {
         const reclassify = await getReclassifier();
         if (reclassify === undefined) return;
         if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
-          throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-            detail:
-              `The source snapshot for "${ctx.projectSlug}" changed during document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely choose between API and page routing.`,
-          });
+          throw createSourceSnapshotChangedError(
+            `The source snapshot for "${ctx.projectSlug}" changed during document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely choose between API and page routing.`,
+          );
         }
         const reclassified = await reclassify();
         if (reclassified.response || !reclassified.continue) {
@@ -434,10 +433,9 @@ export class SSRHandler extends BaseHandler {
         return reclassified;
       }
 
-      throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-        detail:
-          `The source snapshot for "${ctx.projectSlug}" changed during SSR rendering, so this page request must be retried against one generation.`,
-      });
+      throw createSourceSnapshotChangedError(
+        `The source snapshot for "${ctx.projectSlug}" changed during SSR rendering, so this page request must be retried against one generation.`,
+      );
     } catch (error) {
       endRequest(requestId);
       throw error;
