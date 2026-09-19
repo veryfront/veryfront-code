@@ -689,8 +689,9 @@ export function withDisplayPath(text: string, paths: DiscoveryPathNames): string
 }
 
 /**
- * The project root where it stands as a path of its own: not preceded by a
- * path or host character, and followed by a separator (consumed, so what
+ * The project root where it stands as a path of its own: introduced by
+ * `file://` or not preceded by a path or host character, and followed by a
+ * separator (consumed, so what
  * follows reads project-relative) or by something no path name continues
  * with. Matched as a bare substring, `/app` rewrote
  * `https://esm.sh/apple@1.0.0` to `https://esm.sh.le@1.0.0` -- which also hid
@@ -699,7 +700,9 @@ export function withDisplayPath(text: string, paths: DiscoveryPathNames): string
 function projectRootMention(root: string): RegExp {
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   return new RegExp(
-    String.raw`(?<![A-Za-z0-9._~%@:/\\-])${escaped}(?:([/\\])|(?![A-Za-z0-9._~%-]))`,
+    // A `file://` prefix is consumed with the root: Deno quotes module paths as
+    // file URLs, and the `/` it ends with would otherwise fail the boundary.
+    String.raw`(?:file://|(?<![A-Za-z0-9._~%@:/\\-]))${escaped}(?:([/\\])|(?![A-Za-z0-9._~%-]))`,
     "g",
   );
 }

@@ -630,6 +630,18 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(withDisplayPath("(/app)", paths), "(.)");
     });
 
+    it("renders a file URL under the project root relative", () => {
+      assertEquals(
+        withDisplayPath('Module not found "file:///app/lib/x.ts"', paths),
+        'Module not found "lib/x.ts"',
+      );
+      assertEquals(withDisplayPath("at file:///app", paths), "at .");
+      assertEquals(
+        withDisplayPath("at file:///application/x.ts", paths),
+        "at file:///application/x.ts",
+      );
+    });
+
     it("leaves a host, URL or longer path that merely contains the root", () => {
       for (
         const text of [
