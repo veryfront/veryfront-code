@@ -11,6 +11,48 @@ import {
 // Cases about which specifiers a scanner recognises, rather than about how many
 // it collects, opt out of the bound explicitly.
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
+
+/** How much larger the second input of a scaling check is than the first. */
+const SCALING_INPUT_FACTOR = 4;
+/**
+ * The most the scan time may grow for that input growth. A linear scan grows
+ * about 4x; a quadratic one about 16x. The midpoint (on a log scale) of those
+ * two tells them apart without a wall-clock budget, which coverage
+ * instrumentation and parallel test load exceed at random.
+ */
+const MAX_SCALING_TIME_FACTOR = 8;
+const SCALING_RUNS = 5;
+
+/** The fastest of several runs: load noise only ever adds time. */
+function fastestScanMillis(scan: (source: string) => unknown, source: string): number {
+  let fastest = Number.POSITIVE_INFINITY;
+  for (let run = 0; run < SCALING_RUNS; run++) {
+    const start = performance.now();
+    scan(source);
+    fastest = Math.min(fastest, performance.now() - start);
+  }
+  return fastest;
+}
+
+/** Asserts `scan` grows linearly, not super-linearly, with `makeSource(size)`. */
+function assertLinearScan(
+  name: string,
+  scan: (source: string) => unknown,
+  makeSource: (size: number) => string,
+  smallSize: number,
+): void {
+  const small = makeSource(smallSize);
+  const large = makeSource(smallSize * SCALING_INPUT_FACTOR);
+  scan(small); // warm up the JIT so the first timed run is not an outlier
+  const smallMillis = fastestScanMillis(scan, small);
+  const largeMillis = fastestScanMillis(scan, large);
+  const growth = largeMillis / Math.max(smallMillis, 0.01);
+  assert(
+    growth < MAX_SCALING_TIME_FACTOR,
+    `${name} scanner time grew ${growth.toFixed(1)}x (${smallMillis.toFixed(1)}ms -> ` +
+      `${largeMillis.toFixed(1)}ms) for ${SCALING_INPUT_FACTOR}x the input`,
+  );
+}
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
   it("keeps static imports inside regexes hidden after local type export lists", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
@@ -45,46 +87,41 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     );
   });
 
-  it("keeps repeated regex ASI checks bounded across import scanners", () => {
+  it("keeps repeated regex ASI checks linear across import scanners", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
-    const repeatedRegexBlocks = "/x/\n{}\n".repeat(800);
-    const maxMillis = 500;
+    const regexBlocks = (count: number) => "/x/\n{}\n".repeat(count);
 
     const cases = [
       {
         name: "static",
-        source: `${repeatedRegexBlocks}import value from "./real.js";`,
+        tail: 'import value from "./real.js";',
         scan: (source: string) => findStaticImportFromSpans(source, matchRelative, UNBOUNDED),
       },
       {
         name: "side-effect",
-        source: `${repeatedRegexBlocks}import "./real.js";`,
+        tail: 'import "./real.js";',
         scan: (source: string) => findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED),
       },
       {
         name: "dynamic",
-        source: `${repeatedRegexBlocks}import("./real.js");`,
+        tail: 'import("./real.js");',
         scan: (source: string) => findDynamicImportSpans(source, matchRelative, UNBOUNDED),
       },
     ];
 
     for (const scanner of cases) {
-      const start = performance.now();
-      const paths = scanner.scan(scanner.source).map((span) => span.path);
-      const elapsed = performance.now() - start;
-
-      assertEquals(paths, ["./real.js"]);
-      assert(
-        elapsed < maxMillis,
-        `${scanner.name} scanner took ${elapsed.toFixed(1)}ms for repeated regex ASI blocks`,
+      const makeSource = (count: number) => `${regexBlocks(count)}${scanner.tail}`;
+      assertEquals(
+        scanner.scan(makeSource(800)).map((span) => span.path),
+        ["./real.js"],
       );
+      assertLinearScan(scanner.name, scanner.scan, makeSource, 4_000);
     }
   });
 
-  it("keeps large brace-heavy division scans bounded across import scanners", () => {
+  it("keeps large brace-heavy division scans linear across import scanners", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
-    const source = "x={a:1}/2;\n".repeat(51_600);
-    const maxMillis = 1_500;
+    const makeSource = (lines: number) => "x={a:1}/2;\n".repeat(lines);
 
     const cases = [
       {
@@ -102,17 +139,9 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     ];
 
     for (const scanner of cases) {
-      const start = performance.now();
-      const spans = scanner.scan(source);
-      const elapsed = performance.now() - start;
-
-      assertEquals(spans, []);
-      assert(
-        elapsed < maxMillis,
-        `${scanner.name} scanner took ${elapsed.toFixed(1)}ms for a ${
-          Math.round(source.length / 1024)
-        } KB brace-heavy division scan`,
-      );
+      assertEquals(scanner.scan(makeSource(51_600)), []);
+      // 12,900 lines grows to the original 51,600-line (554 KB) timed sample.
+      assertLinearScan(scanner.name, scanner.scan, makeSource, 12_900);
     }
   });
 
