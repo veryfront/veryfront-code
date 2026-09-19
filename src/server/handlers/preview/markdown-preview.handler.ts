@@ -20,8 +20,8 @@ import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-loca
 import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
-  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
+import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import { markdownPreviewOwnsDocumentPathname } from "../request/ssr/document-ownership.ts";
 import {
   ensurePreviewDocumentSourceSnapshot,
@@ -114,18 +114,17 @@ export class MarkdownPreviewHandler extends BaseHandler {
         if (reclassify === undefined) return rendered;
       }
       if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
-        throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-          detail:
-            `The source snapshot for "${ctx.projectSlug}" changed during Markdown document ownership classification or rendering ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely render it.`,
-        });
+        throw createSourceSnapshotChangedError(
+          `The source snapshot for "${ctx.projectSlug}" changed during Markdown document ownership classification or rendering ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely render it.`,
+        );
       }
       const reclassified = await reclassify();
       if (reclassified.response || !reclassified.continue) return reclassified;
     }
 
-    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-      detail: `The source snapshot for "${ctx.projectSlug}" could not be stabilized.`,
-    });
+    throw createSourceSnapshotChangedError(
+      `The source snapshot for "${ctx.projectSlug}" could not be stabilized.`,
+    );
   }
 
   private async renderMarkdown(
