@@ -36,3 +36,24 @@ export function registerRequestContextAccessor(
 export function currentRequestContext(): RequestContext | null {
   return accessor?.() ?? null;
 }
+
+let fileCacheIsolation: (<T>(fn: () => T) => T) | undefined;
+
+/** Called by the server request-context module when it loads. */
+export function registerRequestScopedFileCacheIsolation(
+  fn: <T>(fn: () => T) => T,
+): void {
+  if (fileCacheIsolation !== undefined && fileCacheIsolation !== fn) {
+    throw new TypeError("The hosted request file-cache isolation is already registered");
+  }
+  fileCacheIsolation = fn;
+}
+
+/**
+ * Run an operation in the current hosted request context without that
+ * request's file cache. Use it for work whose result other requests share, so
+ * bytes one request pinned earlier cannot reach requests that never saw them.
+ */
+export function runWithoutRequestScopedFileCache<T>(fn: () => T): T {
+  return fileCacheIsolation === undefined ? fn() : fileCacheIsolation(fn);
+}

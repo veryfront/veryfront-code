@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { registerRequestContextAccessor } from "#veryfront/platform/request-context-access.ts";
+import {
+  registerRequestContextAccessor,
+  registerRequestScopedFileCacheIsolation,
+} from "#veryfront/platform/request-context-access.ts";
 
 export interface RequestContext {
   projectSlug: string;
@@ -76,6 +79,14 @@ export function getCurrentRequestContext(): RequestContext | null {
 // Shared client/server code reads the context through the client-safe holder;
 // loading this module is what makes the real accessor available there.
 registerRequestContextAccessor(getCurrentRequestContext);
+
+function runWithoutRequestScopedFileCacheInStore<T>(fn: () => T): T {
+  const store = getRequestContextStore();
+  if (!store?.fileCache) return fn();
+  return runWithRequestContextStore({ ...store, fileCache: new Map<string, string>() }, fn);
+}
+
+registerRequestScopedFileCacheIsolation(runWithoutRequestScopedFileCacheInStore);
 
 /**
  * Wraps a callback to preserve the current AsyncLocalStorage context.
