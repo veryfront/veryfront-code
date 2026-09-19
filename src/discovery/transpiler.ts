@@ -642,19 +642,35 @@ function describeBundleFailure(failure: unknown): string {
  * @internal Exported for testing only.
  */
 export function discoveryPathForDisplay(filePath: string, baseDir?: string): string {
-  const root = withoutTrailingSlashes(baseDir ?? "");
-  if (root.length > 0 && filePath.startsWith(`${root}/`)) {
-    return filePath.slice(root.length + 1);
+  const root = portableRoot(baseDir);
+  const file = toPortablePath(filePath);
+  if (root.length > 0) {
+    const prefix = `${root}/`;
+    const under = isWindowsDrivePath(root)
+      ? file.toLowerCase().startsWith(prefix.toLowerCase())
+      : file.startsWith(prefix);
+    if (under) return file.slice(prefix.length);
   }
   // A relative path is already free of machine layout; leave it as written.
   if (!isAbsoluteMachinePath(filePath)) return filePath;
-  return pathHelper.basename(filePath);
+  return pathHelper.basename(file);
 }
 
-function withoutTrailingSlashes(path: string): string {
-  let trimmed = path;
+/** `path` with `/` separators: the form the path helpers hand the bundler. */
+function toPortablePath(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+/** A project root in portable form, without trailing separators. */
+function portableRoot(baseDir: string | undefined): string {
+  let trimmed = toPortablePath(baseDir ?? "");
   while (trimmed.endsWith("/")) trimmed = trimmed.slice(0, -1);
   return trimmed;
+}
+
+/** `C:/...`: compared case-insensitively, as Windows compares paths. */
+function isWindowsDrivePath(path: string): boolean {
+  return /^[A-Za-z]:\//.test(path);
 }
 
 function isAbsoluteMachinePath(path: string): boolean {
@@ -674,7 +690,7 @@ interface DiscoveryPathNames {
 
 /** @internal Exported for testing only. */
 export function discoveryPathNames(filePath: string, baseDir?: string): DiscoveryPathNames {
-  const root = withoutTrailingSlashes(baseDir ?? "");
+  const root = portableRoot(baseDir);
   return {
     raw: filePath,
     display: discoveryPathForDisplay(filePath, baseDir),
@@ -711,12 +727,16 @@ export function withDisplayPath(text: string, paths: DiscoveryPathNames): string
  * the CDN from the dependency classification.
  */
 function projectRootMention(root: string): RegExp {
-  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  // `root` is portable; a message may quote it with either separator.
+  const escaped = root.split("/")
+    .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`))
+    .join(String.raw`[/\\]`);
   return new RegExp(
     // A `file://` prefix is consumed with the root: Deno quotes module paths as
-    // file URLs, and the `/` it ends with would otherwise fail the boundary.
-    String.raw`(?:file://|(?<![A-Za-z0-9._~%@:/\\-]))${escaped}(?:([/\\])|(?![A-Za-z0-9._~%-]))`,
-    "g",
+    // file URLs (`file:///C:/...` on Windows), and the `/` it ends with would
+    // otherwise fail the boundary.
+    String.raw`(?:file:///?|(?<![A-Za-z0-9._~%@:/\\-]))${escaped}(?:([/\\])|(?![A-Za-z0-9._~%-]))`,
+    isWindowsDrivePath(root) ? "gi" : "g",
   );
 }
 

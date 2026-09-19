@@ -680,6 +680,28 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("redacts a Windows project root in either separator style and any drive case", () => {
+      const windows = discoveryPathNames("C:/Users/me/proj/tools/a.ts", "C:\\Users\\me\\proj\\");
+      assertEquals(windows.display, "tools/a.ts");
+      assertEquals(
+        withDisplayPath('Could not resolve "C:/Users/me/proj/lib/x.ts"', windows),
+        'Could not resolve "lib/x.ts"',
+      );
+      assertEquals(
+        withDisplayPath("readTextFile 'C:\\Users\\me\\proj\\lib\\x.ts'", windows),
+        "readTextFile 'lib\\x.ts'",
+      );
+      assertEquals(
+        withDisplayPath('Module not found "file:///C:/Users/me/proj/lib/x.ts"', windows),
+        'Module not found "lib/x.ts"',
+      );
+      assertEquals(withDisplayPath("at c:/users/me/proj/lib/x.ts", windows), "at lib/x.ts");
+      assertEquals(
+        withDisplayPath("see C:/Users/me/project/x.ts", windows),
+        "see C:/Users/me/project/x.ts",
+      );
+    });
+
     it("leaves a host, URL or longer path that merely contains the root", () => {
       for (
         const text of [
