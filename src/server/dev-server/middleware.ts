@@ -10,7 +10,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { BundlerPlugin } from "veryfront/extensions/bundler";
 import { cors } from "#veryfront/security";
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
-import { getEsbuildLoader, isWithinDirectory } from "#veryfront/utils/path-utils.ts";
+import { getEsbuildLoader, getExtension, isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
@@ -168,7 +168,23 @@ export async function loadMiddlewareFile(
  * middleware is always transpiled to JS before it is imported.
  */
 const VIRTUAL_PROJECT_NAMESPACE = "veryfront-project-middleware";
-const VIRTUAL_MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
+const VIRTUAL_MODULE_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".json",
+];
+/** Loaders for extensions the shared `getEsbuildLoader` does not cover. */
+const VIRTUAL_MODULE_LOADERS: Record<string, "ts" | "json"> = {
+  ".mts": "ts",
+  ".cts": "ts",
+  ".json": "json",
+};
 
 async function isVirtualFile(path: string, adapter: RuntimeAdapter): Promise<boolean> {
   if (!(await adapter.fs.exists(path))) return false;
@@ -209,7 +225,7 @@ function toProjectModulePath(
 }
 
 function getVirtualModuleLoader(path: string): "tsx" | "jsx" | "ts" | "js" | "json" {
-  return path.toLowerCase().endsWith(".json") ? "json" : getEsbuildLoader(path);
+  return VIRTUAL_MODULE_LOADERS[getExtension(path).toLowerCase()] ?? getEsbuildLoader(path);
 }
 
 /**

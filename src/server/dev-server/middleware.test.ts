@@ -341,6 +341,18 @@ describe("dev-server/middleware: actionable rejection", () => {
       assertEquals((await load(adapter)).length, 1);
     });
 
+    it("loads .mts and .cts modules as TypeScript", async () => {
+      const typed =
+        "export default async (c: unknown, next: () => Promise<Response>) => await next();";
+      const adapter = createVirtualAdapter(
+        'import first from "./lib/first"; import second from "./lib/second.cts"; ' +
+          "export default [first, second];",
+        { "/app/lib/first.mts": typed, "/app/lib/second.cts": typed },
+      );
+
+      assertEquals((await load(adapter)).length, 2);
+    });
+
     it("keeps bare specifiers external even when a same-named project file exists", async () => {
       const adapter = createVirtualAdapter(
         'import { sep } from "node:path"; ' +
