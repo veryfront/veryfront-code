@@ -519,14 +519,14 @@ function compatibleEmbeddedConstraint(
   if (written != null) return written;
   const exact = candidates.filter((constraint) => EXACT_VERSION.test(constraint));
   if (exact.length === 0) return candidates.includes("*") ? "*" : candidates[0]!;
-  return exact.reduce((best, candidate) =>
+  const [first, ...rest] = exact;
+  return rest.reduce((best, candidate) =>
     compareVersions(
         { core: coreOf(candidate), pre: prereleaseOf(candidate) },
         { core: coreOf(best), pre: prereleaseOf(best) },
       ) > 0
       ? candidate
-      : best
-  );
+      : best, first!);
 }
 
 /**

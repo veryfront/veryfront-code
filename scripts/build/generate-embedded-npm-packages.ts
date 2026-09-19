@@ -83,7 +83,7 @@ function groupByName(keys: readonly string[]): Record<string, string[]> {
   for (const [name, versions] of byName) {
     // Sorted only so an unrelated lock reshuffle cannot churn the diff.
     Object.defineProperty(grouped, name, {
-      value: versions.sort(compareStrings),
+      value: versions.toSorted(compareStrings),
       enumerable: true,
       writable: true,
       configurable: true,

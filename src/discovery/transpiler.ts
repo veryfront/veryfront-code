@@ -484,7 +484,9 @@ export function createProjectDependencyCdnPlugin(
       // A deferred import nothing may serve is bundled as a module that throws
       // when the import is reached, carrying the classified reason.
       build.onLoad({ filter: /.*/, namespace: MISSING_DEPENDENCY_NAMESPACE }, (args) => ({
-        contents: `throw new Error(${JSON.stringify(String(args.pluginData ?? ""))});`,
+        contents: `throw new Error(${
+          JSON.stringify(typeof args.pluginData === "string" ? args.pluginData : "")
+        });`,
         loader: "js",
       }));
 
@@ -686,9 +688,9 @@ export function withDisplayPath(text: string, paths: DiscoveryPathNames): string
  * the CDN from the dependency classification.
  */
 function projectRootMention(root: string): RegExp {
-  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   return new RegExp(
-    `(?<![A-Za-z0-9._~%@:/\\\\-])${escaped}(?:([/\\\\])|(?![A-Za-z0-9._~%-]))`,
+    String.raw`(?<![A-Za-z0-9._~%@:/\\-])${escaped}(?:([/\\])|(?![A-Za-z0-9._~%-]))`,
     "g",
   );
 }
