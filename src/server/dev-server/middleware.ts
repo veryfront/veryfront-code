@@ -12,6 +12,7 @@ import { cors } from "#veryfront/security";
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import { getEsbuildLoader, getExtension, isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 export type MiddlewareFunction = MiddlewareHandler;
@@ -179,12 +180,17 @@ const VIRTUAL_MODULE_EXTENSIONS = [
   ".cjs",
   ".json",
 ];
+const SOURCE_MODULE_EXTENSIONS = VIRTUAL_MODULE_EXTENSIONS.filter((extension) =>
+  extension !== ".json"
+);
 /** Loaders for extensions the shared `getEsbuildLoader` does not cover. */
 const VIRTUAL_MODULE_LOADERS: Record<string, "ts" | "json"> = {
   ".mts": "ts",
   ".cts": "ts",
   ".json": "json",
 };
+/** Authored JavaScript extensions that may name a TypeScript source (`./auth.js` -> `auth.ts`). */
+const JAVASCRIPT_SPECIFIER_EXTENSION_RE = /\.(?:m?js|jsx)$/;
 
 async function isVirtualFile(path: string, adapter: RuntimeAdapter): Promise<boolean> {
   if (!(await adapter.fs.exists(path))) return false;
@@ -195,8 +201,14 @@ async function resolveVirtualModulePath(
   path: string,
   adapter: RuntimeAdapter,
 ): Promise<string | undefined> {
+  const sourceBase = JAVASCRIPT_SPECIFIER_EXTENSION_RE.test(path)
+    ? path.replace(JAVASCRIPT_SPECIFIER_EXTENSION_RE, "")
+    : undefined;
   const candidates = [
     path,
+    ...(sourceBase === undefined
+      ? []
+      : SOURCE_MODULE_EXTENSIONS.map((extension) => `${sourceBase}${extension}`)),
     ...VIRTUAL_MODULE_EXTENSIONS.map((extension) => `${path}${extension}`),
     ...VIRTUAL_MODULE_EXTENSIONS.map((extension) => join(path, `index${extension}`)),
   ];
@@ -250,7 +262,9 @@ function createVirtualProjectMiddlewarePlugin(
         { filter: /.*/ },
         wrapWithCurrentContext(async (args) => {
           const importer = args.importer || join(projectDir, "middleware.ts");
-          const candidate = toProjectModulePath(args.path, importer, projectDir);
+          // A query or fragment is not part of the file path; keep it separate.
+          const { path: specifierPath, suffix } = splitSpecifierSuffix(args.path);
+          const candidate = toProjectModulePath(specifierPath, importer, projectDir);
 
           // Keep the existing runtime resolution contract for package and
           // framework imports. The host can resolve these after bundling.
@@ -263,7 +277,13 @@ function createVirtualProjectMiddlewarePlugin(
           }
 
           const resolved = await resolveVirtualModulePath(candidate, adapter);
-          if (resolved) return { path: resolved, namespace: VIRTUAL_PROJECT_NAMESPACE };
+          if (resolved) {
+            return {
+              path: resolved,
+              namespace: VIRTUAL_PROJECT_NAMESPACE,
+              ...(suffix ? { suffix } : {}),
+            };
+          }
 
           return {
             errors: [{ text: `Could not resolve middleware import "${args.path}"` }],

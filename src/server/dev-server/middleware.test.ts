@@ -353,6 +353,37 @@ describe("dev-server/middleware: actionable rejection", () => {
       assertEquals((await load(adapter)).length, 2);
     });
 
+    it("resolves JavaScript specifiers to TypeScript sources", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "./lib/auth.js"; export default middleware;',
+        { "/app/lib/auth.ts": passThrough },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("prefers an existing JavaScript file over its TypeScript alternative", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "./lib/auth.js"; export default middleware;',
+        {
+          "/app/lib/auth.js": passThrough,
+          "/app/lib/auth.ts": "export default [];",
+        },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("separates query and fragment suffixes before probing project files", async () => {
+      const adapter = createVirtualAdapter(
+        'import first from "./lib/auth.ts?v=1"; import second from "./lib/auth#named"; ' +
+          "export default [first, second];",
+        { "/app/lib/auth.ts": passThrough },
+      );
+
+      assertEquals((await load(adapter)).length, 2);
+    });
+
     it("keeps bare specifiers external even when a same-named project file exists", async () => {
       const adapter = createVirtualAdapter(
         'import { sep } from "node:path"; ' +
