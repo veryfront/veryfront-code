@@ -422,6 +422,48 @@ describe(
       assertEquals((error as { slug?: string }).slug, "dependency-missing");
     });
 
+    it("keeps semver identifiers out of an unreachable CDN URL", async () => {
+      // A pre-release part is free-form text, so the URL of a failed fetch
+      // must not carry it into the classified detail or the logs.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({
+            dependencies: { "@veryfront-fixture/absent": "9.9.9-AKIAIOSFODNN7EXAMPLE" },
+          }),
+          [toolPath]: [
+            `import { extractText } from "@veryfront-fixture/absent";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const error = await assertRejects(
+        () =>
+          withMockFetch(
+            (input) => {
+              requested.push(String(input));
+              return Promise.resolve(new Response("Not Found", { status: 404 }));
+            },
+            () => importModule(`file://${projectDir}/${toolPath}`, context),
+          ),
+        Error,
+      );
+      // The request itself still uses the declared version.
+      assertEquals(
+        requested.some((url) => url.includes("9.9.9-AKIAIOSFODNN7EXAMPLE")),
+        true,
+        requested.join(", "),
+      );
+      const detail = String((error as { detail?: string }).detail ?? error.message);
+      assertEquals(detail.includes("AKIAIOSFODNN7EXAMPLE"), false, detail);
+      assertEquals(detail.includes("@veryfront-fixture/absent@9.9.9"), true, detail);
+      assertEquals((error as { slug?: string }).slug, "dependency-missing");
+    });
+
     it("refuses an import whose version contradicts the declared pin", async () => {
       // Inlining the pin here would silently run 1.8.1 for an import that
       // asked for 2.0.0, which is the failure this whole path exists to stop.

@@ -766,6 +766,24 @@ function projectRootMention(root: string): RegExp {
 }
 
 /**
+ * A CDN URL in bundler text, with the pre-release and build parts of its
+ * version replaced. The request uses the declared version verbatim, but both
+ * parts are free-form under semver, so a token written into a declaration
+ * would otherwise reach the classified detail through the failing URL.
+ */
+function withoutCdnVersionIdentifiers(text: string): string {
+  const cdn = ESM_CDN_BASE.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  return text.replace(
+    new RegExp(
+      String.raw`(${cdn}/\S*?@\d+(?:\.\d+){0,2})(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?`,
+      "g",
+    ),
+    (_match, pinned: string, pre?: string, build?: string) =>
+      `${pinned}${pre ? "-<redacted>" : ""}${build ? "+<redacted>" : ""}`,
+  );
+}
+
+/**
  * Classify a bundle failure. Every failure leaves here classified: an
  * unclassified esbuild rejection reaching the user as raw
  * `Build failed with 1 error` text, with no slug and no file path, is the
@@ -796,7 +814,7 @@ function classifyBundleFailure(
     });
   }
 
-  const text = withDisplayPath(describeBundleFailure(failure), paths);
+  const text = withoutCdnVersionIdentifiers(withDisplayPath(describeBundleFailure(failure), paths));
   const detail = `Failed to transpile ${paths.display}: ${text}`;
   // A CDN failure names an unreachable project dependency, not broken source.
   if (text.includes(ESM_CDN_BASE)) {
