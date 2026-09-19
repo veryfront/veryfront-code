@@ -498,4 +498,30 @@ describe("classifyProjectNpmImport", () => {
         "declared unpdf@1.8.1 -- import the declared version instead",
     });
   });
+
+  it("reads an explicit npm: coordinate as the npm package, not the Node builtin", () => {
+    assertEquals(classify("npm:buffer@6.0.3", { buffer: "6.0.3" }), {
+      kind: "cdn",
+      name: "buffer",
+      version: "6.0.3",
+      subpath: ".",
+    });
+    assertEquals(classify("buffer", { buffer: "6.0.3" }), { kind: "runtime" });
+    assertEquals(classify("npm:zod@3.25.76", { zod: "3.25.76" }), { kind: "runtime" });
+  });
+
+  it("treats a package named after an Object.prototype key as any other", () => {
+    assertEquals(classify("constructor", { constructor: "1.0.0" }), {
+      kind: "cdn",
+      name: "constructor",
+      version: "1.0.0",
+      subpath: ".",
+    });
+    assertEquals(classify("npm:constructor@1.0.0"), {
+      kind: "missing",
+      name: "constructor",
+      reason: "this runtime does not carry constructor@1.0.0 and the project declares no " +
+        "dependency on constructor",
+    });
+  });
 });

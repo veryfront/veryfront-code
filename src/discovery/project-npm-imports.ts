@@ -420,7 +420,8 @@ function isEmbedded(
   name: string,
   version?: string,
 ): boolean {
-  const versions = embedded[name];
+  // The tables are plain objects: `constructor` must not read Object.prototype.
+  const versions = Object.hasOwn(embedded, name) ? embedded[name] : undefined;
   if (versions === undefined) return false;
   return version === undefined ? true : versions.includes(version);
 }
@@ -455,14 +456,25 @@ export function classifyProjectNpmImport(
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
-  if (isFrameworkProvidedPackage(parsed.name)) return { kind: "runtime" };
+  if (isRuntimeProvidedImport(specifier, parsed.name)) return { kind: "runtime" };
 
-  const declared = pins[parsed.name];
+  const declared = Object.hasOwn(pins, parsed.name) ? pins[parsed.name] : undefined;
   const pin = declared === undefined ? null : exactVersionNamedByRange(declared);
   const request = { ...parsed, declared, pin, embedded };
   return parsed.version !== null && EXACT_VERSION.test(parsed.version)
     ? classifyExactImport(request, parsed.version)
     : classifyUnversionedImport(request);
+}
+
+/**
+ * Is this import one only the runtime may answer? An explicit `npm:` coordinate
+ * names the npm package even when it shares a Node builtin's name --
+ * `npm:buffer@6.0.3` is the npm `buffer` package, not `node:buffer` -- so only
+ * the framework's own packages keep that form on the runtime.
+ */
+function isRuntimeProvidedImport(specifier: string, name: string): boolean {
+  if (!isFrameworkProvidedPackage(name)) return false;
+  return !specifier.startsWith("npm:") || nodeBuiltinSpecifier(name) === null;
 }
 
 /** One import to classify, with what the project declared for its package. */

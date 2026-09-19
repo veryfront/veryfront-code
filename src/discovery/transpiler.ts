@@ -215,6 +215,9 @@ export function readDependencyPins(packageJsonText: string): Record<string, stri
   for (const group of [pkg?.dependencies, pkg?.devDependencies, pkg?.optionalDependencies]) {
     if (!group || typeof group !== "object") continue;
     for (const [name, range] of Object.entries(group as Record<string, unknown>)) {
+      // `__proto__` is no npm package name, and assigning it would replace the
+      // prototype of the pin table instead of adding an entry.
+      if (name === "__proto__") continue;
       if (typeof range === "string" && range.trim().length > 0) pins[name] = range.trim();
     }
   }

@@ -463,6 +463,12 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("never lets a declaration replace the pin table's prototype", () => {
+      const pins = readDependencyPins('{"dependencies":{"__proto__":"1.0.0","unpdf":"1.8.1"}}');
+      assertEquals(pins, { unpdf: "1.8.1" });
+      assertEquals(Object.getPrototypeOf(pins), Object.prototype);
+    });
+
     it("returns no pins for malformed package.json", () => {
       assertEquals(readDependencyPins("{ not json"), {});
     });
