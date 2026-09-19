@@ -426,7 +426,9 @@ exit 0
 
     try {
       const version = "1.2.3-rc.45";
-      const registryUrl = "https://registry.example.test/npm/";
+      // Only the public registry may be named verbatim; a private host is
+      // redacted (see the private-registry test below).
+      const registryUrl = "https://registry.npmjs.org/";
       const output = await new Deno.Command(Deno.execPath(), {
         args: ["run", "-A", installSmokePath],
         env: {
@@ -490,6 +492,7 @@ exit 0
       await Deno.remove(tempDir, { recursive: true });
     }
   });
+
   it("redacts credentials and absolute paths from npm output on registry install failure", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-registry-install-scrub-" });
     const binDir = `${tempDir}/bin`;
@@ -541,4 +544,94 @@ exit 0
       await Deno.remove(tempDir, { recursive: true });
     }
   });
+
+  it("redacts a private registry host from the context line and npm output", async () => {
+    const privateHost = "npm.private-mirror-must-not-appear.example.test";
+    const stderr = await registryInstallFailureStderr(
+      `https://${privateHost}:8443/npm/`,
+      [
+        "npm error code E404",
+        `npm error 404 Not Found - GET https://${privateHost}:8443/npm/veryfront - private-registry-marker`,
+        `npm error need auth //${privateHost.toUpperCase()}/npm/:_authToken=private-token-must-not-appear`,
+      ],
+    );
+
+    assertEquals(stderr.includes("private-mirror-must-not-appear"), false);
+    assertEquals(stderr.includes("PRIVATE-MIRROR-MUST-NOT-APPEAR"), false);
+    assertEquals(stderr.includes("private-token-must-not-appear"), false);
+    assertStringIncludes(stderr, "registry=<private-registry>");
+    assertStringIncludes(stderr, "specs=1");
+    // The diagnosis itself must survive the host redaction.
+    assertStringIncludes(stderr, "npm error code E404");
+    assertStringIncludes(
+      stderr,
+      "404 Not Found - GET https://<private-registry>/npm/veryfront - private-registry-marker",
+    );
+  });
+
+  it("redacts token-only and repeated URL userinfo from npm output", async () => {
+    const stderr = await registryInstallFailureStderr(
+      "https://registry.npmjs.org/",
+      [
+        "npm error fetch https://tokenonly-must-not-appear@registry.npmjs.org/veryfront and https://user:pair-must-not-appear@registry.npmjs.org/jose failed",
+        "npm error see https://registry.npmjs.org/veryfront?rev=a@b#frag-marker",
+      ],
+    );
+
+    assertEquals(stderr.includes("tokenonly-must-not-appear"), false);
+    assertEquals(stderr.includes("pair-must-not-appear"), false);
+    assertStringIncludes(
+      stderr,
+      "https://<redacted>@registry.npmjs.org/veryfront and https://<redacted>@registry.npmjs.org/jose",
+    );
+    // An @ after the path, query or fragment is not userinfo and stays intact.
+    assertStringIncludes(
+      stderr,
+      "https://registry.npmjs.org/veryfront?rev=a@b#frag-marker",
+    );
+  });
 });
+
+/** Run the registry install path against an npm stub that fails with `lines`. */
+async function registryInstallFailureStderr(
+  registryUrl: string,
+  lines: string[],
+): Promise<string> {
+  const tempDir = await makeTempDir({ prefix: "vf-registry-install-host-" });
+  const binDir = `${tempDir}/bin`;
+  await Deno.mkdir(binDir);
+  await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+  const say = lines.map((line) => `    vf_say_error '${line}'`).join("\n");
+  await writeExecutable(
+    `${binDir}/npm`,
+    `#!/usr/bin/env bash
+${NPM_STUB_LOGLEVEL_PREAMBLE}
+case "\${1:-}" in
+  init | pkg) exit 0 ;;
+  install)
+${say}
+    exit 1
+    ;;
+esac
+exit 0
+`,
+  );
+
+  try {
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", installSmokePath],
+      env: {
+        PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+        VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
+        VF_NPM_REGISTRY_URL: registryUrl,
+        VF_NPM_REGISTRY_VERSION: "1.2.3-rc.45",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(output.code, 20);
+    return decoder.decode(output.stderr);
+  } finally {
+    await Deno.remove(tempDir, { recursive: true });
+  }
+}

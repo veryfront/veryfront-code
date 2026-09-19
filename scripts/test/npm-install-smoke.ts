@@ -74,12 +74,51 @@ function fail(message: string, devLog?: string): never {
   throw new SmokeFailure(message, smokeFailureStatus, devLog);
 }
 
+const PUBLIC_NPM_REGISTRY_HOST = "registry.npmjs.org";
+const PRIVATE_REGISTRY_PLACEHOLDER = "<private-registry>";
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Name the registry in failure output only when it is the public npm registry.
+ * A private registry's host is internal infrastructure (AGENTS.md, "Secret and
+ * internal-detail safety"), so it is replaced both in the context line and
+ * wherever npm echoes it, while the rest of npm's report (error code, status,
+ * package path) is kept because that is the diagnosis.
+ */
+function redactPrivateRegistry(
+  combined: string,
+  registryUrl: string,
+): { registry: string; output: string } {
+  let host: string;
+  let hostname: string;
+  try {
+    ({ host, hostname } = new URL(registryUrl));
+  } catch {
+    return { registry: PRIVATE_REGISTRY_PLACEHOLDER, output: combined };
+  }
+  if (host.toLowerCase() === PUBLIC_NPM_REGISTRY_HOST) {
+    return { registry: registryUrl, output: combined };
+  }
+  let output = combined;
+  for (const name of new Set([host, hostname])) {
+    output = output.replace(
+      new RegExp(escapeRegExp(name), "gi"),
+      PRIVATE_REGISTRY_PLACEHOLDER,
+    );
+  }
+  return { registry: PRIVATE_REGISTRY_PLACEHOLDER, output };
+}
+
 function failRegistryInstall(
   combined: string,
   registryUrl: string,
   specCount: number,
 ): never {
-  const devLog = `[registry=${registryUrl} specs=${specCount}]\n${combined}`;
+  const { registry, output } = redactPrivateRegistry(combined, registryUrl);
+  const devLog = `[registry=${registry} specs=${specCount}]\n${output}`;
   throw new SmokeFailure("exact-version registry install failed", 20, devLog);
 }
 
@@ -171,9 +210,9 @@ function redactAbsolutePaths(text: string): string {
  *
  * The credential passes mirror sanitize_npm_lookup_output in
  * scripts/ci/publish-npm-packages.sh, which is the repository's existing
- * contract for forwarding arbitrary npm output to CI. Registry hostnames are
- * deliberately preserved, exactly as that helper preserves them: which
- * registry answered is the diagnosis this failure path exists to deliver.
+ * contract for forwarding arbitrary npm output to CI. A private registry host
+ * is redacted earlier, by redactPrivateRegistry in failRegistryInstall, where
+ * the configured registry is known.
  */
 function sanitizeDiagnostics(text: string): string {
   let sanitized = text;
@@ -185,9 +224,11 @@ function sanitizeDiagnostics(text: string): string {
       sanitized = sanitized.replaceAll(value, `<${name}>`);
     }
   }
-  // Scrub URL userinfo (user:pass@host) that npm may echo from .npmrc or lockfiles.
+  // Scrub URL userinfo that npm may echo from .npmrc or lockfiles, including
+  // token-only forms (https://token@host). The userinfo cannot contain / ? #,
+  // so an @ later in a path, query or fragment is left alone.
   sanitized = sanitized.replace(
-    /(\bhttps?:\/\/)[^:@/\s]+:[^@/\s]+@/gi,
+    /(\bhttps?:\/\/)[^@/?#\s]+@/gi,
     "$1<redacted>@",
   );
   // Scrub bearer credentials npm echoes back from an authorization header.
