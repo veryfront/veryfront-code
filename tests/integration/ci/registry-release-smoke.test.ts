@@ -367,4 +367,89 @@ exit 0
     assertStringIncludes(stderr, "REGISTRY RELEASE FAIL [configuration]");
     assertEquals(stderr.includes("must-not-appear"), false);
   });
+
+  it("includes npm output and registry context in stderr when registry install fails", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-registry-install-diag-" });
+    const binDir = `${tempDir}/bin`;
+    await Deno.mkdir(binDir);
+    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+    await writeExecutable(
+      `${binDir}/npm`,
+      `#!/usr/bin/env bash
+case "\${1:-}" in
+  init | pkg) exit 0 ;;
+  install)
+    printf 'npm ERR! 404 Not Found - registry-install-diagnostic-marker\\n' >&2
+    exit 1
+    ;;
+esac
+exit 0
+`,
+    );
+
+    try {
+      const version = "1.2.3-rc.45";
+      const registryUrl = "https://registry.example.test/npm/";
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
+        env: {
+          PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+          VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
+          VF_NPM_REGISTRY_URL: registryUrl,
+          VF_NPM_REGISTRY_VERSION: version,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      const stderr = decoder.decode(output.stderr);
+      assertEquals(output.code, 20);
+      assertStringIncludes(stderr, "registry-install-diagnostic-marker");
+      assertStringIncludes(stderr, `registry=${registryUrl}`);
+      assertStringIncludes(stderr, "specs=1");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("redacts _authToken values from npm output on registry install failure", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-registry-install-redact-" });
+    const binDir = `${tempDir}/bin`;
+    await Deno.mkdir(binDir);
+    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+    await writeExecutable(
+      `${binDir}/npm`,
+      `#!/usr/bin/env bash
+case "\${1:-}" in
+  init | pkg) exit 0 ;;
+  install)
+    printf '//registry.example.test/npm/:_authToken=supersecret123\\n' >&2
+    exit 1
+    ;;
+esac
+exit 0
+`,
+    );
+
+    try {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
+        env: {
+          PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+          VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
+          VF_NPM_REGISTRY_URL: "https://registry.example.test/npm/",
+          VF_NPM_REGISTRY_VERSION: "1.2.3-rc.45",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      const stderr = decoder.decode(output.stderr);
+      assertEquals(output.code, 20);
+      assertEquals(stderr.includes("supersecret123"), false);
+      assertStringIncludes(stderr, "_authToken=<redacted>");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
 });

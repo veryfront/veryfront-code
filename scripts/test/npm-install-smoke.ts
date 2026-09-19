@@ -74,8 +74,13 @@ function fail(message: string, devLog?: string): never {
   throw new SmokeFailure(message, smokeFailureStatus, devLog);
 }
 
-function failRegistryInstall(): never {
-  throw new SmokeFailure("exact-version registry install failed", 20);
+function failRegistryInstall(
+  combined: string,
+  registryUrl: string,
+  specCount: number,
+): never {
+  const devLog = `[registry=${registryUrl} specs=${specCount}]\n${combined}`;
+  throw new SmokeFailure("exact-version registry install failed", 20, devLog);
 }
 
 interface RunResult {
@@ -154,6 +159,13 @@ function sanitizeDiagnostics(text: string): string {
       sanitized = sanitized.replaceAll(value, `<${name}>`);
     }
   }
+  // Scrub URL userinfo (user:pass@host) that npm may echo from .npmrc or lockfiles.
+  sanitized = sanitized.replace(
+    /(\bhttps?:\/\/)[^:@/\s]+:[^@/\s]+@/gi,
+    "$1<redacted>@",
+  );
+  // Scrub _authToken values emitted by npm when registry config is echoed.
+  sanitized = sanitized.replace(/(_authToken\s*=\s*)\S+/gi, "$1<redacted>");
   return sanitized;
 }
 
@@ -326,7 +338,13 @@ async function npmInstall(
     ...specs,
   ], { cwd: workDir, env: plan.npmEnv, timeoutMs: 600_000 });
   if (result.code !== 0) {
-    if (plan.registryMode) failRegistryInstall();
+    if (plan.registryMode) {
+      failRegistryInstall(
+        result.combined,
+        plan.npmEnv?.NPM_CONFIG_REGISTRY ?? "https://registry.npmjs.org",
+        specs.length,
+      );
+    }
     fail(`npm install failed\n${result.combined}`);
   }
 }
