@@ -104,7 +104,7 @@ interface CountingAdapter {
  */
 function createProjectAdapter(
   marker: string,
-  options: { failFirstReadOf?: string } = {},
+  options: { failFirstReadOf?: string; missingPaths?: readonly string[] } = {},
 ): CountingAdapter {
   const sourceByPath = new Map<string, string>([
     [
@@ -123,7 +123,9 @@ function createProjectAdapter(
     fs: {
       resolveFile: (path: string) => {
         const candidate = `/virtual/${path}.ts`;
-        return Promise.resolve(sourceByPath.has(candidate) ? candidate : null);
+        const resolvable = sourceByPath.has(candidate) &&
+          !(options.missingPaths ?? []).includes(candidate);
+        return Promise.resolve(resolvable ? candidate : null);
       },
       readFile: async (path: string) => {
         // Only project module sources count; config lookups also use this adapter.
@@ -1105,6 +1107,54 @@ describe("module-fetcher", () => {
           followerResult.reason instanceof ModuleGraphLimitError,
       );
       assertEquals(project.reads.length, 4);
+    });
+
+    it("retries alone when the leading render has no room in its graph", async () => {
+      const project = createProjectAdapter("leader-full");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-leaderfull-cache-"),
+        projectDir: await tempDir("vf-shared-leaderfull-proj-"),
+      };
+      const leader = await newRender(project.adapter, "p-leader-full", dirs);
+      for (let index = 0; index < MAX_MDX_MODULE_GRAPH_ENTRIES - 1; index++) {
+        leader.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
+      }
+      const follower = await newRender(project.adapter, "p-leader-full", dirs);
+
+      const [leaderResult, followerResult] = await Promise.allSettled([
+        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        fetchAndCacheModule("/_vf_modules/page.js", follower),
+      ]);
+
+      assert(
+        leaderResult.status === "rejected" && leaderResult.reason instanceof ModuleGraphLimitError,
+      );
+      assertEquals(followerResult.status, "fulfilled");
+    });
+
+    it("admits modules a shared resolution could not resolve into joined graphs", async () => {
+      const project = createProjectAdapter("stubbed", { missingPaths: ["/virtual/c.ts"] });
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-stub-cache-"),
+        projectDir: await tempDir("vf-shared-stub-proj-"),
+      };
+      const renders = await Promise.all(
+        Array.from({ length: 2 }, async () => {
+          const render = await newRender(project.adapter, "p-stubbed", dirs);
+          render.strictMissingModules = false;
+          return render;
+        }),
+      );
+
+      await Promise.all(
+        renders.map((render) => fetchAndCacheModule("/_vf_modules/page.js", render)),
+      );
+
+      for (const render of renders) {
+        // The dependency was attempted and stubbed, so it still occupies a
+        // slot in every render's graph.
+        assertEquals(render.moduleGraph!.has("_vf_modules/c.js"), true);
+      }
     });
 
     it("keeps concurrent resolutions of the same path separate across projects", async () => {

@@ -37,7 +37,11 @@ import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
 import { captureResolvedModule } from "./captured-module.ts";
-import { getSharedModuleFetchKey, runSharedModuleFetch } from "./shared-module-fetches.ts";
+import {
+  getSharedModuleFetchKey,
+  recordSharedModuleAdmission,
+  runSharedModuleFetch,
+} from "./shared-module-fetches.ts";
 import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { extractDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import {
@@ -241,6 +245,7 @@ export async function fetchAndCacheModule(
     }
     moduleGraph.add(normalizedPath);
   }
+  recordSharedModuleAdmission(normalizedPath);
 
   const now = Date.now();
   context.transformDeadline ??= now + TRANSFORM_TREE_TIMEOUT_MS;
@@ -332,7 +337,10 @@ export async function fetchAndCacheModule(
         // graph limit.
         onResolved: (recordedModules) => admitSharedModules(moduleGraph, recordedModules),
         // The leading request's deadline is not this request's deadline.
-        retryAloneOn: (error) => error instanceof TransformTreeTimeoutError,
+        // A deadline or graph limit belongs to the leading request, not to this
+        // one, which resolves within its own budget instead.
+        retryAloneOn: (error) =>
+          error instanceof TransformTreeTimeoutError || error instanceof ModuleGraphLimitError,
       },
     );
   } else {

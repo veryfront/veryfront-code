@@ -535,6 +535,46 @@ describe("transforms/esm/bundle-recovery", () => {
       }
     });
 
+    it("claims a retry owner when a concurrent caller leaves a bundle missing", async () => {
+      const cacheDir = await makeTempDir();
+      const hash = "903";
+      // The first batch read misses; later reads succeed.
+      const backend = createCountingBatchBackend(
+        { [`code:${hash}`]: "export const late = true;\n" },
+        {
+          latencyMs: 50,
+          hideUntilRead: new Map([[`code:${hash}`, 1]]),
+          missSingleReads: true,
+        },
+      );
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+      try {
+        const results = await Promise.all(
+          Array.from({ length: 3 }, () =>
+            ensureHttpBundlesExist(
+              [{ path: join(cacheDir, `http-${hash}.mjs`), hash }],
+              cacheDir,
+              () => Promise.resolve(null),
+            )),
+        );
+
+        assertEquals(results.map((failed) => failed.join(",")).sort(), ["", "", hash]);
+        assertEquals(
+          backend.batchReads.filter((key) => key === `code:${hash}`).length,
+          2,
+          "one waiter owns the retry while the others wait for it",
+        );
+        assertEquals(
+          await readTextFile(join(cacheDir, `http-${hash}.mjs`)),
+          "export const late = true;\n",
+        );
+        assertEquals(getBundleFetchesInFlightCount(), 0);
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
     it("returns an empty array for an empty bundle list without touching the cache", async () => {
       const failed = await ensureHttpBundlesExist(
         [],

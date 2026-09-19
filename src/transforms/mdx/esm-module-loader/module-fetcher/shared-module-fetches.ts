@@ -37,12 +37,26 @@ interface SharedModuleFetchResult {
   path: string | null;
   /** Modules the resolution recorded, replayed into each caller's render session. */
   recordedModules: ReadonlySet<string>;
+  /** Modules the resolution admitted to its module graph. */
+  admittedModules: ReadonlySet<string>;
 }
 
 let sharedModuleFetches = new Singleflight<SharedModuleFetchResult>();
 
 /** Marks async work that already runs inside a shared resolution. */
 const sharedResolutionScope = new AsyncLocalStorage<true>();
+
+/** Modules the running shared resolution admitted to its module graph. */
+const admittedModuleScope = new AsyncLocalStorage<Set<string>>();
+
+/**
+ * Record a module the running shared resolution admitted to its module graph,
+ * so every caller that joins the resolution admits it too. Outside a shared
+ * resolution this does nothing.
+ */
+export function recordSharedModuleAdmission(normalizedPath: string): void {
+  admittedModuleScope.getStore()?.add(normalizedPath);
+}
 
 /**
  * Build the identity of an entry fetch. Every input that changes the resolved
@@ -72,10 +86,10 @@ export function getSharedModuleFetchKey(
 /** Per-caller hooks for a shared entry fetch. */
 export interface SharedModuleFetchOptions {
   /**
-   * Called with every module the resolution recorded, before the caller gets
-   * the result. A throw rejects only this caller.
+   * Called with every module the resolution admitted to its module graph,
+   * before the caller gets the result. A throw rejects only this caller.
    */
-  onResolved?: (recordedModules: ReadonlySet<string>) => void;
+  onResolved?: (admittedModules: ReadonlySet<string>) => void;
   /**
    * Whether a caller that joined another caller's resolution runs `resolve`
    * itself after that resolution failed with `error`. Use it for failures that
@@ -105,13 +119,19 @@ export async function runSharedModuleFetch(
       () => {
         leading = true;
         const recordedModules = new Set<string>();
+        const admittedModules = new Set<string>();
         return sharedResolutionScope.run(
           true,
           () =>
-            runWithModuleRecorder(recordedModules, async () => ({
-              path: await resolve(),
-              recordedModules,
-            })),
+            admittedModuleScope.run(
+              admittedModules,
+              () =>
+                runWithModuleRecorder(recordedModules, async () => ({
+                  path: await resolve(),
+                  recordedModules,
+                  admittedModules,
+                })),
+            ),
         );
       },
       { staleAfterMs: SHARED_MODULE_FETCH_STALE_AFTER_MS },
@@ -121,7 +141,7 @@ export async function runSharedModuleFetch(
     return await resolve();
   }
 
-  options.onResolved?.(result.recordedModules);
+  options.onResolved?.(result.admittedModules);
   for (const modulePath of result.recordedModules) recordModuleToSession(modulePath);
   return result.path;
 }

@@ -315,6 +315,12 @@ export async function recoverHttpBundleByHash(
  */
 const bundleFetchesInFlight = new Map<string, Promise<void>>();
 
+/**
+ * How many times a caller re-claims bundles that the previous claim holder
+ * could not materialize before it fetches them without a claim.
+ */
+const MAX_BUNDLE_CLAIM_ROUNDS = 2;
+
 function bundleFetchKey(cacheDir: string, hash: string): string {
   return `${cacheDir}\n${hash}`;
 }
@@ -611,40 +617,50 @@ export async function ensureHttpBundlesExist(
       onFailed: (hash) => failed.add(hash),
     };
 
-    // Claim the missing bundles before any await so a concurrent caller that
-    // needs the same bundles waits for this fetch instead of repeating it.
-    const claims = claimBundleFetches(absoluteCacheDir, missing.map(({ hash }) => hash));
-    try {
-      await fetchMissingBundles(
-        missing.filter(({ hash }) => claims.owns(hash)),
-        fetchContext,
-        claims,
-      );
-    } finally {
-      claims.releaseAll();
+    let outstanding: MissingBundle[] = missing;
+    for (let round = 0; round < MAX_BUNDLE_CLAIM_ROUNDS && outstanding.length > 0; round++) {
+      // Claim the missing bundles before any await so a concurrent caller that
+      // needs the same bundles waits for this fetch instead of repeating it.
+      const claims = claimBundleFetches(absoluteCacheDir, outstanding.map(({ hash }) => hash));
+      const waitedFor = outstanding.filter(({ hash }) => claims.inFlight.has(hash));
+      try {
+        await fetchMissingBundles(
+          outstanding.filter(({ hash }) => claims.owns(hash)),
+          fetchContext,
+          claims,
+        );
+      } finally {
+        claims.releaseAll();
+      }
+
+      if (waitedFor.length === 0) {
+        outstanding = [];
+        break;
+      }
+
+      if (heldClaimScope.getStore()) {
+        // This caller runs under another claim; waiting here could deadlock.
+        await fetchMissingBundles(waitedFor, fetchContext);
+        outstanding = [];
+        break;
+      }
+
+      // Wait for bundles another caller was fetching only after releasing every
+      // claim, so two callers never wait on each other.
+      await Promise.all(claims.inFlight.values());
+      const leftover: MissingBundle[] = [];
+      for (const entry of waitedFor) {
+        const bundle = await readCachedHttpBundleFile(fs, entry.canonicalPath);
+        if (bundle && !isDegradedArtifact(bundle.code)) fetchContext.onMaterialized(bundle.code);
+        else leftover.push(entry);
+      }
+      // The other caller could not materialize these. Claim them in the next
+      // round so the waiters do not all retry the same fetch at once.
+      outstanding = leftover;
     }
 
-    // Wait for bundles another caller was fetching only after releasing every
-    // claim, so two callers never wait on each other.
-    if (claims.inFlight.size === 0) continue;
-    if (heldClaimScope.getStore()) {
-      // This caller runs under another claim; waiting here could deadlock.
-      await fetchMissingBundles(
-        missing.filter(({ hash }) => claims.inFlight.has(hash)),
-        fetchContext,
-      );
-      continue;
-    }
-    await Promise.all(claims.inFlight.values());
-    const leftover: MissingBundle[] = [];
-    for (const entry of missing) {
-      if (!claims.inFlight.has(entry.hash)) continue;
-      const bundle = await readCachedHttpBundleFile(fs, entry.canonicalPath);
-      if (bundle && !isDegradedArtifact(bundle.code)) fetchContext.onMaterialized(bundle.code);
-      else leftover.push(entry);
-    }
-    // The other caller could not materialize these; recover them here.
-    await fetchMissingBundles(leftover, fetchContext);
+    // Last resort after the claim rounds: fetch whatever is still missing.
+    await fetchMissingBundles(outstanding, fetchContext);
   }
 
   if (failed.size > 0) {
