@@ -74,8 +74,52 @@ function fail(message: string, devLog?: string): never {
   throw new SmokeFailure(message, smokeFailureStatus, devLog);
 }
 
-function failRegistryInstall(): never {
-  throw new SmokeFailure("exact-version registry install failed", 20);
+const PUBLIC_NPM_REGISTRY_HOST = "registry.npmjs.org";
+const PRIVATE_REGISTRY_PLACEHOLDER = "<private-registry>";
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Name the registry in failure output only when it is the public npm registry.
+ * A private registry's host is internal infrastructure (AGENTS.md, "Secret and
+ * internal-detail safety"), so it is replaced both in the context line and
+ * wherever npm echoes it, while the rest of npm's report (error code, status,
+ * package path) is kept because that is the diagnosis.
+ */
+function redactPrivateRegistry(
+  combined: string,
+  registryUrl: string,
+): { registry: string; output: string } {
+  let host: string;
+  let hostname: string;
+  try {
+    ({ host, hostname } = new URL(registryUrl));
+  } catch {
+    return { registry: PRIVATE_REGISTRY_PLACEHOLDER, output: combined };
+  }
+  if (host.toLowerCase() === PUBLIC_NPM_REGISTRY_HOST) {
+    return { registry: registryUrl, output: combined };
+  }
+  let output = combined;
+  for (const name of new Set([host, hostname])) {
+    output = output.replace(
+      new RegExp(escapeRegExp(name), "gi"),
+      PRIVATE_REGISTRY_PLACEHOLDER,
+    );
+  }
+  return { registry: PRIVATE_REGISTRY_PLACEHOLDER, output };
+}
+
+function failRegistryInstall(
+  combined: string,
+  registryUrl: string,
+  specCount: number,
+): never {
+  const { registry, output } = redactPrivateRegistry(combined, registryUrl);
+  const devLog = `[registry=${registry} specs=${specCount}]\n${output}`;
+  throw new SmokeFailure("exact-version registry install failed", 20, devLog);
 }
 
 interface RunResult {
@@ -143,7 +187,33 @@ async function runChecked(
   return result;
 }
 
-/** Redact env values with secret-shaped names before echoing diagnostics. */
+/**
+ * Redact absolute filesystem paths, matching the path passes of
+ * sanitize_npm_lookup_output in scripts/ci/publish-npm-packages.sh. npm's own
+ * failure output ends with the runner's home directory in the debug-log line,
+ * which AGENTS.md ("Secret and internal-detail safety") forbids in CI output.
+ *
+ * The leading-slash pass skips a doubled slash so that protocol-relative
+ * .npmrc registry keys (//host/path/:_authToken=...) keep their registry
+ * context instead of collapsing into a single <path>.
+ */
+function redactAbsolutePaths(text: string): string {
+  return text
+    .replace(/(file:\/\/)\/[^\s"'\]),]*/gi, "$1<path>")
+    .replace(/(^|[\s"=(\[])\/(?!\/)[^\s"'\]),]*/gm, "$1<path>")
+    .replace(/(^|[\s"=(\[])[A-Za-z]:[\\/][^\s"'\]),]*/gm, "$1<path>")
+    .replace(/(^|[\s"=(\[])\\\\[^\s"'\]),]*/gm, "$1<path>");
+}
+
+/**
+ * Redact secrets and machine-specific detail before echoing diagnostics.
+ *
+ * The credential passes mirror sanitize_npm_lookup_output in
+ * scripts/ci/publish-npm-packages.sh, which is the repository's existing
+ * contract for forwarding arbitrary npm output to CI. A private registry host
+ * is redacted earlier, by redactPrivateRegistry in failRegistryInstall, where
+ * the configured registry is known.
+ */
 function sanitizeDiagnostics(text: string): string {
   let sanitized = text;
   for (const [name, value] of Object.entries(Deno.env.toObject())) {
@@ -154,7 +224,29 @@ function sanitizeDiagnostics(text: string): string {
       sanitized = sanitized.replaceAll(value, `<${name}>`);
     }
   }
-  return sanitized;
+  // Scrub URL userinfo that npm may echo from .npmrc or lockfiles, including
+  // token-only forms (https://token@host). The userinfo cannot contain / ? #,
+  // so an @ later in a path, query or fragment is left alone.
+  sanitized = sanitized.replace(
+    /(\bhttps?:\/\/)[^@/?#\s]+@/gi,
+    "$1<redacted>@",
+  );
+  // Scrub bearer credentials npm echoes back from an authorization header.
+  sanitized = sanitized.replace(/(Bearer )[^\s"'\]),]+/g, "$1<redacted>");
+  // Scrub token-bearing query strings on registry URLs npm reports as failed.
+  sanitized = sanitized.replace(
+    /([?&]token=)[^\s"'\]),&]+/gi,
+    "$1<redacted>",
+  );
+  // Scrub _authToken values emitted by npm when registry config is echoed.
+  sanitized = sanitized.replace(/(_authToken\s*=\s*)\S+/gi, "$1<redacted>");
+  // Drop npm's debug-log pointer outright; the file is unreachable from CI logs
+  // and the line exists only to name a path on the runner.
+  sanitized = sanitized.replace(
+    /^npm (?:error|ERR!) A complete log of this run can be found in:.*(?:\n|$)/gim,
+    "",
+  );
+  return redactAbsolutePaths(sanitized);
 }
 
 /** Deterministic ordinal ordering, matching the Bash glob expansion order. */
@@ -317,16 +409,27 @@ async function npmInstall(
   plan: InstallPlan,
   specs: string[],
 ): Promise<void> {
+  // --loglevel=error, not --silent: npm documents --silent as --loglevel silent,
+  // which suppresses stdout and stderr entirely, so a failing install would hand
+  // failRegistryInstall an empty string and the release gate would again report a
+  // failure it cannot explain. At error level npm still prints its own summary
+  // line on success, which is one line of benign noise for a readable failure.
   const result = await run("npm", [
     "install",
     "--no-fund",
     "--no-audit",
-    "--silent",
+    "--loglevel=error",
     "--ignore-scripts",
     ...specs,
   ], { cwd: workDir, env: plan.npmEnv, timeoutMs: 600_000 });
   if (result.code !== 0) {
-    if (plan.registryMode) failRegistryInstall();
+    if (plan.registryMode) {
+      failRegistryInstall(
+        result.combined,
+        plan.npmEnv?.NPM_CONFIG_REGISTRY ?? "https://registry.npmjs.org",
+        specs.length,
+      );
+    }
     fail(`npm install failed\n${result.combined}`);
   }
 }

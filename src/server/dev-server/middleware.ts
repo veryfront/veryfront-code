@@ -2,14 +2,17 @@ import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts
 import type { MiddlewareHandler } from "#veryfront/middleware/core/types.ts";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { BundlerPlugin } from "veryfront/extensions/bundler";
 import { cors } from "#veryfront/security";
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
-import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import { getEsbuildLoader, getExtension, isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 export type MiddlewareFunction = MiddlewareHandler;
@@ -165,19 +168,168 @@ export async function loadMiddlewareFile(
  * A `deno compile` binary cannot transpile an external `.ts` at import time, so
  * middleware is always transpiled to JS before it is imported.
  */
+const VIRTUAL_PROJECT_NAMESPACE = "veryfront-project-middleware";
+/**
+ * Same probe order as the project import resolver (`transforms/esm/import-parser.ts`).
+ * JSON is only resolved when the specifier names the file explicitly.
+ */
+const SOURCE_MODULE_EXTENSIONS = [
+  ".tsx",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".jsx",
+  ".js",
+  ".mjs",
+  ".cjs",
+];
+/** Loaders for extensions the shared `getEsbuildLoader` does not cover. */
+const VIRTUAL_MODULE_LOADERS: Record<string, "ts" | "json"> = {
+  ".mts": "ts",
+  ".cts": "ts",
+  ".json": "json",
+};
+/** Extensions that name a file exactly; only source ones fall back to alternatives. */
+const HAS_EXTENSION_RE = /\.(?:tsx?|jsx?|mjs|cjs|mts|cts|mdx?|css|json)$/;
+/** Authored source extensions that may name another source (`./auth.js` -> `auth.ts`). */
+const SOURCE_SPECIFIER_EXTENSION_RE = /\.(?:tsx?|jsx?|mjs)$/;
+
+async function isVirtualFile(path: string, adapter: RuntimeAdapter): Promise<boolean> {
+  if (!(await adapter.fs.exists(path))) return false;
+  return (await adapter.fs.stat(path)).isFile;
+}
+
+async function resolveVirtualModulePath(
+  path: string,
+  adapter: RuntimeAdapter,
+): Promise<string | undefined> {
+  if (await isVirtualFile(path, adapter)) return path;
+
+  const sourceSpecifier = SOURCE_SPECIFIER_EXTENSION_RE.test(path);
+  if (HAS_EXTENSION_RE.test(path) && !sourceSpecifier) return undefined;
+
+  const base = sourceSpecifier ? path.replace(SOURCE_SPECIFIER_EXTENSION_RE, "") : path;
+  const candidates = [
+    ...SOURCE_MODULE_EXTENSIONS.map((extension) => `${base}${extension}`),
+    ...SOURCE_MODULE_EXTENSIONS.map((extension) => join(base, `index${extension}`)),
+  ];
+
+  for (const candidate of candidates) {
+    if (await isVirtualFile(candidate, adapter)) return candidate;
+  }
+
+  return undefined;
+}
+
+/**
+ * Map a middleware import specifier to a path inside the project, or return
+ * undefined for package and framework specifiers. Root-absolute imports and
+ * the `@/` alias are project-relative, never host paths.
+ */
+function toProjectModulePath(
+  specifier: string,
+  importer: string,
+  projectDir: string,
+): string | undefined {
+  if (specifier.startsWith(".")) return normalize(join(dirname(importer), specifier));
+  if (specifier.startsWith("@/")) return normalize(join(projectDir, specifier.slice(2)));
+  if (specifier.startsWith("/")) return normalize(join(projectDir, specifier));
+  return undefined;
+}
+
+function getVirtualModuleLoader(path: string): "tsx" | "jsx" | "ts" | "js" | "json" {
+  return VIRTUAL_MODULE_LOADERS[getExtension(path).toLowerCase()] ?? getEsbuildLoader(path);
+}
+
+/**
+ * Resolve project-local middleware imports through the runtime adapter.
+ *
+ * A virtual filesystem cannot be mounted into the host's temporary directory
+ * used for the transpiled entry module. Bundle only project-local modules from
+ * the adapter and leave framework/package imports external so they continue to
+ * resolve in the server runtime. Project-local imports never fall back to the
+ * host filesystem.
+ */
+function createVirtualProjectMiddlewarePlugin(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): BundlerPlugin {
+  return {
+    name: "veryfront-project-middleware-files",
+    setup(build) {
+      // esbuild invokes plugin callbacks outside the caller's AsyncLocalStorage
+      // context; re-enter it so MultiProjectFSAdapter can select the project.
+      build.onResolve(
+        { filter: /.*/ },
+        wrapWithCurrentContext(async (args) => {
+          const importer = args.importer || join(projectDir, "middleware.ts");
+          // A query or fragment is not part of the file path; keep it separate.
+          const { path: specifierPath, suffix } = splitSpecifierSuffix(args.path);
+          const candidate = toProjectModulePath(specifierPath, importer, projectDir);
+          // Suffixes can carry credentials; keep them out of logged diagnostics.
+          const reported = suffix === "" ? specifierPath : `${specifierPath}<redacted suffix>`;
+
+          // Keep the existing runtime resolution contract for package and
+          // framework imports. The host can resolve these after bundling.
+          if (candidate === undefined) return { path: args.path, external: true };
+
+          if (!isWithinDirectory(projectDir, candidate)) {
+            return {
+              errors: [{ text: `Middleware import "${reported}" is outside the project root` }],
+            };
+          }
+
+          const resolved = await resolveVirtualModulePath(candidate, adapter);
+          if (resolved) {
+            return {
+              path: resolved,
+              namespace: VIRTUAL_PROJECT_NAMESPACE,
+              ...(suffix ? { suffix } : {}),
+            };
+          }
+
+          return {
+            errors: [{ text: `Could not resolve middleware import "${reported}"` }],
+          };
+        }),
+      );
+
+      build.onLoad(
+        { filter: /.*/, namespace: VIRTUAL_PROJECT_NAMESPACE },
+        wrapWithCurrentContext(async (args) => {
+          const content = await adapter.fs.readFile(args.path);
+          const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+
+          return {
+            contents: source,
+            loader: getVirtualModuleLoader(args.path),
+            resolveDir: dirname(args.path),
+          };
+        }),
+      );
+    },
+  };
+}
+
 async function transpileMiddlewareSource(
   source: string,
   middlewarePath: string,
+  adapter?: RuntimeAdapter,
 ): Promise<string> {
   const loader = getEsbuildLoader(middlewarePath);
 
   const { build } = await import("veryfront/extensions/bundler");
   const result = await build({
-    bundle: false,
+    bundle: adapter !== undefined,
     write: false,
     format: "esm",
     platform: "neutral",
     target: "es2022",
+    jsx: "automatic",
+    jsxImportSource: "react",
+    ...(adapter
+      ? { plugins: [createVirtualProjectMiddlewarePlugin(dirname(middlewarePath), adapter)] }
+      : {}),
     stdin: {
       contents: source,
       loader,
@@ -204,7 +356,7 @@ async function loadMiddlewareFromVirtualFS(
 
   const content = await adapter.fs.readFile(middlewarePath);
   const source = typeof content === "string" ? content : new TextDecoder().decode(content);
-  const js = await transpileMiddlewareSource(source, middlewarePath);
+  const js = await transpileMiddlewareSource(source, middlewarePath, adapter);
 
   const tempDir = await fs.makeTempDir({ prefix: "vf-middleware-" });
   const tempFile = join(tempDir, "middleware.mjs");
