@@ -1036,6 +1036,11 @@ interface HostedConfigSourceSnapshot {
   readonly version: number;
 }
 
+function canCaptureHostedConfigSourceSnapshot(adapter: RuntimeAdapter): boolean {
+  return typeof adapter.fs.getSourceSnapshotIdentity === "function" &&
+    typeof adapter.fs.getSourceSnapshotVersion === "function";
+}
+
 /**
  * Name the retained source snapshot a preview read would observe. Adapters
  * advance `getSourceSnapshotVersion` whenever an edit, poke, or refresh
@@ -1046,10 +1051,10 @@ interface HostedConfigSourceSnapshot {
 async function captureHostedConfigSourceSnapshot(
   adapter: RuntimeAdapter,
 ): Promise<HostedConfigSourceSnapshot | undefined> {
+  if (!canCaptureHostedConfigSourceSnapshot(adapter)) return undefined;
   const fs = adapter.fs;
-  const getIdentity = fs.getSourceSnapshotIdentity;
-  const getVersion = fs.getSourceSnapshotVersion;
-  if (typeof getIdentity !== "function" || typeof getVersion !== "function") return undefined;
+  const getIdentity = fs.getSourceSnapshotIdentity!;
+  const getVersion = fs.getSourceSnapshotVersion!;
   try {
     const identity = await ReflectApply(getIdentity, fs, []);
     const version = await ReflectApply(getVersion, fs, []);
@@ -1062,6 +1067,20 @@ async function captureHostedConfigSourceSnapshot(
     // The read itself surfaces adapter failures with their normal contract.
     return undefined;
   }
+}
+
+function buildHostedConfigSourceIdentity(
+  effectiveCacheKey: string,
+  configBaseDir: string,
+  adapter: RuntimeAdapter,
+  revisionAtStart: number,
+): string {
+  const filesystemId = hostedConfigSourceReadFilesystemId(adapter);
+  return `${frameConfigIdentityString(decimalIdentityNumber(filesystemId))}${
+    frameConfigIdentityString(effectiveCacheKey)
+  }${frameConfigIdentityString(configBaseDir)}${
+    frameConfigIdentityString(decimalIdentityNumber(revisionAtStart))
+  }`;
 }
 
 function buildHostedConfigSourceReadKey(
@@ -1081,16 +1100,49 @@ function buildHostedConfigSourceReadKey(
     return freezeObject({});
   }
 
-  const filesystemId = hostedConfigSourceReadFilesystemId(adapter);
-  const identity = `${frameConfigIdentityString(decimalIdentityNumber(filesystemId))}${
-    frameConfigIdentityString(effectiveCacheKey)
-  }${frameConfigIdentityString(configBaseDir)}${
-    frameConfigIdentityString(decimalIdentityNumber(revisionAtStart))
-  }`;
+  const identity = buildHostedConfigSourceIdentity(
+    effectiveCacheKey,
+    configBaseDir,
+    adapter,
+    revisionAtStart,
+  );
   if (sourceContext.productionMode) return `hosted-config-source-read-v1:${identity}`;
   return `hosted-config-preview-source-read-v1:${identity}${
     frameConfigIdentityString(previewSnapshot!.identity)
   }${frameConfigIdentityString(decimalIdentityNumber(previewSnapshot!.version))}`;
+}
+
+/**
+ * Capture the preview source snapshot without bypassing source-read admission.
+ * The first probe can initialize a cold per-project filesystem adapter, which
+ * is the same filesystem work the admission budget bounds for reads.
+ * Concurrent requests for one project share one admitted warm-up probe. Each
+ * request then takes its own observation, because adapter selection can
+ * differ per credential.
+ */
+async function captureAdmittedHostedConfigSourceSnapshot(
+  effectiveCacheKey: string,
+  configBaseDir: string,
+  adapter: RuntimeAdapter,
+  revisionAtStart: number,
+  signal: AbortSignal | undefined,
+): Promise<HostedConfigSourceSnapshot | undefined> {
+  if (!canCaptureHostedConfigSourceSnapshot(adapter)) return undefined;
+  const warmupFlight = getOrCreateHostedConfigSourceReadFlight(
+    `hosted-config-preview-source-probe-v1:${
+      buildHostedConfigSourceIdentity(effectiveCacheKey, configBaseDir, adapter, revisionAtStart)
+    }`,
+    async () => {
+      await captureHostedConfigSourceSnapshot(adapter);
+      return null;
+    },
+  );
+  const warmupLease = await waitForHostedConfigSourceReadFlight(warmupFlight, signal);
+  warmupLease.release();
+  const snapshot = await captureHostedConfigSourceSnapshot(adapter);
+  // The observation can await, so an abort must not start a read.
+  throwIfHostedConfigAborted(signal);
+  return snapshot;
 }
 
 async function readHostedConfigSource(
@@ -8879,9 +8931,13 @@ function getConfigInternal(
           try {
             const previewSnapshot = sourceContext!.productionMode
               ? undefined
-              : await captureHostedConfigSourceSnapshot(adapter);
-            // The snapshot probe can await, so an abort must not start a read.
-            throwIfHostedConfigAborted(hosted.signal);
+              : await captureAdmittedHostedConfigSourceSnapshot(
+                effectiveCacheKey,
+                configBaseDir,
+                adapter,
+                revisionAtStart,
+                hosted.signal,
+              );
             const sourceReadKey = buildHostedConfigSourceReadKey(
               effectiveCacheKey,
               configBaseDir,
