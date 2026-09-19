@@ -963,13 +963,16 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assert(contents.startsWith("throw new Error("), `got ${contents}`);
       assert(contents.includes(reason), "the thrown error must carry the classified reason");
 
-      // A lazy `require()` is deferred the same way.
-      const required = await bare(
-        resolveArgs({ path: "@veryfront-fixture/absent", kind: "require-call" }),
-      );
-      assertEquals(missing, []);
-      assert(required && typeof required === "object" && "namespace" in required);
-      assertEquals(required.namespace, deferred.namespace);
+      // A lazy `require()`, and a `require.resolve()` probe, are deferred the
+      // same way.
+      for (const kind of ["require-call", "require-resolve"] as const) {
+        const required = await bare(
+          resolveArgs({ path: "@veryfront-fixture/absent", kind }),
+        );
+        assertEquals(missing, [], kind);
+        assert(required && typeof required === "object" && "namespace" in required, kind);
+        assertEquals(required.namespace, deferred.namespace, kind);
+      }
 
       assertEquals(await bare(resolveArgs({ path: "@veryfront-fixture/absent" })), {
         errors: [{ text: `Cannot resolve "@veryfront-fixture/absent": ${reason}` }],

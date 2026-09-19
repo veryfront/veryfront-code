@@ -13,6 +13,9 @@ const LOCK = JSON.stringify({
     "npm:playwright@1.59.0": "1.59.0",
     "npm:@scope/pkg@^1.2.0": "1.4.0",
     "npm:constructor@1.0.0": "1.0.0",
+    // A dist-tag may contain an underscore; only a package key's peer suffix
+    // (`react-dom@19.2.0_react@19.2.0`) is cut at one.
+    "npm:tagged@release_candidate": "3.0.0",
     "jsr:@std/path@1": "1.1.4",
   },
   npm: {
@@ -23,6 +26,7 @@ const LOCK = JSON.stringify({
     "constructor@1.0.0": {},
     "ms@2.1.3": {},
     "react-dom@19.2.0_react@19.2.0": {},
+    "tagged@3.0.0": {},
   },
 });
 
@@ -35,6 +39,7 @@ describe("generate-embedded-npm-packages", () => {
       constructor: ["1.0.0"],
       ms: ["2.1.3"],
       "react-dom": ["19.2.0"],
+      tagged: ["3.0.0"],
     });
   });
 
@@ -45,6 +50,7 @@ describe("generate-embedded-npm-packages", () => {
       playwright: ["*", "1.59.0"],
       "@scope/pkg": ["^1.2.0"],
       constructor: ["1.0.0"],
+      tagged: ["release_candidate"],
     });
   });
 

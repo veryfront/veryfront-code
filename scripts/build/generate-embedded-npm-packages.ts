@@ -51,8 +51,13 @@ const outputPath = join(projectRoot, ...outputRelativePath.split("/"));
  *
  * @internal Exported for testing only.
  */
-export function collectEmbeddedNpmPackages(lockText: string): Record<string, string[]> {
-  return groupByName(Object.keys(parseLock(lockText).npm ?? {}));
+export function collectEmbeddedNpmPackages(
+  lockText: string,
+): Record<string, string[]> {
+  return groupByName(
+    Object.keys(parseLock(lockText).npm ?? {}),
+    parseNameVersion,
+  );
 }
 
 /**
@@ -63,17 +68,44 @@ export function collectEmbeddedNpmPackages(lockText: string): Record<string, str
  *
  * @internal Exported for testing only.
  */
-export function collectEmbeddedNpmConstraints(lockText: string): Record<string, string[]> {
+export function collectEmbeddedNpmConstraints(
+  lockText: string,
+): Record<string, string[]> {
   const keys = Object.keys(parseLock(lockText).specifiers ?? {});
-  return groupByName(keys.filter((key) => key.startsWith("npm:")).map((key) => key.slice(4)));
+  return groupByName(
+    keys.filter((key) => key.startsWith("npm:")).map((key) => key.slice(4)),
+    parseNameConstraint,
+  );
 }
 
-function groupByName(keys: readonly string[]): Record<string, string[]> {
+/**
+ * Split `<name>@<constraint>`, keeping the constraint whole. A specifier's
+ * constraint is what the import wrote -- a range, or a dist-tag, which may
+ * contain an underscore (`pkg@release_candidate`) -- so the peer-suffix cut
+ * `parseNameVersion` makes for a package key would truncate it.
+ */
+function parseNameConstraint(
+  key: string,
+): { name: string; version: string } | null {
+  const slash = key.startsWith("@") ? key.indexOf("/") : -1;
+  if (key.startsWith("@") && slash < 0) return null;
+  const at = key.indexOf("@", slash + 1);
+  if (at <= 0) return null;
+  const constraint = key.slice(at + 1);
+  return constraint.length === 0
+    ? null
+    : { name: key.slice(0, at), version: constraint };
+}
+
+function groupByName(
+  keys: readonly string[],
+  parse: (key: string) => { name: string; version: string } | null,
+): Record<string, string[]> {
   // A Map, not an object literal: a package named `constructor` must not read
   // Object.prototype.constructor as its version list.
   const byName = new Map<string, string[]>();
   for (const key of keys) {
-    const parsed = parseNameVersion(key);
+    const parsed = parse(key);
     if (!parsed) continue;
     const versions = byName.get(parsed.name) ?? [];
     byName.set(parsed.name, versions);
@@ -94,7 +126,8 @@ function groupByName(keys: readonly string[]): Record<string, string[]> {
 
 function renderEntries(byName: Record<string, string[]>): string {
   return Object.keys(byName).sort(compareStrings).map((name) => {
-    const versions = byName[name]!.map((version) => JSON.stringify(version)).join(", ");
+    const versions = byName[name]!.map((version) => JSON.stringify(version))
+      .join(", ");
     return `  ${JSON.stringify(name)}: [${versions}],`;
   }).join("\n");
 }
@@ -114,7 +147,10 @@ export function collectEmbeddedNpmTables(lockText: string): EmbeddedNpmTables {
 }
 
 /** @internal Exported for testing only. */
-export function renderModule(full: EmbeddedNpmTables, proxy: EmbeddedNpmTables): string {
+export function renderModule(
+  full: EmbeddedNpmTables,
+  proxy: EmbeddedNpmTables,
+): string {
   return `/**
  * npm packages frozen into the compiled runtime binaries, by package name.
  *
@@ -166,7 +202,9 @@ ${renderEntries(proxy.constraints)}
 
 if (import.meta.main) {
   const full = collectEmbeddedNpmTables(await Deno.readTextFile(fullLockPath));
-  const proxy = collectEmbeddedNpmTables(await Deno.readTextFile(proxyLockPath));
+  const proxy = collectEmbeddedNpmTables(
+    await Deno.readTextFile(proxyLockPath),
+  );
   const output = renderModule(full, proxy);
 
   // --check makes a stale committed set fail CI instead of relying on someone
@@ -181,7 +219,9 @@ if (import.meta.main) {
       );
       Deno.exit(1);
     }
-    console.log("[generate-embedded-npm-packages] Committed package sets are up to date");
+    console.log(
+      "[generate-embedded-npm-packages] Committed package sets are up to date",
+    );
   } else {
     await Deno.writeTextFile(outputPath, output);
     console.log(

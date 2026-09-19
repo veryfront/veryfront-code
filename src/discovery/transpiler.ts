@@ -569,9 +569,9 @@ export function createProjectDependencyCdnPlugin(
           // reported.
           const shown = describeNpmImport(args.path);
 
-          // A deferred `import()` -- or its CommonJS form, a `require()` --
-          // inside a handler body is the project's own lazy path, and often
-          // an optional one behind a try/catch. Failing
+          // A deferred `import()` -- or its CommonJS forms, `require()` and
+          // `require.resolve()` -- inside a handler body is the project's own
+          // lazy path, and often an optional one behind a try/catch. Failing
           // the bundle for it would delete every unrelated export of the file
           // -- tools, agents, schemas -- from discovery, which is a strictly
           // larger blast radius than the failure it replaces. The failure is
@@ -584,7 +584,10 @@ export function createProjectDependencyCdnPlugin(
           // it, so the file was going to fail either way. Failing here is the
           // same blast radius reported earlier and with a classified reason
           // instead of Deno's raw constraint text.
-          if (args.kind === "dynamic-import" || args.kind === "require-call") {
+          if (
+            args.kind === "dynamic-import" || args.kind === "require-call" ||
+            args.kind === "require-resolve"
+          ) {
             return {
               path: shown,
               namespace: MISSING_DEPENDENCY_NAMESPACE,
