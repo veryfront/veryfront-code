@@ -680,6 +680,25 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("keeps a filesystem root as the project root", () => {
+      const posix = discoveryPathNames("/tools/a.ts", "/");
+      assertEquals(posix.display, "tools/a.ts");
+      assertEquals(
+        withDisplayPath('Could not resolve "/lib/x.ts" from "/tools"', posix),
+        'Could not resolve "lib/x.ts" from "tools"',
+      );
+      assertEquals(withDisplayPath('at "file:///lib/x.ts"', posix), 'at "lib/x.ts"');
+      assertEquals(
+        withDisplayPath("fetch https://esm.sh/pkg@1.0.0/x.mjs", posix),
+        "fetch https://esm.sh/pkg@1.0.0/x.mjs",
+      );
+
+      const drive = discoveryPathNames("C:/tools/a.ts", "C:\\");
+      assertEquals(drive.display, "tools/a.ts");
+      assertEquals(withDisplayPath("read 'C:\\lib\\x.ts'", drive), "read 'lib\\x.ts'");
+      assertEquals(withDisplayPath('at "file:///c:/lib/x.ts"', drive), 'at "lib/x.ts"');
+    });
+
     it("redacts a Windows project root in either separator style and any drive case", () => {
       const windows = discoveryPathNames("C:/Users/me/proj/tools/a.ts", "C:\\Users\\me\\proj\\");
       assertEquals(windows.display, "tools/a.ts");

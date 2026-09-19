@@ -645,7 +645,7 @@ export function discoveryPathForDisplay(filePath: string, baseDir?: string): str
   const root = portableRoot(baseDir);
   const file = toPortablePath(filePath);
   if (root.length > 0) {
-    const prefix = `${root}/`;
+    const prefix = isFilesystemRoot(root) ? root : `${root}/`;
     const under = isWindowsDrivePath(root)
       ? file.toLowerCase().startsWith(prefix.toLowerCase())
       : file.startsWith(prefix);
@@ -661,11 +661,20 @@ function toPortablePath(path: string): string {
   return path.replaceAll("\\", "/");
 }
 
-/** A project root in portable form, without trailing separators. */
+/**
+ * A project root in portable form, without redundant trailing separators. A
+ * filesystem root keeps its separator: `/` and `C:/` are roots, `` and `C:`
+ * are not.
+ */
 function portableRoot(baseDir: string | undefined): string {
   let trimmed = toPortablePath(baseDir ?? "");
-  while (trimmed.endsWith("/")) trimmed = trimmed.slice(0, -1);
+  while (trimmed.endsWith("/") && !isFilesystemRoot(trimmed)) trimmed = trimmed.slice(0, -1);
   return trimmed;
+}
+
+/** `/` or a Windows volume root such as `C:/`. */
+function isFilesystemRoot(path: string): boolean {
+  return path === "/" || /^[A-Za-z]:\/$/.test(path);
 }
 
 /** `C:/...`: compared case-insensitively, as Windows compares paths. */
@@ -728,16 +737,20 @@ export function withDisplayPath(text: string, paths: DiscoveryPathNames): string
  */
 function projectRootMention(root: string): RegExp {
   // `root` is portable; a message may quote it with either separator.
-  const escaped = root.split("/")
-    .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`))
-    .join(String.raw`[/\\]`);
-  return new RegExp(
-    // A `file://` prefix is consumed with the root: Deno quotes module paths as
-    // file URLs (`file:///C:/...` on Windows), and the `/` it ends with would
-    // otherwise fail the boundary.
-    String.raw`(?:file:///?|(?<![A-Za-z0-9._~%@:/\\-]))${escaped}(?:([/\\])|(?![A-Za-z0-9._~%-]))`,
-    isWindowsDrivePath(root) ? "gi" : "g",
-  );
+  const escapePath = (path: string) =>
+    path.split("/")
+      .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`))
+      .join(String.raw`[/\\]`);
+  // A `file://` prefix is consumed with the root: Deno quotes module paths as
+  // file URLs (`file:///C:/...` on Windows), and the `/` it ends with would
+  // otherwise fail the boundary.
+  const start = String.raw`(?:file:///?|(?<![A-Za-z0-9._~%@:/\\-]))`;
+  // A filesystem root ends in its separator, so it is a mention only where a
+  // path continues after it; the bare `/` of prose is left alone.
+  const rest = isFilesystemRoot(root)
+    ? String.raw`${escapePath(root.slice(0, -1))}([/\\])(?=[A-Za-z0-9._~%-])`
+    : String.raw`${escapePath(root)}(?:([/\\])|(?![A-Za-z0-9._~%-]))`;
+  return new RegExp(`${start}${rest}`, isWindowsDrivePath(root) ? "gi" : "g");
 }
 
 /**
