@@ -1,5 +1,6 @@
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
+import { isSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { sanitizeTelemetryAttributes, sanitizeTelemetryText } from "./telemetry-error.ts";
 import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
@@ -226,6 +227,7 @@ export function initializeApplicationErrorReporter(options: {
 }
 
 const TENANT_BUILD_ERROR_CLASS = "tenant-build";
+const SOURCE_SNAPSHOT_CHANGED_ERROR_CLASS = "source-snapshot-changed";
 
 /**
  * Tag applied by the module loader only after an explicit tenant-source
@@ -275,10 +277,18 @@ export function captureApplicationError(
     // Tenant build/content failures stay captured for escalation analysis,
     // but are tagged and downgraded so per-request tenant mistakes stop
     // surfacing as error-level framework issues.
-    const classifiedContext = isTenantBuildError(error)
+    const errorClass = isTenantBuildError(error)
+      ? TENANT_BUILD_ERROR_CLASS
+      // A mutable source advancing mid-request is rejected so the caller can
+      // retry on one generation. That is expected under concurrent edits, not
+      // a framework fault, so it stays visible without paging at error level.
+      : isSourceSnapshotChangedError(error)
+      ? SOURCE_SNAPSHOT_CHANGED_ERROR_CLASS
+      : undefined;
+    const classifiedContext = errorClass
       ? {
         ...context,
-        errorClass: context.errorClass ?? TENANT_BUILD_ERROR_CLASS,
+        errorClass: context.errorClass ?? errorClass,
         level: context.level ?? "warning" as const,
       }
       : context;

@@ -6,6 +6,7 @@ import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-e
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { API_CLIENT_ERROR, VeryfrontError } from "#veryfront/errors";
+import { isSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -1589,6 +1590,8 @@ describe("adapter-factory", () => {
 
       assertInstanceOf(rejection, VeryfrontError);
       assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+      // A concurrent edit, not an adapter defect: reported as a warning.
+      assertEquals(isSourceSnapshotChangedError(rejection), true);
     });
 
     it("re-throws config loading errors in proxy mode", async () => {

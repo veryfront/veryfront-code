@@ -3,6 +3,7 @@ import {
   tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
+import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { delay } from "#veryfront/platform/compat/std/async.ts";
@@ -299,17 +300,15 @@ async function finalizeAfterPrimaryFailure(finalize: () => Promise<void>): Promi
 }
 
 function throwConfigSnapshotChanged(ctx: HandlerContext): never {
-  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-    detail:
-      `The mutable source snapshot serving "${ctx.projectSlug}" changed after request configuration was derived, so this document request must be retried against one generation.`,
-  });
+  throw createSourceSnapshotChangedError(
+    `The mutable source snapshot serving "${ctx.projectSlug}" changed after request configuration was derived, so this document request must be retried against one generation.`,
+  );
 }
 
 function throwSnapshotReclassificationRequired(ctx: HandlerContext): never {
-  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-    detail:
-      `The mutable source snapshot serving "${ctx.projectSlug}" changed during handler dispatch, so this request must be retried against one generation.`,
-  });
+  throw createSourceSnapshotChangedError(
+    `The mutable source snapshot serving "${ctx.projectSlug}" changed during handler dispatch, so this request must be retried against one generation.`,
+  );
 }
 
 async function preparedDocumentSnapshotMatches(
@@ -405,10 +404,9 @@ export async function reclassifyPreviewDocumentSourceSnapshotIfChanged(
   if (prepared.configBound === true) throwConfigSnapshotChanged(ctx);
   preparedDocumentSnapshots.delete(ctx);
   if (prepared.reclassify === undefined) {
-    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-      detail:
-        `The mutable source snapshot serving "${ctx.projectSlug}" changed during document rendering, so this request must be retried against one generation.`,
-    });
+    throw createSourceSnapshotChangedError(
+      `The mutable source snapshot serving "${ctx.projectSlug}" changed during document rendering, so this request must be retried against one generation.`,
+    );
   }
   return prepared.reclassify;
 }
