@@ -19,6 +19,42 @@ async function writeExecutable(path: string, source: string): Promise<void> {
   await Deno.chmod(path, 0o755);
 }
 
+/**
+ * Preamble for a stubbed `npm` that honours npm's logging contract: `--silent`
+ * (alias of `--loglevel silent`) suppresses every stream, while any other
+ * level lets error output through. Without this, a stub prints regardless of
+ * the flags it is handed and cannot observe a caller that silences npm.
+ */
+const NPM_STUB_LOGLEVEL_PREAMBLE = `
+vf_loglevel=notice
+vf_take_next=0
+for vf_arg in "\$@"; do
+  if [ "\$vf_take_next" -eq 1 ]; then
+    vf_loglevel="\$vf_arg"
+    vf_take_next=0
+    continue
+  fi
+  case "\$vf_arg" in
+    --silent | -s) vf_loglevel=silent ;;
+    --quiet | -q) vf_loglevel=warn ;;
+    --loglevel) vf_take_next=1 ;;
+    --loglevel=*) vf_loglevel="\${vf_arg#--loglevel=}" ;;
+  esac
+done
+
+vf_say_error() {
+  if [ "\$vf_loglevel" != "silent" ]; then
+    printf '%s\\n' "\$1" >&2
+  fi
+}
+
+vf_say_summary() {
+  if [ "\$vf_loglevel" != "silent" ]; then
+    printf '%s\\n' "\$1"
+  fi
+}
+`;
+
 async function workspacePackageNames(): Promise<string[]> {
   const config = JSON.parse(
     await Deno.readTextFile(new URL("deno.json", repoRoot)),
@@ -192,11 +228,11 @@ exit 0
       const log = await Deno.readTextFile(npmLog);
       assertStringIncludes(
         log,
-        `args=install --no-fund --no-audit --silent --ignore-scripts veryfront@${version} @example/runtime-kit@${version} @veryfront/ext-parser-babel@${version}`,
+        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts veryfront@${version} @example/runtime-kit@${version} @veryfront/ext-parser-babel@${version}`,
       );
       assertStringIncludes(
         log,
-        `args=install --no-fund --no-audit --silent --ignore-scripts @veryfront/ext-auth-jwt@${version}`,
+        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts @veryfront/ext-auth-jwt@${version}`,
       );
       assertEquals(
         log.match(new RegExp(`registry=${registryUrl}`, "g"))?.length,
@@ -367,4 +403,235 @@ exit 0
     assertStringIncludes(stderr, "REGISTRY RELEASE FAIL [configuration]");
     assertEquals(stderr.includes("must-not-appear"), false);
   });
+
+  it("includes npm output and registry context in stderr when registry install fails", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-registry-install-diag-" });
+    const binDir = `${tempDir}/bin`;
+    await Deno.mkdir(binDir);
+    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+    await writeExecutable(
+      `${binDir}/npm`,
+      `#!/usr/bin/env bash
+${NPM_STUB_LOGLEVEL_PREAMBLE}
+case "\${1:-}" in
+  init | pkg) exit 0 ;;
+  install)
+    vf_say_error 'npm error 404 Not Found - registry-install-diagnostic-marker'
+    exit 1
+    ;;
+esac
+exit 0
+`,
+    );
+
+    try {
+      const version = "1.2.3-rc.45";
+      // Only the public registry may be named verbatim; a private host is
+      // redacted (see the private-registry test below).
+      const registryUrl = "https://registry.npmjs.org/";
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
+        env: {
+          PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+          VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
+          VF_NPM_REGISTRY_URL: registryUrl,
+          VF_NPM_REGISTRY_VERSION: version,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      const stderr = decoder.decode(output.stderr);
+      assertEquals(output.code, 20);
+      assertStringIncludes(stderr, "registry-install-diagnostic-marker");
+      assertStringIncludes(stderr, `registry=${registryUrl}`);
+      assertStringIncludes(stderr, "specs=1");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("redacts _authToken values from npm output on registry install failure", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-registry-install-redact-" });
+    const binDir = `${tempDir}/bin`;
+    await Deno.mkdir(binDir);
+    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+    await writeExecutable(
+      `${binDir}/npm`,
+      `#!/usr/bin/env bash
+${NPM_STUB_LOGLEVEL_PREAMBLE}
+case "\${1:-}" in
+  init | pkg) exit 0 ;;
+  install)
+    vf_say_error 'npm error need auth //registry.example.test/npm/:_authToken=supersecret123'
+    exit 1
+    ;;
+esac
+exit 0
+`,
+    );
+
+    try {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
+        env: {
+          PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+          VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
+          VF_NPM_REGISTRY_URL: "https://registry.example.test/npm/",
+          VF_NPM_REGISTRY_VERSION: "1.2.3-rc.45",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      const stderr = decoder.decode(output.stderr);
+      assertEquals(output.code, 20);
+      assertEquals(stderr.includes("supersecret123"), false);
+      assertStringIncludes(stderr, "_authToken=<redacted>");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("redacts credentials and absolute paths from npm output on registry install failure", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-registry-install-scrub-" });
+    const binDir = `${tempDir}/bin`;
+    await Deno.mkdir(binDir);
+    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+    await writeExecutable(
+      `${binDir}/npm`,
+      `#!/usr/bin/env bash
+${NPM_STUB_LOGLEVEL_PREAMBLE}
+case "\${1:-}" in
+  init | pkg) exit 0 ;;
+  install)
+    vf_say_error 'npm error code E401'
+    vf_say_error 'npm error 401 Unauthorized - GET https://registry.example.test/npm/veryfront - authorization: Bearer header-must-not-appear'
+    vf_say_error 'npm error request to https://registry.example.test/npm/veryfront?token=query-must-not-appear failed'
+    vf_say_error 'npm error A complete log of this run can be found in: /home/npm-smoke-runner/.npm/_logs/2026-09-19T00_00_00_000Z-debug-0.log'
+    exit 1
+    ;;
+esac
+exit 0
+`,
+    );
+
+    try {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
+        env: {
+          PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+          VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
+          VF_NPM_REGISTRY_URL: "https://registry.example.test/npm/",
+          VF_NPM_REGISTRY_VERSION: "1.2.3-rc.45",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      const stderr = decoder.decode(output.stderr);
+      assertEquals(output.code, 20);
+      // The diagnosis itself must survive: redaction that eats the error code
+      // returns the gate to the state this whole change exists to end.
+      assertStringIncludes(stderr, "npm error code E401");
+      assertEquals(stderr.includes("header-must-not-appear"), false);
+      assertStringIncludes(stderr, "Bearer <redacted>");
+      assertEquals(stderr.includes("query-must-not-appear"), false);
+      assertStringIncludes(stderr, "token=<redacted>");
+      assertEquals(stderr.includes("/home/npm-smoke-runner"), false);
+      assertEquals(stderr.includes("A complete log of this run"), false);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("redacts a private registry host from the context line and npm output", async () => {
+    const privateHost = "npm.private-mirror-must-not-appear.example.test";
+    const stderr = await registryInstallFailureStderr(
+      `https://${privateHost}:8443/npm/`,
+      [
+        "npm error code E404",
+        `npm error 404 Not Found - GET https://${privateHost}:8443/npm/veryfront - private-registry-marker`,
+        `npm error need auth //${privateHost.toUpperCase()}/npm/:_authToken=private-token-must-not-appear`,
+      ],
+    );
+
+    assertEquals(stderr.includes("private-mirror-must-not-appear"), false);
+    assertEquals(stderr.includes("PRIVATE-MIRROR-MUST-NOT-APPEAR"), false);
+    assertEquals(stderr.includes("private-token-must-not-appear"), false);
+    assertStringIncludes(stderr, "registry=<private-registry>");
+    assertStringIncludes(stderr, "specs=1");
+    // The diagnosis itself must survive the host redaction.
+    assertStringIncludes(stderr, "npm error code E404");
+    assertStringIncludes(
+      stderr,
+      "404 Not Found - GET https://<private-registry>/npm/veryfront - private-registry-marker",
+    );
+  });
+
+  it("redacts token-only and repeated URL userinfo from npm output", async () => {
+    const stderr = await registryInstallFailureStderr(
+      "https://registry.npmjs.org/",
+      [
+        "npm error fetch https://tokenonly-must-not-appear@registry.npmjs.org/veryfront and https://user:pair-must-not-appear@registry.npmjs.org/jose failed",
+        "npm error see https://registry.npmjs.org/veryfront?rev=a@b#frag-marker",
+      ],
+    );
+
+    assertEquals(stderr.includes("tokenonly-must-not-appear"), false);
+    assertEquals(stderr.includes("pair-must-not-appear"), false);
+    assertStringIncludes(
+      stderr,
+      "https://<redacted>@registry.npmjs.org/veryfront and https://<redacted>@registry.npmjs.org/jose",
+    );
+    // An @ after the path, query or fragment is not userinfo and stays intact.
+    assertStringIncludes(
+      stderr,
+      "https://registry.npmjs.org/veryfront?rev=a@b#frag-marker",
+    );
+  });
 });
+
+/** Run the registry install path against an npm stub that fails with `lines`. */
+async function registryInstallFailureStderr(
+  registryUrl: string,
+  lines: string[],
+): Promise<string> {
+  const tempDir = await makeTempDir({ prefix: "vf-registry-install-host-" });
+  const binDir = `${tempDir}/bin`;
+  await Deno.mkdir(binDir);
+  await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+  const say = lines.map((line) => `    vf_say_error '${line}'`).join("\n");
+  await writeExecutable(
+    `${binDir}/npm`,
+    `#!/usr/bin/env bash
+${NPM_STUB_LOGLEVEL_PREAMBLE}
+case "\${1:-}" in
+  init | pkg) exit 0 ;;
+  install)
+${say}
+    exit 1
+    ;;
+esac
+exit 0
+`,
+  );
+
+  try {
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", installSmokePath],
+      env: {
+        PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+        VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
+        VF_NPM_REGISTRY_URL: registryUrl,
+        VF_NPM_REGISTRY_VERSION: "1.2.3-rc.45",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(output.code, 20);
+    return decoder.decode(output.stderr);
+  } finally {
+    await Deno.remove(tempDir, { recursive: true });
+  }
+}
