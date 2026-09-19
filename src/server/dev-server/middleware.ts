@@ -2,6 +2,7 @@ import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts
 import type { MiddlewareHandler } from "#veryfront/middleware/core/types.ts";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
@@ -9,7 +10,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { BundlerPlugin } from "veryfront/extensions/bundler";
 import { cors } from "#veryfront/security";
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
-import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import { getEsbuildLoader, isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
@@ -169,6 +170,11 @@ export async function loadMiddlewareFile(
 const VIRTUAL_PROJECT_NAMESPACE = "veryfront-project-middleware";
 const VIRTUAL_MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
 
+async function isVirtualFile(path: string, adapter: RuntimeAdapter): Promise<boolean> {
+  if (!(await adapter.fs.exists(path))) return false;
+  return (await adapter.fs.stat(path)).isFile;
+}
+
 async function resolveVirtualModulePath(
   path: string,
   adapter: RuntimeAdapter,
@@ -180,10 +186,30 @@ async function resolveVirtualModulePath(
   ];
 
   for (const candidate of candidates) {
-    if (await adapter.fs.exists(candidate)) return candidate;
+    if (await isVirtualFile(candidate, adapter)) return candidate;
   }
 
   return undefined;
+}
+
+/**
+ * Map a middleware import specifier to a path inside the project, or return
+ * undefined for package and framework specifiers. Root-absolute imports and
+ * the `@/` alias are project-relative, never host paths.
+ */
+function toProjectModulePath(
+  specifier: string,
+  importer: string,
+  projectDir: string,
+): string | undefined {
+  if (specifier.startsWith(".")) return normalize(join(dirname(importer), specifier));
+  if (specifier.startsWith("@/")) return normalize(join(projectDir, specifier.slice(2)));
+  if (specifier.startsWith("/")) return normalize(join(projectDir, specifier));
+  return undefined;
+}
+
+function getVirtualModuleLoader(path: string): "tsx" | "jsx" | "ts" | "js" | "json" {
+  return path.toLowerCase().endsWith(".json") ? "json" : getEsbuildLoader(path);
 }
 
 /**
@@ -192,7 +218,8 @@ async function resolveVirtualModulePath(
  * A virtual filesystem cannot be mounted into the host's temporary directory
  * used for the transpiled entry module. Bundle only project-local modules from
  * the adapter and leave framework/package imports external so they continue to
- * resolve in the server runtime.
+ * resolve in the server runtime. Project-local imports never fall back to the
+ * host filesystem.
  */
 function createVirtualProjectMiddlewarePlugin(
   projectDir: string,
@@ -201,40 +228,46 @@ function createVirtualProjectMiddlewarePlugin(
   return {
     name: "veryfront-project-middleware-files",
     setup(build) {
-      build.onResolve({ filter: /.*/ }, async (args) => {
-        const importer = args.importer || join(projectDir, "middleware.ts");
-        const candidate = args.path.startsWith(".")
-          ? normalize(join(dirname(importer), args.path))
-          : args.path.startsWith("/")
-          ? normalize(args.path)
-          : normalize(join(projectDir, args.path));
-        const projectPrefix = projectDir.endsWith("/") ? projectDir : `${projectDir}/`;
-        if (candidate !== projectDir && !candidate.startsWith(projectPrefix)) return null;
-        const resolved = await resolveVirtualModulePath(candidate, adapter);
+      // esbuild invokes plugin callbacks outside the caller's AsyncLocalStorage
+      // context; re-enter it so MultiProjectFSAdapter can select the project.
+      build.onResolve(
+        { filter: /.*/ },
+        wrapWithCurrentContext(async (args) => {
+          const importer = args.importer || join(projectDir, "middleware.ts");
+          const candidate = toProjectModulePath(args.path, importer, projectDir);
 
-        if (resolved) {
-          return { path: resolved, namespace: VIRTUAL_PROJECT_NAMESPACE };
-        }
+          // Keep the existing runtime resolution contract for package and
+          // framework imports. The host can resolve these after bundling.
+          if (candidate === undefined) return { path: args.path, external: true };
 
-        // Keep the existing runtime resolution contract for package and
-        // framework imports. The host can resolve these after bundling.
-        if (!args.path.startsWith(".") && !args.path.startsWith("/")) {
-          return { path: args.path, external: true };
-        }
+          if (!isWithinDirectory(projectDir, candidate)) {
+            return {
+              errors: [{ text: `Middleware import "${args.path}" is outside the project root` }],
+            };
+          }
 
-        return null;
-      });
+          const resolved = await resolveVirtualModulePath(candidate, adapter);
+          if (resolved) return { path: resolved, namespace: VIRTUAL_PROJECT_NAMESPACE };
 
-      build.onLoad({ filter: /.*/, namespace: VIRTUAL_PROJECT_NAMESPACE }, async (args) => {
-        const content = await adapter.fs.readFile(args.path);
-        const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+          return {
+            errors: [{ text: `Could not resolve middleware import "${args.path}"` }],
+          };
+        }),
+      );
 
-        return {
-          contents: source,
-          loader: getEsbuildLoader(args.path),
-          resolveDir: dirname(args.path),
-        };
-      });
+      build.onLoad(
+        { filter: /.*/, namespace: VIRTUAL_PROJECT_NAMESPACE },
+        wrapWithCurrentContext(async (args) => {
+          const content = await adapter.fs.readFile(args.path);
+          const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+
+          return {
+            contents: source,
+            loader: getVirtualModuleLoader(args.path),
+            resolveDir: dirname(args.path),
+          };
+        }),
+      );
     },
   };
 }

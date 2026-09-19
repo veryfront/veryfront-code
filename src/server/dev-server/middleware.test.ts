@@ -7,15 +7,26 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { loadMiddlewareFile } from "./middleware.ts";
+
+type FileAccess = "exists" | "stat" | "read";
 
 function createVirtualAdapter(
   source: string | undefined,
-  filesOrOnFileAccess: Record<string, string> | ((operation: "exists" | "read") => void) = {},
-  onFileAccess?: (operation: "exists" | "read") => void,
+  filesOrOnFileAccess: Record<string, string> | ((operation: FileAccess) => void) = {},
+  onFileAccess?: (operation: FileAccess) => void,
 ): RuntimeAdapter {
   const files = typeof filesOrOnFileAccess === "function" ? {} : filesOrOnFileAccess;
   const fileAccess = typeof filesOrOnFileAccess === "function" ? filesOrOnFileAccess : onFileAccess;
+  const isFile = (path: string) =>
+    (source !== undefined && path.endsWith("/middleware.ts")) || Object.hasOwn(files, path);
+  // Like the production adapters, directories exist but are not files.
+  const isDirectory = (path: string) =>
+    Object.keys(files).some((file) => file.startsWith(`${path}/`));
   const fs = {
     getUnderlyingAdapter: () => fs,
     getAdapterType: () => "MultiProjectFSAdapter",
@@ -23,12 +34,20 @@ function createVirtualAdapter(
     isMultiProjectMode: () => true,
     exists: (path: string) => {
       fileAccess?.("exists");
-      return Promise.resolve(
-        (source !== undefined && path.endsWith("/middleware.ts")) || Object.hasOwn(files, path),
-      );
+      return Promise.resolve(isFile(path) || isDirectory(path));
+    },
+    stat: (path: string) => {
+      fileAccess?.("stat");
+      if (!isFile(path) && !isDirectory(path)) return Promise.reject(new Error("not found"));
+      return Promise.resolve({
+        isFile: isFile(path),
+        isDirectory: !isFile(path),
+        isSymlink: false,
+      });
     },
     readFile: (path: string) => {
       fileAccess?.("read");
+      if (isDirectory(path)) return Promise.reject(new Error(`EISDIR: ${path}`));
       return Promise.resolve(files[path] ?? source ?? "");
     },
   } as unknown as RuntimeAdapter["fs"];
@@ -275,6 +294,107 @@ describe("dev-server/middleware: actionable rejection", () => {
     });
 
     assertEquals(middleware.length, 1);
+  });
+
+  describe("virtual filesystem imports", () => {
+    const passThrough = "export default async function (c, next) { return await next(); }";
+    const load = (adapter: RuntimeAdapter, projectDir = "/app") =>
+      loadMiddlewareFile(projectDir, adapter, {
+        throwOnError: true,
+        allowHostProjectCodeExecution: true,
+      });
+
+    it("resolves the @/ project-root alias", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "@/lib/auth"; export default middleware;',
+        { "/app/lib/auth.ts": passThrough },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("treats root-absolute imports as project-relative", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "/lib/auth"; export default middleware;',
+        { "/app/lib/auth.ts": passThrough },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("resolves a directory import to its index module", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "./lib"; export default middleware;',
+        { "/app/lib/index.ts": passThrough },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("loads JSON modules with the JSON loader", async () => {
+      const adapter = createVirtualAdapter(
+        'import policy from "./policy.json"; ' +
+          "export default policy.enabled ? async (c, next) => await next() : [];",
+        { "/app/policy.json": '{ "enabled": true }' },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("keeps bare specifiers external even when a same-named project file exists", async () => {
+      const adapter = createVirtualAdapter(
+        'import { sep } from "node:path"; ' +
+          'export default sep === "project" ? [] : async (c, next) => await next();',
+        { "/app/node:path.ts": 'export const sep = "project";' },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("rejects relative imports that escape the project root", async () => {
+      // Root the virtual project at a real host directory so that, without the
+      // containment check, the bundler would read the sibling host file.
+      const projectDir = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
+      const adapter = createVirtualAdapter(
+        'import { isServerShuttingDown } from "../shutdown-state.ts"; ' +
+          "export default async () => new Response(String(isServerShuttingDown()));",
+      );
+
+      const error = await assertRejects(() => load(adapter, projectDir));
+      assertStringIncludes(String(error), "outside the project root");
+    });
+
+    it("rejects project-relative imports that do not exist", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "./lib/missing"; export default middleware;',
+      );
+
+      const error = await assertRejects(() => load(adapter));
+      assertStringIncludes(String(error), "Could not resolve");
+    });
+
+    it("preserves the request context in bundler callbacks", async () => {
+      const { build } = await import("veryfront/extensions/bundler");
+      // Start the bundler service outside any request context, as on a warm
+      // server whose first build served another request.
+      await build({ write: false, stdin: { contents: "1;", loader: "js" } });
+
+      // Like MultiProjectFSAdapter, refuse to operate without the store.
+      const adapter = createVirtualAdapter(
+        'import middleware from "./lib/auth"; export default middleware;',
+        { "/app/lib/auth.ts": passThrough },
+        () => {
+          if (!getCurrentRequestContext()) throw new Error("No request context available");
+        },
+      );
+
+      const middleware = await runWithRequestContext(
+        { projectSlug: "middleware-project", token: "middleware-token", productionMode: false },
+        () => load(adapter),
+      );
+
+      assertEquals(middleware.length, 1);
+    });
   });
 
   it("still accepts an array of functions", async () => {
