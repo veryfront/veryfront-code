@@ -1469,52 +1469,59 @@ it("reuses the authorized platform source without a second catalog listing", asy
   assertEquals(listings, 1);
 });
 
-it("rejects forwarded reserved tools before permissive policy or remote fallback", async () => {
-  const name = "veryfront__export_data";
-  const definition = {
-    name,
-    description: "Export",
-    parameters: { type: "object" as const, properties: {} },
-  };
-  const policies: Array<SourceIntegrationPolicyManifest | undefined> = [
-    undefined,
-    { schemaVersion: 1, mode: "unrestricted" },
-    { schemaVersion: 1, mode: "allowlist", integrations: { veryfront: { allowedToolIds: null } } },
-    { schemaVersion: 1, mode: "allowlist", integrations: {} },
-  ];
-  for (const policy of policies) {
-    for (const config of [true as const, { [name]: true }]) {
-      assertEquals(
-        (await getAvailableTools(config, {
-          includeIntegrationTools: false,
-          allowedRemoteToolNames: [name],
-          forwardedRemoteToolDefinitions: [definition],
-          sourceIntegrationPolicy: policy,
-        })).filter((tool) => tool.name === name),
-        [],
-      );
-      await assertRejects(
-        () => executeConfiguredTool(name, {}, config, undefined, [name], [], policy),
-        Error,
-        "source integration policy",
-      );
-      const trusted = markTrustedPlatformSource({
-        id: "platform",
-        listTools: async () => [{ ...definition }],
-        executeTool: async () => ({ trusted: true }),
-      });
-      assertEquals(
-        (await getAvailableTools(config, {
-          includeIntegrationTools: false,
-          remoteToolSources: [trusted],
-          sourceIntegrationPolicy: policy,
-        })).filter((tool) => tool.name === name).length,
-        1,
-      );
-      assertEquals(
-        await executeConfiguredTool(name, {}, config, undefined, [name], [trusted], policy),
-        { trusted: true },
-      );
+for (
+  const name of ["veryfront__export_data", "veryfront__export__data", "veryfront__ExportData"]
+) {
+  it(`rejects forwarded reserved tool ${name} before permissive policy or remote fallback`, async () => {
+    const definition = {
+      name,
+      description: "Export",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    const policies: Array<SourceIntegrationPolicyManifest | undefined> = [
+      undefined,
+      { schemaVersion: 1, mode: "unrestricted" },
+      {
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: { veryfront: { allowedToolIds: null } },
+      },
+      { schemaVersion: 1, mode: "allowlist", integrations: {} },
+    ];
+    for (const policy of policies) {
+      for (const config of [true as const, { [name]: true }]) {
+        assertEquals(
+          (await getAvailableTools(config, {
+            includeIntegrationTools: false,
+            allowedRemoteToolNames: [name],
+            forwardedRemoteToolDefinitions: [definition],
+            sourceIntegrationPolicy: policy,
+          })).filter((tool) => tool.name === name),
+          [],
+        );
+        await assertRejects(
+          () => executeConfiguredTool(name, {}, config, undefined, [name], [], policy),
+          Error,
+          "source integration policy",
+        );
+        const trusted = markTrustedPlatformSource({
+          id: "platform",
+          listTools: async () => [{ ...definition }],
+          executeTool: async () => ({ trusted: true }),
+        });
+        assertEquals(
+          (await getAvailableTools(config, {
+            includeIntegrationTools: false,
+            remoteToolSources: [trusted],
+            sourceIntegrationPolicy: policy,
+          })).filter((tool) => tool.name === name).length,
+          1,
+        );
+        assertEquals(
+          await executeConfiguredTool(name, {}, config, undefined, [name], [trusted], policy),
+          { trusted: true },
+        );
+      }
     }
-  }
-});
+  });
+}

@@ -1,4 +1,5 @@
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -29,16 +30,11 @@ import {
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
   isIntegrationToolAllowedBySourcePolicy,
-  parseIntegrationToolIdentity,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const trustedPlatformDefinitions = createPrivateWeakStore<object, true>();
-
-function isPlatformName(name: string): boolean {
-  return parseIntegrationToolIdentity(name)?.integration === "veryfront";
-}
 
 function isAllowedBySourcePolicy(
   name: string,
@@ -46,7 +42,9 @@ function isAllowedBySourcePolicy(
   entry?: unknown,
   remoteDefinitions: ToolDefinition[] = [],
 ): boolean {
-  if (!isPlatformName(name)) return isIntegrationToolAllowedBySourcePolicy(name, policy);
+  if (!isReservedPlatformToolName(name)) {
+    return isIntegrationToolAllowedBySourcePolicy(name, policy);
+  }
   if (hasTrustedHostToolProvenance(entry)) return true;
   for (let index = 0; index < remoteDefinitions.length; index++) {
     if (!intrinsicHasOwn(remoteDefinitions, index)) continue;
@@ -63,7 +61,7 @@ async function resolveTrustedPlatformSource(
   sources: RemoteToolSource[] = [],
   context?: ToolExecutionContext,
 ): Promise<RemoteToolSource | undefined> {
-  if (!isPlatformName(name)) return undefined;
+  if (!isReservedPlatformToolName(name)) return undefined;
   for (let index = 0; index < sources.length; index++) {
     if (!intrinsicHasOwn(sources, index)) continue;
     const source = sources[index]!;
@@ -257,7 +255,9 @@ async function getRemoteToolDefinitions(options?: {
       for (let index = 0; index < sourceDefs.length; index++) {
         if (intrinsicHasOwn(sourceDefs, index)) {
           const definition = sourceDefs[index]!;
-          if (isPlatformName(definition.name) && !hasTrustedPlatformSource(source)) continue;
+          if (isReservedPlatformToolName(definition.name) && !hasTrustedPlatformSource(source)) {
+            continue;
+          }
           addDefinition(definition, hasTrustedPlatformSource(source));
         }
       }
@@ -312,7 +312,7 @@ async function executeRemoteToolFromSources(
   for (let index = 0; index < sources.length; index++) {
     if (!intrinsicHasOwn(sources, index)) continue;
     const source = sources[index]!;
-    if (isPlatformName(toolName) && !hasTrustedPlatformSource(source)) continue;
+    if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(source)) continue;
     if (source !== selectedSource && !(await sourceHasTool(source, toolName, context))) {
       continue;
     }
@@ -324,7 +324,7 @@ async function executeRemoteToolFromSources(
     if (
       sourceIntegrationPolicy &&
       !isIntegrationToolAllowedBySourcePolicy(toolName, sourceIntegrationPolicy) &&
-      !(isPlatformName(toolName) && hasTrustedPlatformSource(source))
+      !(isReservedPlatformToolName(toolName) && hasTrustedPlatformSource(source))
     ) {
       throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
     }
