@@ -895,16 +895,19 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         })),
         { path: `npm:react-dom@${version}/client`, external: true },
       );
-      // A version the binary does not record keeps the bare specifier, which
-      // is what an uncompiled run resolves.
-      assertEquals(
-        await httpUrl(resolveArgs({
-          path: "https://esm.sh/react-dom@0.0.1/es2022/client.mjs",
-          importer,
-          namespace: "http-url",
-        })),
-        { path: "react-dom/client", external: true },
+      // A version the binary does not record falls back to a recorded
+      // constraint for the same package: the plugin runs only on a compiled
+      // binary, where a bare `npm:react-dom` resolves to nothing.
+      const fallback = await httpUrl(resolveArgs({
+        path: "https://esm.sh/react-dom@0.0.1/es2022/client.mjs",
+        importer,
+        namespace: "http-url",
+      })) as { path: string; external: boolean };
+      assert(
+        recorded!.includes(fallback.path.slice("npm:react-dom@".length, -"/client".length)),
+        `expected a recorded react-dom constraint, got ${fallback.path}`,
       );
+      assertEquals(fallback.external, true);
     });
 
     it("leaves every other CDN import to the HTTP plugin", async () => {

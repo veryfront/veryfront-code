@@ -792,6 +792,32 @@ describe(
       assertEquals(requested[1]?.includes("chunk.mjs"), true, requested.join(", "));
     });
 
+    it("classifies a top-level require nothing can serve", async () => {
+      // esbuild reports a module-scope `require()` with the same kind as a
+      // lazy one, so the deferred module runs at import time. Its failure is
+      // the project's missing dependency, not an unclassified crash.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ dependencies: {} }),
+          [toolPath]: [
+            `const mod = require("@veryfront-fixture/never-declared");`,
+            `export default { name: "top-level", value: mod.value };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const error = await assertRejects(
+        () => importModule(`file://${projectDir}/${toolPath}`, context),
+        Error,
+      );
+      assertEquals((error as { slug?: string }).slug, "dependency-missing");
+      const detail = String((error as { detail?: string }).detail ?? "");
+      assertEquals(detail.includes("@veryfront-fixture/never-declared"), true, detail);
+    });
+
     it("keeps the rest of a file discoverable when a lazy require cannot resolve", async () => {
       // `require()` inside a handler is the CommonJS form of the same optional,
       // deferred load, so it must not abort the bundle either.

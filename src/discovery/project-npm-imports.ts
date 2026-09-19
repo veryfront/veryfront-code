@@ -194,7 +194,39 @@ export function exactVersionNamedByRange(range: unknown): string | null {
   return EXACT_VERSION.test(candidate) ? candidate : null;
 }
 
-type VersionCore = [number, number, number];
+/**
+ * A version core as three digit strings. Semver puts no limit on a component,
+ * so `Number` would collapse two distinct versions beyond 2^53 into one.
+ */
+type VersionCore = [string, string, string];
+
+/** A digit string without leading zeros: `007` is `7`, `000` is `0`. */
+function normalizeDigits(digits: string): string {
+  const trimmed = digits.replace(/^0+(?=\d)/, "");
+  return trimmed.length === 0 ? "0" : trimmed;
+}
+
+/** Numeric order of two digit strings: longer is greater, then digit by digit. */
+function compareDigits(left: string, right: string): number {
+  const a = normalizeDigits(left);
+  const b = normalizeDigits(right);
+  if (a.length !== b.length) return a.length < b.length ? -1 : 1;
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/** One more than a digit string, carried by hand so no precision is lost. */
+function incrementDigits(digits: string): string {
+  const value = normalizeDigits(digits).split("");
+  for (let index = value.length - 1; index >= 0; index--) {
+    if (value[index] !== "9") {
+      value[index] = String(Number(value[index]) + 1);
+      return value.join("");
+    }
+    value[index] = "0";
+  }
+  return `1${value.join("")}`;
+}
 
 /**
  * A range bound's numeric parts, as written: `2` is `[2]`, `2.3.x` is `[2, 3]`,
@@ -203,43 +235,43 @@ type VersionCore = [number, number, number];
  */
 const PARTIAL_VERSION = /^(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$/;
 
-function boundParts(bound: string): number[] | null {
+function boundParts(bound: string): string[] | null {
   const core = EXACT_VERSION.test(bound) ? bound.split(/[-+]/, 1)[0]! : bound;
   const match = PARTIAL_VERSION.exec(core);
   if (!match) return null;
   const isNumber = (part: string | undefined) => part !== undefined && /^\d+$/.test(part);
   const groups = match.slice(1);
   const gap = groups.findIndex((part) => !isNumber(part));
-  if (gap < 0) return groups.map(Number);
+  if (gap < 0) return groups.map((part) => normalizeDigits(part!));
   // A number after a wildcard names no range npm would read the same way.
   if (groups.slice(gap).some(isNumber)) return null;
-  return groups.slice(0, gap).map(Number);
+  return groups.slice(0, gap).map((part) => normalizeDigits(part!));
 }
 
-function padded(parts: readonly number[]): VersionCore {
-  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+function padded(parts: readonly string[]): VersionCore {
+  return [parts[0] ?? "0", parts[1] ?? "0", parts[2] ?? "0"];
 }
 
 /** The version just past every one a partial bound covers: `2.3` -> `2.4.0`. */
-function nextAfter(parts: readonly number[]): VersionCore {
+function nextAfter(parts: readonly string[]): VersionCore {
   const next = [...parts];
-  next[next.length - 1]! += 1;
+  next[next.length - 1] = incrementDigits(next[next.length - 1]!);
   return padded(next);
 }
 
 /** The exclusive upper bound of a caret range, per npm's rules for `0.x`. */
-function caretCeiling(parts: readonly number[]): VersionCore {
-  const firstNonZero = parts.findIndex((part) => part !== 0);
+function caretCeiling(parts: readonly string[]): VersionCore {
+  const firstNonZero = parts.findIndex((part) => normalizeDigits(part) !== "0");
   return nextAfter(parts.slice(0, firstNonZero < 0 ? parts.length : firstNonZero + 1));
 }
 
 /** The exclusive upper bound of a tilde range: the minor for a full version. */
-function tildeCeiling(parts: readonly number[]): VersionCore {
+function tildeCeiling(parts: readonly string[]): VersionCore {
   return nextAfter(parts.length === 3 ? parts.slice(0, 2) : parts);
 }
 
 function coreOf(version: string): VersionCore {
-  return padded(version.split(/[-+]/, 1)[0]!.split(".").map(Number));
+  return padded(version.split(/[-+]/, 1)[0]!.split(".").map(normalizeDigits));
 }
 
 /** A version's pre-release identifiers, without build metadata; `null` if none. */
@@ -285,9 +317,10 @@ function compareVersions(
   return compareCores(left.core, right.core) || comparePrereleases(left.pre, right.pre);
 }
 
-function compareCores(left: readonly number[], right: readonly number[]): number {
+function compareCores(left: readonly string[], right: readonly string[]): number {
   for (let index = 0; index < 3; index++) {
-    if (left[index] !== right[index]) return left[index]! < right[index]! ? -1 : 1;
+    const order = compareDigits(left[index] ?? "0", right[index] ?? "0");
+    if (order !== 0) return order;
   }
   return 0;
 }
@@ -547,9 +580,9 @@ function embeddedImport(
  * wins; otherwise the highest recorded exact version is the single copy the
  * binary can actually resolve.
  */
-function embeddedConstraintForBareImport(
-  embedded: EmbeddedNpmSet,
+export function embeddedConstraintForBareImport(
   name: string,
+  embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
 ): string | null {
   const recorded = ownEntry(embedded.constraints, name) ?? [];
   if (recorded.includes("*")) return null;
@@ -604,7 +637,7 @@ export function classifyProjectNpmImport(
       return { kind: "runtime" };
     }
     if (nodeBuiltinSpecifier(specifier) !== null) return { kind: "runtime" };
-    const recorded = embeddedConstraintForBareImport(embedded, parsed.name);
+    const recorded = embeddedConstraintForBareImport(parsed.name, embedded);
     return recorded === null
       ? { kind: "runtime" }
       : runtimeImport(parsed.name, recorded, parsed.subpath);
@@ -615,7 +648,8 @@ export function classifyProjectNpmImport(
       kind: "missing",
       name: parsed.name,
       reason: `the import names a subpath of ${parsed.name} with an empty, \`.\` or ` +
-        `\`..\` segment, an encoded or backslash separator, or a URL \`?\` or \`#\``,
+        `\`..\` segment, an encoded or backslash separator, whitespace, or a URL ` +
+        `\`?\` or \`#\``,
     };
   }
 
@@ -731,8 +765,9 @@ const ENCODED_PATH_CHARACTER = /%(?:2e|2f|5c)/i;
 function isContainedSubpath(subpath: string): boolean {
   if (subpath === ".") return true;
   // `?` and `#` would become the CDN URL's query or fragment -- `?target=` could
-  // override the enforced build target -- instead of part of the package path.
-  if (/[\\?#]/.test(subpath) || ENCODED_PATH_CHARACTER.test(subpath)) return false;
+  // override the enforced build target -- instead of part of the package path,
+  // and whitespace ends a URL in every diagnostic that quotes one.
+  if (/[\\?#\s]/.test(subpath) || ENCODED_PATH_CHARACTER.test(subpath)) return false;
   return subpath.slice(2).split("/").every((segment) =>
     segment.length > 0 && segment !== "." && segment !== ".."
   );

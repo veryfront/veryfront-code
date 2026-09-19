@@ -18,6 +18,7 @@ import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
 import {
   classifyProjectNpmImport,
   describeNpmImport,
+  embeddedConstraintForBareImport,
   embeddedConstraintForVersion,
   isFrameworkProvidedPackage,
   nodeBuiltinSpecifier,
@@ -478,6 +479,14 @@ export const fetchProjectDependencySource: DependencySourceTransport =
 const MISSING_DEPENDENCY_NAMESPACE = "veryfront-missing-npm-dependency";
 
 /**
+ * The prefix the deferred module's error carries, so a `require()` at module
+ * scope -- which esbuild reports with the same kind as a lazy one, and which
+ * therefore runs as soon as the module is imported -- is still classified
+ * rather than escaping as a plain Error.
+ */
+const MISSING_DEPENDENCY_MARKER = "[veryfront:missing-npm-dependency]";
+
+/**
  * Resolve a project's npm imports the way a compiled runtime can serve them.
  *
  * `packages: "external"` leaves every bare specifier in the emitted module,
@@ -555,10 +564,15 @@ export function createProjectDependencyCdnPlugin(
         // `@opentelemetry/*`), so the URL's own version is re-emitted when the
         // binary records it. Without one the bare specifier is left as before,
         // which is what an uncompiled run resolves.
-        const constraint = parsed.version.length > 0
+        // The URL's own version when the binary records it, otherwise any
+        // constraint it records for that package: this plugin runs only on a
+        // compiled binary, where a bare `npm:react-dom` resolves to nothing.
+        const constraint = (parsed.version.length > 0
           ? embeddedConstraintForVersion(parsed.name, parsed.version)
-          : null;
-        if (constraint === null) return { path: specifier, external: true };
+          : null) ?? embeddedConstraintForBareImport(parsed.name);
+        if (constraint === null) {
+          return { path: specifier, external: true };
+        }
         const tail = specifier.slice(parsed.name.length);
         return { path: `npm:${parsed.name}@${constraint}${tail}`, external: true };
       });
@@ -609,7 +623,7 @@ export function createProjectDependencyCdnPlugin(
             return {
               path: shown,
               namespace: MISSING_DEPENDENCY_NAMESPACE,
-              pluginData: `Cannot load "${shown}": ${decision.reason}`,
+              pluginData: `${MISSING_DEPENDENCY_MARKER} Cannot load "${shown}": ${decision.reason}`,
             };
           }
 
@@ -1052,6 +1066,19 @@ export async function importModule(
     try {
       module = await import(moduleUrl.href);
     } catch (error) {
+      // A deferred import reached at module scope: the reason is already
+      // classified, so it is reported rather than rethrown unrecognised.
+      const deferred = error instanceof Error && error.message.startsWith(MISSING_DEPENDENCY_MARKER)
+        ? error.message.slice(MISSING_DEPENDENCY_MARKER.length).trim()
+        : null;
+      if (deferred !== null) {
+        throw DEPENDENCY_MISSING.create({
+          detail: `${paths.display}: ${deferred}. Declare the package in the project's ` +
+            `package.json with an exact version and import that same version, or move the ` +
+            `work to an extension or a sandbox session.`,
+          cause: error,
+        });
+      }
       const unresolvable = describeUnresolvableNpmImport(error);
       if (!unresolvable) throw error;
       throw DEPENDENCY_MISSING.create({

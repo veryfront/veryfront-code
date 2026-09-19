@@ -125,6 +125,23 @@ describe("exactVersionNamedByRange", () => {
     assertEquals(rangeAdmitsVersion("*.*", "2.9.0-rc.1"), false);
   });
 
+  it("compares version cores beyond the safe-integer range", () => {
+    // Both majors convert to the same Number, so numeric coercion would call
+    // them equal and admit a version the declaration excludes.
+    assertEquals(
+      rangeAdmitsVersion(">=9007199254740993.0.0", "9007199254740992.0.0"),
+      false,
+    );
+    assertEquals(
+      rangeAdmitsVersion(">=9007199254740992.0.0", "9007199254740993.0.0"),
+      true,
+    );
+    assertEquals(rangeAdmitsVersion("^9007199254740993.0.0", "9007199254740993.0.1"), true);
+    // Ceilings are computed on the same digits: `^…993.0.0` stops below …994.
+    assertEquals(rangeAdmitsVersion("^9007199254740993.0.0", "9007199254740994.0.0"), false);
+    assertEquals(exactVersionNamedByRange("^9007199254740993.0.0"), "9007199254740993.0.0");
+  });
+
   it("compares numeric pre-release identifiers beyond the safe-integer range", () => {
     // Both convert to the same Number, so numeric coercion would call them
     // equal and admit the version the declaration excludes.
@@ -877,6 +894,8 @@ describe("classifyProjectNpmImport and a subpath that can leave its package", ()
         "unpdf/a%5cb",
         "unpdf/a\\b",
         "unpdf/sub?target=node",
+        "unpdf/foo bar",
+        "unpdf/foo\tbar",
         "unpdf/sub#frag",
       ]
     ) {
@@ -886,7 +905,7 @@ describe("classifyProjectNpmImport and a subpath that can leave its package", ()
       assertEquals(
         reason,
         "the import names a subpath of unpdf with an empty, `.` or `..` segment, an " +
-          "encoded or backslash separator, or a URL `?` or `#`",
+          "encoded or backslash separator, whitespace, or a URL `?` or `#`",
         specifier,
       );
     }
