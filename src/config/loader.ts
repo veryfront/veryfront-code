@@ -8880,6 +8880,8 @@ function getConfigInternal(
             const previewSnapshot = sourceContext!.productionMode
               ? undefined
               : await captureHostedConfigSourceSnapshot(adapter);
+            // The snapshot probe can await, so an abort must not start a read.
+            throwIfHostedConfigAborted(hosted.signal);
             const sourceReadKey = buildHostedConfigSourceReadKey(
               effectiveCacheKey,
               configBaseDir,

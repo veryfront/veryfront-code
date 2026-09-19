@@ -10213,7 +10213,11 @@ export default config as const;
         return adapter;
       }
 
-      function loadSnapshotPreviewConfig(adapter: TestAdapter, preparedContext: PreparedContext) {
+      function loadSnapshotPreviewConfig(
+        adapter: TestAdapter,
+        preparedContext: PreparedContext,
+        signal?: AbortSignal,
+      ) {
         const branch = "feature/preview-burst";
         return runWithRequestContext(
           {
@@ -10227,6 +10231,7 @@ export default config as const;
               cacheKey: "preview-burst-project",
               sourceContext: { productionMode: false, branch },
               preparedContext,
+              signal,
             }),
         );
       }
@@ -10279,6 +10284,55 @@ export default config as const;
         } finally {
           releaseRead.resolve();
           await Promise.allSettled(requests);
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("does not start a preview read after the caller aborts during snapshot capture", async () => {
+        const adapter = createHostedAdapter();
+        const probeStarted = Promise.withResolvers<void>();
+        const releaseProbe = Promise.withResolvers<void>();
+        Object.assign(adapter.fs, {
+          getSourceSnapshotIdentity: () => "branch:preview-burst-project:feature/preview-burst",
+          getSourceSnapshotVersion: async () => {
+            probeStarted.resolve();
+            await releaseProbe.promise;
+            return 7;
+          },
+        });
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        let reads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          return 'export default { title: "source" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({ title: "must-not-evaluate" }));
+
+        const controller = new AbortController();
+        const request = loadSnapshotPreviewConfig(adapter, preparedContext, controller.signal);
+        const failure = assertRejects(
+          () => request,
+          DeclarativeConfigEvaluationError,
+        ) as Promise<DeclarativeConfigEvaluationError>;
+        try {
+          await probeStarted.promise;
+          controller.abort();
+          releaseProbe.resolve();
+          const error = await failure;
+          assertEquals(error.reason, "worker-aborted");
+          assertEquals(reads, 0);
+        } finally {
+          releaseProbe.resolve();
+          await Promise.allSettled([request]);
         }
         await waitForHostedSourceReadState({
           active: 0,
