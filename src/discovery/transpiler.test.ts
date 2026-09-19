@@ -703,6 +703,16 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         withDisplayPath("read '\\\\Server\\Share\\Project\\lib\\x.ts'", unc),
         "read 'lib\\x.ts'",
       );
+      // A UNC file URL puts the server in the authority, with no extra slash.
+      assertEquals(
+        withDisplayPath('Module not found "file://server/share/project/lib/x.ts"', unc),
+        'Module not found "lib/x.ts"',
+      );
+      // A share that merely starts with the root's name is left alone.
+      assertEquals(
+        withDisplayPath('at "file://server/share/projecting/x.ts"', unc),
+        'at "file://server/share/projecting/x.ts"',
+      );
     });
 
     it("keeps a filesystem root as the project root", () => {

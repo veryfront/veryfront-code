@@ -775,12 +775,19 @@ function projectRootMention(root: string): RegExp {
   // A `file://` prefix is consumed with the root: Deno quotes module paths as
   // file URLs (`file:///C:/...` on Windows), and the `/` it ends with would
   // otherwise fail the boundary.
-  const start = String.raw`(?:file:///?|(?<![A-Za-z0-9._~%@:/\\-]))`;
+  // A UNC root is an authority in a file URL (`file://server/share/...`), so
+  // its two leading separators are absent there but present everywhere else.
+  const unc = root.startsWith("//");
+  const start = unc
+    ? String.raw`(?:file://(?:[/\\]{2})?|(?<![A-Za-z0-9._~%@:/\\-])[/\\]{2})`
+    : String.raw`(?:file:///?|(?<![A-Za-z0-9._~%@:/\\-]))`;
   // A filesystem root ends in its separator, so it is a mention only where a
   // path continues after it; the bare `/` of prose is left alone.
+  // The two leading separators of a UNC root are matched by `start`.
+  const body = escapePath(unc ? root.slice(2) : root);
   const rest = isFilesystemRoot(root)
     ? String.raw`${escapePath(root.slice(0, -1))}([/\\])(?=[A-Za-z0-9._~%-])`
-    : String.raw`${escapePath(root)}(?:([/\\])|(?![A-Za-z0-9._~%-]))`;
+    : String.raw`${body}(?:([/\\])|(?![A-Za-z0-9._~%-]))`;
   return new RegExp(`${start}${rest}`, isWindowsDrivePath(root) ? "gi" : "g");
 }
 
