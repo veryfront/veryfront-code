@@ -772,6 +772,8 @@ describe("classifyProjectNpmImport and a subpath that can leave its package", ()
         "unpdf/a%2Fb",
         "unpdf/a%5cb",
         "unpdf/a\\b",
+        "unpdf/sub?target=node",
+        "unpdf/sub#frag",
       ]
     ) {
       const decision = classify(specifier, pins);
@@ -779,8 +781,8 @@ describe("classifyProjectNpmImport and a subpath that can leave its package", ()
       const reason = decision.kind === "missing" ? decision.reason : "";
       assertEquals(
         reason,
-        "the import names a subpath of unpdf with an empty, `.` or `..` segment, or an " +
-          "encoded or backslash separator",
+        "the import names a subpath of unpdf with an empty, `.` or `..` segment, an " +
+          "encoded or backslash separator, or a URL `?` or `#`",
         specifier,
       );
     }

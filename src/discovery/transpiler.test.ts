@@ -741,7 +741,22 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         describeUnresolvableNpmImport(
           new Error("Could not find constraint 'unpdf@1.8.1' in the list of packages"),
         ),
-        "unpdf@1.8.1",
+        "unpdf",
+      );
+    });
+
+    it("names only the package, never the constraint text Deno quotes", () => {
+      // A framework import bypasses classification, so its version reaches the
+      // loader as written and may carry a token in a valid pre-release suffix.
+      assertEquals(
+        describeUnresolvableNpmImport(
+          new Error("Could not find constraint 'zod@4.3.6-SECRETTOKEN' in the list of packages"),
+        ),
+        "zod",
+      );
+      assertEquals(
+        describeUnresolvableNpmImport(new Error('Could not resolve "npm:@scope/pkg@1.0.0/sub"')),
+        "@scope/pkg",
       );
     });
 

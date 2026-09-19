@@ -20,6 +20,7 @@ import {
   describeNpmImport,
   isFrameworkProvidedPackage,
   nodeBuiltinSpecifier,
+  parseNpmSpecifier,
 } from "./project-npm-imports.ts";
 import { createHTTPPlugin } from "#veryfront/transforms/esm/http-bundler.ts";
 import { readHttpModuleText } from "#veryfront/transforms/shared/http-module-response.ts";
@@ -250,7 +251,7 @@ async function readProjectDependencyPins(
 }
 
 /**
- * The `<pkg>@<version>` a compiled binary refused to resolve, or `null` when
+ * The package a compiled binary refused to resolve, or `null` when
  * the failure is unrelated. Deno answers an `npm:` specifier that is not in a
  * compiled binary's frozen package set with
  * `Could not find constraint 'unpdf@1.8.1' in the list of packages.`
@@ -259,12 +260,14 @@ async function readProjectDependencyPins(
  */
 export function describeUnresolvableNpmImport(error: unknown): string | null {
   const message = error instanceof Error ? error.message : String(error);
-  const constraint = /Could not find constraint '([^']+)'/.exec(message);
-  if (constraint?.[1]) return constraint[1];
-  const resolution = /Could not resolve ["']npm:([^"']+)["']/.exec(message);
-  if (resolution?.[1]) return resolution[1];
-  const missing = /npm package '([^']+)' does not exist/.exec(message);
-  return missing?.[1] ?? null;
+  const quoted = /Could not find constraint '([^']+)'/.exec(message)?.[1] ??
+    /Could not resolve ["']npm:([^"']+)["']/.exec(message)?.[1] ??
+    /npm package '([^']+)' does not exist/.exec(message)?.[1];
+  if (quoted === undefined) return null;
+  // Only the package is named: the version and subpath Deno quotes are project
+  // text a framework import carries past classification unchecked, and a valid
+  // pre-release suffix (`zod@4.3.6-<TOKEN>`) can hold anything.
+  return parseNpmSpecifier(quoted)?.name ?? "an npm package";
 }
 
 const ESM_CDN_ORIGIN = new URL(ESM_CDN_BASE).origin;

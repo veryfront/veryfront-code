@@ -616,7 +616,7 @@ export function classifyProjectNpmImport(
       kind: "missing",
       name: parsed.name,
       reason: `the import names a subpath of ${parsed.name} with an empty, \`.\` or ` +
-        `\`..\` segment, or an encoded or backslash separator`,
+        `\`..\` segment, an encoded or backslash separator, or a URL \`?\` or \`#\``,
     };
   }
 
@@ -702,7 +702,9 @@ const ENCODED_PATH_CHARACTER = /%(?:2e|2f|5c)/i;
  */
 function isContainedSubpath(subpath: string): boolean {
   if (subpath === ".") return true;
-  if (subpath.includes("\\") || ENCODED_PATH_CHARACTER.test(subpath)) return false;
+  // `?` and `#` would become the CDN URL's query or fragment -- `?target=` could
+  // override the enforced build target -- instead of part of the package path.
+  if (/[\\?#]/.test(subpath) || ENCODED_PATH_CHARACTER.test(subpath)) return false;
   return subpath.slice(2).split("/").every((segment) =>
     segment.length > 0 && segment !== "." && segment !== ".."
   );
