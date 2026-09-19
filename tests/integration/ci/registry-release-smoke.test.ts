@@ -747,17 +747,27 @@ const MISSING_VERSION_ETARGET = [
   `npm error notarget No matching version found for @veryfront/ext-blob-gcs@${SKEW_VERSION}.`,
 ];
 
+/** A 404 that names only the exact version's tarball URL. */
+const MISSING_TARBALL_ONLY_E404 = [
+  "npm error code E404",
+  `npm error 404 Not Found - GET https://registry.npmjs.org/@veryfront/ext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz - Not found`,
+];
+
 describe("exact-version registry install propagation retry", () => {
   it("retries a stale-packument install and continues once npm sees the version", async () => {
     const result = await runScriptedRegistryInstall(
-      [STALE_PACKUMENT_ERESOLVE, MISSING_VERSION_ETARGET],
+      [
+        STALE_PACKUMENT_ERESOLVE,
+        MISSING_VERSION_ETARGET,
+        MISSING_TARBALL_ONLY_E404,
+      ],
       5,
     );
 
-    // Root install: two skewed attempts, then success; the behavior phase
+    // Root install: three skewed attempts, then success; the behavior phase
     // (stubbed node) then fails, proving the install itself passed.
     assertEquals(result.code, 21, result.stderr);
-    assertEquals(result.installArgs.length, 3);
+    assertEquals(result.installArgs.length, 4);
     assertStringIncludes(
       result.stderr,
       "attempt 1/5 hit npm registry propagation skew (ERESOLVE: veryfront@undefined)",
@@ -765,6 +775,10 @@ describe("exact-version registry install propagation retry", () => {
     assertStringIncludes(
       result.stderr,
       `attempt 2/5 hit npm registry propagation skew (ETARGET: @veryfront/ext-blob-gcs@${SKEW_VERSION})`,
+    );
+    assertStringIncludes(
+      result.stderr,
+      `attempt 3/5 hit npm registry propagation skew (E404: @veryfront/ext-blob-gcs@${SKEW_VERSION})`,
     );
     // Each retry starts from a clean project and revalidates cached metadata.
     assertEquals(result.leftovers, []);

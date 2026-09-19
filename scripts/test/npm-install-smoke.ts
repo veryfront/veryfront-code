@@ -172,7 +172,10 @@ export function registryPropagationSkew(
         if (
           new RegExp(`'${packageName}@${exactVersion}' is not in this registry`)
             .test(output) ||
-          new RegExp(`/-/${basename}-${exactVersion}\\.tgz\\b`).test(output)
+          // The .tgz suffix already bounds the version, and VERSION_END would
+          // reject it as a longer prerelease identifier.
+          new RegExp(`/-/${basename}-${escapeRegExp(version)}\\.tgz\\b`)
+            .test(output)
         ) {
           return `E404: ${spec}`;
         }
