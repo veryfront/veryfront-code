@@ -453,6 +453,16 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("reads optional dependencies, which npm installs like any other", () => {
+      assertEquals(
+        readDependencyPins(JSON.stringify({
+          dependencies: { sharp: "0.34.5", unpdf: "1.8.1" },
+          optionalDependencies: { sharp: "0.35.4", canvas: "^3.1.0" },
+        })),
+        { sharp: "0.35.4", unpdf: "1.8.1", canvas: "^3.1.0" },
+      );
+    });
+
     it("returns no pins for malformed package.json", () => {
       assertEquals(readDependencyPins("{ not json"), {});
     });
@@ -842,6 +852,45 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       const message = error instanceof Error ? error.message : String(error);
       assertEquals((error as { slug?: string }).slug, "dependency-missing");
       assert(message.includes(toolPath), `the detail must name the file, got ${message}`);
+      assert(!message.includes(projectDir), "the detail must not disclose the project path");
+    });
+
+    it("never serves a module built for the other runtime mode", async () => {
+      const files = { [toolPath]: `export default { name: "either-mode" };` };
+      const load = (compiledRuntime: boolean) =>
+        importModule(`file://${projectDir}/${toolPath}`, {
+          ...compiledContext(files),
+          compiledRuntime,
+        });
+
+      const compiled = await load(true);
+      const uncompiled = await load(false);
+
+      assert(compiled !== uncompiled, "an uncompiled load must not reuse the compiled module");
+      assertEquals(await load(true), compiled);
+    });
+
+    it("keeps the project root out of a nested bundler diagnostic", async () => {
+      const error = await assertRejects(
+        () =>
+          importModule(
+            `file://${projectDir}/${toolPath}`,
+            compiledContext({
+              [toolPath]: [
+                `import { helper } from "./missing-helper.ts";`,
+                `export default { name: "nested", helper };`,
+              ].join("\n"),
+            }),
+          ),
+        Error,
+        "missing-helper.ts",
+      );
+      const message = error instanceof Error ? error.message : String(error);
+      assertEquals((error as { slug?: string }).slug, "compilation-error");
+      assert(
+        message.includes('from "src/discovery/__fixtures__"'),
+        `the importer directory must be project-relative, got ${message}`,
+      );
       assert(!message.includes(projectDir), "the detail must not disclose the project path");
     });
 

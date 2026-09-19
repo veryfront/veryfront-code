@@ -6,6 +6,7 @@ import {
   isFrameworkProvidedPackage,
   parseNpmSpecifier,
   type ProjectNpmImport,
+  rangeAdmitsVersion,
 } from "./project-npm-imports.ts";
 
 /**
@@ -148,6 +149,41 @@ describe("exactVersionNamedByRange", () => {
   });
 });
 
+describe("rangeAdmitsVersion", () => {
+  it("evaluates the single-comparator ranges a package.json declares", () => {
+    assertEquals(rangeAdmitsVersion("^1.8.1", "1.9.0"), true);
+    assertEquals(rangeAdmitsVersion("^1.8.1", "1.8.1"), true);
+    assertEquals(rangeAdmitsVersion("^1.8.1", "2.0.0"), false);
+    assertEquals(rangeAdmitsVersion("^1.8.1", "1.8.0"), false);
+    assertEquals(rangeAdmitsVersion("^0.3.1", "0.3.9"), true);
+    assertEquals(rangeAdmitsVersion("^0.3.1", "0.4.0"), false);
+    assertEquals(rangeAdmitsVersion("^0.0.3", "0.0.4"), false);
+    assertEquals(rangeAdmitsVersion("~1.8.1", "1.8.9"), true);
+    assertEquals(rangeAdmitsVersion("~>1.8.1", "1.9.0"), false);
+    assertEquals(rangeAdmitsVersion(">=1.8.1", "3.0.0"), true);
+    assertEquals(rangeAdmitsVersion(">1.8.1", "1.8.1"), false);
+    assertEquals(rangeAdmitsVersion(">1.8.1", "1.8.2"), true);
+    assertEquals(rangeAdmitsVersion("<=1.8.1", "1.8.0"), true);
+    assertEquals(rangeAdmitsVersion("<2.0.0", "2.0.0"), false);
+    assertEquals(rangeAdmitsVersion("<2.0.0", "1.9.9"), true);
+    assertEquals(rangeAdmitsVersion("=1.8.1", "1.8.2"), false);
+    assertEquals(rangeAdmitsVersion("1.8.1", "1.8.1"), true);
+  });
+
+  it("admits a pre-release only as the identical version", () => {
+    assertEquals(rangeAdmitsVersion("^1.8.1", "1.9.0-beta.1"), false);
+    assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.9.0-beta.1"), true);
+    assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.9.0"), false);
+  });
+
+  it("declines to evaluate anything that is not a single comparator", () => {
+    for (const range of ["*", "1.x", ">=1 <2", "^1.0.0 || ^2.0.0", "latest", "workspace:*"]) {
+      assertEquals(rangeAdmitsVersion(range, "1.8.1"), null, range);
+    }
+    assertEquals(rangeAdmitsVersion("^1.8.1", "^1.8.1"), null);
+  });
+});
+
 describe("isFrameworkProvidedPackage", () => {
   it("claims the specifiers only the runtime may answer", () => {
     assertEquals(isFrameworkProvidedPackage("zod"), true);
@@ -265,10 +301,9 @@ describe("classifyProjectNpmImport", () => {
   });
 
   it("serves the declared version for an import that carries a range", () => {
-    // There is no semver resolver here, so a range in the specifier cannot be
-    // checked against the pin. The declared pin is the conservative answer:
-    // it is a version the project wrote, and it is what an exact import of the
-    // same package would have got.
+    // A range in the specifier that admits the pin is served the pin: it is a
+    // version the project wrote, and it is what an exact import of the same
+    // package would have got.
     assertEquals(classify("npm:unpdf@^1.8.0", { unpdf: "1.8.1" }), {
       kind: "cdn",
       name: "unpdf",
@@ -387,6 +422,37 @@ describe("classifyProjectNpmImport", () => {
       name: "unpdf",
       reason: "this runtime does not carry unpdf and the project declares no dependency on it, " +
         'so the version range "^1.8.0" in the import cannot be resolved',
+    });
+  });
+
+  it("serves the exact version an import names when the declaration admits it", () => {
+    assertEquals(classify("npm:unpdf@1.9.0", { unpdf: "^1.8.1" }), {
+      kind: "cdn",
+      name: "unpdf",
+      version: "1.9.0",
+      subpath: ".",
+    });
+    // A declaration that names no single version still admits an exact import.
+    assertEquals(classify("npm:unpdf@1.9.0", { unpdf: ">1.8.1" }), {
+      kind: "cdn",
+      name: "unpdf",
+      version: "1.9.0",
+      subpath: ".",
+    });
+    // The runtime's own copy still wins when it is the admitted version.
+    assertEquals(classify("npm:sharp@0.35.4", { sharp: "^0.35.0" }), { kind: "runtime" });
+    assertEquals(classify("npm:unpdf@2.0.0", { unpdf: "^1.8.1" }), {
+      kind: "missing",
+      name: "unpdf",
+      reason: "the import asks for unpdf@2.0.0 but package.json declares unpdf@^1.8.1",
+    });
+  });
+
+  it("refuses an import range that excludes the declared version", () => {
+    assertEquals(classify("npm:unpdf@>2.0.0", { unpdf: "1.8.1" }), {
+      kind: "missing",
+      name: "unpdf",
+      reason: "the import asks for unpdf@>2.0.0 but package.json declares unpdf@1.8.1",
     });
   });
 });

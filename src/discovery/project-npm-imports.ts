@@ -15,9 +15,9 @@
  *    builtin in both its bare and `node:` form. A second copy would break the
  *    identity comparisons the schema and element registries make against the
  *    framework's own objects, and a Node builtin has no npm coordinate at all.
- * 2. An import whose EXACT version contradicts the project's declaration is
- *    refused outright: serving the declared version would run code the import
- *    did not ask for.
+ * 2. An import whose version the project's declaration does not admit, or
+ *    whose range excludes the declared version, is refused outright: serving
+ *    the declared version would run code the import did not ask for.
  * 3. A version the runtime already embeds stays external, as the single
  *    offline copy.
  * 4. A declaration the runtime does NOT carry is inlined from the version that
@@ -218,6 +218,71 @@ export function exactVersionNamedByRange(range: unknown): string | null {
   return EXACT_VERSION.test(candidate) ? candidate : null;
 }
 
+/** `major.minor.patch` of an exact version, and whether it is a pre-release. */
+function versionParts(version: string): { core: [number, number, number]; pre: boolean } {
+  const [major, minor, patch] = version.split(/[-+]/, 1)[0]!.split(".").map(Number);
+  return { core: [major!, minor!, patch!], pre: version.includes("-") };
+}
+
+function compareCores(left: readonly number[], right: readonly number[]): number {
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) return left[index]! < right[index]! ? -1 : 1;
+  }
+  return 0;
+}
+
+/** The exclusive upper bound of a caret range, per npm's rules for `0.x`. */
+function caretCeiling([major, minor, patch]: readonly number[]): [number, number, number] {
+  if (major! > 0) return [major! + 1, 0, 0];
+  if (minor! > 0) return [0, minor! + 1, 0];
+  return [0, 0, patch! + 1];
+}
+
+/**
+ * Does a single-comparator range admit an exact version? `null` when the range
+ * is not one this module evaluates -- `*`, `1.x`, `>=1 <2`, `a || b`, a
+ * dist-tag -- so the caller keeps its own conservative answer for those.
+ *
+ * Covers exactly the forms {@link exactVersionNamedByRange} reads, plus the
+ * strict `<` and `>` bounds. A pre-release on either side is admitted only by
+ * the identical version: npm excludes pre-releases from a range unless the
+ * range names one on the same core version, and equality is the conservative
+ * reading of that rule.
+ *
+ * @internal Exported for testing only.
+ */
+export function rangeAdmitsVersion(range: string, version: string): boolean | null {
+  const trimmed = range.trim();
+  if (URL_SCHEME.test(trimmed) || !EXACT_VERSION.test(version)) return null;
+  const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
+  const bound = operator === undefined ? trimmed : trimmed.slice(operator.length).trimStart();
+  if (!EXACT_VERSION.test(bound)) return null;
+  if (bound === version) return operator !== "<" && operator !== ">";
+
+  const wanted = versionParts(version);
+  const named = versionParts(bound);
+  if (wanted.pre || named.pre) return false;
+  const order = compareCores(wanted.core, named.core);
+  switch (operator) {
+    case "^":
+      return order >= 0 && compareCores(wanted.core, caretCeiling(named.core)) < 0;
+    case "~":
+    case "~>":
+      return order >= 0 && compareCores(wanted.core, [named.core[0], named.core[1] + 1, 0]) < 0;
+    case ">=":
+      return order >= 0;
+    case ">":
+      return order > 0;
+    case "<=":
+      return order <= 0;
+    case "<":
+      return order < 0;
+    default:
+      // `=`, `v` and a bare version admit only themselves.
+      return order === 0;
+  }
+}
+
 export interface ParsedNpmSpecifier {
   /** Package name, without the `npm:` scheme, the version or the subpath. */
   name: string;
@@ -331,9 +396,13 @@ function isEmbedded(
  * `pins` holds package.json's declarations verbatim, ranges included;
  * {@link exactVersionNamedByRange} reduces each to the one version it names.
  * There is no semver resolver here and deliberately so -- see that function --
- * so every comparison below is between a version the project literally wrote
- * and a version the binary actually froze. Implements the module header's
+ * so every version served below is one the project literally wrote, and every
+ * embedded check is against a version the binary actually froze. Implements the module header's
  * precedence 1-6 in that order.
+ *
+ * An import that names an exact version is served that version when the
+ * declaration admits it ({@link rangeAdmitsVersion}), and an import that names
+ * a range is refused when the range excludes the declared pin.
  *
  * One consequence worth stating: "satisfied by an embedded version" is read as
  * "the version the declaration NAMES is embedded", not as a semver range test.
@@ -350,42 +419,71 @@ export function classifyProjectNpmImport(
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
+  if (isFrameworkProvidedPackage(parsed.name)) return { kind: "runtime" };
 
-  const { name, version, subpath } = parsed;
-  if (isFrameworkProvidedPackage(name)) return { kind: "runtime" };
-
-  const declared = pins[name];
+  const declared = pins[parsed.name];
   const pin = declared === undefined ? null : exactVersionNamedByRange(declared);
-  const requested = version !== null && EXACT_VERSION.test(version) ? version : null;
+  const request = { ...parsed, declared, pin, embedded };
+  return parsed.version !== null && EXACT_VERSION.test(parsed.version)
+    ? classifyExactImport(request, parsed.version)
+    : classifyUnversionedImport(request);
+}
 
-  if (requested !== null) {
-    // A version in the specifier that contradicts the declared pin must not be
-    // served as the pin: the project would run code it did not ask for.
-    if (pin !== null && requested !== pin) {
-      return {
-        kind: "missing",
-        name,
-        reason: `the import asks for ${name}@${requested} but package.json declares ` +
-          `${name}@${declared}`,
-      };
-    }
-    if (isEmbedded(embedded, name, requested)) return { kind: "runtime" };
-    if (pin !== null) return { kind: "cdn", name, version: pin, subpath };
+/** One import to classify, with what the project declared for its package. */
+interface ImportRequest extends ParsedNpmSpecifier {
+  declared: string | undefined;
+  pin: string | null;
+  embedded: Readonly<Record<string, readonly string[]>>;
+}
+
+/** An import that names one exact version (`npm:unpdf@1.8.1`). */
+function classifyExactImport(
+  { name, subpath, declared, pin, embedded }: ImportRequest,
+  requested: string,
+): ProjectNpmImport {
+  const admitted = declared !== undefined && rangeAdmitsVersion(declared, requested) === true;
+  // A version in the specifier that the declaration does not admit must not be
+  // served as the pin: the project would run code it did not ask for.
+  if (pin !== null && !admitted) {
     return {
       kind: "missing",
       name,
-      reason: declared === undefined
-        ? `this runtime does not carry ${name}@${requested} and the project declares no ` +
-          `dependency on ${name}`
-        : `this runtime does not carry ${name}@${requested} and package.json declares ` +
-          `"${declared}", which names no single version to fetch -- declare an exact version`,
+      reason: `the import asks for ${name}@${requested} but package.json declares ` +
+        `${name}@${declared}`,
     };
   }
+  if (isEmbedded(embedded, name, requested)) return { kind: "runtime" };
+  // The declaration admits the exact version the import names -- `^1.8.1`
+  // admits `npm:unpdf@1.9.0` -- so that version is the one to serve.
+  if (admitted) return { kind: "cdn", name, version: requested, subpath };
+  return {
+    kind: "missing",
+    name,
+    reason: declared === undefined
+      ? `this runtime does not carry ${name}@${requested} and the project declares no ` +
+        `dependency on ${name}`
+      : `this runtime does not carry ${name}@${requested} and package.json declares ` +
+        `"${declared}", which names no single version to fetch -- declare an exact version`,
+  };
+}
 
-  // The specifier names no version, or names a range this module does not
-  // resolve. Either way the declared pin is the only coordinate available, and
-  // serving it is the conservative answer: it is a version the project wrote.
+/** An import that names no version, or names a range. */
+function classifyUnversionedImport(
+  { name, version, subpath, declared, pin, embedded }: ImportRequest,
+): ProjectNpmImport {
   if (pin !== null) {
+    // A range in the import that excludes the declared pin cannot be served
+    // by it: `npm:unpdf@>2.0.0` against `"unpdf": "1.8.1"` would run 1.8.1.
+    // A range this module does not evaluate keeps the pin, which is a version
+    // the project wrote.
+    if (version !== null && rangeAdmitsVersion(version, pin) === false) {
+      return {
+        kind: "missing",
+        name,
+        reason: `the import asks for ${name}@${version} but package.json declares ` +
+          `${name}@${declared}`,
+      };
+    }
     // The runtime already carries exactly what the project declared: keep the
     // single in-binary copy rather than fetch a second one.
     if (isEmbedded(embedded, name, pin)) return { kind: "runtime" };

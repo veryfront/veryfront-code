@@ -204,9 +204,15 @@ export function readDependencyPins(packageJsonText: string): Record<string, stri
     return {};
   }
 
-  const pkg = parsed as { dependencies?: unknown; devDependencies?: unknown };
+  const pkg = parsed as {
+    dependencies?: unknown;
+    devDependencies?: unknown;
+    optionalDependencies?: unknown;
+  };
   const pins: Record<string, string> = {};
-  for (const group of [pkg?.dependencies, pkg?.devDependencies]) {
+  // npm installs an optional dependency like any other, and lets its
+  // `optionalDependencies` entry override a `dependencies` entry of the same name.
+  for (const group of [pkg?.dependencies, pkg?.devDependencies, pkg?.optionalDependencies]) {
     if (!group || typeof group !== "object") continue;
     for (const [name, range] of Object.entries(group as Record<string, unknown>)) {
       if (typeof range === "string" && range.trim().length > 0) pins[name] = range.trim();
@@ -535,31 +541,57 @@ function describeBundleFailure(failure: unknown): string {
  * @internal Exported for testing only.
  */
 export function discoveryPathForDisplay(filePath: string, baseDir?: string): string {
-  let root = baseDir ?? "";
-  while (root.endsWith("/")) root = root.slice(0, -1);
+  const root = withoutTrailingSlashes(baseDir ?? "");
   if (root.length > 0 && filePath.startsWith(`${root}/`)) {
     return filePath.slice(root.length + 1);
   }
   // A relative path is already free of machine layout; leave it as written.
-  if (!filePath.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(filePath)) return filePath;
+  if (!isAbsoluteMachinePath(filePath)) return filePath;
   return pathHelper.basename(filePath);
 }
 
-/** The raw entry path, and the only form of it that may reach the user. */
+function withoutTrailingSlashes(path: string): string {
+  let trimmed = path;
+  while (trimmed.endsWith("/")) trimmed = trimmed.slice(0, -1);
+  return trimmed;
+}
+
+function isAbsoluteMachinePath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
+/**
+ * The raw entry path, the only form of it that may reach the user, and the
+ * absolute project root to take out of anything else the bundler quotes (empty
+ * when the root is relative and so discloses no machine layout).
+ */
 interface DiscoveryPathNames {
   raw: string;
   display: string;
+  root: string;
+}
+
+function discoveryPathNames(filePath: string, baseDir?: string): DiscoveryPathNames {
+  const root = withoutTrailingSlashes(baseDir ?? "");
+  return {
+    raw: filePath,
+    display: discoveryPathForDisplay(filePath, baseDir),
+    root: isAbsoluteMachinePath(root) ? root : "",
+  };
 }
 
 /**
  * `text` with every mention of the raw entry path replaced by its display
- * form. A platform or bundler message quotes the path it was handed -- Deno's
- * `readTextFile '<absolute path>'`, esbuild's resolve diagnostics -- which
- * would put the machine layout back into detail {@link discoveryPathForDisplay}
- * just took out.
+ * form, and every other path under the project root rendered relative to it.
+ * A platform or bundler message quotes the paths it was handed -- Deno's
+ * `readTextFile '<absolute path>'`, esbuild's resolve diagnostics, the fsAdapter
+ * plugin's importer directory -- which would put the machine layout back into
+ * detail {@link discoveryPathForDisplay} just took out.
  */
 function withDisplayPath(text: string, paths: DiscoveryPathNames): string {
-  return paths.raw === paths.display ? text : text.split(paths.raw).join(paths.display);
+  const shown = paths.raw === paths.display ? text : text.split(paths.raw).join(paths.display);
+  if (paths.root.length === 0) return shown;
+  return shown.split(`${paths.root}/`).join("").split(paths.root).join(".");
 }
 
 /**
@@ -622,10 +654,7 @@ export async function importModule(
   const filePath = file.replace("file://", "");
   // Everything below names the file to the user through this, never through
   // `filePath`: on a local filesystem run that is an absolute machine path.
-  const paths: DiscoveryPathNames = {
-    raw: filePath,
-    display: discoveryPathForDisplay(filePath, context.baseDir),
-  };
+  const paths = discoveryPathNames(filePath, context.baseDir);
 
   let source: string;
   try {
@@ -651,10 +680,13 @@ export async function importModule(
   // contents re-verify, and a pin bump changes the inlined package source
   // without touching the entry file.
   const cacheNamespace = context.cacheNamespace ?? context.baseDir ?? "";
+  // Compiled and uncompiled runs bundle the same source differently, so a
+  // module built for one mode must never be served to the other.
   const cacheKey = JSON.stringify([
     cacheNamespace,
     file,
     await computeHash(source),
+    compiled,
     dependencyPins,
   ]);
   const cachedEntries = transpileCache.get(cacheKey);
