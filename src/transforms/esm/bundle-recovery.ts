@@ -363,7 +363,7 @@ function claimBundleFetches(cacheDir: string, hashes: readonly string[]): Bundle
     owns: (hash) => owned.has(hash),
     release,
     releaseAll: () => {
-      for (const hash of [...owned.keys()]) release(hash);
+      for (const hash of Array.from(owned.keys())) release(hash);
     },
   };
 }

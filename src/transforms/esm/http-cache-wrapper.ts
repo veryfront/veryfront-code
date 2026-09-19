@@ -179,6 +179,57 @@ async function parseVerifiedImportMap(
   return importMap;
 }
 
+type ParsedIdentity = HttpCacheIdentityMetadata | HttpCacheIdentityReference | null;
+
+/** Read and parse the identity record of every hash in batches. */
+async function readIdentityReferences(
+  distributed: CacheBackend,
+  hashes: readonly string[],
+): Promise<Map<string, ParsedIdentity>> {
+  const raw = await readBatch(distributed, hashes.map((hash) => distributedKey("identity", hash)));
+  return new Map(
+    hashes.map((hash) => {
+      const value = raw.get(distributedKey("identity", hash));
+      return [hash, value ? parseIdentityMetadata(value) : null] as const;
+    }),
+  );
+}
+
+/** Read each shared import map referenced by `identities` once. */
+async function readVerifiedImportMaps(
+  distributed: CacheBackend,
+  identities: Iterable<ParsedIdentity>,
+): Promise<Map<string, ImportMapConfig>> {
+  const fingerprints = new Set<string>();
+  for (const parsed of identities) {
+    if (parsed && !("importMap" in parsed)) fingerprints.add(parsed.importMapFingerprint);
+  }
+  const raw = await readBatch(
+    distributed,
+    Array.from(fingerprints, (fingerprint) => distributedKey("import-map", fingerprint)),
+  );
+  const importMaps = new Map<string, ImportMapConfig>();
+  for (const fingerprint of fingerprints) {
+    const importMap = await parseVerifiedImportMap(
+      raw.get(distributedKey("import-map", fingerprint)) ?? null,
+      fingerprint,
+    );
+    if (importMap) importMaps.set(fingerprint, importMap);
+  }
+  return importMaps;
+}
+
+/** Complete an identity reference with its shared import map, when available. */
+function resolveIdentityReference(
+  parsed: ParsedIdentity,
+  importMaps: ReadonlyMap<string, ImportMapConfig>,
+): HttpCacheIdentityMetadata | null {
+  if (!parsed) return null;
+  if ("importMap" in parsed) return parsed;
+  const importMap = importMaps.get(parsed.importMapFingerprint);
+  return importMap ? { ...parsed, importMap } : null;
+}
+
 /**
  * Read many keys in chunks, using the backend batch read when it has one.
  * A failed read leaves its keys out, like a missing entry.
@@ -628,43 +679,12 @@ class HttpBundleCache {
     const distributed = await resolveDistributedCache();
     if (!distributed || hashStrs.length === 0) return results;
 
-    const rawIdentities = await readBatch(
-      distributed,
-      hashStrs.map((hash) => distributedKey("identity", hash)),
-    );
-    const parsedIdentities = new Map(
-      hashStrs.map((hash) => {
-        const raw = rawIdentities.get(distributedKey("identity", hash));
-        return [hash, raw ? parseIdentityMetadata(raw) : null] as const;
-      }),
-    );
-
-    const fingerprints = new Set<string>();
-    for (const parsed of parsedIdentities.values()) {
-      if (parsed && !("importMap" in parsed)) fingerprints.add(parsed.importMapFingerprint);
-    }
-    const importMaps = new Map<string, ImportMapConfig>();
-    const rawImportMaps = await readBatch(
-      distributed,
-      [...fingerprints].map((fingerprint) => distributedKey("import-map", fingerprint)),
-    );
-    for (const fingerprint of fingerprints) {
-      const importMap = await parseVerifiedImportMap(
-        rawImportMaps.get(distributedKey("import-map", fingerprint)) ?? null,
-        fingerprint,
-      );
-      if (importMap) importMaps.set(fingerprint, importMap);
-    }
+    const parsedIdentities = await readIdentityReferences(distributed, hashStrs);
+    const importMaps = await readVerifiedImportMaps(distributed, parsedIdentities.values());
 
     const withoutMetadata: string[] = [];
     for (const [hash, parsed] of parsedIdentities) {
-      let metadata: HttpCacheIdentityMetadata | null = null;
-      if (parsed && "importMap" in parsed) {
-        metadata = parsed;
-      } else if (parsed) {
-        const importMap = importMaps.get(parsed.importMapFingerprint);
-        if (importMap) metadata = { ...parsed, importMap };
-      }
+      const metadata = resolveIdentityReference(parsed, importMaps);
       if (metadata) results.set(hash, { metadata, originalUrl: metadata.url });
       else withoutMetadata.push(hash);
     }

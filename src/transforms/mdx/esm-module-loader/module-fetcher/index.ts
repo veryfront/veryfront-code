@@ -305,41 +305,39 @@ export async function fetchAndCacheModule(
     fetchAndCacheModule(path, context, parent, nextLineage);
 
   const isEntryFetch = parentModulePath === undefined && lineage.size === 0;
-  const fetchPromise = context.sourceCapture
-    ? captureResolvedModule(
-      normalizedPath,
-      context,
-      fetchAndCacheModuleFn,
-      context.sourceCapture,
-      reference.suffix,
-    )
-    : isEntryFetch
-    // Concurrent requests for the same entry share one resolution of its graph.
-    ? runSharedModuleFetch(
-      getSharedModuleFetchKey(context, bindingKey),
-      () =>
-        doFetchAndCacheModule(
-          normalizedPath,
-          context,
-          fetchAndCacheModuleFn,
-          projectSlug,
-          parentModulePath,
-        ),
-      {
-        // Modules another request resolved still count toward this
-        // request's graph limit.
-        onResolved: (recordedModules) => admitSharedModules(moduleGraph, recordedModules),
-        // The leading request's deadline is not this request's deadline.
-        retryAloneOn: (error) => error instanceof TransformTreeTimeoutError,
-      },
-    )
-    : doFetchAndCacheModule(
+  const resolveModule = (): Promise<string | null> =>
+    doFetchAndCacheModule(
       normalizedPath,
       context,
       fetchAndCacheModuleFn,
       projectSlug,
       parentModulePath,
     );
+  let fetchPromise: Promise<string | null>;
+  if (context.sourceCapture) {
+    fetchPromise = captureResolvedModule(
+      normalizedPath,
+      context,
+      fetchAndCacheModuleFn,
+      context.sourceCapture,
+      reference.suffix,
+    );
+  } else if (isEntryFetch) {
+    // Concurrent requests for the same entry share one resolution of its graph.
+    fetchPromise = runSharedModuleFetch(
+      getSharedModuleFetchKey(context, bindingKey),
+      resolveModule,
+      {
+        // Modules another request resolved still count toward this request's
+        // graph limit.
+        onResolved: (recordedModules) => admitSharedModules(moduleGraph, recordedModules),
+        // The leading request's deadline is not this request's deadline.
+        retryAloneOn: (error) => error instanceof TransformTreeTimeoutError,
+      },
+    );
+  } else {
+    fetchPromise = resolveModule();
+  }
 
   inFlight?.set(bindingKey, fetchPromise);
 

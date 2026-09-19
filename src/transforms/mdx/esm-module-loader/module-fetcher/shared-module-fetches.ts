@@ -21,6 +21,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { ModuleFetcherContext } from "../types.ts";
 import { recordModuleToSession, runWithModuleRecorder } from "./render-sessions.ts";
@@ -62,7 +63,7 @@ export function getSharedModuleFetchKey(
     context.reactVersion ?? REACT_DEFAULT_VERSION,
     context.dependencyPinningCacheKey ?? "off",
     context.moduleServerOrigin ?? "",
-    [...(context.serverExternalPackages ?? [])].sort(),
+    [...(context.serverExternalPackages ?? [])].sort(compareStrings),
     context.strictMissingModules ?? true,
     bindingKey,
   ]);
