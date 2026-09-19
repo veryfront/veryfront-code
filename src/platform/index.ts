@@ -21,6 +21,7 @@ export type {
   DependencySnapshotStoreHandle,
 } from "./adapters/dependency-snapshot-store.ts";
 export { createDependencySnapshotStoreHandle } from "./adapters/dependency-snapshot-store.ts";
+export { createCacheDependencySnapshotStoreHandle } from "#veryfront/cache/dependency-snapshot-store.ts";
 
 // Compat: process
 export {
