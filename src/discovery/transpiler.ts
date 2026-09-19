@@ -337,7 +337,31 @@ export function esmCdnModuleSpecifier(url: URL): string | null {
  * a restart still re-fetches (see the follow-up on an on-disk dependency cache).
  */
 const MAX_CACHED_DEPENDENCY_SOURCES = 256;
+/**
+ * The total source text the cache may hold. The entry cap alone let a shared
+ * runtime retain 256 bodies of up to MAX_BUNDLE_CHUNK_SIZE_BYTES each -- about
+ * 1 GiB of tenant-selected source -- before evicting anything.
+ */
+const MAX_CACHED_DEPENDENCY_SOURCE_BYTES = 32 * 1024 * 1024;
 const dependencySourceCache = new Map<string, { body: string; contentType: string }>();
+let dependencySourceCacheBytes = 0;
+
+/** UTF-16 code units are what a cached string costs, at up to two bytes each. */
+function cachedSourceBytes(body: string): number {
+  return body.length * 2;
+}
+
+function evictOldestDependencySource(): void {
+  const oldest = dependencySourceCache.entries().next();
+  if (oldest.done) return;
+  dependencySourceCache.delete(oldest.value[0]);
+  dependencySourceCacheBytes -= cachedSourceBytes(oldest.value[1].body);
+}
+
+function clearDependencySourceCache(): void {
+  dependencySourceCache.clear();
+  dependencySourceCacheBytes = 0;
+}
 
 function cacheableSourceKey(input: RequestInfo | URL): string | null {
   if (typeof input === "string") return input;
@@ -372,6 +396,7 @@ type DependencySourceTransport = (
  */
 export function createProjectDependencySourceFetcher(
   transport: DependencySourceTransport,
+  { maxBytes = MAX_CACHED_DEPENDENCY_SOURCE_BYTES }: { maxBytes?: number } = {},
 ): DependencySourceTransport {
   return async (input, init) => {
     const key = cacheableSourceKey(input);
@@ -390,12 +415,15 @@ export function createProjectDependencySourceFetcher(
     // An esm.sh build failure is served as HTML with a 200; caching it would
     // pin that failure for the life of the process.
     const isHtml = contentType.includes("text/html") || body.trimStart().startsWith("<");
-    if (!isHtml) {
-      if (dependencySourceCache.size >= MAX_CACHED_DEPENDENCY_SOURCES) {
-        const oldest = dependencySourceCache.keys().next();
-        if (!oldest.done) dependencySourceCache.delete(oldest.value);
-      }
+    const bytes = cachedSourceBytes(body);
+    if (!isHtml && bytes <= maxBytes) {
+      while (
+        dependencySourceCache.size > 0 &&
+        (dependencySourceCache.size >= MAX_CACHED_DEPENDENCY_SOURCES ||
+          dependencySourceCacheBytes + bytes > maxBytes)
+      ) evictOldestDependencySource();
       dependencySourceCache.set(key, { body, contentType });
+      dependencySourceCacheBytes += bytes;
     }
     return new Response(body, { headers: { "content-type": contentType } });
   };
@@ -411,6 +439,9 @@ export const fetchProjectDependencySource: DependencySourceTransport =
   createProjectDependencySourceFetcher((input, init) =>
     guardedOutboundFetch(input, init, { authorizeUrl: authorizeProjectDependencySourceUrl })
   );
+
+/** Where a deferred import nothing may serve is bundled as a throwing module. */
+const MISSING_DEPENDENCY_NAMESPACE = "veryfront-missing-npm-dependency";
 
 /**
  * Resolve a project's npm imports the way a compiled runtime can serve them.
@@ -438,6 +469,23 @@ export function createProjectDependencyCdnPlugin(
   return {
     name: "veryfront-project-npm-cdn",
     setup(build: PluginBuild) {
+      // A URL the project imports directly is the runtime's to fetch, exactly
+      // as on a run with no declared dependency. Registered before the HTTP
+      // plugin, whose resolver would otherwise claim it and send it to a
+      // fetcher that admits only the pinned CDN -- turning an unrelated
+      // `https://deno.land/...` import into a compilation error.
+      build.onResolve(
+        { filter: /^https?:\/\// },
+        (args) => args.namespace === "http-url" ? undefined : { path: args.path, external: true },
+      );
+
+      // A deferred import nothing may serve is bundled as a module that throws
+      // when the import is reached, carrying the classified reason.
+      build.onLoad({ filter: /.*/, namespace: MISSING_DEPENDENCY_NAMESPACE }, (args) => ({
+        contents: `throw new Error(${JSON.stringify(String(args.pluginData ?? ""))});`,
+        loader: "js",
+      }));
+
       // Registered before the HTTP plugin's own http-url resolver so a
       // framework-provided package reached transitively from fetched CDN
       // source (esm.sh emits `/zod@3.25.76/es2022/zod.mjs`) is handed back to
@@ -487,24 +535,33 @@ export function createProjectDependencyCdnPlugin(
         }
 
         if (decision.kind === "missing") {
+          // The specifier is project source and can carry a credential
+          // (`npm:pkg@https://<TOKEN>@host/x`), so only its redacted form is
+          // reported.
+          const shown = describeNpmImport(args.path);
+
           // A deferred `import()` inside a handler body is the project's own
           // lazy path, and often an optional one behind a try/catch. Failing
           // the bundle for it would delete every unrelated export of the file
           // -- tools, agents, schemas -- from discovery, which is a strictly
-          // larger blast radius than the failure it replaces. It is left
-          // external, exactly as before #1440: the module still loads and only
-          // that import fails, at call time, when it is actually reached.
+          // larger blast radius than the failure it replaces. The failure is
+          // deferred to call time instead, when the import is actually reached.
+          // It is not handed back to the runtime: for an import the project's
+          // own declaration contradicts, the runtime could load the very
+          // version package.json rules out.
           //
           // A STATIC import is different: nothing can load the module without
           // it, so the file was going to fail either way. Failing here is the
           // same blast radius reported earlier and with a classified reason
           // instead of Deno's raw constraint text.
-          if (args.kind === "dynamic-import") return undefined;
+          if (args.kind === "dynamic-import") {
+            return {
+              path: shown,
+              namespace: MISSING_DEPENDENCY_NAMESPACE,
+              pluginData: `Cannot load "${shown}": ${decision.reason}`,
+            };
+          }
 
-          // The specifier is project source and can carry a credential
-          // (`npm:pkg@https://<TOKEN>@host/x`), so only its redacted form is
-          // reported.
-          const shown = describeNpmImport(args.path);
           onMissing(shown, decision.reason);
           // Stops the build; importModule turns the recorded specifiers into a
           // classified DEPENDENCY_MISSING rather than reading this text back.
@@ -848,5 +905,5 @@ export async function importModule(
  */
 export function clearTranspileCache(): void {
   transpileCache.clear();
-  dependencySourceCache.clear();
+  clearDependencySourceCache();
 }

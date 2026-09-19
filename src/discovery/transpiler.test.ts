@@ -99,21 +99,36 @@ type ResolveArgs = Parameters<ResolveCallback>[0];
  * The `onResolve` callbacks a plugin registers, by namespace, captured through
  * a fake build so each resolver decision can be asserted without a bundle.
  */
+type LoadCallback = Parameters<PluginBuild["onLoad"]>[1];
+
 function captureResolvers(
   plugin: { setup(build: PluginBuild): void | Promise<void> },
-): { httpUrl: ResolveCallback; bare: ResolveCallback } {
-  const resolvers: Array<{ namespace?: string; callback: ResolveCallback }> = [];
+): {
+  httpUrl: ResolveCallback;
+  bare: ResolveCallback;
+  remote: ResolveCallback;
+  loaders: Map<string, LoadCallback>;
+} {
+  const resolvers: Array<{ filter: RegExp; namespace?: string; callback: ResolveCallback }> = [];
+  const loaders = new Map<string, LoadCallback>();
   const build = {
     onResolve(options: { filter: RegExp; namespace?: string }, callback: ResolveCallback) {
-      resolvers.push({ namespace: options.namespace, callback });
+      resolvers.push({ ...options, callback });
     },
-    onLoad() {},
+    onLoad(options: { filter: RegExp; namespace?: string }, callback: LoadCallback) {
+      loaders.set(options.namespace ?? "file", callback);
+    },
   } as unknown as PluginBuild;
   plugin.setup(build);
   const httpUrl = resolvers.find((resolver) => resolver.namespace === "http-url");
-  const bare = resolvers.find((resolver) => resolver.namespace === undefined);
-  assert(httpUrl && bare, "the plugin must register both resolvers");
-  return { httpUrl: httpUrl.callback, bare: bare.callback };
+  const remote = resolvers.find((resolver) =>
+    resolver.namespace === undefined && resolver.filter.test("https://example.com/x.js")
+  );
+  const bare = resolvers.find((resolver) =>
+    resolver.namespace === undefined && resolver !== remote
+  );
+  assert(httpUrl && bare && remote, "the plugin must register all three resolvers");
+  return { httpUrl: httpUrl.callback, bare: bare.callback, remote: remote.callback, loaders };
 }
 
 function resolveArgs(overrides: Partial<ResolveArgs>): ResolveArgs {
@@ -716,6 +731,36 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assert(!JSON.stringify({ result, missing }).includes("<TOKEN>"), "the token must not leak");
     });
 
+    it("defers a dynamic import the declaration contradicts instead of loading it", async () => {
+      const { bare } = captureResolvers(
+        createProjectDependencyCdnPlugin({ lodash: "1.0.0" }, () => {}),
+      );
+
+      const result = await bare(
+        resolveArgs({ path: "npm:lodash@3.10.1", kind: "dynamic-import" }),
+      );
+
+      assert(result && typeof result === "object" && "namespace" in result);
+      assert(result.external !== true, "a contradicted import must not reach the runtime");
+    });
+
+    it("leaves a URL the project imports directly to the runtime", async () => {
+      const { remote } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
+
+      for (const path of ["https://deno.land/std/path/mod.ts", "https://esm.sh/zod@3.25.76"]) {
+        assertEquals(await remote(resolveArgs({ path })), { path, external: true });
+      }
+      // A URL inside fetched CDN source stays with the HTTP plugin and the
+      // framework guard: esbuild runs a namespace-less resolver everywhere.
+      assertEquals(
+        await remote(resolveArgs({
+          path: "https://esm.sh/zod@3.25.76/es2022/zod.mjs",
+          namespace: "http-url",
+        })),
+        undefined,
+      );
+    });
+
     it("pins bare Node builtins and leaves framework packages to the runtime", async () => {
       const { bare } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
 
@@ -732,7 +777,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
 
     it("fails a static import nothing can serve and defers a dynamic one", async () => {
       const missing: Array<{ specifier: string; reason: string }> = [];
-      const { bare } = captureResolvers(
+      const { bare, loaders } = captureResolvers(
         createProjectDependencyCdnPlugin({}, (specifier, reason) => {
           missing.push({ specifier, reason });
         }),
@@ -740,11 +785,23 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       const reason = "this runtime does not carry @veryfront-fixture/absent and the project " +
         "declares no dependency on it";
 
-      assertEquals(
-        await bare(resolveArgs({ path: "@veryfront-fixture/absent", kind: "dynamic-import" })),
-        undefined,
+      // Deferred: bundled as a module that throws when the import is reached,
+      // never handed back to the runtime to resolve on its own terms.
+      const deferred = await bare(
+        resolveArgs({ path: "@veryfront-fixture/absent", kind: "dynamic-import" }),
       );
       assertEquals(missing, []);
+      assert(deferred && typeof deferred === "object" && "namespace" in deferred);
+      const loader = loaders.get(deferred.namespace!);
+      assert(loader, "the deferred failure namespace must have a loader");
+      const loaded = await loader({
+        path: deferred.path!,
+        namespace: deferred.namespace!,
+        pluginData: deferred.pluginData,
+      });
+      const contents = String(loaded && "contents" in loaded ? loaded.contents : "");
+      assert(contents.startsWith("throw new Error("), `got ${contents}`);
+      assert(contents.includes(reason), "the thrown error must carry the classified reason");
 
       assertEquals(await bare(resolveArgs({ path: "@veryfront-fixture/absent" })), {
         errors: [{ text: `Cannot resolve "@veryfront-fixture/absent": ${reason}` }],
@@ -824,6 +881,40 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
 
       await (await fetchSource(request())).text();
       await (await fetchSource(request())).text();
+
+      assertEquals(calls, 2);
+    });
+
+    it("keeps the cached sources within a byte budget", async () => {
+      const requested: string[] = [];
+      // 20 UTF-16 code units are budgeted as 40 bytes.
+      const body = "x".repeat(20);
+      const fetchSource = createProjectDependencySourceFetcher((input) => {
+        requested.push(String(input));
+        return Promise.resolve(new Response(body, { headers: javascript }));
+      }, { maxBytes: 100 });
+      const url = (index: number) => `https://esm.sh/budget-${index}@1.0.0`;
+
+      for (let index = 0; index < 3; index++) await (await fetchSource(url(index))).text();
+      requested.length = 0;
+
+      // 3 x 40 bytes exceeds 100, so the first source was evicted to fit the third.
+      await (await fetchSource(url(2))).text();
+      await (await fetchSource(url(1))).text();
+      assertEquals(requested, []);
+      await (await fetchSource(url(0))).text();
+      assertEquals(requested, [url(0)]);
+    });
+
+    it("never caches a source larger than the whole budget", async () => {
+      let calls = 0;
+      const fetchSource = createProjectDependencySourceFetcher(() => {
+        calls++;
+        return Promise.resolve(new Response("y".repeat(200), { headers: javascript }));
+      }, { maxBytes: 100 });
+
+      await (await fetchSource("https://esm.sh/huge@1.0.0")).text();
+      await (await fetchSource("https://esm.sh/huge@1.0.0")).text();
 
       assertEquals(calls, 2);
     });

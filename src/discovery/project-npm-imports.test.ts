@@ -470,8 +470,8 @@ describe("classifyProjectNpmImport", () => {
     assertEquals(unresolvable, {
       kind: "missing",
       name: "unpdf",
-      reason: 'this runtime does not carry unpdf@1.8.1 and package.json declares "latest", ' +
-        "which names no single version to fetch -- declare an exact version",
+      reason: 'the import asks for unpdf@1.8.1 and package.json declares "latest", which it ' +
+        "cannot be checked against -- declare an exact version",
     });
   });
 
@@ -592,8 +592,8 @@ describe("classifyProjectNpmImport", () => {
     const exact = classify("npm:unpdf@1.8.1", { unpdf: "user/repo#main" });
     assertEquals(
       exact.kind === "missing" ? exact.reason : "",
-      "this runtime does not carry unpdf@1.8.1 and package.json declares a non-registry " +
-        "source, which names no single version to fetch -- declare an exact version",
+      "the import asks for unpdf@1.8.1 and package.json declares a non-registry source, " +
+        "which it cannot be checked against -- declare an exact version",
     );
   });
 
@@ -662,5 +662,16 @@ describe("describeNpmImport", () => {
     );
     assertEquals(describeNpmImport("pkg/x@<TOKEN>"), "an import that names no npm package");
     assertEquals(describeNpmImport("pkg/user:<TOKEN>/x"), "pkg");
+  });
+});
+
+describe("classifyProjectNpmImport with a declaration it cannot evaluate", () => {
+  it("refuses an exact import rather than reuse the embedded copy", () => {
+    assertEquals(classify("npm:lodash@3.10.1", { lodash: ">=4.0.0 <5.0.0" }), {
+      kind: "missing",
+      name: "lodash",
+      reason: 'the import asks for lodash@3.10.1 and package.json declares ">=4.0.0 <5.0.0", ' +
+        "which it cannot be checked against -- declare an exact version",
+    });
   });
 });

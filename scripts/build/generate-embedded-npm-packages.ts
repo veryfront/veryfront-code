@@ -41,7 +41,8 @@ const scriptDir = dirname(fromFileUrl(import.meta.url));
 const projectRoot = join(scriptDir, "..", "..");
 const fullLockPath = join(projectRoot, "deno.lock");
 const proxyLockPath = join(projectRoot, "scripts", "build", "proxy-deno.lock");
-const outputPath = join(projectRoot, "src", "discovery", "embedded-npm-packages.generated.ts");
+const outputRelativePath = "src/discovery/embedded-npm-packages.generated.ts";
+const outputPath = join(projectRoot, ...outputRelativePath.split("/"));
 
 /**
  * Collapse deno.lock npm keys into `name -> versions`. A key carries a peer
@@ -174,7 +175,7 @@ if (import.meta.main) {
     const committed = await Deno.readTextFile(outputPath).catch(() => null);
     if (committed !== output) {
       console.error(
-        `[generate-embedded-npm-packages] ${outputPath} is stale.\n` +
+        `[generate-embedded-npm-packages] ${outputRelativePath} is stale.\n` +
           `  The committed package sets do not match deno.lock / proxy-deno.lock.\n` +
           `  Run \`deno task generate\` and commit the result.`,
       );
@@ -184,7 +185,7 @@ if (import.meta.main) {
   } else {
     await Deno.writeTextFile(outputPath, output);
     console.log(
-      `[generate-embedded-npm-packages] Written to ${outputPath} ` +
+      `[generate-embedded-npm-packages] Written to ${outputRelativePath} ` +
         `(full: ${Object.keys(full.packages).length} packages, ` +
         `proxy: ${Object.keys(proxy.packages).length})`,
     );

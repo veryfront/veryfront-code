@@ -617,6 +617,18 @@ function classifyExactImport(
 ): ProjectNpmImport {
   const admission = declared === undefined ? null : rangeAdmitsVersion(declared, requested);
   const admitted = admission === true;
+  // A declaration this module cannot evaluate (`>=4.0.0 <5.0.0`, a dist-tag)
+  // is not taken as admitting the import: the embedded copy may be exactly the
+  // version it rules out.
+  if (declared !== undefined && admission === null && pin === null) {
+    return {
+      kind: "missing",
+      name,
+      reason: `the import asks for ${name}@${requested} and package.json declares ` +
+        `${describeDeclaration(declared)}, which it cannot be checked against -- declare an ` +
+        `exact version`,
+    };
+  }
   // A version in the specifier that the declaration excludes must not be
   // served, from the pin or from the runtime: the project would run code its
   // own package.json rules out. With a pin, a declaration this module cannot
@@ -634,15 +646,12 @@ function classifyExactImport(
   // The declaration admits the exact version the import names -- `^1.8.1`
   // admits `npm:unpdf@1.9.0` -- so that version is the one to serve.
   if (admitted) return { kind: "cdn", name, version: requested, subpath };
+  // Every declared case has returned above, so the package is undeclared.
   return {
     kind: "missing",
     name,
-    reason: declared === undefined
-      ? `this runtime does not carry ${name}@${requested} and the project declares no ` +
-        `dependency on ${name}`
-      : `this runtime does not carry ${name}@${requested} and package.json declares ` +
-        `${describeDeclaration(declared)}, which names no single version to fetch -- ` +
-        `declare an exact version`,
+    reason: `this runtime does not carry ${name}@${requested} and the project declares no ` +
+      `dependency on ${name}`,
   };
 }
 
