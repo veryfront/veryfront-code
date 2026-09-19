@@ -110,6 +110,11 @@ describe("exactVersionNamedByRange", () => {
     for (const range of ["^*", ">=*", "=*.*", "~>x", "<=x.x", "^x.x.x"]) {
       assertEquals(rangeAdmitsVersion(range, "2.9.0"), true, range);
     }
+    // A strict comparator on a wildcard is npm's empty range: nothing is
+    // greater than every version, or less than every version.
+    for (const range of [">*", "<*", ">x.x", "<x.x.x"]) {
+      assertEquals(rangeAdmitsVersion(range, "2.9.0"), false, range);
+    }
   });
 
   it("admits any release under an all-wildcard range", () => {
@@ -314,6 +319,9 @@ describe("isFrameworkProvidedPackage", () => {
       assertEquals(isFrameworkProvidedPackage(specifier), false, specifier);
     }
     assertEquals(nodeBuiltinSpecifier("path/posix"), "node:path/posix");
+    // The platform's canonical list carries Node's internal modules too.
+    assertEquals(nodeBuiltinSpecifier("_http_agent"), "node:_http_agent");
+    assertEquals(nodeBuiltinSpecifier("_stream_duplex"), "node:_stream_duplex");
     assertEquals(nodeBuiltinSpecifier("util/types"), "node:util/types");
     assertEquals(nodeBuiltinSpecifier("assert/strict"), "node:assert/strict");
   });

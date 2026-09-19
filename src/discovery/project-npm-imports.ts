@@ -32,6 +32,7 @@
  *    package, instead of Deno's raw constraint text.
  */
 
+import { NODE_BUILTINS } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
 import {
   EMBEDDED_NPM_CONSTRAINTS,
   EMBEDDED_NPM_PACKAGES,
@@ -57,73 +58,13 @@ const FRAMEWORK_PROVIDED_PACKAGES = new Set(["veryfront", "react", "react-dom", 
  * Without the bare half of this list every compiled discovery run classified
  * `import { readFile } from "fs"` as a missing project dependency and told the
  * user to declare `fs` in package.json, which is advice that cannot work.
+ *
+ * The platform's canonical list is the one source: it already carries Node's
+ * internal modules (`_http_agent`) and its real subpaths (`fs/promises`), and
+ * already leaves out the prefix-only `test`, `sqlite` and `sea`, whose bare
+ * forms are ordinary npm packages.
  */
-// `sea`, `sqlite` and `test` are absent on purpose: Node exposes them only under
-// the mandatory `node:` prefix, so a bare `test` is the npm package of that name.
-const NODE_BUILTIN_MODULES = new Set([
-  "assert",
-  "async_hooks",
-  "buffer",
-  "child_process",
-  "cluster",
-  "console",
-  "constants",
-  "crypto",
-  "dgram",
-  "diagnostics_channel",
-  "dns",
-  "domain",
-  "events",
-  "fs",
-  "http",
-  "http2",
-  "https",
-  "inspector",
-  "module",
-  "net",
-  "os",
-  "path",
-  "perf_hooks",
-  "process",
-  "punycode",
-  "querystring",
-  "readline",
-  "repl",
-  "stream",
-  "string_decoder",
-  "sys",
-  "timers",
-  "tls",
-  "trace_events",
-  "tty",
-  "url",
-  "util",
-  "v8",
-  "vm",
-  "wasi",
-  "worker_threads",
-  "zlib",
-]);
-
-/**
- * The builtin subpaths Node exposes without the `node:` prefix
- * (`require("node:module").builtinModules`); any other path under a builtin
- * root is not a builtin.
- */
-const NODE_BUILTIN_SUBPATHS = new Set([
-  "assert/strict",
-  "dns/promises",
-  "fs/promises",
-  "inspector/promises",
-  "path/posix",
-  "path/win32",
-  "readline/promises",
-  "stream/consumers",
-  "stream/promises",
-  "stream/web",
-  "timers/promises",
-  "util/types",
-]);
+const NODE_BUILTIN_SPECIFIERS: ReadonlySet<string> = new Set(NODE_BUILTINS);
 
 /**
  * The `node:`-prefixed form of a bare Node builtin specifier, or `null` when
@@ -137,12 +78,9 @@ const NODE_BUILTIN_SUBPATHS = new Set([
  */
 export function nodeBuiltinSpecifier(name: string): string | null {
   if (name.startsWith("node:")) return name;
-  // Only the exact subpaths Node exposes are builtins: `buffer/` is the npm
+  // Only a whole specifier on the list is a builtin: `buffer/` is the npm
   // `buffer` package and `fs/custom` is nothing, so neither has a `node:` form.
-  const builtin = name.includes("/")
-    ? NODE_BUILTIN_SUBPATHS.has(name)
-    : NODE_BUILTIN_MODULES.has(name);
-  return builtin ? `node:${name}` : null;
+  return NODE_BUILTIN_SPECIFIERS.has(name) ? `node:${name}` : null;
 }
 
 /**
@@ -368,8 +306,12 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
   const bound = boundAfterOperator(trimmed, operator);
   const wanted = { core: coreOf(version), pre: prereleaseOf(version) };
   // `*`, `x`, and their repeated forms (`*.*`, `x.x.x`) are all "any release",
-  // and npm reads an operator in front of one (`^*`, `>=*`) the same way.
-  if (/^[xX*](?:\.[xX*])*$/.test(bound)) return wanted.pre === null;
+  // and npm reads a non-strict operator in front of one (`^*`, `>=*`) the same
+  // way. A strict one is npm's EMPTY range: no version is above every version.
+  if (/^[xX*](?:\.[xX*])*$/.test(bound)) {
+    if (operator === ">" || operator === "<") return false;
+    return wanted.pre === null;
+  }
   const parts = boundParts(bound);
   if (parts === null) return null;
   const full = parts.length === 3;
