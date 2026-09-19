@@ -286,45 +286,63 @@ describe("executor operation gate", () => {
     }
   });
 
-  it("releases drained streams from source cancellation without relying on a combined signal", async () => {
+  it("keeps drained-stream cancellation reachable from the cancellation sources", async () => {
     // Deno holds AbortSignal.any() results only weakly from their sources, so a
-    // combined signal that nothing else references can be collected together
-    // with its abort listeners. Model that collection as a signal that never
-    // aborts: ownership must still be released through the source signals.
-    const combine = AbortSignal.any;
-    AbortSignal.any = (() => new AbortController().signal) as typeof AbortSignal.any;
-    try {
-      for (const cancel of ["revocation", "call"] as const) {
-        const gate = createExecutorOperationGate({
-          binding,
-          signal: new AbortController().signal,
-          operations: new Map([["model.stream", {
-            mode: "stream",
-            async *handle(input) {
-              yield input;
-            },
-          }]]),
-        });
-        gate.markPrepared();
-        gate.beginExecution();
-        const operation = gate.operations.get("model.stream")!;
-        assert(operation.mode === "stream");
-        const call = new AbortController();
-        // Draining without return() leaves release to the call's cancellation.
-        assertEquals(await Array.fromAsync(operation.handle(1, context(call.signal))), [1]);
-        if (cancel === "call") {
-          call.abort();
-          await tick();
-        }
-        gate.revoke();
-        const settled = await Promise.race([
-          gate.settled.then(() => true),
-          tick().then(() => false),
-        ]);
-        assertEquals(settled, true, `${cancel} must release the drained stream`);
-      }
-    } finally {
-      AbortSignal.any = combine;
+    // drained stream's combined signal could be collected with its abort
+    // listener, leaving revocation unable to release ownership. The sources
+    // must own the listeners that cancel the call.
+    const abortListeners = (signal: AbortSignal) => {
+      const listeners = new Set<unknown>();
+      const add = signal.addEventListener.bind(signal);
+      const remove = signal.removeEventListener.bind(signal);
+      Object.defineProperties(signal, {
+        addEventListener: {
+          value: (type: string, listener: unknown, options?: unknown) => {
+            if (type === "abort") listeners.add(listener);
+            add(type, listener as EventListener, options as AddEventListenerOptions);
+          },
+        },
+        removeEventListener: {
+          value: (type: string, listener: unknown, options?: unknown) => {
+            if (type === "abort") listeners.delete(listener);
+            remove(type, listener as EventListener, options as EventListenerOptions);
+          },
+        },
+      });
+      return listeners;
+    };
+    for (const cancel of ["revocation", "call"] as const) {
+      let observed: AbortSignal | undefined;
+      const gate = createExecutorOperationGate({
+        binding,
+        signal: new AbortController().signal,
+        operations: new Map([["model.stream", {
+          mode: "stream",
+          async *handle(input, current) {
+            observed = current.signal;
+            yield input;
+          },
+        }]]),
+      });
+      const revocationListeners = abortListeners(gate.signal);
+      gate.markPrepared();
+      gate.beginExecution();
+      const operation = gate.operations.get("model.stream")!;
+      assert(operation.mode === "stream");
+      const call = new AbortController();
+      const callListeners = abortListeners(call.signal);
+      // Draining without return() leaves release to cancellation.
+      assertEquals(await Array.fromAsync(operation.handle(1, context(call.signal))), [1]);
+      assertEquals(revocationListeners.size, 1, "revocation must own the call's cancellation");
+      assertEquals(callListeners.size, 1, "the call signal must own the call's cancellation");
+      let settled = false;
+      void gate.settled.then(() => settled = true);
+      if (cancel === "call") call.abort();
+      gate.revoke();
+      await tick();
+      assertEquals(observed?.aborted, true);
+      assertEquals(settled, true, `${cancel} must release the drained stream`);
+      assertEquals(revocationListeners.size + callListeners.size, 0);
     }
   });
 
