@@ -169,8 +169,11 @@ export async function loadMiddlewareFile(
  * middleware is always transpiled to JS before it is imported.
  */
 const VIRTUAL_PROJECT_NAMESPACE = "veryfront-project-middleware";
-/** Same probe order as the project import resolver (`transforms/esm/import-parser.ts`). */
-const VIRTUAL_MODULE_EXTENSIONS = [
+/**
+ * Same probe order as the project import resolver (`transforms/esm/import-parser.ts`).
+ * JSON is only resolved when the specifier names the file explicitly.
+ */
+const SOURCE_MODULE_EXTENSIONS = [
   ".tsx",
   ".ts",
   ".mts",
@@ -179,19 +182,17 @@ const VIRTUAL_MODULE_EXTENSIONS = [
   ".js",
   ".mjs",
   ".cjs",
-  ".json",
 ];
-const SOURCE_MODULE_EXTENSIONS = VIRTUAL_MODULE_EXTENSIONS.filter((extension) =>
-  extension !== ".json"
-);
 /** Loaders for extensions the shared `getEsbuildLoader` does not cover. */
 const VIRTUAL_MODULE_LOADERS: Record<string, "ts" | "json"> = {
   ".mts": "ts",
   ".cts": "ts",
   ".json": "json",
 };
-/** Authored JavaScript extensions that may name a TypeScript source (`./auth.js` -> `auth.ts`). */
-const JAVASCRIPT_SPECIFIER_EXTENSION_RE = /\.(?:m?js|jsx)$/;
+/** Extensions that name a file exactly; only source ones fall back to alternatives. */
+const HAS_EXTENSION_RE = /\.(?:tsx?|jsx?|mjs|cjs|mts|cts|mdx?|css|json)$/;
+/** Authored source extensions that may name another source (`./auth.js` -> `auth.ts`). */
+const SOURCE_SPECIFIER_EXTENSION_RE = /\.(?:tsx?|jsx?|mjs)$/;
 
 async function isVirtualFile(path: string, adapter: RuntimeAdapter): Promise<boolean> {
   if (!(await adapter.fs.exists(path))) return false;
@@ -202,16 +203,15 @@ async function resolveVirtualModulePath(
   path: string,
   adapter: RuntimeAdapter,
 ): Promise<string | undefined> {
-  const sourceBase = JAVASCRIPT_SPECIFIER_EXTENSION_RE.test(path)
-    ? path.replace(JAVASCRIPT_SPECIFIER_EXTENSION_RE, "")
-    : undefined;
+  if (await isVirtualFile(path, adapter)) return path;
+
+  const sourceSpecifier = SOURCE_SPECIFIER_EXTENSION_RE.test(path);
+  if (HAS_EXTENSION_RE.test(path) && !sourceSpecifier) return undefined;
+
+  const base = sourceSpecifier ? path.replace(SOURCE_SPECIFIER_EXTENSION_RE, "") : path;
   const candidates = [
-    path,
-    ...(sourceBase === undefined
-      ? []
-      : SOURCE_MODULE_EXTENSIONS.map((extension) => `${sourceBase}${extension}`)),
-    ...VIRTUAL_MODULE_EXTENSIONS.map((extension) => `${path}${extension}`),
-    ...VIRTUAL_MODULE_EXTENSIONS.map((extension) => join(path, `index${extension}`)),
+    ...SOURCE_MODULE_EXTENSIONS.map((extension) => `${base}${extension}`),
+    ...SOURCE_MODULE_EXTENSIONS.map((extension) => join(base, `index${extension}`)),
   ];
 
   for (const candidate of candidates) {

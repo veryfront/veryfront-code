@@ -411,6 +411,27 @@ describe("dev-server/middleware: actionable rejection", () => {
       assertEquals((await load(adapter)).length, 1);
     });
 
+    it("falls back between TypeScript source extensions", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "./lib/auth.tsx"; export default middleware;',
+        { "/app/lib/auth.ts": passThrough },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("keeps JSON out of extensionless probing", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "./policy"; export default middleware;',
+        {
+          "/app/policy.json": "[]",
+          "/app/policy/index.ts": passThrough,
+        },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
     it("prefers .jsx over .js for extensionless imports", async () => {
       const adapter = createVirtualAdapter(
         'import middleware from "./lib/auth"; export default middleware;',
@@ -458,11 +479,17 @@ describe("dev-server/middleware: actionable rejection", () => {
 
     it("rejects project-relative imports that do not exist", async () => {
       const adapter = createVirtualAdapter(
-        'import middleware from "./lib/missing"; export default middleware;',
+        'import middleware from "./lib/missing"; import policy from "./lib/policy.json"; ' +
+          "export default [middleware, policy];",
+        { "/app/lib/policy.json.ts": "export default [];" },
       );
 
       const error = await assertRejects(() => load(adapter));
-      assertStringIncludes(String(error), "Could not resolve");
+      assertStringIncludes(String(error), 'Could not resolve middleware import "./lib/missing"');
+      assertStringIncludes(
+        String(error),
+        'Could not resolve middleware import "./lib/policy.json"',
+      );
     });
 
     it("preserves the request context in bundler callbacks", async () => {
