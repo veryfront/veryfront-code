@@ -485,7 +485,7 @@ describe("classifyProjectNpmImport", () => {
     assertEquals(unresolvable, {
       kind: "missing",
       name: "unpdf",
-      reason: 'the import asks for unpdf@1.8.1 and package.json declares "latest", which it ' +
+      reason: "the import asks for unpdf@1.8.1 and package.json declares a dist-tag, which it " +
         "cannot be checked against -- declare an exact version",
     });
   });
@@ -563,8 +563,8 @@ describe("classifyProjectNpmImport", () => {
     assertEquals(classify("npm:unpdf@latest", { unpdf: "1.8.1" }), {
       kind: "missing",
       name: "unpdf",
-      reason: "the import asks for unpdf@latest, a range that cannot be checked against the " +
-        "declared unpdf@1.8.1 -- import the declared version instead",
+      reason: "the import asks for unpdf at a dist-tag, a range that cannot be checked against " +
+        "the declared unpdf@1.8.1 -- import the declared version instead",
     });
   });
 
@@ -625,11 +625,25 @@ describe("classifyProjectNpmImport", () => {
         declared,
       );
     }
-    for (const declared of [">= 1.2.0 < 2", "1.0.0 - 2.0.0", "^1 || ~2.3", "next", "beta.2"]) {
+    for (const declared of [">= 1.2.0 < 2", "1.0.0 - 2.0.0", "^1 || ~2.3", ">=1 <2 || 3.x"]) {
       const decision = classify("npm:unpdf@9.9.9", { unpdf: declared });
       const reason = decision.kind === "missing" ? decision.reason : "";
       assertEquals(reason.includes(`"${declared}"`), true, `${declared}: ${reason}`);
     }
+  });
+
+  it("names a dist-tag by its kind, since a one-token credential looks the same", () => {
+    for (const declared of ["latest", "next", "ghp_EXAMPLETOKEN0123456789"]) {
+      const decision = classify("npm:unpdf@1.8.1", { unpdf: declared });
+      assertEquals(
+        decision.kind === "missing" ? decision.reason : "",
+        "the import asks for unpdf@1.8.1 and package.json declares a dist-tag, which it " +
+          "cannot be checked against -- declare an exact version",
+        declared,
+      );
+    }
+    assertEquals(describeNpmImport("npm:pkg@ghp_EXAMPLETOKEN0123456789"), "pkg (with a dist-tag)");
+    assertEquals(describeNpmImport("npm:pkg@latest/sub"), "pkg (with a dist-tag)");
   });
 
   it("serves grandfathered uppercase package names", () => {

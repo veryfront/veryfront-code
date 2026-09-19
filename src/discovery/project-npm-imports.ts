@@ -635,17 +635,20 @@ const RANGE_COMPARATOR =
 /** A hyphen-range bound: a version with no operator. */
 const RANGE_BOUND = /^v?\d+(?:\.(?:\d+|[xX*])){0,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-/** A dist-tag: one token that is not itself a version. */
+/**
+ * A dist-tag: one token that is not itself a version. It is named by its kind
+ * and never quoted, because a one-token credential (`ghp_...`) looks the same.
+ */
 const DIST_TAG = /^[A-Za-z][A-Za-z0-9._-]*$/;
 
 /**
  * Does this text parse as an npm semver range (comparator sets joined by `||`,
- * hyphen ranges, `*`) or a single dist-tag? A character allow-list is not
- * enough: whitespace lets arbitrary prose -- `Bearer <TOKEN>` -- through it.
+ * hyphen ranges, `*`)? A character allow-list is not enough: whitespace lets
+ * arbitrary prose -- `Bearer <TOKEN>` -- through it.
  */
-function isRangeOrDistTag(text: string): boolean {
+function isSemverRange(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed === "" || DIST_TAG.test(trimmed)) return true;
+  if (trimmed === "") return true;
   return trimmed.split("||").every((alternative) => {
     // npm allows whitespace between an operator and its version.
     const set = alternative.trim().replace(/(<=|>=|~>|[<>=^~])\s+/g, "$1");
@@ -657,15 +660,21 @@ function isRangeOrDistTag(text: string): boolean {
 }
 
 /**
- * A declaration as user-facing detail may show it. A range or dist-tag is
- * quoted verbatim; anything else -- `git+https://<TOKEN>@host/repo.git`, a
- * `file:` path, a `user/repo` shorthand, prose -- can carry credentials or a
- * machine path, so only its kind is named.
+ * A declaration as user-facing detail may show it. Only a semver range is
+ * quoted verbatim; a dist-tag, `git+https://<TOKEN>@host/repo.git`, a `file:`
+ * path, a `user/repo` shorthand or prose can carry credentials or a machine
+ * path, so only its kind is named.
  */
 function describeDeclaration(declared: string): string {
-  if (isRangeOrDistTag(declared)) return `"${declared}"`;
+  if (isSemverRange(declared)) return `"${declared}"`;
+  if (DIST_TAG.test(declared.trim())) return "a dist-tag";
   const scheme = URL_SCHEME.exec(declared)?.[0];
   return scheme === undefined ? "a non-registry source" : `a "${scheme}" source`;
+}
+
+/** What a version written into an import is, when it may not be quoted. */
+function describeVersionKind(version: string): string {
+  return DIST_TAG.test(version) ? "a dist-tag" : "a non-registry version";
 }
 
 /** A path segment of a package subpath: nothing that can carry `user:token@host`. */
@@ -690,7 +699,7 @@ function isContainedSubpath(subpath: string): boolean {
 
 /** A version written into an import, as user-facing detail may show it. */
 function isPlainImportVersion(version: string): boolean {
-  return isRangeOrDistTag(version);
+  return isSemverRange(version);
 }
 
 /**
@@ -703,7 +712,7 @@ export function describeNpmImport(specifier: string): string {
   if (parsed === null) return "an import that names no npm package";
   const { name, version, subpath } = parsed;
   if (version !== null && !isPlainImportVersion(version)) {
-    return `${name} (with a non-registry version)`;
+    return `${name} (with ${describeVersionKind(version)})`;
   }
   const shownVersion = version === null ? "" : `@${version}`;
   const shownSubpath = subpath !== "." && PLAIN_SUBPATH.test(subpath) &&
@@ -766,7 +775,9 @@ function classifyExactImport(
 }
 
 function describeImportedVersion(name: string, version: string): string {
-  return isPlainImportVersion(version) ? `${name}@${version}` : `${name} at a non-registry version`;
+  return isPlainImportVersion(version)
+    ? `${name}@${version}`
+    : `${name} at ${describeVersionKind(version)}`;
 }
 
 function describeImportedRange(version: string): string {
