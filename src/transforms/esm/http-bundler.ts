@@ -51,6 +51,13 @@ export { getReactUrls };
 export interface HttpPluginOptions {
   fetchFn?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * How a URL is rendered in this plugin's diagnostics and logs; defaults to
+   * `sanitizeUrlForSpan`. A caller whose URLs carry project text -- a CDN
+   * coordinate built from a declared version, whose pre-release part is
+   * free-form -- passes its own so the raw text never reaches a log line.
+   */
+  describeUrl?: (url: string) => string;
 }
 
 function requireHttpTimeout(timeoutMs: number): number {
@@ -118,7 +125,8 @@ export function createHTTPPlugin(options: HttpPluginOptions = {}): Plugin {
 
       build.onLoad({ filter: /.*/, namespace: "http-url" }, async (args) => {
         let requestUrl = args.path;
-        const safeUrl = sanitizeUrlForSpan(args.path);
+        const describeUrl = options.describeUrl ?? sanitizeUrlForSpan;
+        const safeUrl = describeUrl(args.path);
 
         try {
           const url = new URL(args.path);

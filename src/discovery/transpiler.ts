@@ -919,7 +919,10 @@ export async function importModule(
       }),
     );
     if (Object.keys(dependencyPins).length > 0) {
-      plugins.push(createHTTPPlugin({ fetchFn: fetchProjectDependencySource }));
+      plugins.push(createHTTPPlugin({
+        fetchFn: fetchProjectDependencySource,
+        describeUrl: withoutCdnVersionIdentifiers,
+      }));
     }
   }
 

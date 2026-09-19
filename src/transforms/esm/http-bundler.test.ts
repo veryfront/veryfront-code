@@ -185,6 +185,28 @@ describe("transforms/esm/http-bundler", () => {
       assertEquals(cancelled, true);
     });
 
+    it("renders a URL in diagnostics through describeUrl when given one", async () => {
+      // A caller whose URLs carry project text (a pinned CDN coordinate) needs
+      // the diagnostic and log form of the URL to be its own, not the raw one.
+      const described: string[] = [];
+      const onLoad = captureHttpOnLoad({
+        timeoutMs: 1_000,
+        describeUrl: (url: string) => {
+          described.push(url);
+          return url.replace(/@9\.9\.9-\S+/, "@9.9.9-<redacted>");
+        },
+        fetchFn: (() => Promise.resolve(new Response("nope", { status: 404 }))) as typeof fetch,
+      });
+
+      const result = await onLoad({ path: "https://esm.sh/pkg@9.9.9-SECRETTOKEN" });
+
+      assertEquals(
+        result.errors?.[0]?.text,
+        "Failed to fetch https://esm.sh/pkg@9.9.9-<redacted>: 404",
+      );
+      assertEquals(described, ["https://esm.sh/pkg@9.9.9-SECRETTOKEN"]);
+    });
+
     it("reports an HTML module response without blaming esm.sh", async () => {
       const onLoad = captureHttpOnLoad({
         timeoutMs: 1_000,
