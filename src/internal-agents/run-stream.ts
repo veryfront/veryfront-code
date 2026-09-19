@@ -79,6 +79,7 @@ import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
+import { type ProviderReplayTurnFailure } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
@@ -868,9 +869,18 @@ type ProviderReplayPrivateFrame = {
   payload: Record<string, unknown>;
 };
 
+/** Error carrying the run error code the provider failure was classified with. */
+type ProviderReplayTurnError = Error & { vfRunErrorCode?: string };
+
+/** Read the classified run error code a failed replay boundary carried. */
+function readProviderReplayTurnErrorCode(error: unknown): string | undefined {
+  const code = (error as ProviderReplayTurnError | null)?.vfRunErrorCode;
+  return typeof code === "string" && code.length > 0 ? code : undefined;
+}
+
 function createProviderReplayCheckpointRelay(): {
   complete: (messageId: string) => Promise<void>;
-  fail: () => Promise<void>;
+  fail: (failure?: ProviderReplayTurnFailure) => Promise<void>;
   takeCompletedTurn: () => Promise<ProviderReplayPrivateFrame[]>;
   hasCompletedTurn: () => boolean;
 } {
@@ -879,7 +889,7 @@ function createProviderReplayCheckpointRelay(): {
     | ((frames: ProviderReplayPrivateFrame[]) => void)
     | undefined;
   let rejectPending: ((error: Error) => void) | undefined;
-  let terminalError: Error | undefined;
+  let terminalError: ProviderReplayTurnError | undefined;
 
   const takeReadyTurn = (): ProviderReplayPrivateFrame[] | undefined => {
     const boundaryIndex = buffered.findIndex((frame) =>
@@ -908,9 +918,17 @@ function createProviderReplayCheckpointRelay(): {
       });
       resolveIfReady();
     },
-    fail: async () => {
+    fail: async (failure) => {
       if (terminalError) return;
-      terminalError = new Error("Provider replay turn failed before its boundary");
+      // Carry the runtime's already-sanitized cause instead of manufacturing a
+      // message: the parked boundary waiter is what the consumer surfaces, so a
+      // fixed string here masks the real provider failure. The fallback stays
+      // neutral — a caller that reports no cause (a cancellation, a Veryfront
+      // persistence failure) must not be attributed to the provider.
+      terminalError = new Error(
+        failure?.message ?? "Provider replay turn failed before its boundary",
+      );
+      if (failure?.code) terminalError.vfRunErrorCode = failure.code;
       buffered.splice(0);
       const reject = rejectPending;
       resolvePending = undefined;
@@ -1560,7 +1578,7 @@ export async function createRuntimeAgentStreamResponse(
                 error: errorMessage,
               });
               enqueueIfAttached("RunError", {
-                code: "RUNTIME_ERROR",
+                code: readProviderReplayTurnErrorCode(error) ?? "RUNTIME_ERROR",
                 message: errorMessage,
               });
             }

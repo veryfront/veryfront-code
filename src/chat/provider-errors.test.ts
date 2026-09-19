@@ -5,6 +5,17 @@ import { parseKnownProblemBody, parseProviderError } from "./provider-errors.ts"
 import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 describe("chat/provider-errors", () => {
+  it("maps the gateway project-required body to a curated code with fixed wording", () => {
+    assertEquals(
+      parseProviderError({ code: "gateway_project_required", error: "echoed secret text" }),
+      {
+        code: "GATEWAY_PROJECT_REQUIRED",
+        message: "A project is required to use Veryfront-managed AI inference",
+        status: 400,
+      },
+    );
+  });
+
   it("does not expose provider text from recognized problem bodies", async () => {
     for (const slug of ["insufficient-credits", "resource-limit-exceeded"]) {
       const problem = {

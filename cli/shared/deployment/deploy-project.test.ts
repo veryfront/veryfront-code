@@ -13,6 +13,7 @@ import { FakeTime } from "#std/testing/time";
 import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
+  PREVIEW_DEPLOYMENT_NOT_ALLOWED,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -27,7 +28,7 @@ import {
   writePushReceipt,
 } from "../deployment-provenance.ts";
 import { capturePushSourceSnapshot } from "../../commands/push/command.ts";
-import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
+import { loadIgnoreChecker } from "../../sync/ignore.ts";
 import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
@@ -446,6 +447,228 @@ describe("DeployProject", () => {
     });
   });
 
+  describe("managed Preview environment", () => {
+    // Preview renders the latest push to main and the API refuses deployments
+    // to it (veryfront/veryfront-issue-inbox#1442).
+    it("refuses a Preview deployment before pushing, releasing, or deploying", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        const events: DeployEvent[] = [];
+        try {
+          const error = await expectDeployError(() =>
+            executeApply(projectDir, controlPlane, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }, { environment: "Preview", source: { kind: "ensure-pushed" } })
+          );
+
+          assertEquals(error instanceof VeryfrontError, true);
+          assertEquals((error as VeryfrontError).slug, PREVIEW_DEPLOYMENT_NOT_ALLOWED.slug);
+          assertStringIncludes((error as VeryfrontError).detail ?? "", "veryfront push");
+          assertEquals(events, []);
+          assertEquals(controlPlane.projectLookups, []);
+          assertEquals(controlPlane.createdReleases, []);
+          assertEquals(controlPlane.createdDeployments, []);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("classifies the API refusal of an environment it manages as Preview", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        const apiRefusal = Object.assign(
+          new Error(
+            "Deployments to Preview environments are not allowed. Check the request body and query parameters against the API documentation.",
+          ),
+          { status: 400 },
+        );
+        controlPlane.createDeployment = () => Promise.reject(apiRefusal);
+        try {
+          const error = await expectDeployError(() =>
+            executeApply(projectDir, controlPlane, undefined, { environment: "staging" })
+          );
+
+          assertEquals(error instanceof VeryfrontError, true);
+          assertEquals((error as VeryfrontError).slug, PREVIEW_DEPLOYMENT_NOT_ALLOWED.slug);
+          assertEquals((error as VeryfrontError).cause, apiRefusal);
+          assertStringIncludes((error as VeryfrontError).detail ?? "", '"staging"');
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("publishes live source to Preview without a release or deployment", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir, commitSha } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        controlPlane.environmentDomains = ["https://my-project.preview.veryfront.com"];
+        controlPlane.createDeployment = () =>
+          Promise.reject(new Error("Deployments to Preview environments are not allowed"));
+        const events: DeployEvent[] = [];
+        const readinessRequests: string[] = [];
+        try {
+          const outcome = await withFetchStub((input, init) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            readinessRequests.push(request.url);
+            return new Response("ready");
+          }, () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "preview",
+              publish: "live-source",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }));
+
+          const completedSteps = events
+            .filter((event): event is Extract<DeployEvent, { kind: "step" }> =>
+              event.kind === "step" && event.phase === "completed"
+            )
+            .map((event) => event.step);
+          assertEquals(completedSteps, [
+            "resolve-config",
+            "resolve-target",
+            "verify-source",
+            "wait-environment-url",
+          ]);
+          assertEquals(controlPlane.createdReleases, []);
+          assertEquals(controlPlane.createdDeployments, []);
+          assertEquals(readinessRequests, ["https://my-project.preview.veryfront.com/"]);
+          assertEquals(outcome.kind, "live-source");
+          if (outcome.kind !== "live-source") throw new Error("unreachable");
+          assertEquals(outcome.result.projectSlug, PROJECT_SLUG);
+          assertEquals(outcome.result.environment, "preview");
+          assertEquals(outcome.result.environmentId, ENVIRONMENT_ID);
+          assertEquals(outcome.result.url, "https://my-project.preview.veryfront.com");
+          assertEquals(outcome.result.urlVerification, "responded");
+          assertEquals(outcome.result.commitSha, commitSha);
+          assertEquals(outcome.result.branch, "main");
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("gives live-source gate warnings up retry guidance, never deploy guidance", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        controlPlane.environmentProtected = true;
+        controlPlane.environmentDomains = ["https://my-project.preview.veryfront.com"];
+        const events: DeployEvent[] = [];
+        try {
+          const outcome = await withFetchStub(
+            () =>
+              new Response(null, {
+                status: 302,
+                headers: { location: "https://veryfront.com/sign-in" },
+              }),
+            () =>
+              createDeployment(controlPlane).execute({
+                projectDir,
+                environment: "preview",
+                publish: "live-source",
+                mode: "apply",
+                source: { kind: "already-pushed" },
+              }, {
+                onEvent(event) {
+                  events.push(event);
+                },
+              }),
+          );
+
+          assertEquals(outcome.kind, "live-source");
+          const warning = events.find((event) =>
+            event.kind === "warning" && event.code === "environment-url-unverified"
+          );
+          const message = warning?.kind === "warning" ? warning.message : "";
+          assertStringIncludes(message, "Source pushed, but");
+          assertStringIncludes(message, "run veryfront up again");
+          assertEquals(message.includes("deploy again"), false, message);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("plans a live-source dry run without release or deploy actions", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        try {
+          const outcome = await createDeployment(controlPlane).execute({
+            projectDir,
+            environment: "preview",
+            publish: "live-source",
+            mode: "dry-run",
+            source: { kind: "already-pushed" },
+          });
+
+          assertEquals(outcome.kind, "dry-run");
+          if (outcome.kind !== "dry-run") throw new Error("unreachable");
+          assertEquals(outcome.plan.plannedActions, []);
+          assertEquals(controlPlane.createdReleases, []);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("refuses live-source publishing of any branch other than main", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        try {
+          const error = await expectDeployError(() =>
+            executeApply(projectDir, controlPlane, undefined, {
+              environment: "preview",
+              branch: "feature-x",
+              publish: "live-source",
+            })
+          );
+
+          assertEquals(error instanceof VeryfrontError, true);
+          assertEquals((error as VeryfrontError).slug, DEPLOYMENT_ERROR.slug);
+          assertStringIncludes((error as VeryfrontError).detail ?? "", '"feature-x"');
+          assertEquals(controlPlane.projectLookups, []);
+          assertEquals(controlPlane.createdReleases, []);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+
+    it("refuses live-source publishing to any environment other than Preview", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        try {
+          const error = await expectDeployError(() =>
+            executeApply(projectDir, controlPlane, undefined, {
+              environment: "production",
+              publish: "live-source",
+            })
+          );
+
+          assertEquals((error as VeryfrontError).slug, DEPLOYMENT_ERROR.slug);
+          assertEquals(controlPlane.projectLookups, []);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+    });
+  });
+
   it("preserves VeryfrontError instances from project resolution", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -481,7 +704,7 @@ describe("DeployProject", () => {
         const error = await expectDeployError(() =>
           createDeployment(controlPlane).execute({
             projectDir,
-            environment: "preview",
+            environment: "staging",
             mode: "dry-run",
             source: { kind: "already-pushed" },
           })
@@ -1109,10 +1332,11 @@ describe("pushed source provenance", () => {
   it("rejects a source change Git cannot see once the receipt digests the pushed files", async () => {
     await withTempDir((projectDir) =>
       withoutAmbientCommitSha(async () => {
-        // `.gitignore` hides this file while `.vfignore` does not, so push
-        // uploads it and `git status` never reports it. Cleanliness alone
-        // therefore cannot tell a stale upload from a current one.
+        // `.gitignore` hides this file while a `.vfignore` negation re-includes
+        // it, so push uploads it and `git status` never reports it. Cleanliness
+        // alone therefore cannot tell a stale upload from a current one.
         await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\ngenerated.ts\n");
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "!generated.ts\n");
         await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
         await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 1;\n");
         const commitSha = await commitProject(projectDir);
@@ -1167,7 +1391,10 @@ describe("pushed source provenance", () => {
   it("rejects an ignored source edit during the closing Git probe", async () => {
     await withTempDir((projectDir) =>
       withoutAmbientCommitSha(async () => {
+        // Git ignores the file, but the `.vfignore` negation keeps it in the
+        // pushed source set, so only the digest can observe the edit.
         await Deno.writeTextFile(`${projectDir}/.gitignore`, "generated.ts\n");
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "!generated.ts\n");
         await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
         await Deno.writeTextFile(`${projectDir}/generated.ts`, "export const generated = 1;\n");
         await commitProject(projectDir);
@@ -1211,7 +1438,7 @@ describe("pushed source provenance", () => {
 
         const pushed = await capturePushSourceSnapshot(
           projectDir,
-          createIgnoreChecker(await loadIgnorePatterns(projectDir)),
+          await loadIgnoreChecker(projectDir),
         );
         const observed = await observeLocalSource(projectDir);
 
@@ -1406,11 +1633,48 @@ describe("resolveBootstrapPush", () => {
     });
   });
 
-  it("leaves a moved HEAD to the receipt check instead of uploading behind it", async () => {
+  it("refreshes a moved HEAD so committed work reaches the preview", async () => {
     await withGitProject(async (projectDir) => {
-      // Committed work the push never saw is refused by validatePushReceipt
-      // with "came from a different commit"; deploy must not quietly replace
-      // that refusal with an upload.
+      // The receipt targets this deploy but predates the commit on disk. A
+      // caller that publishes what is on disk pushes that work instead of
+      // sending the operator to a separate veryfront push
+      // (veryfront/veryfront-issue-inbox#1470).
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: true, localPaths: ["app.ts"] },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "refresh",
+      );
+    });
+  });
+
+  it("refreshes a moved HEAD whose tree is also dirty", async () => {
+    await withGitProject(async (projectDir) => {
+      // Committed and uncommitted work alike are what the caller asked to
+      // publish, so the push sends both.
+      await dirty(projectDir);
+
+      assertEquals(
+        resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: true, localPaths: ["app.ts"] },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          await observeLocalSource(projectDir),
+          target,
+        ),
+        "refresh",
+      );
+    });
+  });
+
+  it("leaves a moved HEAD to the receipt check when the receipt recorded no paths", async () => {
+    await withGitProject(async (projectDir) => {
+      // A receipt from before push recorded its paths cannot tell the refresh
+      // which files the new commits deleted, so the remote copies would
+      // survive a push that then reported success. The refusal stays, and one
+      // veryfront push writes a receipt that can be refreshed.
       assertEquals(
         resolveBootstrapPush(
           { ...receipt, commitSha: "1".repeat(40), clean: true },
@@ -1423,21 +1687,44 @@ describe("resolveBootstrapPush", () => {
     });
   });
 
-  it("keeps the moved-HEAD refusal when the tree is also dirty", async () => {
+  it("leaves a moved HEAD to the deploy gate when the caller does not refresh", async () => {
     await withGitProject(async (projectDir) => {
-      // A dirty tree must not upgrade a refusal into an upload: pushing here
-      // would send the new commit *and* the uncommitted work, and would
-      // overwrite the very receipt validatePushReceipt reads to refuse.
-      await dirty(projectDir);
-
+      // veryfront deploy promotes a reviewed push. Committed work it never saw
+      // must reach validatePushReceipt as "came from a different commit", not
+      // become an upload behind the operator's back.
       assertEquals(
         resolveBootstrapPush(
           { ...receipt, commitSha: "1".repeat(40), clean: true },
-          { kind: "ensure-pushed", refreshStaleSource: true },
+          { kind: "ensure-pushed" },
           await observeLocalSource(projectDir),
           target,
         ),
         "none",
+      );
+    });
+  });
+
+  it("refreshes a digest-only receipt once the directory gained a commit", async () => {
+    await withGitProject(async (projectDir) => {
+      // The receipt was written outside Git. The directory now names a commit
+      // the receipt never described, so the source is pushed again.
+      const local = await observeLocalSource(projectDir);
+      assertExists(local.sourceDigest);
+
+      assertEquals(
+        resolveBootstrapPush(
+          {
+            ...receipt,
+            commitSha: null,
+            clean: true,
+            localSourceDigest: local.sourceDigest,
+            localPaths: ["app.ts"],
+          },
+          { kind: "ensure-pushed", refreshStaleSource: true },
+          local,
+          target,
+        ),
+        "refresh",
       );
     });
   });
@@ -1585,19 +1872,18 @@ describe("resolveBootstrapPush", () => {
     });
   });
 
-  it("keeps the moved-HEAD refusal when the receipt was dirty", async () => {
+  it("refreshes a moved HEAD when the receipt was dirty", async () => {
     await withGitProject(async (projectDir) => {
-      // A dirty receipt that still names a commit gets the same comparison as
-      // a clean one: refreshing here would upload the new commit and rewrite
-      // the receipt validatePushReceipt reads to refuse the moved HEAD.
+      // A dirty receipt that names a commit gets the same treatment as a clean
+      // one: the checkout moved on, so the new commit is pushed.
       assertEquals(
         resolveBootstrapPush(
-          { ...receipt, commitSha: "1".repeat(40), clean: false },
+          { ...receipt, commitSha: "1".repeat(40), clean: false, localPaths: ["app.ts"] },
           { kind: "ensure-pushed", refreshStaleSource: true },
           await observeLocalSource(projectDir),
           target,
         ),
-        "none",
+        "refresh",
       );
     });
   });
@@ -2217,6 +2503,36 @@ describe("environment URL readiness", () => {
       error,
       "Environment URL https://my-project.production.veryfront.com did not become ready within 1s (last response: HTTP 404). Check the deployment and run deploy again.",
     );
+  });
+
+  it("tells an up caller to rerun up, not deploy, when readiness fails", async () => {
+    const timeout = await withMockFetch(
+      () => Promise.resolve(new Response("not ready", { status: 404 })),
+      () =>
+        expectErrorMessage(
+          () =>
+            waitForEnvironmentReady({ ...hostedTarget, retry: "up" }, {
+              pollIntervalMs: 1,
+              timeoutMs: 2,
+            }),
+        ),
+    );
+    const challenge = await withMockFetch(
+      () => Promise.resolve(new Response(null, { status: 403 })),
+      () =>
+        expectErrorMessage(
+          () =>
+            waitForEnvironmentReady({ ...hostedTarget, protected: true, retry: "up" }, {
+              pollIntervalMs: 1,
+              timeoutMs: 1_000,
+            }),
+        ),
+    );
+
+    for (const message of [timeout, challenge]) {
+      assertStringIncludes(message ?? "", "run veryfront up again");
+      assertEquals((message ?? "").includes("deploy again"), false, message);
+    }
   });
 });
 

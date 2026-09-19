@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  runWithVeryfrontCloudContext,
+  type VeryfrontCloudContext,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -269,6 +273,34 @@ describe("provider/veryfront-cloud/shared", () => {
       capturedRequest?.headers.get("x-veryfront-billing-group-id"),
       "evalrun_20260628_kimi",
     );
+  });
+
+  it("records whether a billed gateway request got past admission", async () => {
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://93.184.216.34/ai/gateway/openai/v1",
+      "trusted-project",
+    );
+    const admittedFor = async (status: number) => {
+      const context: VeryfrontCloudContext = { billingGroupId: "evalrun_admission" };
+      const response = await withMockFetch(
+        async () => new Response(null, { status }),
+        () =>
+          runWithVeryfrontCloudContext(
+            context,
+            () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+          ),
+      );
+      // Every gateway response is marked, so provider errors keep its provenance.
+      assertEquals(isVeryfrontGatewayResponse(response), true);
+      return context.billingGroupRequestAdmitted === true;
+    };
+
+    assertEquals(await admittedFor(400), false);
+    assertEquals(await admittedFor(402), false);
+    assertEquals(await admittedFor(401), false);
+    assertEquals(await admittedFor(200), true);
+    assertEquals(await admittedFor(500), true);
   });
 
   it("rejects redirects before the gateway credential reaches another origin", async () => {

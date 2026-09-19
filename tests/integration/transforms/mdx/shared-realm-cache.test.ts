@@ -335,7 +335,7 @@ describe("MDX cache shared-realm lifecycle", () => {
       Promise.prototype.catch = originalCatch;
       __jsxCacheInternals.releaseJsxArtifact(path);
       __jsxCacheInternals.cancelScheduledJsxCachePrunes();
-      await __jsxCacheInternals.waitForJsxCacheMaintenanceForTests();
+      await __jsxCacheInternals.waitForJsxCacheMaintenance();
       await remove(dir, { recursive: true });
     }
     assertEquals(pins, 0);
@@ -462,7 +462,7 @@ describe("MDX cache shared-realm lifecycle", () => {
       Promise.prototype.catch = originals.catch;
       Promise.prototype.finally = originals.finally;
       __jsxCacheInternals.cancelScheduledJsxCachePrunes();
-      await __jsxCacheInternals.waitForJsxCacheMaintenanceForTests();
+      await __jsxCacheInternals.waitForJsxCacheMaintenance();
       try {
         freshExists = await stat(artifact).then(() => true, () => false);
         staleExists = await stat(stale).then(() => true, () => false);
@@ -527,7 +527,7 @@ describe("MDX cache shared-realm lifecycle", () => {
       Array.prototype[Symbol.iterator] = iterator;
       scope.release();
       __jsxCacheInternals.cancelScheduledJsxCachePrunes();
-      await __jsxCacheInternals.waitForJsxCacheMaintenanceForTests();
+      await __jsxCacheInternals.waitForJsxCacheMaintenance();
       await remove(dir, { recursive: true });
     }
     assertEquals(value, 59);

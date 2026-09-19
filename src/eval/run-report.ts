@@ -3,6 +3,7 @@ import { compareEvalReports } from "./baseline.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
 import { EVAL_REPORT_SCHEMA_VERSION, RECORD_INCOMPLETE_EXPLANATION } from "./report.ts";
+import { isEvalModelAccessDeniedError } from "./model-access.ts";
 import { createEvalRunId } from "./run-id.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type {
@@ -936,6 +937,9 @@ async function runEvalReportSuite(
         report,
       });
     } catch (error) {
+      // Model access is refused for the whole account or project, so every
+      // remaining eval would fail the same way. Stop the suite with one error.
+      if (isEvalModelAccessDeniedError(error)) throw error;
       const message = errorMessage(error);
       results.push({
         id: evalItem.id,

@@ -1,9 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { cliLogger } from "#cli/utils";
 import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, makeTempDir, setEnv, withTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -24,6 +26,7 @@ import {
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import type { ModelRuntime } from "veryfront/provider";
 import {
+  getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { type Tool, tool } from "veryfront/tool";
@@ -44,9 +47,11 @@ import {
   createResolvedEvalModelComparisonConfig,
   createToolAdapter,
   type EvalOptions,
+  evalRunMayCallModel,
   exportEvalReportForCli,
   finalizeGatewayBillingGroup,
   findEvalForCliId,
+  formatMissingEvalProjectWarning,
   hydrateEvalRuntimeAuth,
   loadEvalModelComparisonPolicy,
   normalizeEvalCliId,
@@ -56,13 +61,22 @@ import {
   resolveEvalExporterIds,
   resolveEvalExportRedactionFromEnv,
   resolveEvalExportRequired,
+  resolveEvalRecordTimeoutMs,
   resolveToolTargetId,
   runEvalCommand,
   runEvalWithGatewayBillingGroup,
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
+import { createEvalModelAccessDeniedError } from "../../../src/eval/model-access.ts";
+import { __installOutboundFetchTransportForTests } from "#cli/outbound-fetch";
+import { buildProviderError } from "../../../src/provider/runtime-loader/provider-http.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#cli/outbound-fetch";
 
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
@@ -631,6 +645,75 @@ describe("eval CLI command helpers", () => {
     }, { prefix: "vf-eval-list-json-" });
   });
 
+  it("does not warn about a missing project when only listing evals", async () => {
+    await withTempDir(async (projectDir) => {
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await runEvalCommand(
+          { list: true, exporters: [], debug: false, candidateModels: [], projectDir },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            // A token without a project: the state that would warn before a run.
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-list-no-project-" });
+  });
+
+  it("treats only dataset evals without metrics or checks as model-free", () => {
+    const bareDataset = evalDataset({
+      id: "eval:bare-dataset",
+      dataset: [{ id: "case", input: "value" }],
+    });
+    const deterministicMetricDataset = evalDataset({
+      id: "eval:deterministic-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      metrics: [metrics.answer.contains({ text: "value" })],
+    });
+    const rubricDataset = evalDataset({
+      id: "eval:rubric-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      metrics: [
+        metrics.judge.rubric({ rubric: "Is it good?", judge: () => Promise.resolve({ score: 1 }) }),
+      ],
+    });
+    const checkDataset = evalDataset({
+      id: "eval:check-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      check: () => {},
+    });
+    const agentEval = evalAgent({
+      id: "eval:agent",
+      target: "agent:fixture",
+      dataset: [{ id: "case", input: "value" }],
+    });
+    const toolEval = evalTool({
+      id: "eval:tool",
+      target: "tool:fixture",
+      dataset: [{ id: "case", input: {} }],
+    });
+
+    assertEquals(evalRunMayCallModel([bareDataset]), false);
+    assertEquals(evalRunMayCallModel([bareDataset, bareDataset]), false);
+    // Any metric may be custom code that calls a model, so it counts.
+    assertEquals(evalRunMayCallModel([deterministicMetricDataset]), true);
+    assertEquals(evalRunMayCallModel([rubricDataset]), true);
+    assertEquals(evalRunMayCallModel([checkDataset]), true);
+    assertEquals(evalRunMayCallModel([agentEval]), true);
+    assertEquals(evalRunMayCallModel([toolEval]), true);
+    assertEquals(evalRunMayCallModel([bareDataset, agentEval]), true);
+  });
+
   it("resolves eval export redaction from exact global env toggles", () => {
     Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS", "true");
     Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS", "1");
@@ -844,6 +927,66 @@ describe("eval CLI command helpers", () => {
     assertEquals(calls, ["q1:1", "q1:2", "q2:1", "q2:2"]);
   });
 
+  it("starts no model request when a mock tool resolver returns after the record deadline", async () => {
+    let generateCalls = 0;
+    const agent = makeAgentStub(async () => {
+      generateCalls += 1;
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:resolver-late",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "one" }]),
+      // A resolver that ignores the signal and resolves past the deadline.
+      mockTools: () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ search_docs: makeEvalTool("search_docs") }), 60)
+        ),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 20,
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+    // Give the abandoned record time to reach the point where it would generate.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:resolver-late" case "q1" did not finish within 0.02s.',
+    );
+    assertEquals(generateCalls, 0);
+  });
+
+  it("cancels a stalled mock tool resolver at the record deadline", async () => {
+    let resolverSignal: AbortSignal | undefined;
+    let releaseResolver: (() => void) | undefined;
+    const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
+    const definition = evalAgent({
+      id: "eval:resolver-stall",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "one" }]),
+      mockTools: ({ signal }) => {
+        resolverSignal = signal;
+        return new Promise((resolve) => {
+          releaseResolver = () => resolve({});
+        });
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:resolver-stall" case "q1" did not finish within 0.05s.',
+    );
+    assertEquals(resolverSignal?.aborted, true);
+    releaseResolver?.();
+  });
+
   it("isolates mock tool resolver errors to the current eval record", async () => {
     const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
     const definition = evalAgent({
@@ -865,6 +1008,109 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(report.records.map((record) => record.completed), [true, false]);
     assertEquals(report.records[1]?.error, "mock resolver failed");
+  });
+
+  it("fails the eval once when the gateway refuses a real agent's model request", async () => {
+    let modelCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-no-credits",
+      async doGenerate() {
+        modelCalls += 1;
+        const error = await buildProviderError(
+          "anthropic",
+          new Response(
+            JSON.stringify({
+              slug: "insufficient-credits",
+              error: "AI credit limit exceeded",
+              suggestion: "Purchase additional credits or upgrade your subscription plan.",
+              balance: 0,
+              required: 0.25,
+            }),
+            { status: 402, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+        error.message = `veryfront-cloud request failed: ${error.message}`;
+        throw error;
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const agent = createAgent({
+      id: "eval-no-credits-agent",
+      model: "hosted/eval-no-credits",
+      system: "Answer.",
+      resolveModelTransport: async () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:no-credits",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+      check({ record }) {
+        JSON.parse((record.output as { text?: string } | undefined)?.text ?? "");
+      },
+    });
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-access-denied");
+    assertStringIncludes(error.detail ?? "", "0.25 credits required, 0 available");
+    assertEquals(modelCalls, 1);
+  });
+
+  it("fails a case whose model stream stalls once the record timeout elapses", async () => {
+    let streamSignal: AbortSignal | undefined;
+    // Released at the end of the test so no promise outlives it.
+    let releaseModel: (() => void) | undefined;
+    const model = {
+      provider: "hosted",
+      modelId: "hosted/eval-stalled-stream",
+      _generateViaStream: true,
+      doGenerate() {
+        return new Promise((resolve) => {
+          releaseModel = () => resolve({ text: "late" });
+        });
+      },
+      async doStream(options: { abortSignal?: AbortSignal }) {
+        streamSignal = options.abortSignal;
+        // Headers arrived, then the provider stopped sending data.
+        return { stream: new ReadableStream() };
+      },
+    } as unknown as ModelRuntime;
+    const agent = createAgent({
+      id: "eval-stalled-stream-agent",
+      model: "hosted/eval-stalled-stream",
+      system: "Answer.",
+      resolveModelTransport: async () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:stalled",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: resolveEvalRecordTimeoutMs(createEvalOptions({ recordTimeout: 0.2 })),
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:stalled" case "q1" did not finish within 0.2s.',
+    );
+    assertEquals(streamSignal?.aborted, true);
+    releaseModel?.();
   });
 
   it("retains only skill loader tools for skills agents when mock tools are active", async () => {
@@ -991,6 +1237,40 @@ describe("eval CLI command helpers", () => {
       ["load_skill", "load_skill_reference", "search_docs"],
       ["search_docs"],
     ]);
+  });
+
+  it("forwards the record timeout signal into tool execution", async () => {
+    let executionSignal: AbortSignal | undefined;
+    let releaseExecution: (() => void) | undefined;
+    const tool = {
+      id: "slow_lookup",
+      type: "function",
+      description: "Lookup that never finishes.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: (_input: unknown, context?: Parameters<Tool["execute"]>[1]) => {
+        executionSignal = context?.abortSignal;
+        return new Promise((resolve) => {
+          releaseExecution = () => resolve({ ok: true });
+        });
+      },
+    } as Tool;
+    const definition = evalTool({
+      id: "eval:slow-tool",
+      target: "tool:slow_lookup",
+      dataset: datasets.inline([{ id: "q1", input: { query: "slow" } }]),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: { tool: createToolAdapter(tool) },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:slow-tool" case "q1" did not finish within 0.05s.',
+    );
+    assertEquals(executionSignal?.aborted, true);
+    releaseExecution?.();
   });
 
   it("creates a CLI tool adapter for direct tool evals", async () => {
@@ -1265,6 +1545,93 @@ describe("eval CLI command helpers", () => {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
+  });
+
+  it("converts --record-timeout seconds into a valid timer deadline", () => {
+    assertEquals(resolveEvalRecordTimeoutMs({}), 600_000);
+    assertEquals(resolveEvalRecordTimeoutMs({ recordTimeout: 0 }), 0);
+    assertEquals(resolveEvalRecordTimeoutMs({ recordTimeout: 0.0004 }), 1);
+    const error = assertThrows(
+      () => resolveEvalRecordTimeoutMs({ recordTimeout: 10_000_000 }),
+      VeryfrontError,
+    ) as VeryfrontError;
+    assertEquals(
+      error.detail,
+      "Invalid --record-timeout: use 0 to disable the limit, or a number of seconds up to 2147483.",
+    );
+  });
+
+  it("reports suite progress per eval", async () => {
+    await withTempDir(async (projectDir) => {
+      await withTempDir(async (configHome) => {
+        const fixtureAgent = {
+          id: "fixture",
+          config: {},
+          generate: async () => ({
+            text: "expected",
+            messages: [],
+            status: "completed",
+            toolCalls: [],
+          }),
+        } as unknown as Agent;
+        const runtime = createProjectRuntimeDiscovery(
+          normalizeSourceIntegrationPolicy({ allow: {} }),
+        );
+        runtime.agents.set(fixtureAgent.id, fixtureAgent);
+        for (const id of ["beta", "alpha"]) {
+          const definition = evalAgent({
+            id: `eval:${id}`,
+            target: "agent:fixture",
+            dataset: [{ id: `${id}-1`, input: id }, { id: `${id}-2`, input: id }],
+            metrics: [metrics.answer.contains({ text: "expected" }).gate()],
+          });
+          definition.source = {
+            filePath: `${projectDir}/evals/${id}.eval.ts`,
+            exportName: "default",
+          };
+          runtime.evals.set(definition.id, definition);
+        }
+        const progress: string[] = [];
+
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+        Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+        Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+        await captureConsoleOutput(() =>
+          runEvalCommand(
+            createEvalOptions({ projectDir, reportDir: `${projectDir}/suite` }),
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              createProgressReporter: () => ({
+                startEval: ({ name, position, count }) =>
+                  progress.push(`start ${position}/${count} ${name}`),
+                onEvent: (event) => {
+                  if (event.type === "record-finished") {
+                    progress.push(`finished ${event.exampleId}`);
+                  }
+                },
+                onRetry: () => {},
+                setPhase: () => {},
+                stop: () => progress.push("stop"),
+              }),
+            },
+          )
+        );
+
+        assertEquals(progress.filter((line) => !line.startsWith("finished")), [
+          "start 1/2 alpha",
+          "start 2/2 beta",
+          "stop",
+          "stop",
+        ]);
+        assertEquals(
+          progress.filter((line) => line.startsWith("finished")),
+          ["finished alpha-1", "finished alpha-2", "finished beta-1", "finished beta-2"],
+        );
+      });
+    });
   });
 
   it("describes each metric in prose, naming the tool it asserted on", async () => {
@@ -1969,6 +2336,20 @@ describe("eval CLI command helpers", () => {
     }
   });
 
+  it("warns before the run when a Veryfront token has no project to bill", () => {
+    const warning = formatMissingEvalProjectWarning({ apiToken: "token" });
+
+    assertEquals(typeof warning, "string");
+    assertEquals(warning?.includes("gateway_project_required"), true);
+    assertEquals(warning?.includes("VERYFRONT_PROJECT_SLUG"), true);
+    assertEquals(warning?.includes("veryfront link"), false);
+    assertEquals(
+      formatMissingEvalProjectWarning({ apiToken: "token", projectSlug: "eval-project" }),
+      undefined,
+    );
+    assertEquals(formatMissingEvalProjectWarning({}), undefined);
+  });
+
   it("keeps the stored login token out of the project tool execution context", async () => {
     // `createToolAdapter` passes this context straight to a project-defined
     // `tool.execute()`. The stored login token is host-private so project code
@@ -2079,6 +2460,348 @@ describe("eval CLI command helpers", () => {
     assertEquals(request.headers.get("Authorization"), "Bearer test-token");
     assertEquals(await request.json(), { billing_group_id: "evalrun_test_model" });
     assertEquals(ambientFetchCalled, false);
+  });
+
+  it("finalizes gateway billing on an operator-exported API origin with a private DNS answer", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.staging.example");
+    const requests: Request[] = [];
+    const fetchStub = (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ ok: true }, { status: 404 }));
+    };
+    const transport = {
+      fetch: fetchStub,
+      pinnedFetch: (url: URL, _addresses: readonly string[], init: RequestInit) =>
+        fetchStub(url, init),
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    };
+
+    __resetOperatorVeryfrontApiOriginsForTests();
+    try {
+      await __runWithOutboundFetchTransportForTests(transport, async () => {
+        await finalizeGatewayBillingGroup("evalrun_private_api", { retryDelaysMs: [] });
+      });
+      assertEquals(requests.length, 0, "an untrusted private DNS answer must stay blocked");
+
+      trustOperatorConfiguredVeryfrontApiOrigins();
+      await __runWithOutboundFetchTransportForTests(transport, async () => {
+        await finalizeGatewayBillingGroup("evalrun_private_api", { retryDelaysMs: [] });
+      });
+    } finally {
+      __resetOperatorVeryfrontApiOriginsForTests();
+    }
+
+    assertEquals(requests.map((request) => request.url), [
+      "https://api.staging.example/ai/gateway/billing/finalize",
+    ]);
+  });
+
+  it("does not warn about a missing billing group when model access was denied", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    let finalizeRequests = 0;
+    installMockFetch(() => {
+      finalizeRequests += 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "Gateway billing group not found",
+            code: "gateway_billing_group_not_found",
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    });
+    const denied = createEvalModelAccessDeniedError(
+      "eval:denied",
+      { kind: "billing", code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+      undefined,
+    );
+
+    const deniedOutput = await captureConsoleOutput(() =>
+      assertRejects(() =>
+        runEvalWithGatewayBillingGroup("evalrun_denied", async () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          throw denied;
+        })
+      )
+    );
+    const otherFailureOutput = await captureConsoleOutput(() =>
+      assertRejects(() =>
+        runEvalWithGatewayBillingGroup("evalrun_other", async () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          throw new Error("custom metric failed");
+        })
+      )
+    );
+
+    assertEquals(finalizeRequests, 2);
+    assertEquals(
+      [...deniedOutput.stdout, ...deniedOutput.stderr].some((line) =>
+        line.includes("Gateway billing finalization skipped")
+      ),
+      false,
+    );
+    assertEquals(
+      [...otherFailureOutput.stdout, ...otherFailureOutput.stderr].some((line) =>
+        line.includes("Gateway billing finalization skipped for evalrun_other: 404")
+      ),
+      true,
+    );
+  });
+
+  it("keeps the missing billing group warning when an earlier request got past admission", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "Gateway billing group not found",
+            code: "gateway_billing_group_not_found",
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    const denied = createEvalModelAccessDeniedError(
+      "eval:denied-later",
+      { kind: "billing", code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits" },
+      undefined,
+    );
+
+    const output = await captureConsoleOutput(() =>
+      assertRejects(() =>
+        runEvalWithGatewayBillingGroup("evalrun_denied_later", async () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          const context = getCurrentVeryfrontCloudContext();
+          if (context) context.billingGroupRequestAdmitted = true;
+          throw denied;
+        })
+      )
+    );
+
+    assertEquals(
+      [...output.stdout, ...output.stderr].some((line) =>
+        line.includes("Gateway billing finalization skipped for evalrun_denied_later: 404")
+      ),
+      true,
+    );
+  });
+
+  it("does not warn when finalization hits the egress block that stopped the eval", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.staging.example");
+    let transportCalls = 0;
+    const recordCall = () => {
+      transportCalls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    const restoreTransport = __installOutboundFetchTransportForTests({
+      fetch: recordCall,
+      pinnedFetch: recordCall,
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    });
+    const blocked = createEvalModelAccessDeniedError(
+      "eval:blocked",
+      { kind: "egress-blocked", code: "EGRESS_BLOCKED", message: "Blocked" },
+      undefined,
+    );
+
+    try {
+      const blockedOutput = await captureConsoleOutput(() =>
+        assertRejects(() =>
+          runEvalWithGatewayBillingGroup("evalrun_blocked", async () => {
+            markCurrentVeryfrontCloudBillingGroupUsed();
+            throw blocked;
+          })
+        )
+      );
+      const otherFailureOutput = await captureConsoleOutput(() =>
+        assertRejects(() =>
+          runEvalWithGatewayBillingGroup("evalrun_other_blocked", async () => {
+            markCurrentVeryfrontCloudBillingGroupUsed();
+            throw new Error("custom metric failed");
+          })
+        )
+      );
+
+      assertEquals(
+        [...blockedOutput.stdout, ...blockedOutput.stderr].some((line) =>
+          line.includes("Gateway billing finalization skipped")
+        ),
+        false,
+      );
+      assertEquals(
+        [...otherFailureOutput.stdout, ...otherFailureOutput.stderr].some((line) =>
+          line.includes(
+            "Gateway billing finalization skipped for evalrun_other_blocked: Outbound network egress blocked for host: api.staging.example",
+          )
+        ),
+        true,
+      );
+      assertEquals(transportCalls, 0);
+    } finally {
+      restoreTransport();
+    }
+  });
+
+  it("does not warn about finalization refusals that repeat a missing project", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    const responses = [
+      new Response(
+        JSON.stringify({
+          error: "Gateway billing group not found",
+          code: "gateway_billing_group_not_found",
+        }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      ),
+      new Response(
+        JSON.stringify({
+          error: "A project is required to finalize gateway billing groups",
+          code: "gateway_project_required",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      ),
+    ];
+    installMockFetch(() => Promise.resolve(responses.shift()!));
+    const denied = createEvalModelAccessDeniedError(
+      "eval:no-project",
+      {
+        kind: "project-required",
+        code: "gateway_project_required",
+        message: "A project is required to use Veryfront-managed AI inference",
+      },
+      undefined,
+    );
+    const run = (billingGroupId: string) =>
+      captureConsoleOutput(() =>
+        assertRejects(() =>
+          runEvalWithGatewayBillingGroup(billingGroupId, async () => {
+            markCurrentVeryfrontCloudBillingGroupUsed();
+            throw denied;
+          })
+        )
+      );
+
+    const outputs = [await run("evalrun_no_project_404"), await run("evalrun_no_project_400")];
+
+    assertEquals(responses.length, 0);
+    assertEquals(
+      outputs.flatMap((output) => [...output.stdout, ...output.stderr]).some((line) =>
+        line.includes("Gateway billing finalization skipped")
+      ),
+      false,
+    );
+  });
+
+  it("suppresses only the finalization refusal that matches the denial that stopped the eval", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    );
+    const finalizeAfter = (billingGroupId: string, kind: "billing" | "unauthorized") =>
+      captureConsoleOutput(() =>
+        assertRejects(() =>
+          runEvalWithGatewayBillingGroup(billingGroupId, async () => {
+            markCurrentVeryfrontCloudBillingGroupUsed();
+            throw createEvalModelAccessDeniedError(
+              "eval:denied",
+              { kind, code: kind.toUpperCase(), message: "Refused" },
+              undefined,
+            );
+          })
+        )
+      );
+    const warned = (output: { stdout: string[]; stderr: string[] }, billingGroupId: string) =>
+      [...output.stdout, ...output.stderr].some((line) =>
+        line.includes(`Gateway billing finalization skipped for ${billingGroupId}: 401`)
+      );
+
+    const afterUnauthorized = await finalizeAfter("evalrun_unauthorized", "unauthorized");
+    const afterCreditDenial = await finalizeAfter("evalrun_credit_then_401", "billing");
+
+    assertEquals(warned(afterUnauthorized, "evalrun_unauthorized"), false);
+    assertEquals(warned(afterCreditDenial, "evalrun_credit_then_401"), true);
+  });
+
+  it("reports a refused configured project without echoing the slug", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    Deno.env.set("VERYFRONT_PROJECT_SLUG", "typo-project");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "Gateway billing group not found",
+            code: "gateway_billing_group_not_found",
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    const denied = createEvalModelAccessDeniedError(
+      "eval:typo",
+      {
+        kind: "project-required",
+        code: "gateway_project_required",
+        message: "A project is required to use Veryfront-managed AI inference",
+      },
+      undefined,
+    );
+
+    let thrown: unknown;
+    await captureConsoleOutput(async () => {
+      try {
+        await runEvalWithGatewayBillingGroup("evalrun_typo_project", () => {
+          markCurrentVeryfrontCloudBillingGroupUsed();
+          throw denied;
+        });
+      } catch (error) {
+        thrown = error;
+      }
+    });
+
+    assertInstanceOf(thrown, VeryfrontError);
+    assertEquals(thrown.slug, "eval-project-required");
+    assertStringIncludes(thrown.detail ?? "", "rejected the project this run is configured with");
+    assertEquals(thrown.detail?.includes("typo-project"), false);
+    assertEquals(thrown.cause, denied);
+  });
+
+  it("skips billing finalization with a warning when the response body cannot be read", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(new Error("body stalled past the request deadline"));
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    let warnings = 0;
+
+    const finalization = await finalizeGatewayBillingGroup("evalrun_body_stall", {
+      beforeWarning: () => {
+        warnings += 1;
+      },
+    });
+
+    assertEquals(finalization, undefined);
+    assertEquals(warnings, 1);
   });
 
   it("retries gateway billing finalization while usage capture is not ready", async () => {
@@ -2442,5 +3165,139 @@ describe("eval CLI command helpers", () => {
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+
+  it("does not warn about a missing project for a dataset-only suite", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:dataset-only",
+        dataset: [{ id: "case", input: "value" }],
+      });
+      definition.source = {
+        filePath: `${projectDir}/evals/dataset-only.eval.ts`,
+        exportName: "default",
+      };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        for (const id of [undefined, "eval:dataset-only"]) {
+          await runEvalCommand(
+            {
+              ...(id ? { id } : {}),
+              list: false,
+              exporters: [],
+              debug: false,
+              candidateModels: [],
+              projectDir,
+              reportDir: `${projectDir}/reports-${id ?? "suite"}`,
+            },
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+            },
+          );
+        }
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-dataset-no-project-" });
+  });
+
+  it("warns about a missing project for a dataset suite with metrics", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:judged-dataset",
+        dataset: [{ id: "case", input: "value" }],
+        metrics: [
+          metrics.judge.rubric({
+            rubric: "Is it good?",
+            judge: () => Promise.resolve({ score: 1 }),
+          }),
+        ],
+      });
+      definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/reports`,
+          },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.filter((line) => line.includes("gateway_project_required")).length,
+        1,
+      );
+    }, { prefix: "vf-eval-judged-no-project-" });
+  });
+
+  it("does not warn about a missing project in JSON mode", async () => {
+    await withTempDir(async (projectDir) => {
+      const definition = evalDataset({
+        id: "eval:judged-dataset",
+        dataset: [{ id: "case", input: "value" }],
+        metrics: [
+          metrics.judge.rubric({
+            rubric: "Is it good?",
+            judge: () => Promise.resolve({ score: 1 }),
+          }),
+        ],
+      });
+      definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      const warnings: string[] = [];
+      const originalWarn = cliLogger.warn;
+      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      setJsonMode(true);
+      try {
+        await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/reports`,
+          },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+      } finally {
+        setJsonMode(false);
+        cliLogger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+    }, { prefix: "vf-eval-json-no-project-" });
   });
 });

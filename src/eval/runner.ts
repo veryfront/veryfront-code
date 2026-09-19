@@ -2,8 +2,15 @@ import { createEvalCheckContext } from "./expect.ts";
 import { isEvalDefinition } from "./factory.ts";
 import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
+import {
+  classifyEvalModelAccessDenial,
+  createEvalModelAccessDeniedError,
+  isEvalModelAccessDeniedError,
+} from "./model-access.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import { EVAL_RECORD_TIMEOUT } from "#veryfront/errors";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 import {
   createEvalReportExporterRegistry,
   type EvalReportExportContext,
@@ -18,6 +25,7 @@ import type {
   EvalAgentAdapterResult,
   EvalDefinition,
   EvalMetricResult,
+  EvalProgressEvent,
   EvalRecord,
   EvalReport,
   EvalReportExportConfig,
@@ -204,12 +212,15 @@ async function runAgentTarget(
   options: RunEvalOptions,
   example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
   repetition: number,
+  signal: AbortSignal | undefined,
 ): Promise<EvalAgentAdapterResult> {
   const adapter = options.adapters.agent;
   if (!adapter) {
     throw new Error(`No agent adapter configured for eval target "${definition.target}".`);
   }
-  return normalizeAgentAdapterResult(await adapter({ definition, example, repetition }));
+  return normalizeAgentAdapterResult(
+    await adapter({ definition, example, repetition, ...(signal ? { signal } : {}) }),
+  );
 }
 
 async function runToolTarget(
@@ -218,16 +229,28 @@ async function runToolTarget(
   example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
   repetition: number,
   runId: string,
-  markInvoked?: () => void,
+  signal: AbortSignal | undefined,
+  markInvoked?: (input: unknown) => void,
 ): Promise<{ input: unknown; result: EvalToolAdapterResult }> {
   const adapter = options.adapters.tool;
   if (!adapter) {
     throw new Error(`No tool adapter configured for eval target "${definition.target}".`);
   }
-  const input = definition.input ? await definition.input(example) : example.input;
-  markInvoked?.();
+  const input = definition.input
+    ? await definition.input(example, signal ? { signal } : undefined)
+    : example.input;
+  // The mapper can outlive the record deadline; do not execute the tool after it.
+  if (signal?.aborted) throw signal.reason;
+  markInvoked?.(input);
   const result = normalizeToolAdapterResult(
-    await adapter({ definition, example, repetition, runId, input }),
+    await adapter({
+      definition,
+      example,
+      repetition,
+      runId,
+      input,
+      ...(signal ? { signal } : {}),
+    }),
   );
   return { input, result };
 }
@@ -484,12 +507,27 @@ export async function exportEvalReport(
   return results;
 }
 
+/**
+ * Stop the whole eval when the model gateway refuses a model request for
+ * billing or entitlement reasons. Every later record would be refused the same
+ * way, and grading the empty output only buries the cause.
+ */
+function throwIfModelAccessDenied(definition: EvalDefinition, error: unknown): void {
+  // Adapters and judges that already classified the denial pass it through.
+  if (isEvalModelAccessDeniedError(error)) throw error;
+  const denial = classifyEvalModelAccessDenial(error);
+  if (denial) throw createEvalModelAccessDeniedError(definition.id, denial, error);
+}
+
 async function runRecord(
   definition: EvalDefinition,
   options: RunEvalOptions,
   example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
   repetition: number,
   runId: string,
+  signal?: AbortSignal,
+  onTargetFinished?: (record: EvalRecord) => void,
+  onToolInvoked?: (input: unknown) => void,
 ): Promise<EvalRecord> {
   const started = Date.now();
   let result: EvalAgentAdapterResult | EvalToolAdapterResult;
@@ -501,15 +539,25 @@ async function runRecord(
       // Dataset evals grade the stored example value directly: no execution.
       result = { output: example.input, completed: true };
     } else if (definition.targetKind === "tool") {
-      const toolRun = await runToolTarget(definition, options, example, repetition, runId, () => {
-        toolInvoked = true;
-      });
+      const toolRun = await runToolTarget(
+        definition,
+        options,
+        example,
+        repetition,
+        runId,
+        signal,
+        (invokedInput) => {
+          toolInvoked = true;
+          onToolInvoked?.(invokedInput);
+        },
+      );
       result = toolRun.result;
       toolInput = toolRun.input;
     } else {
-      result = await runAgentTarget(definition, options, example, repetition);
+      result = await runAgentTarget(definition, options, example, repetition, signal);
     }
   } catch (error) {
+    throwIfModelAccessDenied(definition, error);
     result = {
       ...(definition.targetKind === "tool" ? { output: undefined } : { text: "" }),
       completed: false,
@@ -552,12 +600,27 @@ async function runRecord(
     ...(result.error ? { error: result.error } : {}),
   };
 
+  onTargetFinished?.(record);
+
+  // Once the record deadline passed, the record is already reported as timed
+  // out. Stop before each grading stage so no evaluator starts new work.
+  const stopIfTimedOut = (): void => {
+    if (signal?.aborted) throw signal.reason;
+  };
+
   const metricResults = [];
   const evaluationErrors: string[] = [];
   for (const metric of definition.metrics) {
+    stopIfTimedOut();
     try {
-      metricResults.push(normalizeMetricResult(metric, await metric.evaluate(record)));
+      metricResults.push(
+        normalizeMetricResult(
+          metric,
+          await metric.evaluate(record, signal ? { signal } : undefined),
+        ),
+      );
     } catch (error) {
+      throwIfModelAccessDenied(definition, error);
       const failure = metricEvaluationFailure(metric, error);
       metricResults.push(failure);
       evaluationErrors.push(failure.explanation ?? `${metric.name} evaluation failed`);
@@ -567,6 +630,7 @@ async function runRecord(
 
   const checks: EvalMetricResult[] = [];
   if (definition.check) {
+    stopIfTimedOut();
     try {
       await definition.check(createEvalCheckContext({
         definition,
@@ -574,9 +638,18 @@ async function runRecord(
         repetition,
         record,
         checks,
+        ...(signal ? { signal } : {}),
       }));
     } catch (error) {
-      evaluationErrors.push(`Eval check failed: ${stringifyEvalError(error)}`);
+      throwIfModelAccessDenied(definition, error);
+      // A check that throws on the output of a target that already failed is a
+      // consequence of that failure, not a defect in the check. Say so, so the
+      // report does not send the author to debug eval logic that is fine.
+      evaluationErrors.push(
+        record.error
+          ? `Eval check could not evaluate the failed target output: ${stringifyEvalError(error)}`
+          : `Eval check failed: ${stringifyEvalError(error)}`,
+      );
     }
   }
   record.checks = checks;
@@ -589,6 +662,122 @@ async function runRecord(
   }
 
   return record;
+}
+
+function normalizeEvalRecordTimeoutMs(value: number | undefined): number {
+  if (value === undefined) return 0;
+  try {
+    return normalizeTimerDurationMs(value, "Eval record timeout");
+  } catch (error) {
+    throw createEvalValidationError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function formatRecordTimeout(ms: number): string {
+  const seconds = ms / 1000;
+  return `${Number.isInteger(seconds) ? seconds : Number(seconds.toFixed(3))}s`;
+}
+
+/**
+ * Run one record against its deadline. The deadline covers the whole record,
+ * target execution, metrics, and checks, and returns control even when the
+ * work ignores the abort signal, so one stalled record cannot hold the run.
+ */
+async function runRecordWithinTimeout(
+  definition: EvalDefinition,
+  options: RunEvalOptions,
+  example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
+  repetition: number,
+  runId: string,
+  timeoutMs: number,
+): Promise<EvalRecord> {
+  if (timeoutMs === 0) return await runRecord(definition, options, example, repetition, runId);
+
+  const started = Date.now();
+  const controller = new AbortController();
+  // Set once the target finished, so a timeout during grading keeps its output,
+  // trace, and usage instead of discarding them.
+  let targetRecord: EvalRecord | undefined;
+  // Set once a tool target was invoked, so a timeout still reports the mapped
+  // input the tool actually received.
+  let executionInput: { value: unknown } | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<EvalRecord>((resolve) => {
+    timer = setTimeout(() => {
+      const error = EVAL_RECORD_TIMEOUT.create({
+        detail: `Eval "${definition.id}" case "${example.id}" did not finish within ${
+          formatRecordTimeout(timeoutMs)
+        }.`,
+        context: { evalId: definition.id, exampleId: example.id, repetition, timeoutMs },
+      });
+      controller.abort(error);
+      const timeoutMessage = error.detail ?? error.message;
+      if (targetRecord) {
+        resolve({
+          // `durationMs` stays the target's own measure, as on a record that
+          // finished grading. The whole-case wait is reported through progress.
+          ...targetRecord,
+          completed: false,
+          error: [targetRecord.error, timeoutMessage].filter(Boolean).join("; "),
+          // Grading never finished, so no metric or check result is reported.
+          metrics: [],
+          checks: [],
+        });
+        return;
+      }
+      resolve({
+        id: `${example.id}:${repetition}`,
+        evalId: definition.id,
+        exampleId: example.id,
+        repetition,
+        input: example.input,
+        output: undefined,
+        ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
+        ...(executionInput ? { executionInput: executionInput.value } : {}),
+        metadata: example.metadata ?? {},
+        trace: normalizeTrace(),
+        usage: {},
+        durationMs: Date.now() - started,
+        completed: false,
+        error: timeoutMessage,
+        metrics: [],
+        checks: [],
+      });
+    }, timeoutMs);
+  });
+  const work = runRecord(
+    definition,
+    options,
+    example,
+    repetition,
+    runId,
+    controller.signal,
+    (record) => {
+      targetRecord = { ...record };
+    },
+    (input) => {
+      executionInput = { value: input };
+    },
+  );
+  // A record abandoned at its deadline may still settle later; nothing waits
+  // for it, and the run moves on to the next record.
+  work.catch(() => {});
+  try {
+    return await Promise.race([work, timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function notifyEvalProgress(options: RunEvalOptions, event: EvalProgressEvent): void {
+  if (!options.onProgress) return;
+  try {
+    // An async listener rejects after this frame returns, so contain that too:
+    // an unhandled rejection can take the process down.
+    void Promise.resolve(options.onProgress(event)).catch(() => {});
+  } catch {
+    // Progress is advisory: a failing listener must not change the eval result.
+  }
 }
 
 /** Execute an eval locally with injected target adapters. */
@@ -613,12 +802,46 @@ export async function runEval(
     `dataset "${definition.dataset.path ?? definition.dataset.kind}"`,
   );
   const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
-  const records: EvalRecord[] = [];
-
+  const recordTimeoutMs = normalizeEvalRecordTimeoutMs(options.recordTimeoutMs);
+  const jobs: Array<{ example: (typeof examples)[number]; repetition: number }> = [];
   for (const example of examples) {
     for (let repetition = 1; repetition <= definition.repetitions; repetition += 1) {
-      records.push(await runRecord(definition, options, example, repetition, runId));
+      jobs.push({ example, repetition });
     }
+  }
+  const total = jobs.length;
+  const records: EvalRecord[] = [];
+  notifyEvalProgress(options, { type: "eval-started", evalId: definition.id, total });
+
+  for (const [index, { example, repetition }] of jobs.entries()) {
+    const progress = {
+      evalId: definition.id,
+      recordId: `${example.id}:${repetition}`,
+      exampleId: example.id,
+      repetition,
+      index,
+      total,
+    };
+    notifyEvalProgress(options, { type: "record-started", ...progress });
+    // The record's own `durationMs` can come from the adapter, which measures
+    // target execution alone. Progress reports the whole case, grading
+    // included, because that is the wait a reader is watching.
+    const startedAt = Date.now();
+    const record = await runRecordWithinTimeout(
+      definition,
+      options,
+      example,
+      repetition,
+      runId,
+      recordTimeoutMs,
+    );
+    records.push(record);
+    notifyEvalProgress(options, {
+      type: "record-finished",
+      ...progress,
+      completed: record.completed,
+      durationMs: Date.now() - startedAt,
+    });
   }
 
   const endedAt = options.now?.() ?? new Date();

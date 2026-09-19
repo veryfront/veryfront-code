@@ -10,6 +10,10 @@ import { DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS } from "../../agent/ho
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
 import {
+  type ProviderRequestRetryEvent,
+  runWithProviderRequestObserver,
+} from "./provider-request-observer.ts";
+import {
   buildProviderError,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
@@ -525,6 +529,36 @@ describe("provider-http", () => {
       });
     });
 
+    it("preserves the gateway project-required body on a 400", async () => {
+      const body = JSON.stringify({
+        error: "A project is required to use Veryfront-managed AI inference",
+        code: "gateway_project_required",
+      });
+      const err = await buildProviderError(
+        "anthropic",
+        new Response(body, { status: 400, headers: { "Content-Type": "application/json" } }),
+      );
+
+      assertEquals(err.status, 400);
+      assertEquals(err.responseBody, body);
+      assertEquals(err.message.includes("project"), false);
+    });
+
+    it("classifies the gateway project-required rejection for streaming and hosted surfaces", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(400, { error: "echoed <GATEWAY TEXT>", code: "gateway_project_required" }),
+      );
+      const expected = {
+        code: "GATEWAY_PROJECT_REQUIRED",
+        message: "A project is required to use Veryfront-managed AI inference",
+        status: 400,
+      };
+
+      assertEquals(parseProviderError(err), expected);
+      assertEquals(parseProviderError({ lastError: err }), expected);
+    });
+
     it("treats a JSON null error body as an unstructured request error", async () => {
       const err = await buildProviderError("openai", jsonResponse(400, "null"));
 
@@ -724,6 +758,32 @@ describe("provider-http", () => {
       assertEquals(error.retryable, true);
     });
 
+    it("keeps the HTTP status when a JSON error body stalls past the deadline", async () => {
+      const stalledBody = new ReadableStream<Uint8Array>({
+        pull() {
+          return new Promise<void>(() => {});
+        },
+      });
+      const error = await assertRejects(
+        () =>
+          requestJson({
+            url: "https://user:pass@gateway.test/ai/gateway/openai/v1/chat/completions?key=secret",
+            fetchImpl: () => Promise.resolve(new Response(stalledBody, { status: 401 })),
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            timeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "status 401",
+      ) as ProviderRequestError;
+
+      assertEquals(error.status, 401);
+      assertEquals(error.message.includes("timed out"), false);
+      assertEquals(error.requestUrl, "https://gateway.test/ai/gateway/openai/v1/chat/completions");
+      assertEquals(Object.keys(error).includes("requestUrl"), false);
+    });
+
     it("names the model, the elapsed time, and the deadline that fired", async () => {
       const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
       const error = await assertRejects(
@@ -883,6 +943,224 @@ describe("provider-http", () => {
 
       assertEquals(attempts, 2);
       assertEquals(await new Response(stream).text(), "chunk");
+    });
+
+    it("reports each stream retry to the active request observer", async () => {
+      let attempts = 0;
+      const retries: ProviderRequestRetryEvent[] = [];
+      const stream = await runWithProviderRequestObserver(
+        {
+          onRetry: (event) => {
+            retries.push(event);
+          },
+        },
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                attempts === 1
+                  ? jsonResponse(
+                    429,
+                    { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                    { "retry-after": "0" },
+                  )
+                  : new Response("chunk"),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            modelId: "kimi-k2.6",
+          }),
+      );
+
+      assertEquals(await new Response(stream).text(), "chunk");
+      assertEquals(retries, [{
+        providerLabel: "veryfront-cloud",
+        modelId: "kimi-k2.6",
+        reason: "429",
+        attempt: 2,
+        maxAttempts: 3,
+        delayMs: 0,
+      }]);
+    });
+
+    it("reports no retry when the provider delay outlasts the header budget", async () => {
+      let attempts = 0;
+      const retries: ProviderRequestRetryEvent[] = [];
+      await runWithProviderRequestObserver(
+        {
+          onRetry: (event) => {
+            retries.push(event);
+          },
+        },
+        async () => {
+          await assertRejects(() =>
+            requestStream({
+              url: "https://provider.test/stream",
+              fetchImpl: () => {
+                attempts++;
+                return Promise.resolve(jsonResponse(
+                  429,
+                  { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                  { "retry-after": "30" },
+                ));
+              },
+              init: { method: "POST" },
+              providerLabel: "veryfront-cloud",
+              providerKind: "moonshotai",
+            })
+          );
+        },
+      );
+
+      assertEquals(attempts, 1);
+      assertEquals(retries, []);
+    });
+
+    it("contains a rejected async retry observer", async () => {
+      let attempts = 0;
+      const stream = await runWithProviderRequestObserver(
+        { onRetry: () => Promise.reject(new Error("observer failed")) },
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                attempts === 1
+                  ? jsonResponse(
+                    429,
+                    { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                    { "retry-after": "0" },
+                  )
+                  : new Response("chunk"),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+      );
+
+      assertEquals(attempts, 2);
+      assertEquals(await new Response(stream).text(), "chunk");
+    });
+
+    it("reports no retry when the caller cancelled during the failed response", async () => {
+      const controller = new AbortController();
+      let attempts = 0;
+      const retries: ProviderRequestRetryEvent[] = [];
+      await runWithProviderRequestObserver(
+        {
+          onRetry: (event) => {
+            retries.push(event);
+          },
+        },
+        async () => {
+          await assertRejects(() =>
+            requestStream({
+              url: "https://provider.test/stream",
+              fetchImpl: () => {
+                attempts++;
+                // The caller gives up while this failed response is read.
+                controller.abort(new Error("caller cancelled"));
+                return Promise.resolve(jsonResponse(
+                  429,
+                  { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                  { "retry-after": "0" },
+                ));
+              },
+              init: { method: "POST", signal: controller.signal },
+              providerLabel: "veryfront-cloud",
+              providerKind: "moonshotai",
+            })
+          );
+        },
+      );
+
+      assertEquals(attempts, 1);
+      assertEquals(retries, []);
+    });
+
+    it("reports the retry that follows a per-attempt header timeout", async () => {
+      let attempts = 0;
+      const retries: ProviderRequestRetryEvent[] = [];
+      const stream = await runWithProviderRequestObserver(
+        {
+          onRetry: (event) => {
+            retries.push(event);
+          },
+        },
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (_input, init) => {
+              attempts++;
+              // The first attempt never returns headers, so its deadline fires.
+              if (attempts === 1) {
+                return new Promise<Response>((_resolve, reject) => {
+                  const signal = (init as RequestInit | undefined)?.signal;
+                  signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+                });
+              }
+              return Promise.resolve(new Response("chunk"));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 20,
+            totalHeadersBudgetMs: 5_000,
+          }),
+      );
+
+      assertEquals(attempts, 2);
+      assertEquals(await new Response(stream).text(), "chunk");
+      assertEquals(retries.map((event) => event.reason), ["timeout"]);
+    });
+
+    it("keeps overlapping observer scopes isolated", async () => {
+      const first: string[] = [];
+      const second: string[] = [];
+      const retryThenSucceed = (label: string) => {
+        let attempts = 0;
+        return () => {
+          attempts++;
+          if (attempts > 1) return Promise.resolve(new Response(label));
+          return Promise.resolve(jsonResponse(
+            429,
+            { error: { code: "rate_limit_exceeded", message: "slow down" } },
+            { "retry-after": "0" },
+          ));
+        };
+      };
+      const scoped = (collected: string[], label: string) =>
+        runWithProviderRequestObserver(
+          {
+            onRetry: (event) => {
+              collected.push(`${label}:${event.reason}`);
+            },
+          },
+          async () => {
+            // Yield so the scopes interleave rather than run back to back.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            const stream = await requestStream({
+              url: "https://provider.test/stream",
+              fetchImpl: retryThenSucceed(label),
+              init: { method: "POST" },
+              providerLabel: "veryfront-cloud",
+              providerKind: "moonshotai",
+            });
+            assertEquals(await new Response(stream).text(), label);
+          },
+        );
+
+      await Promise.all([scoped(first, "first"), scoped(second, "second")]);
+
+      assertEquals(first, ["first:429"]);
+      assertEquals(second, ["second:429"]);
     });
 
     it("bounds rate-limit retries", async () => {

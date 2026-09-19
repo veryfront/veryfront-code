@@ -85,6 +85,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     | "abortSignal"
     | "fileContentFetchTimeoutMs"
     | "historicalToolInputRetention"
+    | "onUnresolvableAttachment"
   >
   & {
     authToken?: string;
@@ -313,6 +314,7 @@ export type HostedChatExecutionPreparationRootRunOptions = Pick<
 /** Public API contract for hosted chat context budget logging. */
 export type HostedChatContextBudgetLogger = {
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
+  warn?: (message: string, metadata?: Record<string, unknown>) => void;
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
@@ -683,6 +685,20 @@ export async function prepareHostedChatExecution<
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
       },
+      onUnresolvableAttachment: ({ uploadId, error }) => {
+        // Deliberately narrow: the filename is user-controlled, and a provider
+        // error message can carry the response body, so neither is logged. The
+        // uploadId identifies the file for anyone investigating, and the error
+        // class separates a permission failure from a network one.
+        input.contextBudget?.logger?.warn?.(
+          "Hosted chat attachment unreadable; continuing without it",
+          {
+            uploadId,
+            projectId: input.request.projectId,
+            errorKind: error instanceof Error ? error.name : typeof error,
+          },
+        );
+      },
     },
   );
   const finalMessages = preparedMessages;
@@ -789,5 +805,6 @@ export async function prepareHostedChatRuntimeMessages(
         uploadId,
         projectId: options.projectId,
       }),
+    onUnresolvableAttachment: options.onUnresolvableAttachment,
   });
 }

@@ -270,6 +270,8 @@ export interface EvalAnswerGroundednessMetricOptions {
     metadata: Record<string, unknown>;
     evidence: string[];
     sources: string[];
+    /** Aborts when the eval record exceeds its time limit. */
+    signal?: AbortSignal;
   }) => EvalMaybePromise<{ score: number; pass?: boolean; explanation?: string }>;
 }
 
@@ -352,6 +354,8 @@ export interface EvalMetricResult {
 /** Optional runtime context passed to metric evaluators. */
 export interface EvalMetricContext {
   now?: () => Date;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Metric contract used by eval definitions. */
@@ -391,6 +395,8 @@ export interface EvalCheckContext {
   repetition: number;
   record: EvalRecord;
   expect: EvalExpect;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Context passed to an agent eval mock tool resolver. */
@@ -398,6 +404,8 @@ export interface EvalMockToolsResolverContext {
   definition: EvalDefinition;
   example: EvalExample;
   repetition: number;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Request-scoped mock tool resolver for local `evalAgent` execution. */
@@ -428,7 +436,10 @@ export interface EvalDefinition {
   tags: string[];
   metadata: Record<string, unknown>;
   source?: EvalSource;
-  input?: (example: EvalExample) => EvalMaybePromise<unknown>;
+  input?: (
+    example: EvalExample,
+    context?: EvalToolInputContext,
+  ) => EvalMaybePromise<unknown>;
   mockTools?: EvalMockTools;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
@@ -476,7 +487,10 @@ export interface EvalToolInput {
    * Optional mapper from dataset example to tool input. When omitted, the
    * dataset example's `input` value is passed to the tool adapter unchanged.
    */
-  input?: (example: EvalExample) => EvalMaybePromise<unknown>;
+  input?: (
+    example: EvalExample,
+    context?: EvalToolInputContext,
+  ) => EvalMaybePromise<unknown>;
   metrics?: EvalMetric[];
   repetitions?: number;
   tags?: string[];
@@ -489,6 +503,8 @@ export interface EvalAgentAdapterContext {
   definition: EvalDefinition;
   example: EvalExample;
   repetition: number;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Agent adapter result normalized into an eval record. */
@@ -510,6 +526,12 @@ export type EvalAgentAdapter = (
   context: EvalAgentAdapterContext,
 ) => EvalMaybePromise<string | EvalAgentAdapterResult>;
 
+/** Context passed to an `evalTool` input mapper. */
+export interface EvalToolInputContext {
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
+}
+
 /** Context passed to a tool adapter when `runEval` executes an example. */
 export interface EvalToolAdapterContext {
   definition: EvalDefinition;
@@ -517,6 +539,8 @@ export interface EvalToolAdapterContext {
   repetition: number;
   runId: string;
   input: unknown;
+  /** Aborts when the record exceeds `RunEvalOptions.recordTimeoutMs`. */
+  signal?: AbortSignal;
 }
 
 /** Tool adapter result normalized into an eval record. */
@@ -535,6 +559,40 @@ export type EvalToolAdapter = (
   context: EvalToolAdapterContext,
 ) => EvalMaybePromise<EvalToolAdapterResult>;
 
+/**
+ * Progress notification emitted by `runEval` while it executes records.
+ *
+ * `index` is the zero-based position of the record in execution order, and
+ * `total` is the number of records the run executes (examples times
+ * repetitions).
+ */
+export type EvalProgressEvent =
+  | {
+    type: "eval-started";
+    evalId: string;
+    total: number;
+  }
+  | {
+    type: "record-started";
+    evalId: string;
+    recordId: string;
+    exampleId: string;
+    repetition: number;
+    index: number;
+    total: number;
+  }
+  | {
+    type: "record-finished";
+    evalId: string;
+    recordId: string;
+    exampleId: string;
+    repetition: number;
+    index: number;
+    total: number;
+    completed: boolean;
+    durationMs: number;
+  };
+
 /** Options for running an eval locally. */
 export interface RunEvalOptions {
   adapters: {
@@ -546,6 +604,19 @@ export interface RunEvalOptions {
   now?: () => Date;
   export?: EvalReportExportConfig;
   metadata?: EvalReportMetadata;
+  /**
+   * Most milliseconds one record may take, covering target execution,
+   * metrics, and checks. A record past the limit fails with the
+   * `eval-record-timeout` error, its adapter `signal` aborts, and the run moves
+   * on without waiting for it. Omit or pass 0 for no limit.
+   */
+  recordTimeoutMs?: number;
+  /**
+   * Receives progress while records run. Records run one after another, so
+   * events arrive in dataset order. A listener that throws, or whose promise
+   * rejects, does not affect the run.
+   */
+  onProgress?: (event: EvalProgressEvent) => void | Promise<void>;
 }
 
 /** Export configuration for a completed eval report. */

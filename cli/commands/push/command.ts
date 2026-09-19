@@ -43,7 +43,7 @@ import {
 } from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, formatDuration } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
-import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
+import { type IgnoreChecker, loadIgnoreChecker } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { isNotFoundError, lstat } from "veryfront/fs";
@@ -213,8 +213,13 @@ export async function scanLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
 ): Promise<UploadOp[]> {
+  // Push does long remote work between loading ignore rules and scanning, so
+  // bring Git's ignore state up to date for both this scan and the remote
+  // classification that follows it.
+  await ignoreChecker.refreshGitIgnores();
   const fs = createFileSystem();
   const ops: UploadOp[] = [];
+  const supportedSymlinks: string[] = [];
 
   async function walk(currentDir: string): Promise<void> {
     const entries = await fs.readDir(currentDir);
@@ -226,12 +231,7 @@ export async function scanLocalFiles(
       if (ignoreChecker.isIgnored(relativePath, { isDirectory: entry.isDirectory })) continue;
 
       if (entry.isSymlink) {
-        if (ignoreChecker.isSupportedExtension(entry.name)) {
-          throw INVALID_ARGUMENT.create({
-            detail:
-              `Veryfront push does not support symbolic links: "${relativePath}". Replace the link with a file and run veryfront push again.`,
-          });
-        }
+        if (ignoreChecker.isSupportedExtension(entry.name)) supportedSymlinks.push(relativePath);
         continue;
       }
 
@@ -248,7 +248,23 @@ export async function scanLocalFiles(
   }
 
   await walk(projectDir);
-  return ops;
+  // The Git ignore listing is a snapshot taken when the checker was loaded. Ask
+  // Git about every file this scan found, so one created since then is still
+  // excluded when the checkout ignores it.
+  await ignoreChecker.resolveGitIgnoredCandidates([
+    ...ops.map((op) => op.path),
+    ...supportedSymlinks,
+  ]);
+  // A symbolic link is rejected only once Git confirms the checkout does not
+  // ignore it, so an ignored link created since the listing is skipped instead.
+  const rejectedSymlink = supportedSymlinks.find((path) => !ignoreChecker.isIgnored(path));
+  if (rejectedSymlink !== undefined) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Veryfront push does not support symbolic links: "${rejectedSymlink}". Replace the link with a file and run veryfront push again.`,
+    });
+  }
+  return ops.filter((op) => !ignoreChecker.isIgnored(op.path));
 }
 
 function gitSourcesMatch(left: GitSource, right: GitSource): boolean {
@@ -320,7 +336,7 @@ export async function capturePushSourceDigest(
   projectDir: string,
   ignoreChecker?: IgnoreChecker,
 ): Promise<{ files: UploadOp[]; sourceDigest: string }> {
-  const checker = ignoreChecker ?? createIgnoreChecker(await loadIgnorePatterns(projectDir));
+  const checker = ignoreChecker ?? await loadIgnoreChecker(projectDir);
   const files = await scanLocalFiles(projectDir, checker);
   return { files, sourceDigest: await computeSourceDigest(files) };
 }
@@ -1160,8 +1176,17 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       await preflightSyncState(projectDir);
 
       spinner.update("Loading ignore patterns...");
-      const ignorePatterns = await loadIgnorePatterns(projectDir);
-      const ignoreChecker = createIgnoreChecker(ignorePatterns);
+      const ignoreChecker = await loadIgnoreChecker(projectDir);
+      // Remote files need not exist locally, so ask Git about each listing:
+      // otherwise a remote path the checkout ignores would count as managed
+      // and prune would delete it, which `.vfignore` rules already prevent.
+      const listRemoteFiles = async (
+        ...args: Parameters<typeof listAllFiles>
+      ): Promise<RemoteFile[]> => {
+        const files = await listAllFiles(...args);
+        await ignoreChecker.resolveGitIgnoredCandidates(files.map((file) => file.path));
+        return files;
+      };
 
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);
@@ -1228,7 +1253,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           // A just-created project has no files yet; a listing failure here is
           // not a reason to fail the push.
           try {
-            mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
+            mainFiles = await listRemoteFiles(client, projectApiReference(config), {
+              type: "main",
+            });
           } catch {
             mainFiles = [];
           }
@@ -1239,7 +1266,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               config.projectId
             ? outcome.config
             : config;
-          mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
+          mainFiles = await listRemoteFiles(client, projectApiReference(config), { type: "main" });
         }
       }
 
@@ -1277,6 +1304,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           source: { type: "main" } satisfies PullSource,
           branchExists: isMainBranch,
         };
+      await ignoreChecker.resolveGitIgnoredCandidates(target.remoteFiles.map((file) => file.path));
       let remoteFilesAreBaseline = !isMainBranch && !target.branchExists;
 
       if (!dryRun && !isMainBranch && !target.branchId) {
@@ -1292,7 +1320,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             branchName,
           );
           const branchSource = { type: "branch", name: branchName } satisfies PullSource;
-          const branchRemoteFiles = await listAllFiles(
+          const branchRemoteFiles = await listRemoteFiles(
             client,
             projectApiReference(config),
             branchSource,
@@ -1505,7 +1533,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           ? createNoopSpinner()
           : createSpinner("Checking remote files...");
         try {
-          const latestRemoteFiles = await listAllFiles(
+          const latestRemoteFiles = await listRemoteFiles(
             client,
             projectApiReference(config),
             target.source,
@@ -1528,7 +1556,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           if (!dryRun) {
             if (!force) {
               spinner.update("Checking remote files...");
-              const latestRemoteFiles = await listAllFiles(
+              const latestRemoteFiles = await listRemoteFiles(
                 client,
                 projectApiReference(config),
                 target.source,
@@ -1547,7 +1575,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
             } else if (pruneRemoteMissing) {
               spinner.update("Verifying push target...");
-              let latestRemoteFiles = await listAllFiles(
+              let latestRemoteFiles = await listRemoteFiles(
                 client,
                 projectApiReference(config),
                 target.source,
@@ -1586,7 +1614,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               if (lateDeleteResult.deleted > 0) {
                 try {
-                  latestRemoteFiles = await listAllFiles(
+                  latestRemoteFiles = await listRemoteFiles(
                     client,
                     projectApiReference(config),
                     target.source,
@@ -1608,7 +1636,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               pushedSourceDigest = await computeVerifiedSourceDigest(latestRemoteFiles);
             } else {
-              let latestRemoteFiles = await listAllFiles(
+              let latestRemoteFiles = await listRemoteFiles(
                 client,
                 projectApiReference(config),
                 target.source,
@@ -1637,7 +1665,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               for (const file of lateSelectedFiles) deletePaths.add(file.path);
               if (lateDeleteResult.deleted > 0) {
-                latestRemoteFiles = await listAllFiles(
+                latestRemoteFiles = await listRemoteFiles(
                   client,
                   projectApiReference(config),
                   target.source,
@@ -1805,7 +1833,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       };
       const listAllFilesForVerification = async () => {
         try {
-          return await listAllFiles(
+          return await listRemoteFiles(
             client,
             projectApiReference(config),
             target.source,

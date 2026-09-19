@@ -1591,6 +1591,93 @@ describe("pullCommand", () => {
     }
   });
 
+  it("skips remote and local paths Git ignores during a pruning pull", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
+    const originalProjectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
+
+    try {
+      await Deno.mkdir(join(tempDir, "app"), { recursive: true });
+      await Deno.writeTextFile(join(tempDir, "app", "keep.ts"), "old\n");
+      await Deno.writeTextFile(join(tempDir, ".gitignore"), "generated/\n");
+      await Deno.writeTextFile(join(tempDir, ".vfignore"), "!/generated/keep.ts\n");
+      await initializeCleanTestGit(tempDir);
+      await Deno.writeTextFile(join(tempDir, ".git", "info", "exclude"), ".scratch/\n");
+      await Deno.mkdir(join(tempDir, ".scratch"), { recursive: true });
+      await Deno.writeTextFile(join(tempDir, ".scratch", "todos.md"), "local notes\n");
+
+      setEnv("VERYFRONT_API_TOKEN", "token");
+      deleteEnv("VERYFRONT_PROJECT_SLUG");
+      _resetEnvironmentConfig();
+
+      const remoteFile = (path: string, content: string) => ({
+        path,
+        content,
+        size: content.length,
+        type: "file",
+        created_at: "",
+        updated_at: "",
+      });
+
+      await withMockFetch(
+        (input: RequestInfo | URL) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          if (url.pathname === "/projects/alpha") {
+            return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+          }
+          if (
+            url.pathname === "/projects/alpha/files" &&
+            url.searchParams.get("branch") === "studio-change"
+          ) {
+            return Promise.resolve(Response.json({
+              data: [
+                remoteFile("app/keep.ts", "export default 1;"),
+                remoteFile(".scratch/todos.md", "remote notes\n"),
+                remoteFile("generated/remote-only.ts", "export const generated = 1;"),
+                remoteFile("generated/keep.ts", "export const kept = 1;"),
+              ],
+              page_info: {},
+            }));
+          }
+          throw new Error(`Pruning pull made an unexpected per-file request: ${url}`);
+        },
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            branch: "studio-change",
+            prune: true,
+            force: true,
+            quiet: true,
+          }),
+      );
+
+      assertEquals(await Deno.readTextFile(join(tempDir, "app", "keep.ts")), "export default 1;");
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, ".scratch", "todos.md")),
+        "local notes\n",
+        "a Git-ignored local file is neither pruned nor overwritten",
+      );
+      assertEquals(
+        await exists(join(tempDir, "generated", "remote-only.ts")),
+        false,
+        "a remote path Git ignores is not written even though it did not exist locally",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "generated", "keep.ts")),
+        "export const kept = 1;",
+        "a .vfignore negation re-includes a Git-ignored remote path",
+      );
+    } finally {
+      if (originalApiToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
+      else setEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      if (originalProjectSlug === undefined) deleteEnv("VERYFRONT_PROJECT_SLUG");
+      else setEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("does not overwrite files protected by .vfignore during a pruning pull", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;

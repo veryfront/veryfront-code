@@ -4,6 +4,7 @@
 
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
 import { INVALID_ARGUMENT } from "veryfront/errors";
+import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "../../../src/utils/timer.ts";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
 import {
@@ -15,6 +16,7 @@ import {
 import type {
   DiscoveredEval,
   EvalAgentAdapterContext,
+  EvalDefinition,
   EvalGateFailureSummary,
   EvalMockTools,
   EvalModelComparisonMetricName,
@@ -52,6 +54,11 @@ import {
 } from "../../../src/agent/project/agent-runtime.ts";
 import { runEvalReport } from "../../../src/eval/run-report.ts";
 import {
+  type EvalModelAccessDenialKind,
+  explainConfiguredProjectDenial,
+  getEvalModelAccessDenialKind,
+} from "../../../src/eval/model-access.ts";
+import {
   createErrorEnvelope,
   createSuccessEnvelope,
   isJsonMode,
@@ -60,7 +67,13 @@ import {
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
-import { createOriginBoundOutboundFetch } from "#cli/outbound-fetch";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  OutboundRequestBlockedError,
+  trustOperatorConfiguredVeryfrontApiOrigins,
+} from "#cli/outbound-fetch";
+import { runWithProviderRequestObserver } from "../../../src/provider/runtime-loader/provider-request-observer.ts";
+import { createEvalProgressReporter, type EvalProgressReporter } from "./progress.ts";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -68,6 +81,8 @@ export interface EvalOptions extends EvalArgs {
 
 interface EvalCommandDependencies {
   discoverProjectAgentRuntime?: typeof discoverProjectAgentRuntime;
+  hydrateEvalRuntimeAuth?: typeof hydrateEvalRuntimeAuth;
+  createProgressReporter?: () => EvalProgressReporter;
 }
 
 type GatewayBillingGroupFinalization = {
@@ -88,11 +103,24 @@ type GatewayBillingFinalizeError = {
 type GatewayBillingFinalizeOptions = {
   retryDelaysMs?: readonly number[];
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * The refusal that stopped the eval, set only when no earlier request in the
+   * run got past admission. Finalization then expects no recorded usage, and a
+   * missing billing group, or a repeat of that same refusal, is not worth a
+   * warning. Any other failure still warns.
+   */
+  stoppedByDenial?: EvalModelAccessDenialKind;
+  /** Per-attempt deadline for the finalization request. */
+  requestTimeoutMs?: number;
+  /** Called before a warning prints, so a live progress line can clear first. */
+  beforeWarning?: () => void;
 };
 
 type EvalModelComparisonPolicy = Omit<EvalModelComparisonOptions, "baselineModel">;
 
 const GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE = "gateway_billing_group_usage_not_ready";
+const GATEWAY_BILLING_GROUP_NOT_FOUND_CODE = "gateway_billing_group_not_found";
+const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
 const ENV_EVAL_EXPORTERS = "VERYFRONT_EVAL_EXPORTERS";
 const ENV_EVAL_EXPORT = "VERYFRONT_EVAL_EXPORT";
 const ENV_EVAL_EXPORT_REQUIRED = "VERYFRONT_EVAL_EXPORT_REQUIRED";
@@ -106,6 +134,17 @@ const ENV_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS =
   "VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EXPLANATIONS";
 const ENV_EVAL_EXPORT_METADATA_ALLOWLIST = "VERYFRONT_EVAL_EXPORT_METADATA_ALLOWLIST";
 // Gateway usage capture is eventually consistent after model streams close.
+/**
+ * Finalization is a small bookkeeping call. Without a deadline, a gateway that accepts the
+ * connection and never answers would hold the command open after every record already finished.
+ */
+const DEFAULT_GATEWAY_BILLING_FINALIZE_REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * Default time one agent eval case may run. Measured multi-agent cases take about a minute, so ten
+ * minutes leaves room for slow orchestrators while still ending a case whose model stream stopped
+ * sending data (provider streams have no idle deadline once response headers arrive).
+ */
+export const DEFAULT_EVAL_RECORD_TIMEOUT_SECONDS = 600;
 const DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS = [
   500,
   1_000,
@@ -274,6 +313,23 @@ function isGatewayBillingUsageNotReady(
   return error.code === GATEWAY_BILLING_GROUP_USAGE_NOT_READY_CODE;
 }
 
+/** Finalization status that repeats the refusal which stopped the eval. */
+const DENIAL_FINALIZE_STATUS: Partial<Record<EvalModelAccessDenialKind, number>> = {
+  unauthorized: 401,
+  forbidden: 403,
+};
+
+function isExpectedFinalizeRefusal(
+  denial: EvalModelAccessDenialKind,
+  response: Response,
+  error: GatewayBillingFinalizeError,
+): boolean {
+  if (response.status === 404 && error.code === GATEWAY_BILLING_GROUP_NOT_FOUND_CODE) return true;
+  if (DENIAL_FINALIZE_STATUS[denial] === response.status) return true;
+  return denial === "project-required" && response.status === 400 &&
+    error.code === GATEWAY_PROJECT_REQUIRED_CODE;
+}
+
 function formatGatewayBillingFinalizeWarning(
   billingGroupId: string,
   response: Response,
@@ -323,7 +379,13 @@ export async function finalizeGatewayBillingGroup(
 
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_GATEWAY_BILLING_FINALIZE_RETRY_DELAYS_MS;
   const sleepFn = options.sleep ?? sleep;
-  const hostTransport = createOriginBoundOutboundFetch(bootstrap.apiBaseUrl);
+  const warn = (message: string): void => {
+    options.beforeWarning?.();
+    cliLogger.warn(message);
+  };
+  const hostTransport = createVeryfrontApiOriginBoundOutboundFetch(bootstrap.apiBaseUrl);
+  const requestTimeoutMs = options.requestTimeoutMs ??
+    DEFAULT_GATEWAY_BILLING_FINALIZE_REQUEST_TIMEOUT_MS;
 
   for (let attempt = 0;; attempt += 1) {
     let response: Response;
@@ -338,14 +400,23 @@ export async function finalizeGatewayBillingGroup(
             ...(bootstrap.projectSlug ? { "x-veryfront-project-slug": bootstrap.projectSlug } : {}),
           },
           body: JSON.stringify({ billing_group_id: billingGroupId }),
+          signal: AbortSignal.timeout(requestTimeoutMs),
         },
       );
     } catch (error) {
-      cliLogger.warn(
-        `Gateway billing finalization skipped for ${billingGroupId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      const message = `Gateway billing finalization skipped for ${billingGroupId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      // The eval already stopped with a classified egress block, and the same
+      // host policy refuses the finalization request too.
+      if (
+        options.stoppedByDenial === "egress-blocked" &&
+        error instanceof OutboundRequestBlockedError
+      ) {
+        cliLogger.debug(message);
+      } else {
+        warn(message);
+      }
       return undefined;
     }
 
@@ -357,13 +428,34 @@ export async function finalizeGatewayBillingGroup(
         continue;
       }
 
-      cliLogger.warn(formatGatewayBillingFinalizeWarning(billingGroupId, response, error));
+      const message = formatGatewayBillingFinalizeWarning(billingGroupId, response, error);
+      if (
+        options.stoppedByDenial &&
+        isExpectedFinalizeRefusal(options.stoppedByDenial, response, error)
+      ) {
+        cliLogger.debug(message);
+      } else {
+        warn(message);
+      }
       return undefined;
     }
 
-    const finalization = parseGatewayBillingGroupFinalization(await response.json());
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      // A body that stalls past the request deadline, or is not JSON, must not
+      // fail an eval whose records already finished.
+      warn(
+        `Gateway billing finalization skipped for ${billingGroupId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return undefined;
+    }
+    const finalization = parseGatewayBillingGroupFinalization(payload);
     if (!finalization) {
-      cliLogger.warn(
+      warn(
         `Gateway billing finalization skipped for ${billingGroupId}: invalid response`,
       );
     }
@@ -374,20 +466,38 @@ export async function finalizeGatewayBillingGroup(
 export async function runEvalWithGatewayBillingGroup(
   billingGroupId: string,
   operation: () => Promise<EvalReport>,
+  hooks: { onFinalize?: () => void; beforeWarning?: () => void } = {},
 ): Promise<EvalReport> {
   const currentContext = getCurrentVeryfrontCloudContext();
   const billingContext = { ...(currentContext ?? {}), billingGroupId };
+  // The slug the model requests carried, so a project-required refusal can
+  // name it rather than suggest setting one that is already set.
+  const sentProjectSlug = getVeryfrontCloudBootstrap().projectSlug;
   let report: EvalReport;
   try {
     report = await runWithVeryfrontCloudContextAsync(billingContext, operation);
-  } catch (error) {
+  } catch (caught) {
+    const error = explainConfiguredProjectDenial(caught, sentProjectSlug);
     if (billingContext.billingGroupUsed) {
-      await finalizeGatewayBillingGroup(billingGroupId);
+      hooks.onFinalize?.();
+      // Still finalize: earlier requests can have been served before the
+      // gateway started refusing them, and those must be reconciled.
+      const denial = getEvalModelAccessDenialKind(error);
+      await finalizeGatewayBillingGroup(billingGroupId, {
+        ...(denial && !billingContext.billingGroupRequestAdmitted
+          ? { stoppedByDenial: denial }
+          : {}),
+        ...(hooks.beforeWarning ? { beforeWarning: hooks.beforeWarning } : {}),
+      });
     }
     throw error;
   }
   if (!billingContext.billingGroupUsed && !hasGatewayUsage(report)) return report;
-  const finalization = await finalizeGatewayBillingGroup(billingGroupId);
+  hooks.onFinalize?.();
+  const finalization = await finalizeGatewayBillingGroup(
+    billingGroupId,
+    hooks.beforeWarning ? { beforeWarning: hooks.beforeWarning } : {},
+  );
   return finalization ? applyGatewayBillingGroupFinalization(report, finalization) : report;
 }
 
@@ -606,6 +716,35 @@ export async function hydrateEvalRuntimeAuth(
   );
 }
 
+/**
+ * Veryfront Cloud bills managed inference to a project, and its gateway
+ * rejects every model request that names none. With a token but no project,
+ * the run stops at its first `veryfront-cloud/...` request with
+ * `EVAL_PROJECT_REQUIRED`, so name the fix before the run starts. The remedy
+ * matches that error's suggestion.
+ */
+export function formatMissingEvalProjectWarning(
+  runtimeAuth: { apiToken?: string; projectSlug?: string },
+): string | undefined {
+  if (!runtimeAuth.apiToken || runtimeAuth.projectSlug) return undefined;
+  return "No Veryfront project is configured, so Veryfront Cloud will reject veryfront-cloud model requests " +
+    "(gateway_project_required). Set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
+}
+
+/**
+ * Whether running these evals might send a model request. The warning this
+ * gates is advisory, so the check is deliberately coarse: only a dataset eval
+ * with no metrics and no `check` callback is certainly model-free. Any metric
+ * or check runs code that may call a model.
+ */
+export function evalRunMayCallModel(definitions: readonly EvalDefinition[]): boolean {
+  return definitions.some((definition) =>
+    definition.targetKind !== "dataset" ||
+    definition.metrics.length > 0 ||
+    definition.check !== undefined
+  );
+}
+
 export function createEvalToolExecutionContext(
   config: EvalRuntimeAuthConfig | null | undefined,
 ): ToolExecutionContext {
@@ -723,14 +862,38 @@ async function resolveEvalMockTools(
   return typeof mockTools === "function" ? await mockTools(context) : mockTools;
 }
 
+/**
+ * Convert `--record-timeout` seconds to the runner's millisecond deadline. Exact 0 disables it.
+ * Any other value must land in the portable timer range, so a tiny value never rounds down to
+ * "no limit" and a huge one is rejected instead of being clamped by the runtime.
+ */
+export function resolveEvalRecordTimeoutMs(options: Pick<EvalOptions, "recordTimeout">): number {
+  const seconds = options.recordTimeout ?? DEFAULT_EVAL_RECORD_TIMEOUT_SECONDS;
+  if (seconds === 0) return 0;
+  try {
+    return normalizeTimerDurationMs(seconds * 1000, "--record-timeout");
+  } catch {
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid --record-timeout: use 0 to disable the limit, or a number of seconds up to ${
+        Math.floor(MAX_TIMER_DELAY_MS / 1000)
+      }.`,
+    });
+  }
+}
+
 export function createAgentAdapter(agent: Agent, options: EvalOptions) {
-  return async ({ definition, example, repetition }: EvalAgentAdapterContext) => {
+  return async ({ definition, example, repetition, signal }: EvalAgentAdapterContext) => {
     const started = Date.now();
     const mockTools = await resolveEvalMockTools(definition.mockTools, {
       definition,
       example,
       repetition,
+      // A resolver that awaits network work cancels with the case.
+      ...(signal ? { signal } : {}),
     });
+    // A resolver that ignored the signal can return after the deadline. The
+    // record is already reported as timed out, so start no model request.
+    if (signal?.aborted) throw signal.reason;
     const response = await agent.generate({
       input: normalizeEvalInputForAgent(example.input),
       context: {
@@ -746,6 +909,8 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       ...(definition.mockTools !== undefined
         ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
         : {}),
+      // The runner aborts this when the case passes --record-timeout.
+      ...(signal ? { abortSignal: signal } : {}),
     });
     return {
       text: response.text,
@@ -769,6 +934,8 @@ export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext 
       ...baseContext,
       runId: context.runId,
       toolCallId,
+      // The runner aborts this when the case passes --record-timeout.
+      ...(context.signal ? { abortSignal: context.signal } : {}),
     });
     const error = getToolExecutionErrorMessage(output);
     return {
@@ -1241,12 +1408,23 @@ async function outputEvalUsageError(message: string): Promise<2> {
   return 2;
 }
 
+function evalDisplayName(evalItem: DiscoveredEval): string {
+  return (evalItem.name || evalItem.id).replace(/^eval:/, "");
+}
+
 function createEvalReportCommandAdapters(input: {
   options: EvalOptions;
   config: EvalRuntimeAuthConfig | null | undefined;
   projectRuntime: ProjectAgentRuntimeDiscovery;
   modelComparisonAgent?: Agent;
+  progress: EvalProgressReporter;
+  /** Evals in run order, used to label suite progress as `[eval 2/3]`. */
+  evalOrder?: DiscoveredEval[];
+  /** Models in run order, used to label model comparison progress. */
+  modelOrder?: string[];
 }) {
+  const { progress } = input;
+  let runsStarted = 0;
   return {
     targets: {
       runEval: (evalItem: DiscoveredEval, options: {
@@ -1255,17 +1433,38 @@ function createEvalReportCommandAdapters(input: {
         targetKind: EvalReport["targetKind"];
         targetAdapter: unknown;
         metadata: EvalReport["metadata"];
-      }) =>
-        runEval(evalItem.definition, {
-          baseDir: options.baseDir,
-          runId: options.runId,
-          adapters: options.targetKind === "tool"
-            ? { tool: options.targetAdapter as ReturnType<typeof createToolAdapter> }
-            : options.targetKind === "agent"
-            ? { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> }
-            : {},
-          metadata: options.metadata,
-        }),
+        selectedModel?: string;
+      }) => {
+        runsStarted += 1;
+        const models = input.modelOrder ?? [];
+        const evals = input.evalOrder ?? [];
+        const name = options.selectedModel && models.length > 0
+          ? `${evalDisplayName(evalItem)} (${options.selectedModel})`
+          : evalDisplayName(evalItem);
+        const count = models.length > 0 ? models.length : Math.max(evals.length, 1);
+        const evalIndex = evals.indexOf(evalItem);
+        progress.startEval({
+          name,
+          position: models.length > 0 || evalIndex < 0 ? runsStarted : evalIndex + 1,
+          count,
+        });
+        return runWithProviderRequestObserver(
+          { onRetry: (event) => progress.onRetry(event) },
+          () =>
+            runEval(evalItem.definition, {
+              baseDir: options.baseDir,
+              runId: options.runId,
+              adapters: options.targetKind === "tool"
+                ? { tool: options.targetAdapter as ReturnType<typeof createToolAdapter> }
+                : options.targetKind === "agent"
+                ? { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> }
+                : {},
+              metadata: options.metadata,
+              recordTimeoutMs: resolveEvalRecordTimeoutMs(input.options),
+              onProgress: (event) => progress.onEvent(event),
+            }),
+        );
+      },
       resolveTarget: (evalItem: DiscoveredEval) => {
         const agentId = evalItem.definition.targetKind === "agent"
           ? resolveAgentTargetId(evalItem.definition.target)
@@ -1300,7 +1499,11 @@ function createEvalReportCommandAdapters(input: {
       writeTextFileEnsuringDir,
     },
     billing: {
-      runWithGatewayBillingGroup: runEvalWithGatewayBillingGroup,
+      runWithGatewayBillingGroup: (billingGroupId: string, operation: () => Promise<EvalReport>) =>
+        runEvalWithGatewayBillingGroup(billingGroupId, operation, {
+          onFinalize: () => progress.setPhase("finalizing usage"),
+          beforeWarning: () => progress.stop(),
+        }),
     },
     exporters: {
       exportReport: (report: EvalReport, config?: EvalReportExportConfig) =>
@@ -1316,9 +1519,42 @@ export async function runEvalCommand(
   const projectDir = options.projectDir ?? Deno.cwd();
   const discoverRuntime = dependencies.discoverProjectAgentRuntime ?? discoverProjectAgentRuntime;
 
+  const progress = dependencies.createProgressReporter?.() ?? createEvalProgressReporter();
+  try {
+    return await runEvalCommandWithProgress(
+      options,
+      projectDir,
+      discoverRuntime,
+      progress,
+      dependencies,
+    );
+  } finally {
+    progress.stop();
+  }
+}
+
+async function runEvalCommandWithProgress(
+  options: EvalOptions,
+  projectDir: string,
+  discoverRuntime: typeof discoverProjectAgentRuntime,
+  progress: EvalProgressReporter,
+  dependencies: EvalCommandDependencies,
+): Promise<number | undefined> {
   return await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey } = context;
-    await hydrateEvalRuntimeAuth(projectDir, config);
+    const runtimeAuth = await (dependencies.hydrateEvalRuntimeAuth ?? hydrateEvalRuntimeAuth)(
+      projectDir,
+      config,
+    );
+    // Emitted only once a run is certain and it can reach a model: listing,
+    // usage errors, and model-free dataset evals never send a model request.
+    const warnIfNoProject = (definitions: readonly EvalDefinition[]) => {
+      // JSON output must stay machine-readable; the refusal itself still
+      // arrives in the envelope if the run reaches the gateway.
+      if (isJsonMode() || !evalRunMayCallModel(definitions)) return;
+      const warning = formatMissingEvalProjectWarning(runtimeAuth);
+      if (warning) cliLogger.warn(warning);
+    };
 
     const projectRuntime = await discoverRuntime({
       projectDir,
@@ -1363,6 +1599,12 @@ export async function runEvalCommand(
       return undefined;
     }
 
+    try {
+      resolveEvalRecordTimeoutMs(options);
+    } catch (error) {
+      return await outputEvalUsageError(error instanceof Error ? error.message : String(error));
+    }
+
     if (resolveEvalExportRequired(options) && resolveEvalExporterIds(options).length === 0) {
       return await outputEvalUsageError(
         "--require-export requires --export <id> or a configured eval exporter.",
@@ -1388,6 +1630,7 @@ export async function runEvalCommand(
         return 0;
       }
 
+      warnIfNoProject(evals.map((item) => item.definition));
       const selectedExporterIds = resolveEvalExporterIds(options);
       const extensionSetup = await setupEvalCliExtensions(
         projectDir,
@@ -1421,8 +1664,11 @@ export async function runEvalCommand(
                 options,
                 config,
                 projectRuntime,
+                progress,
+                evalOrder: sortEvals(evals),
               }),
             );
+            progress.stop();
 
             if (outcome.kind !== "suite") {
               throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);
@@ -1506,6 +1752,7 @@ export async function runEvalCommand(
       if (toolId && !tool) {
         return await outputToolNotFound(toolId);
       }
+      warnIfNoProject([evalItem.definition]);
 
       if (modelComparisonConfig) {
         return await runWithProjectAgentRuntime(
@@ -1542,8 +1789,11 @@ export async function runEvalCommand(
                 config,
                 projectRuntime,
                 modelComparisonAgent: agent!,
+                progress,
+                modelOrder: modelComparisonConfig.config.models,
               }),
             );
+            progress.stop();
 
             if (outcome.kind !== "model-comparison") {
               throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);
@@ -1628,9 +1878,11 @@ export async function runEvalCommand(
               options,
               config,
               projectRuntime,
+              progress,
             }),
           ),
       );
+      progress.stop();
 
       if (outcome.kind !== "single") {
         throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);
@@ -1664,6 +1916,10 @@ export async function runEvalCommand(
 }
 
 export async function evalCommand(options: EvalOptions): Promise<void> {
+  // Seal the operator's exported Veryfront API origin before project config or
+  // agent modules load, so a staging, VPN, or self-hosted API that resolves to
+  // a private address stays reachable while project code cannot widen the set.
+  trustOperatorConfiguredVeryfrontApiOrigins();
   const exitCode = await runEvalCommand(options);
   if (typeof exitCode === "number") {
     exitProcess(exitCode);

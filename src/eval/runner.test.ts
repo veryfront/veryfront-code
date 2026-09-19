@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  buildProviderError,
+  requestJson,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   datasets,
@@ -21,12 +27,59 @@ import {
   type Span,
 } from "../observability/tracing/api-shim.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
+import { createOutboundFetchBoundary } from "#veryfront/security/http/outbound-fetch.ts";
+
+async function createGatewayCreditDenial(): Promise<Error> {
+  const error = await buildProviderError(
+    "anthropic",
+    new Response(
+      JSON.stringify({
+        slug: "insufficient-credits",
+        error: "AI credit limit exceeded",
+        suggestion: "Purchase additional credits or upgrade your subscription plan.",
+        balance: 0,
+        required: 0.25,
+      }),
+      { status: 402, headers: { "Content-Type": "application/json" } },
+    ),
+  );
+  error.message = `veryfront-cloud request failed: ${error.message}`;
+  return error;
+}
 
 function createUnprintableThrownValue(): object {
   const revocable = Proxy.revocable({}, {});
   revocable.revoke();
   return revocable.proxy;
 }
+
+/** A guarded fetch whose DNS answers every host with `addresses`. */
+function blockingGuardedFetch(baseUrl: string, addresses: string[]): typeof fetch {
+  return createOutboundFetchBoundary({
+    fetch: () => Promise.resolve(Response.json({ ok: true })),
+    pinnedFetch: () => Promise.resolve(Response.json({ ok: true })),
+    resolveHost: () => Promise.resolve(addresses),
+  }).createOriginBoundFetch(baseUrl);
+}
+
+/** A model request whose provider transport the egress guard blocks. */
+function blockedModelRequest(): Promise<unknown> {
+  const apiBaseUrl = getVeryfrontCloudBootstrap().apiBaseUrl.replace(/\/+$/, "");
+  const apiOrigin = new URL(apiBaseUrl).origin;
+  return requestJson({
+    url: `${apiBaseUrl}/ai/gateway/openai/v1/responses`,
+    fetchImpl: blockingGuardedFetch(apiOrigin, ["10.255.128.3"]),
+    init: { method: "POST", body: "{}" },
+    providerLabel: "veryfront-cloud",
+    providerKind: "openai",
+  });
+}
+
+const stalledMetricResult = {
+  name: "answer.exactMatch",
+  family: "answer",
+  severity: "gate",
+} as const;
 
 describe("eval/runner", () => {
   afterEach(() => {
@@ -571,6 +624,564 @@ describe("eval/runner", () => {
     assertEquals(report.summary.passRate, 0);
     assertEquals(report.records[0]?.completed, false);
     assertEquals(report.records[0]?.error, "AG-UI request failed");
+  });
+
+  it("stops at the first model access denial instead of grading empty output", async () => {
+    let adapterCalls = 0;
+    let checkCalls = 0;
+    const definition = evalAgent({
+      id: "eval:no-model-access",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+        { id: "q3", input: "Third" },
+      ]),
+      check({ record }) {
+        checkCalls += 1;
+        JSON.parse(String(record.output ?? ""));
+      },
+    });
+    const denial = await createGatewayCreditDenial();
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: {
+            agent: async () => {
+              adapterCalls += 1;
+              throw denial;
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-access-denied");
+    assertEquals(
+      error.detail,
+      'Eval "eval:no-model-access" stopped at its first refused model request: AI credit limit exceeded: 0.25 credits required, 0 available. Purchase additional credits or upgrade your subscription plan.',
+    );
+    assertEquals(adapterCalls, 1);
+    assertEquals(checkCalls, 0);
+  });
+
+  it("stops at the first gateway project-required rejection", async () => {
+    let adapterCalls = 0;
+    const definition = evalAgent({
+      id: "eval:no-project",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: {
+            agent: async () => {
+              adapterCalls += 1;
+              return await requestJson({
+                url: `${
+                  new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin
+                }/ai/gateway/anthropic/v1/messages`,
+                fetchImpl: () =>
+                  Promise.resolve(
+                    new Response(
+                      JSON.stringify({
+                        error: "A project is required to use Veryfront-managed AI inference",
+                        code: "gateway_project_required",
+                      }),
+                      { status: 400, headers: { "Content-Type": "application/json" } },
+                    ),
+                  ),
+                init: { method: "POST", body: "{}" },
+                providerLabel: "veryfront-cloud",
+                providerKind: "anthropic",
+              }) as never;
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-project-required");
+    assertEquals(adapterCalls, 1);
+  });
+
+  it("stops at the first Veryfront Cloud credential rejection", async () => {
+    let adapterCalls = 0;
+    const definition = evalAgent({
+      id: "eval:rejected-credential",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: {
+            agent: async () => {
+              adapterCalls += 1;
+              return await requestJson({
+                url: `${
+                  new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin
+                }/ai/gateway/anthropic/v1/messages`,
+                fetchImpl: () =>
+                  Promise.resolve(new Response('{"error":"Unauthorized"}', { status: 401 })),
+                init: { method: "POST", body: "{}" },
+                providerLabel: "veryfront-cloud",
+                providerKind: "anthropic",
+              }) as never;
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-unauthorized");
+    assertEquals(adapterCalls, 1);
+  });
+
+  it("stops at the first model request the egress guard blocks", async () => {
+    let adapterCalls = 0;
+    const definition = evalAgent({
+      id: "eval:blocked-endpoint",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+    });
+
+    const error = (await assertRejects(
+      () =>
+        runEval(definition, {
+          adapters: {
+            agent: async () => {
+              adapterCalls += 1;
+              return await blockedModelRequest() as never;
+            },
+          },
+        }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-egress-blocked");
+    assertEquals(
+      error.detail,
+      'Eval "eval:blocked-endpoint" stopped at its first refused model request: Veryfront blocked the request to the configured Veryfront API because its host resolves to a private network address',
+    );
+    assertEquals(adapterCalls, 1);
+  });
+
+  it("keeps a tool eval that calls a blocked private endpoint as a record failure", async () => {
+    let adapterCalls = 0;
+    const definition = evalTool({
+      id: "eval:tool-private-endpoint",
+      target: "tool:lookup",
+      dataset: datasets.inline([
+        { id: "q1", input: { q: "First" } },
+        { id: "q2", input: { q: "Second" } },
+      ]),
+    });
+    const blockedFetch = blockingGuardedFetch("https://internal.example", ["10.0.0.8"]);
+
+    const report = await runEval(definition, {
+      adapters: {
+        tool: async () => {
+          adapterCalls += 1;
+          await blockedFetch("https://internal.example/lookup");
+          return { output: "unreachable" };
+        },
+      },
+    });
+
+    assertEquals(adapterCalls, 2);
+    assertEquals(report.records.map((record) => record.completed), [false, false]);
+  });
+
+  it("stops when an eval check is refused model access", async () => {
+    let checkCalls = 0;
+    const definition = evalAgent({
+      id: "eval:check-blocked-endpoint",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+      check: async () => {
+        checkCalls += 1;
+        await blockedModelRequest();
+      },
+    });
+
+    const error = (await assertRejects(
+      () => runEval(definition, { adapters: { agent: async () => ({ text: "Paris" }) } }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-egress-blocked");
+    assertEquals(checkCalls, 1);
+  });
+
+  it("contains a rejecting async progress listener", async () => {
+    const definition = evalAgent({
+      id: "eval:async-progress",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+      metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+    });
+    const seen: string[] = [];
+
+    const report = await runEval(definition, {
+      adapters: { agent: () => "Paris" },
+      onProgress: (event) => {
+        seen.push(event.type);
+        return Promise.reject(new Error("listener failed"));
+      },
+    });
+    // Let the rejected listener promises settle before the test ends.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assertEquals(seen, ["eval-started", "record-started", "record-finished"]);
+    assertEquals(report.summary.passed, 1);
+  });
+
+  it("reports progress for every record in dataset order", async () => {
+    const definition = evalAgent({
+      id: "eval:progress",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First" },
+        { id: "q2", input: "Second" },
+      ]),
+      metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+    });
+    const events: string[] = [];
+
+    await runEval(definition, {
+      adapters: { agent: async ({ example }) => example.id === "q1" ? "Paris" : "Lyon" },
+      onProgress: (event) => {
+        events.push(
+          event.type === "eval-started"
+            ? `${event.type} ${event.evalId} total=${event.total}`
+            : event.type === "record-started"
+            ? `${event.type} ${event.recordId} ${event.index + 1}/${event.total}`
+            : `${event.type} ${event.recordId} completed=${event.completed}`,
+        );
+        throw new Error("a failing progress listener must not affect the run");
+      },
+    });
+
+    assertEquals(events, [
+      "eval-started eval:progress total=2",
+      "record-started q1:1 1/2",
+      "record-finished q1:1 completed=true",
+      "record-started q2:1 2/2",
+      "record-finished q2:1 completed=false",
+    ]);
+  });
+
+  it("reports the whole case duration in progress, not just target execution", async () => {
+    const slowMetric = metrics.answer.exactMatch().gate();
+    slowMetric.evaluate = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return { name: "answer.exactMatch", family: "answer", severity: "gate", pass: true };
+    };
+    const definition = evalAgent({
+      id: "eval:case-duration",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First", reference: "Paris" }]),
+      metrics: [slowMetric],
+    });
+    let reportedMs = 0;
+
+    const report = await runEval(definition, {
+      onProgress: (event) => {
+        if (event.type === "record-finished") reportedMs = event.durationMs;
+      },
+      // The adapter reports its own duration, which covers the target alone.
+      adapters: { agent: () => ({ text: "Paris", durationMs: 1 }) },
+    });
+
+    assertEquals(report.records[0]?.durationMs, 1);
+    assertEquals(
+      reportedMs >= 30,
+      true,
+      `progress duration ${reportedMs}ms must include grading`,
+    );
+  });
+
+  it("fails a record whose metric stalls past the record timeout and keeps its target data", async () => {
+    const metricSignals: AbortSignal[] = [];
+    // Released at the end of the test so no promise outlives it.
+    const releases: Array<() => void> = [];
+    const stalled = metrics.answer.exactMatch().gate();
+    stalled.evaluate = (_record, context) => {
+      if (context?.signal) metricSignals.push(context.signal);
+      return new Promise((resolve) => releases.push(() => resolve(stalledMetricResult)));
+    };
+    const definition = evalAgent({
+      id: "eval:stalled-metric",
+      target: "agent:researcher",
+      dataset: datasets.inline([
+        { id: "q1", input: "First", reference: "Paris" },
+        { id: "q2", input: "Second", reference: "Paris" },
+      ]),
+      metrics: [stalled],
+    });
+    const signals: AbortSignal[] = [];
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: {
+        agent: ({ signal }) => {
+          if (signal) signals.push(signal);
+          return { text: "Paris", usage: { totalTokens: 7 } };
+        },
+      },
+    });
+
+    assertEquals(report.records.map((record) => record.error), [
+      'Eval "eval:stalled-metric" case "q1" did not finish within 0.05s.',
+      'Eval "eval:stalled-metric" case "q2" did not finish within 0.05s.',
+    ]);
+    assertEquals(report.summary.failed, 2);
+    assertEquals(signals.map((signal) => signal.aborted), [true, true]);
+    assertEquals(metricSignals.map((signal) => signal.aborted), [true, true]);
+    assertEquals(report.records.map((record) => record.output), [
+      { text: "Paris" },
+      { text: "Paris" },
+    ]);
+    assertEquals(report.records.map((record) => record.usage.totalTokens), [7, 7]);
+    assertEquals(report.records.map((record) => record.metrics), [[], []]);
+    for (const release of releases) release();
+  });
+
+  it("starts no grading work once a target rejects at the record deadline", async () => {
+    const evaluated: string[] = [];
+    let checks = 0;
+    const lateMetric = metrics.answer.exactMatch().gate();
+    lateMetric.evaluate = (record) => {
+      evaluated.push(record.exampleId);
+      return { name: "answer.exactMatch", family: "answer", severity: "gate", pass: true };
+    };
+    const definition = evalAgent({
+      id: "eval:aborted-target",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+      metrics: [lateMetric],
+      check() {
+        checks += 1;
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 20,
+      adapters: {
+        // A target that honors the signal rejects as soon as the deadline passes.
+        agent: ({ signal }) =>
+          new Promise((_, reject) => {
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      },
+    });
+    // Give the abandoned record a chance to run any grading it would still start.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:aborted-target" case "q1" did not finish within 0.02s.',
+    );
+    assertEquals(evaluated, []);
+    assertEquals(checks, 0);
+  });
+
+  it("does not execute a tool when its input mapper outlives the record deadline", async () => {
+    let mapperSignal: AbortSignal | undefined;
+    let executions = 0;
+    const definition = evalTool({
+      id: "eval:slow-input",
+      target: "tool:lookup",
+      dataset: datasets.inline([{ id: "q1", input: { query: "one" } }]),
+      input: (example, context) => {
+        mapperSignal = context?.signal;
+        // Resolves after the deadline, the way an I/O-bound mapper would.
+        return new Promise((resolve) => setTimeout(() => resolve(example.input), 40));
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 20,
+      adapters: {
+        tool: () => {
+          executions += 1;
+          return { output: { ok: true } };
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:slow-input" case "q1" did not finish within 0.02s.',
+    );
+    assertEquals(mapperSignal?.aborted, true);
+    assertEquals(executions, 0);
+  });
+
+  it("keeps the target duration when grading times out", async () => {
+    let releaseMetric: (() => void) | undefined;
+    const stalled = metrics.answer.exactMatch().gate();
+    stalled.evaluate = () =>
+      new Promise((resolve) => {
+        releaseMetric = () => resolve(stalledMetricResult);
+      });
+    const definition = evalAgent({
+      id: "eval:target-duration",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First", reference: "Paris" }]),
+      metrics: [stalled],
+    });
+    let progressMs = 0;
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 40,
+      onProgress: (event) => {
+        if (event.type === "record-finished") progressMs = event.durationMs;
+      },
+      adapters: { agent: () => ({ text: "Paris", durationMs: 7 }) },
+    });
+    releaseMetric?.();
+
+    // The record keeps the adapter's target measure, as a graded record does.
+    assertEquals(report.records[0]?.durationMs, 7);
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(progressMs >= 40, true, `progress duration ${progressMs}ms covers the wait`);
+  });
+
+  it("keeps the mapped tool input when the tool times out", async () => {
+    let releaseTool: (() => void) | undefined;
+    const definition = evalTool({
+      id: "eval:tool-timeout",
+      target: "tool:lookup",
+      dataset: datasets.inline([{ id: "q1", input: { orderId: "A1" } }]),
+      input: (example) => ({ mapped: (example.input as { orderId: string }).orderId }),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 30,
+      adapters: {
+        tool: () =>
+          new Promise((resolve) => {
+            releaseTool = () => resolve({ output: { late: true } });
+          }),
+      },
+    });
+    releaseTool?.();
+
+    assertEquals(report.records[0]?.executionInput, { mapped: "A1" });
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:tool-timeout" case "q1" did not finish within 0.03s.',
+    );
+  });
+
+  it("passes the record signal to a stalled check", async () => {
+    let checkSignal: AbortSignal | undefined;
+    let releaseCheck: (() => void) | undefined;
+    const definition = evalAgent({
+      id: "eval:stalled-check",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+      check({ signal }) {
+        checkSignal = signal;
+        return new Promise<void>((resolve) => {
+          releaseCheck = resolve;
+        });
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: { agent: () => "Paris" },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:stalled-check" case "q1" did not finish within 0.05s.',
+    );
+    assertEquals(checkSignal?.aborted, true);
+    releaseCheck?.();
+  });
+
+  it("rejects a record timeout outside the timer range", async () => {
+    const definition = evalAgent({
+      id: "eval:bad-timeout",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+    });
+
+    for (const recordTimeoutMs of [-1, Number.POSITIVE_INFINITY, 2 ** 31]) {
+      const error = await assertRejects(
+        () => runEval(definition, { recordTimeoutMs, adapters: { agent: async () => "ok" } }),
+      ) as Error;
+      assertEquals(error.message.includes("Eval record timeout must be finite"), true);
+    }
+  });
+
+  it("stops when a judge metric is refused model access", async () => {
+    const denial = await createGatewayCreditDenial();
+    const judge = metrics.answer.exactMatch().gate();
+    judge.evaluate = () => Promise.reject(denial);
+    const definition = evalAgent({
+      id: "eval:judge-no-model-access",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First", reference: "Paris" }]),
+      metrics: [judge],
+    });
+
+    const error = (await assertRejects(
+      () => runEval(definition, { adapters: { agent: async () => ({ text: "Paris" }) } }),
+      VeryfrontError,
+    )) as VeryfrontError;
+
+    assertEquals(error.slug, "eval-model-access-denied");
+  });
+
+  it("attributes a check that throws on a failed target output to the target failure", async () => {
+    const definition = evalAgent({
+      id: "eval:check-after-target-failure",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+      check({ record }) {
+        // A fixed message keeps the assertion independent of each engine's
+        // JSON.parse wording.
+        if (!(record.output as { text?: string } | undefined)?.text) {
+          throw new Error("output is not valid JSON");
+        }
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => {
+          throw new Error("upstream unavailable");
+        },
+      },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      "upstream unavailable; Eval check could not evaluate the failed target output: output is not valid JSON",
+    );
   });
 
   it("contains hostile adapter throws as structured record failures", async () => {

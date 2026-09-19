@@ -1,6 +1,7 @@
 import {
   mergeUsage,
   parseSseChunk,
+  ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderRateLimitError,
   ProviderRequestError,
@@ -101,6 +102,24 @@ function invalidAnthropicStream(
     provider: "anthropic",
     status: 200,
     message: `${providerLabel} request failed: invalid successful stream (${issue})`,
+    retryable: false,
+  });
+}
+
+const UNPARSABLE_TOOL_INPUT_ISSUE = "tool call arguments were not valid JSON object text";
+
+/**
+ * Build the terminal error for a response the provider cut at the output token
+ * limit. Fine-grained tool streaming does not guarantee valid `partial_json`
+ * when `stop_reason` is `max_tokens`, so an unparsable tool input plus that
+ * stop reason is a truncation, not a malformed stream.
+ */
+function truncatedAnthropicOutput(providerLabel: string): ProviderOutputTruncatedError {
+  return new ProviderOutputTruncatedError({
+    provider: "anthropic",
+    status: 200,
+    message:
+      `${providerLabel} request failed: provider output truncated at the max output token limit (incomplete tool_use input)`,
     retryable: false,
   });
 }
@@ -768,6 +787,19 @@ export async function* streamAnthropicCompatibleParts(
   let sawDoneMarker = false;
   let sawStopReason = false;
   let completedSupportedContentBlocks = 0;
+  // A tool input that failed to parse is only classifiable once `stop_reason`
+  // arrives in `message_delta`, which is always later than `content_block_stop`.
+  let sawUnparsableToolInput = false;
+
+  const resolveDeferredToolInputFailure = ():
+    | ProviderOutputTruncatedError
+    | ProviderRequestError
+    | undefined => {
+    if (!sawUnparsableToolInput) return undefined;
+    return rawStopReason === "max_tokens"
+      ? truncatedAnthropicOutput(providerLabel)
+      : invalidAnthropicStream(providerLabel, UNPARSABLE_TOOL_INPUT_ISSUE);
+  };
 
   const mergeRecordUsage = (record: Record<string, unknown>) => {
     usage = mergeUsage(usage, extractAnthropicUsage(record));
@@ -893,6 +925,10 @@ export async function* streamAnthropicCompatibleParts(
   const validateCompletion = () => {
     if (!sawMessageStart) {
       throw invalidAnthropicStream(providerLabel, "stream contained no provider envelope");
+    }
+    const deferredToolInputFailure = resolveDeferredToolInputFailure();
+    if (deferredToolInputFailure) {
+      throw deferredToolInputFailure;
     }
     if (
       openContentBlocks.size > 0 ||
@@ -1434,6 +1470,15 @@ export async function* streamAnthropicCompatibleParts(
           if (!current) {
             continue;
           }
+          if (sawUnparsableToolInput) {
+            // The stream is already going to throw once `stop_reason` arrives.
+            // Before the deferral the first unparsable input threw right here,
+            // so no later tool call was ever yielded; keep that guarantee so a
+            // consumer can never dispatch a tool call from a doomed turn.
+            toolCalls.delete(index);
+            rawContentBlocks.delete(index);
+            continue;
+          }
           const input = joinAnthropicToolInput(current) || "{}";
           let parsedInput: Record<string, unknown>;
           try {
@@ -1444,10 +1489,15 @@ export async function* streamAnthropicCompatibleParts(
             }
             parsedInput = parsedRecord;
           } catch {
-            throw invalidAnthropicStream(
-              providerLabel,
-              "tool call arguments were not valid JSON object text",
-            );
+            // Defer: `stop_reason` decides whether this is a truncated response
+            // or a malformed stream, and it only arrives in `message_delta`.
+            // Drop the block so no partial tool call reaches the caller or a
+            // replay checkpoint, where a `tool_use` without a `tool_result`
+            // would invalidate the next provider request.
+            sawUnparsableToolInput = true;
+            toolCalls.delete(index);
+            rawContentBlocks.delete(index);
+            continue;
           }
 
           if (rawBlock) rawBlock.input = parsedInput;
@@ -1497,6 +1547,17 @@ export async function* streamAnthropicCompatibleParts(
           const normalizedFinishReason = normalizeAnthropicFinishReason(delta.stop_reason);
           if (normalizedFinishReason) {
             finishReason = normalizedFinishReason;
+          }
+          // Only decide once a stop reason has actually arrived. A usage-only
+          // message_delta carries no stop_reason, and resolving here would
+          // classify the deferred failure as a malformed stream before the
+          // later delta that says max_tokens -- turning the truncation this
+          // change exists to identify back into the generic error.
+          if (sawStopReason) {
+            const deferredToolInputFailure = resolveDeferredToolInputFailure();
+            if (deferredToolInputFailure) {
+              throw deferredToolInputFailure;
+            }
           }
           continue;
         }

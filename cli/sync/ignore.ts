@@ -8,6 +8,7 @@ import { cliLogger, logWarning } from "#cli/utils";
 import { isJsonMode } from "../shared/json-output.ts";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
+import { type GitIgnoreContext, loadGitIgnoreContext, trimTrailingSlashes } from "./git-ignore.ts";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
@@ -24,6 +25,8 @@ const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
   ".vercel",
   ".netlify",
   "coverage",
+  // Local agent-tooling scratch space (Conductor) that is never project source.
+  ".context",
 
   // Files
   "*.log",
@@ -95,6 +98,40 @@ export interface IgnoreChecker {
 
   /** Check if a file extension is supported */
   isSupportedExtension(filename: string): boolean;
+
+  /**
+   * Ask Git about paths that may not exist locally, such as remote files, so
+   * `isIgnored` treats the ones Git's rules match like any other Git-ignored
+   * path. Each path is checked at most once per checker; a checker without Git
+   * context resolves immediately.
+   */
+  resolveGitIgnoredCandidates(paths: Iterable<string>): Promise<void>;
+
+  /**
+   * Read Git ignore state afresh, in place: the local listing is reloaded and
+   * every candidate path resolved so far is asked about again, so local and
+   * remote classification both follow the current rules. A checker without Git
+   * context is left unchanged.
+   */
+  refreshGitIgnores(): Promise<void>;
+}
+
+export interface IgnoreCheckerOptions {
+  /**
+   * Local paths Git ignores, relative to the project directory, as listed by
+   * {@link loadGitIgnoreContext}. A listed directory covers its descendants.
+   *
+   * These rank below every default and `.vfignore` rule: a path that any rule
+   * matches is decided by the last matching rule, so a `.vfignore` negation
+   * such as `!dist` or `!generated/data.json` still re-includes output that Git
+   * ignores, including a file inside a directory Git ignores as a whole. Only a
+   * path no rule matches falls back to Git.
+   */
+  gitIgnoredPaths?: Iterable<string>;
+  /** Return the given paths Git's rules match; backs `resolveGitIgnoredCandidates`. */
+  checkGitIgnoredPaths?: (paths: string[]) => Promise<string[]>;
+  /** Read Git ignore state again; backs `refreshGitIgnores`. */
+  loadGitIgnoreContext?: () => Promise<GitIgnoreContext>;
 }
 
 interface IgnoreRule {
@@ -284,6 +321,15 @@ function toRules(
 }
 
 const PROTECTED_RULES = toRules(PROTECTED_IGNORE_PATTERNS, true);
+
+function toGitIgnoredPathSet(paths: Iterable<string>): Set<string> {
+  const set = new Set<string>();
+  for (const path of paths) {
+    const normalized = trimTrailingSlashes(normalizeIgnorePath(path));
+    if (normalized) set.add(normalized);
+  }
+  return set;
+}
 
 function normalizeIgnorePath(path: string): string {
   return path.replaceAll("\\", "/");
@@ -483,7 +529,10 @@ function collectCanceledNegations(rules: readonly IgnoreRule[]): ReadonlySet<Ign
 /**
  * Create an ignore checker with loaded patterns
  */
-export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker {
+export function createIgnoreChecker(
+  patterns: readonly string[],
+  options: IgnoreCheckerOptions = {},
+): IgnoreChecker {
   const hasDefaultPrefix = DEFAULT_IGNORE_PATTERNS.every(
     (pattern, index) => patterns[index] === pattern,
   );
@@ -497,6 +546,19 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
   // at the default log level. Deduplicated per checker because every path is
   // tested many times during a single scan.
   const warnedOverrides = new Set<string>();
+  let checkGitIgnoredPaths = options.checkGitIgnoredPaths;
+  let gitIgnoredPaths = toGitIgnoredPathSet(options.gitIgnoredPaths ?? []);
+
+  function isGitIgnored(normalizedPath: string): boolean {
+    if (gitIgnoredPaths.size === 0) return false;
+    if (gitIgnoredPaths.has(normalizedPath)) return true;
+    let separator = normalizedPath.lastIndexOf("/");
+    while (separator > 0) {
+      if (gitIgnoredPaths.has(normalizedPath.slice(0, separator))) return true;
+      separator = normalizedPath.lastIndexOf("/", separator - 1);
+    }
+    return false;
+  }
 
   function isIgnored(relativePath: string, options: { isDirectory?: boolean } = {}): boolean {
     const normalizedPath = normalizeIgnorePath(relativePath);
@@ -507,6 +569,14 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
       if (!rule.regex.test(normalizedPath)) continue;
       lastMatchedRule = rule;
       ignored = !rule.negated;
+    }
+    if (!lastMatchedRule && isGitIgnored(normalizedPath)) {
+      // Git reports a wholly ignored directory once. Keep walking into it when
+      // a `.vfignore` negation could re-include something beneath it; each
+      // descendant is then decided on its own. Directories no negation can
+      // reach, such as a large dependency cache, are still skipped whole.
+      ignored = !(options.isDirectory === true &&
+        hasEffectiveDescendantNegation(rules, normalizedPath, canceledNegations));
     }
 
     if (isProtectedPath(normalizedPath)) {
@@ -533,7 +603,56 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
     return SUPPORTED_EXTENSIONS.has(filename.slice(lastDot).toLowerCase());
   }
 
-  return { isIgnored, isProtected, isSupportedExtension };
+  let checkedGitCandidates = new Set<string>();
+  async function resolveGitIgnoredCandidates(paths: Iterable<string>): Promise<void> {
+    if (!checkGitIgnoredPaths) return;
+    const pending: string[] = [];
+    for (const path of paths) {
+      const normalized = normalizeIgnorePath(path);
+      if (!normalized || checkedGitCandidates.has(normalized)) continue;
+      checkedGitCandidates.add(normalized);
+      pending.push(normalized);
+    }
+    if (pending.length === 0) return;
+    for (const ignoredPath of await checkGitIgnoredPaths(pending)) {
+      const normalized = trimTrailingSlashes(normalizeIgnorePath(ignoredPath));
+      if (normalized) gitIgnoredPaths.add(normalized);
+    }
+  }
+
+  async function refreshGitIgnores(): Promise<void> {
+    const reload = options.loadGitIgnoreContext;
+    if (!reload) return;
+    const context = await reload();
+    const previouslyChecked = Array.from(checkedGitCandidates);
+    gitIgnoredPaths = toGitIgnoredPathSet(context.ignoredPaths);
+    checkGitIgnoredPaths = (paths) => context.checkPaths(paths);
+    checkedGitCandidates = new Set();
+    await resolveGitIgnoredCandidates(previouslyChecked);
+  }
+
+  return {
+    isIgnored,
+    isProtected,
+    isSupportedExtension,
+    resolveGitIgnoredCandidates,
+    refreshGitIgnores,
+  };
+}
+
+/**
+ * Create the ignore checker sync uses for a project directory: the default
+ * patterns, the project's `.vfignore`, and Git's ignore rules there. Call
+ * `resolveGitIgnoredCandidates` with remote paths before classifying them.
+ */
+export async function loadIgnoreChecker(projectPath: string): Promise<IgnoreChecker> {
+  const reload = () => loadGitIgnoreContext(projectPath);
+  const [patterns, gitContext] = await Promise.all([loadIgnorePatterns(projectPath), reload()]);
+  return createIgnoreChecker(patterns, {
+    gitIgnoredPaths: gitContext.ignoredPaths,
+    checkGitIgnoredPaths: (paths) => gitContext.checkPaths(paths),
+    loadGitIgnoreContext: reload,
+  });
 }
 
 /**

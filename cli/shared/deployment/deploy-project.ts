@@ -29,6 +29,7 @@ import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
   ENVIRONMENT_NOT_ROUTABLE,
+  PREVIEW_DEPLOYMENT_NOT_ALLOWED,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -73,7 +74,7 @@ import {
   type DeployRelease,
   type EnvironmentAccessTarget,
 } from "./control-plane.ts";
-import type { DeployResult } from "./result.ts";
+import type { DeployResult, LiveSourceResult } from "./result.ts";
 
 export interface DeployProjectRequest {
   projectDir: string;
@@ -88,12 +89,30 @@ export interface DeployProjectRequest {
   branch?: string;
   environment: string;
   releaseName?: string;
+  /**
+   * How the source reaches the environment.
+   *
+   * `"deployment"` (the default) builds a release and deploys it. Veryfront's
+   * managed Preview environment refuses that: it renders the latest source on
+   * main directly, so a deployment request fails fast with
+   * `preview-deployment-not-allowed` before anything is pushed or built.
+   *
+   * `"live-source"` publishes to Preview the way it actually works: push the
+   * branch, verify the pushed source, then probe the Preview URL. It creates
+   * no release and no deployment, and only accepts the Preview environment.
+   */
+  publish?: "deployment" | "live-source";
   mode: "apply" | "dry-run";
   source:
     | {
       kind: "ensure-pushed";
       /**
-       * Push the working tree again when it no longer matches the receipt.
+       * Push the working tree again when it no longer matches the receipt,
+       * whether the difference is uncommitted edits or commits made since the
+       * push. A receipt for another control plane, project, or branch is still
+       * refused: it describes an upload this deploy never targets. So is a
+       * moved HEAD behind a receipt that recorded no pushed paths, because the
+       * push could not tell which files those commits deleted.
        *
        * Only a command whose job is to publish what is on disk may do this.
        * `veryfront up` does: it exists to make the current directory live, so
@@ -169,6 +188,7 @@ export interface DeployPlan {
 
 export type DeployProjectOutcome =
   | { kind: "deployed"; result: DeployResult }
+  | { kind: "live-source"; result: LiveSourceResult }
   | { kind: "dry-run"; plan: DeployPlan };
 
 export interface DeployProject {
@@ -226,6 +246,34 @@ interface VerificationRetryOptions {
 interface DeploymentVerificationOptions extends VerificationRetryOptions {
   releaseSource?: VerificationRetryOptions;
   verifiedRelease?: ReleaseSourceVerification;
+}
+
+/** The managed environment that renders main live and accepts no deployments. */
+export const LIVE_PREVIEW_ENVIRONMENT = "preview";
+
+/** Whether a requested environment name targets the managed Preview environment. */
+export function isLivePreviewEnvironmentName(name: string): boolean {
+  return name.trim().toLowerCase() === LIVE_PREVIEW_ENVIRONMENT;
+}
+
+/**
+ * The API's refusal of a Preview deployment, classified.
+ *
+ * The CLI refuses a Preview deployment by name before any work, but the API
+ * also quarantines legacy environments that only look like Preview. Without
+ * this, that refusal reaches the operator as an unclassified error.
+ */
+function classifyPreviewDeploymentRefusal(error: unknown, environmentName: string): unknown {
+  if (error instanceof VeryfrontError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/deployments to preview environments are not allowed/i.test(message)) return error;
+  return PREVIEW_DEPLOYMENT_NOT_ALLOWED.create({
+    detail:
+      `Veryfront refused to deploy to environment "${environmentName}" because it is managed as Preview, which renders the latest push to main and accepts no deployments. ` +
+      "Run veryfront push --branch main to update Preview, or deploy to staging or production.",
+    context: { environmentName },
+    cause: error,
+  });
 }
 
 const MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS = 20;
@@ -407,20 +455,24 @@ function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget)
  * sight. A caller that asked to refresh therefore publishes what is on disk
  * rather than deploying a stale upload.
  *
- * Every refusal {@link validatePushReceipt} owns is checked *before* dirtiness
- * can select a push, because the push rewrites the receipt those refusals read.
- * A different control plane, project, or branch, and a HEAD that has moved off
- * the pushed commit, therefore still reach the operator as an error telling
- * them to push, exactly as they do from a clean checkout. The moved-HEAD check
- * applies to dirty receipts too: as long as a receipt names a commit, the
- * current commit is compared against it before any refresh. That keeps
- * deploy's standing contract intact: committed work is never uploaded behind
- * the operator's back, and neither a dirty tree nor a dirty receipt converts a
- * refusal into an upload.
+ * A receipt for a different control plane, project, or branch describes an
+ * upload this deploy never targets. That refusal is checked *before* drift can
+ * select a push, because the push would rewrite the receipt it reads, and it
+ * still reaches the operator as an error telling them to push, exactly as it
+ * does from a clean checkout. A HEAD that has moved off the pushed commit is
+ * different: the receipt targets this deploy and merely predates committed
+ * work, so a refreshing caller pushes that work the same way it pushes
+ * uncommitted edits. Refusing it sent `veryfront up` operators to a separate
+ * `veryfront push` before the preview showed what they had committed
+ * (veryfront/veryfront-issue-inbox#1470). The push finds the files those
+ * commits deleted by comparing the paths the receipt recorded against the
+ * tree, so a receipt written before push recorded paths cannot direct those
+ * deletions: it keeps the refusal, and one `veryfront push` replaces it.
  *
  * Only a source that asked for it is refreshed. Without
  * `refreshStaleSource`, a stale receipt selects `"none"` and reaches
- * {@link validatePushReceipt} as a refusal instead.
+ * {@link validatePushReceipt} as a refusal instead, so `veryfront deploy`
+ * never uploads committed work behind the operator's back.
  */
 function resolveDigestOnlySourceRefresh(
   receipt: PushReceipt,
@@ -428,10 +480,14 @@ function resolveDigestOnlySourceRefresh(
 ): BootstrapPushKind {
   // A digest-only receipt is the normal provenance for a directory outside
   // Git. Keep it when both sides still have no commit and the recomputed source
-  // digest matches. If the directory has since gained a commit, preserve the
-  // existing policy: an unclean legacy receipt refreshes, while a clean one
-  // reaches validatePushReceipt as a commit mismatch.
-  if (local.gitSource.commitSha !== null) return receipt.clean ? "none" : "refresh";
+  // digest matches. A directory that has since gained a commit holds source the
+  // receipt never described, so it is pushed again where the receipt recorded
+  // the paths that push needs to find committed deletions. A legacy receipt
+  // keeps the earlier policy: unclean refreshes, clean reaches
+  // validatePushReceipt as a commit mismatch.
+  if (local.gitSource.commitSha !== null) {
+    return receipt.localPaths !== undefined || !receipt.clean ? "refresh" : "none";
+  }
   if (receipt.localSourceDigest === undefined) return "refresh-preserving-remote";
   if (local.sourceDigest === null) return "refresh";
   return receipt.localSourceDigest === local.sourceDigest ? "none" : "refresh";
@@ -441,10 +497,17 @@ function resolveMismatchedCommitRefresh(
   receipt: PushReceipt,
   gitSource: LocalSourceObservation["gitSource"],
 ): BootstrapPushKind {
-  // A checkout on a different commit must reach validatePushReceipt holding
-  // the original receipt. A checkout that lost its commit may refresh only
-  // when neither cleanliness nor a source digest still proves that receipt.
-  if (gitSource.commitSha !== null) return "none";
+  // A checkout on another commit holds committed work the push never saw.
+  // The caller asked to publish what is on disk, so that work is pushed rather
+  // than refused: the receipt it replaces described a commit that is no longer
+  // the source. The push learns which files those commits deleted from the
+  // paths the receipt recorded, so a receipt without them cannot be refreshed
+  // faithfully and still reaches validatePushReceipt as a refusal. A checkout
+  // that lost its commit may refresh only when neither cleanliness nor a
+  // source digest still proves that receipt.
+  if (gitSource.commitSha !== null) {
+    return receipt.localPaths === undefined ? "none" : "refresh";
+  }
   if (receipt.localSourceDigest !== undefined) return "none";
   return receipt.clean ? "none" : "refresh";
 }
@@ -457,11 +520,10 @@ function resolveStaleSourceRefresh(
   if (!receipt.commitSha) return resolveDigestOnlySourceRefresh(receipt, local);
   const { gitSource } = local;
   if (gitSource.commitSha !== receipt.commitSha) {
-    // A checkout on a different commit must reach {@link validatePushReceipt}
-    // holding the receipt that proves the mismatch; pushing here would rewrite
-    // that receipt into one that matches. When the checkout no longer resolves
-    // to any commit, a clean receipt still fails closed the same way, while a
-    // dirty one proves nothing about the upload and keeps its refresh.
+    // A checkout on another commit holds work the push never saw and is pushed
+    // again. When the checkout no longer resolves to any commit, a receipt that
+    // still proves its source reaches {@link validatePushReceipt} as a refusal,
+    // while one that proves nothing about the upload keeps its refresh.
     return resolveMismatchedCommitRefresh(receipt, gitSource);
   }
   // Digests compare the file set push uploads, so where the receipt has one it
@@ -1168,8 +1230,9 @@ function assertEnvironmentIsReachable(environment: DeployEnvironment): void {
       `Veryfront serves ${
         HOSTED_ENVIRONMENT_NAMES.join(", ")
       } at https://<slug>.<environment>.veryfront.com; ` +
-      `no other environment name resolves. Deploy to one of those, or attach a custom domain ` +
-      `to "${environment.name}" in Studio under Environments and deploy again.`,
+      `no other environment name resolves. Deploy to staging or production, or attach a custom ` +
+      `domain to "${environment.name}" in Studio under Environments and deploy again. ` +
+      `Preview accepts no deployments: veryfront push updates it.`,
     context: { environmentName: environment.name, hostedEnvironments: HOSTED_ENVIRONMENT_NAMES },
   });
 }
@@ -1179,22 +1242,44 @@ function buildEnvironmentUrl(projectSlug: string, environment: DeployEnvironment
     buildCanonicalEnvironmentUrl(projectSlug, environment.name);
 }
 
+/**
+ * Which command an operator reruns after a readiness failure.
+ *
+ * A release deploy is retried with `veryfront deploy`. A live-source publish
+ * belongs to `veryfront up`: `deploy --env preview` is refused, and a bare
+ * `deploy` targets production, so "deploy again" would send that operator to
+ * the wrong environment.
+ */
+type ReadinessRetry = "deploy" | "up";
+
+function retryInstruction(retry: ReadinessRetry): string {
+  return retry === "up" ? "run veryfront up again" : "deploy again";
+}
+
 function buildCanonicalEnvironmentUrl(projectSlug: string, environmentName: string): string {
   return `https://${projectSlug}.${environmentName}.veryfront.com`;
 }
 
-function buildEnvironmentProbeUrl(baseUrl: string, route: string): string {
+function buildEnvironmentProbeUrl(
+  baseUrl: string,
+  route: string,
+  retry: ReadinessRetry = "deploy",
+): string {
   let url: URL;
   try {
     url = new URL(baseUrl);
   } catch {
     throw new Error(
-      `Environment URL "${baseUrl}" is invalid. Check the environment configuration and deploy again.`,
+      `Environment URL "${baseUrl}" is invalid. Check the environment configuration and ${
+        retryInstruction(retry)
+      }.`,
     );
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(
-      `Environment URL "${baseUrl}" must use HTTP or HTTPS. Check the environment configuration and deploy again.`,
+      `Environment URL "${baseUrl}" must use HTTP or HTTPS. Check the environment configuration and ${
+        retryInstruction(retry)
+      }.`,
     );
   }
   if (!route.startsWith("/")) {
@@ -1205,8 +1290,12 @@ function buildEnvironmentProbeUrl(baseUrl: string, route: string): string {
   return route === "/" ? probeUrl.origin : probeUrl.href;
 }
 
-function buildReadyEnvironmentUrl(baseUrl: string, route: string | null): string {
-  return route ? buildEnvironmentProbeUrl(baseUrl, route) : baseUrl;
+function buildReadyEnvironmentUrl(
+  baseUrl: string,
+  route: string | null,
+  retry: ReadinessRetry = "deploy",
+): string {
+  return route ? buildEnvironmentProbeUrl(baseUrl, route, retry) : baseUrl;
 }
 
 function secureEnvironmentProbeUrl(url: string): string {
@@ -1221,6 +1310,8 @@ interface EnvironmentReadinessTarget {
   url: string;
   route?: string | null;
   protected: boolean;
+  /** The command the operator reruns after a failure; defaults to deploy. */
+  retry?: ReadinessRetry;
   apiToken: string;
   /**
    * A token bound to this environment, obtained by exchanging `apiToken`, and
@@ -1305,7 +1396,7 @@ function buildEnvironmentReadinessProbes(
   // that reads as gated rather than failing the deploy.
   const tolerateChallenge = !canAuthenticate || target.environmentAccessToken !== undefined;
 
-  const targetUrl = buildEnvironmentProbeUrl(target.url, route);
+  const targetUrl = buildEnvironmentProbeUrl(target.url, route, target.retry);
   if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
     const challengeProbe = {
       url: targetUrl,
@@ -1323,6 +1414,7 @@ function buildEnvironmentReadinessProbes(
         url: buildEnvironmentProbeUrl(
           buildCanonicalEnvironmentUrl(target.projectSlug, target.environmentName),
           route,
+          target.retry,
         ),
         authenticate: canAuthenticate,
         acceptAuthenticationChallenge: tolerateChallenge,
@@ -1427,14 +1519,16 @@ function describeAuthenticationChallenge(
   probe: EnvironmentReadinessProbe,
   status: number,
   signInRedirect: boolean,
+  retry: ReadinessRetry = "deploy",
 ): string {
+  const again = retryInstruction(retry);
   if (probe.authenticate) {
-    return `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`;
+    return `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and ${again}.`;
   }
   if (signInRedirect) {
-    return `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`;
+    return `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and ${again}.`;
   }
-  return `Environment URL ${probe.url} returned HTTP ${status}. Check its protection settings and deploy again.`;
+  return `Environment URL ${probe.url} returned HTTP ${status}. Check its protection settings and ${again}.`;
 }
 
 function isTransientEnvironmentStatus(status: number): boolean {
@@ -1522,14 +1616,21 @@ export async function waitForEnvironmentReady(
         if (authenticationChallenge) {
           // A bare Error here reaches the operator as `unknown-error`.
           throw DEPLOYMENT_ERROR.create({
-            detail: describeAuthenticationChallenge(probe, response.status, signInRedirect),
+            detail: describeAuthenticationChallenge(
+              probe,
+              response.status,
+              signInRedirect,
+              target.retry,
+            ),
             context: { url: probe.url, status: response.status },
           });
         }
         if (!isTransientEnvironmentStatus(response.status)) {
           throw DEPLOYMENT_ERROR.create({
             detail:
-              `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and deploy again.`,
+              `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and ${
+                retryInstruction(target.retry ?? "deploy")
+              }.`,
             context: { url: probe.url, status: response.status },
           });
         }
@@ -1540,7 +1641,11 @@ export async function waitForEnvironmentReady(
         throw DEPLOYMENT_ERROR.create({
           detail: `Environment URL ${probe.url} did not become ready within ${
             Math.ceil(timeoutMs / 1000)
-          }s (last response: ${lastResponse}). Check the deployment and run deploy again.`,
+          }s (last response: ${lastResponse}). ${
+            target.retry === "up"
+              ? "Check the project in Studio and run veryfront up again."
+              : "Check the deployment and run deploy again."
+          }`,
           context: { url: probe.url, timeoutMs },
         });
       }
@@ -1566,14 +1671,18 @@ export async function waitForEnvironmentReady(
  * store, so for those two sources signing in leaves the next deploy gated the
  * same way. Naming the overriding key is the only step an operator can act on.
  */
-function getProbeCredentialRemedy(source: ResolvedConfig["apiTokenSource"]): string {
+function getProbeCredentialRemedy(
+  source: ResolvedConfig["apiTokenSource"],
+  retry: ReadinessRetry,
+): string {
+  const again = retryInstruction(retry);
   if (source === "env") {
-    return "VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and deploy again, to confirm the app responds.";
+    return `VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and ${again}, to confirm the app responds.`;
   }
   if (source === "config-file") {
-    return "The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and deploy again, to confirm the app responds.";
+    return `The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and ${again}, to confirm the app responds.`;
   }
-  return "Open the URL signed in, or run veryfront login and deploy again, to confirm the app responds.";
+  return `Open the URL signed in, or run veryfront login and ${again}, to confirm the app responds.`;
 }
 
 /**
@@ -1588,22 +1697,24 @@ function getEnvironmentUrlWarning(
   readiness: EnvironmentReadiness,
   apiTokenSource: ResolvedConfig["apiTokenSource"],
   access: EnvironmentAccess,
+  retry: ReadinessRetry,
 ): string | null {
   if (readiness.kind !== "gated") return null;
-  const prefix = `Deployment committed, but ${readiness.url} was never observed serving this app:`;
+  const published = retry === "up" ? "Source pushed" : "Deployment committed";
+  const prefix = `${published}, but ${readiness.url} was never observed serving this app:`;
   if (access.kind === "exchanged") {
     return `${prefix} the access gate refused the environment access token with HTTP ${readiness.status}. Check that the API key owner is a member of this project, or open the URL signed in, to confirm the app responds.`;
   }
   if (access.kind === "unavailable") {
     const remedy = access.failure === "refused"
       ? "Use an API key for this project whose owner can read it, or open the URL signed in, to confirm the app responds."
-      : getProbeCredentialRemedy(apiTokenSource);
+      : getProbeCredentialRemedy(apiTokenSource, retry);
     return `${prefix} the access gate answered HTTP ${readiness.status} and ${
       describeEnvironmentAccessFailure(access)
     }. ${remedy}`;
   }
   return `${prefix} the access gate answered HTTP ${readiness.status} and this CLI has no session credential to probe past it. ${
-    getProbeCredentialRemedy(apiTokenSource)
+    getProbeCredentialRemedy(apiTokenSource, retry)
   }`;
 }
 
@@ -1678,6 +1789,7 @@ function dryRunPlan(input: {
   environment: DeployEnvironment | null;
   controlPlane: DeployControlPlane;
   bootstrapPush: boolean;
+  liveSource: boolean;
 }): DeployPlan {
   return {
     branch: input.branch,
@@ -1689,8 +1801,7 @@ function dryRunPlan(input: {
     plannedActions: [
       ...(input.project ? [] : ["create-project" as const]),
       ...(input.bootstrapPush ? ["push-source" as const] : []),
-      "create-release",
-      "deploy",
+      ...(input.liveSource ? [] : ["create-release" as const, "deploy" as const]),
     ],
   };
 }
@@ -1714,6 +1825,33 @@ export function createDeployProject(options: {
         throw DEPLOYMENT_ERROR.create({
           detail:
             `An explicit projectSlug requires source { kind: "already-pushed" }: request-scoped deploys never push local sources. Run veryfront push first, or omit projectSlug to deploy the locally configured project.`,
+        });
+      }
+      const liveSource = request.publish === "live-source";
+      // Preview renders main at <slug>.preview.veryfront.com. Probing that URL
+      // after pushing another branch would verify main, not the pushed branch.
+      if (liveSource && (request.branch ?? "main") !== "main") {
+        throw DEPLOYMENT_ERROR.create({
+          detail:
+            `Live-source publishing only publishes "main" to Preview, not "${request.branch}". Run veryfront push --branch ${request.branch} to update that branch's preview.`,
+          context: { branch: request.branch },
+        });
+      }
+      if (liveSource && !isLivePreviewEnvironmentName(request.environment)) {
+        throw DEPLOYMENT_ERROR.create({
+          detail:
+            `Live-source publishing only targets the "${LIVE_PREVIEW_ENVIRONMENT}" environment, not "${request.environment}". Deploy a release to other environments.`,
+          context: { environmentName: request.environment },
+        });
+      }
+      // Refused before any push, release, or build: the API rejects the
+      // deployment at the very end, after every other step has already run.
+      if (!liveSource && isLivePreviewEnvironmentName(request.environment)) {
+        throw PREVIEW_DEPLOYMENT_NOT_ALLOWED.create({
+          detail:
+            `Preview renders the latest push to main, so it accepts no release deployments. ` +
+            "Run veryfront push --branch main to update Preview, or deploy to staging or production with veryfront deploy --env production.",
+          context: { environmentName: request.environment },
         });
       }
       const environmentConfig = await step(
@@ -1773,6 +1911,7 @@ export function createDeployProject(options: {
             environment: null,
             controlPlane,
             bootstrapPush,
+            liveSource,
           }),
         };
       }
@@ -1872,6 +2011,7 @@ export function createDeployProject(options: {
             environment,
             controlPlane,
             bootstrapPush,
+            liveSource,
           }),
         };
       }
@@ -1891,6 +2031,87 @@ export function createDeployProject(options: {
           observeSource,
         });
       });
+
+      /** Probes the environment URL and warns when only its access gate answered. */
+      const waitForEnvironmentUrl = async (
+        projectSlug: string,
+        retry: ReadinessRetry,
+      ) => {
+        const environmentUrl = buildReadyEnvironmentUrl(
+          buildEnvironmentUrl(projectSlug, environment),
+          readinessRoute,
+          retry,
+        );
+        let access: EnvironmentAccess = { kind: "session" };
+        const readiness = await step(
+          observer,
+          "wait-environment-url",
+          async () => {
+            if (environment.protected) {
+              access = await resolveEnvironmentAccess(controlPlane, config.apiToken, {
+                projectId: project!.id,
+                environmentName: environment.name,
+              });
+            }
+            return waitForEnvironmentReady({
+              projectSlug,
+              environmentName: environment.name,
+              url: environmentUrl,
+              route: readinessRoute,
+              protected: environment.protected,
+              apiToken: config.apiToken,
+              retry,
+              ...(access.kind === "exchanged" ? { environmentAccessToken: access.token } : {}),
+            }, {
+              pollIntervalMs: polling.environmentPollIntervalMs,
+              timeoutMs: polling.environmentTimeoutMs,
+            });
+          },
+        );
+
+        const urlWarning = getEnvironmentUrlWarning(
+          readiness,
+          config.apiTokenSource,
+          access,
+          retry,
+        );
+        if (urlWarning) {
+          await emit(observer, {
+            kind: "warning",
+            code: "environment-url-unverified",
+            message: urlWarning,
+          });
+        }
+        return { environmentUrl, readiness };
+      };
+
+      if (liveSource) {
+        const { environmentUrl, readiness } = await waitForEnvironmentUrl(
+          project!.slug,
+          "up",
+        );
+
+        return {
+          kind: "live-source",
+          result: {
+            projectId: project!.id,
+            projectSlug: project!.slug,
+            environment: environment.name,
+            environmentId: environment.id,
+            url: environmentUrl,
+            // A 2xx proves the Preview answers, not that it serves this push:
+            // nothing yet ties the response to source.sourceDigest.
+            // TODO(veryfront/veryfront-issue-inbox#1457): verify the served
+            // revision once the platform exposes it.
+            urlVerification: readiness.kind === "served" ? "responded" : readiness.kind,
+            protected: environment.protected,
+            commitSha: source.commitSha,
+            sourceDigest: source.sourceDigest,
+            controlPlane: controlPlaneFromConfig(config),
+            branch,
+          },
+        };
+      }
 
       const release = await step(observer, "create-release", async () => {
         const created = await controlPlane.createRelease(project!.id, {
@@ -1927,11 +2148,16 @@ export function createDeployProject(options: {
       const deployment = await step(
         observer,
         "create-deployment",
-        async () =>
-          controlPlane.createDeployment(project!.id, {
-            releaseId: release.id,
-            environmentId: environment.id,
-          }),
+        async () => {
+          try {
+            return await controlPlane.createDeployment(project!.id, {
+              releaseId: release.id,
+              environmentId: environment.id,
+            });
+          } catch (error) {
+            throw classifyPreviewDeploymentRefusal(error, environment.name);
+          }
+        },
       );
 
       const verification = await step(
@@ -1951,44 +2177,10 @@ export function createDeployProject(options: {
           }, { verifiedRelease }),
       );
 
-      const environmentUrl = buildReadyEnvironmentUrl(
-        buildEnvironmentUrl(verification.projectSlug, environment),
-        readinessRoute,
+      const { environmentUrl, readiness } = await waitForEnvironmentUrl(
+        verification.projectSlug,
+        "deploy",
       );
-      let access: EnvironmentAccess = { kind: "session" };
-      const readiness = await step(
-        observer,
-        "wait-environment-url",
-        async () => {
-          if (environment.protected) {
-            access = await resolveEnvironmentAccess(controlPlane, config.apiToken, {
-              projectId: project!.id,
-              environmentName: environment.name,
-            });
-          }
-          return waitForEnvironmentReady({
-            projectSlug: verification.projectSlug,
-            environmentName: environment.name,
-            url: environmentUrl,
-            route: readinessRoute,
-            protected: environment.protected,
-            apiToken: config.apiToken,
-            ...(access.kind === "exchanged" ? { environmentAccessToken: access.token } : {}),
-          }, {
-            pollIntervalMs: polling.environmentPollIntervalMs,
-            timeoutMs: polling.environmentTimeoutMs,
-          });
-        },
-      );
-
-      const urlWarning = getEnvironmentUrlWarning(readiness, config.apiTokenSource, access);
-      if (urlWarning) {
-        await emit(observer, {
-          kind: "warning",
-          code: "environment-url-unverified",
-          message: urlWarning,
-        });
-      }
 
       const warning = getDeploymentRoutingConvergenceWarning(deployment);
       if (warning) {

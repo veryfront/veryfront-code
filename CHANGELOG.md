@@ -6,6 +6,151 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: a response cut at the output token limit reports `PROVIDER_OUTPUT_TRUNCATED`
+
+An Anthropic response that stops at the output token limit part way through a
+tool call now fails with the new curated code `PROVIDER_OUTPUT_TRUNCATED` and
+the message "The model stopped at its output token limit before it finished
+the response." It previously surfaced as a malformed provider stream, and on
+agents that use provider replay checkpoints it surfaced as "Provider replay
+turn failed before its boundary", neither of which named the real cause.
+
+The failure is terminal, not retryable: the same request and the same output
+token budget truncate again. Raise the model output token limit, or ask for a
+shorter response. This is a deliberate retry-semantics change and needs your
+decision if you depend on the old behaviour: `PROVIDER_OUTPUT_TRUNCATED` joins
+the curated provider failure codes, so it is classified as a known terminal
+error and hosted child runs -- including durable child forks -- stop retrying
+it, where a truncation previously landed in the unknown, retryable
+`PROVIDER_STREAM_ERROR` bucket. A retry above temperature 0 could occasionally have produced a shorter
+tool input and succeeded; that accidental recovery is gone, in exchange for a
+named failure instead of a retry loop against a budget that cannot fit the
+response. The incomplete tool call is also dropped rather than replayed, so no
+partial tool input reaches a tool, and no later tool call from the same
+truncated turn is dispatched.
+
+A replay checkpoint boundary that fails now reports the provider failure the
+stream reports instead of a fixed message. Anything that matched on the literal
+string "Provider replay turn failed before its boundary" must match on the run
+error code instead. That string remains only as the neutral fallback for a turn
+that ends with no reported cause, such as a client cancellation, and a failure
+to persist a durable run event now reports
+`DURABLE_RUN_EVENT_PERSISTENCE_FAILED` rather than a provider failure.
+
+### Changed: `veryfront up` pushes committed work again
+
+`veryfront up` now pushes the local source to main whenever the checkout no
+longer matches the last push to the same project and branch on the same
+control plane, including commits made after that push. It previously refused
+with "The latest push came from a different commit. Run veryfront push again."
+and left the preview on the older upload until you ran `veryfront push`
+yourself. A push receipt for another project, branch, or control plane is
+still refused, and so is a receipt written by a CLI older than 0.1.1258, which
+did not record the pushed paths. Run `veryfront push` once to replace such a
+receipt.
+
+`veryfront deploy` is unchanged. It still refuses a stale push receipt instead
+of uploading committed work, so run `veryfront push` before promoting new
+commits.
+
+### Breaking: push, up, deploy, and pull respect Git ignore rules
+
+`veryfront push`, `up`, `deploy`, and `pull` now skip untracked files that Git
+ignores, whether the rule comes from a `.gitignore` at any level,
+`.git/info/exclude`, or `core.excludesFile`. Previously only the built-in
+defaults and `.vfignore` applied, so local-only files such as tooling scratch
+directories were uploaded. Remote paths Git ignores are treated like paths
+`.vfignore` ignores even when no local copy exists: pull does not write them and
+`push --prune` does not delete them. Pull into a directory that does not exist
+yet applies the enclosing repository's rules, and files inside a checked-out
+submodule or another nested Git repository follow that repository's own rules.
+Tracked files are never skipped by a Git ignore rule, and a directory outside
+Git behaves as before.
+
+A supported file that Git ignores and earlier versions uploaded, such as
+generated source, is now skipped. To keep uploading it, re-include it in
+`.vfignore` with a `!` rule, for example `!dist` or `!generated/data.json`; the
+rule also reaches a file inside a directory Git ignores as a whole. The first
+`veryfront up` or `deploy` after upgrading re-pushes a project whose uploaded
+file set changes. Remote copies of newly ignored paths are preserved, not
+pruned; delete them in Studio if they should go.
+
+Git ignore rules are read when a command scans the project, so a rule changed
+during a push or pull applies from the next run. Nested Git repositories other
+than checked-out submodules and repositories created inside the project are a
+known limitation: a nested repository inside a directory the enclosing
+repository ignores stays ignored, and other layouts may not follow the nested
+repository's rules. Use `.vfignore` for exact control there. See
+[Git ignore limitations](./docs/guides/deploy-from-ci.md#git-ignore-limitations).
+
+If the enclosing repository ignores the project directory itself, Git ignore
+rules are not applied for that project and the CLI prints a warning; with
+`--json` it emits a `warning` line with code `git-ignore-rules-not-applied`. The
+defaults and `.vfignore` still apply.
+
+`.context` is now ignored by default, and a `.vfignore` negation can re-include
+it.
+
+If Git fails while reading ignore rules inside a repository, push (and so `up`
+and `deploy`) stops with an error instead of uploading files the checkout
+ignores. Pull stops the same way. Fix the Git error, then run the command
+again.
+
+### Added: `veryfront eval` progress and `--record-timeout`
+
+`veryfront eval` now shows which eval and case is running, finished cases, and
+elapsed time while cases run, and prints a notice when a model request is
+retried. `--record-timeout <seconds>` fails a case that runs too long,
+including its metrics and checks, with the `eval-record-timeout` error (default
+600). While the limit is active, a stalled model stream can no longer hold the
+run open; `--record-timeout 0` disables it and restores the previous unbounded
+wait. The failed case keeps its target output, trace, and usage.
+
+`runEval()` from `veryfront/eval` accepts matching `recordTimeoutMs` and
+`onProgress` options. Target adapters, `evalTool` input mappers, mock tool
+resolvers, metric `evaluate()` contexts, check contexts, and LLM judge inputs
+receive a `signal` that aborts at the record deadline, and the built-in LLM
+judges pass it to the model request. With `LOG_LEVEL=DEBUG`, provider requests log their start,
+status, duration, and retries.
+
+### Changed: `runEval()` rejects when the model gateway refuses model access
+
+`runEval()` from `veryfront/eval` now rejects with the
+`eval-model-access-denied` error when a target or metric model request returns
+HTTP 402 from the model gateway for an account-wide denial (insufficient AI
+credits or the AI provider spend limit). Request-scoped limits, such as a
+resource limit or an agent run credit limit, still fail only the affected
+record. Built-in LLM judges stop the eval the same way, and so does the agent service
+adapter when the service returns the gateway's 402 problem body. A credit code
+carried only by an AG-UI run error still fails just that record, because the
+stream does not show whether the Veryfront gateway or another provider raised
+it.
+
+An AI provider spend limit rejects with `eval-model-spend-limit-exceeded`
+instead, because buying credits does not clear it.
+
+It also rejects with `eval-project-required` when the gateway returns HTTP 400
+with code `gateway_project_required` because the model request named no
+project. It previously recorded the refusal on every
+record, ran checks against the empty output, and resolved with a report.
+`veryfront eval` stops at the first refusal and prints one error. If you call
+`runEval()` directly, handle the rejection where you previously inspected
+failed records for credit errors.
+
+It also rejects with `eval-model-unauthorized` when the Veryfront Cloud gateway
+returns HTTP 401 for the credential, and with `eval-model-project-access-denied`
+when it returns HTTP 403 for the linked project. A 401 or 403 from a
+third-party provider, or from an agent service used through
+`createAgentServiceEvalAdapter`, still fails only the affected record.
+
+It rejects with `eval-model-egress-blocked` when the host egress policy blocks a
+model gateway request to the configured Veryfront API because its host resolves
+to a private network address. The error points to the
+`VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS` setting that allows a trusted
+private API, without naming the private host. A block of any other request, such as a local provider or a tool or
+custom metric endpoint, still fails only the affected record. A refusal thrown by an
+eval `check` now stops the eval too.
+
 ### Deprecated: the `event` key on conversation-scoped run event rows
 
 The Veryfront API now serves every run event row keyed `payload`, on the

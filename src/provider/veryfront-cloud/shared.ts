@@ -6,7 +6,7 @@ import {
 } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
-  createOriginBoundOutboundFetch,
+  createVeryfrontApiOriginBoundOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
   HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
   isHostAllowedInternalProviderOrigin,
@@ -25,6 +25,10 @@ import {
   requireInferenceProviderCredential,
   requireProviderCredential,
 } from "../runtime-loader/provider-request-init.ts";
+import {
+  markVeryfrontGatewayResponse,
+  markVeryfrontGatewayTransportFailure,
+} from "../runtime-loader/provider-http.ts";
 
 export type { VeryfrontCloudProviderId } from "./model-catalog.ts";
 
@@ -39,6 +43,15 @@ const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeTrim = String.prototype.trim;
 const HeadersDelete = NativeHeaders.prototype.delete;
 const HeadersSet = NativeHeaders.prototype.set;
+const PromisePrototypeThen = Promise.prototype.then;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
+/**
+ * Gateway admission rejections that return before any usage is recorded. A 400
+ * is included because the gateway rejects invalid requests, including the
+ * project-required refusal, before admission; treating a rare upstream 400 as
+ * unadmitted only risks demoting a finalize warning to debug.
+ */
+const GATEWAY_ADMISSION_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 401, 402, 403]);
 const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
 const URLHashSet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")?.set;
 const URLHostnameGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
@@ -297,6 +310,12 @@ export function getVeryfrontCloudGatewayBaseUrl(
  * The gateway expects only Bearer auth, so we strip all provider-specific
  * headers to prevent credential leakage to the wrong auth path.
  */
+/** Keep gateway provenance on a transport that threw before any response. */
+function rethrowAsGatewayTransportFailure(error: unknown): never {
+  markVeryfrontGatewayTransportFailure(error);
+  throw error;
+}
+
 export function createVeryfrontCloudFetch(
   apiToken: string,
   apiBaseUrl: string,
@@ -326,7 +345,8 @@ export function createVeryfrontCloudFetch(
       IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
     }
 
-    const billingGroup = getCurrentVeryfrontCloudContext()?.billingGroupId;
+    const cloudContext = getCurrentVeryfrontCloudContext();
+    const billingGroup = cloudContext?.billingGroupId;
     const billingGroupId = billingGroup === undefined
       ? undefined
       : IntrinsicReflectApply(StringPrototypeTrim, billingGroup, []) as string;
@@ -338,7 +358,24 @@ export function createVeryfrontCloudFetch(
       markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
-    // Consults the internal-provider-origin allowlist; resolved per call since it snapshots the host transport eagerly.
-    return createOriginBoundOutboundFetch(apiBaseUrl)(new NativeRequest(request, { headers }));
+    // Consults the internal-provider-origin allowlist and the operator-configured Veryfront API
+    // origin; resolved per call since it snapshots the host transport eagerly.
+    const responsePromise = IntrinsicReflectApply(
+      PromisePrototypeThen,
+      createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
+        new NativeRequest(request, { headers }),
+      ),
+      [markVeryfrontGatewayResponse, rethrowAsGatewayTransportFailure],
+    ) as Promise<Response>;
+    if (!billingGroupId || !cloudContext || !ResponseStatusGet) return responsePromise;
+    return IntrinsicReflectApply(PromisePrototypeThen, responsePromise, [
+      (response: Response) => {
+        const status = IntrinsicReflectApply(ResponseStatusGet, response, []) as number;
+        if (!GATEWAY_ADMISSION_REJECTION_STATUSES.has(status)) {
+          cloudContext.billingGroupRequestAdmitted = true;
+        }
+        return response;
+      },
+    ]) as Promise<Response>;
   };
 }

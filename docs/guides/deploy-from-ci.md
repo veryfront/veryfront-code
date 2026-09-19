@@ -67,14 +67,22 @@ stylesheets, HTML, Markdown, MDX, text, SVG, YAML, and TOML.
 Binary images, fonts, archives, and other unsupported files remain outside
 this handoff. Manage those files through another reviewed delivery path.
 
-Both commands use the same `.vfignore` rules. Ignored files and unsupported
-extensions are not reconciled with Veryfront. A `.vfignore` negation cannot
-re-include `.env`, `.env.*`, `.veryfront`, or `.git` paths: those stay ignored
-so local secrets and CLI state are never uploaded. Push prints a warning naming
-each path whose negation was dropped. Pull does the same for protected `.env`
-paths, and rejects remote `.git` or `.veryfront` metadata before changing local
-files. Names that only begin with `.env`, such as `.envoy/` or `.environments/`,
-are not protected and stay negatable. Run `veryfront push --prune` once after
+Both commands use the same `.vfignore` rules. Inside a Git checkout they also
+skip untracked files that Git ignores, whether the rule comes from a
+`.gitignore`, `.git/info/exclude`, or `core.excludesFile`. Remote paths Git
+ignores are preserved like `.vfignore` matches, even without a local copy. A
+`.vfignore` negation such as `!dist` or `!generated/data.json` re-includes a
+path Git ignores. Tracked files are never skipped by Git ignore rules. If the
+enclosing repository ignores the project directory itself, Git rules are not
+applied and the CLI prints a warning. `.context/` is ignored by default.
+Ignored files and unsupported extensions are not reconciled with Veryfront. A
+`.vfignore` negation cannot re-include `.env`, `.env.*`, `.veryfront`, or
+`.git` paths: those stay ignored so local secrets and CLI state are never
+uploaded. Push prints a warning naming each path whose negation was dropped.
+Pull does the same for protected `.env` paths, and rejects remote `.git` or
+`.veryfront` metadata before changing local files. Names that only begin with
+`.env`, such as `.envoy/` or `.environments/`, are not protected and stay
+negatable. Run `veryfront push --prune` once after
 upgrading to remove any protected path that an older CLI uploaded. Rotate any
 credential that was previously exposed.
 
@@ -86,6 +94,19 @@ prints the paths it removes, and `--json` runs carry the same list as
 `--dry-run`). Use `veryfront push --prune --dry-run` to review the list before
 a real prune, and move any file you must keep to a path outside the protected
 set.
+
+### Git ignore limitations
+
+Git ignore rules are read when a command scans the project. A rule that
+changes while a push or pull is running applies from the next run; the
+command does not fail.
+
+Checked-out submodules, and Git repositories created inside the project
+directory, follow their own ignore rules. A nested repository inside a
+directory the enclosing repository ignores stays ignored as a whole. Other
+nested repository layouts are not guaranteed to follow the nested repository's
+rules; list anything that must or must not be uploaded from such a repository
+in `.vfignore`, which always applies.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked
@@ -140,8 +161,10 @@ Uncommitted edits are the one change no commit check can see, because they leave
 directory and refuses the promotion when it no longer matches the receipt, so an
 accidentally dirty checkout fails instead of promoting bytes no Push reviewed.
 
-The digest covers exactly the files Push uploads, so an edit that `.gitignore` hides
-is still caught and an edit to a file Push never sends is not a mismatch. Run
+The digest covers exactly the files Push uploads. A file Git ignores is not
+uploaded, so editing it is not a mismatch. The exception is a Git-ignored file
+that a `.vfignore` negation re-includes: Push uploads it and `git status` does
+not show it, so the digest is what catches an edit to it. Run
 Push again to deploy the current source. Deploying a project named with
 `--project` promotes what that project already has and never uploads the working
 directory, so local edits are neither pushed nor treated as a mismatch on that
@@ -175,7 +198,8 @@ commands across CI jobs or clean the checkout between them.
 A receipt written by a CLI older than the source digest carries no digest to
 recompute, so Deploy falls back to the recorded Git cleanliness for it.
 
-That fallback cannot see an edit that `.gitignore` hides while `.vfignore` does not.
+That fallback cannot see an edit to a file that Git ignores but a `.vfignore`
+negation re-includes.
 Run Push once after upgrading: the receipt it writes carries the digest, and the
 full check applies from then on.
 

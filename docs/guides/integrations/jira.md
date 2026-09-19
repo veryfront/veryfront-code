@@ -36,15 +36,15 @@ contains the current account-management steps.
 2. Select **Add people**, choose the service account, and assign a project role.
 3. Use the least-privilege role that grants the actions your agent needs:
 
-| Agent operation | Jira permission |
-| --- | --- |
+| Agent operation                    | Jira permission                       |
+| ---------------------------------- | ------------------------------------- |
 | Read or search projects and issues | Browse Projects and issue read access |
-| Create issues | Create Issues |
-| Edit issues | Edit Issues |
-| Add comments | Add Comments |
-| Change status | Transition Issues |
-| Set or change an assignee | Edit Issues + Assign Issues |
-| Search Jira users | Browse users and groups |
+| Create issues                      | Create Issues                         |
+| Edit issues                        | Edit Issues                           |
+| Add comments                       | Add Comments                          |
+| Change status                      | Transition Issues                     |
+| Set or change an assignee          | Edit Issues + Assign Issues           |
+| Search Jira users                  | Browse users and groups               |
 
 Use Jira's [project-permission documentation](https://support.atlassian.com/jira-cloud-administration/docs/permissions-for-company-managed-projects/)
 and permission helper to verify the service account. For Jira Service Management workflows, also
@@ -98,12 +98,12 @@ in Atlassian Administration.
 
 Open the Veryfront environment used by the agent run and add these variables:
 
-| Variable | Value |
-| --- | --- |
-| `ATLASSIAN_SERVICE_ACCOUNT_CLIENT_ID` | The service-account OAuth 2.0 client ID |
-| `ATLASSIAN_SERVICE_ACCOUNT_CLIENT_SECRET` | The service-account OAuth 2.0 client secret |
-| `ATLASSIAN_SERVICE_ACCOUNT_CLOUD_ID` | The target Jira site Cloud ID |
-| `JIRA_SERVICE_PROJECT_KEY` | The target Jira project key, required for write tools |
+| Variable                                  | Value                                                 |
+| ----------------------------------------- | ----------------------------------------------------- |
+| `ATLASSIAN_SERVICE_ACCOUNT_CLIENT_ID`     | The service-account OAuth 2.0 client ID               |
+| `ATLASSIAN_SERVICE_ACCOUNT_CLIENT_SECRET` | The service-account OAuth 2.0 client secret           |
+| `ATLASSIAN_SERVICE_ACCOUNT_CLOUD_ID`      | The target Jira site Cloud ID                         |
+| `JIRA_SERVICE_PROJECT_KEY`                | The target Jira project key, required for write tools |
 
 Then enable Jira for the Veryfront project and allow the specific `jira__*` tools the agent may
 use. Set the variables in the same environment where the agent runs.
@@ -146,9 +146,9 @@ the Jira connector:
 
 Set these project variables:
 
-| Variable | Value |
-| --- | --- |
-| `ATLASSIAN_CLIENT_ID` | Atlassian OAuth app client ID |
+| Variable                  | Value                             |
+| ------------------------- | --------------------------------- |
+| `ATLASSIAN_CLIENT_ID`     | Atlassian OAuth app client ID     |
 | `ATLASSIAN_CLIENT_SECRET` | Atlassian OAuth app client secret |
 
 If the user can access more than one Atlassian site, also set `JIRA_CLOUD_ID` to the target site's
@@ -160,13 +160,13 @@ for the distinction between hosted and self-hosted setups.
 
 ## Service account versus user OAuth
 
-| | Service account | User OAuth |
-| --- | --- | --- |
-| Browser consent | Not used | Required |
-| Identity | Dedicated Atlassian account | Individual Atlassian user |
-| Variables | `ATLASSIAN_SERVICE_ACCOUNT_*` | Managed OAuth: none; custom app: `ATLASSIAN_CLIENT_*` |
-| Token grant | `client_credentials` (2LO) | `authorization_code` (3LO) |
-| Best for | Scheduled or project-owned automation | Actions that must act as the person |
+|                 | Service account                       | User OAuth                                            |
+| --------------- | ------------------------------------- | ----------------------------------------------------- |
+| Browser consent | Not used                              | Required                                              |
+| Identity        | Dedicated Atlassian account           | Individual Atlassian user                             |
+| Variables       | `ATLASSIAN_SERVICE_ACCOUNT_*`         | Managed OAuth: none; custom app: `ATLASSIAN_CLIENT_*` |
+| Token grant     | `client_credentials` (2LO)            | `authorization_code` (3LO)                            |
+| Best for        | Scheduled or project-owned automation | Actions that must act as the person                   |
 
 This guide covers Jira service-account access. Confluence service identity is not currently
 covered by the Veryfront service-identity path.

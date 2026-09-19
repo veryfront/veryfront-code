@@ -24,6 +24,11 @@ import {
   stringifyEvalError,
 } from "./validation.ts";
 import { trustedLocalEvalFetchAgentId } from "./agent-service/trusted-fetch.ts";
+import {
+  classifyAgentServiceModelAccessDenial,
+  createEvalModelAccessDeniedError,
+  isEvalModelAccessDeniedError,
+} from "./model-access.ts";
 
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
@@ -524,6 +529,42 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
   return [...toolCalls.values()].map((entry) => entry.call);
 }
 
+/**
+ * Stop the eval when the agent service reports an account-wide model access
+ * denial, instead of resolving a failed record for every remaining example.
+ */
+/**
+ * A 401 or 403 fails only this example: an application hook can return either
+ * for one example, and nothing in the response proves the adapter token or
+ * project was rejected. The message still points at the likely cause.
+ */
+function describeFailedRun(
+  response: Response,
+  run: Awaited<ReturnType<typeof parseAgUiSseResponse>>,
+): string {
+  if (response.status === 401 || response.status === 403) {
+    return `Agent service rejected the request (${response.status}); check the adapter token and project access`;
+  }
+  return run.runError ?? `AG-UI response failed with status ${response.status}`;
+}
+
+function throwIfAgentServiceModelAccessDenied(
+  evalId: string,
+  response: Response,
+  run: Awaited<ReturnType<typeof parseAgUiSseResponse>>,
+): void {
+  const runErrorEvent = run.events.find((event) =>
+    getAgUiSseStringField(event, "type") === agUiSseEventTypes.runError
+  );
+  const denial = classifyAgentServiceModelAccessDenial({
+    status: response.status,
+    body: response.ok ? null : run.runError,
+    runErrorCode: runErrorEvent ? getAgUiSseStringField(runErrorEvent, "code") : undefined,
+    runErrorMessage: runErrorEvent ? getAgUiSseStringField(runErrorEvent, "message") : undefined,
+  });
+  if (denial) throw createEvalModelAccessDeniedError(evalId, denial, undefined);
+}
+
 function createRunOutput(run: Awaited<ReturnType<typeof parseAgUiSseResponse>>) {
   return {
     text: run.text,
@@ -866,6 +907,7 @@ export function createAgentServiceEvalAdapter(
       const run = await parseAgUiSseResponse(response, parseOptions);
       const completed = response.ok && run.runError === null &&
         run.eventTypes.includes(agUiSseEventTypes.runFinished);
+      if (!completed) throwIfAgentServiceModelAccessDenied(context.definition.id, response, run);
       const output = createRunOutput(run);
       const usage = getRunFinishedUsage(run.events);
 
@@ -879,11 +921,10 @@ export function createAgentServiceEvalAdapter(
         ...(usage ? { usage } : {}),
         durationMs: getNow(config) - started,
         completed,
-        ...(!completed
-          ? { error: run.runError ?? `AG-UI response failed with status ${response.status}` }
-          : {}),
+        ...(!completed ? { error: describeFailedRun(response, run) } : {}),
       };
     } catch (error) {
+      if (isEvalModelAccessDeniedError(error)) throw error;
       return {
         text: "",
         output: {

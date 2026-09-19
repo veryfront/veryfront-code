@@ -28,6 +28,17 @@ export type RuntimeToolLoadingMode = "eager" | "deferred";
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
+/**
+ * Sanitized cause handed to the replay turn failure hook.
+ *
+ * Only the already-sanitized `{message, code}` pair that the runtime sends on
+ * the stream crosses this boundary. The raw provider error never does.
+ */
+export type ProviderReplayTurnFailure = {
+  message: string;
+  code?: string;
+};
+
 export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
     { name: string; description: string; parameters: Record<string, unknown> }
@@ -39,7 +50,9 @@ export type RuntimeToolFilterConfig = AgentConfig & {
     checkpoint: ProviderReplayCheckpoint,
   ) => void | Promise<void>;
   __vfProviderReplayCheckpointTurnComplete?: () => void | Promise<void>;
-  __vfProviderReplayCheckpointTurnFailed?: () => void | Promise<void>;
+  __vfProviderReplayCheckpointTurnFailed?: (
+    failure?: ProviderReplayTurnFailure,
+  ) => void | Promise<void>;
   __vfProviderReplayCheckpointPersistenceRequired?: boolean;
   __vfPersistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,
@@ -166,7 +179,7 @@ export function getRuntimeProviderReplayCheckpointTurnComplete(
 /** Return the trusted hook that aborts one provider response boundary. */
 export function getRuntimeProviderReplayCheckpointTurnFailed(
   config: AgentConfig,
-): (() => void | Promise<void>) | undefined {
+): ((failure?: ProviderReplayTurnFailure) => void | Promise<void>) | undefined {
   const value = (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpointTurnFailed;
   return typeof value === "function" ? value : undefined;
 }

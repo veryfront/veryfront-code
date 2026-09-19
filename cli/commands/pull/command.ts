@@ -37,7 +37,7 @@ import {
 } from "veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
+import { type IgnoreChecker, loadIgnoreChecker } from "../../sync/ignore.ts";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import {
   ensurePulledProjectBootstrap,
@@ -394,12 +394,13 @@ async function writeFiles(
 
 async function listManagedLocalFiles(
   projectDir: string,
-  ignoreChecker: ReturnType<typeof createIgnoreChecker>,
+  ignoreChecker: IgnoreChecker,
 ): Promise<DeleteOp[]> {
   const fs = createFileSystem();
   if (!(await fs.exists(projectDir))) return [];
 
   const files: DeleteOp[] = [];
+  const supportedSymlinks: string[] = [];
 
   async function walk(currentDir: string): Promise<void> {
     const entries = await fs.readDir(currentDir);
@@ -410,11 +411,7 @@ async function listManagedLocalFiles(
 
       if (ignoreChecker.isIgnored(relativePath, { isDirectory: entry.isDirectory })) continue;
       if (entry.isSymlink) {
-        if (ignoreChecker.isSupportedExtension(entry.name)) {
-          throw new Error(
-            `Veryfront pull with --prune does not support symbolic links: "${relativePath}". Remove the link and run veryfront pull again.`,
-          );
-        }
+        if (ignoreChecker.isSupportedExtension(entry.name)) supportedSymlinks.push(relativePath);
         continue;
       }
       if (entry.isDirectory) {
@@ -427,7 +424,19 @@ async function listManagedLocalFiles(
   }
 
   await walk(projectDir);
-  return files;
+  // Recheck files created since the checker's Git listing so pruning never
+  // deletes a local file the checkout ignores.
+  await ignoreChecker.resolveGitIgnoredCandidates([
+    ...files.map((file) => file.relativePath),
+    ...supportedSymlinks,
+  ]);
+  const rejectedSymlink = supportedSymlinks.find((path) => !ignoreChecker.isIgnored(path));
+  if (rejectedSymlink !== undefined) {
+    throw new Error(
+      `Veryfront pull with --prune does not support symbolic links: "${rejectedSymlink}". Remove the link and run veryfront pull again.`,
+    );
+  }
+  return files.filter((file) => !ignoreChecker.isIgnored(file.relativePath));
 }
 
 async function deleteLocalFiles(
@@ -688,8 +697,7 @@ async function pullSingleProject(
     spinner.stop();
   }
 
-  const ignoreChecker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
-  const writeOps: WriteOp[] = [];
+  const validatedFiles: { file: ProjectFile; op: ValidatedFilePath }[] = [];
   const remotePaths = new Set<string>();
   for (const file of files) {
     let op: ValidatedFilePath;
@@ -707,7 +715,16 @@ async function pullSingleProject(
         cause: error,
       });
     }
+    validatedFiles.push({ file, op });
+  }
 
+  // Remote paths may not exist locally yet, so ask Git about them directly:
+  // listing ignored local files alone would let pull write a file the checkout
+  // ignores, which `.vfignore` rules already prevent.
+  const ignoreChecker = await loadIgnoreChecker(projectDir);
+  await ignoreChecker.resolveGitIgnoredCandidates(remotePaths);
+  const writeOps: WriteOp[] = [];
+  for (const { file, op } of validatedFiles) {
     if (
       ignoreChecker.isIgnored(op.relativePath) ||
       !ignoreChecker.isSupportedExtension(op.relativePath)

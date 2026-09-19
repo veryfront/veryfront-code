@@ -14,13 +14,13 @@ import {
 import { upCommand } from "./index.ts";
 import { createDeployProject } from "../../shared/deployment/deploy-project.ts";
 import type {
+  DeployDeployment,
   DeployEnvironment,
   DeployReleaseFile,
 } from "../../shared/deployment/control-plane.ts";
 import {
   commitProject,
   CONTROL_PLANE,
-  ENVIRONMENT_ID,
   InMemoryDeployControlPlane,
   PROJECT_ID,
   PROJECT_SLUG,
@@ -182,6 +182,8 @@ const APP_PAGE = "export default function Page() { return <main>Hello</main>; }\
 /**
  * The in-memory control plane with a preview environment that carries its own
  * domain, and whose release mirrors whatever the bootstrap push uploaded.
+ *
+ * Like the API, it refuses every deployment to Preview.
  */
 class PreviewControlPlane extends InMemoryDeployControlPlane {
   constructor(private readonly pushedFiles: Map<string, string>) {
@@ -194,6 +196,17 @@ class PreviewControlPlane extends InMemoryDeployControlPlane {
   ): Promise<DeployEnvironment | null> {
     const environment = await super.getEnvironment(reference, name);
     return environment ? { ...environment, domains: [PREVIEW_DOMAIN] } : environment;
+  }
+
+  override createDeployment(): Promise<DeployDeployment> {
+    return Promise.reject(
+      Object.assign(
+        new Error(
+          "Deployments to Preview environments are not allowed. Check the request body and query parameters against the API documentation.",
+        ),
+        { status: 400 },
+      ),
+    );
   }
 
   override async *listReleaseFiles(
@@ -218,10 +231,11 @@ interface UpRunOptions {
   jsonMode?: boolean;
   relativeProjectDir?: boolean;
   /**
-   * Seed a linked project plus a push receipt for this branch, so the deploy
-   * meets a receipt that does not describe the branch up targets.
+   * Seed a linked project plus a push receipt that no longer describes what up
+   * publishes: one for another branch, or one from an older commit than the
+   * checkout.
    */
-  receiptBranch?: string;
+  receipt?: { branch?: string; commitSha?: string };
 }
 
 /**
@@ -230,7 +244,7 @@ interface UpRunOptions {
  * and deployments go through the in-memory control plane.
  */
 async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
-  const { dryRun = false, jsonMode = false, receiptBranch, relativeProjectDir = false } = options;
+  const { dryRun = false, jsonMode = false, receipt, relativeProjectDir = false } = options;
   const projectDir = await makeTempDir({ prefix: "vf-up-e2e-" });
   const pushedFiles = new Map<string, string>();
   const controlPlane = new PreviewControlPlane(pushedFiles);
@@ -247,7 +261,7 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
     await writeTextFile(join(projectDir, "app", "page.tsx"), APP_PAGE);
     const commitSha = await commitProject(projectDir);
 
-    if (receiptBranch) {
+    if (receipt) {
       await writeProjectLink(projectDir, {
         controlPlane: CONTROL_PLANE,
         projectId: PROJECT_ID,
@@ -257,12 +271,13 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
         controlPlane: CONTROL_PLANE,
         projectId: PROJECT_ID,
         projectSlug: PROJECT_SLUG,
-        branch: receiptBranch,
-        commitSha,
-        // Well-formed but not this tree's pushed digest: the branch check
-        // fires first, which is what this receipt is here to prove.
+        branch: receipt.branch ?? "main",
+        commitSha: receipt.commitSha ?? commitSha,
+        // Well-formed but not this tree's pushed digest: the branch or commit
+        // comparison decides first, which is what these receipts are here to prove.
         sourceDigest: await computeSourceDigest([{ path: "app/page.tsx", content: APP_PAGE }]),
         clean: true,
+        localPaths: ["app/page.tsx", "package.json"],
       });
     }
 
@@ -352,8 +367,8 @@ describe("up end to end", () => {
     const run = await runUp({ relativeProjectDir: true });
 
     assertEquals(run.failure, null);
-    assertEquals(run.controlPlane.createdReleases.length, 1);
-    assertEquals(run.controlPlane.createdDeployments.length, 1);
+    assertEquals(run.controlPlane.createdReleases, []);
+    assertEquals(run.controlPlane.createdDeployments, []);
   });
 
   it("creates the project, pushes source, and prints the verified preview URL", async () => {
@@ -362,12 +377,14 @@ describe("up end to end", () => {
     assertEquals(run.failure, null);
     assertEquals(run.projectCreates, 1);
     assertEquals(run.uploadedPaths.includes("app/page.tsx"), true);
-    assertEquals(run.controlPlane.createdReleases.length, 1);
-    assertEquals(run.controlPlane.createdDeployments.length, 1);
-    assertEquals(run.controlPlane.createdDeployments[0]?.environmentId, ENVIRONMENT_ID);
+    // Preview renders the latest push to main and the API refuses deployments
+    // to it (veryfront/veryfront-issue-inbox#1442), so up creates neither a
+    // release nor a deployment.
+    assertEquals(run.controlPlane.createdReleases, []);
+    assertEquals(run.controlPlane.createdDeployments, []);
 
     const lines = run.output.map(stripAnsi);
-    assertEquals(lines.includes(`  ✓ ${PROJECT_SLUG} is ready`), true);
+    assertEquals(lines.includes(`  ✓ Pushed ${PROJECT_SLUG} to Preview`), true);
     // The URL printed is the environment domain the control plane returned and
     // the deploy probed, not a hostname rebuilt from the local slug.
     assertEquals(lines.includes(`  Preview: ${PREVIEW_DOMAIN}`), true);
@@ -387,6 +404,8 @@ describe("up end to end", () => {
         dryRun: false,
         studioUrl: `https://veryfront.com/projects/${PROJECT_SLUG}?branch=main`,
         previewUrl: PREVIEW_DOMAIN,
+        urlVerification: "responded",
+        warnings: [],
         nextCommand: "veryfront deploy",
       },
     });
@@ -415,7 +434,7 @@ describe("up end to end", () => {
   });
 
   it("fails a dry run whose push receipt describes another branch", async () => {
-    const run = await runUp({ dryRun: true, receiptBranch: "feature-x" });
+    const run = await runUp({ dryRun: true, receipt: { branch: "feature-x" } });
 
     // up targets main, the receipt is for feature-x: the deploy it plans could
     // not run, so the plan is refused instead of printed. Before up delegated
@@ -423,7 +442,7 @@ describe("up end to end", () => {
     // receipt, and reported a push it would not have made.
     assertEquals(
       run.failure,
-      'Preview deployment failed: The latest push is for branch "feature-x", but deploy targets ' +
+      'Preview publish failed: The latest push is for branch "feature-x", but deploy targets ' +
         '"main". Run veryfront deploy --branch feature-x to deploy the latest push, or veryfront ' +
         "push --branch main to preview main first.",
     );
@@ -431,6 +450,34 @@ describe("up end to end", () => {
     assertEquals(run.uploadedPaths, []);
     assertEquals(run.controlPlane.createdReleases, []);
     assertEquals(run.controlPlane.createdDeployments, []);
-    assertEquals(run.output.some((line) => line.includes("is ready")), false);
+    assertEquals(run.output.some((line) => line.includes("Pushed")), false);
+  });
+
+  it("pushes committed work the last push never saw", async () => {
+    // The receipt names an older commit of this project. up promises to push
+    // main, so the new commit is uploaded instead of refused with "Run
+    // veryfront push again" (veryfront/veryfront-issue-inbox#1470).
+    const run = await runUp({ receipt: { commitSha: "1".repeat(40) } });
+
+    assertEquals(run.failure, null);
+    assertEquals(run.projectCreates, 0);
+    assertEquals(run.uploadedPaths.includes("app/page.tsx"), true);
+    assertEquals(
+      run.output.map(stripAnsi).includes(`  ✓ Pushed ${PROJECT_SLUG} to Preview`),
+      true,
+    );
+  });
+
+  it("plans the push for committed work the last push never saw", async () => {
+    const run = await runUp({
+      dryRun: true,
+      jsonMode: true,
+      receipt: { commitSha: "1".repeat(40) },
+    });
+
+    assertEquals(run.failure, null);
+    assertEquals(run.uploadedPaths, []);
+    const result = JSON.parse(run.output[0]!) as { data: { plannedActions: string[] } };
+    assertEquals(result.data.plannedActions.includes("push-source"), true);
   });
 });

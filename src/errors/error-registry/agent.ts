@@ -94,6 +94,102 @@ export const PROVIDER_REPLAY_CHECKPOINT_INVALID = defineError({
     "Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state",
 });
 
+/**
+ * An eval stopped because the model gateway refused to serve its model
+ * requests for billing or entitlement reasons (HTTP 402). Every later record
+ * would fail the same way, so the run fails fast with one actionable error
+ * instead of grading empty outputs.
+ */
+export const EVAL_MODEL_ACCESS_DENIED = defineError({
+  slug: "eval-model-access-denied",
+  category: "AGENT",
+  status: 402,
+  title: "No model access for eval run",
+  suggestion:
+    "Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits",
+});
+
+/**
+ * An eval stopped because the Veryfront Cloud gateway rejected its model
+ * requests for naming no project (HTTP 400, `gateway_project_required`).
+ */
+export const EVAL_PROJECT_REQUIRED = defineError({
+  slug: "eval-project-required",
+  category: "AGENT",
+  status: 400,
+  title: "No project for eval model requests",
+  suggestion:
+    "Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again",
+});
+
+/**
+ * An eval stopped because Veryfront reached its AI provider spend limit for the
+ * current window. Buying credits does not clear this limit.
+ */
+export const EVAL_MODEL_SPEND_LIMIT_EXCEEDED = defineError({
+  slug: "eval-model-spend-limit-exceeded",
+  category: "AGENT",
+  status: 402,
+  title: "AI provider spend limit reached for eval run",
+  suggestion:
+    "Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit",
+});
+
+/**
+ * An eval stopped because the Veryfront Cloud gateway rejected the API
+ * credential for its model requests (HTTP 401).
+ */
+export const EVAL_MODEL_UNAUTHORIZED = defineError({
+  slug: "eval-model-unauthorized",
+  category: "AGENT",
+  status: 401,
+  title: "Veryfront Cloud rejected the eval credential",
+  suggestion:
+    "Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again",
+});
+
+/**
+ * An eval stopped because the Veryfront Cloud gateway denied the credential
+ * access to the linked project (HTTP 403).
+ */
+export const EVAL_MODEL_PROJECT_ACCESS_DENIED = defineError({
+  slug: "eval-model-project-access-denied",
+  category: "AGENT",
+  status: 403,
+  title: "No access to the linked project for eval run",
+  suggestion:
+    "Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again",
+});
+
+/**
+ * An eval stopped because the host egress policy blocked its model gateway
+ * request: the Veryfront API host resolves to a private network address. The
+ * policy blocks every later record the same way.
+ */
+export const EVAL_MODEL_EGRESS_BLOCKED = defineError({
+  slug: "eval-model-egress-blocked",
+  category: "AGENT",
+  status: 403,
+  title: "Veryfront API blocked by network egress policy",
+  suggestion:
+    "Veryfront blocks requests to hosts that resolve to private network addresses. If the Veryfront API runs on a private network you trust, such as a staging, VPN, or self-hosted deployment, add its exact origin (for example https://api.example.com) to VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS in the environment that runs veryfront eval, then run the eval again",
+});
+
+/**
+ * An eval record ran past its time limit. The limit covers the whole record:
+ * target execution, tools, model requests, metrics, and checks. A model stream
+ * that stops sending data after its response headers has no deadline of its
+ * own, so the record limit is what keeps an eval run from waiting forever.
+ */
+export const EVAL_RECORD_TIMEOUT = defineError({
+  slug: "eval-record-timeout",
+  category: "AGENT",
+  status: 504,
+  title: "Eval record timed out",
+  suggestion:
+    "The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout <seconds>, or pass --record-timeout 0 to disable it.",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -106,4 +202,11 @@ export const AGENT_REGISTRY = {
   "durable-run-event-persistence-failed": DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
   "default-model-credential-mismatch": DEFAULT_MODEL_CREDENTIAL_MISMATCH,
   "provider-replay-checkpoint-invalid": PROVIDER_REPLAY_CHECKPOINT_INVALID,
+  "eval-model-access-denied": EVAL_MODEL_ACCESS_DENIED,
+  "eval-project-required": EVAL_PROJECT_REQUIRED,
+  "eval-model-spend-limit-exceeded": EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
+  "eval-model-egress-blocked": EVAL_MODEL_EGRESS_BLOCKED,
+  "eval-model-unauthorized": EVAL_MODEL_UNAUTHORIZED,
+  "eval-model-project-access-denied": EVAL_MODEL_PROJECT_ACCESS_DENIED,
+  "eval-record-timeout": EVAL_RECORD_TIMEOUT,
 } as const;

@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { agent, type AgentConfig } from "#veryfront/agent";
@@ -17,7 +18,8 @@ import {
   createProviderReplayCheckpointEmissionState,
   type ProviderReplayCheckpoint,
 } from "./provider-replay.ts";
-import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
+import type { ProviderReplayTurnFailure, RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
+import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
 
 const MESSAGE_ID = "assistant-message-1";
 const SIGNATURE = "test-signature";
@@ -435,5 +437,126 @@ describe("provider replay checkpoint emission", () => {
     );
     assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "durable-run-event-persistence-failed");
+  });
+  /**
+   * Regression coverage for #1467: this is the junction between the typed
+   * truncation the Anthropic parser now raises and the run error an internal
+   * agent reports. The runtime is the only place that carries the sanitized
+   * `{message, code}` pair into the replay failure hook, so the hook argument
+   * is asserted against a real provider failure rather than a hand-built one.
+   */
+  it("hands the classified provider truncation to the replay failure hook", async () => {
+    const failures: (ProviderReplayTurnFailure | undefined)[] = [];
+    const privateProviderDetail = "incomplete tool_use input <PRIVATE>";
+    const model = scriptedModel([() => {
+      throw new ProviderOutputTruncatedError({
+        provider: "anthropic",
+        status: 200,
+        message:
+          `Anthropic request failed: provider output truncated at the max output token limit (${privateProviderDetail})`,
+        retryable: false,
+      });
+    }], {
+      modelId: "anthropic/truncated-provider-replay-stream",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const config = {
+      id: "truncated-provider-replay-stream",
+      model: "anthropic/truncated-provider-replay-stream",
+      system: "Answer.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointTurnFailed: (failure?: ProviderReplayTurnFailure) => {
+        failures.push(failure);
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const stream = await agent(config).stream({ input: "Answer" });
+    const body = await stream.toDataStreamResponse().text();
+
+    assertEquals(failures.length, 1);
+    assertEquals(failures[0]?.code, "PROVIDER_OUTPUT_TRUNCATED");
+    assertEquals(
+      failures[0]?.message,
+      "The model stopped at its output token limit before it finished the response. " +
+        "Raise the model output token limit, or ask for a shorter response.",
+    );
+    assertEquals(failures[0]?.message.includes(privateProviderDetail), false);
+    assertEquals(body.includes("PROVIDER_OUTPUT_TRUNCATED"), true);
+    assertEquals(body.includes(privateProviderDetail), false);
+  });
+
+  it("keeps a cancelled turn's replay failure free of the cancellation reason", async () => {
+    const failures: (ProviderReplayTurnFailure | undefined)[] = [];
+    const cancelReasonMarker = "client disconnected <PRIVATE CANCEL REASON>";
+    const model = scriptedModel([{ hangUntilAbort: true }], {
+      modelId: "anthropic/cancelled-provider-replay-stream",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const config = {
+      id: "cancelled-provider-replay-stream",
+      model: "anthropic/cancelled-provider-replay-stream",
+      system: "Answer.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointTurnFailed: (failure?: ProviderReplayTurnFailure) => {
+        failures.push(failure);
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const abortController = new AbortController();
+    const stream = await agent(config).stream({
+      input: "Answer",
+      abortSignal: abortController.signal,
+    });
+    const bodyPromise = stream.toDataStreamResponse().text();
+    await waitFor(() => model.callCount > 0, {
+      message: "the model call must start before the run is cancelled",
+    });
+    abortController.abort(new DOMException(cancelReasonMarker, "AbortError"));
+    const body = await bodyPromise;
+
+    assertEquals(failures.length, 1);
+    // A cancellation reports no cause at all, so the relay keeps its neutral
+    // default instead of surfacing the client's raw abort reason.
+    assertEquals(failures[0], undefined);
+    assertEquals(body.includes(cancelReasonMarker), false);
+  });
+
+  it("attributes a checkpoint persistence failure to Veryfront, not the provider", async () => {
+    const failures: (ProviderReplayTurnFailure | undefined)[] = [];
+    const model = scriptedModel([{ text: "done" }], {
+      modelId: "anthropic/required-provider-replay-persistence",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "required-provider-replay-persistence",
+      model: "anthropic/required-provider-replay-persistence",
+      system: "Answer.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointPersistenceRequired: true,
+      __vfProviderReplayCheckpointTurnFailed: (failure?: ProviderReplayTurnFailure) => {
+        failures.push(failure);
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    await assertRejects(
+      () => agent(config).generate({ input: "Answer" }),
+      VeryfrontError,
+      "provider replay checkpoint message identity is required",
+    );
+
+    assertEquals(failures.length, 1);
+    assertEquals(failures[0]?.code, "DURABLE_RUN_EVENT_PERSISTENCE_FAILED");
+    assertEquals(failures[0]?.message, "Durable run event persistence failed");
   });
 });

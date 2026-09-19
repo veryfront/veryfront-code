@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1259-rc",
+  "version": "0.1.1260-rc",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -602,11 +602,15 @@
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
     "test:node": {
       "command": "node ./tests/node/run-tests.mjs --suite=runtime:node",
-      "dependencies": ["build:npm"]
+      "dependencies": [
+        "build:npm"
+      ]
     },
     "test:bun": {
       "command": "node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs --suite=runtime:bun",
-      "dependencies": ["build:npm"]
+      "dependencies": [
+        "build:npm"
+      ]
     },
     "test:all-runtimes": "deno task test:unit && deno task test:node && deno task test:bun",
     "test:e2e": "deno task test:e2e:playwright",

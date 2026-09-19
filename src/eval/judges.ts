@@ -2,6 +2,7 @@ import { resolveRuntimeModel } from "#veryfront/agent/runtime/model-resolution.t
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
 
+import { classifyEvalModelAccessDenial, isEvalModelAccessDeniedError } from "./model-access.ts";
 import type { EvalAnswerGroundednessMetricOptions } from "./types.ts";
 import {
   assertFiniteEvalNumber,
@@ -18,6 +19,7 @@ type RubricJudge = (input: {
   output: Record<string, unknown>;
   reference?: unknown;
   metadata: Record<string, unknown>;
+  signal?: AbortSignal;
 }) => Promise<{ score: number; pass?: boolean; explanation?: string }>;
 
 /** Options for the built-in general-purpose LLM rubric judge. */
@@ -341,6 +343,14 @@ function parseJudgeResponse(
   }
 }
 
+/**
+ * A refused judge model request is not a low score: every later record would be
+ * refused the same way, so let the eval runner stop the run.
+ */
+function rethrowModelAccessDenial(error: unknown): void {
+  if (isEvalModelAccessDeniedError(error) || classifyEvalModelAccessDenial(error)) throw error;
+}
+
 function judgeFailure(error: unknown): { score: number; pass: false; explanation: string } {
   const message = error instanceof Error ? error.message : String(error);
   return {
@@ -375,10 +385,12 @@ function createLlmRubricJudge(
         maxOutputTokens,
         temperature: options.temperature ?? 0,
         ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
+        ...(input.signal ? { abortSignal: input.signal } : {}),
       });
 
       return parseJudgeResponse(response.text, threshold);
     } catch (error) {
+      rethrowModelAccessDenial(error);
       return judgeFailure(error);
     }
   };
@@ -434,10 +446,12 @@ function createLlmGroundednessJudge(
         ...(validatedOptions.providerOptions
           ? { providerOptions: validatedOptions.providerOptions }
           : {}),
+        ...(input.signal ? { abortSignal: input.signal } : {}),
       });
 
       return parseJudgeResponse(response.text, threshold);
     } catch (error) {
+      rethrowModelAccessDenial(error);
       return judgeFailure(error);
     }
   };

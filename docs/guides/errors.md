@@ -694,7 +694,14 @@ Deployment environment not found.
 Environment name has no Veryfront-hosted address.
 
 - **HTTP status:** 400
-- **What to do:** Deploy to preview, staging, or production, or attach a custom domain to this environment in Studio
+- **What to do:** Deploy to staging or production, or attach a custom domain to this environment in Studio. Preview accepts no deployments: veryfront push updates it
+
+### preview-deployment-not-allowed
+
+Preview does not accept deployments.
+
+- **HTTP status:** 400
+- **What to do:** Preview serves the latest push to main: run veryfront push to update it, or deploy to staging or production
 
 ### release-missing-version
 
@@ -832,6 +839,55 @@ Provider replay checkpoint is invalid.
 
 - **HTTP status:** 500
 - **What to do:** Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state
+
+### eval-model-access-denied
+
+No model access for eval run.
+
+- **HTTP status:** 402
+- **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits
+
+### eval-project-required
+
+No project for eval model requests.
+
+- **HTTP status:** 400
+- **What to do:** Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again
+
+### eval-model-spend-limit-exceeded
+
+AI provider spend limit reached for eval run.
+
+- **HTTP status:** 402
+- **What to do:** Try again after the spend limit window resets, or ask a Veryfront administrator to raise the AI provider spend limit
+
+### eval-model-egress-blocked
+
+Veryfront API blocked by network egress policy.
+
+- **HTTP status:** 403
+- **What to do:** Veryfront blocks requests to hosts that resolve to private network addresses. If the Veryfront API runs on a private network you trust, such as a staging, VPN, or self-hosted deployment, add its exact origin (for example https://api.example.com) to VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS in the environment that runs veryfront eval, then run the eval again
+
+### eval-model-unauthorized
+
+Veryfront Cloud rejected the eval credential.
+
+- **HTTP status:** 401
+- **What to do:** Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again
+
+### eval-model-project-access-denied
+
+No access to the linked project for eval run.
+
+- **HTTP status:** 403
+- **What to do:** Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again
+
+### eval-record-timeout
+
+Eval record timed out.
+
+- **HTTP status:** 504
+- **What to do:** The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout \<seconds>, or pass --record-timeout 0 to disable it.
 
 ## General
 
