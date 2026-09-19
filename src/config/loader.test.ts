@@ -10501,6 +10501,82 @@ export default config as const;
         });
       });
 
+      it("does not retry a failed preview snapshot probe outside source-read admission", async () => {
+        const adapter = createHostedAdapter();
+        const releaseProbes = Promise.withResolvers<void>();
+        let probeCalls = 0;
+        let probesInFlight = 0;
+        let maxProbesInFlight = 0;
+        let reads = 0;
+        Object.assign(adapter.fs, {
+          getSourceSnapshotIdentity: () => "branch:failing-preview:main",
+          getSourceSnapshotVersion: async () => {
+            probeCalls += 1;
+            probesInFlight += 1;
+            maxProbesInFlight = Math.max(maxProbesInFlight, probesInFlight);
+            try {
+              await releaseProbes.promise;
+            } finally {
+              probesInFlight -= 1;
+            }
+            throw new Error("adapter initialization failed");
+          },
+        });
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          return 'export default { title: "fallback" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({ title: "fallback" }));
+
+        const admission = __getHostedConfigSourceReadStateForTests();
+        const projectIds = Array.from(
+          { length: admission.maxActive + 2 },
+          (_, index) => `failing-preview-${index}`,
+        );
+        const requests = projectIds.map((projectId) =>
+          runWithRequestContext(
+            { projectSlug: projectId, projectId, token: "token", branch: "main" },
+            () =>
+              getHostedConfig(`/hosted/${projectId}`, adapter, {
+                cacheKey: projectId,
+                sourceContext: { productionMode: false, branch: "main" },
+                preparedContext,
+              }),
+          )
+        );
+        const settled = Promise.allSettled(requests);
+        try {
+          await waitForHostedSourceReadState({
+            active: admission.maxActive,
+            queued: 2,
+            flights: projectIds.length,
+            waiters: projectIds.length,
+          });
+          releaseProbes.resolve();
+          const results = await settled;
+          assertEquals(results.filter((result) => result.status === "rejected").length, 0);
+          // Each context probes once under admission, then falls back to an
+          // unshared admitted read instead of probing again.
+          assertEquals(probeCalls, projectIds.length);
+          assertEquals(maxProbesInFlight, admission.maxActive);
+          assertEquals(reads, projectIds.length);
+        } finally {
+          releaseProbes.resolve();
+          await settled;
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
       it("reads a changed preview snapshot again instead of joining the previous read", async () => {
         const snapshot = {
           identity: "branch:preview-burst-project:feature/preview-burst",

@@ -880,12 +880,21 @@ interface HostedConfigSourceSelection {
 }
 
 type HostedConfigSourceReadKey = string | object;
+/**
+ * Value an admitted source flight settles with. Read flights and preview
+ * snapshot warm-up flights use disjoint key namespaces, so each caller only
+ * ever observes its own kind.
+ */
+type HostedConfigSourceFlightValue =
+  | HostedConfigSourceSelection
+  | HostedConfigSourceSnapshot
+  | null;
 type HostedConfigSourceReadState = "queued" | "active" | "ready" | "failed";
 
 interface HostedConfigSourceReadFlight {
   readonly key: HostedConfigSourceReadKey;
   readonly start: PromiseWithResolvers<void>;
-  readonly promise: Promise<HostedConfigSourceSelection | null>;
+  readonly promise: Promise<HostedConfigSourceFlightValue>;
   queueNode: HostedConfigSourceReadQueueNode | null;
   waiterCount: number;
   state: HostedConfigSourceReadState;
@@ -898,7 +907,7 @@ interface HostedConfigSourceReadQueueNode {
 }
 
 interface HostedConfigSourceReadLease {
-  readonly selection: HostedConfigSourceSelection | null;
+  readonly value: HostedConfigSourceFlightValue;
   readonly release: () => void;
 }
 
@@ -1134,10 +1143,10 @@ async function buildHostedConfigAdapterSelectorIdentity(): Promise<string> {
  * Capture the preview source snapshot without bypassing source-read admission.
  * The first probe can initialize a cold per-project filesystem adapter, which
  * is the same filesystem work the admission budget bounds for reads.
- * Concurrent requests share one admitted warm-up probe only when every
- * request-context field that selects a concrete filesystem adapter matches,
- * so each request's own observation afterwards is warm. The key carries only
- * a digest of the credential.
+ * The probe runs as an admitted flight. Concurrent requests share its result
+ * only when every request-context field that selects a concrete filesystem
+ * adapter matches, so they observe the same adapter. The key carries only a
+ * digest of the credential.
  */
 async function captureAdmittedHostedConfigSourceSnapshot(
   effectiveCacheKey: string,
@@ -1153,17 +1162,14 @@ async function captureAdmittedHostedConfigSourceSnapshot(
     `hosted-config-preview-source-probe-v2:${
       buildHostedConfigSourceIdentity(effectiveCacheKey, configBaseDir, adapter, revisionAtStart)
     }${frameConfigIdentityString(selectorIdentity)}`,
-    async () => {
-      await captureHostedConfigSourceSnapshot(adapter);
-      return null;
-    },
+    async () => (await captureHostedConfigSourceSnapshot(adapter)) ?? null,
   );
   const warmupLease = await waitForHostedConfigSourceReadFlight(warmupFlight, signal);
+  const snapshot = warmupLease.value;
   warmupLease.release();
-  const snapshot = await captureHostedConfigSourceSnapshot(adapter);
-  // The observation can await, so an abort must not start a read.
-  throwIfHostedConfigAborted(signal);
-  return snapshot;
+  // A failed or unstable observation is not retried here: the caller falls
+  // back to an unshared read, which stays under the same admission budget.
+  return snapshot !== null && "version" in snapshot ? snapshot : undefined;
 }
 
 async function readHostedConfigSource(
@@ -1327,7 +1333,7 @@ function cancelQueuedHostedConfigSourceRead(
 
 function createHostedConfigSourceReadFlight(
   key: HostedConfigSourceReadKey,
-  operation: () => Promise<HostedConfigSourceSelection | null>,
+  operation: () => Promise<HostedConfigSourceFlightValue>,
 ): HostedConfigSourceReadFlight {
   const start = promiseWithResolvers<void>();
   // Register the deferred operation in the caller's async context now. A
@@ -1361,7 +1367,7 @@ function createHostedConfigSourceReadFlight(
 
 function getOrCreateHostedConfigSourceReadFlight(
   key: HostedConfigSourceReadKey,
-  operation: () => Promise<HostedConfigSourceSelection | null>,
+  operation: () => Promise<HostedConfigSourceFlightValue>,
 ): HostedConfigSourceReadFlight {
   const existing = mapGet(hostedConfigSourceReadFlights, key);
   if (existing && existing.state !== "failed") return existing;
@@ -1455,10 +1461,10 @@ function waitForHostedConfigSourceReadFlight(
       }
       void thenPromise(
         flight.promise,
-        (selection) =>
+        (value) =>
           finish(() =>
             resolve(freezeObject({
-              selection,
+              value,
               release,
             }))
           ),
@@ -8959,6 +8965,8 @@ function getConfigInternal(
                 revisionAtStart,
                 hosted.signal,
               );
+            // Snapshot capture awaits, so an abort must not start a read.
+            throwIfHostedConfigAborted(hosted.signal);
             const sourceReadKey = buildHostedConfigSourceReadKey(
               effectiveCacheKey,
               configBaseDir,
@@ -8988,7 +8996,10 @@ function getConfigInternal(
 
           try {
             throwIfHostedConfigAborted(hosted.signal);
-            const selectedSource = sourceReadLease.selection;
+            const leasedSource = sourceReadLease.value;
+            const selectedSource = leasedSource !== null && "source" in leasedSource
+              ? leasedSource
+              : null;
             if (selectedSource) {
               const { configPath, configFile, source } = selectedSource;
               try {
