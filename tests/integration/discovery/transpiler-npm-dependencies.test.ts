@@ -422,6 +422,45 @@ describe(
       assertEquals((error as { slug?: string }).slug, "dependency-missing");
     });
 
+    it("keeps a package subpath out of an unreachable CDN URL", async () => {
+      // A subpath segment is free-form project text, like a version qualifier.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({
+            dependencies: { "@veryfront-fixture/absent": "9.9.9" },
+          }),
+          [toolPath]: [
+            `import { extractText } from "@veryfront-fixture/absent/ghpEXAMPLETOKEN0123/deep";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const error = await assertRejects(
+        () =>
+          withMockFetch(
+            (input) => {
+              requested.push(String(input));
+              return Promise.resolve(new Response("Not Found", { status: 404 }));
+            },
+            () => importModule(`file://${projectDir}/${toolPath}`, context),
+          ),
+        Error,
+      );
+      assertEquals(
+        requested.some((url) => url.includes("ghpEXAMPLETOKEN0123/deep")),
+        true,
+        requested.join(", "),
+      );
+      const detail = String((error as { detail?: string }).detail ?? error.message);
+      assertEquals(detail.includes("ghpEXAMPLETOKEN0123"), false, detail);
+      assertEquals(detail.includes("@veryfront-fixture/absent@9.9.9/..."), true, detail);
+    });
+
     it("keeps semver identifiers out of an unreachable CDN URL", async () => {
       // A pre-release part is free-form text, so the URL of a failed fetch
       // must not carry it into the classified detail or the logs.

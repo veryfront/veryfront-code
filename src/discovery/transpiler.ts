@@ -766,20 +766,22 @@ function projectRootMention(root: string): RegExp {
 }
 
 /**
- * A CDN URL in bundler text, with the pre-release and build parts of its
- * version replaced. The request uses the declared version verbatim, but both
- * parts are free-form under semver, so a token written into a declaration
- * would otherwise reach the classified detail through the failing URL.
+ * A CDN URL in bundler text, with everything the project wrote replaced: the
+ * pre-release and build parts of the version, and the package subpath. The
+ * request uses all of it verbatim, but each part is free-form -- semver says
+ * nothing about a pre-release's content, and a subpath segment is whatever
+ * the import named -- so a token in any of them would otherwise reach the
+ * classified detail and the bundler's logs through the failing URL.
  */
-function withoutCdnVersionIdentifiers(text: string): string {
+function withoutCdnProjectText(text: string): string {
   const cdn = ESM_CDN_BASE.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   return text.replace(
     new RegExp(
-      String.raw`(${cdn}/\S*?@\d+(?:\.\d+){0,2})(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?`,
+      String.raw`(${cdn}/\S*?@\d+(?:\.\d+){0,2})(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?([^\s?]*)`,
       "g",
     ),
-    (_match, pinned: string, pre?: string, build?: string) =>
-      `${pinned}${pre ? "-<redacted>" : ""}${build ? "+<redacted>" : ""}`,
+    (_match, pinned: string, pre?: string, build?: string, subpath?: string) =>
+      `${pinned}${pre ? "-<redacted>" : ""}${build ? "+<redacted>" : ""}${subpath ? "/..." : ""}`,
   );
 }
 
@@ -814,7 +816,7 @@ function classifyBundleFailure(
     });
   }
 
-  const text = withoutCdnVersionIdentifiers(withDisplayPath(describeBundleFailure(failure), paths));
+  const text = withoutCdnProjectText(withDisplayPath(describeBundleFailure(failure), paths));
   const detail = `Failed to transpile ${paths.display}: ${text}`;
   // A CDN failure names an unreachable project dependency, not broken source.
   if (text.includes(ESM_CDN_BASE)) {
@@ -921,7 +923,7 @@ export async function importModule(
     if (Object.keys(dependencyPins).length > 0) {
       plugins.push(createHTTPPlugin({
         fetchFn: fetchProjectDependencySource,
-        describeUrl: withoutCdnVersionIdentifiers,
+        describeUrl: withoutCdnProjectText,
       }));
     }
   }
