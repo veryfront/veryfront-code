@@ -262,6 +262,45 @@ function tildeCeiling(parts: readonly number[]): VersionCore {
   return nextAfter(parts.length === 3 ? parts.slice(0, 2) : parts);
 }
 
+function coreOf(version: string): VersionCore {
+  return padded(version.split(/[-+]/, 1)[0]!.split(".").map(Number));
+}
+
+/** A version's pre-release identifiers, without build metadata; `null` if none. */
+function prereleaseOf(version: string): string[] | null {
+  const withoutBuild = version.split("+", 1)[0]!;
+  const dash = withoutBuild.indexOf("-");
+  return dash < 0 ? null : withoutBuild.slice(dash + 1).split(".");
+}
+
+/** Semver pre-release precedence: a release outranks any of its pre-releases. */
+function comparePrereleases(left: string[] | null, right: string[] | null): number {
+  if (left === null || right === null) {
+    if (left === right) return 0;
+    return left === null ? 1 : -1;
+  }
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const a = left[index];
+    const b = right[index];
+    if (a === undefined) return -1;
+    if (b === undefined) return 1;
+    if (a === b) continue;
+    const aNumeric = /^\d+$/.test(a);
+    const bNumeric = /^\d+$/.test(b);
+    if (aNumeric && bNumeric) return Number(a) < Number(b) ? -1 : 1;
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return a < b ? -1 : 1;
+  }
+  return 0;
+}
+
+function compareVersions(
+  left: { core: VersionCore; pre: string[] | null },
+  right: { core: VersionCore; pre: string[] | null },
+): number {
+  return compareCores(left.core, right.core) || comparePrereleases(left.pre, right.pre);
+}
+
 function compareCores(left: readonly number[], right: readonly number[]): number {
   for (let index = 0; index < 3; index++) {
     if (left[index] !== right[index]) return left[index]! < right[index]! ? -1 : 1;
@@ -277,10 +316,10 @@ function compareCores(left: readonly number[], right: readonly number[]): number
  * Covers an operator (`^`, `~`, `~>`, `>=`, `>`, `<=`, `<`, `=`, `v`) or none,
  * in front of a full version (`1.8.1`) or an abbreviated one (`2`, `2.3`,
  * `2.x`, `*`), with npm's meaning for each: `^2` is `>=2.0.0 <3.0.0`, `>2` is
- * `>=3.0.0`, `<=2.3` is `<2.4.0`. A pre-release on either side is admitted only
- * by the identical version: npm excludes pre-releases from a range unless the
- * range names one on the same core version, and equality is the conservative
- * reading of that rule.
+ * `>=3.0.0`, `<=2.3` is `<2.4.0`. Versions compare by semver precedence, and a
+ * pre-release is admitted only by a range that names a pre-release on the same
+ * core version, as npm does: `^1.2.3-beta.1` admits `1.2.3-beta.2` and `1.2.3`,
+ * never `1.3.0-rc.1`.
  *
  * @internal Exported for testing only.
  */
@@ -289,33 +328,39 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
   if (URL_SCHEME.test(trimmed) || !EXACT_VERSION.test(version)) return null;
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
   const bound = operator === undefined ? trimmed : trimmed.slice(operator.length).trimStart();
+  const wanted = { core: coreOf(version), pre: prereleaseOf(version) };
   if (operator === undefined && (bound === "*" || bound === "x" || bound === "X")) {
-    return !version.includes("-");
+    return wanted.pre === null;
   }
   const parts = boundParts(bound);
   if (parts === null) return null;
-  if (bound === version) return operator !== "<" && operator !== ">";
-  if (version.includes("-") || bound.includes("-")) return false;
+  const full = parts.length === 3;
+  const lower = { core: padded(parts), pre: full ? prereleaseOf(bound) : null };
+  // npm's pre-release rule: a pre-release is admitted only by a range that
+  // names a pre-release on the same core version.
+  if (wanted.pre !== null && (lower.pre === null || compareCores(wanted.core, lower.core) !== 0)) {
+    return false;
+  }
 
-  const wanted = padded(version.split(/[-+]/, 1)[0]!.split(".").map(Number));
-  const atLeast = compareCores(wanted, padded(parts)) >= 0;
+  const order = compareVersions(wanted, lower);
+  const below = (ceiling: VersionCore) => compareCores(wanted.core, ceiling) < 0;
   switch (operator) {
     case "^":
-      return atLeast && compareCores(wanted, caretCeiling(parts)) < 0;
+      return order >= 0 && below(caretCeiling(parts));
     case "~":
     case "~>":
-      return atLeast && compareCores(wanted, tildeCeiling(parts)) < 0;
+      return order >= 0 && below(tildeCeiling(parts));
     case ">=":
-      return atLeast;
+      return order >= 0;
     case ">":
-      return compareCores(wanted, nextAfter(parts)) >= 0;
+      return full ? order > 0 : !below(nextAfter(parts));
     case "<=":
-      return compareCores(wanted, nextAfter(parts)) < 0;
+      return full ? order <= 0 : below(nextAfter(parts));
     case "<":
-      return !atLeast;
+      return order < 0;
     default:
       // `=`, `v` and no operator cover exactly the versions the bound names.
-      return atLeast && compareCores(wanted, nextAfter(parts)) < 0;
+      return full ? order === 0 : order >= 0 && below(nextAfter(parts));
   }
 }
 
@@ -489,10 +534,13 @@ function classifyExactImport(
   { name, subpath, declared, pin, embedded }: ImportRequest,
   requested: string,
 ): ProjectNpmImport {
-  const admitted = declared !== undefined && rangeAdmitsVersion(declared, requested) === true;
-  // A version in the specifier that the declaration does not admit must not be
-  // served as the pin: the project would run code it did not ask for.
-  if (pin !== null && !admitted) {
+  const admission = declared === undefined ? null : rangeAdmitsVersion(declared, requested);
+  const admitted = admission === true;
+  // A version in the specifier that the declaration excludes must not be
+  // served, from the pin or from the runtime: the project would run code its
+  // own package.json rules out. With a pin, a declaration this module cannot
+  // evaluate is not taken as admitting the import either.
+  if (admission === false || (pin !== null && !admitted)) {
     return {
       kind: "missing",
       name,

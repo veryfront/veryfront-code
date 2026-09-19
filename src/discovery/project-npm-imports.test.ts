@@ -192,10 +192,22 @@ describe("rangeAdmitsVersion", () => {
     assertEquals(rangeAdmitsVersion("*", "1.8.1-rc.1"), false);
   });
 
-  it("admits a pre-release only as the identical version", () => {
+  it("applies npm's pre-release rule and semver precedence", () => {
     assertEquals(rangeAdmitsVersion("^1.8.1", "1.9.0-beta.1"), false);
     assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.9.0-beta.1"), true);
-    assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.9.0"), false);
+    assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.9.0-beta.2"), true);
+    assertEquals(rangeAdmitsVersion("^1.9.0-beta.2", "1.9.0-beta.1"), false);
+    assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.9.0"), true);
+    assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.9.5"), true);
+    assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.10.0-rc.1"), false);
+    assertEquals(rangeAdmitsVersion(">=1.9.0-alpha", "1.9.0-alpha.1"), true);
+    assertEquals(rangeAdmitsVersion(">=1.9.0-2", "1.9.0-10"), true);
+    assertEquals(rangeAdmitsVersion(">=1.9.0-alpha", "1.9.0-1"), false);
+    assertEquals(rangeAdmitsVersion("<1.9.0-rc.1", "1.9.0-beta.1"), true);
+    assertEquals(rangeAdmitsVersion("<1.9.0-rc.1", "1.8.9"), true);
+    assertEquals(rangeAdmitsVersion("1.9.0-rc.1", "1.9.0-rc.1+build.5"), true);
+    assertEquals(rangeAdmitsVersion(">1.9.0-rc.1", "1.9.0"), true);
+    assertEquals(rangeAdmitsVersion("<=1.9.0-rc.1", "1.9.0"), false);
   });
 
   it("declines to evaluate anything that is not a single comparator", () => {
@@ -488,6 +500,17 @@ describe("classifyProjectNpmImport", () => {
       version: "1.8.1",
       subpath: ".",
     });
+  });
+
+  it("refuses an exact import a declaration without a pin excludes", () => {
+    // `<3.0.0` names no version to fetch, but it still rules out lodash 3.10.1,
+    // which the runtime happens to carry.
+    assertEquals(classify("npm:lodash@3.10.1", { lodash: "<3.0.0" }), {
+      kind: "missing",
+      name: "lodash",
+      reason: "the import asks for lodash@3.10.1 but package.json declares lodash@<3.0.0",
+    });
+    assertEquals(classify("npm:lodash@3.10.1", { lodash: "<4.0.0" }), { kind: "runtime" });
   });
 
   it("refuses an import range it cannot check against the declared version", () => {
