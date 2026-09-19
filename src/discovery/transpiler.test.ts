@@ -683,10 +683,8 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         'Module not found "lib/x.ts"',
       );
       assertEquals(withDisplayPath("at file:///app", paths), "at .");
-      assertEquals(
-        withDisplayPath("at file:///application/x.ts", paths),
-        "at file:///application/x.ts",
-      );
+      // Not the root, so it is named by its file like any foreign path.
+      assertEquals(withDisplayPath("at file:///application/x.ts", paths), "at x.ts");
     });
 
     it("redacts a Windows UNC project root whatever its casing", () => {
@@ -750,22 +748,48 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         'Module not found "lib/x.ts"',
       );
       assertEquals(withDisplayPath("at c:/users/me/proj/lib/x.ts", windows), "at lib/x.ts");
+      // A sibling directory is not the root: it is named by its file alone
+      // (as any foreign absolute path is), never rendered relative to the root.
+      assertEquals(withDisplayPath("see C:/Users/me/project/x.ts", windows), "see x.ts");
+    });
+
+    it("names an absolute path outside the project root by its file alone", () => {
+      // esbuild can quote a path under another directory entirely; the machine
+      // layout there is no more publishable than the project's own.
       assertEquals(
-        withDisplayPath("see C:/Users/me/project/x.ts", windows),
-        "see C:/Users/me/project/x.ts",
+        withDisplayPath('Could not resolve "/home/someone/work/lib/x.ts"', paths),
+        'Could not resolve "x.ts"',
+      );
+      assertEquals(
+        withDisplayPath('at "file:///Users/me/tmp/y.ts"', paths),
+        'at "y.ts"',
+      );
+      assertEquals(withDisplayPath("read 'C:\\Users\\me\\z.ts'", paths), "read 'z.ts'");
+      assertEquals(
+        withDisplayPath("at //server/share/other/w.ts", paths),
+        "at w.ts",
+      );
+      // URLs and relative paths are untouched.
+      assertEquals(
+        withDisplayPath("fetch https://esm.sh/pkg@1.0.0/x.mjs", paths),
+        "fetch https://esm.sh/pkg@1.0.0/x.mjs",
+      );
+      assertEquals(withDisplayPath("in tools/a.ts", paths), "in tools/a.ts");
+    });
+
+    it("leaves a host or URL that merely contains the root", () => {
+      assertEquals(
+        withDisplayPath("fetch https://esm.sh/apple@1.0.0 failed", paths),
+        "fetch https://esm.sh/apple@1.0.0 failed",
       );
     });
 
-    it("leaves a host, URL or longer path that merely contains the root", () => {
-      for (
-        const text of [
-          "fetch https://esm.sh/apple@1.0.0 failed",
-          "see /application/tools",
-          "see /srv/app/tools",
-          "see /app-old/tools",
-        ]
-      ) {
-        assertEquals(withDisplayPath(text, paths), text);
+    it("never renders a path that merely starts with the root relative to it", () => {
+      // Each of these is a foreign absolute path, so it is named by its file;
+      // what must never happen is the root being cut out of the middle of a
+      // longer name, which would leave a mangled fragment such as `ication/`.
+      for (const text of ["/application/tools/x.ts", "/srv/app/tools/x.ts", "/app-old/x.ts"]) {
+        assertEquals(withDisplayPath(`see ${text}`, paths), "see x.ts", text);
       }
     });
   });

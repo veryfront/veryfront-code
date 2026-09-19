@@ -541,6 +541,21 @@ function embeddedImport(
  * version in its URL -- has to be re-emitted under a constraint the binary
  * actually froze, not as an unconstrained `npm:<name>`.
  */
+/**
+ * The constraint to emit a bare framework import under, or `null` when the
+ * binary records none. A recorded `*` is the framework's own constraint, so it
+ * wins; otherwise the highest recorded exact version is the single copy the
+ * binary can actually resolve.
+ */
+function embeddedConstraintForBareImport(
+  embedded: EmbeddedNpmSet,
+  name: string,
+): string | null {
+  const recorded = ownEntry(embedded.constraints, name) ?? [];
+  if (recorded.includes("*")) return null;
+  return compatibleEmbeddedConstraint(embedded, name, undefined, null);
+}
+
 export function embeddedConstraintForVersion(
   name: string,
   version: string,
@@ -579,7 +594,21 @@ export function classifyProjectNpmImport(
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
-  if (isRuntimeProvidedImport(specifier, parsed.name)) return { kind: "runtime" };
+  if (isRuntimeProvidedImport(specifier, parsed.name)) {
+    // A framework package still has to be emitted under a constraint the
+    // binary records: `npm:zod` is the constraint `zod@*`, which a profile
+    // that froze only `zod@4.3.6` cannot answer. The framework's own
+    // specifiers (`veryfront/...`) become globals, and a Node builtin has no
+    // npm coordinate, so neither takes a constraint.
+    if (parsed.name === "veryfront" || parsed.name.startsWith("veryfront/")) {
+      return { kind: "runtime" };
+    }
+    if (nodeBuiltinSpecifier(specifier) !== null) return { kind: "runtime" };
+    const recorded = embeddedConstraintForBareImport(embedded, parsed.name);
+    return recorded === null
+      ? { kind: "runtime" }
+      : runtimeImport(parsed.name, recorded, parsed.subpath);
+  }
   if (!isContainedSubpath(parsed.subpath)) {
     // The subpath is project text and may carry anything, so it is not echoed.
     return {

@@ -348,6 +348,32 @@ describe("classifyProjectNpmImport", () => {
     assertEquals(classify("@opentelemetry/api"), { kind: "runtime" });
   });
 
+  it("emits a framework package under a constraint the binary records", () => {
+    // A compiled binary resolves `npm:` by constraint. A profile that records
+    // zod only at an exact version cannot answer an unconstrained `npm:zod`.
+    const exactOnly = {
+      packages: { zod: ["4.3.6"], "@opentelemetry/api": ["1.9.1"] },
+      constraints: { zod: ["4.3.6"], "@opentelemetry/api": ["1.9.1"] },
+    } as const;
+    assertEquals(classifyProjectNpmImport("zod", {}, exactOnly), {
+      kind: "runtime",
+      specifier: "npm:zod@4.3.6",
+    });
+    assertEquals(classifyProjectNpmImport("@opentelemetry/api", {}, exactOnly), {
+      kind: "runtime",
+      specifier: "npm:@opentelemetry/api@1.9.1",
+    });
+    // A recorded wildcard is the framework's own constraint, so it wins.
+    const wildcard = {
+      packages: { zod: ["4.3.6"] },
+      constraints: { zod: ["*", "4.3.6"] },
+    } as const;
+    assertEquals(classifyProjectNpmImport("zod", {}, wildcard), { kind: "runtime" });
+    // The framework itself and Node builtins keep their own forms.
+    assertEquals(classifyProjectNpmImport("veryfront/agents", {}, exactOnly), { kind: "runtime" });
+    assertEquals(classifyProjectNpmImport("fs/promises", {}, exactOnly), { kind: "runtime" });
+  });
+
   it("keeps bare Node builtins on the runtime instead of calling them missing", () => {
     assertEquals(classify("fs"), { kind: "runtime" });
     assertEquals(classify("crypto"), { kind: "runtime" });

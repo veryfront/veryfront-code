@@ -750,10 +750,25 @@ export function discoveryPathNames(filePath: string, baseDir?: string): Discover
  */
 export function withDisplayPath(text: string, paths: DiscoveryPathNames): string {
   const shown = paths.raw === paths.display ? text : text.split(paths.raw).join(paths.display);
-  if (paths.root.length === 0) return shown;
-  return shown.replace(
+  const underRoot = paths.root.length === 0 ? shown : shown.replace(
     projectRootMention(paths.root),
     (_, separator: string | undefined) => separator === undefined ? "." : "",
+  );
+  return withoutForeignAbsolutePaths(underRoot);
+}
+
+/**
+ * An absolute path outside the project root, named by its file alone. The
+ * bundler can quote one -- a temp directory, another home directory, a share
+ * -- and that layout is no more publishable than the project's own. A URL is
+ * left alone: its host is not a filesystem.
+ */
+function withoutForeignAbsolutePaths(text: string): string {
+  return text.replace(
+    // `file://` is consumed with the path; otherwise the path may not follow a
+    // scheme, a host or another path character.
+    /(?:file:\/\/\/?|(?<![A-Za-z0-9._~%@:\/\\-]))(?:[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)[^\s"'`)\]]*/g,
+    (match) => pathHelper.basename(toPortablePath(match)) || match,
   );
 }
 
