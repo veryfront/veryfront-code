@@ -53,6 +53,8 @@ const FRAMEWORK_PROVIDED_PACKAGES = new Set(["veryfront", "react", "react-dom", 
  * `import { readFile } from "fs"` as a missing project dependency and told the
  * user to declare `fs` in package.json, which is advice that cannot work.
  */
+// `sea`, `sqlite` and `test` are absent on purpose: Node exposes them only under
+// the mandatory `node:` prefix, so a bare `test` is the npm package of that name.
 const NODE_BUILTIN_MODULES = new Set([
   "assert",
   "async_hooks",
@@ -82,11 +84,9 @@ const NODE_BUILTIN_MODULES = new Set([
   "querystring",
   "readline",
   "repl",
-  "sea",
   "stream",
   "string_decoder",
   "sys",
-  "test",
   "timers",
   "tls",
   "trace_events",
@@ -134,7 +134,9 @@ export function isFrameworkProvidedPackage(name: string): boolean {
  * one -- `#veryfront/...` subpath imports, bare aliases from an import map --
  * are none of this module's business and are left to the rest of the bundle.
  */
-const NPM_PACKAGE_NAME = /^(?:@[a-z0-9~][a-z0-9-._~]*\/)?[a-z0-9~][a-z0-9-._~]*$/;
+// Unscoped names admit uppercase: the registry still serves grandfathered
+// packages such as `JSONStream`.
+const NPM_PACKAGE_NAME = /^(?:@[a-z0-9~][a-z0-9-._~]*\/)?[A-Za-z0-9~][A-Za-z0-9-._~]*$/;
 
 /**
  * A single version, as opposed to a range: semver's `major.minor.patch` with
@@ -522,6 +524,21 @@ function isRuntimeProvidedImport(specifier: string, name: string): boolean {
   return !specifier.startsWith("npm:") || nodeBuiltinSpecifier(name) === null;
 }
 
+/** The characters of a semver range or a dist-tag, and nothing that can carry a URL. */
+const PLAIN_DECLARATION = /^[0-9A-Za-z.*^~<>=|+\s-]*$/;
+
+/**
+ * A declaration as user-facing detail may show it. A range or dist-tag is
+ * quoted verbatim; anything else -- `git+https://<TOKEN>@host/repo.git`, a
+ * `file:` path, a `user/repo` shorthand -- can carry credentials or a machine
+ * path, so only its kind is named.
+ */
+function describeDeclaration(declared: string): string {
+  if (PLAIN_DECLARATION.test(declared)) return `"${declared}"`;
+  const scheme = URL_SCHEME.exec(declared)?.[0];
+  return scheme === undefined ? "a non-registry source" : `a "${scheme}" source`;
+}
+
 /** One import to classify, with what the project declared for its package. */
 interface ImportRequest extends ParsedNpmSpecifier {
   declared: string | undefined;
@@ -559,7 +576,8 @@ function classifyExactImport(
       ? `this runtime does not carry ${name}@${requested} and the project declares no ` +
         `dependency on ${name}`
       : `this runtime does not carry ${name}@${requested} and package.json declares ` +
-        `"${declared}", which names no single version to fetch -- declare an exact version`,
+        `${describeDeclaration(declared)}, which names no single version to fetch -- ` +
+        `declare an exact version`,
   };
 }
 
@@ -597,7 +615,8 @@ function classifyUnversionedImport(
     return {
       kind: "missing",
       name,
-      reason: `this runtime does not carry ${name} and package.json declares "${declared}", ` +
+      reason: `this runtime does not carry ${name} and package.json declares ` +
+        `${describeDeclaration(declared)}, ` +
         `which names no single version to fetch -- declare an exact version`,
     };
   }

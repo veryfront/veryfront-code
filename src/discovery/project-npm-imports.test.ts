@@ -547,4 +547,41 @@ describe("classifyProjectNpmImport", () => {
         "dependency on constructor",
     });
   });
+
+  it("names a non-registry declaration by its kind, never verbatim", () => {
+    const secret = "git+https://<TOKEN>@example.com/repo.git";
+    const decision = classify("unpdf", { unpdf: secret });
+    assertEquals(decision.kind, "missing");
+    const reason = decision.kind === "missing" ? decision.reason : "";
+    assertEquals(
+      reason,
+      'this runtime does not carry unpdf and package.json declares a "git+https:" source, ' +
+        "which names no single version to fetch -- declare an exact version",
+    );
+    const exact = classify("npm:unpdf@1.8.1", { unpdf: "user/repo#main" });
+    assertEquals(
+      exact.kind === "missing" ? exact.reason : "",
+      "this runtime does not carry unpdf@1.8.1 and package.json declares a non-registry " +
+        "source, which names no single version to fetch -- declare an exact version",
+    );
+  });
+
+  it("serves grandfathered uppercase package names", () => {
+    assertEquals(classify("JSONStream", { JSONStream: "1.3.5" }), {
+      kind: "cdn",
+      name: "JSONStream",
+      version: "1.3.5",
+      subpath: ".",
+    });
+  });
+
+  it("reads a bare prefix-only builtin name as the npm package", () => {
+    assertEquals(classify("test", { test: "3.3.0" }), {
+      kind: "cdn",
+      name: "test",
+      version: "3.3.0",
+      subpath: ".",
+    });
+    assertEquals(classify("node:test"), { kind: "runtime" });
+  });
 });
