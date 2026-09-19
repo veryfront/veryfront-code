@@ -813,7 +813,7 @@ describe("exact-version registry install propagation retry", () => {
       "npm error code E404",
       `npm error 404 Not Found - GET https://registry.npmjs.org/veryfront/-/veryfront-${SKEW_VERSION}.tgz`,
       `npm error 404  'veryfront@${SKEW_VERSION}' is not in this registry.`,
-      "npm error A complete log of this run can be found in: /home/npm-smoke-runner/.npm/_logs/debug-0.log",
+      "npm error need auth //registry.npmjs.org/:_authToken=giveup-token-must-not-appear",
     ];
     const result = await runScriptedRegistryInstall(
       [missingTarball, missingTarball, missingTarball, missingTarball],
@@ -835,7 +835,8 @@ describe("exact-version registry install propagation retry", () => {
       result.stderr,
       `'veryfront@${SKEW_VERSION}' is not in this registry.`,
     );
-    assertEquals(result.stderr.includes("/home/npm-smoke-runner"), false);
+    assertEquals(result.stderr.includes("giveup-token-must-not-appear"), false);
+    assertStringIncludes(result.stderr, "_authToken=<redacted>");
     assertStringIncludes(
       result.stderr,
       "SMOKE FAIL: exact-version registry install failed",
