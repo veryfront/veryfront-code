@@ -37,6 +37,7 @@ import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
 import { captureResolvedModule } from "./captured-module.ts";
+import { getSharedModuleFetchKey, runSharedModuleFetch } from "./shared-module-fetches.ts";
 import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { extractDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import {
@@ -189,6 +190,17 @@ function isRefusedTenantFrameworkModuleFetch(
   return !isPublicFrameworkSourceKey(frameworkKey);
 }
 
+/** Add modules resolved by a shared resolution to this request's graph. */
+function admitSharedModules(moduleGraph: Set<string>, modulePaths: ReadonlySet<string>): void {
+  for (const modulePath of modulePaths) {
+    if (moduleGraph.has(modulePath)) continue;
+    if (moduleGraph.size >= MAX_MDX_MODULE_GRAPH_ENTRIES) {
+      throw new ModuleGraphLimitError(modulePath);
+    }
+    moduleGraph.add(modulePath);
+  }
+}
+
 /**
  * Fetch and cache a module.
  * This is the main entry point for module fetching operations.
@@ -292,21 +304,40 @@ export async function fetchAndCacheModule(
   const fetchAndCacheModuleFn = (path: string, parent?: string): Promise<string | null> =>
     fetchAndCacheModule(path, context, parent, nextLineage);
 
-  const fetchPromise = context.sourceCapture
-    ? captureResolvedModule(
-      normalizedPath,
-      context,
-      fetchAndCacheModuleFn,
-      context.sourceCapture,
-      reference.suffix,
-    )
-    : doFetchAndCacheModule(
+  const isEntryFetch = parentModulePath === undefined && lineage.size === 0;
+  const resolveModule = (): Promise<string | null> =>
+    doFetchAndCacheModule(
       normalizedPath,
       context,
       fetchAndCacheModuleFn,
       projectSlug,
       parentModulePath,
     );
+  let fetchPromise: Promise<string | null>;
+  if (context.sourceCapture) {
+    fetchPromise = captureResolvedModule(
+      normalizedPath,
+      context,
+      fetchAndCacheModuleFn,
+      context.sourceCapture,
+      reference.suffix,
+    );
+  } else if (isEntryFetch) {
+    // Concurrent requests for the same entry share one resolution of its graph.
+    fetchPromise = runSharedModuleFetch(
+      getSharedModuleFetchKey(context, bindingKey),
+      resolveModule,
+      {
+        // Modules another request resolved still count toward this request's
+        // graph limit.
+        onResolved: (recordedModules) => admitSharedModules(moduleGraph, recordedModules),
+        // The leading request's deadline is not this request's deadline.
+        retryAloneOn: (error) => error instanceof TransformTreeTimeoutError,
+      },
+    );
+  } else {
+    fetchPromise = resolveModule();
+  }
 
   inFlight?.set(bindingKey, fetchPromise);
 

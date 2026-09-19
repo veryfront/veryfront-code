@@ -10,6 +10,8 @@ import {
 } from "./bundle-recovery.ts";
 import { __injectCachesForTests } from "./http-cache-state.ts";
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
+import { getBundleFetchesInFlightCount } from "./bundle-recovery.ts";
+import { fingerprintImportMap } from "./http-cache-helpers.ts";
 import { buildHttpCacheIdentity, hashHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { markDegradedArtifact } from "./degraded-artifact.ts";
 import { MAX_CACHED_HTTP_BUNDLE_BYTES } from "./http-bundle-file.ts";
@@ -43,6 +45,65 @@ function createSuffixCacheBackend(entries: Record<string, string>): CacheBackend
       return Promise.resolve();
     },
   };
+}
+
+interface CountingBatchBackend extends CacheBackend {
+  /** Suffix keys (`prefix:hash`) read one at a time. */
+  singleReads: string[];
+  /** Suffix keys read through batch requests. */
+  batchReads: string[];
+}
+
+/** Suffix-keyed backend with a slow batch read that records every key read. */
+function createCountingBatchBackend(
+  entries: Record<string, string>,
+  options: {
+    latencyMs?: number;
+    /** Batch reads of a key that return nothing before the key is served. */
+    hideUntilRead?: Map<string, number>;
+    /** Serve nothing to single-key reads. */
+    missSingleReads?: boolean;
+  } = {},
+): CountingBatchBackend {
+  const values = new Map(Object.entries(entries));
+  const suffixKey = (key: string): string => {
+    const match = /^[^:]+:([^:]+):(.+)$/.exec(key);
+    return match ? `${match[1]}:${match[2]}` : key;
+  };
+  const reads = new Map<string, number>();
+  const read = (key: string): string | null => {
+    const suffix = suffixKey(key);
+    const count = (reads.get(suffix) ?? 0) + 1;
+    reads.set(suffix, count);
+    const hiddenReads = options.hideUntilRead?.get(suffix) ?? 0;
+    return count > hiddenReads ? values.get(suffix) ?? null : null;
+  };
+  const delay = () => new Promise((resolve) => setTimeout(resolve, options.latencyMs ?? 0));
+
+  const backend: CountingBatchBackend = {
+    type: "redis",
+    singleReads: [],
+    batchReads: [],
+    get: async (key) => {
+      backend.singleReads.push(suffixKey(key));
+      await delay();
+      return options.missSingleReads ? null : values.get(suffixKey(key)) ?? null;
+    },
+    getBatch: async (keys) => {
+      backend.batchReads.push(...keys.map(suffixKey));
+      await delay();
+      return new Map(keys.map((key) => [key, read(key)]));
+    },
+    set: (key, value) => {
+      values.set(suffixKey(key), value);
+      return Promise.resolve();
+    },
+    del: (key) => {
+      values.delete(suffixKey(key));
+      return Promise.resolve();
+    },
+  };
+  return backend;
 }
 
 // Force the distributed cache to be unavailable so the recovery/invalidation
@@ -322,6 +383,153 @@ describe("transforms/esm/bundle-recovery", () => {
           [hashB],
           "an unrecoverable transitive dep is reported as failed",
         );
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("reads recovery identities in batches instead of one request per bundle", async () => {
+      const cacheDir = await makeTempDir();
+      const importMap = { imports: { dependency: "https://cdn.example.com/dependency@2.js" } };
+      const importMapFingerprint = await fingerprintImportMap(importMap);
+      const hashes = Array.from({ length: 30 }, (_, index) => `${500 + index}`);
+      const entries: Record<string, string> = {
+        [`import-map:${importMapFingerprint}`]: JSON.stringify(importMap),
+      };
+      for (const hash of hashes) {
+        entries[`code:${hash}`] = `export const bundle${hash} = true;\n`;
+        entries[`identity:${hash}`] = JSON.stringify({
+          url: `https://esm.sh/package-${hash}@1`,
+          importMapFingerprint,
+        });
+      }
+      const backend = createCountingBatchBackend(entries);
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+      try {
+        const failed = await ensureHttpBundlesExist(
+          hashes.map((hash) => ({ path: join(cacheDir, `http-${hash}.mjs`), hash })),
+          cacheDir,
+          () => Promise.resolve(null),
+        );
+
+        assertEquals(failed, []);
+        assertEquals(backend.singleReads, [], "no bundle is looked up on its own");
+        assertEquals(
+          backend.batchReads.filter((key) => key.startsWith("import-map:")),
+          [`import-map:${importMapFingerprint}`],
+          "a shared import map is read once",
+        );
+        assertEquals(backend.batchReads.filter((key) => key.startsWith("identity:")).length, 30);
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("fetches each bundle once for concurrent callers", async () => {
+      const cacheDir = await makeTempDir();
+      const hashes = Array.from({ length: 20 }, (_, index) => `${700 + index}`);
+      const entries: Record<string, string> = {};
+      for (const hash of hashes) {
+        entries[`code:${hash}`] = `export const bundle${hash} = true;\n`;
+        entries[`hash:${hash}`] = `https://esm.sh/package-${hash}@1`;
+      }
+      const backend = createCountingBatchBackend(entries, { latencyMs: 50 });
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+      try {
+        const results = await Promise.all(
+          Array.from({ length: 5 }, () =>
+            ensureHttpBundlesExist(
+              hashes.map((hash) => ({ path: join(cacheDir, `http-${hash}.mjs`), hash })),
+              cacheDir,
+              () => Promise.resolve(null),
+            )),
+        );
+
+        assertEquals(results, Array(5).fill([]));
+        assertEquals(
+          backend.batchReads.filter((key) => key.startsWith("code:")).length,
+          hashes.length,
+          "each bundle's code is fetched once across all callers",
+        );
+        for (const hash of hashes) {
+          assertEquals(
+            await readTextFile(join(cacheDir, `http-${hash}.mjs`)),
+            `export const bundle${hash} = true;\n`,
+          );
+        }
+        assertEquals(getBundleFetchesInFlightCount(), 0, "settled fetches are released");
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("retries a bundle that a concurrent caller failed to fetch", async () => {
+      const cacheDir = await makeTempDir();
+      const hash = "901";
+      // The first batch read misses, as if the cache briefly failed, and the
+      // single-bundle fallback finds nothing either.
+      const backend = createCountingBatchBackend(
+        { [`code:${hash}`]: "export const flaky = true;\n" },
+        { latencyMs: 50, hideUntilRead: new Map([[`code:${hash}`, 1]]), missSingleReads: true },
+      );
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+      try {
+        const results = await Promise.all(
+          Array.from({ length: 2 }, () =>
+            ensureHttpBundlesExist(
+              [{ path: join(cacheDir, `http-${hash}.mjs`), hash }],
+              cacheDir,
+              () => Promise.resolve(null),
+            )),
+        );
+
+        // The caller whose reads missed reports the bundle; the caller that
+        // waited for it fetches the bundle itself instead of inheriting the miss.
+        assertEquals(
+          results.map((failed) => failed.join(",")).sort(),
+          ["", hash],
+        );
+        assertEquals(
+          await readTextFile(join(cacheDir, `http-${hash}.mjs`)),
+          "export const flaky = true;\n",
+        );
+        assertEquals(getBundleFetchesInFlightCount(), 0);
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("keeps single-bundle recovery claimed so concurrent callers do not repeat it", async () => {
+      const cacheDir = await makeTempDir();
+      const hash = "902";
+      // The batch read never has the code, so every bundle goes through
+      // single-bundle recovery by hash.
+      const backend = createCountingBatchBackend(
+        { [`code:${hash}`]: "export const recovered = true;\n" },
+        { latencyMs: 50, hideUntilRead: new Map([[`code:${hash}`, Infinity]]) },
+      );
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+      try {
+        const results = await Promise.all(
+          Array.from({ length: 3 }, () =>
+            ensureHttpBundlesExist(
+              [{ path: join(cacheDir, `http-${hash}.mjs`), hash }],
+              cacheDir,
+              () => Promise.resolve(null),
+            )),
+        );
+
+        assertEquals(results, [[], [], []]);
+        assertEquals(
+          backend.singleReads.filter((key) => key === `code:${hash}`).length,
+          1,
+          "one caller recovers the bundle while the others wait",
+        );
+        assertEquals(getBundleFetchesInFlightCount(), 0);
       } finally {
         await remove(cacheDir, { recursive: true });
       }
