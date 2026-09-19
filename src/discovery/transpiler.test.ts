@@ -565,6 +565,29 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         ),
         "react",
       );
+      // Build-variant file names (`?dev`, `?bundle`) address the same export.
+      assertEquals(
+        esmCdnModuleSpecifier(
+          new URL(
+            "https://esm.sh/react@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/jsx-dev-runtime.development.mjs",
+          ),
+        ),
+        "react/jsx-dev-runtime",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/react@19.2.4/es2022/react.development.mjs")),
+        "react",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(new URL("https://esm.sh/react-dom@19.2.4/es2022/client.bundle.mjs")),
+        "react-dom/client",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(
+          new URL("https://esm.sh/react-dom@19.2.4/es2022/client.development.bundle.mjs"),
+        ),
+        "react-dom/client",
+      );
       assertEquals(
         esmCdnModuleSpecifier(new URL("https://esm.sh/v135/react@19.2.4/es2022/jsx-runtime.mjs")),
         "react/jsx-runtime",

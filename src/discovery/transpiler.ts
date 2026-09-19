@@ -284,8 +284,13 @@ const ESM_CDN_BUILD_TARGET = /^(?:es(?:next|\d{4})|denonext|deno|node|bun|browse
  */
 const ESM_CDN_BUILD_OPTIONS = /^X-[A-Za-z0-9_-]+$/;
 
-/** The extension esm.sh gives a built module file. */
-const ESM_CDN_MODULE_EXTENSION = /\.[mc]?js$/;
+/**
+ * The extension esm.sh gives a built module file, with the build-variant
+ * suffixes it adds for `?dev` and `?bundle` builds
+ * (`jsx-dev-runtime.development.mjs`, `client.bundle.mjs`): each variant is
+ * the same package export.
+ */
+const ESM_CDN_MODULE_EXTENSION = /(?:\.(?:development|bundle|nobundle))*\.[mc]?js$/;
 
 /**
  * The package, and the package subpath, an esm.sh module path addresses.
