@@ -265,6 +265,8 @@ function createVirtualProjectMiddlewarePlugin(
           // A query or fragment is not part of the file path; keep it separate.
           const { path: specifierPath, suffix } = splitSpecifierSuffix(args.path);
           const candidate = toProjectModulePath(specifierPath, importer, projectDir);
+          // Suffixes can carry credentials; keep them out of logged diagnostics.
+          const reported = suffix === "" ? specifierPath : `${specifierPath}<redacted suffix>`;
 
           // Keep the existing runtime resolution contract for package and
           // framework imports. The host can resolve these after bundling.
@@ -272,7 +274,7 @@ function createVirtualProjectMiddlewarePlugin(
 
           if (!isWithinDirectory(projectDir, candidate)) {
             return {
-              errors: [{ text: `Middleware import "${args.path}" is outside the project root` }],
+              errors: [{ text: `Middleware import "${reported}" is outside the project root` }],
             };
           }
 
@@ -286,7 +288,7 @@ function createVirtualProjectMiddlewarePlugin(
           }
 
           return {
-            errors: [{ text: `Could not resolve middleware import "${args.path}"` }],
+            errors: [{ text: `Could not resolve middleware import "${reported}"` }],
           };
         }),
       );

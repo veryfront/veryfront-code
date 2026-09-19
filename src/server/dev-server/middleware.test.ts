@@ -384,6 +384,21 @@ describe("dev-server/middleware: actionable rejection", () => {
       assertEquals((await load(adapter)).length, 2);
     });
 
+    it("redacts import suffixes from resolver errors", async () => {
+      const suffixValue = `suffix-${crypto.randomUUID()}`;
+      const adapter = createVirtualAdapter(
+        `import missing from "./lib/missing.ts?value=${suffixValue}"; ` +
+          `import escaped from "../outside.ts#${suffixValue}"; ` +
+          "export default [missing, escaped];",
+      );
+
+      const error = await assertRejects(() => load(adapter));
+      const message = String(error);
+      assertStringIncludes(message, "./lib/missing.ts<redacted suffix>");
+      assertStringIncludes(message, "../outside.ts<redacted suffix>");
+      assertEquals(message.includes(suffixValue), false);
+    });
+
     it("keeps bare specifiers external even when a same-named project file exists", async () => {
       const adapter = createVirtualAdapter(
         'import { sep } from "node:path"; ' +
