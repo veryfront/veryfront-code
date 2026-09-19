@@ -277,6 +277,13 @@ const ESM_CDN_ORIGIN = new URL(ESM_CDN_BASE).origin;
  */
 const ESM_CDN_BUILD_TARGET = /^(?:es(?:next|\d{4})|denonext|deno|node|bun|browser)$/;
 
+/**
+ * The segment esm.sh puts between a package pin and the build target when the
+ * build has options: `/react@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/...`
+ * (base64 of the options). Like the target, it is esm.sh's own layout.
+ */
+const ESM_CDN_BUILD_OPTIONS = /^X-[A-Za-z0-9_-]+$/;
+
 /** The extension esm.sh gives a built module file. */
 const ESM_CDN_MODULE_EXTENSION = /\.[mc]?js$/;
 
@@ -287,8 +294,8 @@ const ESM_CDN_MODULE_EXTENSION = /\.[mc]?js$/;
  * esm.sh addresses a package as `/zod@3.25.76/es2022/zod.mjs` and a scoped one
  * as `/@scope/pkg@1.0.0/es2022/pkg.mjs`, optionally behind a `/v135/` build
  * prefix. What follows the pin is the built file, so the package's own subpath
- * is what is left after the build-target directory and the file extension come
- * off: `/react@19.2.4/es2022/jsx-runtime.mjs` is `react/jsx-runtime`, while
+ * is what is left after the `X-<options>` segment (when present), the
+ * build-target directory and the file extension come off: `/react@19.2.4/es2022/jsx-runtime.mjs` is `react/jsx-runtime`, while
  * `/react@19.2.4/es2022/react.mjs` -- whose file is named after the package
  * itself -- is the package root.
  */
@@ -302,6 +309,7 @@ function parseEsmCdnModule(url: URL): { name: string; subpath: string } | null {
   if (name.length === 0) return null;
 
   let rest = segments.slice(scoped ? 2 : 1);
+  if (rest.length > 0 && ESM_CDN_BUILD_OPTIONS.test(rest[0]!)) rest = rest.slice(1);
   if (rest.length > 0 && ESM_CDN_BUILD_TARGET.test(rest[0]!)) rest = rest.slice(1);
   const file = rest.join("/").replace(ESM_CDN_MODULE_EXTENSION, "");
   // esm.sh names the root module after the package, so a file matching the

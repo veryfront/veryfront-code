@@ -550,6 +550,21 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         ),
         "@opentelemetry/api/experimental",
       );
+      // esm.sh puts build options in an `X-<base64>` segment before the target.
+      assertEquals(
+        esmCdnModuleSpecifier(
+          new URL(
+            "https://esm.sh/react@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/jsx-runtime.mjs",
+          ),
+        ),
+        "react/jsx-runtime",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(
+          new URL("https://esm.sh/react@19.2.4/X-ZGNzc3R5cGVAMy4yLjMKZXJlYWN0/es2022/react.mjs"),
+        ),
+        "react",
+      );
       assertEquals(
         esmCdnModuleSpecifier(new URL("https://esm.sh/v135/react@19.2.4/es2022/jsx-runtime.mjs")),
         "react/jsx-runtime",
