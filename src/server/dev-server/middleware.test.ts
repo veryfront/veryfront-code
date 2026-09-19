@@ -411,6 +411,18 @@ describe("dev-server/middleware: actionable rejection", () => {
       assertEquals((await load(adapter)).length, 1);
     });
 
+    it("prefers .jsx over .js for extensionless imports", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "./lib/auth"; export default middleware;',
+        {
+          "/app/lib/auth.jsx": passThrough,
+          "/app/lib/auth.js": "export default [];",
+        },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
     it("compiles JSX dependencies with the automatic runtime", async () => {
       const adapter = createVirtualAdapter(
         'import { element } from "./lib/banner.tsx"; ' +
