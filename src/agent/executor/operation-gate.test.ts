@@ -337,7 +337,14 @@ describe("executor operation gate", () => {
       assertEquals(callListeners.size, 1, "the call signal must own the call's cancellation");
       let settled = false;
       void gate.settled.then(() => settled = true);
-      if (cancel === "call") call.abort();
+      if (cancel === "call") {
+        call.abort();
+        await tick();
+        // Call cancellation alone must cancel and unlink before any revocation.
+        assertEquals(observed?.aborted, true);
+        assertEquals(revocationListeners.size + callListeners.size, 0);
+        assertEquals(settled, false);
+      }
       gate.revoke();
       await tick();
       assertEquals(observed?.aborted, true);
