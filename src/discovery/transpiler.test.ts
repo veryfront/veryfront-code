@@ -482,6 +482,16 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("reads peer dependencies, below every installed declaration", () => {
+      assertEquals(
+        readDependencyPins(JSON.stringify({
+          peerDependencies: { react: "^18.0.0 || ^19.0.0", "pdf-kit": "2.0.0" },
+          devDependencies: { react: "19.2.4" },
+        })),
+        { react: "19.2.4", "pdf-kit": "2.0.0" },
+      );
+    });
+
     it("never lets a declaration replace the pin table's prototype", () => {
       const pins = readDependencyPins('{"dependencies":{"__proto__":"1.0.0","unpdf":"1.8.1"}}');
       assertEquals(pins, { unpdf: "1.8.1" });

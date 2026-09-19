@@ -206,14 +206,23 @@ export function readDependencyPins(packageJsonText: string): Record<string, stri
   }
 
   const pkg = parsed as {
+    peerDependencies?: unknown;
     dependencies?: unknown;
     devDependencies?: unknown;
     optionalDependencies?: unknown;
   };
   const pins: Record<string, string> = {};
-  // npm installs an optional dependency like any other, and lets its
-  // `optionalDependencies` entry override a `dependencies` entry of the same name.
-  for (const group of [pkg?.dependencies, pkg?.devDependencies, pkg?.optionalDependencies]) {
+  // Later groups override earlier ones. A peer dependency is installed and
+  // importable, but its range is the widest statement of what the project
+  // accepts, so any installed declaration of the same name wins over it. npm
+  // lets an `optionalDependencies` entry override a `dependencies` entry.
+  const groups = [
+    pkg?.peerDependencies,
+    pkg?.dependencies,
+    pkg?.devDependencies,
+    pkg?.optionalDependencies,
+  ];
+  for (const group of groups) {
     if (!group || typeof group !== "object") continue;
     for (const [name, range] of Object.entries(group as Record<string, unknown>)) {
       // `__proto__` is no npm package name, and assigning it would replace the
