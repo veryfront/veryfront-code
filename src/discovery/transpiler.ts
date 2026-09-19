@@ -689,9 +689,12 @@ function isFilesystemRoot(path: string): boolean {
   return path === "/" || /^[A-Za-z]:\/$/.test(path);
 }
 
-/** `C:/...`: compared case-insensitively, as Windows compares paths. */
+/**
+ * A Windows path -- a volume root (`C:/...`) or a UNC share (`//Server/Share`)
+ * -- which Windows compares case-insensitively.
+ */
 function isWindowsDrivePath(path: string): boolean {
-  return /^[A-Za-z]:\//.test(path);
+  return /^[A-Za-z]:\//.test(path) || path.startsWith("//");
 }
 
 function isAbsoluteMachinePath(path: string): boolean {

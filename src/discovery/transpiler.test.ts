@@ -680,6 +680,22 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("redacts a Windows UNC project root whatever its casing", () => {
+      const unc = discoveryPathNames(
+        "//Server/Share/Project/tools/a.ts",
+        "\\\\Server\\Share\\Project",
+      );
+      assertEquals(unc.display, "tools/a.ts");
+      assertEquals(
+        withDisplayPath('Could not resolve "//server/share/project/lib/x.ts"', unc),
+        'Could not resolve "lib/x.ts"',
+      );
+      assertEquals(
+        withDisplayPath("read '\\\\Server\\Share\\Project\\lib\\x.ts'", unc),
+        "read 'lib\\x.ts'",
+      );
+    });
+
     it("keeps a filesystem root as the project root", () => {
       const posix = discoveryPathNames("/tools/a.ts", "/");
       assertEquals(posix.display, "tools/a.ts");

@@ -125,6 +125,16 @@ describe("exactVersionNamedByRange", () => {
     assertEquals(rangeAdmitsVersion("*.*", "2.9.0-rc.1"), false);
   });
 
+  it("compares numeric pre-release identifiers beyond the safe-integer range", () => {
+    // Both convert to the same Number, so numeric coercion would call them
+    // equal and admit the version the declaration excludes.
+    assertEquals(rangeAdmitsVersion(">1.0.0-9007199254740993", "1.0.0-9007199254740992"), false);
+    assertEquals(rangeAdmitsVersion(">1.0.0-9007199254740992", "1.0.0-9007199254740993"), true);
+    // Longer digit strings are larger, and equal lengths compare digit by digit.
+    assertEquals(rangeAdmitsVersion(">1.0.0-9", "1.0.0-10"), true);
+    assertEquals(rangeAdmitsVersion(">1.0.0-10", "1.0.0-9"), false);
+  });
+
   it("reads a v-prefixed version after an operator, as npm does", () => {
     assertEquals(exactVersionNamedByRange("^v1.8.1"), "1.8.1");
     assertEquals(exactVersionNamedByRange(">= v1.8.1"), "1.8.1");

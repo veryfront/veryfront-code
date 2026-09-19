@@ -263,7 +263,15 @@ function comparePrereleases(left: string[] | null, right: string[] | null): numb
     if (a === b) continue;
     const aNumeric = /^\d+$/.test(a);
     const bNumeric = /^\d+$/.test(b);
-    if (aNumeric && bNumeric) return Number(a) < Number(b) ? -1 : 1;
+    // Compared by digits, not by Number: a numeric identifier has no length
+    // limit under semver, and two beyond 2^53 can collapse to the same value.
+    if (aNumeric && bNumeric) {
+      const left = a.replace(/^0+(?=\d)/, "");
+      const right = b.replace(/^0+(?=\d)/, "");
+      if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+      if (left === right) continue;
+      return left < right ? -1 : 1;
+    }
     if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
     return a < b ? -1 : 1;
   }
