@@ -138,8 +138,8 @@ function tarballUrlPattern(name: string, version: string): RegExp {
   const basename = scoped ? scoped[2] : name;
   const packagePath = scoped
     ? `${escapeRegExp(scoped[1])}(?:/|%2[fF])${escapeRegExp(basename)}`
-    : // An unscoped name is its own path segment, not the tail of a scope.
-      `(?<!@[^/\\s]*/)${escapeRegExp(name)}`;
+    // An unscoped name is its own path segment, not the tail of a scope.
+    : `(?<!@[^/\\s]*/)${escapeRegExp(name)}`;
   // The .tgz suffix already bounds the version, and VERSION_END would reject
   // it as a longer prerelease identifier.
   return new RegExp(
