@@ -95,15 +95,22 @@ describe("veryfront dev cache guard", () => {
     async () => {
       await withTestContext("dev-cache-guard-port-free", async (context) => {
         const cache = await seedRunningServerCache(context.projectDir);
-        const { port, release } = await holdPort();
-        // Release immediately: the port is known-unused, not merely unprobed.
-        await release();
+        // A released ephemeral port can be taken by a parallel test before the
+        // real probe runs, so the free-port answer is injected here. The real
+        // probe's free-port behavior is covered in port-fallback.test.ts.
+        const port = 4173;
+        const probedPorts: number[] = [];
+        const probeFree = (probed: number) => {
+          probedPorts.push(probed);
+          return Promise.resolve(true);
+        };
 
         const cleared = await runWithCacheDir(
           cache.cacheDir,
-          () => clearLocalCachesIfPortFree(port, undefined, undefined, () => false),
+          () => clearLocalCachesIfPortFree(port, undefined, probeFree, () => false),
         );
 
+        assertEquals(probedPorts, [port], "the requested dev port must be probed");
         assertEquals(cleared, true, "a free dev port must still clear stale caches");
         assertEquals(
           await exists(cache.mdxEsmEntry),
