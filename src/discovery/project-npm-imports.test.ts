@@ -106,6 +106,12 @@ describe("exactVersionNamedByRange", () => {
     assertEquals(exactVersionNamedByRange(" ^1.8.1-rc.1 "), "1.8.1-rc.1");
   });
 
+  it("admits any release under a wildcard range, operator or not", () => {
+    for (const range of ["^*", ">=*", "=*.*", "~>x", "<=x.x", "^x.x.x"]) {
+      assertEquals(rangeAdmitsVersion(range, "2.9.0"), true, range);
+    }
+  });
+
   it("admits any release under an all-wildcard range", () => {
     for (const range of ["*", "x", "X", "*.*", "x.x", "*.*.*", "x.x.x", "1.*.*"]) {
       assertEquals(rangeAdmitsVersion(range, "2.9.0"), range.startsWith("1") ? false : true, range);
@@ -695,6 +701,27 @@ describe("classifyProjectNpmImport", () => {
       version: "1.3.5",
       subpath: ".",
     });
+  });
+
+  it("claims a builtin only when the whole specifier is one", () => {
+    // `buffer/` is the documented way to import the npm package, and
+    // `fs/custom` is no builtin subpath: both are the project's dependency.
+    assertEquals(classify("buffer/", { buffer: "6.0.3" }), {
+      kind: "cdn",
+      name: "buffer",
+      version: "6.0.3",
+      // A trailing slash names no subpath, so the package root is served.
+      subpath: ".",
+    });
+    assertEquals(classify("fs/custom", { fs: "1.0.0" }), {
+      kind: "cdn",
+      name: "fs",
+      version: "1.0.0",
+      subpath: "./custom",
+    });
+    // The builtin itself, and a real builtin subpath, stay with the runtime.
+    assertEquals(classify("buffer", { buffer: "6.0.3" }), { kind: "runtime" });
+    assertEquals(classify("fs/promises"), { kind: "runtime" });
   });
 
   it("reads a bare prefix-only builtin name as the npm package", () => {

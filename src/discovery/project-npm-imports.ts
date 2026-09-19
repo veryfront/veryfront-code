@@ -151,10 +151,13 @@ export function nodeBuiltinSpecifier(name: string): string | null {
  * Node builtin with no npm coordinate at all?
  */
 export function isFrameworkProvidedPackage(name: string): boolean {
-  if (FRAMEWORK_PROVIDED_PACKAGES.has(name)) return true;
-  if (name.startsWith("veryfront/")) return true;
-  if (name.startsWith("@opentelemetry/")) return true;
-  return nodeBuiltinSpecifier(name) !== null;
+  return isFrameworkPackage(name) || nodeBuiltinSpecifier(name) !== null;
+}
+
+/** A package the framework hands its own instance of, subpaths included. */
+function isFrameworkPackage(name: string): boolean {
+  return FRAMEWORK_PROVIDED_PACKAGES.has(name) || name.startsWith("veryfront/") ||
+    name.startsWith("@opentelemetry/");
 }
 
 /**
@@ -364,10 +367,9 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
   const bound = boundAfterOperator(trimmed, operator);
   const wanted = { core: coreOf(version), pre: prereleaseOf(version) };
-  // `*`, `x`, and their repeated forms (`*.*`, `x.x.x`) are all "any release".
-  if (operator === undefined && /^[xX*](?:\.[xX*])*$/.test(bound)) {
-    return wanted.pre === null;
-  }
+  // `*`, `x`, and their repeated forms (`*.*`, `x.x.x`) are all "any release",
+  // and npm reads an operator in front of one (`^*`, `>=*`) the same way.
+  if (/^[xX*](?:\.[xX*])*$/.test(bound)) return wanted.pre === null;
   const parts = boundParts(bound);
   if (parts === null) return null;
   const full = parts.length === 3;
@@ -636,8 +638,14 @@ export function classifyProjectNpmImport(
  * the framework's own packages keep that form on the runtime.
  */
 function isRuntimeProvidedImport(specifier: string, name: string): boolean {
-  if (!isFrameworkProvidedPackage(name)) return false;
-  return !specifier.startsWith("npm:") || nodeBuiltinSpecifier(name) === null;
+  // The framework hands out its own instance of these, subpaths included.
+  if (isFrameworkPackage(name)) return true;
+  // A builtin is one only as a whole: `buffer/` is the npm package (the
+  // documented way to bypass the builtin) and `fs/custom` is no builtin at
+  // all, so neither is the runtime's. An explicit `npm:` coordinate names the
+  // npm package even when it spells a builtin.
+  if (specifier.startsWith("npm:")) return false;
+  return nodeBuiltinSpecifier(specifier) !== null;
 }
 
 /** One semver comparator: an optional operator, then a full or partial version. */
