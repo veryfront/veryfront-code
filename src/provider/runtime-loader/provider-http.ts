@@ -1,6 +1,8 @@
 import { readRecord } from "./provider-records.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
+import { logger } from "#veryfront/utils/logger/logger.ts";
+import { notifyProviderRequestRetry } from "./provider-request-observer.ts";
 
 /**
  * Which provider runtime a request is being sent to.
@@ -135,6 +137,15 @@ export class ProviderQuotaError extends ProviderError {}
 
 /** Non-retryable 4xx/5xx that doesn't fit another bucket. */
 export class ProviderRequestError extends ProviderError {}
+
+/**
+ * Provider stopped generating at the output token limit, leaving the response
+ * incomplete (for example a `tool_use` block whose input JSON never closed).
+ *
+ * Non-retryable: the same request and the same output token budget truncate
+ * again. Raise the budget or shorten the requested output instead.
+ */
+export class ProviderOutputTruncatedError extends ProviderError {}
 
 function readRequestRoute(url: string): string | undefined {
   try {
@@ -871,11 +882,14 @@ function cancelReaderWithoutWaiting(
   void cancellation.then(releaseReader, releaseReader);
 }
 
+type ProviderStreamOutcome = "completed" | "failed" | "cancelled";
+
 function streamWithCleanup(
   stream: ReadableStream<Uint8Array>,
   abortSignal: AbortSignal,
   abortRequest: (reason?: unknown) => void,
   cleanup: () => void,
+  onFinish?: (outcome: ProviderStreamOutcome) => void,
 ): ReadableStream<Uint8Array> {
   const reader = stream.getReader();
   let finished = false;
@@ -888,15 +902,20 @@ function streamWithCleanup(
     cancellationStarted = true;
     cancelReaderWithoutWaiting(reader, reason, releaseReader);
   };
-  const finish = (): boolean => {
+  const finish = (outcome: ProviderStreamOutcome): boolean => {
     if (finished) return false;
     finished = true;
     abortSignal.removeEventListener("abort", abortStream);
     cleanup();
+    try {
+      onFinish?.(outcome);
+    } catch {
+      // Stream observation must not change stream behavior.
+    }
     return true;
   };
   const abortStream = () => {
-    if (!finish()) return;
+    if (!finish("cancelled")) return;
     streamController?.error(abortSignal.reason);
     cancelReader(abortSignal.reason);
   };
@@ -913,14 +932,14 @@ function streamWithCleanup(
         const result = await reader.read();
         if (finished) return;
         if (result.done) {
-          finish();
+          finish("completed");
           releaseReader();
           controller.close();
           return;
         }
         controller.enqueue(result.value);
       } catch (error) {
-        if (finish()) {
+        if (finish("failed")) {
           abortRequest(error);
           controller.error(error);
           cancelReader(error);
@@ -928,7 +947,7 @@ function streamWithCleanup(
       }
     },
     cancel(reason) {
-      if (!finish()) return;
+      if (!finish("cancelled")) return;
       abortRequest(reason);
       cancelReader(reason);
     },
@@ -1086,6 +1105,12 @@ export async function requestJson(options: {
   // The HTTP rejection outranks a deadline that expired while its error body
   // was being read: the status is already known and callers classify on it.
   let httpRejection: ProviderError | undefined;
+  const logFields = {
+    provider: options.providerLabel,
+    ...(options.modelId === undefined ? {} : { model: options.modelId }),
+  };
+  logger.debug("Provider request started", logFields);
+  let status: number | undefined;
 
   try {
     const response = await waitForAbortable(
@@ -1093,6 +1118,7 @@ export async function requestJson(options: {
       deadline.deadlineSignal,
       cancelLateResponse,
     );
+    status = response.status;
     if (!response.ok) {
       let err: ProviderError;
       try {
@@ -1122,11 +1148,23 @@ export async function requestJson(options: {
     );
 
     try {
-      return JSON.parse(text) as unknown;
+      const payload = JSON.parse(text) as unknown;
+      logger.debug("Provider request finished", {
+        ...logFields,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return payload;
     } catch {
       throw providerProtocolError(options, "response body was not valid JSON", response.status);
     }
   } catch (error) {
+    logger.debug("Provider request failed", {
+      ...logFields,
+      ...(status === undefined ? {} : { status }),
+      timedOut: deadline.timedOut,
+      durationMs: Date.now() - startedAt,
+    });
     if (deadline.timedOut && error !== httpRejection) {
       throw providerTimeoutError(options, {
         waitingFor: "the JSON response",
@@ -1184,8 +1222,14 @@ export async function requestStream(options: {
   // not happen: a provider that would have answered at 29s still wins.
   let attemptTimeoutMs = headersTimeoutMs;
 
+  const logFields = {
+    provider: options.providerLabel,
+    ...(options.modelId === undefined ? {} : { model: options.modelId }),
+  };
+
   while (true) {
     const startedAt = monotonicMilliseconds();
+    logger.debug("Provider stream request started", { ...logFields, attempt: retryCount + 1 });
     const deadline = createRequestDeadline(options.init, attemptTimeoutMs, "headersTimeoutMs");
     let streamOwnsDeadline = false;
     let bodyClaimAttempted = false;
@@ -1198,6 +1242,11 @@ export async function requestStream(options: {
         cancelLateResponse,
       );
       responseReceived = true;
+      logger.debug("Provider stream response received", {
+        ...logFields,
+        status: response.status,
+        durationMs: monotonicMilliseconds() - startedAt,
+      });
       if (!response.ok) {
         let err: ProviderError;
         try {
@@ -1229,6 +1278,12 @@ export async function requestStream(options: {
         deadline.deadlineSignal,
         deadline.abort,
         deadline.dispose,
+        (outcome) =>
+          logger.debug("Provider stream finished", {
+            ...logFields,
+            outcome,
+            durationMs: monotonicMilliseconds() - requestStartedAt,
+          }),
       );
       // Ownership transfers only once the wrapped stream exists: a throw from
       // `streamWithCleanup` (getReader() on an unreadable body) leaves nothing
@@ -1271,6 +1326,13 @@ export async function requestStream(options: {
         retryCount >= MAX_PROVIDER_STREAM_RETRIES ||
         remainingBudgetMs <= 0
       ) {
+        logger.debug("Provider stream request failed", {
+          ...logFields,
+          ...(failure instanceof ProviderError
+            ? { status: failure.status, retryable: failure.retryable }
+            : {}),
+          durationMs: monotonicMilliseconds() - requestStartedAt,
+        });
         throw failure;
       }
 
@@ -1279,10 +1341,34 @@ export async function requestStream(options: {
       // A provider-specified wait that cannot fit the current attempt's
       // remaining deadline cannot be honored. Report the provider failure we
       // actually received instead of rewriting it as a false timeout.
+      // A wait that outlasts either the attempt deadline or the shared header
+      // budget leaves no time to send the replay. Report the provider failure
+      // instead of announcing an attempt that never happens.
       if (retryDelayMs > 0) {
-        if (retryDelayMs >= attemptTimeoutMs - (monotonicMilliseconds() - startedAt)) {
+        if (
+          retryDelayMs >= attemptTimeoutMs - (monotonicMilliseconds() - startedAt) ||
+          retryDelayMs >= remainingBudgetMs
+        ) {
           throw failure;
         }
+      }
+      // A caller that cancelled while the failed response was read gets no
+      // replay: the wait rejects, or the next attempt's deadline is already
+      // aborted. Announcing one would claim a request that is never sent.
+      // The per-attempt deadline signal is not that test: a header timeout
+      // aborts it and still replays on a fresh deadline, so ask the caller's
+      // own signal.
+      if (!options.init.signal?.aborted) {
+        notifyProviderRequestRetry({
+          providerLabel: options.providerLabel,
+          ...(options.modelId === undefined ? {} : { modelId: options.modelId }),
+          reason: deadline.timedOut && !responseReceived ? "timeout" : String(failure.status),
+          attempt: retryCount + 2,
+          maxAttempts: MAX_PROVIDER_STREAM_RETRIES + 1,
+          delayMs: retryDelayMs,
+        });
+      }
+      if (retryDelayMs > 0) {
         try {
           await waitForProviderStreamRetry(retryDelayMs, deadline.deadlineSignal);
         } catch (waitError) {

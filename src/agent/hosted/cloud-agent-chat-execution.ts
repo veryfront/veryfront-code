@@ -301,6 +301,7 @@ function createHostedChatContextBudgetOptions(
     ),
     logger: {
       debug: (message, metadata) => context.infrastructure.logger.debug(message, metadata),
+      warn: (message, metadata) => context.infrastructure.logger.warn(message, metadata),
       error: (message, metadata) => context.infrastructure.logger.error(message, metadata),
     },
   };

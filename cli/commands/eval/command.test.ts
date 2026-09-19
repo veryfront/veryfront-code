@@ -5,6 +5,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, makeTempDir, setEnv, withTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -60,6 +61,7 @@ import {
   resolveEvalExporterIds,
   resolveEvalExportRedactionFromEnv,
   resolveEvalExportRequired,
+  resolveEvalRecordTimeoutMs,
   resolveToolTargetId,
   runEvalCommand,
   runEvalWithGatewayBillingGroup,
@@ -925,6 +927,66 @@ describe("eval CLI command helpers", () => {
     assertEquals(calls, ["q1:1", "q1:2", "q2:1", "q2:2"]);
   });
 
+  it("starts no model request when a mock tool resolver returns after the record deadline", async () => {
+    let generateCalls = 0;
+    const agent = makeAgentStub(async () => {
+      generateCalls += 1;
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:resolver-late",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "one" }]),
+      // A resolver that ignores the signal and resolves past the deadline.
+      mockTools: () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ search_docs: makeEvalTool("search_docs") }), 60)
+        ),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 20,
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+    // Give the abandoned record time to reach the point where it would generate.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:resolver-late" case "q1" did not finish within 0.02s.',
+    );
+    assertEquals(generateCalls, 0);
+  });
+
+  it("cancels a stalled mock tool resolver at the record deadline", async () => {
+    let resolverSignal: AbortSignal | undefined;
+    let releaseResolver: (() => void) | undefined;
+    const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
+    const definition = evalAgent({
+      id: "eval:resolver-stall",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "one" }]),
+      mockTools: ({ signal }) => {
+        resolverSignal = signal;
+        return new Promise((resolve) => {
+          releaseResolver = () => resolve({});
+        });
+      },
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:resolver-stall" case "q1" did not finish within 0.05s.',
+    );
+    assertEquals(resolverSignal?.aborted, true);
+    releaseResolver?.();
+  });
+
   it("isolates mock tool resolver errors to the current eval record", async () => {
     const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
     const definition = evalAgent({
@@ -1004,6 +1066,51 @@ describe("eval CLI command helpers", () => {
     assertEquals(error.slug, "eval-model-access-denied");
     assertStringIncludes(error.detail ?? "", "0.25 credits required, 0 available");
     assertEquals(modelCalls, 1);
+  });
+
+  it("fails a case whose model stream stalls once the record timeout elapses", async () => {
+    let streamSignal: AbortSignal | undefined;
+    // Released at the end of the test so no promise outlives it.
+    let releaseModel: (() => void) | undefined;
+    const model = {
+      provider: "hosted",
+      modelId: "hosted/eval-stalled-stream",
+      _generateViaStream: true,
+      doGenerate() {
+        return new Promise((resolve) => {
+          releaseModel = () => resolve({ text: "late" });
+        });
+      },
+      async doStream(options: { abortSignal?: AbortSignal }) {
+        streamSignal = options.abortSignal;
+        // Headers arrived, then the provider stopped sending data.
+        return { stream: new ReadableStream() };
+      },
+    } as unknown as ModelRuntime;
+    const agent = createAgent({
+      id: "eval-stalled-stream-agent",
+      model: "hosted/eval-stalled-stream",
+      system: "Answer.",
+      resolveModelTransport: async () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:stalled",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "First" }]),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: resolveEvalRecordTimeoutMs(createEvalOptions({ recordTimeout: 0.2 })),
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:stalled" case "q1" did not finish within 0.2s.',
+    );
+    assertEquals(streamSignal?.aborted, true);
+    releaseModel?.();
   });
 
   it("retains only skill loader tools for skills agents when mock tools are active", async () => {
@@ -1130,6 +1237,40 @@ describe("eval CLI command helpers", () => {
       ["load_skill", "load_skill_reference", "search_docs"],
       ["search_docs"],
     ]);
+  });
+
+  it("forwards the record timeout signal into tool execution", async () => {
+    let executionSignal: AbortSignal | undefined;
+    let releaseExecution: (() => void) | undefined;
+    const tool = {
+      id: "slow_lookup",
+      type: "function",
+      description: "Lookup that never finishes.",
+      inputSchema: {} as Tool["inputSchema"],
+      execute: (_input: unknown, context?: Parameters<Tool["execute"]>[1]) => {
+        executionSignal = context?.abortSignal;
+        return new Promise((resolve) => {
+          releaseExecution = () => resolve({ ok: true });
+        });
+      },
+    } as Tool;
+    const definition = evalTool({
+      id: "eval:slow-tool",
+      target: "tool:slow_lookup",
+      dataset: datasets.inline([{ id: "q1", input: { query: "slow" } }]),
+    });
+
+    const report = await runEval(definition, {
+      recordTimeoutMs: 50,
+      adapters: { tool: createToolAdapter(tool) },
+    });
+
+    assertEquals(
+      report.records[0]?.error,
+      'Eval "eval:slow-tool" case "q1" did not finish within 0.05s.',
+    );
+    assertEquals(executionSignal?.aborted, true);
+    releaseExecution?.();
   });
 
   it("creates a CLI tool adapter for direct tool evals", async () => {
@@ -1404,6 +1545,93 @@ describe("eval CLI command helpers", () => {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
+  });
+
+  it("converts --record-timeout seconds into a valid timer deadline", () => {
+    assertEquals(resolveEvalRecordTimeoutMs({}), 600_000);
+    assertEquals(resolveEvalRecordTimeoutMs({ recordTimeout: 0 }), 0);
+    assertEquals(resolveEvalRecordTimeoutMs({ recordTimeout: 0.0004 }), 1);
+    const error = assertThrows(
+      () => resolveEvalRecordTimeoutMs({ recordTimeout: 10_000_000 }),
+      VeryfrontError,
+    ) as VeryfrontError;
+    assertEquals(
+      error.detail,
+      "Invalid --record-timeout: use 0 to disable the limit, or a number of seconds up to 2147483.",
+    );
+  });
+
+  it("reports suite progress per eval", async () => {
+    await withTempDir(async (projectDir) => {
+      await withTempDir(async (configHome) => {
+        const fixtureAgent = {
+          id: "fixture",
+          config: {},
+          generate: async () => ({
+            text: "expected",
+            messages: [],
+            status: "completed",
+            toolCalls: [],
+          }),
+        } as unknown as Agent;
+        const runtime = createProjectRuntimeDiscovery(
+          normalizeSourceIntegrationPolicy({ allow: {} }),
+        );
+        runtime.agents.set(fixtureAgent.id, fixtureAgent);
+        for (const id of ["beta", "alpha"]) {
+          const definition = evalAgent({
+            id: `eval:${id}`,
+            target: "agent:fixture",
+            dataset: [{ id: `${id}-1`, input: id }, { id: `${id}-2`, input: id }],
+            metrics: [metrics.answer.contains({ text: "expected" }).gate()],
+          });
+          definition.source = {
+            filePath: `${projectDir}/evals/${id}.eval.ts`,
+            exportName: "default",
+          };
+          runtime.evals.set(definition.id, definition);
+        }
+        const progress: string[] = [];
+
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+        Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+        Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+        await captureConsoleOutput(() =>
+          runEvalCommand(
+            createEvalOptions({ projectDir, reportDir: `${projectDir}/suite` }),
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              createProgressReporter: () => ({
+                startEval: ({ name, position, count }) =>
+                  progress.push(`start ${position}/${count} ${name}`),
+                onEvent: (event) => {
+                  if (event.type === "record-finished") {
+                    progress.push(`finished ${event.exampleId}`);
+                  }
+                },
+                onRetry: () => {},
+                setPhase: () => {},
+                stop: () => progress.push("stop"),
+              }),
+            },
+          )
+        );
+
+        assertEquals(progress.filter((line) => !line.startsWith("finished")), [
+          "start 1/2 alpha",
+          "start 2/2 beta",
+          "stop",
+          "stop",
+        ]);
+        assertEquals(
+          progress.filter((line) => line.startsWith("finished")),
+          ["finished alpha-1", "finished alpha-2", "finished beta-1", "finished beta-2"],
+        );
+      });
+    });
   });
 
   it("describes each metric in prose, naming the tool it asserted on", async () => {
@@ -2547,6 +2775,33 @@ describe("eval CLI command helpers", () => {
     assertStringIncludes(thrown.detail ?? "", "rejected the project this run is configured with");
     assertEquals(thrown.detail?.includes("typo-project"), false);
     assertEquals(thrown.cause, denied);
+  });
+
+  it("skips billing finalization with a warning when the response body cannot be read", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(new Error("body stalled past the request deadline"));
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    let warnings = 0;
+
+    const finalization = await finalizeGatewayBillingGroup("evalrun_body_stall", {
+      beforeWarning: () => {
+        warnings += 1;
+      },
+    });
+
+    assertEquals(finalization, undefined);
+    assertEquals(warnings, 1);
   });
 
   it("retries gateway billing finalization while usage capture is not ready", async () => {

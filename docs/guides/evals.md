@@ -100,6 +100,28 @@ gate failures, failed examples, flake classification for repeated examples,
 duration aggregates, and usage totals. Use `results.jsonl` when you need the
 full input, output, trace, and per-record metric evidence.
 
+## Progress and timeouts
+
+Agent eval cases often take a minute or more each, because every case makes
+real model requests. `veryfront eval` reports progress while cases run:
+
+- In an interactive terminal, one live line shows the eval, finished cases,
+  the current case, and elapsed time, for example
+  `[eval 2/3] disposition-agent 4/11 · case "label-and-move" · 3m 12s`.
+- Elsewhere, such as CI or a piped log, each finished case prints one line with
+  its duration.
+- A model request that fails transiently and is sent again prints a notice,
+  for example `Retrying model request (HTTP 429), attempt 2/3 in 1.0s`.
+
+`--quiet` and `--json` print no progress. Set `LOG_LEVEL=DEBUG` to also log
+each model request with its status, duration, and attempt number.
+
+Each case, including its metrics and checks, fails after 600 seconds by
+default with the `eval-record-timeout` error, and the eval continues with the
+next case. A model stream that stops sending data has no other deadline. Use
+`--record-timeout <seconds>` to change the limit, or `--record-timeout 0` to
+disable it.
+
 ## Tool evals
 
 Use `evalTool` when the target is one tool and the eval should avoid agent

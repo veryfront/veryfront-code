@@ -13,6 +13,7 @@ import {
   resolveRuntimeMessageFileUrls,
   type RuntimeFileContentFetcher,
   type RuntimeFileUrlResolver,
+  type UnresolvableRuntimeAttachment,
 } from "./message-file-url-refresh.ts";
 
 const DEFAULT_EMPTY_CONVERSATION_PROMPT =
@@ -23,6 +24,7 @@ export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
   messages: readonly ChatUiMessage[];
   emptyConversationPrompt?: string;
   resolveFileUrl?: RuntimeFileUrlResolver;
+  onUnresolvableAttachment?: (attachment: UnresolvableRuntimeAttachment) => void;
   fetchFileContent?: RuntimeFileContentFetcher;
   abortSignal?: AbortSignal;
   fileContentFetchTimeoutMs?: number;
@@ -53,6 +55,11 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
         trustedFileContentUrls.add(url);
       }
       return url;
+    }, {
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      ...(options.onUnresolvableAttachment
+        ? { onUnresolvableAttachment: options.onUnresolvableAttachment }
+        : {}),
     })
     : [...options.messages];
   const messagesWithFileContent = await inlineRuntimeMessageFileContents(

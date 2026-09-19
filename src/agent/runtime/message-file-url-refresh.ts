@@ -1,5 +1,5 @@
 import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
-import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { flatMapPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   type ChatUiMessage,
   type FileUIPartWithUpload,
@@ -66,12 +66,25 @@ export function createRuntimeFileContentFetcher(
   };
 }
 
+/** Details of an upload whose url could not be resolved. */
+export type UnresolvableRuntimeAttachment = {
+  uploadId: string;
+  filename?: string;
+  mediaType?: string;
+  error: unknown;
+};
+
 /** Resolves runtime message file urls. */
 export async function resolveRuntimeMessageFileUrls(
   messages: readonly ChatUiMessage[],
   resolveFileUrl: RuntimeFileUrlResolver,
+  options: {
+    abortSignal?: AbortSignal;
+    onUnresolvableAttachment?: (attachment: UnresolvableRuntimeAttachment) => void;
+  } = {},
 ): Promise<ChatUiMessage[]> {
   const urlByUploadId = new Map<string, Promise<string | undefined>>();
+  const reportedUploadIds = new Set<string>();
 
   return Promise.all(
     mapPrivateArray(messages, async (message) => {
@@ -82,29 +95,71 @@ export async function resolveRuntimeMessageFileUrls(
       const parts = await Promise.all(
         mapPrivateArray(message.parts, async (part) => {
           const uploadId = getUploadId(part);
-          if (!uploadId) return part;
+          if (!uploadId) return [part];
 
           let urlPromise = urlByUploadId.get(uploadId);
           if (!urlPromise) {
-            urlPromise = resolveFileUrl({
-              uploadId,
-              part: toResolverPart(part, uploadId),
-              message,
-            });
+            // The async wrapper is load-bearing: a resolver that throws
+            // SYNCHRONOUSLY (validation, client setup) would otherwise escape
+            // the catch below, reject Promise.all and fail the whole turn --
+            // the exact failure this degrade exists to prevent.
+            urlPromise = (async () =>
+              await resolveFileUrl({
+                uploadId,
+                part: toResolverPart(part, uploadId),
+                message,
+              }))();
             urlByUploadId.set(uploadId, urlPromise);
           }
 
-          const signedUrl = await urlPromise;
-          if (!signedUrl) return normalizeUploadedFilePart(part, uploadId);
+          let signedUrl: string | undefined;
+          try {
+            signedUrl = await urlPromise;
+          } catch (error) {
+            // Caller aborts stay hard failures; an upload whose url cannot be
+            // resolved degrades to a reference-only part plus a note so the
+            // turn still runs and the model knows a file was there.
+            if (options.abortSignal?.aborted) throw error;
 
-          return {
+            const filename = getStringField(part, "filename");
+            if (!reportedUploadIds.has(uploadId)) {
+              reportedUploadIds.add(uploadId);
+              const mediaType = getMediaType(part);
+              options.onUnresolvableAttachment?.({
+                uploadId,
+                ...(filename ? { filename } : {}),
+                ...(mediaType ? { mediaType } : {}),
+                error,
+              });
+            }
+
+            return [
+              toUnresolvedUploadPart(part, uploadId),
+              {
+                type: "text",
+                text: `[attachment unavailable: ${filename ?? uploadId}]`,
+              } as ChatUiMessage["parts"][number],
+            ];
+          }
+          if (!signedUrl) return [normalizeUploadedFilePart(part, uploadId)];
+
+          return [{
             ...normalizeUploadedFilePart(part, uploadId),
             url: signedUrl,
-          };
+          }];
         }),
       );
 
-      return { ...message, parts };
+      // Array.prototype.flat is observable: project code can replace it, and it
+      // would receive the raw message parts. This file already uses
+      // mapPrivateArray for that reason, so the flatten stays private too.
+      //
+      // flatMapPrivateArray appends into one output array. Folding with
+      // concatPrivateArrays instead recopies the whole prefix per part, which is
+      // quadratic -- the hosted schema allows 1,000 parts per message across
+      // 1,000 messages, so a legitimate attachment history reaches hundreds of
+      // millions of element copies before the provider request is even built.
+      return { ...message, parts: flatMapPrivateArray(parts, (group) => group) };
     }),
   );
 }
@@ -271,6 +326,31 @@ function normalizeUploadedFilePart(
     type: partType === "image" ? "image" : "file",
     mediaType,
     url,
+    ...(filename ? { filename } : {}),
+    uploadId,
+    ...(uploadPath ? { uploadPath } : {}),
+  } as ChatUiMessage["parts"][number];
+}
+
+function toUnresolvedUploadPart(
+  part: ChatUiMessage["parts"][number],
+  uploadId: string,
+): ChatUiMessage["parts"][number] {
+  if (!isRecord(part)) return part;
+
+  const partRecord: Record<string, unknown> = part;
+  const partType = partRecord.type;
+  if (partType !== "file" && partType !== "image") return part;
+
+  const mediaType = getMediaType(part);
+  const filename = getStringField(part, "filename");
+  const uploadPath = getUploadPath(part);
+
+  // The url is dropped on purpose: a resolver failure means the previous
+  // signed url is dead, and handing it to a provider fails a second time.
+  return {
+    type: partType === "image" ? "image" : "file",
+    ...(mediaType ? { mediaType } : {}),
     ...(filename ? { filename } : {}),
     uploadId,
     ...(uploadPath ? { uploadPath } : {}),

@@ -1013,3 +1013,40 @@ Deno.test("chat attachment preparation keeps a synthetic PDF visible in the mode
   assertEquals(sawPrompt, true);
   assertEquals(result.text, "I can see sample-attachment.pdf.");
 });
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages keeps an unreadable attachment visible to the model", async () => {
+  const reportedUploadIds: string[] = [];
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      userMessage([
+        { type: "text", text: "Use this file." },
+        {
+          type: "file",
+          mediaType: "text/plain",
+          filename: "notes.txt",
+          uploadId: "upload-denied",
+          url: "https://files.example.com/expired.txt",
+        },
+      ]),
+    ],
+    resolveFileUrl: ({ uploadId }) =>
+      Promise.reject(
+        new Error(`Failed to fetch signed upload URL for ${uploadId}: Access denied`),
+      ),
+    onUnresolvableAttachment: ({ uploadId }) => {
+      reportedUploadIds.push(uploadId);
+    },
+  });
+
+  assertEquals(reportedUploadIds, ["upload-denied"]);
+  const text = (messages[0]?.parts ?? [])
+    .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+    .join("\n");
+  assertStringIncludes(text, "Use this file.");
+  assertStringIncludes(text, "[attachment unavailable: notes.txt]");
+  assertEquals(
+    text.includes("https://files.example.com/expired.txt"),
+    false,
+    "a dead signed url must not reach the provider payload",
+  );
+});

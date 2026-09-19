@@ -31,11 +31,18 @@ export {
 export type { JsonSnapshotOptions, JsonSnapshotValue } from "./runtime-loader/json-snapshot.ts";
 export {
   ProviderError,
+  ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
 } from "./runtime-loader/provider-http.ts";
+export {
+  notifyProviderRequestRetry,
+  type ProviderRequestObserver,
+  type ProviderRequestRetryEvent,
+  runWithProviderRequestObserver,
+} from "./runtime-loader/provider-request-observer.ts";
 export { TOOL_INPUT_PENDING_THRESHOLD_MS, withToolInputStatusTransitions };
 export {
   buildProviderError,
