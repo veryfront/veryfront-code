@@ -665,6 +665,32 @@ describe(
       assertEquals(await optional(), "fallback");
     });
 
+    it("keeps the rest of a file discoverable when a lazy require cannot resolve", async () => {
+      // `require()` inside a handler is the CommonJS form of the same optional,
+      // deferred load, so it must not abort the bundle either.
+      const { mod, requested } = await bundleTool(
+        "src/discovery/__fixtures__/optional-require.ts",
+        [
+          `export default {`,
+          `  name: "mostly-works",`,
+          `  optional: () => {`,
+          `    try {`,
+          `      return require("@veryfront-fixture/never-declared").value;`,
+          `    } catch {`,
+          `      return "fallback";`,
+          `    }`,
+          `  },`,
+          `};`,
+        ].join("\n"),
+        {},
+      );
+
+      assertEquals(mod.default.name, "mostly-works");
+      assertEquals(requested, [], "an undeclared package must never be fetched");
+      const optional = mod.default.optional as () => string;
+      assertEquals(optional(), "fallback");
+    });
+
     it("serves a pinned dependency source once per process", async () => {
       // Discovery re-bundles per file and per source generation, and a pinned
       // CDN URL is immutable, so a second module declaring the same pin must not
