@@ -15,6 +15,8 @@ import {
   readDependencyPins,
 } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
+import { EMBEDDED_NPM_CONSTRAINTS } from "./embedded-npm-packages.generated.ts";
+import { isFrameworkProvidedPackage } from "./project-npm-imports.ts";
 import { type PluginBuild, stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
@@ -638,6 +640,16 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
     it("leaves every other CDN import to the HTTP plugin", async () => {
       const { httpUrl } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
 
+      // An npm polyfill named after a Node builtin is still an npm package.
+      assertEquals(
+        await httpUrl(resolveArgs({
+          path: "https://esm.sh/buffer@6.0.3/es2022/buffer.mjs",
+          importer: "https://esm.sh/@veryfront-fixture/pdf-text@1.8.1",
+          namespace: "http-url",
+        })),
+        undefined,
+      );
+
       assertEquals(
         await httpUrl(resolveArgs({
           path: "/@veryfront-fixture/helper@1.0.0/es2022/helper.mjs",
@@ -666,6 +678,42 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           namespace: "http-url",
         },
       );
+    });
+
+    it("externalizes an embedded package under a constraint the binary holds", async () => {
+      const [name, constraints] = Object.entries(EMBEDDED_NPM_CONSTRAINTS).find(
+        ([candidate, versions]) =>
+          !isFrameworkProvidedPackage(candidate) && versions.some((v) => /^\d+\.\d+\.\d+$/.test(v)),
+      )!;
+      const version = constraints.find((v) => /^\d+\.\d+\.\d+$/.test(v))!;
+      const { bare } = captureResolvers(
+        createProjectDependencyCdnPlugin({ [name]: version }, () => {}),
+      );
+
+      assertEquals(await bare(resolveArgs({ path: name })), {
+        path: `npm:${name}@${version}`,
+        external: true,
+      });
+    });
+
+    it("reports a missing import without echoing a credential it carries", async () => {
+      const missing: Array<{ specifier: string; reason: string }> = [];
+      const { bare } = captureResolvers(
+        createProjectDependencyCdnPlugin({}, (specifier, reason) => {
+          missing.push({ specifier, reason });
+        }),
+      );
+
+      const result = await bare(
+        resolveArgs({ path: "npm:@veryfront-fixture/absent@https://<TOKEN>@example.invalid/x" }),
+      );
+
+      assertEquals(missing.length, 1);
+      assertEquals(
+        missing[0]!.specifier,
+        "@veryfront-fixture/absent (with a non-registry version)",
+      );
+      assert(!JSON.stringify({ result, missing }).includes("<TOKEN>"), "the token must not leak");
     });
 
     it("pins bare Node builtins and leaves framework packages to the runtime", async () => {

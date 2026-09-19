@@ -30,7 +30,9 @@
  */
 
 import {
+  EMBEDDED_NPM_CONSTRAINTS,
   EMBEDDED_NPM_PACKAGES,
+  PROXY_EMBEDDED_NPM_CONSTRAINTS,
   PROXY_EMBEDDED_NPM_PACKAGES,
 } from "./embedded-npm-packages.generated.ts";
 
@@ -425,7 +427,11 @@ export function parseNpmSpecifier(specifier: string): ParsedNpmSpecifier | null 
 
 export type ProjectNpmImport =
   /** Leave the specifier external; the runtime resolves it. */
-  | { kind: "runtime" }
+  | {
+    kind: "runtime";
+    /** The coordinate to externalize instead of the specifier as written. */
+    specifier?: string;
+  }
   /** Inline the package from its pinned CDN source at bundle time. */
   | { kind: "cdn"; name: string; version: string; subpath: string }
   /** Nothing can resolve this specifier; report it rather than let Deno. */
@@ -453,24 +459,57 @@ export type ProjectNpmImport =
 export const PROXY_BINARY_PROFILE_GLOBAL = "__VERYFRONT_PROXY_BINARY_PROFILE__";
 
 /**
- * The npm package set THIS binary froze in, which is the only set a decision
- * here may be made against.
+ * What a compiled binary froze in: every package version it carries, and every
+ * import constraint (`2.9.0`, `^2.4.0`, `*`) it can resolve, both by name.
+ *
+ * The two differ. A compiled binary answers an `npm:` import by looking its
+ * constraint up, not by searching the packages it carries, so a package that
+ * arrived only transitively -- or a version reached only through `^2.4.0` --
+ * is carried but cannot be imported as `npm:<name>@<version>`.
  */
-export function embeddedNpmPackagesForRuntime(): Readonly<Record<string, readonly string[]>> {
-  return (globalThis as Record<string, unknown>)[PROXY_BINARY_PROFILE_GLOBAL] === true
-    ? PROXY_EMBEDDED_NPM_PACKAGES
-    : EMBEDDED_NPM_PACKAGES;
+export interface EmbeddedNpmSet {
+  packages: Readonly<Record<string, readonly string[]>>;
+  constraints: Readonly<Record<string, readonly string[]>>;
 }
 
-function isEmbedded(
-  embedded: Readonly<Record<string, readonly string[]>>,
+/**
+ * The npm set THIS binary froze in, which is the only set a decision here may
+ * be made against.
+ */
+export function embeddedNpmPackagesForRuntime(): EmbeddedNpmSet {
+  return (globalThis as Record<string, unknown>)[PROXY_BINARY_PROFILE_GLOBAL] === true
+    ? { packages: PROXY_EMBEDDED_NPM_PACKAGES, constraints: PROXY_EMBEDDED_NPM_CONSTRAINTS }
+    : { packages: EMBEDDED_NPM_PACKAGES, constraints: EMBEDDED_NPM_CONSTRAINTS };
+}
+
+function ownEntry(
+  table: Readonly<Record<string, readonly string[]>>,
   name: string,
-  version?: string,
-): boolean {
+): readonly string[] | undefined {
   // The tables are plain objects: `constructor` must not read Object.prototype.
-  const versions = Object.hasOwn(embedded, name) ? embedded[name] : undefined;
-  if (versions === undefined) return false;
-  return version === undefined ? true : versions.includes(version);
+  return Object.hasOwn(table, name) ? table[name] : undefined;
+}
+
+/** Does the binary carry this package under any version at all? */
+function carriesPackage(embedded: EmbeddedNpmSet, name: string): boolean {
+  return ownEntry(embedded.packages, name) !== undefined;
+}
+
+/**
+ * The runtime decision for `<name>@<version>` when the binary can resolve that
+ * exact constraint, or `null` when it cannot. The import is re-emitted under
+ * that constraint: left as written, `import "yaml"` becomes `npm:yaml` -- the
+ * constraint `yaml@*` -- which the binary may never have recorded.
+ */
+function embeddedImport(
+  embedded: EmbeddedNpmSet,
+  name: string,
+  version: string,
+  subpath: string,
+): ProjectNpmImport | null {
+  if (!ownEntry(embedded.constraints, name)?.includes(version)) return null;
+  const tail = subpath === "." ? "" : subpath.slice(1);
+  return { kind: "runtime", specifier: `npm:${name}@${version}${tail}` };
 }
 
 /**
@@ -499,7 +538,7 @@ function isEmbedded(
 export function classifyProjectNpmImport(
   specifier: string,
   pins: Readonly<Record<string, string>>,
-  embedded: Readonly<Record<string, readonly string[]>> = embeddedNpmPackagesForRuntime(),
+  embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
@@ -539,11 +578,36 @@ function describeDeclaration(declared: string): string {
   return scheme === undefined ? "a non-registry source" : `a "${scheme}" source`;
 }
 
+/** A path segment of a package subpath: nothing that can carry `user:token@host`. */
+const PLAIN_SUBPATH = /^\.\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+
+/** A version written into an import, as user-facing detail may show it. */
+function isPlainImportVersion(version: string): boolean {
+  return PLAIN_DECLARATION.test(version);
+}
+
+/**
+ * An import specifier as user-facing detail may show it: the package name, and
+ * the version and subpath only when neither can carry a URL or credential.
+ * `npm:pkg@https://<TOKEN>@host/x` is shown as the package it names.
+ */
+export function describeNpmImport(specifier: string): string {
+  const parsed = parseNpmSpecifier(specifier);
+  if (parsed === null) return "an import that names no npm package";
+  const { name, version, subpath } = parsed;
+  if (version !== null && !isPlainImportVersion(version)) {
+    return `${name} (with a non-registry version)`;
+  }
+  const shownVersion = version === null ? "" : `@${version}`;
+  const shownSubpath = subpath !== "." && PLAIN_SUBPATH.test(subpath) ? subpath.slice(1) : "";
+  return `${name}${shownVersion}${shownSubpath}`;
+}
+
 /** One import to classify, with what the project declared for its package. */
 interface ImportRequest extends ParsedNpmSpecifier {
   declared: string | undefined;
   pin: string | null;
-  embedded: Readonly<Record<string, readonly string[]>>;
+  embedded: EmbeddedNpmSet;
 }
 
 /** An import that names one exact version (`npm:unpdf@1.8.1`). */
@@ -565,7 +629,8 @@ function classifyExactImport(
         `${name}@${declared}`,
     };
   }
-  if (isEmbedded(embedded, name, requested)) return { kind: "runtime" };
+  const inBinary = embeddedImport(embedded, name, requested, subpath);
+  if (inBinary !== null) return inBinary;
   // The declaration admits the exact version the import names -- `^1.8.1`
   // admits `npm:unpdf@1.9.0` -- so that version is the one to serve.
   if (admitted) return { kind: "cdn", name, version: requested, subpath };
@@ -579,6 +644,14 @@ function classifyExactImport(
         `${describeDeclaration(declared)}, which names no single version to fetch -- ` +
         `declare an exact version`,
   };
+}
+
+function describeImportedVersion(name: string, version: string): string {
+  return isPlainImportVersion(version) ? `${name}@${version}` : `${name} at a non-registry version`;
+}
+
+function describeImportedRange(version: string): string {
+  return isPlainImportVersion(version) ? `"${version}"` : "it names";
 }
 
 /** An import that names no version, or names a range. */
@@ -597,19 +670,21 @@ function classifyUnversionedImport(
         reason: admitted === false
           ? `the import asks for ${name}@${version} but package.json declares ` +
             `${name}@${declared}`
-          : `the import asks for ${name}@${version}, a range that cannot be checked against ` +
-            `the declared ${name}@${declared} -- import the declared version instead`,
+          : `the import asks for ${describeImportedVersion(name, version!)}, a range that ` +
+            `cannot be checked against the declared ${name}@${declared} -- import the ` +
+            `declared version instead`,
       };
     }
     // The runtime already carries exactly what the project declared: keep the
     // single in-binary copy rather than fetch a second one.
-    if (isEmbedded(embedded, name, pin)) return { kind: "runtime" };
+    const inBinary = embeddedImport(embedded, name, pin, subpath);
+    if (inBinary !== null) return inBinary;
     return { kind: "cdn", name, version: pin, subpath };
   }
 
   // No usable pin. A package the binary carries under any version keeps
   // resolving from the binary, exactly as it did before #1440.
-  if (isEmbedded(embedded, name)) return { kind: "runtime" };
+  if (carriesPackage(embedded, name)) return { kind: "runtime" };
 
   if (declared !== undefined) {
     return {
@@ -626,6 +701,7 @@ function classifyUnversionedImport(
     reason: version === null
       ? `this runtime does not carry ${name} and the project declares no dependency on it`
       : `this runtime does not carry ${name} and the project declares no dependency on it, ` +
-        `so the version range "${version}" in the import cannot be resolved`,
+        `so the version range ${describeImportedRange(version)} in the import cannot be ` +
+        `resolved`,
   };
 }

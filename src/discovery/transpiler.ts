@@ -17,6 +17,7 @@ import type { FileDiscoveryContext } from "./types.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
 import {
   classifyProjectNpmImport,
+  describeNpmImport,
   isFrameworkProvidedPackage,
   nodeBuiltinSpecifier,
 } from "./project-npm-imports.ts";
@@ -454,7 +455,13 @@ export function createProjectDependencyCdnPlugin(
           return undefined;
         }
         const parsed = parseEsmCdnModule(url);
-        if (!parsed || !isFrameworkProvidedPackage(parsed.name)) return undefined;
+        // A CDN URL always names an npm package: `/buffer@6.0.3/...` is the npm
+        // `buffer` polyfill at that version, not `node:buffer`, so only the
+        // framework's own packages are handed back here.
+        if (
+          !parsed || !isFrameworkProvidedPackage(parsed.name) ||
+          nodeBuiltinSpecifier(parsed.name) !== null
+        ) return undefined;
         // The SUBPATH has to survive: `react/jsx-runtime` externalized as
         // `react` imports a module with no `jsx` or `jsxs` export, so every
         // JSX element in the inlined dependency fails when it loads.
@@ -473,7 +480,11 @@ export function createProjectDependencyCdnPlugin(
         if (builtin) return { path: builtin, external: true };
 
         const decision = classifyProjectNpmImport(args.path, pins);
-        if (decision.kind === "runtime") return undefined;
+        if (decision.kind === "runtime") {
+          return decision.specifier === undefined
+            ? undefined
+            : { path: decision.specifier, external: true };
+        }
 
         if (decision.kind === "missing") {
           // A deferred `import()` inside a handler body is the project's own
@@ -490,10 +501,14 @@ export function createProjectDependencyCdnPlugin(
           // instead of Deno's raw constraint text.
           if (args.kind === "dynamic-import") return undefined;
 
-          onMissing(args.path, decision.reason);
+          // The specifier is project source and can carry a credential
+          // (`npm:pkg@https://<TOKEN>@host/x`), so only its redacted form is
+          // reported.
+          const shown = describeNpmImport(args.path);
+          onMissing(shown, decision.reason);
           // Stops the build; importModule turns the recorded specifiers into a
           // classified DEPENDENCY_MISSING rather than reading this text back.
-          return { errors: [{ text: `Cannot resolve "${args.path}": ${decision.reason}` }] };
+          return { errors: [{ text: `Cannot resolve "${shown}": ${decision.reason}` }] };
         }
 
         const { name, version, subpath } = decision;

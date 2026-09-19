@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   classifyProjectNpmImport,
+  describeNpmImport,
   exactVersionNamedByRange,
   isFrameworkProvidedPackage,
   parseNpmSpecifier,
@@ -10,14 +11,23 @@ import {
 } from "./project-npm-imports.ts";
 
 /**
- * A stand-in for the generated package set. Tests state the frozen snapshot
- * they mean instead of reading the live deno.lock, which moves with every
- * framework dependency bump.
+ * A stand-in for the generated package and constraint sets. Tests state the
+ * frozen snapshot they mean instead of reading the live deno.lock, which moves
+ * with every framework dependency bump. `ms` is carried only transitively: the
+ * binary holds the package, but no import constraint resolves to it.
  */
 const EMBEDDED = {
-  lodash: ["3.10.1"],
-  yaml: ["2.9.0"],
-  sharp: ["0.34.5", "0.35.4"],
+  packages: {
+    lodash: ["3.10.1"],
+    yaml: ["2.9.0"],
+    sharp: ["0.34.5", "0.35.4"],
+    ms: ["2.1.3"],
+  },
+  constraints: {
+    lodash: ["3.10.1"],
+    yaml: ["2.9.0"],
+    sharp: ["0.34.5", "0.35.4"],
+  },
 } as const;
 
 function classify(
@@ -290,10 +300,19 @@ describe("classifyProjectNpmImport", () => {
   it("keeps a declared package on the runtime when the runtime embeds that exact version", () => {
     // The binary already carries it: rerouting would turn an offline
     // resolution into a network fetch of a second copy.
-    assertEquals(classify("yaml", { yaml: "2.9.0" }), { kind: "runtime" });
-    assertEquals(classify("npm:yaml@2.9.0", { yaml: "2.9.0" }), { kind: "runtime" });
+    assertEquals(classify("yaml", { yaml: "2.9.0" }), {
+      kind: "runtime",
+      specifier: "npm:yaml@2.9.0",
+    });
+    assertEquals(classify("npm:yaml@2.9.0", { yaml: "2.9.0" }), {
+      kind: "runtime",
+      specifier: "npm:yaml@2.9.0",
+    });
     // ...including when the declaration is the caret range npm writes.
-    assertEquals(classify("yaml", { yaml: "^2.9.0" }), { kind: "runtime" });
+    assertEquals(classify("yaml", { yaml: "^2.9.0" }), {
+      kind: "runtime",
+      specifier: "npm:yaml@2.9.0",
+    });
   });
 
   it("inlines a declared package the runtime does not carry, in every specifier form", () => {
@@ -345,7 +364,10 @@ describe("classifyProjectNpmImport", () => {
       subpath: ".",
     });
     // An embedded declared version still wins, so no network round trip.
-    assertEquals(classify("npm:yaml@^2.0.0", { yaml: "2.9.0" }), { kind: "runtime" });
+    assertEquals(classify("npm:yaml@^2.0.0", { yaml: "2.9.0" }), {
+      kind: "runtime",
+      specifier: "npm:yaml@2.9.0",
+    });
   });
 
   it("inlines a declared version the runtime carries only at another version", () => {
@@ -372,7 +394,10 @@ describe("classifyProjectNpmImport", () => {
 
   it("leaves an undeclared package to the runtime only when the runtime carries it", () => {
     assertEquals(classify("yaml"), { kind: "runtime" });
-    assertEquals(classify("npm:sharp@0.35.4"), { kind: "runtime" });
+    assertEquals(classify("npm:sharp@0.35.4"), {
+      kind: "runtime",
+      specifier: "npm:sharp@0.35.4",
+    });
     assertEquals(classify("npm:sharp@0.30.0").kind, "missing");
     assertEquals(classify("unpdf").kind, "missing");
   });
@@ -474,7 +499,10 @@ describe("classifyProjectNpmImport", () => {
       subpath: ".",
     });
     // The runtime's own copy still wins when it is the admitted version.
-    assertEquals(classify("npm:sharp@0.35.4", { sharp: "^0.35.0" }), { kind: "runtime" });
+    assertEquals(classify("npm:sharp@0.35.4", { sharp: "^0.35.0" }), {
+      kind: "runtime",
+      specifier: "npm:sharp@0.35.4",
+    });
     assertEquals(classify("npm:unpdf@2.0.0", { unpdf: "^1.8.1" }), {
       kind: "missing",
       name: "unpdf",
@@ -510,7 +538,10 @@ describe("classifyProjectNpmImport", () => {
       name: "lodash",
       reason: "the import asks for lodash@3.10.1 but package.json declares lodash@<3.0.0",
     });
-    assertEquals(classify("npm:lodash@3.10.1", { lodash: "<4.0.0" }), { kind: "runtime" });
+    assertEquals(classify("npm:lodash@3.10.1", { lodash: "<4.0.0" }), {
+      kind: "runtime",
+      specifier: "npm:lodash@3.10.1",
+    });
   });
 
   it("refuses an import range it cannot check against the declared version", () => {
@@ -583,5 +614,53 @@ describe("classifyProjectNpmImport", () => {
       subpath: ".",
     });
     assertEquals(classify("node:test"), { kind: "runtime" });
+  });
+
+  it("externalizes a reused embedded package under a constraint the binary holds", () => {
+    // Left bare, `import "yaml"` is emitted as `npm:yaml` -- the constraint
+    // `yaml@*`, which the binary never recorded -- even though it carries 2.9.0.
+    assertEquals(classify("yaml", { yaml: "2.9.0" }), {
+      kind: "runtime",
+      specifier: "npm:yaml@2.9.0",
+    });
+    assertEquals(classify("npm:sharp@0.35.4/lib/utility", { sharp: "^0.35.0" }), {
+      kind: "runtime",
+      specifier: "npm:sharp@0.35.4/lib/utility",
+    });
+  });
+
+  it("inlines a declared package the binary carries under no import constraint", () => {
+    assertEquals(classify("ms", { ms: "2.1.3" }), {
+      kind: "cdn",
+      name: "ms",
+      version: "2.1.3",
+      subpath: ".",
+    });
+    assertEquals(classify("npm:ms@2.1.3"), {
+      kind: "missing",
+      name: "ms",
+      reason: "this runtime does not carry ms@2.1.3 and the project declares no dependency on ms",
+    });
+  });
+});
+
+describe("describeNpmImport", () => {
+  it("names an import by its package, version and subpath", () => {
+    assertEquals(describeNpmImport("unpdf"), "unpdf");
+    assertEquals(describeNpmImport("npm:unpdf@1.8.1/dist/core"), "unpdf@1.8.1/dist/core");
+    assertEquals(describeNpmImport("@scope/pkg@^2"), "@scope/pkg@^2");
+  });
+
+  it("never echoes a version or subpath that can carry a credential", () => {
+    assertEquals(
+      describeNpmImport("npm:pkg@https://<TOKEN>@example.invalid/x"),
+      "pkg (with a non-registry version)",
+    );
+    assertEquals(
+      describeNpmImport("npm:pkg@user:<TOKEN>@host"),
+      "pkg (with a non-registry version)",
+    );
+    assertEquals(describeNpmImport("pkg/x@<TOKEN>"), "an import that names no npm package");
+    assertEquals(describeNpmImport("pkg/user:<TOKEN>/x"), "pkg");
   });
 });

@@ -51,17 +51,44 @@ const outputPath = join(projectRoot, "src", "discovery", "embedded-npm-packages.
  * @internal Exported for testing only.
  */
 export function collectEmbeddedNpmPackages(lockText: string): Record<string, string[]> {
-  const lock = parseLock(lockText);
-  const byName: Record<string, string[]> = {};
-  for (const key of Object.keys(lock.npm ?? {})) {
+  return groupByName(Object.keys(parseLock(lockText).npm ?? {}));
+}
+
+/**
+ * Collapse deno.lock's `npm:` specifier keys into `name -> constraints`
+ * (`npm:yaml@^2.4.0` is `yaml -> ^2.4.0`). A compiled binary resolves an
+ * `npm:` import by looking its constraint up here, so a package present only
+ * transitively is carried but not importable.
+ *
+ * @internal Exported for testing only.
+ */
+export function collectEmbeddedNpmConstraints(lockText: string): Record<string, string[]> {
+  const keys = Object.keys(parseLock(lockText).specifiers ?? {});
+  return groupByName(keys.filter((key) => key.startsWith("npm:")).map((key) => key.slice(4)));
+}
+
+function groupByName(keys: readonly string[]): Record<string, string[]> {
+  // A Map, not an object literal: a package named `constructor` must not read
+  // Object.prototype.constructor as its version list.
+  const byName = new Map<string, string[]>();
+  for (const key of keys) {
     const parsed = parseNameVersion(key);
     if (!parsed) continue;
-    const versions = byName[parsed.name] ??= [];
+    const versions = byName.get(parsed.name) ?? [];
+    byName.set(parsed.name, versions);
     if (!versions.includes(parsed.version)) versions.push(parsed.version);
   }
-  // Sorted only so an unrelated lock reshuffle cannot churn the diff.
-  for (const versions of Object.values(byName)) versions.sort(compareStrings);
-  return byName;
+  const grouped: Record<string, string[]> = {};
+  for (const [name, versions] of byName) {
+    // Sorted only so an unrelated lock reshuffle cannot churn the diff.
+    Object.defineProperty(grouped, name, {
+      value: versions.sort(compareStrings),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return grouped;
 }
 
 function renderEntries(byName: Record<string, string[]>): string {
@@ -71,11 +98,22 @@ function renderEntries(byName: Record<string, string[]>): string {
   }).join("\n");
 }
 
+/** One lockfile's embedded packages and import constraints. */
+export interface EmbeddedNpmTables {
+  packages: Record<string, string[]>;
+  constraints: Record<string, string[]>;
+}
+
 /** @internal Exported for testing only. */
-export function renderModule(
-  full: Record<string, string[]>,
-  proxy: Record<string, string[]>,
-): string {
+export function collectEmbeddedNpmTables(lockText: string): EmbeddedNpmTables {
+  return {
+    packages: collectEmbeddedNpmPackages(lockText),
+    constraints: collectEmbeddedNpmConstraints(lockText),
+  };
+}
+
+/** @internal Exported for testing only. */
+export function renderModule(full: EmbeddedNpmTables, proxy: EmbeddedNpmTables): string {
   return `/**
  * npm packages frozen into the compiled runtime binaries, by package name.
  *
@@ -92,7 +130,7 @@ export function renderModule(
  */
 // deno-fmt-ignore -- one package per line keeps the generated diff readable.
 export const EMBEDDED_NPM_PACKAGES: Readonly<Record<string, readonly string[]>> = {
-${renderEntries(full)}
+${renderEntries(full.packages)}
 };
 
 /**
@@ -104,14 +142,30 @@ ${renderEntries(full)}
  */
 // deno-fmt-ignore -- one package per line keeps the generated diff readable.
 export const PROXY_EMBEDDED_NPM_PACKAGES: Readonly<Record<string, readonly string[]>> = {
-${renderEntries(proxy)}
+${renderEntries(proxy.packages)}
+};
+
+/**
+ * Every \`npm:\` import constraint the FULL binary can resolve, by package name
+ * (\`npm:yaml@2.9.0\` is \`yaml: ["2.9.0"]\`). A compiled binary answers an import
+ * by looking its constraint up here, not by searching the packages above.
+ */
+// deno-fmt-ignore -- one package per line keeps the generated diff readable.
+export const EMBEDDED_NPM_CONSTRAINTS: Readonly<Record<string, readonly string[]>> = {
+${renderEntries(full.constraints)}
+};
+
+/** The same, for the PROXY binary. */
+// deno-fmt-ignore -- one package per line keeps the generated diff readable.
+export const PROXY_EMBEDDED_NPM_CONSTRAINTS: Readonly<Record<string, readonly string[]>> = {
+${renderEntries(proxy.constraints)}
 };
 `;
 }
 
 if (import.meta.main) {
-  const full = collectEmbeddedNpmPackages(await Deno.readTextFile(fullLockPath));
-  const proxy = collectEmbeddedNpmPackages(await Deno.readTextFile(proxyLockPath));
+  const full = collectEmbeddedNpmTables(await Deno.readTextFile(fullLockPath));
+  const proxy = collectEmbeddedNpmTables(await Deno.readTextFile(proxyLockPath));
   const output = renderModule(full, proxy);
 
   // --check makes a stale committed set fail CI instead of relying on someone
@@ -131,7 +185,8 @@ if (import.meta.main) {
     await Deno.writeTextFile(outputPath, output);
     console.log(
       `[generate-embedded-npm-packages] Written to ${outputPath} ` +
-        `(full: ${Object.keys(full).length} packages, proxy: ${Object.keys(proxy).length})`,
+        `(full: ${Object.keys(full.packages).length} packages, ` +
+        `proxy: ${Object.keys(proxy.packages).length})`,
     );
   }
 }
