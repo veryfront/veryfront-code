@@ -169,9 +169,10 @@ export async function loadMiddlewareFile(
  * middleware is always transpiled to JS before it is imported.
  */
 const VIRTUAL_PROJECT_NAMESPACE = "veryfront-project-middleware";
+/** Same probe order as the project import resolver (`transforms/esm/import-parser.ts`). */
 const VIRTUAL_MODULE_EXTENSIONS = [
-  ".ts",
   ".tsx",
+  ".ts",
   ".mts",
   ".cts",
   ".js",
@@ -324,6 +325,8 @@ async function transpileMiddlewareSource(
     format: "esm",
     platform: "neutral",
     target: "es2022",
+    jsx: "automatic",
+    jsxImportSource: "react",
     ...(adapter
       ? { plugins: [createVirtualProjectMiddlewarePlugin(dirname(middlewarePath), adapter)] }
       : {}),

@@ -399,6 +399,28 @@ describe("dev-server/middleware: actionable rejection", () => {
       assertEquals(message.includes(suffixValue), false);
     });
 
+    it("prefers .tsx over .ts for extensionless imports", async () => {
+      const adapter = createVirtualAdapter(
+        'import middleware from "./lib/auth"; export default middleware;',
+        {
+          "/app/lib/auth.tsx": passThrough,
+          "/app/lib/auth.ts": "export default [];",
+        },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
+    it("compiles JSX dependencies with the automatic runtime", async () => {
+      const adapter = createVirtualAdapter(
+        'import { element } from "./lib/banner.tsx"; ' +
+          'export default element.type === "p" ? async (c, next) => await next() : [];',
+        { "/app/lib/banner.tsx": "export const element = <p>ok</p>;" },
+      );
+
+      assertEquals((await load(adapter)).length, 1);
+    });
+
     it("keeps bare specifiers external even when a same-named project file exists", async () => {
       const adapter = createVirtualAdapter(
         'import { sep } from "node:path"; ' +
