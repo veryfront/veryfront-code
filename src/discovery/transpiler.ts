@@ -764,12 +764,25 @@ export function withDisplayPath(text: string, paths: DiscoveryPathNames): string
  * left alone: its host is not a filesystem.
  */
 function withoutForeignAbsolutePaths(text: string): string {
-  return text.replace(
-    // `file://` is consumed with the path; otherwise the path may not follow a
-    // scheme, a host or another path character.
-    /(?:file:\/\/\/?|(?<![A-Za-z0-9._~%@:\/\\-]))(?:[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)[^\s"'`)\]]*/g,
-    (match) => pathHelper.basename(toPortablePath(match)) || match,
-  );
+  const path = String.raw`(?:file:\/\/\/?)?(?:[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)`;
+  const named = (match: string) => pathHelper.basename(toPortablePath(match)) || match;
+  return text
+    // A quoted path runs to its closing delimiter: a directory name may carry
+    // a space, and stopping at the first one leaves most of the layout.
+    .replace(
+      new RegExp(String.raw`(["'\`])(${path}[^"'\`]*)\1`, "g"),
+      (_match, quote: string, quoted: string) => `${quote}${named(quoted)}${quote}`,
+    )
+    // Otherwise the path may not follow a scheme, a host or another path
+    // character, and it ends at whitespace or a closing bracket.
+    .replace(
+      new RegExp(
+        String
+          .raw`(?:file:\/\/\/?|(?<![A-Za-z0-9._~%@:\/\\-]))(?:[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)[^\s"'\`)\]]*`,
+        "g",
+      ),
+      named,
+    );
 }
 
 /**

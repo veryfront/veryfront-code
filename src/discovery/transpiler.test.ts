@@ -777,6 +777,23 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(withDisplayPath("in tools/a.ts", paths), "in tools/a.ts");
     });
 
+    it("names a quoted absolute path with spaces by its file", () => {
+      // A home directory can carry a person's name, and a quoted path runs to
+      // its closing delimiter rather than to the first space.
+      assertEquals(
+        withDisplayPath('Could not resolve "/home/Other User/private/file.ts"', paths),
+        'Could not resolve "file.ts"',
+      );
+      assertEquals(
+        withDisplayPath("readTextFile 'C:\\Users\\Other User\\file.ts'", paths),
+        "readTextFile 'file.ts'",
+      );
+      assertEquals(
+        withDisplayPath('at "file:///home/Other User/x.ts"', paths),
+        'at "x.ts"',
+      );
+    });
+
     it("leaves a host or URL that merely contains the root", () => {
       assertEquals(
         withDisplayPath("fetch https://esm.sh/apple@1.0.0 failed", paths),
