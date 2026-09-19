@@ -116,10 +116,94 @@ function failRegistryInstall(
   combined: string,
   registryUrl: string,
   specCount: number,
+  attempts: number,
 ): never {
   const { registry, output } = redactPrivateRegistry(combined, registryUrl);
-  const devLog = `[registry=${registry} specs=${specCount}]\n${output}`;
+  const devLog =
+    `[registry=${registry} specs=${specCount} attempts=${attempts}]\n${output}`;
   throw new SmokeFailure("exact-version registry install failed", 20, devLog);
+}
+
+/** Matches the end of an exact version: `1.2.3-rc.4` must not match `1.2.3-rc.45`. */
+const VERSION_END = String.raw`(?![0-9A-Za-z-]|\.[0-9A-Za-z])`;
+
+function npmErrorCode(output: string): string | undefined {
+  return /^npm (?:error|ERR!) code (\w+)/m.exec(output)?.[1];
+}
+
+/**
+ * Recognize npm reading registry metadata that predates the release under
+ * test. The integrity check has already confirmed every exact version through
+ * the registry API, but `npm install` reads packuments through the registry
+ * CDN, which can serve a stale copy for a few minutes after publish (CI runs
+ * 35432458903 and 35445818678). Only failures that name a package under test
+ * at the exact version, or resolve one as `@undefined`, qualify. Everything
+ * else, including auth errors and genuine peer conflicts, is not skew.
+ *
+ * Returns a short reason for the retry log, or undefined when not skew.
+ */
+export function registryPropagationSkew(
+  output: string,
+  packageNames: readonly string[],
+  version: string,
+): string | undefined {
+  const exactVersion = escapeRegExp(version) + VERSION_END;
+  const code = npmErrorCode(output);
+  for (const name of packageNames) {
+    const packageName = escapeRegExp(name);
+    const spec = `${name}@${version}`;
+    switch (code) {
+      case "ETARGET":
+        if (
+          new RegExp(
+            `No matching version found for ${packageName}@[\\^~]?${exactVersion}`,
+          ).test(output)
+        ) {
+          return `ETARGET: ${spec}`;
+        }
+        break;
+      case "ERESOLVE":
+        if (new RegExp(`Found: ${packageName}@undefined\\b`).test(output)) {
+          return `ERESOLVE: ${name}@undefined`;
+        }
+        break;
+      case "E404": {
+        const basename = escapeRegExp(name.replace(/^@[^/]+\//, ""));
+        if (
+          new RegExp(`'${packageName}@${exactVersion}' is not in this registry`)
+            .test(output) ||
+          new RegExp(`/-/${basename}-${exactVersion}\\.tgz\\b`).test(output)
+        ) {
+          return `E404: ${spec}`;
+        }
+        break;
+      }
+    }
+  }
+  return undefined;
+}
+
+const DEFAULT_REGISTRY_INSTALL_ATTEMPTS = 5;
+const DEFAULT_REGISTRY_RETRY_DELAY_MS = 15_000;
+const MAX_REGISTRY_RETRY_DELAY_MS = 60_000;
+
+function nonNegativeIntegerEnv(name: string, fallback: number): number {
+  const value = Deno.env.get(name);
+  if (value === undefined || !/^\d+$/.test(value)) return fallback;
+  return Number(value);
+}
+
+/** Backoff between skewed attempts: 15s, 30s, 60s, 60s by default. */
+function registryRetryDelayMs(attempt: number): number {
+  const base = nonNegativeIntegerEnv(
+    "VF_NPM_REGISTRY_RETRY_DELAY_MS",
+    DEFAULT_REGISTRY_RETRY_DELAY_MS,
+  );
+  return Math.min(base * 2 ** (attempt - 1), MAX_REGISTRY_RETRY_DELAY_MS);
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return await Deno.lstat(path).then(() => true, () => false);
 }
 
 interface RunResult {
@@ -274,12 +358,17 @@ interface InstallPlan {
   authInstallSpecs: string[];
   npmEnv: Record<string, string> | undefined;
   registryMode: boolean;
+  /** Registry mode only: the package names and exact version under test. */
+  registryPackageNames?: string[];
+  registryVersion?: string;
 }
 
 function parseRegistryConfiguration(): {
   registryUrl: string;
   rootSpecs: string[];
   authSpec: string;
+  packageNames: string[];
+  version: string;
 } {
   const version = Deno.env.get("VF_NPM_REGISTRY_VERSION")!;
   const packages = Deno.env.get("VF_NPM_REGISTRY_PACKAGES");
@@ -298,6 +387,7 @@ function parseRegistryConfiguration(): {
   }
 
   const rootSpecs: string[] = [];
+  const packageNames: string[] = [];
   let authSpec = "";
   for (const line of packages.split("\n")) {
     const packageName = line.trim();
@@ -309,6 +399,7 @@ function parseRegistryConfiguration(): {
       fail("registry package list contains an invalid package name");
     }
     const spec = `${packageName}@${version}`;
+    packageNames.push(packageName);
     if (packageName === AUTH_PACKAGE) {
       authSpec = spec;
     } else {
@@ -321,19 +412,22 @@ function parseRegistryConfiguration(): {
   if (!authSpec) {
     fail(`registry package list is missing ${AUTH_PACKAGE}`);
   }
-  return { registryUrl, rootSpecs, authSpec };
+  return { registryUrl, rootSpecs, authSpec, packageNames, version };
 }
 
 async function prepareArtifacts(workDir: string): Promise<InstallPlan> {
   if (Deno.env.get("VF_NPM_REGISTRY_VERSION")) {
     smokeFailureStatus = 22;
-    const { registryUrl, rootSpecs, authSpec } = parseRegistryConfiguration();
+    const { registryUrl, rootSpecs, authSpec, packageNames, version } =
+      parseRegistryConfiguration();
     smokeFailureStatus = 21;
     return {
       rootInstallSpecs: rootSpecs,
       authInstallSpecs: [authSpec],
       npmEnv: { NPM_CONFIG_REGISTRY: registryUrl },
       registryMode: true,
+      registryPackageNames: packageNames,
+      registryVersion: version,
     };
   }
 
@@ -414,23 +508,73 @@ async function npmInstall(
   // failRegistryInstall an empty string and the release gate would again report a
   // failure it cannot explain. At error level npm still prints its own summary
   // line on success, which is one line of benign noise for a readable failure.
-  const result = await run("npm", [
+  const args = [
     "install",
     "--no-fund",
     "--no-audit",
     "--loglevel=error",
     "--ignore-scripts",
-    ...specs,
-  ], { cwd: workDir, env: plan.npmEnv, timeoutMs: 600_000 });
-  if (result.code !== 0) {
-    if (plan.registryMode) {
+  ];
+  if (!plan.registryMode) {
+    const result = await run("npm", [...args, ...specs], {
+      cwd: workDir,
+      env: plan.npmEnv,
+      timeoutMs: 600_000,
+    });
+    if (result.code !== 0) fail(`npm install failed\n${result.combined}`);
+    return;
+  }
+
+  // Registry mode retries only npm registry propagation skew (see
+  // registryPropagationSkew). --prefer-online makes npm revalidate cached
+  // packuments instead of reusing the stale copy that caused the failure.
+  const maxAttempts = Math.max(
+    1,
+    nonNegativeIntegerEnv(
+      "VF_NPM_REGISTRY_INSTALL_ATTEMPTS",
+      DEFAULT_REGISTRY_INSTALL_ATTEMPTS,
+    ),
+  );
+  const nodeModules = `${workDir}/node_modules`;
+  const lockfile = `${workDir}/package-lock.json`;
+  const freshProject = !(await pathExists(nodeModules)) &&
+    !(await pathExists(lockfile));
+  for (let attempt = 1;; attempt++) {
+    const result = await run("npm", [...args, "--prefer-online", ...specs], {
+      cwd: workDir,
+      env: plan.npmEnv,
+      timeoutMs: 600_000,
+    });
+    if (result.code === 0) return;
+
+    const skew = attempt < maxAttempts
+      ? registryPropagationSkew(
+        result.combined,
+        plan.registryPackageNames ?? [],
+        plan.registryVersion ?? "",
+      )
+      : undefined;
+    if (!skew) {
       failRegistryInstall(
         result.combined,
         plan.npmEnv?.NPM_CONFIG_REGISTRY ?? "https://registry.npmjs.org",
         specs.length,
+        attempt,
       );
     }
-    fail(`npm install failed\n${result.combined}`);
+
+    const delayMs = registryRetryDelayMs(attempt);
+    console.error(
+      `Registry install attempt ${attempt}/${maxAttempts} hit npm registry propagation skew (${skew}); retrying in ${
+        Math.round(delayMs / 1000)
+      }s.`,
+    );
+    // Start the retry from the same project state as the first attempt.
+    if (freshProject) {
+      await Deno.remove(nodeModules, { recursive: true }).catch(() => {});
+      await Deno.remove(lockfile).catch(() => {});
+    }
+    await delay(delayMs);
   }
 }
 
