@@ -15,12 +15,16 @@ const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 /** How much larger the second input of a scaling check is than the first. */
 const SCALING_INPUT_FACTOR = 4;
 /**
- * The most the scan time may grow for that input growth. A linear scan grows
- * about 4x; a quadratic one about 16x. The midpoint (on a log scale) of those
- * two tells them apart without a wall-clock budget, which coverage
- * instrumentation and parallel test load exceed at random.
+ * The steepest growth curve a scan may show, as the exponent `e` in
+ * `time ~ size^e`. Linear is 1 and quadratic is 2, and the exponent is what
+ * the test is about, so it is measured rather than a wall-clock budget --
+ * which coverage instrumentation and parallel load exceed at random -- and
+ * rather than a fixed time ratio, which bakes in one engine: the same linear
+ * scan measures about 0.9 under V8 (Deno, Node) and about 1.5 under
+ * JavaScriptCore (Bun), where a 4x input took 8.1x the time. 1.75 clears that
+ * spread and still refuses a quadratic scan.
  */
-const MAX_SCALING_TIME_FACTOR = 8;
+const MAX_SCALING_EXPONENT = 1.75;
 const SCALING_RUNS = 5;
 
 /** The fastest of several runs: load noise only ever adds time. */
@@ -47,10 +51,12 @@ function assertLinearScan(
   const smallMillis = fastestScanMillis(scan, small);
   const largeMillis = fastestScanMillis(scan, large);
   const growth = largeMillis / Math.max(smallMillis, 0.01);
+  const exponent = Math.log(growth) / Math.log(SCALING_INPUT_FACTOR);
   assert(
-    growth < MAX_SCALING_TIME_FACTOR,
+    exponent < MAX_SCALING_EXPONENT,
     `${name} scanner time grew ${growth.toFixed(1)}x (${smallMillis.toFixed(1)}ms -> ` +
-      `${largeMillis.toFixed(1)}ms) for ${SCALING_INPUT_FACTOR}x the input`,
+      `${largeMillis.toFixed(1)}ms) for ${SCALING_INPUT_FACTOR}x the input, ` +
+      `a size^${exponent.toFixed(2)} curve`,
   );
 }
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
