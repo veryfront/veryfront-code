@@ -218,10 +218,48 @@ export function exactVersionNamedByRange(range: unknown): string | null {
   return EXACT_VERSION.test(candidate) ? candidate : null;
 }
 
-/** `major.minor.patch` of an exact version, and whether it is a pre-release. */
-function versionParts(version: string): { core: [number, number, number]; pre: boolean } {
-  const [major, minor, patch] = version.split(/[-+]/, 1)[0]!.split(".").map(Number);
-  return { core: [major!, minor!, patch!], pre: version.includes("-") };
+type VersionCore = [number, number, number];
+
+/**
+ * A range bound's numeric parts, as written: `2` is `[2]`, `2.3.x` is `[2, 3]`,
+ * `2.3.4` is `[2, 3, 4]`. `null` for anything else, including a wildcard
+ * followed by a number (`1.x.3`).
+ */
+const PARTIAL_VERSION = /^(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$/;
+
+function boundParts(bound: string): number[] | null {
+  const core = EXACT_VERSION.test(bound) ? bound.split(/[-+]/, 1)[0]! : bound;
+  const match = PARTIAL_VERSION.exec(core);
+  if (!match) return null;
+  const isNumber = (part: string | undefined) => part !== undefined && /^\d+$/.test(part);
+  const groups = match.slice(1);
+  const gap = groups.findIndex((part) => !isNumber(part));
+  if (gap < 0) return groups.map(Number);
+  // A number after a wildcard names no range npm would read the same way.
+  if (groups.slice(gap).some(isNumber)) return null;
+  return groups.slice(0, gap).map(Number);
+}
+
+function padded(parts: readonly number[]): VersionCore {
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+}
+
+/** The version just past every one a partial bound covers: `2.3` -> `2.4.0`. */
+function nextAfter(parts: readonly number[]): VersionCore {
+  const next = [...parts];
+  next[next.length - 1]! += 1;
+  return padded(next);
+}
+
+/** The exclusive upper bound of a caret range, per npm's rules for `0.x`. */
+function caretCeiling(parts: readonly number[]): VersionCore {
+  const firstNonZero = parts.findIndex((part) => part !== 0);
+  return nextAfter(parts.slice(0, firstNonZero < 0 ? parts.length : firstNonZero + 1));
+}
+
+/** The exclusive upper bound of a tilde range: the minor for a full version. */
+function tildeCeiling(parts: readonly number[]): VersionCore {
+  return nextAfter(parts.length === 3 ? parts.slice(0, 2) : parts);
 }
 
 function compareCores(left: readonly number[], right: readonly number[]): number {
@@ -231,21 +269,16 @@ function compareCores(left: readonly number[], right: readonly number[]): number
   return 0;
 }
 
-/** The exclusive upper bound of a caret range, per npm's rules for `0.x`. */
-function caretCeiling([major, minor, patch]: readonly number[]): [number, number, number] {
-  if (major! > 0) return [major! + 1, 0, 0];
-  if (minor! > 0) return [0, minor! + 1, 0];
-  return [0, 0, patch! + 1];
-}
-
 /**
  * Does a single-comparator range admit an exact version? `null` when the range
- * is not one this module evaluates -- `*`, `1.x`, `>=1 <2`, `a || b`, a
- * dist-tag -- so the caller keeps its own conservative answer for those.
+ * is not one this module evaluates -- `>=1 <2`, `a || b`, a dist-tag, a scheme
+ * -- so the caller decides what an unchecked range means for it.
  *
- * Covers exactly the forms {@link exactVersionNamedByRange} reads, plus the
- * strict `<` and `>` bounds. A pre-release on either side is admitted only by
- * the identical version: npm excludes pre-releases from a range unless the
+ * Covers an operator (`^`, `~`, `~>`, `>=`, `>`, `<=`, `<`, `=`, `v`) or none,
+ * in front of a full version (`1.8.1`) or an abbreviated one (`2`, `2.3`,
+ * `2.x`, `*`), with npm's meaning for each: `^2` is `>=2.0.0 <3.0.0`, `>2` is
+ * `>=3.0.0`, `<=2.3` is `<2.4.0`. A pre-release on either side is admitted only
+ * by the identical version: npm excludes pre-releases from a range unless the
  * range names one on the same core version, and equality is the conservative
  * reading of that rule.
  *
@@ -256,30 +289,33 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
   if (URL_SCHEME.test(trimmed) || !EXACT_VERSION.test(version)) return null;
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
   const bound = operator === undefined ? trimmed : trimmed.slice(operator.length).trimStart();
-  if (!EXACT_VERSION.test(bound)) return null;
+  if (operator === undefined && (bound === "*" || bound === "x" || bound === "X")) {
+    return !version.includes("-");
+  }
+  const parts = boundParts(bound);
+  if (parts === null) return null;
   if (bound === version) return operator !== "<" && operator !== ">";
+  if (version.includes("-") || bound.includes("-")) return false;
 
-  const wanted = versionParts(version);
-  const named = versionParts(bound);
-  if (wanted.pre || named.pre) return false;
-  const order = compareCores(wanted.core, named.core);
+  const wanted = padded(version.split(/[-+]/, 1)[0]!.split(".").map(Number));
+  const atLeast = compareCores(wanted, padded(parts)) >= 0;
   switch (operator) {
     case "^":
-      return order >= 0 && compareCores(wanted.core, caretCeiling(named.core)) < 0;
+      return atLeast && compareCores(wanted, caretCeiling(parts)) < 0;
     case "~":
     case "~>":
-      return order >= 0 && compareCores(wanted.core, [named.core[0], named.core[1] + 1, 0]) < 0;
+      return atLeast && compareCores(wanted, tildeCeiling(parts)) < 0;
     case ">=":
-      return order >= 0;
+      return atLeast;
     case ">":
-      return order > 0;
+      return compareCores(wanted, nextAfter(parts)) >= 0;
     case "<=":
-      return order <= 0;
+      return compareCores(wanted, nextAfter(parts)) < 0;
     case "<":
-      return order < 0;
+      return !atLeast;
     default:
-      // `=`, `v` and a bare version admit only themselves.
-      return order === 0;
+      // `=`, `v` and no operator cover exactly the versions the bound names.
+      return atLeast && compareCores(wanted, nextAfter(parts)) < 0;
   }
 }
 
@@ -472,16 +508,19 @@ function classifyUnversionedImport(
   { name, version, subpath, declared, pin, embedded }: ImportRequest,
 ): ProjectNpmImport {
   if (pin !== null) {
-    // A range in the import that excludes the declared pin cannot be served
-    // by it: `npm:unpdf@>2.0.0` against `"unpdf": "1.8.1"` would run 1.8.1.
-    // A range this module does not evaluate keeps the pin, which is a version
-    // the project wrote.
-    if (version !== null && rangeAdmitsVersion(version, pin) === false) {
+    // A range in the import has to admit the declared pin before the pin can
+    // serve it: `npm:unpdf@^2` against `"unpdf": "1.8.1"` would run 1.8.1. A
+    // range this module cannot evaluate is refused rather than guessed at.
+    const admitted = version === null ? true : rangeAdmitsVersion(version, pin);
+    if (admitted !== true) {
       return {
         kind: "missing",
         name,
-        reason: `the import asks for ${name}@${version} but package.json declares ` +
-          `${name}@${declared}`,
+        reason: admitted === false
+          ? `the import asks for ${name}@${version} but package.json declares ` +
+            `${name}@${declared}`
+          : `the import asks for ${name}@${version}, a range that cannot be checked against ` +
+            `the declared ${name}@${declared} -- import the declared version instead`,
       };
     }
     // The runtime already carries exactly what the project declared: keep the

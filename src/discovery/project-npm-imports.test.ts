@@ -170,6 +170,28 @@ describe("rangeAdmitsVersion", () => {
     assertEquals(rangeAdmitsVersion("1.8.1", "1.8.1"), true);
   });
 
+  it("reads abbreviated versions and wildcards the way npm does", () => {
+    assertEquals(rangeAdmitsVersion("^2", "2.9.9"), true);
+    assertEquals(rangeAdmitsVersion("^2", "1.8.1"), false);
+    assertEquals(rangeAdmitsVersion("^2", "3.0.0"), false);
+    assertEquals(rangeAdmitsVersion("^0", "0.9.0"), true);
+    assertEquals(rangeAdmitsVersion("^0.0", "0.1.0"), false);
+    assertEquals(rangeAdmitsVersion("~2.3", "2.3.9"), true);
+    assertEquals(rangeAdmitsVersion("~2.3", "2.4.0"), false);
+    assertEquals(rangeAdmitsVersion(">=2", "1.8.1"), false);
+    assertEquals(rangeAdmitsVersion(">=2", "2.0.0"), true);
+    assertEquals(rangeAdmitsVersion(">2", "2.9.0"), false);
+    assertEquals(rangeAdmitsVersion(">2", "3.0.0"), true);
+    assertEquals(rangeAdmitsVersion("<=2.3", "2.3.9"), true);
+    assertEquals(rangeAdmitsVersion("<=2.3", "2.4.0"), false);
+    assertEquals(rangeAdmitsVersion("<2", "1.9.9"), true);
+    assertEquals(rangeAdmitsVersion("1.x", "1.8.1"), true);
+    assertEquals(rangeAdmitsVersion("1.8.*", "1.9.0"), false);
+    assertEquals(rangeAdmitsVersion("2", "2.1.0"), true);
+    assertEquals(rangeAdmitsVersion("*", "1.8.1"), true);
+    assertEquals(rangeAdmitsVersion("*", "1.8.1-rc.1"), false);
+  });
+
   it("admits a pre-release only as the identical version", () => {
     assertEquals(rangeAdmitsVersion("^1.8.1", "1.9.0-beta.1"), false);
     assertEquals(rangeAdmitsVersion("^1.9.0-beta.1", "1.9.0-beta.1"), true);
@@ -177,7 +199,7 @@ describe("rangeAdmitsVersion", () => {
   });
 
   it("declines to evaluate anything that is not a single comparator", () => {
-    for (const range of ["*", "1.x", ">=1 <2", "^1.0.0 || ^2.0.0", "latest", "workspace:*"]) {
+    for (const range of [">=1 <2", "^1.0.0 || ^2.0.0", "latest", "workspace:*", "1.x.3"]) {
       assertEquals(rangeAdmitsVersion(range, "1.8.1"), null, range);
     }
     assertEquals(rangeAdmitsVersion("^1.8.1", "^1.8.1"), null);
@@ -407,11 +429,11 @@ describe("classifyProjectNpmImport", () => {
     });
 
     // Declared, but with a range that names no single version to fetch.
-    const unresolvable = classify("npm:unpdf@1.8.1", { unpdf: "*" });
+    const unresolvable = classify("npm:unpdf@1.8.1", { unpdf: "latest" });
     assertEquals(unresolvable, {
       kind: "missing",
       name: "unpdf",
-      reason: 'this runtime does not carry unpdf@1.8.1 and package.json declares "*", ' +
+      reason: 'this runtime does not carry unpdf@1.8.1 and package.json declares "latest", ' +
         "which names no single version to fetch -- declare an exact version",
     });
   });
@@ -453,6 +475,27 @@ describe("classifyProjectNpmImport", () => {
       kind: "missing",
       name: "unpdf",
       reason: "the import asks for unpdf@>2.0.0 but package.json declares unpdf@1.8.1",
+    });
+    // An abbreviated range is checked as npm reads it: `^2` excludes all of 1.x.
+    assertEquals(classify("npm:unpdf@^2", { unpdf: "1.8.1" }), {
+      kind: "missing",
+      name: "unpdf",
+      reason: "the import asks for unpdf@^2 but package.json declares unpdf@1.8.1",
+    });
+    assertEquals(classify("npm:unpdf@^1", { unpdf: "1.8.1" }), {
+      kind: "cdn",
+      name: "unpdf",
+      version: "1.8.1",
+      subpath: ".",
+    });
+  });
+
+  it("refuses an import range it cannot check against the declared version", () => {
+    assertEquals(classify("npm:unpdf@latest", { unpdf: "1.8.1" }), {
+      kind: "missing",
+      name: "unpdf",
+      reason: "the import asks for unpdf@latest, a range that cannot be checked against the " +
+        "declared unpdf@1.8.1 -- import the declared version instead",
     });
   });
 });
