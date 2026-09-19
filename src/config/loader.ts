@@ -1116,9 +1116,10 @@ function buildHostedConfigSourceReadKey(
  * Capture the preview source snapshot without bypassing source-read admission.
  * The first probe can initialize a cold per-project filesystem adapter, which
  * is the same filesystem work the admission budget bounds for reads.
- * Concurrent requests for one project share one admitted warm-up probe. Each
- * request then takes its own observation, because adapter selection can
- * differ per credential.
+ * Concurrent requests for one project and credential share one admitted
+ * warm-up probe, because the filesystem selects a concrete adapter per
+ * credential. The key carries only a digest of that credential. Each request
+ * then takes its own, now warm, observation.
  */
 async function captureAdmittedHostedConfigSourceSnapshot(
   effectiveCacheKey: string,
@@ -1128,10 +1129,15 @@ async function captureAdmittedHostedConfigSourceSnapshot(
   signal: AbortSignal | undefined,
 ): Promise<HostedConfigSourceSnapshot | undefined> {
   if (!canCaptureHostedConfigSourceSnapshot(adapter)) return undefined;
+  const token = currentRequestContext()?.token;
+  const credentialIdentity = typeof token === "string" && token !== ""
+    ? `credential:${await computeHash(token)}`
+    : "credential:none";
+  throwIfHostedConfigAborted(signal);
   const warmupFlight = getOrCreateHostedConfigSourceReadFlight(
-    `hosted-config-preview-source-probe-v1:${
+    `hosted-config-preview-source-probe-v2:${
       buildHostedConfigSourceIdentity(effectiveCacheKey, configBaseDir, adapter, revisionAtStart)
-    }`,
+    }${frameConfigIdentityString(credentialIdentity)}`,
     async () => {
       await captureHostedConfigSourceSnapshot(adapter);
       return null;
