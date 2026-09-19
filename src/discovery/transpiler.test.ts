@@ -1,9 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
+  authorizeProjectDependencySourceUrl,
   clearTranspileCache,
+  createProjectDependencyCdnPlugin,
+  createProjectDependencySourceFetcher,
   describeUnresolvableNpmImport,
   discoveryPathForDisplay,
   esmCdnModuleSpecifier,
@@ -12,7 +15,7 @@ import {
   readDependencyPins,
 } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
-import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { type PluginBuild, stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
@@ -85,6 +88,41 @@ function createMockAdapter(
       return null as never;
     },
   } satisfies FileSystemAdapter;
+}
+
+type ResolveCallback = Parameters<PluginBuild["onResolve"]>[1];
+type ResolveArgs = Parameters<ResolveCallback>[0];
+
+/**
+ * The `onResolve` callbacks a plugin registers, by namespace, captured through
+ * a fake build so each resolver decision can be asserted without a bundle.
+ */
+function captureResolvers(
+  plugin: { setup(build: PluginBuild): void | Promise<void> },
+): { httpUrl: ResolveCallback; bare: ResolveCallback } {
+  const resolvers: Array<{ namespace?: string; callback: ResolveCallback }> = [];
+  const build = {
+    onResolve(options: { filter: RegExp; namespace?: string }, callback: ResolveCallback) {
+      resolvers.push({ namespace: options.namespace, callback });
+    },
+    onLoad() {},
+  } as unknown as PluginBuild;
+  plugin.setup(build);
+  const httpUrl = resolvers.find((resolver) => resolver.namespace === "http-url");
+  const bare = resolvers.find((resolver) => resolver.namespace === undefined);
+  assert(httpUrl && bare, "the plugin must register both resolvers");
+  return { httpUrl: httpUrl.callback, bare: bare.callback };
+}
+
+function resolveArgs(overrides: Partial<ResolveArgs>): ResolveArgs {
+  return {
+    path: "",
+    importer: "",
+    namespace: "file",
+    resolveDir: "/project",
+    kind: "import-statement",
+    ...overrides,
+  };
 }
 
 describe("embedding module static import", () => {
@@ -553,6 +591,271 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
 
     it("ignores unrelated import failures", () => {
       assertEquals(describeUnresolvableNpmImport(new Error("boom")), null);
+    });
+  });
+
+  describe("createProjectDependencyCdnPlugin", () => {
+    const pins = { "@veryfront-fixture/pdf-text": "1.8.1" };
+
+    it("hands framework packages reached from CDN source back to the runtime", async () => {
+      const { httpUrl } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
+      const importer = "https://esm.sh/@veryfront-fixture/pdf-text@1.8.1";
+
+      assertEquals(
+        await httpUrl(resolveArgs({
+          path: "https://esm.sh/zod@3.25.76/es2022/zod.mjs",
+          importer,
+          namespace: "http-url",
+        })),
+        { path: "zod", external: true },
+      );
+      assertEquals(
+        await httpUrl(resolveArgs({
+          path: "/react@19.2.4/es2022/jsx-runtime.mjs",
+          importer,
+          namespace: "http-url",
+        })),
+        { path: "react/jsx-runtime", external: true },
+      );
+    });
+
+    it("leaves every other CDN import to the HTTP plugin", async () => {
+      const { httpUrl } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
+
+      assertEquals(
+        await httpUrl(resolveArgs({
+          path: "/@veryfront-fixture/helper@1.0.0/es2022/helper.mjs",
+          importer: "https://esm.sh/@veryfront-fixture/pdf-text@1.8.1",
+          namespace: "http-url",
+        })),
+        undefined,
+      );
+      assertEquals(
+        await httpUrl(resolveArgs({ path: "not a url", importer: "", namespace: "http-url" })),
+        undefined,
+      );
+    });
+
+    it("redirects a declared package to its pinned CDN source", async () => {
+      const { bare } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
+
+      assertEquals(
+        await bare(resolveArgs({ path: "@veryfront-fixture/pdf-text" })),
+        { path: "https://esm.sh/@veryfront-fixture/pdf-text@1.8.1", namespace: "http-url" },
+      );
+      assertEquals(
+        await bare(resolveArgs({ path: "npm:@veryfront-fixture/pdf-text@1.8.1/dist/core" })),
+        {
+          path: "https://esm.sh/@veryfront-fixture/pdf-text@1.8.1/dist/core",
+          namespace: "http-url",
+        },
+      );
+    });
+
+    it("pins bare Node builtins and leaves framework packages to the runtime", async () => {
+      const { bare } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
+
+      assertEquals(await bare(resolveArgs({ path: "crypto" })), {
+        path: "node:crypto",
+        external: true,
+      });
+      assertEquals(await bare(resolveArgs({ path: "zod" })), undefined);
+      assertEquals(
+        await bare(resolveArgs({ path: "@veryfront-fixture/pdf-text", namespace: "http-url" })),
+        undefined,
+      );
+    });
+
+    it("fails a static import nothing can serve and defers a dynamic one", async () => {
+      const missing: Array<{ specifier: string; reason: string }> = [];
+      const { bare } = captureResolvers(
+        createProjectDependencyCdnPlugin({}, (specifier, reason) => {
+          missing.push({ specifier, reason });
+        }),
+      );
+      const reason = "this runtime does not carry @veryfront-fixture/absent and the project " +
+        "declares no dependency on it";
+
+      assertEquals(
+        await bare(resolveArgs({ path: "@veryfront-fixture/absent", kind: "dynamic-import" })),
+        undefined,
+      );
+      assertEquals(missing, []);
+
+      assertEquals(await bare(resolveArgs({ path: "@veryfront-fixture/absent" })), {
+        errors: [{ text: `Cannot resolve "@veryfront-fixture/absent": ${reason}` }],
+      });
+      assertEquals(missing, [{ specifier: "@veryfront-fixture/absent", reason }]);
+    });
+  });
+
+  describe("authorizeProjectDependencySourceUrl", () => {
+    it("admits only the pinned CDN origin", () => {
+      authorizeProjectDependencySourceUrl(new URL("https://esm.sh/unpdf@1.8.1"));
+      assertThrows(
+        () => authorizeProjectDependencySourceUrl(new URL("https://attacker.example.com/x.js")),
+        TypeError,
+        "blocked by allow-list",
+      );
+      assertThrows(
+        () => authorizeProjectDependencySourceUrl(new URL("http://169.254.169.254/latest/")),
+        TypeError,
+        "blocked by allow-list",
+      );
+    });
+  });
+
+  describe("createProjectDependencySourceFetcher", () => {
+    const javascript = { "content-type": "application/javascript" };
+
+    it("serves a pinned source from the process cache after its first fetch", async () => {
+      const requested: string[] = [];
+      const fetchSource = createProjectDependencySourceFetcher((input) => {
+        requested.push(String(input));
+        return Promise.resolve(new Response("export const a = 1;", { headers: javascript }));
+      });
+
+      const first = await fetchSource("https://esm.sh/pkg-a@1.0.0");
+      const second = await fetchSource(new URL("https://esm.sh/pkg-a@1.0.0"));
+
+      assertEquals(await first.text(), "export const a = 1;");
+      assertEquals(await second.text(), "export const a = 1;");
+      assertEquals(second.headers.get("content-type"), "application/javascript");
+      assertEquals(requested, ["https://esm.sh/pkg-a@1.0.0"]);
+    });
+
+    it("never caches a failed or HTML response", async () => {
+      const responses = [
+        new Response("Not Found", { status: 404 }),
+        new Response("<html>build failed</html>", { headers: { "content-type": "text/html" } }),
+        new Response("  <!doctype html>", { headers: javascript }),
+        // No content type at all: the source is served as JavaScript.
+        new Response(new TextEncoder().encode("export const ok = true;")),
+      ];
+      let calls = 0;
+      const fetchSource = createProjectDependencySourceFetcher(() =>
+        Promise.resolve(responses[calls++]!)
+      );
+      const url = "https://esm.sh/pkg-b@1.0.0";
+
+      const notFound = await fetchSource(url);
+      assertEquals(notFound.status, 404);
+      await notFound.body?.cancel();
+      assertEquals(await (await fetchSource(url)).text(), "<html>build failed</html>");
+      assertEquals(await (await fetchSource(url)).text(), "  <!doctype html>");
+      const recovered = await fetchSource(url);
+      assertEquals(await recovered.text(), "export const ok = true;");
+      assertEquals(recovered.headers.get("content-type"), "application/javascript");
+      assertEquals(await (await fetchSource(url)).text(), "export const ok = true;");
+      assertEquals(calls, 4);
+    });
+
+    it("passes a Request through without caching it", async () => {
+      let calls = 0;
+      const fetchSource = createProjectDependencySourceFetcher(() => {
+        calls++;
+        return Promise.resolve(new Response("export {}", { headers: javascript }));
+      });
+      const request = () => new Request("https://esm.sh/pkg-c@1.0.0");
+
+      await (await fetchSource(request())).text();
+      await (await fetchSource(request())).text();
+
+      assertEquals(calls, 2);
+    });
+
+    it("evicts the oldest source once the cache is full", async () => {
+      const requested: string[] = [];
+      const fetchSource = createProjectDependencySourceFetcher((input) => {
+        requested.push(String(input));
+        return Promise.resolve(new Response("export {}", { headers: javascript }));
+      });
+      const url = (index: number) => `https://esm.sh/pkg-${index}@1.0.0`;
+
+      for (let index = 0; index <= 256; index++) await (await fetchSource(url(index))).text();
+      requested.length = 0;
+
+      await (await fetchSource(url(256))).text();
+      assertEquals(requested, [], "the newest source must still be cached");
+      await (await fetchSource(url(0))).text();
+      assertEquals(requested, [url(0)], "the oldest source must have been evicted");
+    });
+  });
+
+  describe("importModule on a compiled runtime", () => {
+    // esbuild resolves bare specifiers against a real directory, so these
+    // fixtures live under an existing repo path the way a deployed project's
+    // files do. None of them declares a pin, so no CDN fetch is ever wired up
+    // and nothing can leave the process.
+    const projectDir = Deno.cwd();
+    const toolPath = "src/discovery/__fixtures__/compiled-runtime-tool.ts";
+
+    function compiledContext(files: Record<string, string>): FileDiscoveryContext {
+      return {
+        platform: "node",
+        fsAdapter: createMockAdapter(files, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+    }
+
+    it("treats a project without a package.json as declaring no dependencies", async () => {
+      const mod = await importModule(
+        `file://${projectDir}/${toolPath}`,
+        compiledContext({ [toolPath]: `export default { name: "no-manifest" };` }),
+      ) as { default: { name: string } };
+
+      assertEquals(mod.default.name, "no-manifest");
+    });
+
+    it("keeps bare Node builtins external instead of failing the file", async () => {
+      const mod = await importModule(
+        `file://${projectDir}/${toolPath}`,
+        compiledContext({
+          "package.json": JSON.stringify({ dependencies: {} }),
+          [toolPath]: [
+            `import { createHash } from "crypto";`,
+            `export default { name: "uses-builtins", ok: typeof createHash === "function" };`,
+          ].join("\n"),
+        }),
+      ) as { default: { ok: boolean } };
+
+      assertEquals(mod.default.ok, true);
+    });
+
+    it("classifies a static import nothing can serve without the machine path", async () => {
+      const error = await assertRejects(
+        () =>
+          importModule(
+            `file://${projectDir}/${toolPath}`,
+            compiledContext({
+              "package.json": JSON.stringify({ dependencies: {} }),
+              [toolPath]: [
+                `import { extractText } from "@veryfront-fixture/never-declared";`,
+                `export default { name: "extract", text: extractText() };`,
+              ].join("\n"),
+            }),
+          ),
+        Error,
+        "@veryfront-fixture/never-declared",
+      );
+      const message = error instanceof Error ? error.message : String(error);
+      assertEquals((error as { slug?: string }).slug, "dependency-missing");
+      assert(message.includes(toolPath), `the detail must name the file, got ${message}`);
+      assert(!message.includes(projectDir), "the detail must not disclose the project path");
+    });
+
+    it("classifies a syntax error in project code", async () => {
+      const error = await assertRejects(
+        () =>
+          importModule(
+            `file://${projectDir}/${toolPath}`,
+            compiledContext({ [toolPath]: `export default { name: "broken", ` }),
+          ),
+        Error,
+        "Failed to transpile",
+      );
+      assertEquals((error as { slug?: string }).slug, "compilation-error");
     });
   });
 

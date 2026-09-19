@@ -35,6 +35,7 @@
 
 import { dirname, fromFileUrl, join } from "#std/path.ts";
 import { parseLock, parseNameVersion } from "../lib/deno-lock.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const scriptDir = dirname(fromFileUrl(import.meta.url));
 const projectRoot = join(scriptDir, "..", "..");
@@ -59,12 +60,12 @@ export function collectEmbeddedNpmPackages(lockText: string): Record<string, str
     if (!versions.includes(parsed.version)) versions.push(parsed.version);
   }
   // Sorted only so an unrelated lock reshuffle cannot churn the diff.
-  for (const versions of Object.values(byName)) versions.sort();
+  for (const versions of Object.values(byName)) versions.sort(compareStrings);
   return byName;
 }
 
 function renderEntries(byName: Record<string, string[]>): string {
-  return Object.keys(byName).sort().map((name) => {
+  return Object.keys(byName).sort(compareStrings).map((name) => {
     const versions = byName[name]!.map((version) => JSON.stringify(version)).join(", ");
     return `  ${JSON.stringify(name)}: [${versions}],`;
   }).join("\n");

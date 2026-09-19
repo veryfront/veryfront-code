@@ -345,4 +345,48 @@ describe("classifyProjectNpmImport", () => {
       subpath: ".",
     });
   });
+
+  it("leaves a specifier that names no npm package to the runtime", () => {
+    assertEquals(classify("https://example.com/mod.ts", { unpdf: "1.8.1" }), { kind: "runtime" });
+    assertEquals(classify("@scope-only"), { kind: "runtime" });
+  });
+
+  it("reads Deno's npm:/ form as the package it names", () => {
+    assertEquals(classify("npm:/unpdf@1.8.1", { unpdf: "1.8.1" }), {
+      kind: "cdn",
+      name: "unpdf",
+      version: "1.8.1",
+      subpath: ".",
+    });
+  });
+
+  it("reports an exact import version nothing can serve", () => {
+    // Undeclared: the version in the specifier is the only coordinate, and
+    // fetching an undeclared package is never done.
+    const undeclared = classify("npm:unpdf@1.8.1");
+    assertEquals(undeclared, {
+      kind: "missing",
+      name: "unpdf",
+      reason: "this runtime does not carry unpdf@1.8.1 and the project declares no " +
+        "dependency on unpdf",
+    });
+
+    // Declared, but with a range that names no single version to fetch.
+    const unresolvable = classify("npm:unpdf@1.8.1", { unpdf: "*" });
+    assertEquals(unresolvable, {
+      kind: "missing",
+      name: "unpdf",
+      reason: 'this runtime does not carry unpdf@1.8.1 and package.json declares "*", ' +
+        "which names no single version to fetch -- declare an exact version",
+    });
+  });
+
+  it("reports an undeclared import that carries a version range", () => {
+    assertEquals(classify("npm:unpdf@^1.8.0"), {
+      kind: "missing",
+      name: "unpdf",
+      reason: "this runtime does not carry unpdf and the project declares no dependency on it, " +
+        'so the version range "^1.8.0" in the import cannot be resolved',
+    });
+  });
 });

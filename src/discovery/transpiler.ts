@@ -259,7 +259,7 @@ const ESM_CDN_ORIGIN = new URL(ESM_CDN_BASE).origin;
 const ESM_CDN_BUILD_TARGET = /^(?:es(?:next|\d{4})|denonext|deno|node|bun|browser)$/;
 
 /** The extension esm.sh gives a built module file. */
-const ESM_CDN_MODULE_EXTENSION = /\.(?:m|c)?js$/;
+const ESM_CDN_MODULE_EXTENSION = /\.[mc]?js$/;
 
 /**
  * The package, and the package subpath, an esm.sh module path addresses.
@@ -336,47 +336,71 @@ function cacheableSourceKey(input: RequestInfo | URL): string | null {
 }
 
 /**
- * Project dependency sources are fetched through the host egress ceiling and
- * only from the pinned ESM CDN: a project supplies the package name and the
- * version it declared, never the host.
+ * The allow-list a project dependency source URL must pass before any request
+ * leaves: a project supplies the package name and the version it declared,
+ * never the host.
  *
  * @internal Exported for testing only.
  */
-export async function fetchProjectDependencySource(
+export function authorizeProjectDependencySourceUrl(url: URL): void {
+  if (url.origin !== ESM_CDN_ORIGIN) {
+    throw new TypeError(`Project dependency source blocked by allow-list: ${url.origin}`);
+  }
+}
+
+/** Sends one project dependency source request. */
+type DependencySourceTransport = (
   input: RequestInfo | URL,
   init?: RequestInit,
-): Promise<Response> {
-  const key = cacheableSourceKey(input);
-  const cached = key ? dependencySourceCache.get(key) : undefined;
-  if (cached) {
-    return new Response(cached.body, { headers: { "content-type": cached.contentType } });
-  }
+) => Promise<Response>;
 
-  const response = await guardedOutboundFetch(input, init, {
-    authorizeUrl: (url) => {
-      if (url.origin !== ESM_CDN_ORIGIN) {
-        throw new TypeError(`Project dependency source blocked by allow-list: ${url.origin}`);
-      }
-    },
-  });
-  if (!key || !response.ok) return response;
-
-  // Read through the same bounded reader the bundler plugin uses, so caching
-  // never buffers more of a CDN response than the plugin would have accepted.
-  const contentType = response.headers.get("content-type") ?? "application/javascript";
-  const body = await readHttpModuleText(response, MAX_BUNDLE_CHUNK_SIZE_BYTES);
-  // An esm.sh build failure is served as HTML with a 200; caching it would
-  // pin that failure for the life of the process.
-  const isHtml = contentType.includes("text/html") || body.trimStart().startsWith("<");
-  if (!isHtml) {
-    if (dependencySourceCache.size >= MAX_CACHED_DEPENDENCY_SOURCES) {
-      const oldest = dependencySourceCache.keys().next();
-      if (!oldest.done) dependencySourceCache.delete(oldest.value);
+/**
+ * A dependency source fetcher over `transport` that serves each pinned URL
+ * from the process-wide source cache after its first successful fetch.
+ *
+ * @internal Exported for testing only.
+ */
+export function createProjectDependencySourceFetcher(
+  transport: DependencySourceTransport,
+): DependencySourceTransport {
+  return async (input, init) => {
+    const key = cacheableSourceKey(input);
+    const cached = key ? dependencySourceCache.get(key) : undefined;
+    if (cached) {
+      return new Response(cached.body, { headers: { "content-type": cached.contentType } });
     }
-    dependencySourceCache.set(key, { body, contentType });
-  }
-  return new Response(body, { headers: { "content-type": contentType } });
+
+    const response = await transport(input, init);
+    if (!key || !response.ok) return response;
+
+    // Read through the same bounded reader the bundler plugin uses, so caching
+    // never buffers more of a CDN response than the plugin would have accepted.
+    const contentType = response.headers.get("content-type") ?? "application/javascript";
+    const body = await readHttpModuleText(response, MAX_BUNDLE_CHUNK_SIZE_BYTES);
+    // An esm.sh build failure is served as HTML with a 200; caching it would
+    // pin that failure for the life of the process.
+    const isHtml = contentType.includes("text/html") || body.trimStart().startsWith("<");
+    if (!isHtml) {
+      if (dependencySourceCache.size >= MAX_CACHED_DEPENDENCY_SOURCES) {
+        const oldest = dependencySourceCache.keys().next();
+        if (!oldest.done) dependencySourceCache.delete(oldest.value);
+      }
+      dependencySourceCache.set(key, { body, contentType });
+    }
+    return new Response(body, { headers: { "content-type": contentType } });
+  };
 }
+
+/**
+ * Project dependency sources are fetched through the host egress ceiling and
+ * only from the pinned ESM CDN (see {@link authorizeProjectDependencySourceUrl}).
+ *
+ * @internal Exported for testing only.
+ */
+export const fetchProjectDependencySource: DependencySourceTransport =
+  createProjectDependencySourceFetcher((input, init) =>
+    guardedOutboundFetch(input, init, { authorizeUrl: authorizeProjectDependencySourceUrl })
+  );
 
 /**
  * Resolve a project's npm imports the way a compiled runtime can serve them.
@@ -394,8 +418,10 @@ export async function fetchProjectDependencySource(
  * esbuild calls this for a deferred `import()` inside a handler body exactly
  * as it does for a top-level one, which is what makes the production failure
  * reachable from here: an inlined dynamic import stays lazy in the output.
+ *
+ * @internal Exported for testing only.
  */
-function createProjectDependencyCdnPlugin(
+export function createProjectDependencyCdnPlugin(
   pins: Record<string, string>,
   onMissing: (specifier: string, reason: string) => void,
 ): Plugin {
@@ -509,7 +535,8 @@ function describeBundleFailure(failure: unknown): string {
  * @internal Exported for testing only.
  */
 export function discoveryPathForDisplay(filePath: string, baseDir?: string): string {
-  const root = (baseDir ?? "").replace(/\/+$/, "");
+  let root = baseDir ?? "";
+  while (root.endsWith("/")) root = root.slice(0, -1);
   if (root.length > 0 && filePath.startsWith(`${root}/`)) {
     return filePath.slice(root.length + 1);
   }
