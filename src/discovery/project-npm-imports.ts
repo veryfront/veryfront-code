@@ -364,7 +364,8 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
   const bound = boundAfterOperator(trimmed, operator);
   const wanted = { core: coreOf(version), pre: prereleaseOf(version) };
-  if (operator === undefined && (bound === "*" || bound === "x" || bound === "X")) {
+  // `*`, `x`, and their repeated forms (`*.*`, `x.x.x`) are all "any release".
+  if (operator === undefined && /^[xX*](?:\.[xX*])*$/.test(bound)) {
     return wanted.pre === null;
   }
   const parts = boundParts(bound);
@@ -671,13 +672,35 @@ function isSemverRange(text: string): boolean {
 }
 
 /**
+ * An exact version as user-facing detail may show it: its `major.minor.patch`
+ * core, then the KIND of any pre-release or build part. Both parts are
+ * free-form text under semver, so `1.0.0-<TOKEN>` is as unsafe to echo as a
+ * dist-tag, while the core is what makes the message actionable.
+ */
+function describeVersion(version: string): string {
+  if (!EXACT_VERSION.test(version)) return version;
+  const core = version.split(/[-+]/, 1)[0]!;
+  if (version.includes("-")) return `${core} (pre-release)`;
+  if (version.includes("+")) return `${core} (build metadata)`;
+  return core;
+}
+
+/** Every exact version inside a range text, described rather than echoed. */
+function describeRangeText(range: string): string {
+  return range.replace(
+    /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g,
+    (version) => describeVersion(version),
+  );
+}
+
+/**
  * A declaration as user-facing detail may show it. Only a semver range is
  * quoted verbatim; a dist-tag, `git+https://<TOKEN>@host/repo.git`, a `file:`
  * path, a `user/repo` shorthand or prose can carry credentials or a machine
  * path, so only its kind is named.
  */
 function describeDeclaration(declared: string): string {
-  if (isSemverRange(declared)) return `"${declared}"`;
+  if (isSemverRange(declared)) return `"${describeRangeText(declared)}"`;
   if (DIST_TAG.test(declared.trim())) return "a dist-tag";
   const scheme = URL_SCHEME.exec(declared)?.[0];
   return scheme === undefined ? "a non-registry source" : `a "${scheme}" source`;
@@ -727,11 +750,10 @@ export function describeNpmImport(specifier: string): string {
   if (version !== null && !isPlainImportVersion(version)) {
     return `${name} (with ${describeVersionKind(version)})`;
   }
-  const shownVersion = version === null ? "" : `@${version}`;
-  const shownSubpath = subpath !== "." && PLAIN_SUBPATH.test(subpath) &&
-      isContainedSubpath(subpath)
-    ? subpath.slice(1)
-    : "";
+  const shownVersion = version === null ? "" : `@${describeVersion(version)}`;
+  // A subpath segment is free-form project text, so its presence is shown but
+  // not its content.
+  const shownSubpath = subpath === "." ? "" : "/...";
   return `${name}${shownVersion}${shownSubpath}`;
 }
 
@@ -756,9 +778,9 @@ function classifyExactImport(
     return {
       kind: "missing",
       name,
-      reason: `the import asks for ${name}@${requested} and package.json declares ` +
-        `${describeDeclaration(declared)}, which it cannot be checked against -- declare an ` +
-        `exact version`,
+      reason: `the import asks for ${name}@${describeVersion(requested)} and package.json ` +
+        `declares ${describeDeclaration(declared)}, which it cannot be checked against -- ` +
+        `declare an exact version`,
     };
   }
   // A version in the specifier that the declaration excludes must not be
@@ -769,8 +791,8 @@ function classifyExactImport(
     return {
       kind: "missing",
       name,
-      reason: `the import asks for ${name}@${requested} but package.json declares ` +
-        `${name}@${declared}`,
+      reason: `the import asks for ${name}@${describeVersion(requested)} but package.json ` +
+        `declares ${name}@${describeRangeText(declared!)}`,
     };
   }
   const inBinary = embeddedImport(embedded, name, requested, subpath);
@@ -782,19 +804,19 @@ function classifyExactImport(
   return {
     kind: "missing",
     name,
-    reason: `this runtime does not carry ${name}@${requested} and the project declares no ` +
-      `dependency on ${name}`,
+    reason: `this runtime does not carry ${name}@${describeVersion(requested)} and the ` +
+      `project declares no dependency on ${name}`,
   };
 }
 
 function describeImportedVersion(name: string, version: string): string {
   return isPlainImportVersion(version)
-    ? `${name}@${version}`
+    ? `${name}@${describeRangeText(version)}`
     : `${name} at ${describeVersionKind(version)}`;
 }
 
 function describeImportedRange(version: string): string {
-  return isPlainImportVersion(version) ? `"${version}"` : "it names";
+  return isPlainImportVersion(version) ? `"${describeRangeText(version)}"` : "it names";
 }
 
 /** An import that names no version, or names a range. */
@@ -811,10 +833,11 @@ function classifyUnversionedImport(
         kind: "missing",
         name,
         reason: admitted === false
-          ? `the import asks for ${name}@${version} but package.json declares ` +
-            `${name}@${declared}`
+          ? `the import asks for ${name}@${describeRangeText(version!)} but package.json ` +
+            `declares ${name}@${describeRangeText(declared!)}`
           : `the import asks for ${describeImportedVersion(name, version!)}, a range that ` +
-            `cannot be checked against the declared ${name}@${declared} -- import the ` +
+            `cannot be checked against the declared ${name}@${describeRangeText(declared!)} -- ` +
+            `import the ` +
             `declared version instead`,
       };
     }

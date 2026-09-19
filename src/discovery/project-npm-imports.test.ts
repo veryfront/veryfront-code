@@ -106,6 +106,14 @@ describe("exactVersionNamedByRange", () => {
     assertEquals(exactVersionNamedByRange(" ^1.8.1-rc.1 "), "1.8.1-rc.1");
   });
 
+  it("admits any release under an all-wildcard range", () => {
+    for (const range of ["*", "x", "X", "*.*", "x.x", "*.*.*", "x.x.x", "1.*.*"]) {
+      assertEquals(rangeAdmitsVersion(range, "2.9.0"), range.startsWith("1") ? false : true, range);
+    }
+    // A wildcard range still admits no pre-release, as npm does.
+    assertEquals(rangeAdmitsVersion("*.*", "2.9.0-rc.1"), false);
+  });
+
   it("reads a v-prefixed version after an operator, as npm does", () => {
     assertEquals(exactVersionNamedByRange("^v1.8.1"), "1.8.1");
     assertEquals(exactVersionNamedByRange(">= v1.8.1"), "1.8.1");
@@ -642,6 +650,25 @@ describe("classifyProjectNpmImport", () => {
     }
   });
 
+  it("never echoes pre-release, build or subpath text that can carry a token", () => {
+    // Valid semver, but everything after the core is arbitrary text.
+    const mismatch = classify("npm:unpdf@1.0.0-SECRETTOKEN", { unpdf: "2.0.0+BUILDSECRET" });
+    const reason = mismatch.kind === "missing" ? mismatch.reason : "";
+    assertEquals(reason.includes("SECRETTOKEN"), false, reason);
+    assertEquals(reason.includes("BUILDSECRET"), false, reason);
+    assertEquals(
+      reason,
+      "the import asks for unpdf@1.0.0 (pre-release) but package.json declares " +
+        "unpdf@2.0.0 (build metadata)",
+    );
+    assertEquals(
+      describeNpmImport("npm:pkg@1.0.0-SECRETTOKEN"),
+      "pkg@1.0.0 (pre-release)",
+    );
+    assertEquals(describeNpmImport("pkg/ghp_EXAMPLETOKEN0123456789"), "pkg/...");
+    assertEquals(describeNpmImport("npm:pkg@1.0.0/sub/deep"), "pkg@1.0.0/...");
+  });
+
   it("names a dist-tag by its kind, since a one-token credential looks the same", () => {
     for (const declared of ["latest", "next", "ghp_EXAMPLETOKEN0123456789"]) {
       const decision = classify("npm:unpdf@1.8.1", { unpdf: declared });
@@ -706,7 +733,8 @@ describe("classifyProjectNpmImport", () => {
 describe("describeNpmImport", () => {
   it("names an import by its package, version and subpath", () => {
     assertEquals(describeNpmImport("unpdf"), "unpdf");
-    assertEquals(describeNpmImport("npm:unpdf@1.8.1/dist/core"), "unpdf@1.8.1/dist/core");
+    // A subpath's presence is shown, never its free-form segments.
+    assertEquals(describeNpmImport("npm:unpdf@1.8.1/dist/core"), "unpdf@1.8.1/...");
     assertEquals(describeNpmImport("@scope/pkg@^2"), "@scope/pkg@^2");
   });
 
@@ -719,9 +747,9 @@ describe("describeNpmImport", () => {
       describeNpmImport("npm:pkg@user:<TOKEN>@host"),
       "pkg (with a non-registry version)",
     );
-    assertEquals(describeNpmImport("pkg/x@<TOKEN>"), "pkg");
-    assertEquals(describeNpmImport("unpdf/../x"), "unpdf");
-    assertEquals(describeNpmImport("pkg/user:<TOKEN>/x"), "pkg");
+    assertEquals(describeNpmImport("pkg/x@<TOKEN>"), "pkg/...");
+    assertEquals(describeNpmImport("unpdf/../x"), "unpdf/...");
+    assertEquals(describeNpmImport("pkg/user:<TOKEN>/x"), "pkg/...");
   });
 });
 

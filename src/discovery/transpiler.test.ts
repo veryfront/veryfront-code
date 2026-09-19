@@ -918,7 +918,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
 
       assert(result && typeof result === "object" && "errors" in result);
       assert(!JSON.stringify(result).includes("esm.sh"), "no CDN URL may be built");
-      assertEquals(missing, ["unpdf"]);
+      assertEquals(missing, ["unpdf/..."]);
     });
 
     it("pins bare Node builtins and leaves framework packages to the runtime", async () => {
