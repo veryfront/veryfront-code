@@ -23,8 +23,11 @@
  * 4. A declaration the runtime does NOT carry is inlined from the version that
  *    declaration names, at bundle time -- the only moment the package can
  *    still be materialised.
- * 5. With no usable declaration, a package the runtime carries under any
- *    version stays external. This is what an uncompiled run has always done.
+ * 5. With no usable declaration, a package stays external only under an
+ *    import constraint the runtime recorded and that both the declaration (if
+ *    any) and the import's own range (if any) admit. It is re-emitted under
+ *    that constraint: a compiled binary resolves `npm:` imports by constraint,
+ *    so an unconstrained `npm:<name>` fails even when the package is carried.
  * 6. Anything left fails as a classified DEPENDENCY_MISSING naming the
  *    package, instead of Deno's raw constraint text.
  */
@@ -166,22 +169,16 @@ const RANGE_OPERATORS = ["<=", ">=", "~>", "^", "~", "=", "v", "<", ">"] as cons
 /**
  * The operators whose range does NOT let the version they mention be served.
  *
- * `^1.8.1`, `~1.8.1`, `~>1.8.1`, `>=1.8.1`, `=1.8.1`, `v1.8.1` and a bare
- * `1.8.1` all ADMIT 1.8.1, so fetching it serves a version the project both
- * wrote down and accepts. The three here do not:
+ * `^1.8.1`, `~1.8.1`, `~>1.8.1`, `>=1.8.1`, `<=1.8.1`, `=1.8.1`, `v1.8.1` and
+ * a bare `1.8.1` all ADMIT 1.8.1, so fetching it serves a version the project
+ * both wrote down and accepts. `<=` is among them: refusing it would turn a
+ * valid, satisfiable entry into a hard failure.
  *
- * - `>1.8.1` and `<1.8.1` exclude 1.8.1 outright. Stripping the operator and
- *   fetching it served the one version the declaration had ruled out.
- * - `<=1.8.1` admits 1.8.1 but names it as a ceiling rather than as the
- *   version the project installed, so it is not this module's to pick either.
- *
- * All three route to the caller's conservative branch instead, exactly as an
- * unresolvable range such as `1.x` does.
+ * The two here do not: `>1.8.1` and `<1.8.1` exclude 1.8.1 outright, and
+ * stripping the operator fetched the one version the declaration had ruled
+ * out. Both route to the caller's conservative branch instead, exactly as an
+ * unresolvable range such as `>=1 <2` does.
  */
-// `<` and `>` mention a version and exclude it, so reducing to it would fetch
-// the one version the project ruled out. `<=` is NOT in this set: it admits the
-// version it names, so serving that version is within the declaration -- and
-// refusing it would turn a valid, satisfiable entry into a hard failure.
 const OPERATORS_NAMING_NO_FETCHABLE_VERSION: ReadonlySet<string> = new Set(["<", ">"]);
 
 /** Anything carrying its own URL scheme (`https:`, `jsr:`, `data:`, ...). */
@@ -404,22 +401,15 @@ export function parseNpmSpecifier(specifier: string): ParsedNpmSpecifier | null 
     rest = rest.slice(slash + 1);
   }
 
-  // `rest` is now `name[@version][/subpath]` with the scope stripped off.
-  let name: string;
-  let version: string | null = null;
-  let tail: string;
-  const at = rest.indexOf("@");
-  if (at > 0) {
-    name = scope + rest.slice(0, at);
-    const afterAt = rest.slice(at + 1);
-    const slash = afterAt.indexOf("/");
-    version = (slash < 0 ? afterAt : afterAt.slice(0, slash)) || null;
-    tail = slash < 0 ? "" : afterAt.slice(slash + 1);
-  } else {
-    const slash = rest.indexOf("/");
-    name = scope + (slash < 0 ? rest : rest.slice(0, slash));
-    tail = slash < 0 ? "" : rest.slice(slash + 1);
-  }
+  // `rest` is now `name[@version][/subpath]` with the scope stripped off. A
+  // version belongs to the package-name segment only: `pkg/foo@bar` is the
+  // subpath `./foo@bar` of `pkg`, not `pkg/foo` at version `bar`.
+  const slash = rest.indexOf("/");
+  const head = slash < 0 ? rest : rest.slice(0, slash);
+  const tail = slash < 0 ? "" : rest.slice(slash + 1);
+  const at = head.indexOf("@");
+  const name = scope + (at > 0 ? head.slice(0, at) : head);
+  const version = at > 0 ? head.slice(at + 1) || null : null;
 
   if (!NPM_PACKAGE_NAME.test(name)) return null;
   return { name, version, subpath: tail ? `./${tail}` : "." };
@@ -490,9 +480,53 @@ function ownEntry(
   return Object.hasOwn(table, name) ? table[name] : undefined;
 }
 
-/** Does the binary carry this package under any version at all? */
-function carriesPackage(embedded: EmbeddedNpmSet, name: string): boolean {
-  return ownEntry(embedded.packages, name) !== undefined;
+function runtimeImport(name: string, constraint: string, subpath: string): ProjectNpmImport {
+  const tail = subpath === "." ? "" : subpath.slice(1);
+  return { kind: "runtime", specifier: `npm:${name}@${constraint}${tail}` };
+}
+
+/**
+ * Does a recorded constraint satisfy a requirement (a declaration or the
+ * import's own range)? An exact recorded version is checked against the
+ * requirement; a recorded range (`*`, `^2.4.0`) resolves to a version this
+ * module cannot see, so it satisfies only the identical range.
+ */
+function constraintSatisfies(constraint: string, requirement: string | undefined | null): boolean {
+  if (requirement === undefined || requirement === null) return true;
+  if (EXACT_VERSION.test(constraint)) return rangeAdmitsVersion(requirement, constraint) === true;
+  return constraint === requirement.trim();
+}
+
+/**
+ * The recorded constraint to re-emit a pinless import under, or `null` when no
+ * recorded constraint satisfies both the declaration and the import's range.
+ * Prefers the constraint the import or declaration wrote verbatim, then the
+ * highest exact version.
+ */
+function compatibleEmbeddedConstraint(
+  embedded: EmbeddedNpmSet,
+  name: string,
+  declared: string | undefined,
+  importRange: string | null,
+): string | null {
+  const candidates = (ownEntry(embedded.constraints, name) ?? []).filter((constraint) =>
+    constraintSatisfies(constraint, declared) && constraintSatisfies(constraint, importRange)
+  );
+  if (candidates.length === 0) return null;
+  const written = [importRange, declared?.trim()].find((range) =>
+    range != null && candidates.includes(range)
+  );
+  if (written != null) return written;
+  const exact = candidates.filter((constraint) => EXACT_VERSION.test(constraint));
+  if (exact.length === 0) return candidates.includes("*") ? "*" : candidates[0]!;
+  return exact.reduce((best, candidate) =>
+    compareVersions(
+        { core: coreOf(candidate), pre: prereleaseOf(candidate) },
+        { core: coreOf(best), pre: prereleaseOf(best) },
+      ) > 0
+      ? candidate
+      : best
+  );
 }
 
 /**
@@ -508,8 +542,7 @@ function embeddedImport(
   subpath: string,
 ): ProjectNpmImport | null {
   if (!ownEntry(embedded.constraints, name)?.includes(version)) return null;
-  const tail = subpath === "." ? "" : subpath.slice(1);
-  return { kind: "runtime", specifier: `npm:${name}@${version}${tail}` };
+  return runtimeImport(name, version, subpath);
 }
 
 /**
@@ -543,6 +576,15 @@ export function classifyProjectNpmImport(
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
   if (isRuntimeProvidedImport(specifier, parsed.name)) return { kind: "runtime" };
+  if (!isContainedSubpath(parsed.subpath)) {
+    // The subpath is project text and may carry anything, so it is not echoed.
+    return {
+      kind: "missing",
+      name: parsed.name,
+      reason: `the import names a subpath of ${parsed.name} with an empty, \`.\` or ` +
+        `\`..\` segment, or an encoded or backslash separator`,
+    };
+  }
 
   const declared = Object.hasOwn(pins, parsed.name) ? pins[parsed.name] : undefined;
   const pin = declared === undefined ? null : exactVersionNamedByRange(declared);
@@ -581,6 +623,23 @@ function describeDeclaration(declared: string): string {
 /** A path segment of a package subpath: nothing that can carry `user:token@host`. */
 const PLAIN_SUBPATH = /^\.\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
 
+/** A percent-encoded `.`, `/` or `\`, which a URL normaliser may decode. */
+const ENCODED_PATH_CHARACTER = /%(?:2e|2f|5c)/i;
+
+/**
+ * Does this subpath stay inside its package once it is appended to a CDN
+ * coordinate? `unpdf/../../left-pad@1.3.0` becomes
+ * `https://esm.sh/unpdf@1.8.1/../../left-pad@1.3.0`, which normalises to
+ * `left-pad@1.3.0` -- a package nothing declared or checked.
+ */
+function isContainedSubpath(subpath: string): boolean {
+  if (subpath === ".") return true;
+  if (subpath.includes("\\") || ENCODED_PATH_CHARACTER.test(subpath)) return false;
+  return subpath.slice(2).split("/").every((segment) =>
+    segment.length > 0 && segment !== "." && segment !== ".."
+  );
+}
+
 /** A version written into an import, as user-facing detail may show it. */
 function isPlainImportVersion(version: string): boolean {
   return PLAIN_DECLARATION.test(version);
@@ -599,7 +658,10 @@ export function describeNpmImport(specifier: string): string {
     return `${name} (with a non-registry version)`;
   }
   const shownVersion = version === null ? "" : `@${version}`;
-  const shownSubpath = subpath !== "." && PLAIN_SUBPATH.test(subpath) ? subpath.slice(1) : "";
+  const shownSubpath = subpath !== "." && PLAIN_SUBPATH.test(subpath) &&
+      isContainedSubpath(subpath)
+    ? subpath.slice(1)
+    : "";
   return `${name}${shownVersion}${shownSubpath}`;
 }
 
@@ -691,9 +753,12 @@ function classifyUnversionedImport(
     return { kind: "cdn", name, version: pin, subpath };
   }
 
-  // No usable pin. A package the binary carries under any version keeps
-  // resolving from the binary, exactly as it did before #1440.
-  if (carriesPackage(embedded, name)) return { kind: "runtime" };
+  // No usable pin. The binary can still serve the import, but only under an
+  // import constraint it recorded and that both the declaration and the
+  // import's own range admit -- never an unconstrained `npm:<name>`, and never
+  // an embedded version the declaration rules out.
+  const recorded = compatibleEmbeddedConstraint(embedded, name, declared, version);
+  if (recorded !== null) return runtimeImport(name, recorded, subpath);
 
   if (declared !== undefined) {
     return {

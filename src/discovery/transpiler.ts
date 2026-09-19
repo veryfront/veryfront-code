@@ -416,7 +416,9 @@ export function createProjectDependencySourceFetcher(
     // pin that failure for the life of the process.
     const isHtml = contentType.includes("text/html") || body.trimStart().startsWith("<");
     const bytes = cachedSourceBytes(body);
-    if (!isHtml && bytes <= maxBytes) {
+    // A concurrent miss for the same URL may have filled the entry while this
+    // one was in flight; replacing it would count the same source twice.
+    if (!isHtml && bytes <= maxBytes && !dependencySourceCache.has(key)) {
       while (
         dependencySourceCache.size > 0 &&
         (dependencySourceCache.size >= MAX_CACHED_DEPENDENCY_SOURCES ||
@@ -646,7 +648,8 @@ interface DiscoveryPathNames {
   root: string;
 }
 
-function discoveryPathNames(filePath: string, baseDir?: string): DiscoveryPathNames {
+/** @internal Exported for testing only. */
+export function discoveryPathNames(filePath: string, baseDir?: string): DiscoveryPathNames {
   const root = withoutTrailingSlashes(baseDir ?? "");
   return {
     raw: filePath,
@@ -662,11 +665,32 @@ function discoveryPathNames(filePath: string, baseDir?: string): DiscoveryPathNa
  * `readTextFile '<absolute path>'`, esbuild's resolve diagnostics, the fsAdapter
  * plugin's importer directory -- which would put the machine layout back into
  * detail {@link discoveryPathForDisplay} just took out.
+ *
+ * @internal Exported for testing only.
  */
-function withDisplayPath(text: string, paths: DiscoveryPathNames): string {
+export function withDisplayPath(text: string, paths: DiscoveryPathNames): string {
   const shown = paths.raw === paths.display ? text : text.split(paths.raw).join(paths.display);
   if (paths.root.length === 0) return shown;
-  return shown.split(`${paths.root}/`).join("").split(paths.root).join(".");
+  return shown.replace(
+    projectRootMention(paths.root),
+    (_, separator: string | undefined) => separator === undefined ? "." : "",
+  );
+}
+
+/**
+ * The project root where it stands as a path of its own: not preceded by a
+ * path or host character, and followed by a separator (consumed, so what
+ * follows reads project-relative) or by something no path name continues
+ * with. Matched as a bare substring, `/app` rewrote
+ * `https://esm.sh/apple@1.0.0` to `https://esm.sh.le@1.0.0` -- which also hid
+ * the CDN from the dependency classification.
+ */
+function projectRootMention(root: string): RegExp {
+  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `(?<![A-Za-z0-9._~%@:/\\\\-])${escaped}(?:([/\\\\])|(?![A-Za-z0-9._~%-]))`,
+    "g",
+  );
 }
 
 /**

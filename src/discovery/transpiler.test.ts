@@ -9,10 +9,12 @@ import {
   createProjectDependencySourceFetcher,
   describeUnresolvableNpmImport,
   discoveryPathForDisplay,
+  discoveryPathNames,
   esmCdnModuleSpecifier,
   esmCdnPackageName,
   importModule as importModuleRaw,
   readDependencyPins,
+  withDisplayPath,
 } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { EMBEDDED_NPM_CONSTRAINTS } from "./embedded-npm-packages.generated.ts";
@@ -605,6 +607,33 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
     });
   });
 
+  describe("withDisplayPath", () => {
+    const paths = discoveryPathNames("/app/tools/extract.ts", "/app");
+
+    it("renders the project root relative only at a path boundary", () => {
+      assertEquals(
+        withDisplayPath('Could not resolve "./x" from "/app/tools" via fsAdapter', paths),
+        'Could not resolve "./x" from "tools" via fsAdapter',
+      );
+      assertEquals(withDisplayPath("read /app/tools/extract.ts", paths), "read tools/extract.ts");
+      assertEquals(withDisplayPath("cwd is /app", paths), "cwd is .");
+      assertEquals(withDisplayPath("(/app)", paths), "(.)");
+    });
+
+    it("leaves a host, URL or longer path that merely contains the root", () => {
+      for (
+        const text of [
+          "fetch https://esm.sh/apple@1.0.0 failed",
+          "see /application/tools",
+          "see /srv/app/tools",
+          "see /app-old/tools",
+        ]
+      ) {
+        assertEquals(withDisplayPath(text, paths), text);
+      }
+    });
+  });
+
   describe("describeUnresolvableNpmImport", () => {
     it("names the package a compiled binary could not resolve", () => {
       assertEquals(
@@ -761,6 +790,21 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("never builds a CDN URL from a subpath that leaves its package", async () => {
+      const missing: string[] = [];
+      const { bare } = captureResolvers(
+        createProjectDependencyCdnPlugin({ unpdf: "1.8.1" }, (specifier) => {
+          missing.push(specifier);
+        }),
+      );
+
+      const result = await bare(resolveArgs({ path: "unpdf/../../left-pad@1.3.0" }));
+
+      assert(result && typeof result === "object" && "errors" in result);
+      assert(!JSON.stringify(result).includes("esm.sh"), "no CDN URL may be built");
+      assertEquals(missing, ["unpdf"]);
+    });
+
     it("pins bare Node builtins and leaves framework packages to the runtime", async () => {
       const { bare } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
 
@@ -904,6 +948,32 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(requested, []);
       await (await fetchSource(url(0))).text();
       assertEquals(requested, [url(0)]);
+    });
+
+    it("accounts one body once when concurrent misses fill the same key", async () => {
+      const requested: string[] = [];
+      const body = "z".repeat(20); // budgeted as 40 bytes
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const fetchSource = createProjectDependencySourceFetcher(async (input) => {
+        requested.push(String(input));
+        await gate;
+        return new Response(body, { headers: javascript });
+      }, { maxBytes: 100 });
+      const url = (name: string) => `https://esm.sh/${name}@1.0.0`;
+
+      const both = Promise.all([fetchSource(url("same")), fetchSource(url("same"))]);
+      release();
+      for (const response of await both) await response.text();
+      await (await fetchSource(url("other"))).text();
+      requested.length = 0;
+
+      // 40 + 40 fits in 100. Counting the concurrent fill twice (80 + 40) would
+      // have evicted the first source to make room for the second.
+      await (await fetchSource(url("same"))).text();
+      assertEquals(requested, []);
     });
 
     it("never caches a source larger than the whole budget", async () => {

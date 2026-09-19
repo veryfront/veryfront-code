@@ -22,11 +22,14 @@ const EMBEDDED = {
     yaml: ["2.9.0"],
     sharp: ["0.34.5", "0.35.4"],
     ms: ["2.1.3"],
+    chalk: ["5.6.2"],
   },
   constraints: {
     lodash: ["3.10.1"],
     yaml: ["2.9.0"],
     sharp: ["0.34.5", "0.35.4"],
+    // Recorded only as a range: `npm:chalk` was imported bare.
+    chalk: ["*"],
   },
 } as const;
 
@@ -393,7 +396,7 @@ describe("classifyProjectNpmImport", () => {
   });
 
   it("leaves an undeclared package to the runtime only when the runtime carries it", () => {
-    assertEquals(classify("yaml"), { kind: "runtime" });
+    assertEquals(classify("yaml"), { kind: "runtime", specifier: "npm:yaml@2.9.0" });
     assertEquals(classify("npm:sharp@0.35.4"), {
       kind: "runtime",
       specifier: "npm:sharp@0.35.4",
@@ -404,10 +407,10 @@ describe("classifyProjectNpmImport", () => {
 
   it("reports a declaration that names no version to fetch", () => {
     // `*`, `1.x`, `>=1 <2` and dist-tags cannot be turned into a CDN
-    // coordinate without a registry, so they fall back to the runtime when the
-    // runtime has the package and are reported, never guessed at, when it does
-    // not.
-    assertEquals(classify("yaml", { yaml: "*" }), { kind: "runtime" });
+    // coordinate without a registry, so they fall back to a recorded runtime
+    // constraint the declaration admits and are reported, never guessed at,
+    // when there is none.
+    assertEquals(classify("yaml", { yaml: "*" }), { kind: "runtime", specifier: "npm:yaml@2.9.0" });
     const decision = classify("unpdf", { unpdf: "^1.0.0 || ^2.0.0" });
     assertEquals(decision.kind, "missing");
     assertEquals(
@@ -428,9 +431,8 @@ describe("classifyProjectNpmImport", () => {
       'this runtime does not carry unpdf and package.json declares ">1.8.1", ' +
         "which names no single version to fetch -- declare an exact version",
     );
-    // A package the runtime does carry keeps falling back to the runtime copy
-    // rather than being reported, exactly as any unresolvable range does.
-    assertEquals(classify("yaml", { yaml: ">2.9.0" }), { kind: "runtime" });
+    // The runtime's own copy is no fallback when the declaration excludes it.
+    assertEquals(classify("yaml", { yaml: ">2.9.0" }).kind, "missing");
     // The inclusive bound is unchanged: 1.8.1 satisfies `>=1.8.1`.
     assertEquals(classify("unpdf", { unpdf: ">=1.8.1" }), {
       kind: "cdn",
@@ -660,7 +662,8 @@ describe("describeNpmImport", () => {
       describeNpmImport("npm:pkg@user:<TOKEN>@host"),
       "pkg (with a non-registry version)",
     );
-    assertEquals(describeNpmImport("pkg/x@<TOKEN>"), "an import that names no npm package");
+    assertEquals(describeNpmImport("pkg/x@<TOKEN>"), "pkg");
+    assertEquals(describeNpmImport("unpdf/../x"), "unpdf");
     assertEquals(describeNpmImport("pkg/user:<TOKEN>/x"), "pkg");
   });
 });
@@ -672,6 +675,95 @@ describe("classifyProjectNpmImport with a declaration it cannot evaluate", () =>
       name: "lodash",
       reason: 'the import asks for lodash@3.10.1 and package.json declares ">=4.0.0 <5.0.0", ' +
         "which it cannot be checked against -- declare an exact version",
+    });
+  });
+});
+
+describe("parseNpmSpecifier and an @ inside the subpath", () => {
+  it("reads a version only from the package-name segment", () => {
+    assertEquals(parseNpmSpecifier("pkg/foo@bar"), {
+      name: "pkg",
+      version: null,
+      subpath: "./foo@bar",
+    });
+    assertEquals(parseNpmSpecifier("@scope/pkg/foo@bar"), {
+      name: "@scope/pkg",
+      version: null,
+      subpath: "./foo@bar",
+    });
+    assertEquals(parseNpmSpecifier("npm:pkg@1.0.0/foo@bar"), {
+      name: "pkg",
+      version: "1.0.0",
+      subpath: "./foo@bar",
+    });
+  });
+});
+
+describe("classifyProjectNpmImport and a subpath that can leave its package", () => {
+  it("refuses every traversal or encoded separator instead of fetching it", () => {
+    const pins = { unpdf: "1.8.1" };
+    for (
+      const specifier of [
+        "unpdf/../../left-pad@1.3.0",
+        "npm:unpdf@1.8.1/../x",
+        "unpdf/./x",
+        "unpdf//x",
+        "unpdf/dist/",
+        "unpdf/%2e%2e/left-pad",
+        "unpdf/%2E%2e/left-pad",
+        "unpdf/a%2fb",
+        "unpdf/a%2Fb",
+        "unpdf/a%5cb",
+        "unpdf/a\\b",
+      ]
+    ) {
+      const decision = classify(specifier, pins);
+      assertEquals(decision.kind, "missing", specifier);
+      const reason = decision.kind === "missing" ? decision.reason : "";
+      assertEquals(
+        reason,
+        "the import names a subpath of unpdf with an empty, `.` or `..` segment, or an " +
+          "encoded or backslash separator",
+        specifier,
+      );
+    }
+    // An ordinary nested subpath is still served.
+    assertEquals(classify("unpdf/dist/core.mjs", pins).kind, "cdn");
+  });
+});
+
+describe("classifyProjectNpmImport without a usable pin", () => {
+  it("reuses an embedded package only under a recorded constraint", () => {
+    assertEquals(classify("yaml"), { kind: "runtime", specifier: "npm:yaml@2.9.0" });
+    assertEquals(classify("yaml/dist/index.js"), {
+      kind: "runtime",
+      specifier: "npm:yaml@2.9.0/dist/index.js",
+    });
+    assertEquals(classify("npm:yaml@^2"), { kind: "runtime", specifier: "npm:yaml@2.9.0" });
+    assertEquals(classify("chalk"), { kind: "runtime", specifier: "npm:chalk@*" });
+    assertEquals(classify("npm:chalk@*"), { kind: "runtime", specifier: "npm:chalk@*" });
+    // Carried only transitively: no constraint the binary can resolve.
+    assertEquals(classify("ms"), {
+      kind: "missing",
+      name: "ms",
+      reason: "this runtime does not carry ms and the project declares no dependency on it",
+    });
+  });
+
+  it("never reuses an embedded version the declaration or import excludes", () => {
+    assertEquals(classify("yaml", { yaml: "*" }), {
+      kind: "runtime",
+      specifier: "npm:yaml@2.9.0",
+    });
+    assertEquals(classify("yaml", { yaml: ">2.9.0" }).kind, "missing");
+    assertEquals(classify("lodash", { lodash: "<3.0.0" }).kind, "missing");
+    assertEquals(classify("npm:yaml@^3").kind, "missing");
+    // A range constraint serves only the range it records, never a different one.
+    assertEquals(classify("chalk", { chalk: "^5" }).kind, "missing");
+    assertEquals(classify("npm:chalk@^5").kind, "missing");
+    assertEquals(classify("chalk", { chalk: "*" }), {
+      kind: "runtime",
+      specifier: "npm:chalk@*",
     });
   });
 });
