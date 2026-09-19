@@ -47,6 +47,7 @@ function diag(message: string): void {
     append: true,
   });
 }
+(globalThis as { __brokerDiag?: (m: string) => void }).__brokerDiag = diag;
 function traced(name: string, fn: () => Promise<void> | void): void {
   it(name, async () => {
     diag(`start ${name}`);
@@ -1412,6 +1413,15 @@ async function withTrustedToolOperations(
       }, { binding: fixedBinding, signal, deadline: Date.now() + 10_000 }))
     );
   } finally {
+    const watch = (name: string, p: Promise<unknown> | undefined) =>
+      void p?.then(() => diag(`${name} ok`), () => diag(`${name} err`));
+    watch("local.settled", local?.settled);
+    watch("local.channel.settled", local?.channel.settled);
+    watch("local.gate.settled", local?.gate.settled);
+    watch("runtime.settled", runtime?.settled);
+    watch("broker.closed", broker.closed);
+    watch("broker.settled", broker.settled);
+    watch("projectPeer.settled", f.projectPeer?.settled);
     diag("L1383");
     await runtime?.close("completed");
     diag("L1384");

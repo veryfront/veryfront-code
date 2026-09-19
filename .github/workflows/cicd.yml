@@ -25,4 +25,4 @@ jobs:
         run: deno task coverage:ci:shard -- --shard=1/4 --coverage-dir=coverage-shard-1
       - name: Dump broker diag
         if: always()
-        run: for f in /tmp/broker-diag-*.log; do echo "== $f"; tail -n 60 "$f"; done
+        run: for f in /tmp/broker-diag-*.log; do echo "== $f"; tail -n 120 "$f"; done

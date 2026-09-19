@@ -34,14 +34,17 @@ export async function createTrustedManagedRuntime(
     if (closing) return closing;
     closing = Promise.resolve().then(async () => {
       await setupFinished.promise;
-      await awaitExecutorCleanup([
+      const pieces = [
         Promise.resolve().then(() => owner?.close()),
         owner?.settled ?? Promise.resolve(),
         Promise.resolve().then(() => facades?.cleanup()),
         authority?.settled ?? Promise.resolve(),
         runtime?.settled ?? Promise.resolve(),
         gate?.settled ?? Promise.resolve(),
-      ]);
+      ];
+      const names = ["owner.close", "owner.settled", "facades.cleanup", "authority.settled", "runtime.settled", "gate.settled"];
+      pieces.forEach((piece, index) => void piece.then(() => (globalThis as { __brokerDiag?: (m: string) => void }).__brokerDiag?.(`trusted ${names[index]} ok`), () => (globalThis as { __brokerDiag?: (m: string) => void }).__brokerDiag?.(`trusted ${names[index]} err`)));
+      await awaitExecutorCleanup(pieces);
     });
     gate?.revoke();
     lifetime.abort();

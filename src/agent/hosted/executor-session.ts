@@ -338,6 +338,9 @@ class Session implements HostedExecutorSession {
 
   #track<T>(operation: () => Promise<T>, observe?: (value: T) => void): Promise<T> {
     const tracked = Promise.withResolvers<T>();
+    const diagId = Math.random().toString(36).slice(2, 8);
+    (globalThis as { __brokerDiag?: (m: string) => void }).__brokerDiag?.(`track+ ${diagId} ${(new Error().stack ?? "").split("\n").slice(2, 5).map((l) => l.trim().replace(/.*\/src\//, "")).join(" <- ")}`);
+    void tracked.promise.then(() => (globalThis as { __brokerDiag?: (m: string) => void }).__brokerDiag?.(`track- ${diagId}`), () => (globalThis as { __brokerDiag?: (m: string) => void }).__brokerDiag?.(`track! ${diagId}`));
     this.#tasks.add(tracked.promise);
     void tracked.promise.catch(() => {});
     void (async () => {
