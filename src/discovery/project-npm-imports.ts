@@ -533,6 +533,23 @@ function embeddedImport(
 }
 
 /**
+ * The recorded import constraint this binary can resolve for `name` at
+ * `version`, or `null` when it records none.
+ *
+ * A compiled binary answers an `npm:` import by looking its constraint up, so
+ * a framework package reached from fetched CDN source -- which names an exact
+ * version in its URL -- has to be re-emitted under a constraint the binary
+ * actually froze, not as an unconstrained `npm:<name>`.
+ */
+export function embeddedConstraintForVersion(
+  name: string,
+  version: string,
+  embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
+): string | null {
+  return compatibleEmbeddedConstraint(embedded, name, undefined, version);
+}
+
+/**
  * Decide how the discovery bundler should resolve one npm specifier on a
  * compiled runtime, given the project's declared dependency pins.
  *

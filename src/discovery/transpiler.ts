@@ -18,6 +18,7 @@ import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
 import {
   classifyProjectNpmImport,
   describeNpmImport,
+  embeddedConstraintForVersion,
   isFrameworkProvidedPackage,
   nodeBuiltinSpecifier,
   parseNpmSpecifier,
@@ -312,7 +313,7 @@ const ESM_CDN_MODULE_EXTENSION = /(?:\.(?:development|bundle|nobundle))*\.[mc]?j
  * `/react@19.2.4/es2022/react.mjs` -- whose file is named after the package
  * itself -- is the package root.
  */
-function parseEsmCdnModule(url: URL): { name: string; subpath: string } | null {
+function parseEsmCdnModule(url: URL): { name: string; version: string; subpath: string } | null {
   if (url.origin !== ESM_CDN_ORIGIN) return null;
   const segments = url.pathname.replace(/^\/(?:v\d+|stable)\//, "/").split("/").filter(Boolean);
   if (segments.length === 0) return null;
@@ -320,6 +321,7 @@ function parseEsmCdnModule(url: URL): { name: string; subpath: string } | null {
   const pinned = scoped ? `${segments[0]}/${segments[1]}` : segments[0]!;
   const name = pinned.replace(/@[^@/]+$/, "");
   if (name.length === 0) return null;
+  const version = pinned.slice(name.length + 1);
 
   let rest = segments.slice(scoped ? 2 : 1);
   if (rest.length > 0 && ESM_CDN_BUILD_OPTIONS.test(rest[0]!)) rest = rest.slice(1);
@@ -329,7 +331,7 @@ function parseEsmCdnModule(url: URL): { name: string; subpath: string } | null {
   // package's own last name segment is the root rather than a subpath.
   const rootModuleName = name.slice(name.lastIndexOf("/") + 1);
   const subpath = file.length === 0 || file === rootModuleName ? "" : file;
-  return { name, subpath };
+  return { name, version, subpath };
 }
 
 /**
@@ -547,7 +549,18 @@ export function createProjectDependencyCdnPlugin(
         // The SUBPATH has to survive: `react/jsx-runtime` externalized as
         // `react` imports a module with no `jsx` or `jsxs` export, so every
         // JSX element in the inlined dependency fails when it loads.
-        return { path: esmCdnModuleSpecifier(url)!, external: true };
+        const specifier = esmCdnModuleSpecifier(url)!;
+        // A compiled binary resolves `npm:` by constraint, and some framework
+        // packages are recorded only at exact versions (`react-dom`,
+        // `@opentelemetry/*`), so the URL's own version is re-emitted when the
+        // binary records it. Without one the bare specifier is left as before,
+        // which is what an uncompiled run resolves.
+        const constraint = parsed.version.length > 0
+          ? embeddedConstraintForVersion(parsed.name, parsed.version)
+          : null;
+        if (constraint === null) return { path: specifier, external: true };
+        const tail = specifier.slice(parsed.name.length);
+        return { path: `npm:${parsed.name}@${constraint}${tail}`, external: true };
       });
 
       build.onResolve({ filter: /^[^./]/ }, (args) => {

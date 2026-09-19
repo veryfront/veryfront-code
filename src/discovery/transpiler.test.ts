@@ -810,15 +810,49 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           importer,
           namespace: "http-url",
         })),
+        // The binary records `zod` at `*` and 4.3.6, not at this version, so
+        // the bare specifier is kept.
         { path: "zod", external: true },
       );
+      // Re-emitted under the constraint the binary records for that version,
+      // subpath included; see the framework-constraint test below.
       assertEquals(
         await httpUrl(resolveArgs({
           path: "/react@19.2.4/es2022/jsx-runtime.mjs",
           importer,
           namespace: "http-url",
         })),
-        { path: "react/jsx-runtime", external: true },
+        { path: "npm:react@19.2.4/jsx-runtime", external: true },
+      );
+    });
+
+    it("externalizes a framework CDN import under a constraint the binary holds", async () => {
+      // A compiled binary resolves `npm:` by constraint. `react-dom` is
+      // recorded only at exact versions, so an unversioned `npm:react-dom`
+      // would not resolve there even though the package is embedded.
+      const { httpUrl } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
+      const importer = "https://esm.sh/@veryfront-fixture/pdf-text@1.8.1";
+      const recorded = (EMBEDDED_NPM_CONSTRAINTS as Record<string, readonly string[]>)["react-dom"];
+      const version = recorded?.find((candidate) => /^\d+\.\d+\.\d+$/.test(candidate));
+      assert(version, "the framework's own lock records react-dom at an exact version");
+
+      assertEquals(
+        await httpUrl(resolveArgs({
+          path: `https://esm.sh/react-dom@${version}/es2022/client.mjs`,
+          importer,
+          namespace: "http-url",
+        })),
+        { path: `npm:react-dom@${version}/client`, external: true },
+      );
+      // A version the binary does not record keeps the bare specifier, which
+      // is what an uncompiled run resolves.
+      assertEquals(
+        await httpUrl(resolveArgs({
+          path: "https://esm.sh/react-dom@0.0.1/es2022/client.mjs",
+          importer,
+          namespace: "http-url",
+        })),
+        { path: "react-dom/client", external: true },
       );
     });
 
