@@ -1113,13 +1113,31 @@ function buildHostedConfigSourceReadKey(
 }
 
 /**
+ * Identity of the request-context fields a multi-project filesystem uses to
+ * select its concrete adapter. The credential enters only as a digest.
+ */
+async function buildHostedConfigAdapterSelectorIdentity(): Promise<string> {
+  const context = currentRequestContext();
+  if (!context) return "context:none";
+  const token = context.token;
+  const credential = typeof token === "string" && token !== "" ? await computeHash(token) : null;
+  return `context:${frameOptionalConfigIdentityString(context.projectSlug)}${
+    frameOptionalConfigIdentityString(context.projectId)
+  }${frameOptionalConfigIdentityString(credential)}${
+    context.productionMode === true ? "production;" : "preview;"
+  }${frameOptionalConfigIdentityString(context.releaseId)}${
+    frameOptionalConfigIdentityString(context.environmentName)
+  }${frameOptionalConfigIdentityString(context.branch)}`;
+}
+
+/**
  * Capture the preview source snapshot without bypassing source-read admission.
  * The first probe can initialize a cold per-project filesystem adapter, which
  * is the same filesystem work the admission budget bounds for reads.
- * Concurrent requests for one project and credential share one admitted
- * warm-up probe, because the filesystem selects a concrete adapter per
- * credential. The key carries only a digest of that credential. Each request
- * then takes its own, now warm, observation.
+ * Concurrent requests share one admitted warm-up probe only when every
+ * request-context field that selects a concrete filesystem adapter matches,
+ * so each request's own observation afterwards is warm. The key carries only
+ * a digest of the credential.
  */
 async function captureAdmittedHostedConfigSourceSnapshot(
   effectiveCacheKey: string,
@@ -1129,15 +1147,12 @@ async function captureAdmittedHostedConfigSourceSnapshot(
   signal: AbortSignal | undefined,
 ): Promise<HostedConfigSourceSnapshot | undefined> {
   if (!canCaptureHostedConfigSourceSnapshot(adapter)) return undefined;
-  const token = currentRequestContext()?.token;
-  const credentialIdentity = typeof token === "string" && token !== ""
-    ? `credential:${await computeHash(token)}`
-    : "credential:none";
+  const selectorIdentity = await buildHostedConfigAdapterSelectorIdentity();
   throwIfHostedConfigAborted(signal);
   const warmupFlight = getOrCreateHostedConfigSourceReadFlight(
     `hosted-config-preview-source-probe-v2:${
       buildHostedConfigSourceIdentity(effectiveCacheKey, configBaseDir, adapter, revisionAtStart)
-    }${frameConfigIdentityString(credentialIdentity)}`,
+    }${frameConfigIdentityString(selectorIdentity)}`,
     async () => {
       await captureHostedConfigSourceSnapshot(adapter);
       return null;

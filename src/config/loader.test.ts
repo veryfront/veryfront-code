@@ -10410,7 +10410,7 @@ export default config as const;
         });
       });
 
-      it("admits cold preview snapshot probes separately for each credential", async () => {
+      it("admits cold preview snapshot probes separately for each adapter selector", async () => {
         const adapter = createHostedAdapter();
         const releaseProbes = Promise.withResolvers<void>();
         const warmCredentials = new Set<string>();
@@ -10421,7 +10421,10 @@ export default config as const;
           getSourceSnapshotVersion: async () => {
             // A concrete adapter is selected per credential, so each new
             // credential pays its own cold initialization.
-            const token = getCurrentRequestContext()?.token ?? "";
+            const context = getCurrentRequestContext();
+            const token = `${context?.token}:${context?.projectSlug}:${
+              context?.environmentName ?? null
+            }`;
             if (warmCredentials.has(token)) return 1;
             probesInFlight += 1;
             maxProbesInFlight = Math.max(maxProbesInFlight, probesInFlight);
@@ -10445,13 +10448,26 @@ export default config as const;
         __setHostedConfigEvaluatorForTests(async () => ({ title: "shared" }));
 
         const admission = __getHostedConfigSourceReadStateForTests();
-        const tokens = Array.from(
-          { length: admission.maxActive + 2 },
-          (_, index) => `credential-${index}`,
+        // Each context selects a different concrete adapter: by credential,
+        // by project slug, or by environment name.
+        const contexts = [
+          { projectSlug: "shared-preview", token: "credential-0", environmentName: null },
+          { projectSlug: "shared-preview", token: "credential-1", environmentName: null },
+          { projectSlug: "shared-preview-alias", token: "credential-0", environmentName: null },
+          { projectSlug: "shared-preview", token: "credential-0", environmentName: "staging" },
+        ].slice(0, admission.maxActive + 2);
+        const tokens = contexts.map((context) =>
+          `${context.token}:${context.projectSlug}:${context.environmentName}`
         );
-        const requests = tokens.map((token) =>
+        const requests = contexts.map((context) =>
           runWithRequestContext(
-            { projectSlug: "shared-preview", projectId: "shared-preview", token, branch: "main" },
+            {
+              projectSlug: context.projectSlug,
+              projectId: "shared-preview",
+              token: context.token,
+              branch: "main",
+              environmentName: context.environmentName,
+            },
             () =>
               getHostedConfig("/hosted/shared-preview", adapter, {
                 cacheKey: "shared-preview",
