@@ -518,12 +518,16 @@ export function getRuntimeRemoteToolSources(
       // A retained source keeps its provenance: a deeper child must still be
       // able to re-derive its own bootstrap source past an inherited alias
       // this level only policy-narrowed.
+      // Trusted platform sources get the same live canonical catalog as a
+      // configured platform server, so legacy-only listings still expose
+      // `veryfront__*` names.
       return propagateBootstrapIdentity(
         source,
-        createMcpToolPolicySource(
-          source,
-          hasTrustedPlatformSource(source) ? withPlatformMcpPolicyAliases(policy) : policy,
-        ),
+        hasTrustedPlatformSource(source)
+          ? createLivePlatformMcpSource(
+            createMcpToolPolicySource(source, withPlatformMcpPolicyAliases(policy)),
+          )
+          : createMcpToolPolicySource(source, policy),
       );
     },
   );

@@ -1428,8 +1428,47 @@ it("retained platform policies expand aliases without widening project source po
         const allowed = trusted ? name.endsWith("get_file") : name === `${prefix}get_file` ||
           name === (prefix ? "delete_file" : "veryfront__delete_file");
         if (allowed) assertEquals(await retained.executeTool(name, {}), { name });
-        else assertThrows(() => retained.executeTool(name, {}));
+        else await assertRejects(async () => await retained.executeTool(name, {}));
       }
     }
+  }
+});
+
+it("retained trusted legacy-only platform sources expose canonical names", async () => {
+  for (const prefix of ["", "veryfront__"]) {
+    const executions: string[] = [];
+    const source = markTrustedPlatformSource<RemoteToolSource>({
+      id: VERYFRONT_API_MCP_SOURCE_ID,
+      listTools: async () =>
+        ["get_file", "delete_file"].map((name) => ({
+          name,
+          description: name,
+          parameters: { type: "object" as const, properties: {} },
+        })),
+      executeTool: async (name) => {
+        executions.push(name);
+        return { name };
+      },
+    });
+    const sources = getRuntimeRemoteToolSources(
+      {
+        system: "Use files",
+        mcpServers: [{
+          kind: "veryfront-api",
+          toolPolicy: { allow: [`${prefix}get_file`], deny: [`${prefix}delete_file`] },
+        }],
+        __vfRemoteToolSources: [source],
+      } as Parameters<typeof getRuntimeRemoteToolSources>[0],
+    );
+    const retained = sources![0]!;
+    assertEquals((await retained.listTools()).map((t) => t.name), [
+      "get_file",
+      "veryfront__get_file",
+    ]);
+    assertEquals(await retained.executeTool("veryfront__get_file", {}), { name: "get_file" });
+    for (const name of ["delete_file", "veryfront__delete_file"]) {
+      await assertRejects(async () => await retained.executeTool(name, {}));
+    }
+    assertEquals(executions, ["get_file"]);
   }
 });
