@@ -502,6 +502,39 @@ describe("transforms/esm/bundle-recovery", () => {
       }
     });
 
+    it("keeps single-bundle recovery claimed so concurrent callers do not repeat it", async () => {
+      const cacheDir = await makeTempDir();
+      const hash = "902";
+      // The batch read never has the code, so every bundle goes through
+      // single-bundle recovery by hash.
+      const backend = createCountingBatchBackend(
+        { [`code:${hash}`]: "export const recovered = true;\n" },
+        { latencyMs: 50, hideUntilRead: new Map([[`code:${hash}`, Infinity]]) },
+      );
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+      try {
+        const results = await Promise.all(
+          Array.from({ length: 3 }, () =>
+            ensureHttpBundlesExist(
+              [{ path: join(cacheDir, `http-${hash}.mjs`), hash }],
+              cacheDir,
+              () => Promise.resolve(null),
+            )),
+        );
+
+        assertEquals(results, [[], [], []]);
+        assertEquals(
+          backend.singleReads.filter((key) => key === `code:${hash}`).length,
+          1,
+          "one caller recovers the bundle while the others wait",
+        );
+        assertEquals(getBundleFetchesInFlightCount(), 0);
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
     it("returns an empty array for an empty bundle list without touching the cache", async () => {
       const failed = await ensureHttpBundlesExist(
         [],

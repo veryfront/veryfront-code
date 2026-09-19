@@ -190,6 +190,17 @@ function isRefusedTenantFrameworkModuleFetch(
   return !isPublicFrameworkSourceKey(frameworkKey);
 }
 
+/** Add modules resolved by a shared resolution to this request's graph. */
+function admitSharedModules(moduleGraph: Set<string>, modulePaths: ReadonlySet<string>): void {
+  for (const modulePath of modulePaths) {
+    if (moduleGraph.has(modulePath)) continue;
+    if (moduleGraph.size >= MAX_MDX_MODULE_GRAPH_ENTRIES) {
+      throw new ModuleGraphLimitError(modulePath);
+    }
+    moduleGraph.add(modulePath);
+  }
+}
+
 /**
  * Fetch and cache a module.
  * This is the main entry point for module fetching operations.
@@ -314,6 +325,13 @@ export async function fetchAndCacheModule(
           projectSlug,
           parentModulePath,
         ),
+      {
+        // Modules another request resolved still count toward this
+        // request's graph limit.
+        onResolved: (recordedModules) => admitSharedModules(moduleGraph, recordedModules),
+        // The leading request's deadline is not this request's deadline.
+        retryAloneOn: (error) => error instanceof TransformTreeTimeoutError,
+      },
     )
     : doFetchAndCacheModule(
       normalizedPath,

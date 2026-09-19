@@ -8,6 +8,7 @@
  * @module transforms/esm/bundle-recovery
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
@@ -367,6 +368,30 @@ function claimBundleFetches(cacheDir: string, hashes: readonly string[]): Bundle
   };
 }
 
+/**
+ * Marks work that runs while its caller still holds a bundle claim. Nested
+ * bundle recovery inside it never waits for another caller's claim: it
+ * fetches those bundles itself, so two claim holders cannot wait on each
+ * other through recursive recovery.
+ */
+const heldClaimScope = new AsyncLocalStorage<true>();
+
+/**
+ * Run single-bundle recovery while keeping `hash` claimed, so concurrent
+ * callers wait for this recovery instead of repeating it, then release it.
+ */
+async function recoverWhileClaimed(
+  hash: string,
+  recover: () => Promise<boolean>,
+  claims: BundleFetchClaims | undefined,
+): Promise<boolean> {
+  try {
+    return await heldClaimScope.run(true, recover);
+  } finally {
+    claims?.release(hash);
+  }
+}
+
 /** Number of bundle fetches currently claimed by some caller. */
 export function getBundleFetchesInFlightCount(): number {
   return bundleFetchesInFlight.size;
@@ -418,13 +443,17 @@ async function fetchMissingBundles(
   const identities = await httpBundleCache.getBatchRecoveryIdentities([...codes.keys()]);
 
   const recoverFromMiss = async (hash: string, canonicalPath: string): Promise<void> => {
-    claims?.release(hash);
-    const recovered = await recoverHttpBundleByHash(
+    const recovered = await recoverWhileClaimed(
       hash,
-      absoluteCacheDir,
-      cacheHttpModule,
-      undefined,
-      fallbackIdentity,
+      () =>
+        recoverHttpBundleByHash(
+          hash,
+          absoluteCacheDir,
+          cacheHttpModule,
+          undefined,
+          fallbackIdentity,
+        ),
+      claims,
     );
     if (!recovered) {
       context.onFailed(hash);
@@ -458,13 +487,17 @@ async function fetchMissingBundles(
           "[HTTP-CACHE] Batch-fetched code has incompatible file paths, trying single recovery",
           { hash, localCacheDir: absoluteCacheDir },
         );
-        claims?.release(hash);
-        const recovered = await recoverHttpBundleByHash(
+        const recovered = await recoverWhileClaimed(
           hash,
-          absoluteCacheDir,
-          cacheHttpModule,
-          undefined,
-          fallbackIdentity,
+          () =>
+            recoverHttpBundleByHash(
+              hash,
+              absoluteCacheDir,
+              cacheHttpModule,
+              undefined,
+              fallbackIdentity,
+            ),
+          claims,
         );
         if (!recovered) context.onFailed(hash);
         return;
@@ -594,6 +627,14 @@ export async function ensureHttpBundlesExist(
     // Wait for bundles another caller was fetching only after releasing every
     // claim, so two callers never wait on each other.
     if (claims.inFlight.size === 0) continue;
+    if (heldClaimScope.getStore()) {
+      // This caller runs under another claim; waiting here could deadlock.
+      await fetchMissingBundles(
+        missing.filter(({ hash }) => claims.inFlight.has(hash)),
+        fetchContext,
+      );
+      continue;
+    }
     await Promise.all(claims.inFlight.values());
     const leftover: MissingBundle[] = [];
     for (const entry of missing) {

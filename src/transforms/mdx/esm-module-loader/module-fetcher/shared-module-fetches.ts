@@ -62,10 +62,25 @@ export function getSharedModuleFetchKey(
     context.reactVersion ?? REACT_DEFAULT_VERSION,
     context.dependencyPinningCacheKey ?? "off",
     context.moduleServerOrigin ?? "",
-    context.serverExternalPackages ?? [],
+    [...(context.serverExternalPackages ?? [])].sort(),
     context.strictMissingModules ?? true,
     bindingKey,
   ]);
+}
+
+/** Per-caller hooks for a shared entry fetch. */
+export interface SharedModuleFetchOptions {
+  /**
+   * Called with every module the resolution recorded, before the caller gets
+   * the result. A throw rejects only this caller.
+   */
+  onResolved?: (recordedModules: ReadonlySet<string>) => void;
+  /**
+   * Whether a caller that joined another caller's resolution runs `resolve`
+   * itself after that resolution failed with `error`. Use it for failures that
+   * belong to the leading caller, such as its own deadline.
+   */
+  retryAloneOn?: (error: unknown) => boolean;
 }
 
 /**
@@ -77,25 +92,35 @@ export function getSharedModuleFetchKey(
 export async function runSharedModuleFetch(
   key: string,
   resolve: () => Promise<string | null>,
+  options: SharedModuleFetchOptions = {},
 ): Promise<string | null> {
   if (sharedResolutionScope.getStore()) return await resolve();
 
-  const result = await sharedModuleFetches.do(
-    key,
-    () => {
-      const recordedModules = new Set<string>();
-      return sharedResolutionScope.run(
-        true,
-        () =>
-          runWithModuleRecorder(recordedModules, async () => ({
-            path: await resolve(),
-            recordedModules,
-          })),
-      );
-    },
-    { staleAfterMs: SHARED_MODULE_FETCH_STALE_AFTER_MS },
-  );
+  let leading = false;
+  let result: SharedModuleFetchResult;
+  try {
+    result = await sharedModuleFetches.do(
+      key,
+      () => {
+        leading = true;
+        const recordedModules = new Set<string>();
+        return sharedResolutionScope.run(
+          true,
+          () =>
+            runWithModuleRecorder(recordedModules, async () => ({
+              path: await resolve(),
+              recordedModules,
+            })),
+        );
+      },
+      { staleAfterMs: SHARED_MODULE_FETCH_STALE_AFTER_MS },
+    );
+  } catch (error) {
+    if (leading || !options.retryAloneOn?.(error)) throw error;
+    return await resolve();
+  }
 
+  options.onResolved?.(result.recordedModules);
   for (const modulePath of result.recordedModules) recordModuleToSession(modulePath);
   return result.path;
 }

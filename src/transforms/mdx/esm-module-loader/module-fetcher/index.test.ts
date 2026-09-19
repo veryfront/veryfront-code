@@ -16,6 +16,7 @@ import {
   rewriteDntImports,
   runInRenderSession,
   startRenderSession,
+  TransformTreeTimeoutError,
 } from "./index.ts";
 import {
   MAX_MDX_MODULE_GRAPH_ENTRIES,
@@ -1054,6 +1055,56 @@ describe("module-fetcher", () => {
         `expected at most ${oneGraphGets} cache reads, got ${cache.getCalls}`,
       );
       assertEquals(getSharedModuleFetchCount(), 0, "settled resolutions are released");
+    });
+
+    it("retries alone when the leading render hits its own deadline", async () => {
+      const project = createProjectAdapter("deadline");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-deadline-cache-"),
+        projectDir: await tempDir("vf-shared-deadline-proj-"),
+      };
+      const leader = await newRender(project.adapter, "p-deadline", dirs);
+      // The leading render is almost out of time; nested fetches start after it.
+      leader.transformDeadline = Date.now() + REMOTE_LATENCY_MS / 2;
+      const follower = await newRender(project.adapter, "p-deadline", dirs);
+
+      const [leaderResult, followerResult] = await Promise.allSettled([
+        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        fetchAndCacheModule("/_vf_modules/page.js", follower),
+      ]);
+
+      assertEquals(leaderResult.status, "rejected");
+      assert(
+        leaderResult.status === "rejected" &&
+          leaderResult.reason instanceof TransformTreeTimeoutError,
+      );
+      assertEquals(followerResult.status, "fulfilled");
+    });
+
+    it("counts shared modules toward each joined render's graph limit", async () => {
+      const project = createProjectAdapter("graph-limit");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-limit-cache-"),
+        projectDir: await tempDir("vf-shared-limit-proj-"),
+      };
+      const leader = await newRender(project.adapter, "p-graph-limit", dirs);
+      const follower = await newRender(project.adapter, "p-graph-limit", dirs);
+      // Room for the entry only, not for the three modules it imports.
+      for (let index = 0; index < MAX_MDX_MODULE_GRAPH_ENTRIES - 1; index++) {
+        follower.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
+      }
+
+      const [leaderResult, followerResult] = await Promise.allSettled([
+        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        fetchAndCacheModule("/_vf_modules/page.js", follower),
+      ]);
+
+      assertEquals(leaderResult.status, "fulfilled");
+      assert(
+        followerResult.status === "rejected" &&
+          followerResult.reason instanceof ModuleGraphLimitError,
+      );
+      assertEquals(project.reads.length, 4);
     });
 
     it("keeps concurrent resolutions of the same path separate across projects", async () => {

@@ -150,6 +150,58 @@ describe("shared module fetches", () => {
       assertEquals(getSharedModuleFetchCount(), 0);
     });
 
+    it("lets a joined caller retry alone after a failure that belongs to the leader", async () => {
+      const gate = deferred<string | null>();
+      const leader = runSharedModuleFetch("key", () => gate.promise, {
+        retryAloneOn: () => true,
+      });
+      const follower = runSharedModuleFetch("key", () => Promise.resolve("follower-own"), {
+        retryAloneOn: (error) => error instanceof RangeError,
+      });
+      gate.reject(new RangeError("leader deadline"));
+
+      await assertRejects(() => leader, RangeError, "leader deadline");
+      assertEquals(await follower, "follower-own");
+    });
+
+    it("does not retry a joined caller for other failures", async () => {
+      const gate = deferred<string | null>();
+      let followerRuns = 0;
+      const callers = Promise.allSettled([
+        runSharedModuleFetch("key", () => gate.promise),
+        runSharedModuleFetch("key", () => {
+          followerRuns++;
+          return Promise.resolve("unused");
+        }, { retryAloneOn: (error) => error instanceof RangeError }),
+      ]);
+      gate.reject(new Error("source unavailable"));
+
+      assertEquals((await callers).map((result) => result.status), ["rejected", "rejected"]);
+      assertEquals(followerRuns, 0);
+    });
+
+    it("rejects only the caller whose result hook throws", async () => {
+      const gate = deferred<void>();
+      const resolve = async () => {
+        recordModuleToSession("_vf_modules/page.js");
+        await gate.promise;
+        return "/cache/page.mjs";
+      };
+      const callers = Promise.allSettled([
+        runSharedModuleFetch("key", resolve),
+        runSharedModuleFetch("key", resolve, {
+          onResolved: (modules) => {
+            throw new Error(`too many modules: ${modules.size}`);
+          },
+        }),
+      ]);
+      gate.resolve();
+
+      const [first, second] = await callers;
+      assertEquals(first, { status: "fulfilled", value: "/cache/page.mjs" });
+      assertEquals(second.status, "rejected");
+    });
+
     it("runs a nested call directly instead of joining another resolution", async () => {
       const outerGate = deferred<string | null>();
       const nestedResults: Array<string | null> = [];
