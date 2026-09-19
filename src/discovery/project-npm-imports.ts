@@ -204,6 +204,17 @@ const RANGE_OPERATORS = ["<=", ">=", "~>", "^", "~", "=", "v", "<", ">"] as cons
  */
 const OPERATORS_NAMING_NO_FETCHABLE_VERSION: ReadonlySet<string> = new Set(["<", ">"]);
 
+/**
+ * The version a range comparator names, with its operator removed. npm also
+ * accepts a `v` prefix after the operator (`^v1.2.3`, `>= v2`), so one is
+ * dropped there too; a bare `v1.2.3` already reads `v` as its operator.
+ */
+function boundAfterOperator(trimmed: string, operator: string | undefined): string {
+  if (operator === undefined) return trimmed;
+  const bound = trimmed.slice(operator.length).trimStart();
+  return operator !== "v" && /^v\d/.test(bound) ? bound.slice(1) : bound;
+}
+
 /** Anything carrying its own URL scheme (`https:`, `jsr:`, `data:`, ...). */
 const URL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 
@@ -238,7 +249,7 @@ export function exactVersionNamedByRange(range: unknown): string | null {
   if (URL_SCHEME.test(trimmed)) return null;
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
   if (operator !== undefined && OPERATORS_NAMING_NO_FETCHABLE_VERSION.has(operator)) return null;
-  const candidate = operator === undefined ? trimmed : trimmed.slice(operator.length).trimStart();
+  const candidate = boundAfterOperator(trimmed, operator);
   return EXACT_VERSION.test(candidate) ? candidate : null;
 }
 
@@ -351,7 +362,7 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
   const trimmed = range.trim();
   if (URL_SCHEME.test(trimmed) || !EXACT_VERSION.test(version)) return null;
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
-  const bound = operator === undefined ? trimmed : trimmed.slice(operator.length).trimStart();
+  const bound = boundAfterOperator(trimmed, operator);
   const wanted = { core: coreOf(version), pre: prereleaseOf(version) };
   if (operator === undefined && (bound === "*" || bound === "x" || bound === "X")) {
     return wanted.pre === null;

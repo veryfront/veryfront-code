@@ -106,6 +106,16 @@ describe("exactVersionNamedByRange", () => {
     assertEquals(exactVersionNamedByRange(" ^1.8.1-rc.1 "), "1.8.1-rc.1");
   });
 
+  it("reads a v-prefixed version after an operator, as npm does", () => {
+    assertEquals(exactVersionNamedByRange("^v1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange(">= v1.8.1"), "1.8.1");
+    assertEquals(exactVersionNamedByRange("=v1.8.1"), "1.8.1");
+    assertEquals(rangeAdmitsVersion("^v1.2.3", "1.4.0"), true);
+    assertEquals(rangeAdmitsVersion("~v1.2.3", "1.3.0"), false);
+    assertEquals(rangeAdmitsVersion(">=v2", "2.0.0"), true);
+    assertEquals(exactVersionNamedByRange("vv1.8.1"), null);
+  });
+
   it("names no version for a range that names none", () => {
     // Choosing a version for any of these would need a registry, and choosing
     // `latest` would change which code a project runs between two passes.
