@@ -37,6 +37,7 @@ import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
 import { captureResolvedModule } from "./captured-module.ts";
+import { getSharedModuleFetchKey, runSharedModuleFetch } from "./shared-module-fetches.ts";
 import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { extractDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import {
@@ -292,6 +293,7 @@ export async function fetchAndCacheModule(
   const fetchAndCacheModuleFn = (path: string, parent?: string): Promise<string | null> =>
     fetchAndCacheModule(path, context, parent, nextLineage);
 
+  const isEntryFetch = parentModulePath === undefined && lineage.size === 0;
   const fetchPromise = context.sourceCapture
     ? captureResolvedModule(
       normalizedPath,
@@ -299,6 +301,19 @@ export async function fetchAndCacheModule(
       fetchAndCacheModuleFn,
       context.sourceCapture,
       reference.suffix,
+    )
+    : isEntryFetch
+    // Concurrent requests for the same entry share one resolution of its graph.
+    ? runSharedModuleFetch(
+      getSharedModuleFetchKey(context, bindingKey),
+      () =>
+        doFetchAndCacheModule(
+          normalizedPath,
+          context,
+          fetchAndCacheModuleFn,
+          projectSlug,
+          parentModulePath,
+        ),
     )
     : doFetchAndCacheModule(
       normalizedPath,

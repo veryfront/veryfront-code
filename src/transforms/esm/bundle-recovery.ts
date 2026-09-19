@@ -308,6 +308,196 @@ export async function recoverHttpBundleByHash(
 }
 
 /**
+ * Bundles that some caller is fetching into a cache directory right now.
+ * An entry only signals that the fetch finished; waiters read the result from
+ * disk. Entries are removed when released, so the map holds in-flight work only.
+ */
+const bundleFetchesInFlight = new Map<string, Promise<void>>();
+
+function bundleFetchKey(cacheDir: string, hash: string): string {
+  return `${cacheDir}\n${hash}`;
+}
+
+interface BundleFetchClaims {
+  /** Fetches another caller already runs, by hash. */
+  inFlight: Map<string, Promise<void>>;
+  /** Whether this caller claimed the hash. */
+  owns(hash: string): boolean;
+  /** Signal waiters that this caller is done with the hash. */
+  release(hash: string): void;
+  releaseAll(): void;
+}
+
+/** Claim every hash that no other caller is fetching into `cacheDir`. */
+function claimBundleFetches(cacheDir: string, hashes: readonly string[]): BundleFetchClaims {
+  const inFlight = new Map<string, Promise<void>>();
+  const owned = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+
+  for (const hash of hashes) {
+    const key = bundleFetchKey(cacheDir, hash);
+    const existing = bundleFetchesInFlight.get(key);
+    if (existing) {
+      inFlight.set(hash, existing);
+      continue;
+    }
+    let resolve!: () => void;
+    const promise = new Promise<void>((res) => {
+      resolve = res;
+    });
+    owned.set(hash, { promise, resolve });
+    bundleFetchesInFlight.set(key, promise);
+  }
+
+  const release = (hash: string): void => {
+    const claim = owned.get(hash);
+    if (!claim) return;
+    owned.delete(hash);
+    const key = bundleFetchKey(cacheDir, hash);
+    if (bundleFetchesInFlight.get(key) === claim.promise) bundleFetchesInFlight.delete(key);
+    claim.resolve();
+  };
+
+  return {
+    inFlight,
+    owns: (hash) => owned.has(hash),
+    release,
+    releaseAll: () => {
+      for (const hash of [...owned.keys()]) release(hash);
+    },
+  };
+}
+
+/** Number of bundle fetches currently claimed by some caller. */
+export function getBundleFetchesInFlightCount(): number {
+  return bundleFetchesInFlight.size;
+}
+
+interface MissingBundle {
+  hash: string;
+  canonicalPath: string;
+}
+
+interface MissingBundleFetchContext {
+  fs: ReturnType<typeof createFileSystem>;
+  absoluteCacheDir: string;
+  cacheHttpModule: CacheHttpModuleFn;
+  fallbackIdentity?: HttpCacheIdentityOptions;
+  total: number;
+  /** Called with the code of every bundle now present on disk. */
+  onMaterialized(code: string): void;
+  onFailed(hash: string): void;
+}
+
+/**
+ * Fetch missing bundles from the distributed cache in one batch and write
+ * them to disk. A bundle the batch cannot supply falls back to single-bundle
+ * recovery, which runs only after its claim is released because it can
+ * recurse into other bundles.
+ */
+async function fetchMissingBundles(
+  missing: readonly MissingBundle[],
+  context: MissingBundleFetchContext,
+  claims?: BundleFetchClaims,
+): Promise<void> {
+  if (missing.length === 0) return;
+  const { fs, absoluteCacheDir, cacheHttpModule, fallbackIdentity } = context;
+
+  logger.info("Fetching missing bundles from distributed cache", {
+    missing: missing.length,
+    total: context.total,
+  });
+
+  const cacheAvailable = await httpBundleCache.isAvailable();
+  if (!cacheAvailable) {
+    logger.error("No distributed cache available for bundle recovery");
+    for (const m of missing) context.onFailed(m.hash);
+    return;
+  }
+
+  const codes = await httpBundleCache.getBatchCodes(missing.map((m) => m.hash));
+  const identities = await httpBundleCache.getBatchRecoveryIdentities([...codes.keys()]);
+
+  const recoverFromMiss = async (hash: string, canonicalPath: string): Promise<void> => {
+    claims?.release(hash);
+    const recovered = await recoverHttpBundleByHash(
+      hash,
+      absoluteCacheDir,
+      cacheHttpModule,
+      undefined,
+      fallbackIdentity,
+    );
+    if (!recovered) {
+      context.onFailed(hash);
+      return;
+    }
+
+    const recoveredBundle = await readCachedHttpBundleFile(fs, canonicalPath);
+    if (!recoveredBundle || isDegradedArtifact(recoveredBundle.code)) {
+      context.onFailed(hash);
+      return;
+    }
+    context.onMaterialized(recoveredBundle.code);
+  };
+
+  await Promise.all(
+    missing.map(async ({ hash, canonicalPath }) => {
+      const localCode = codes.get(hash);
+      if (!localCode) {
+        await recoverFromMiss(hash, canonicalPath);
+        return;
+      }
+
+      const code = unbrand(localCode);
+
+      if (
+        !isHttpBundleCodeWithinLimit(code) ||
+        isDegradedArtifact(code) ||
+        hasIncompatibleFilePaths(code, absoluteCacheDir)
+      ) {
+        logger.warn(
+          "[HTTP-CACHE] Batch-fetched code has incompatible file paths, trying single recovery",
+          { hash, localCacheDir: absoluteCacheDir },
+        );
+        claims?.release(hash);
+        const recovered = await recoverHttpBundleByHash(
+          hash,
+          absoluteCacheDir,
+          cacheHttpModule,
+          undefined,
+          fallbackIdentity,
+        );
+        if (!recovered) context.onFailed(hash);
+        return;
+      }
+
+      try {
+        await fs.mkdir(absoluteCacheDir, { recursive: true });
+        await fs.writeTextFile(canonicalPath, code);
+        logger.debug("Wrote bundle to disk", { hash, path: canonicalPath });
+
+        const identity = identities.get(hash);
+        if (identity?.originalUrl) {
+          await rememberRecoveredPath(
+            hash,
+            absoluteCacheDir,
+            identity.originalUrl,
+            canonicalPath,
+            identity.metadata ?? fallbackIdentity,
+          );
+        }
+
+        context.onMaterialized(code);
+      } catch (error) {
+        logger.error("Failed to write bundle to disk", { hash, error });
+        context.onFailed(hash);
+      } finally {
+        claims?.release(hash);
+      }
+    }),
+  );
+}
+
+/**
  * Ensure all HTTP bundles exist locally before import.
  * Proactively fetches missing bundles from distributed cache.
  */
@@ -374,94 +564,46 @@ export async function ensureHttpBundlesExist(
 
     if (missing.length === 0) continue;
 
-    logger.info("Fetching missing bundles from distributed cache", {
-      missing: missing.length,
+    const fetchContext: MissingBundleFetchContext = {
+      fs,
+      absoluteCacheDir,
+      cacheHttpModule,
+      fallbackIdentity,
       total: batch.length,
-    });
+      onMaterialized: (code) => {
+        for (const dep of extractBundleDeps(code)) {
+          if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
+        }
+      },
+      onFailed: (hash) => failed.add(hash),
+    };
 
-    const cacheAvailable = await httpBundleCache.isAvailable();
-    if (!cacheAvailable) {
-      logger.error("No distributed cache available for bundle recovery");
-      for (const m of missing) failed.add(m.hash);
-      continue;
+    // Claim the missing bundles before any await so a concurrent caller that
+    // needs the same bundles waits for this fetch instead of repeating it.
+    const claims = claimBundleFetches(absoluteCacheDir, missing.map(({ hash }) => hash));
+    try {
+      await fetchMissingBundles(
+        missing.filter(({ hash }) => claims.owns(hash)),
+        fetchContext,
+        claims,
+      );
+    } finally {
+      claims.releaseAll();
     }
 
-    const codes = await httpBundleCache.getBatchCodes(missing.map((m) => m.hash));
-
-    await Promise.all(
-      missing.map(async ({ hash, canonicalPath }) => {
-        const localCode = codes.get(hash);
-        if (!localCode) {
-          const recovered = await recoverHttpBundleByHash(
-            hash,
-            absoluteCacheDir,
-            cacheHttpModule,
-            undefined,
-            fallbackIdentity,
-          );
-          if (!recovered) {
-            failed.add(hash);
-            return;
-          }
-
-          const recoveredBundle = await readCachedHttpBundleFile(fs, canonicalPath);
-          if (!recoveredBundle || isDegradedArtifact(recoveredBundle.code)) {
-            failed.add(hash);
-            return;
-          }
-          for (const dep of extractBundleDeps(recoveredBundle.code)) {
-            if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
-          }
-          return;
-        }
-
-        const code = unbrand(localCode);
-
-        if (
-          !isHttpBundleCodeWithinLimit(code) ||
-          isDegradedArtifact(code) ||
-          hasIncompatibleFilePaths(code, absoluteCacheDir)
-        ) {
-          logger.warn(
-            "[HTTP-CACHE] Batch-fetched code has incompatible file paths, trying single recovery",
-            { hash, localCacheDir: absoluteCacheDir },
-          );
-          const recovered = await recoverHttpBundleByHash(
-            hash,
-            absoluteCacheDir,
-            cacheHttpModule,
-            undefined,
-            fallbackIdentity,
-          );
-          if (!recovered) failed.add(hash);
-          return;
-        }
-
-        try {
-          await fs.mkdir(absoluteCacheDir, { recursive: true });
-          await fs.writeTextFile(canonicalPath, code);
-          logger.debug("Wrote bundle to disk", { hash, path: canonicalPath });
-
-          const identity = await resolveRecoveryIdentity(hash, fallbackIdentity);
-          if (identity.originalUrl) {
-            await rememberRecoveredPath(
-              hash,
-              absoluteCacheDir,
-              identity.originalUrl,
-              canonicalPath,
-              identity.options,
-            );
-          }
-
-          for (const dep of extractBundleDeps(code)) {
-            if (!seen.has(dep.hash)) pending.push({ hash: dep.hash });
-          }
-        } catch (error) {
-          logger.error("Failed to write bundle to disk", { hash, error });
-          failed.add(hash);
-        }
-      }),
-    );
+    // Wait for bundles another caller was fetching only after releasing every
+    // claim, so two callers never wait on each other.
+    if (claims.inFlight.size === 0) continue;
+    await Promise.all(claims.inFlight.values());
+    const leftover: MissingBundle[] = [];
+    for (const entry of missing) {
+      if (!claims.inFlight.has(entry.hash)) continue;
+      const bundle = await readCachedHttpBundleFile(fs, entry.canonicalPath);
+      if (bundle && !isDegradedArtifact(bundle.code)) fetchContext.onMaterialized(bundle.code);
+      else leftover.push(entry);
+    }
+    // The other caller could not materialize these; recover them here.
+    await fetchMissingBundles(leftover, fetchContext);
   }
 
   if (failed.size > 0) {

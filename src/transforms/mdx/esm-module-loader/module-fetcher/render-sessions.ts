@@ -34,6 +34,17 @@ const renderSessions = new Map<string, RenderSession>();
 const currentSessionIdStorage = new AsyncLocalStorage<string>();
 
 /**
+ * Collects the modules recorded by a shared module resolution so every render
+ * that joins it can record them into its own session.
+ */
+const moduleRecorderStorage = new AsyncLocalStorage<Set<string>>();
+
+/** Run `fn` while collecting every module recorded by the work it spawns. */
+export function runWithModuleRecorder<T>(recorder: Set<string>, fn: () => T): T {
+  return moduleRecorderStorage.run(recorder, fn);
+}
+
+/**
  * Run `fn` with `sessionId` bound as the active render session for all async
  * work it spawns. Modules fetched inside are attributed to this session.
  */
@@ -118,6 +129,7 @@ function getCurrentSession(): RenderSession | null {
 }
 
 export function recordModuleToSession(normalizedPath: string): void {
+  moduleRecorderStorage.getStore()?.add(normalizedPath);
   const session = getCurrentSession();
   if (!session) return;
 
