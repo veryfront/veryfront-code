@@ -89,7 +89,10 @@ export function createExecutorOperationGate(
     if (state === "revoked") throw new TypeError("Executor operation gate revoked");
   }
 
-  function admit(name: string, context: ExecutorOperationContext): ExecutorOperationContext {
+  function admit(
+    name: string,
+    context: ExecutorOperationContext,
+  ): { context: ExecutorOperationContext; release(): void } {
     assertActive();
     const current = getExecutorBindingSchema().safeParse(context.binding);
     if (
@@ -100,9 +103,10 @@ export function createExecutorOperationGate(
     if (state !== "executing" && !preparation.has(name)) {
       throw new TypeError("Executor operation requires execution");
     }
-    const signal = AbortSignal.any([controller.signal, context.signal]);
+    const signal = linkCancellation([controller.signal, context.signal]);
     signal.throwIfAborted();
-    return { binding, signal, deadline: context.deadline };
+    owned++;
+    return { context: { binding, signal, deadline: context.deadline }, release };
   }
 
   const operations = new Map<string, ExecutorOperation>();
@@ -112,15 +116,15 @@ export function createExecutorOperationGate(
       operations.set(name, {
         mode: "unary",
         async handle(input, context) {
-          const bound = admit(name, context);
-          owned++;
+          const admitted = admit(name, context);
+          const bound = admitted.context;
           try {
             const result = await handle(input, bound);
             assertActive();
             bound.signal.throwIfAborted();
             return result;
           } finally {
-            release();
+            admitted.release();
           }
         },
       });
@@ -129,13 +133,13 @@ export function createExecutorOperationGate(
       operations.set(name, {
         mode: "stream",
         handle(input, context) {
-          const bound = admit(name, context);
-          owned++;
+          const admitted = admit(name, context);
+          const bound = admitted.context;
           try {
             const iterator = handle(input, bound)[Symbol.asyncIterator]();
-            return ownIterator(iterator, bound.signal, assertActive, release);
+            return ownIterator(iterator, bound.signal, assertActive, admitted.release);
           } catch (error) {
-            release();
+            admitted.release();
             throw error;
           }
         },
@@ -164,6 +168,33 @@ export function createExecutorOperationGate(
     },
     revoke,
   };
+}
+
+/**
+ * Combine cancellation sources for one owned call.
+ *
+ * AbortSignal.any() is not used here: Deno keeps a combined signal alive from
+ * its sources only through weak references, so once a drained stream's
+ * consumer drops its iterator the combined signal and its abort listener can
+ * be garbage collected. Cancellation then never reaches the call, ownership is
+ * never released and `settled` stays pending with nothing left to run.
+ * Listening on the sources directly keeps the call reachable for exactly as
+ * long as a source can still abort it, matching AbortSignal.any() semantics
+ * for work that outlives the call. The first abort unlinks every source.
+ */
+function linkCancellation(sources: readonly AbortSignal[]): AbortSignal {
+  const call = new AbortController();
+  const aborted = sources.find((source) => source.aborted);
+  if (aborted) {
+    call.abort(aborted.reason);
+    return call.signal;
+  }
+  const onAbort = (event: Event) => {
+    for (const source of sources) source.removeEventListener("abort", onAbort);
+    call.abort((event.target as AbortSignal).reason);
+  };
+  for (const source of sources) source.addEventListener("abort", onAbort, { once: true });
+  return call.signal;
 }
 
 function ownIterator(

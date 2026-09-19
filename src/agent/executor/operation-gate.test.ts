@@ -286,6 +286,48 @@ describe("executor operation gate", () => {
     }
   });
 
+  it("releases drained streams from source cancellation without relying on a combined signal", async () => {
+    // Deno holds AbortSignal.any() results only weakly from their sources, so a
+    // combined signal that nothing else references can be collected together
+    // with its abort listeners. Model that collection as a signal that never
+    // aborts: ownership must still be released through the source signals.
+    const combine = AbortSignal.any;
+    AbortSignal.any = (() => new AbortController().signal) as typeof AbortSignal.any;
+    try {
+      for (const cancel of ["revocation", "call"] as const) {
+        const gate = createExecutorOperationGate({
+          binding,
+          signal: new AbortController().signal,
+          operations: new Map([["model.stream", {
+            mode: "stream",
+            async *handle(input) {
+              yield input;
+            },
+          }]]),
+        });
+        gate.markPrepared();
+        gate.beginExecution();
+        const operation = gate.operations.get("model.stream")!;
+        assert(operation.mode === "stream");
+        const call = new AbortController();
+        // Draining without return() leaves release to the call's cancellation.
+        assertEquals(await Array.fromAsync(operation.handle(1, context(call.signal))), [1]);
+        if (cancel === "call") {
+          call.abort();
+          await tick();
+        }
+        gate.revoke();
+        const settled = await Promise.race([
+          gate.settled.then(() => true),
+          tick().then(() => false),
+        ]);
+        assertEquals(settled, true, `${cancel} must release the drained stream`);
+      }
+    } finally {
+      AbortSignal.any = combine;
+    }
+  });
+
   it("revokes before abort listeners can reenter handlers or transitions", async () => {
     for (const fromOwner of [false, true]) {
       const release = Promise.withResolvers<void>();
