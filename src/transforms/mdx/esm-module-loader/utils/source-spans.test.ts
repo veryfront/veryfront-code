@@ -140,7 +140,8 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
 
     for (const scanner of cases) {
       assertEquals(scanner.scan(makeSource(51_600)), []);
-      assertLinearScan(scanner.name, scanner.scan, makeSource, 6_450);
+      // 12,900 lines grows to the original 51,600-line (554 KB) timed sample.
+      assertLinearScan(scanner.name, scanner.scan, makeSource, 12_900);
     }
   });
 
