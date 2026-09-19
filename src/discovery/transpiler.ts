@@ -664,7 +664,9 @@ export function discoveryPathForDisplay(filePath: string, baseDir?: string): str
     if (under) return file.slice(prefix.length);
   }
   // A relative path is already free of machine layout; leave it as written.
-  if (!isAbsoluteMachinePath(filePath)) return filePath;
+  // The portable form is what is checked: a native UNC path (`\\\\Server\\Share`)
+  // is absolute too, and its server and share are machine layout.
+  if (!isAbsoluteMachinePath(file)) return filePath;
   return pathHelper.basename(file);
 }
 
@@ -697,8 +699,9 @@ function isWindowsDrivePath(path: string): boolean {
   return /^[A-Za-z]:\//.test(path) || path.startsWith("//");
 }
 
+/** Expects the portable form: `/...`, `//Server/Share/...` or `C:/...`. */
 function isAbsoluteMachinePath(path: string): boolean {
-  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+  return path.startsWith("/") || /^[A-Za-z]:\//.test(path);
 }
 
 /**

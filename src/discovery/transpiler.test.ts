@@ -652,6 +652,15 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         discoveryPathForDisplay("C:\\Users\\someone\\work\\extract.ts", ""),
         "extract.ts",
       );
+      // A native UNC path is absolute too, server and share included.
+      assertEquals(
+        discoveryPathForDisplay("\\\\Server\\Share\\Project\\tools\\extract.ts"),
+        "extract.ts",
+      );
+      assertEquals(
+        discoveryPathForDisplay("\\\\Server\\Share\\Project\\tools\\extract.ts", "/srv/other"),
+        "extract.ts",
+      );
     });
   });
 
