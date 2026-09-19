@@ -44,7 +44,10 @@ import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache/registry.ts";
 import { VERYFRONT_CONFIG_FILES } from "./config-files.ts";
-import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import {
+  currentRequestContext,
+  runWithoutRequestScopedFileCache,
+} from "#veryfront/platform/request-context-access.ts";
 import type { BundleOptions, BundleResult } from "#veryfront/extensions/bundler/bundler.ts";
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import type { ASTNode } from "#veryfront/extensions/parser/index.ts";
@@ -8977,7 +8980,14 @@ function getConfigInternal(
             );
             const sourceReadFlight = getOrCreateHostedConfigSourceReadFlight(
               sourceReadKey,
-              () => readHostedConfigSource(adapter, configBaseDir),
+              previewSnapshot === undefined
+                ? () => readHostedConfigSource(adapter, configBaseDir)
+                // Other requests share this read, so it must not return bytes
+                // the creating request pinned before the snapshot advanced.
+                : () =>
+                  runWithoutRequestScopedFileCache(() =>
+                    readHostedConfigSource(adapter, configBaseDir)
+                  ),
             );
             sourceReadLease = await waitForHostedConfigSourceReadFlight(
               sourceReadFlight,

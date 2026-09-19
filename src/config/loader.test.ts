@@ -10577,6 +10577,75 @@ export default config as const;
         });
       });
 
+      it("does not share bytes a request pinned before the preview snapshot advanced", async () => {
+        const snapshot = {
+          identity: "branch:preview-burst-project:feature/preview-burst",
+          version: 8,
+        };
+        const adapter = createSnapshotPreviewAdapter(snapshot);
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        const readStarted = Promise.withResolvers<void>();
+        const releaseRead = Promise.withResolvers<void>();
+        let reads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          readStarted.resolve();
+          await releaseRead.promise;
+          // Mirrors the Veryfront adapter: request-scoped content wins.
+          return getCurrentRequestContext()?.fileCache?.get(path) ?? "after-edit";
+        };
+        __setHostedConfigEvaluatorForTests(async (payload) => ({
+          title: payload.evaluationOptions.source,
+        }));
+
+        const branch = "feature/preview-burst";
+        // A long-running request cached the config before the edit.
+        const pinned = runWithRequestContext(
+          {
+            projectSlug: "preview-burst-project",
+            projectId: "preview-burst-project",
+            token: "token",
+            branch,
+          },
+          () => {
+            getCurrentRequestContext()?.fileCache?.set("/veryfront.config.js", "before-edit");
+            return getHostedConfig("/hosted/preview-burst-project", adapter, {
+              cacheKey: "preview-burst-project",
+              sourceContext: { productionMode: false, branch },
+              preparedContext,
+            });
+          },
+        );
+        let fresh: ReturnType<typeof loadSnapshotPreviewConfig> | undefined;
+        try {
+          await readStarted.promise;
+          fresh = loadSnapshotPreviewConfig(adapter, preparedContext);
+          await waitForHostedSourceReadState({
+            active: 1,
+            queued: 0,
+            flights: 1,
+            waiters: 2,
+          });
+          releaseRead.resolve();
+          assertEquals((await fresh).title, "after-edit");
+          await pinned;
+          assertEquals(reads, 1);
+        } finally {
+          releaseRead.resolve();
+          await Promise.allSettled([pinned, fresh].filter((request) => request !== undefined));
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
       it("reads a changed preview snapshot again instead of joining the previous read", async () => {
         const snapshot = {
           identity: "branch:preview-burst-project:feature/preview-burst",
