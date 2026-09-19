@@ -628,17 +628,42 @@ function isRuntimeProvidedImport(specifier: string, name: string): boolean {
   return !specifier.startsWith("npm:") || nodeBuiltinSpecifier(name) === null;
 }
 
-/** The characters of a semver range or a dist-tag, and nothing that can carry a URL. */
-const PLAIN_DECLARATION = /^[0-9A-Za-z.*^~<>=|+\s-]*$/;
+/** One semver comparator: an optional operator, then a full or partial version. */
+const RANGE_COMPARATOR =
+  /^(?:<=|>=|~>|[<>=^~])?v?(?:\d+|[xX*])(?:\.(?:\d+|[xX*])){0,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** A hyphen-range bound: a version with no operator. */
+const RANGE_BOUND = /^v?\d+(?:\.(?:\d+|[xX*])){0,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** A dist-tag: one token that is not itself a version. */
+const DIST_TAG = /^[A-Za-z][A-Za-z0-9._-]*$/;
+
+/**
+ * Does this text parse as an npm semver range (comparator sets joined by `||`,
+ * hyphen ranges, `*`) or a single dist-tag? A character allow-list is not
+ * enough: whitespace lets arbitrary prose -- `Bearer <TOKEN>` -- through it.
+ */
+function isRangeOrDistTag(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed === "" || DIST_TAG.test(trimmed)) return true;
+  return trimmed.split("||").every((alternative) => {
+    // npm allows whitespace between an operator and its version.
+    const set = alternative.trim().replace(/(<=|>=|~>|[<>=^~])\s+/g, "$1");
+    if (set === "") return true;
+    const hyphen = /^(\S+)\s+-\s+(\S+)$/.exec(set);
+    if (hyphen) return RANGE_BOUND.test(hyphen[1]!) && RANGE_BOUND.test(hyphen[2]!);
+    return set.split(/\s+/).every((comparator) => RANGE_COMPARATOR.test(comparator));
+  });
+}
 
 /**
  * A declaration as user-facing detail may show it. A range or dist-tag is
  * quoted verbatim; anything else -- `git+https://<TOKEN>@host/repo.git`, a
- * `file:` path, a `user/repo` shorthand -- can carry credentials or a machine
- * path, so only its kind is named.
+ * `file:` path, a `user/repo` shorthand, prose -- can carry credentials or a
+ * machine path, so only its kind is named.
  */
 function describeDeclaration(declared: string): string {
-  if (PLAIN_DECLARATION.test(declared)) return `"${declared}"`;
+  if (isRangeOrDistTag(declared)) return `"${declared}"`;
   const scheme = URL_SCHEME.exec(declared)?.[0];
   return scheme === undefined ? "a non-registry source" : `a "${scheme}" source`;
 }
@@ -665,7 +690,7 @@ function isContainedSubpath(subpath: string): boolean {
 
 /** A version written into an import, as user-facing detail may show it. */
 function isPlainImportVersion(version: string): boolean {
-  return PLAIN_DECLARATION.test(version);
+  return isRangeOrDistTag(version);
 }
 
 /**

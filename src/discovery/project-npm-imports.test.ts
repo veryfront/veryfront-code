@@ -612,6 +612,26 @@ describe("classifyProjectNpmImport", () => {
     );
   });
 
+  it("quotes a declaration only when it parses as a range or a dist-tag", () => {
+    // Characters a range may use do not make prose a range: whitespace lets a
+    // credential-bearing sentence through a character allow-list.
+    for (const declared of ["Bearer TOKENVALUE", "token = abc-123", "1.2.3 SECRET"]) {
+      const decision = classify("npm:unpdf@1.8.1", { unpdf: declared });
+      const reason = decision.kind === "missing" ? decision.reason : "";
+      assertEquals(
+        reason,
+        "the import asks for unpdf@1.8.1 and package.json declares a non-registry source, " +
+          "which it cannot be checked against -- declare an exact version",
+        declared,
+      );
+    }
+    for (const declared of [">= 1.2.0 < 2", "1.0.0 - 2.0.0", "^1 || ~2.3", "next", "beta.2"]) {
+      const decision = classify("npm:unpdf@9.9.9", { unpdf: declared });
+      const reason = decision.kind === "missing" ? decision.reason : "";
+      assertEquals(reason.includes(`"${declared}"`), true, `${declared}: ${reason}`);
+    }
+  });
+
   it("serves grandfathered uppercase package names", () => {
     assertEquals(classify("JSONStream", { JSONStream: "1.3.5" }), {
       kind: "cdn",
