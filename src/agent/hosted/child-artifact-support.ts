@@ -1,3 +1,4 @@
+import { inheritTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { privateArtifactText } from "../artifacts/private-artifact-text.ts";
 import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
@@ -7,7 +8,12 @@ const TEXT_PROJECT_ARTIFACT_CUE_PATTERN =
   /\b(markdown|reference document|research report|report|write-up|writeup|save it to the project|save everything to the project|save the results to the project|compile everything into a single well-structured markdown file)\b/i;
 const TEXT_PROJECT_ARTIFACT_PATH_PATTERN = /(?:^|[\s`"'(])(?:[\w./-]+\/)?[\w.-]+\.md\b/i;
 
-const DEFAULT_WRITING_TOOL_NAMES = ["create_file", "update_file"];
+const DEFAULT_WRITING_TOOL_NAMES = [
+  "create_file",
+  "update_file",
+  "veryfront__create_file",
+  "veryfront__update_file",
+];
 const CREATE_FILE_ALREADY_EXISTS_PATTERN = /file already exists/i;
 const TOOL_ERROR_VALUES = new Set(["error", "tool_error"]);
 const MAX_NESTED_TOOL_RESULT_DEPTH = 8;
@@ -57,7 +63,7 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
 
   return {
     ...input.tools,
-    [createToolName]: {
+    [createToolName]: inheritTrustedHostToolProvenance(createFileTool, {
       ...createFileTool,
       execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
         const normalizedToolInput = toChildRunToolInputRecord(toolInput);
@@ -95,7 +101,7 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
           execOptions,
         );
       },
-    },
+    }),
   };
 }
 

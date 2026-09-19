@@ -1,3 +1,5 @@
+import { isToolAllowedBySourcePolicy } from "./platform-tool-policy.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { INPUT_VALIDATION_FAILED, PERMISSION_DENIED } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
@@ -63,6 +65,7 @@ export type ProjectScopedRemoteToolCatalog = {
 
 /** Options accepted by list project-scoped remote tool name. */
 export type ListProjectScopedRemoteToolNameOptions = {
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   projectId: string | null;
   context?: ToolExecutionContext;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -456,7 +459,13 @@ export async function listProjectScopedRemoteToolNames(
       options.projectScopedRemoteToolOptions,
     );
     for (const toolDefinition of toolDefinitions) {
-      remoteToolNames.add(toolDefinition.name);
+      if (
+        isToolAllowedBySourcePolicy(
+          toolDefinition.name,
+          options.sourceIntegrationPolicy ?? { schemaVersion: 1, mode: "unrestricted" },
+          source,
+        )
+      ) remoteToolNames.add(toolDefinition.name);
     }
   }
 

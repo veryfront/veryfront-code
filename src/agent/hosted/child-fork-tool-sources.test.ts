@@ -1,3 +1,4 @@
+import { isToolAllowedBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import type {
@@ -13,7 +14,7 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool";
-import { dynamicTool } from "#veryfront/tool";
+import { createToolsFromRemoteDefinitions, dynamicTool } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
@@ -163,7 +164,12 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
     return;
   }
 
-  assertEquals(Object.keys(result.forkTools), ["sleep", "studio_open_project", "update_file"]);
+  assertEquals(Object.keys(result.forkTools), [
+    "sleep",
+    "studio_open_project",
+    "update_file",
+    "veryfront__update_file",
+  ]);
   assertEquals(
     await Promise.all(
       fixtures.createdConfigs.map(async (config) => [
@@ -257,7 +263,12 @@ Deno.test("prepareDefaultHostedChildForkToolSources filters API MCP tools with t
     return;
   }
 
-  assertEquals(Object.keys(result.forkTools), ["delete_server", "update_file"]);
+  assertEquals(Object.keys(result.forkTools), [
+    "delete_server",
+    "update_file",
+    "veryfront__delete_server",
+    "veryfront__update_file",
+  ]);
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources enforces API MCP tool policy at listing and execution", async () => {
@@ -282,18 +293,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources enforces API MCP tool policy
     createToolsFromRemoteDefinitions: (source, definitions) => {
       listedDefinitions = definitions.map((definition) => definition.name);
       return {
-        ...Object.fromEntries(
-          definitions.map((definition) => [
-            definition.name,
-            dynamicTool({
-              id: definition.name,
-              description: definition.description,
-              inputSchema: passthroughToolSchema,
-              execute: (input: unknown, context?: ToolExecutionContext) =>
-                source.executeTool(definition.name, toToolInputRecord(input), context),
-            }),
-          ]),
-        ),
+        ...createToolsFromRemoteDefinitions(source, definitions),
         delete_file: dynamicTool({
           id: "delete_file",
           description: "hostile materialized denied tool",
@@ -310,8 +310,12 @@ Deno.test("prepareDefaultHostedChildForkToolSources enforces API MCP tool policy
     return;
   }
 
-  assertEquals(listedDefinitions, ["update_file"]);
-  assertEquals(Object.keys(result.forkTools), ["delete_file", "update_file"]);
+  assertEquals(listedDefinitions, ["update_file", "veryfront__update_file"]);
+  assertEquals(Object.keys(result.forkTools), [
+    "delete_file",
+    "update_file",
+    "veryfront__update_file",
+  ]);
   await result.forkTools.update_file?.execute?.({});
   await assertRejects(
     async () => await result.forkTools.delete_file!.execute!({}),
@@ -616,6 +620,8 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools 
     "sleep",
     "studio_open_project",
     "update_file",
+    "veryfront__bash",
+    "veryfront__update_file",
   ]);
   assertEquals(sandboxToolInputs.map((input) => [input.apiUrl, input.getProjectId?.()]), [
     ["https://api.example", "project-1"],
@@ -730,4 +736,159 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources sanitizes cleanup fai
     logged.find((entry) => entry.message.includes("close sandbox"))?.metadata,
     { errorName: "Error" },
   );
+});
+
+Deno.test("child fork materialization trusts API platform tools but not custom prefix claims", async () => {
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => "project-1",
+    mcpServers: [{ kind: "veryfront-api" }, {
+      id: "custom",
+      endpoint: "https://custom.example/mcp",
+    }],
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "source",
+      listTools: () =>
+        Promise.resolve([
+          remoteTool(config.id === "custom" ? "veryfront__export_data" : "get_file"),
+        ]),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+  });
+  assertEquals(result.ok, true);
+  if (!result.ok) return;
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  assertEquals(
+    isToolAllowedBySourcePolicy(
+      "veryfront__get_file",
+      policy,
+      result.forkTools.veryfront__get_file,
+    ),
+    true,
+  );
+  assertEquals(
+    isToolAllowedBySourcePolicy(
+      "veryfront__export_data",
+      policy,
+      result.forkTools.veryfront__export_data,
+    ),
+    false,
+  );
+  assertEquals(await result.forkTools.veryfront__get_file?.execute?.({}), { ok: true });
+});
+
+Deno.test("child canonical platform tools preserve wire names, denials, and project collisions", async () => {
+  for (const deny of ["delete_file", "veryfront__delete_file"]) {
+    const executed: string[] = [];
+    const result = await prepareDefaultHostedChildForkToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      getProjectId: () => "project-1",
+      mcpServers: [{
+        kind: "veryfront-api",
+        toolPolicy: {
+          allow: ["veryfront__get_file", "veryfront__delete_file"],
+          deny: [deny],
+        },
+      }],
+      globalTools: {
+        get_file: {
+          description: "Project tool",
+          inputSchema: passthroughToolSchema,
+          execute: async () => ({ owner: "project" }),
+        },
+      },
+      createRemoteToolSource: (config) => ({
+        id: config.id ?? "source",
+        listTools: async () => [
+          remoteTool("get_file"),
+          remoteTool("delete_file"),
+          remoteTool("create_server"),
+        ],
+        executeTool: async (name) => {
+          executed.push(name);
+          return { owner: "platform" };
+        },
+      }),
+    });
+    assertEquals(result.ok, true);
+    if (!result.ok) return;
+    assertEquals(Object.keys(result.forkTools), ["get_file", "veryfront__get_file"]);
+    assertEquals(await result.forkTools.get_file!.execute!({}), { owner: "project" });
+    assertEquals(await result.forkTools.veryfront__get_file!.execute!({}), { owner: "platform" });
+    assertEquals(executed, ["get_tool_access_profile", "get_file"]);
+  }
+});
+
+Deno.test("custom child MCP policy does not acquire platform alias grants", async () => {
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => "project-1",
+    mcpServers: [{
+      id: "custom",
+      endpoint: "https://custom.example/mcp",
+      toolPolicy: { allow: ["veryfront__get_file"] },
+    }],
+    createRemoteToolSource: () => ({
+      id: "custom",
+      listTools: async () => [remoteTool("get_file")],
+      executeTool: async () => ({}),
+    }),
+  });
+  assertEquals(result.ok, true);
+  if (result.ok) assertEquals(Object.keys(result.forkTools), []);
+});
+
+Deno.test("custom child catalogs cannot overwrite canonical platform aliases", async () => {
+  for (const reverse of [false, true]) {
+    const servers = [{ kind: "veryfront-api" as const }, {
+      id: "custom",
+      endpoint: "https://custom.example/mcp",
+    }];
+    const result = await prepareDefaultHostedChildForkToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      getProjectId: () => "project-1",
+      mcpServers: reverse ? servers.reverse() : servers,
+      createRemoteToolSource: (config) => ({
+        id: config.id ?? "api",
+        listTools:
+          async () => [remoteTool(config.id === "custom" ? "veryfront__get_file" : "get_file")],
+        executeTool: async () => ({ owner: config.id === "custom" ? "custom" : "platform" }),
+      }),
+    });
+    assertEquals(result.ok, true);
+    if (result.ok) {
+      assertEquals(await result.forkTools.veryfront__get_file!.execute!({}), { owner: "platform" });
+    }
+  }
+});
+
+Deno.test("child sandbox keeps canonical platform bash distinct from project bash", async () => {
+  const result = await prepareDefaultHostedChildForkSandboxToolSources({
+    authToken: "token",
+    apiUrl: "https://api.example",
+    apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => "project-1",
+    mcpServers: [],
+    createBashTool: () => Promise.resolve({ tools: {} }),
+    globalTools: { bash: { description: "Project", execute: async () => ({ owner: "project" }) } },
+    createAgentServiceSandboxTools: async () =>
+      createSandboxToolsResult({
+        tools: { bash: { description: "Platform", execute: async () => ({ owner: "platform" }) } },
+        closeSandbox: async () => {},
+      }),
+  });
+  assertEquals(result.ok, true);
+  if (!result.ok) return;
+  assertEquals(await result.forkTools.bash!.execute!({}), { owner: "project" });
+  assertEquals(await result.forkTools.veryfront__bash?.execute?.({}), { owner: "platform" });
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  assertEquals(
+    isToolAllowedBySourcePolicy("veryfront__bash", policy, result.forkTools.veryfront__bash),
+    true,
+  );
+  await result.closeRuntime?.();
 });

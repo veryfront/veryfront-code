@@ -1,3 +1,4 @@
+import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
 import {
   assertEquals,
   assertInstanceOf,
@@ -800,7 +801,7 @@ Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools 
 
   assertEquals(
     (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
-    ["delete_server", "update_file"],
+    ["delete_server", "update_file", "veryfront__delete_server", "veryfront__update_file"],
   );
   assertEquals(executed, [
     {
@@ -835,7 +836,7 @@ Deno.test("createHostedProjectRemoteToolSources fails closed for mapped API tool
 
   assertEquals(
     (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
-    ["update_file"],
+    ["update_file", "veryfront__update_file"],
   );
 });
 
@@ -1051,7 +1052,7 @@ Deno.test("createHostedProjectRemoteToolSources applies API and Studio policies 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
   assertEquals(
     (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
-    ["update_file"],
+    ["update_file", "veryfront__update_file"],
   );
   assertEquals(
     (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
@@ -1336,4 +1337,92 @@ Deno.test("createHostedProjectRemoteToolSource treats null activatedRemoteToolNa
     { ok: true },
     "tool outside allowedToolNames must execute when the activation gate is null",
   );
+});
+
+Deno.test("authenticated hosted API catalogs retain platform tools under connector restrictions", async () => {
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => "project-1",
+    mcpServers: [{ kind: "veryfront-api" }, {
+      id: "custom",
+      endpoint: "https://custom.example/mcp",
+    }],
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [
+          simpleTool(config.id === "custom" ? "veryfront__export_data" : "veryfront__get_file"),
+          simpleTool("veryfront__create_server"),
+        ],
+        execute: (name) => {
+          if (name === "get_tool_access_profile") throw new Error("Unavailable");
+          return { name };
+        },
+      }),
+  });
+  assertEquals(
+    await listProjectScopedRemoteToolNames(sources, {
+      projectId: "project-1",
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "allowlist", integrations: {} },
+      context: { authToken: "token-1" },
+    }),
+    ["veryfront__get_file"],
+  );
+  assertEquals(
+    await sources[0]!.executeTool("veryfront__get_file", {}, { projectId: "project-1" }),
+    { name: "veryfront__get_file" },
+  );
+  await assertRejects(() =>
+    sources[0]!.executeTool("veryfront__create_server", {}, { projectId: "project-1" })
+  );
+});
+
+Deno.test("hosted platform aliases preserve exact ceilings, live activation, and access filtering", async () => {
+  const activated = new Set(["veryfront__get_file"]);
+  const executions: string[] = [];
+  const [source] = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api", toolPolicy: { deny: ["veryfront__delete_file"] } }],
+    getProjectId: () => "project-1",
+    activatedRemoteToolNames: activated,
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [
+          simpleTool("get_file"),
+          simpleTool("update_file"),
+          simpleTool("delete_file"),
+          simpleTool("create_server"),
+        ],
+        execute: (name) => {
+          executions.push(name);
+          if (name === "get_tool_access_profile") throw new Error("Unavailable");
+          return { owner: "platform" };
+        },
+      }),
+  });
+  assertEquals((await source!.listTools({ projectId: "project-1" })).map(({ name }) => name), [
+    "veryfront__get_file",
+  ]);
+  assertEquals(await source!.executeTool("veryfront__get_file", {}, { projectId: "project-1" }), {
+    owner: "platform",
+  });
+  await assertRejects(async () => await source!.executeTool("get_file", {}));
+  activated.delete("veryfront__get_file");
+  activated.add("veryfront__update_file");
+  activated.add("veryfront__create_server");
+  activated.add("veryfront__delete_file");
+  assertEquals((await source!.listTools({ projectId: "project-1" })).map(({ name }) => name), [
+    "veryfront__update_file",
+  ]);
+  for (
+    const name of ["veryfront__get_file", "veryfront__delete_file", "veryfront__create_server"]
+  ) {
+    await assertRejects(async () =>
+      await source!.executeTool(name, {}, { projectId: "project-1" })
+    );
+  }
+  assertEquals(executions.filter((name) => name !== "get_tool_access_profile"), ["get_file"]);
 });

@@ -1,3 +1,5 @@
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { it } from "#veryfront/testing/bdd.ts";
 import type {
@@ -212,7 +214,7 @@ Deno.test("getRuntimeRemoteToolSources hydrates a Veryfront API MCP server from 
   );
   assertEquals(
     (await sources?.[0]?.listTools({ projectId: "browser-project" }))?.map((tool) => tool.name),
-    ["get_file"],
+    ["get_file", "veryfront__get_file"],
   );
   await sources?.[0]?.executeTool(
     "get_file",
@@ -359,7 +361,10 @@ Deno.test("getRuntimeRemoteToolSources implicitly connects unresolved named tool
     await resolveRemoteEndpoint(remoteConfig?.endpoint),
     "https://api.example/projects/server-project/mcp",
   );
-  assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
+  assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), [
+    "get_file",
+    "veryfront__get_file",
+  ]);
 });
 
 Deno.test("getRuntimeRemoteToolSources preserves explicit MCP opt-out", () => {
@@ -994,7 +999,7 @@ it("getRuntimeRemoteToolSources serves a child agent's own named tools past a co
     .flat()
     .map((tool) => tool.name)
     .toSorted();
-  assertEquals(names, ["create_file", "get_file"]);
+  assertEquals(names, ["create_file", "get_file", "veryfront__create_file", "veryfront__get_file"]);
 });
 
 it("getRuntimeRemoteToolSources keeps a host-injected ambient source authoritative for its id", async () => {
@@ -1156,7 +1161,7 @@ it("keeps bootstrap provenance across a retained intermediate delegation", async
   const names = (await Promise.all((grandchildSources ?? []).map((source) => source.listTools())))
     .flat()
     .map((tool) => tool.name);
-  assertEquals(names, ["create_file"]);
+  assertEquals(names, ["create_file", "veryfront__create_file"]);
 });
 
 it("keeps a trusted remote-tool ceiling authoritative for an invoked child", async () => {
@@ -1281,4 +1286,189 @@ it("ignores inherited array slots when classifying remote source ownership", asy
     .flat()
     .map((tool) => tool.name);
   assertEquals(names, ["list_files"]);
+});
+
+it("preserves trusted bootstrap platform sources through nested credential and tool ceilings", async () => {
+  const calls: Array<ToolExecutionContext | undefined> = [];
+  const sources = getRuntimeRemoteToolSources({
+    system: "Read a project file",
+    tools: { veryfront__get_file: true },
+    mcpServers: [{ kind: "veryfront-api" }],
+  }, {
+    getVeryfrontBootstrap: () => ({
+      apiBaseUrl: "https://api.example",
+      apiToken: "server-token",
+      projectSlug: "server-project",
+      hasRequestContext: false,
+      usesVeryfrontFs: false,
+    }),
+    createRemoteToolSource: () => ({
+      id: VERYFRONT_API_MCP_SOURCE_ID,
+      listTools: () =>
+        Promise.resolve([{
+          name: "veryfront__get_file",
+          description: "Read file",
+          parameters: { type: "object", properties: {} },
+        }]),
+      executeTool: (_name, _args, context) => {
+        calls.push(context);
+        return Promise.resolve({ text: "file content" });
+      },
+    }),
+  })!;
+  const bound = bindRuntimeRemoteToolSourcesToCredentialOwner(sources, {
+    authToken: "owner-token",
+  })!;
+  const constrained = constrainRuntimeRemoteToolSources(bound, ["veryfront__get_file"])!;
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  for (const selected of [sources, bound, constrained]) {
+    assertEquals(
+      await listProjectScopedRemoteToolNames(selected, {
+        projectId: "project-1",
+        sourceIntegrationPolicy: policy,
+      }),
+      [
+        "veryfront__get_file",
+      ],
+    );
+  }
+  assertEquals(
+    await constrained[0]!.executeTool("veryfront__get_file", {}, { authToken: "untrusted-token" }),
+    { text: "file content" },
+  );
+  assertEquals(calls[0]?.authToken, "owner-token");
+});
+
+it("bootstrap platform aliases use legacy wire names and enforce either policy spelling", async () => {
+  for (const denied of ["delete_file", "veryfront__delete_file"]) {
+    const executions: string[] = [];
+    const sources = getRuntimeRemoteToolSources({
+      system: "Use files.",
+      tools: { veryfront__get_file: true },
+      mcpServers: [{
+        kind: "veryfront-api",
+        toolPolicy: {
+          allow: ["veryfront__get_file", "veryfront__delete_file"],
+          deny: [denied],
+        },
+      }],
+    }, {
+      getVeryfrontBootstrap: () => ({
+        hasRequestContext: false,
+        usesVeryfrontFs: true,
+        apiToken: "server-token",
+        projectSlug: "project-1",
+        apiBaseUrl: "https://api.example",
+      }),
+      createRemoteToolSource: (config) => ({
+        id: config.id ?? "platform",
+        listTools: async () =>
+          ["get_file", "delete_file"].map((name) => ({
+            name,
+            description: name,
+            parameters: { type: "object" as const, properties: {} },
+          })),
+        executeTool: async (name) => {
+          executions.push(name);
+          return { owner: "platform" };
+        },
+      }),
+    });
+    const source = sources![0]!;
+    assertEquals((await source.listTools()).map(({ name }) => name), [
+      "get_file",
+      "veryfront__get_file",
+    ]);
+    assertEquals(await source.executeTool("veryfront__get_file", {}), { owner: "platform" });
+    for (const name of ["delete_file", "veryfront__delete_file"]) {
+      await assertRejects(() => source.executeTool(name, {}));
+    }
+    assertEquals(executions, ["get_file"]);
+  }
+});
+
+it("retained platform policies expand aliases without widening project source policies", async () => {
+  for (const trusted of [false, true]) {
+    for (const prefix of ["", "veryfront__"]) {
+      const source: RemoteToolSource = {
+        id: VERYFRONT_API_MCP_SOURCE_ID,
+        listTools: async () =>
+          ["get_file", "veryfront__get_file", "delete_file", "veryfront__delete_file"].map(
+            (name) => ({
+              name,
+              description: name,
+              parameters: { type: "object" as const, properties: {} },
+            }),
+          ),
+        executeTool: async (name) => ({ name }),
+      };
+      const sources = getRuntimeRemoteToolSources(
+        {
+          system: "Use files",
+          mcpServers: [{
+            kind: "veryfront-api",
+            toolPolicy: {
+              allow: [`${prefix}get_file`, "delete_file", "veryfront__delete_file"],
+              deny: [`${prefix}delete_file`],
+            },
+          }],
+          __vfRemoteToolSources: [trusted ? markTrustedPlatformSource(source) : source],
+        } as Parameters<typeof getRuntimeRemoteToolSources>[0],
+      );
+      const retained = sources![0]!;
+      assertEquals(
+        (await retained.listTools()).map((t) => t.name),
+        trusted
+          ? ["get_file", "veryfront__get_file"]
+          : [`${prefix}get_file`, prefix ? "delete_file" : "veryfront__delete_file"],
+      );
+      for (
+        const name of ["get_file", "veryfront__get_file", "delete_file", "veryfront__delete_file"]
+      ) {
+        const allowed = trusted ? name.endsWith("get_file") : name === `${prefix}get_file` ||
+          name === (prefix ? "delete_file" : "veryfront__delete_file");
+        if (allowed) assertEquals(await retained.executeTool(name, {}), { name });
+        else await assertRejects(async () => await retained.executeTool(name, {}));
+      }
+    }
+  }
+});
+
+it("retained trusted legacy-only platform sources expose canonical names", async () => {
+  for (const prefix of ["", "veryfront__"]) {
+    const executions: string[] = [];
+    const source = markTrustedPlatformSource<RemoteToolSource>({
+      id: VERYFRONT_API_MCP_SOURCE_ID,
+      listTools: async () =>
+        ["get_file", "delete_file"].map((name) => ({
+          name,
+          description: name,
+          parameters: { type: "object" as const, properties: {} },
+        })),
+      executeTool: async (name) => {
+        executions.push(name);
+        return { name };
+      },
+    });
+    const sources = getRuntimeRemoteToolSources(
+      {
+        system: "Use files",
+        mcpServers: [{
+          kind: "veryfront-api",
+          toolPolicy: { allow: [`${prefix}get_file`], deny: [`${prefix}delete_file`] },
+        }],
+        __vfRemoteToolSources: [source],
+      } as Parameters<typeof getRuntimeRemoteToolSources>[0],
+    );
+    const retained = sources![0]!;
+    assertEquals((await retained.listTools()).map((t) => t.name), [
+      "get_file",
+      "veryfront__get_file",
+    ]);
+    assertEquals(await retained.executeTool("veryfront__get_file", {}), { name: "get_file" });
+    for (const name of ["delete_file", "veryfront__delete_file"]) {
+      await assertRejects(async () => await retained.executeTool(name, {}));
+    }
+    assertEquals(executions, ["get_file"]);
+  }
 });

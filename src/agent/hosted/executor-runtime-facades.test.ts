@@ -1,3 +1,5 @@
+import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -137,6 +139,8 @@ it("constructs model and host/remote tool facades only for the installed IDs", a
       channel: pair.executor,
       signal: pair.executor.signal,
     });
+    assertEquals(hasTrustedHostToolProvenance(facades.hostTools.get("host")!.read), false);
+    assertEquals(hasTrustedPlatformSource(facades.remoteToolSources.get("remote")!), false);
     assertEquals([...facades.hostTools.keys()], ["host"]);
     assertEquals([...facades.remoteToolSources.keys()], ["remote"]);
     const read = facades.hostTools.get("host")!.read!;
@@ -316,6 +320,26 @@ it("restores a durable replay checkpoint larger than the installation envelope",
     const data = facades.providerReplayCheckpoint?.initial?.[0]?.providerBlocks[0]?.block.data;
     assert(typeof data === "string");
     assertEquals(data.length, 70_000);
+    await facades.cleanup();
+  } finally {
+    await pair.close();
+  }
+});
+
+it("restores only installation-authorized platform provenance across the executor channel", async () => {
+  const pair = channels();
+  try {
+    const input = installation();
+    input.platformToolSourceIds = ["remote"];
+    input.platformHostTools = [{ sourceId: "host", toolName: "read" }];
+    const facades = await createExecutorRuntimeFacades({
+      input,
+      channel: pair.executor,
+      signal: pair.executor.signal,
+    });
+    assertEquals(hasTrustedHostToolProvenance(facades.hostTools.get("host")!.read), true);
+    assertEquals(hasTrustedPlatformSource(facades.remoteToolSources.get("remote")!), true);
+    assertEquals(await facades.hostTools.get("host")!.read!.execute!({}), "synthetic-result");
     await facades.cleanup();
   } finally {
     await pair.close();

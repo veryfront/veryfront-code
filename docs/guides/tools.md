@@ -40,6 +40,41 @@ export default tool({
 
 The filename becomes the tool's ID. `tools/get-weather.ts` registers as `getWeather`.
 
+## Platform and project tool names
+
+For project agents running in Veryfront Cloud, select platform tools with the
+reserved `veryfront__` prefix, for example `veryfront__bash` or
+`veryfront__get_file`. Project tools keep their local IDs. An agent can select
+both platform `veryfront__bash` and a project tool named `bash`:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  system: "Use veryfront__bash for shell commands and bash for the project action.",
+  tools: { veryfront__bash: true, bash: true },
+});
+```
+
+Existing noncolliding platform selectors such as `get_file` remain supported.
+Integration tools retain names such as `github__list_repos`. Project tool IDs
+cannot use the reserved double-underscore namespace. Platform aliases retain
+the same project scope and policy restrictions as their legacy names.
+
+Connector allowlists do not remove trusted platform capabilities. That exception
+requires host-owned provenance; a remote source cannot claim it with a tool name
+or source ID. Hosted wrappers and child forks preserve provenance. Managed
+executor installations carry broker-derived platform source and host-tool
+metadata, then restore provenance on the executor-local facades.
+Reserved platform names resolve only through trusted sources, regardless of
+custom server ordering. Hosted discovery applies connector policy to the same
+catalog snapshot it lists, without fetching each catalog a second time.
+Parent, child, hosted-project, and standalone API sources derive canonical aliases
+from the authenticated legacy catalog. API MCP allow/deny entries apply to both
+spellings; a run's tool-name ceiling still grants only its exact selected names.
+Canonical calls use the legacy wire name after project and access checks. Runtime
+dispatch reuses the source selected during authorization for that call.
+
 ## Try a tool directly
 
 Agents usually invoke tools, but direct execution is useful for testing and for API routes that expose a specific action:

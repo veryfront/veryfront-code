@@ -1,4 +1,12 @@
 import {
+  hasTrustedPlatformSource,
+  inheritTrustedPlatformSource,
+} from "#veryfront/tool/platform-source-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  inheritTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
+import {
   parseSourceIntegrationPolicyManifest,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
@@ -527,6 +535,18 @@ function constrainInstalledOperationGrants(
     }
   }
   installation.grant.allowedToolNames = [...allowedTools];
+  installation.platformToolSourceIds = installation.grant.remoteToolSourceIds.filter((id) => {
+    const capability = input.tools.sources.get(id);
+    return capability !== undefined && hasTrustedPlatformSource(capability.source);
+  });
+  installation.platformHostTools = installation.grant.hostToolFacadeIds.flatMap((sourceId) => {
+    const capability = input.tools.sources.get(sourceId);
+    if (!capability) return [];
+    return [...capability.allowedToolNames].filter((toolName) =>
+      hasTrustedPlatformSource(capability.source) ||
+      hasTrustedHostToolProvenance(input.tools.catalog.get(toolName))
+    ).map((toolName) => ({ sourceId, toolName }));
+  });
   // Source listings describe callable tools; only trusted ingress supplies ownership.
   const hostToolAliases: NonNullable<ExecutorRuntimeInstall["hostToolAliases"]> = [];
   for (const sourceId of installation.grant.hostToolFacadeIds) {
@@ -636,21 +656,27 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
   }
   const catalog = new Map([...input.tools.catalog].map(([id, tool]) => [
     id,
-    Object.freeze({
-      ownerAgentId: tool.ownerAgentId,
-      shortName: tool.shortName,
-    }),
+    inheritTrustedHostToolProvenance(
+      tool,
+      Object.freeze({
+        ownerAgentId: tool.ownerAgentId,
+        shortName: tool.shortName,
+      }),
+    ),
   ]));
   const sources = new Map<string, ExecutorToolCapability>();
   for (const [id, capability] of input.tools.sources) {
     const source = capability.source;
     const context = capability.context;
     sources.set(id, {
-      source: Object.freeze({
-        id: source.id,
-        listTools: source.listTools.bind(source),
-        executeTool: source.executeTool.bind(source),
-      }),
+      source: inheritTrustedPlatformSource(
+        source,
+        Object.freeze({
+          id: source.id,
+          listTools: source.listTools.bind(source),
+          executeTool: source.executeTool.bind(source),
+        }),
+      ),
       allowedToolNames: new Set(capability.allowedToolNames),
       retired: capability.retired,
       context: Object.freeze({

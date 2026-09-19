@@ -168,6 +168,8 @@ Deno.test("createHostedRootLocalToolRuntime merges sandbox tools and owns their 
     "bash",
     "get_background_command",
     "sleep",
+    "veryfront__bash",
+    "veryfront__get_background_command",
   ]);
   assertEquals(hasTrustedHostToolProvenance(localTools.bash), true);
   assertEquals(hasTrustedHostToolProvenance(localTools.get_background_command), true);
@@ -176,6 +178,8 @@ Deno.test("createHostedRootLocalToolRuntime merges sandbox tools and owns their 
     "bash",
     "get_background_command",
     "sleep",
+    "veryfront__bash",
+    "veryfront__get_background_command",
   ]);
   assertEquals(factoryCalls, 1);
   assertEquals(getProjectId?.(), "project-1");
@@ -228,4 +232,28 @@ Deno.test("createHostedRootLocalToolRuntime waits for in-flight setup before cle
   await buildPromise;
   await cleanupPromise;
   assertEquals(closeCalls, 1);
+});
+
+Deno.test("hosted root canonical sandbox selection preserves project bash", async () => {
+  const project = { description: "Project", execute: async () => ({ owner: "project" }) };
+  const runtime = createHostedRootLocalToolRuntime({
+    allowedToolNames: ["veryfront__bash"],
+    authToken: "token",
+    createBashTool,
+    buildBaseTools: () => ({ bash: project }),
+    createAgentServiceSandboxTools: async () => ({
+      tools: { bash: { description: "Platform", execute: async () => ({ owner: "platform" }) } },
+      closeSandbox: async () => {},
+    }),
+  });
+  const tools = await runtime.buildLocalTools({
+    authToken: "token",
+    projectId: "project-1",
+    branchId: null,
+    model: "openai/gpt-5.4-nano",
+  });
+  assertEquals(await tools.bash!.execute!({}), { owner: "project" });
+  assertEquals(await tools.veryfront__bash?.execute?.({}), { owner: "platform" });
+  assertEquals(hasTrustedHostToolProvenance(tools.veryfront__bash), true);
+  await runtime.cleanup();
 });

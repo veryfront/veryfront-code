@@ -1,3 +1,5 @@
+import { markTrustedPlatformSource } from "./platform-source-provenance.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -671,3 +673,35 @@ async function assertRejectsWithMessage(
 
   throw new Error("Expected action to reject");
 }
+
+it("reserved platform inventory requires provenance under every source policy", async () => {
+  const policies: Array<SourceIntegrationPolicyManifest | undefined> = [
+    undefined,
+    { schemaVersion: 1, mode: "unrestricted" },
+    { schemaVersion: 1, mode: "allowlist", integrations: { veryfront: { allowedToolIds: null } } },
+    { schemaVersion: 1, mode: "allowlist", integrations: {} },
+  ];
+  for (const policy of policies) {
+    for (const trusted of [false, true]) {
+      const source: RemoteToolSource = {
+        id: "catalog",
+        listTools: async () =>
+          ["bash", "veryfront__bash", "github__search"].map((name) => toolDefinition({ name })),
+        executeTool: async () => ({}),
+      };
+      assertEquals(
+        await listProjectScopedRemoteToolNames([
+          trusted ? markTrustedPlatformSource(source) : source,
+        ], {
+          projectId: "project-1",
+          sourceIntegrationPolicy: policy,
+        }),
+        [
+          "bash",
+          ...(!policy || policy.mode === "unrestricted" ? ["github__search"] : []),
+          ...(trusted ? ["veryfront__bash"] : []),
+        ],
+      );
+    }
+  }
+});
