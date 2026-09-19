@@ -711,9 +711,6 @@ function describeVersionKind(version: string): string {
   return DIST_TAG.test(version) ? "a dist-tag" : "a non-registry version";
 }
 
-/** A path segment of a package subpath: nothing that can carry `user:token@host`. */
-const PLAIN_SUBPATH = /^\.\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
-
 /** A percent-encoded `.`, `/` or `\`, which a URL normaliser may decode. */
 const ENCODED_PATH_CHARACTER = /%(?:2e|2f|5c)/i;
 
