@@ -176,17 +176,17 @@ export function startAgentRuntimeForkWithHostTools<
       forkModel: input.forkModel,
       forkTools,
     });
-  const sourcePolicy = input.sourceIntegrationPolicy;
-  const forkToolNames = sourcePolicy
-    ? requestedForkToolNames.filter((name) => {
-      const tool = runtimeTools[name];
-      return isToolAllowedBySourcePolicy(
-        name,
-        sourcePolicy,
-        typeof tool === "object" ? tool : undefined,
-      );
-    })
-    : requestedForkToolNames;
+  // Reserved platform names need trusted provenance even without a connector policy.
+  const sourcePolicy = input.sourceIntegrationPolicy ??
+    { schemaVersion: 1, mode: "unrestricted" } as const;
+  const forkToolNames = requestedForkToolNames.filter((name) => {
+    const tool = runtimeTools[name];
+    return isToolAllowedBySourcePolicy(
+      name,
+      sourcePolicy,
+      typeof tool === "object" ? tool : undefined,
+    );
+  });
   const providerNativeToolNames = new Set(
     getProviderNativeToolNames({
       provider: input.provider,
