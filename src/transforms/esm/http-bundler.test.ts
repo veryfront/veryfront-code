@@ -207,6 +207,25 @@ describe("transforms/esm/http-bundler", () => {
       assertEquals(described, ["https://esm.sh/pkg@9.9.9-SECRETTOKEN"]);
     });
 
+    it("describes the request URL inside a transport error too", async () => {
+      // A transport error commonly quotes the URL it was given, so the raw
+      // form would reach the log and the diagnostic through the error text.
+      const onLoad = captureHttpOnLoad({
+        timeoutMs: 1_000,
+        describeUrl: (url: string) => url.replace(/@9\.9\.9-[^?]+/, "@9.9.9-<redacted>"),
+        fetchFn: ((input: RequestInfo | URL) =>
+          Promise.reject(
+            new Error(`error sending request for url (${String(input)})`),
+          )) as typeof fetch,
+      });
+
+      const result = await onLoad({ path: "https://esm.sh/pkg@9.9.9-SECRETTOKEN" });
+
+      const text = result.errors?.[0]?.text ?? "";
+      assertEquals(text.includes("SECRETTOKEN"), false, text);
+      assertEquals(text.includes("@9.9.9-<redacted>"), true, text);
+    });
+
     it("reports an HTML module response without blaming esm.sh", async () => {
       const onLoad = captureHttpOnLoad({
         timeoutMs: 1_000,

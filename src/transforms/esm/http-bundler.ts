@@ -192,7 +192,11 @@ export function createHTTPPlugin(options: HttpPluginOptions = {}): Plugin {
 
           return { contents, loader: "js" };
         } catch (error) {
-          const errorMessage = snapshotThrowableDiagnostic(error);
+          // A transport error commonly quotes the URL it was given, so the raw
+          // request URL is replaced by its described form inside the text too.
+          const errorMessage = snapshotThrowableDiagnostic(error)
+            .split(requestUrl).join(describeUrl(requestUrl))
+            .split(args.path).join(safeUrl);
           logger.warn(`${LOG_PREFIX} Network error fetching ${safeUrl}: ${errorMessage}`);
           return { errors: [{ text: `Network error fetching ${safeUrl}: ${errorMessage}` }] };
         } finally {
