@@ -665,6 +665,52 @@ describe(
       assertEquals(await optional(), "fallback");
     });
 
+    it("bundles a CDN dependency whose module imports a relative chunk", async () => {
+      // esm.sh splits a package across files, and hosted discovery runs with an
+      // fsAdapter whose resolver also claims `./...` specifiers. A relative
+      // import reached from fetched CDN source belongs to the HTTP plugin.
+      const path = "src/discovery/__fixtures__/multi-file-dependency.ts";
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(
+          {
+            "package.json": JSON.stringify({
+              dependencies: { "@veryfront-fixture/pdf-text": "1.8.1" },
+            }),
+            [path]: [
+              `import { extractText } from "@veryfront-fixture/pdf-text";`,
+              `export default { name: "multi-file", text: extractText() };`,
+            ].join("\n"),
+          },
+          { projectDir },
+        ),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          const url = String(input);
+          requested.push(url);
+          const body = url.includes("chunk.mjs")
+            ? `export function extractText() { return "pdf text"; }`
+            : `export { extractText } from "./chunk.mjs";`;
+          return Promise.resolve(
+            new Response(body, { headers: { "content-type": "application/javascript" } }),
+          );
+        },
+        () =>
+          importModule(`file://${projectDir}/${path}`, context) as Promise<
+            { default: Record<string, unknown> }
+          >,
+      );
+
+      assertEquals(mod.default.text, "pdf text");
+      assertEquals(requested.length, 2, "the package module and its chunk are both fetched");
+      assertEquals(requested[1]?.includes("chunk.mjs"), true, requested.join(", "));
+    });
+
     it("keeps the rest of a file discoverable when a lazy require cannot resolve", async () => {
       // `require()` inside a handler is the CommonJS form of the same optional,
       // deferred load, so it must not abort the bundle either.

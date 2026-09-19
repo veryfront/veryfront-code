@@ -678,17 +678,21 @@ function isSemverRange(text: string): boolean {
  * dist-tag, while the core is what makes the message actionable.
  */
 function describeVersion(version: string): string {
-  if (!EXACT_VERSION.test(version)) return version;
   const core = version.split(/[-+]/, 1)[0]!;
+  if (!PARTIAL_VERSION.test(core)) return version;
   if (version.includes("-")) return `${core} (pre-release)`;
   if (version.includes("+")) return `${core} (build metadata)`;
   return core;
 }
 
-/** Every exact version inside a range text, described rather than echoed. */
+/**
+ * Every version inside a range text, described rather than echoed. A partial
+ * version carries a qualifier too (`1.2-<TOKEN>` parses as a comparator), so
+ * the match is not limited to three-component versions.
+ */
 function describeRangeText(range: string): string {
   return range.replace(
-    /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g,
+    /\d+(?:\.(?:\d+|[xX*])){0,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g,
     (version) => describeVersion(version),
   );
 }

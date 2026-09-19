@@ -666,6 +666,11 @@ describe("classifyProjectNpmImport", () => {
       "pkg@1.0.0 (pre-release)",
     );
     assertEquals(describeNpmImport("pkg/ghp_EXAMPLETOKEN0123456789"), "pkg/...");
+    // A partial version takes a qualifier too: `1.2-<TOKEN>` parses as a range.
+    const partial = classify("npm:unpdf@1.8.1", { unpdf: "1.2-AKIAIOSFODNN7EXAMPLE" });
+    const partialReason = partial.kind === "missing" ? partial.reason : "";
+    assertEquals(partialReason.includes("AKIAIOSFODNN7EXAMPLE"), false, partialReason);
+    assertEquals(partialReason.includes('"1.2 (pre-release)"'), true, partialReason);
     assertEquals(describeNpmImport("npm:pkg@1.0.0/sub/deep"), "pkg@1.0.0/...");
   });
 

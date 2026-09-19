@@ -142,6 +142,11 @@ function createFsAdapterPlugin(
       build.onResolve(
         { filter: /^\.\.?\// },
         wrapWithCurrentContext(async (args) => {
+          // A relative import reached from fetched CDN source addresses another
+          // module of that package (esm.sh splits packages across files), not a
+          // project file: it belongs to the HTTP plugin, which is registered
+          // after this one.
+          if (args.namespace === "http-url") return undefined;
           const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
           const basePath = pathHelper.resolve(importerDir, args.path);
 
