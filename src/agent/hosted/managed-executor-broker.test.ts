@@ -41,16 +41,11 @@ import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 
 
-const diagOut = (() => {
-  try {
-    return Deno.openSync("/dev/stderr", { write: true });
-  } catch {
-    return undefined;
-  }
-})();
-const diagEncoder = new TextEncoder();
+const diagPath = `/tmp/broker-diag-${crypto.randomUUID()}.log`;
 function diag(message: string): void {
-  diagOut?.writeSync(diagEncoder.encode(`[broker-diag ${performance.now().toFixed(1)}] ${message}\n`));
+  Deno.writeTextFileSync(diagPath, `[broker-diag ${performance.now().toFixed(1)}] ${message}\n`, {
+    append: true,
+  });
 }
 function traced(name: string, fn: () => Promise<void> | void): void {
   it(name, async () => {

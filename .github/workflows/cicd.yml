@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rep: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        rep: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,3 +23,6 @@ jobs:
         timeout-minutes: 5
       - name: Run unit coverage shard
         run: deno task coverage:ci:shard -- --shard=1/4 --coverage-dir=coverage-shard-1
+      - name: Dump broker diag
+        if: always()
+        run: for f in /tmp/broker-diag-*.log; do echo "== $f"; tail -n 60 "$f"; done
