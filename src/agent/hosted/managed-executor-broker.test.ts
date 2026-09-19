@@ -40,6 +40,31 @@ import { createTrustedManagedRuntime } from "#veryfront/agent/hosted/trusted-man
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 
+
+const diagOut = (() => {
+  try {
+    return Deno.openSync("/dev/stderr", { write: true });
+  } catch {
+    return undefined;
+  }
+})();
+const diagEncoder = new TextEncoder();
+function diag(message: string): void {
+  diagOut?.writeSync(diagEncoder.encode(`[broker-diag ${performance.now().toFixed(1)}] ${message}\n`));
+}
+function traced(name: string, fn: () => Promise<void> | void): void {
+  it(name, async () => {
+    diag(`start ${name}`);
+    try {
+      await fn();
+      diag(`end ${name}`);
+    } catch (error) {
+      diag(`throw ${name}: ${error}`);
+      throw error;
+    }
+  });
+}
+
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "project-test" };
 const source = { type: "release" as const, releaseId: "release-test" };
@@ -1166,6 +1191,7 @@ function trustedFixture(
   f.input.state = scope.projectId === null ? {} : {
     prepareProjectSteering: async ({ definition }) => {
       steeringEntered.resolve();
+      diag("L1169");
       await blockSteering;
       return { agent: definition, initialProjectInstructions: privateMarker };
     },
@@ -1265,6 +1291,7 @@ function trustedFixture(
             cleanup: () => Promise.resolve(),
           },
         });
+        diag("L1268");
         const runtime = await createExecutorProjectToolRuntime({
           input,
           discovery,
@@ -1329,8 +1356,10 @@ async function drainTrustedFixture(f: ReturnType<typeof trustedFixture>) {
   const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
   let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
   try {
+    diag("L1332");
     runtime = await broker.start(f.input);
     runtime.accept({ kind: "execution" });
+    diag("L1334");
     const stream = await runtime.agent.stream({
       messages: [{
         id: "user",
@@ -1340,11 +1369,16 @@ async function drainTrustedFixture(f: ReturnType<typeof trustedFixture>) {
       }],
       abortSignal: new AbortController().signal,
     });
+    diag("L1343");
     return await Array.fromAsync(stream.toUIMessageStream());
   } finally {
+    diag("L1345");
     await runtime?.close("completed");
+    diag("L1346");
     await broker.shutdown();
+    diag("L1347");
     await broker.settled;
+    diag("L1348");
     await f.peerCleanup;
   }
 }
@@ -1359,11 +1393,13 @@ async function withTrustedToolOperations(
   let binding: ExecutorBinding | undefined;
   const broker = createManagedExecutorBroker({ maxActive: 1 }, async (options) => {
     binding = options.binding;
+    diag("L1362");
     local = await createTrustedManagedRuntime(options);
     return local;
   });
   let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
   try {
+    diag("L1367");
     runtime = await broker.start(f.input);
     runtime.accept({ kind: "execution" });
     assert(local && binding);
@@ -1371,6 +1407,7 @@ async function withTrustedToolOperations(
     const operation = local.gate.operations.get("tool.execute");
     assert(operation?.mode === "stream");
     const fixedBinding = binding;
+    diag("L1374");
     await test((sourceId, signal = new AbortController().signal) =>
       Array.fromAsync(operation.handle({
         sourceId,
@@ -1380,15 +1417,19 @@ async function withTrustedToolOperations(
       }, { binding: fixedBinding, signal, deadline: Date.now() + 10_000 }))
     );
   } finally {
+    diag("L1383");
     await runtime?.close("completed");
+    diag("L1384");
     await broker.shutdown();
+    diag("L1385");
     await broker.settled;
+    diag("L1386");
     await f.peerCleanup;
   }
 }
 
 describe("broker-local trusted runtime", () => {
-  it("executes a canonical global run without inventing a project identity", async () => {
+  traced("executes a canonical global run without inventing a project identity", async () => {
     const observed: ToolExecutionContext[] = [];
     const f = trustedFixture(
       undefined,
@@ -1404,6 +1445,7 @@ describe("broker-local trusted runtime", () => {
         projectId: null,
       },
     );
+    diag("L1407");
     await drainTrustedFixture(f);
     assertEquals(f.executions, 1);
     assertEquals(f.hostCalls, 1);
@@ -1416,18 +1458,20 @@ describe("broker-local trusted runtime", () => {
     assert(f.projectWire.includes('"projectId":null'));
   });
 
-  it("rejects a project-owned source without its project context before allocation", async () => {
+  traced("rejects a project-owned source without its project context before allocation", async () => {
     const f = trustedFixture(undefined, false, undefined, undefined, { owner, projectId: null });
     const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
     try {
+      diag("L1423");
       await assertRejects(() => broker.start(f.input));
       assertEquals(f.calls, []);
     } finally {
+      diag("L1426");
       await broker.shutdown();
     }
   });
 
-  it("accepts explicit global steering without a project identity", async () => {
+  traced("accepts explicit global steering without a project identity", async () => {
     const f = trustedFixture(undefined, false, undefined, undefined, {
       owner: { scopeKind: "global", serviceName: "global-test-service" },
       projectId: null,
@@ -1442,13 +1486,14 @@ describe("broker-local trusted runtime", () => {
       },
       refreshProjectSteering: () => f.privateMarker,
     };
+    diag("L1445");
     await drainTrustedFixture(f);
     assertEquals(prepared, true);
     assertEquals(f.executions, 1);
     assertEquals(f.projectWire.includes(f.privateMarker), false);
   });
 
-  it("rejects a project slug in projectless execution before allocation", async () => {
+  traced("rejects a project slug in projectless execution before allocation", async () => {
     const f = trustedFixture(undefined, false, undefined, undefined, {
       owner: { scopeKind: "global", serviceName: "global-test-service" },
       projectId: null,
@@ -1456,14 +1501,16 @@ describe("broker-local trusted runtime", () => {
     f.input.installation.grant.execution.projectSlug = "unbound-project";
     const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
     try {
+      diag("L1459");
       await assertRejects(() => broker.start(f.input));
       assertEquals(f.calls, []);
     } finally {
+      diag("L1462");
       await broker.shutdown();
     }
   });
 
-  it("preserves retirement authority for preconfigured remote source snapshots", async () => {
+  traced("preserves retirement authority for preconfigured remote source snapshots", async () => {
     const f = trustedFixture(undefined, true);
     const retired = Promise.withResolvers<void>();
     const host = f.input.tools.sources.get("host")!;
@@ -1478,6 +1525,7 @@ describe("broker-local trusted runtime", () => {
       },
     }]]);
     try {
+      diag("L1481");
       await withTrustedToolOperations(f, async (execute) => {
         assertEquals(await execute("host"), [{ type: "failure" }]);
         assertEquals(await execute("project"), [{
@@ -1486,6 +1534,7 @@ describe("broker-local trusted runtime", () => {
         }]);
         assertEquals(f.executions, 0);
         retired.resolve();
+        diag("L1489");
         await tick();
         assertEquals(await execute("project"), [{ type: "result", result: { ok: true } }]);
         assertEquals(f.executions, 1);
@@ -1495,13 +1544,13 @@ describe("broker-local trusted runtime", () => {
     }
   });
 
-  it("requires trusted runtime configuration in the public start type", () => {
+  traced("requires trusted runtime configuration in the public start type", () => {
     type Start = Parameters<ReturnType<typeof createTrustedManagedExecutorBroker>["start"]>[0];
     const required: undefined extends Start["trustedRuntime"] ? false : true = true;
     assertEquals(required, true);
   });
 
-  it("carries approved identity and current skill availability across both channel hops", async () => {
+  traced("carries approved identity and current skill availability across both channel hops", async () => {
     const observed: ToolExecutionContext[] = [];
     const f = trustedFixture(undefined, false, async (_args, call) => {
       assert(call);
@@ -1510,6 +1559,7 @@ describe("broker-local trusted runtime", () => {
     });
     f.input.installation.grant.execution.userId = "synthetic-user";
     f.input.installation.grant.execution.projectSlug = "synthetic-slug";
+    diag("L1513");
     await drainTrustedFixture(f);
     assertEquals(observed.length, 1);
     assertEquals(observed[0]!.userId, "synthetic-user");
@@ -1523,7 +1573,7 @@ describe("broker-local trusted runtime", () => {
     assert(f.projectWire.includes('"projectContext"'));
   });
 
-  it("reserves project aliases within the combined host and project metadata budget", async () => {
+  traced("reserves project aliases within the combined host and project metadata budget", async () => {
     for (const includeAliases of [false, true]) {
       const aliases = includeAliases
         ? Array.from(
@@ -1540,6 +1590,7 @@ describe("broker-local trusted runtime", () => {
       f.input.tools.limits = { maxMetadataBytes: 4_096 };
       if (includeAliases) {
         let admitted = false;
+        diag("L1543");
         await assertRejects(() =>
           withTrustedToolOperations(f, async () => {
             admitted = true;
@@ -1549,6 +1600,7 @@ describe("broker-local trusted runtime", () => {
         assertEquals(f.executions, 0);
         assertEquals(f.hostCalls, 0);
       } else {
+        diag("L1552");
         await withTrustedToolOperations(f, async (execute) => {
           assertEquals(await execute("project"), [{ type: "result", result: { ok: true } }]);
           assertEquals(await execute("host"), [{
@@ -1562,7 +1614,7 @@ describe("broker-local trusted runtime", () => {
     }
   });
 
-  it("shares concurrency between held host work and project calls", async () => {
+  traced("shares concurrency between held host work and project calls", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const f = trustedFixture(undefined, true);
@@ -1570,12 +1622,16 @@ describe("broker-local trusted runtime", () => {
     const original = host.source.executeTool;
     host.source.executeTool = async (...args) => {
       entered.resolve();
+      diag("L1573");
       await release.promise;
+      diag("L1574");
       return await original(...args);
     };
+    diag("L1576");
     await withTrustedToolOperations(f, async (execute) => {
       const first = execute("host");
       try {
+        diag("L1579");
         await entered.promise;
         assertEquals(await execute("project"), [{
           type: "failure",
@@ -1584,6 +1640,7 @@ describe("broker-local trusted runtime", () => {
         assertEquals(f.executions, 0);
       } finally {
         release.resolve();
+        diag("L1587");
         await first;
       }
       assertEquals(await execute("project"), [{ type: "result", result: { ok: true } }]);
@@ -1591,24 +1648,28 @@ describe("broker-local trusted runtime", () => {
     });
   });
 
-  it("holds shared concurrency after project cancellation until allocation retirement", async () => {
+  traced("holds shared concurrency after project cancellation until allocation retirement", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const f = trustedFixture(undefined, true, async () => {
       entered.resolve();
+      diag("L1599");
       await release.promise;
       return { ok: true };
     });
+    diag("L1602");
     await withTrustedToolOperations(f, async (execute) => {
       const controller = new AbortController();
       const first = assertRejects(() => execute("project", controller.signal));
       try {
+        diag("L1606");
         await entered.promise;
         controller.abort();
         assertEquals(await execute("host"), [{ type: "failure", code: "RESOURCE_LIMIT_EXCEEDED" }]);
         assertEquals(f.hostCalls, 0);
       } finally {
         release.resolve();
+        diag("L1612");
         await first;
       }
       // Local response settlement is not an authenticated remote retirement acknowledgement.
@@ -1617,13 +1678,14 @@ describe("broker-local trusted runtime", () => {
     });
   });
 
-  it("releases shared concurrency after an ordinary project-tool failure", async () => {
+  traced("releases shared concurrency after an ordinary project-tool failure", async () => {
     let projectAttempts = 0;
     const f = trustedFixture(undefined, true, async () => {
       projectAttempts++;
       if (projectAttempts === 1) throw new ExecutorAgentError("PERMISSION_DENIED");
       return { ok: true };
     });
+    diag("L1627");
     await withTrustedToolOperations(f, async (execute) => {
       assertEquals(await execute("project"), [{ type: "failure", code: "PERMISSION_DENIED" }]);
       assertEquals(await execute("host"), [{ type: "result", result: { value: f.privateMarker } }]);
@@ -1632,13 +1694,16 @@ describe("broker-local trusted runtime", () => {
     });
   });
 
-  it("enforces tightened progress limits inside the project executor", async () => {
+  traced("enforces tightened progress limits inside the project executor", async () => {
     const f = trustedFixture(undefined, false, async (_args, call) => {
+      diag("L1637");
       await call?.publishDataEvent?.({ type: "data-tool-progress", data: { text: "one" } });
+      diag("L1638");
       await call?.publishDataEvent?.({ type: "data-tool-progress", data: { text: "two" } });
       return { ok: true };
     });
     f.input.tools.limits = { maxProgressEvents: 1 };
+    diag("L1642");
     const events = await drainTrustedFixture(f);
     assertEquals(f.executions, 1);
     assert(
@@ -1649,25 +1714,28 @@ describe("broker-local trusted runtime", () => {
     assertEquals(f.projectWire.includes('"text":"two"'), false);
   });
 
-  it("shares one call allowance across host and project tools", async () => {
+  traced("shares one call allowance across host and project tools", async () => {
     const f = trustedFixture(undefined, true);
     f.input.tools.maxCalls = 6;
+    diag("L1655");
     await drainTrustedFixture(f);
     assertEquals(f.hostCalls, 1);
     assertEquals(f.executions, 0);
   });
 
-  it("rejects oversized project arguments before they cross the project channel", async () => {
+  traced("rejects oversized project arguments before they cross the project channel", async () => {
     const f = trustedFixture();
     f.input.tools.limits = { maxArgumentBytes: 8 };
+    diag("L1663");
     await drainTrustedFixture(f);
     assertEquals(f.executions, 0);
     assertEquals(f.projectWire.includes('"query":"approved"'), false);
   });
 
-  it("enforces tightened project result limits", async () => {
+  traced("enforces tightened project result limits", async () => {
     const f = trustedFixture();
     f.input.tools.limits = { maxResultBytes: 8 };
+    diag("L1671");
     const events = await drainTrustedFixture(f);
     assertEquals(f.executions, 1);
     assert(
@@ -1678,7 +1746,7 @@ describe("broker-local trusted runtime", () => {
   });
 
   for (const limits of [{ maxSources: 1 }, { maxTotalTools: 1 }, { maxToolsPerSource: 1 }]) {
-    it(`validates combined host/project inventory before allocation ${JSON.stringify(limits)}`, async () => {
+    traced(`validates combined host/project inventory before allocation ${JSON.stringify(limits)}`, async () => {
       const f = trustedFixture(undefined, true);
       f.input.tools.limits = limits;
       if ("maxToolsPerSource" in limits) {
@@ -1687,20 +1755,24 @@ describe("broker-local trusted runtime", () => {
         f.input.installation.grant.allowedToolNames.push("second");
         f.input.tools.catalog = new Map([...f.input.tools.catalog, ["second", {}]]);
       }
+      diag("L1690");
       await assertRejects(() => drainTrustedFixture(f), TypeError, "Combined tool catalog");
       assertEquals(f.calls, []);
     });
   }
   for (const includeHost of [false, true]) {
-    it(`keeps private instructions and output local with host tools ${includeHost}`, async () => {
+    traced(`keeps private instructions and output local with host tools ${includeHost}`, async () => {
       const f = trustedFixture(undefined, includeHost);
       const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
       let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
       try {
+        diag("L1700");
         runtime = await broker.start(f.input);
         assertEquals(f.installedProjectMode, true);
+        diag("L1702");
         await assertRejects(() => f.projectPeer!.request("model.prepare", {}));
         runtime.accept({ kind: "execution" });
+        diag("L1704");
         const stream = await runtime.agent.stream({
           messages: [{
             id: "user",
@@ -1710,6 +1782,7 @@ describe("broker-local trusted runtime", () => {
           }],
           abortSignal: new AbortController().signal,
         });
+        diag("L1713");
         const events = await Array.fromAsync(stream.toUIMessageStream());
         assert(
           events.some((event) => event.type === "text-delta" && event.delta === f.privateMarker),
@@ -1720,10 +1793,13 @@ describe("broker-local trusted runtime", () => {
         assertEquals(f.model.callCount, includeHost ? 3 : 2);
         assertEquals(f.hostCalls, includeHost ? 1 : 0);
         assertEquals(f.projectWire.includes(f.privateMarker), false);
+        diag("L1723");
         await assertRejects(() => f.projectPeer!.request("model.generate", {}));
+        diag("L1724");
         await assertRejects(() =>
           f.projectPeer!.request(executorStateOperations.refreshProjectSteering, {})
         );
+        diag("L1727");
         await assertRejects(() =>
           Array.fromAsync(f.projectPeer!.stream("tool.execute", {
             sourceId: "host",
@@ -1734,26 +1810,33 @@ describe("broker-local trusted runtime", () => {
         );
         assertEquals(f.hostCalls, includeHost ? 1 : 0);
       } finally {
+        diag("L1737");
         await runtime?.close("completed");
+        diag("L1738");
         await broker.shutdown();
+        diag("L1739");
         await broker.settled;
+        diag("L1740");
         await f.peerCleanup;
       }
       assertEquals(broker.active, 0);
     });
   }
-  it("requires a construction-time trusted entrypoint rather than a request-only mode switch", async () => {
+  traced("requires a construction-time trusted entrypoint rather than a request-only mode switch", async () => {
     const f = trustedFixture();
     const broker = createManagedExecutorBroker({ maxActive: 1 });
     try {
+      diag("L1749");
       await assertRejects(() => broker.start(f.input), TypeError, "dedicated broker entrypoint");
       assertEquals(f.calls, []);
     } finally {
+      diag("L1752");
       await broker.shutdown();
+      diag("L1753");
       await broker.settled;
     }
   });
-  it("rejects project tool authority outside the normalized grant before allocation", async () => {
+  traced("rejects project tool authority outside the normalized grant before allocation", async () => {
     const f = trustedFixture();
     Object.assign(f.input, {
       trustedRuntime: {
@@ -1763,14 +1846,17 @@ describe("broker-local trusted runtime", () => {
     });
     const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
     try {
+      diag("L1766");
       await assertRejects(() => broker.start(f.input), TypeError, "normalized invocation grant");
       assertEquals(f.calls, []);
     } finally {
+      diag("L1769");
       await broker.shutdown();
+      diag("L1770");
       await broker.settled;
     }
   });
-  it("preserves admitted streaming beyond the default thirty-second channel timeout", async () => {
+  traced("preserves admitted streaming beyond the default thirty-second channel timeout", async () => {
     using time = new FakeTime();
     const f = trustedFixture();
     const entered = Promise.withResolvers<void>();
@@ -1792,11 +1878,13 @@ describe("broker-local trusted runtime", () => {
     };
     f.input.model.resolver = () => model;
     const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+    diag("L1795");
     const runtime = await broker.start(f.input);
     let consumed: Promise<void> = Promise.resolve();
     let consumptionError: unknown;
     try {
       runtime.accept({ kind: "execution" });
+      diag("L1800");
       const stream = await runtime.agent.stream({
         messages: [],
         abortSignal: new AbortController().signal,
@@ -1808,10 +1896,13 @@ describe("broker-local trusted runtime", () => {
       })().catch((error) => {
         consumptionError = error;
       });
+      diag("L1811");
       await entered.promise;
+      diag("L1812");
       await firstText.promise;
       for (let index = 0; index < 4; index++) {
         controller!.enqueue({ type: "text-delta", text: "tick" });
+        diag("L1815");
         await time.tickAsync(9_000);
       }
       assertEquals(
@@ -1822,31 +1913,43 @@ describe("broker-local trusted runtime", () => {
       assertEquals(consumptionError, undefined);
       controller!.enqueue({ type: "finish", finishReason: "stop" });
       controller!.close();
+      diag("L1825");
       await consumed;
       assertEquals(consumptionError, undefined);
     } finally {
       const closing = runtime.close();
+      diag("L1829");
       await time.tickAsync(50);
+      diag("L1830");
       await closing;
+      diag("L1831");
       await broker.shutdown();
+      diag("L1832");
       await broker.settled;
+      diag("L1833");
       await consumed;
+      diag("L1834");
       await f.peerCleanup;
     }
   });
-  it("returns bounded cancellation while retaining noncooperative broker-local preparation", async () => {
+  traced("returns bounded cancellation while retaining noncooperative broker-local preparation", async () => {
     const release = Promise.withResolvers<void>();
     const f = trustedFixture(release.promise);
     const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
     const starting = broker.start(f.input);
     const rejected = assertRejects(() => starting);
+    diag("L1843");
     await f.steeringEntered;
     f.preparation.abort();
+    diag("L1845");
     await rejected;
     assertEquals(broker.active, 1);
     release.resolve();
+    diag("L1848");
     await broker.shutdown();
+    diag("L1849");
     await broker.settled;
+    diag("L1850");
     await f.peerCleanup;
     assertEquals(broker.active, 0);
   });
