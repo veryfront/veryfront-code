@@ -1031,24 +1031,66 @@ function hostedConfigSourceReadFilesystemId(adapter: RuntimeAdapter): number {
   return filesystemId;
 }
 
+interface HostedConfigSourceSnapshot {
+  readonly identity: string;
+  readonly version: number;
+}
+
+/**
+ * Name the retained source snapshot a preview read would observe. Adapters
+ * advance `getSourceSnapshotVersion` whenever an edit, poke, or refresh
+ * replaces the snapshot, so equal identity and version mean equal source.
+ * Returns `undefined` when the adapter cannot name its snapshot or the
+ * observation is not stable, so the caller keeps an unshared read.
+ */
+async function captureHostedConfigSourceSnapshot(
+  adapter: RuntimeAdapter,
+): Promise<HostedConfigSourceSnapshot | undefined> {
+  const fs = adapter.fs;
+  const getIdentity = fs.getSourceSnapshotIdentity;
+  const getVersion = fs.getSourceSnapshotVersion;
+  if (typeof getIdentity !== "function" || typeof getVersion !== "function") return undefined;
+  try {
+    const identity = await ReflectApply(getIdentity, fs, []);
+    const version = await ReflectApply(getVersion, fs, []);
+    if (typeof identity !== "string" || typeof version !== "number") return undefined;
+    // A reused contextual adapter can switch source across either await.
+    if (await ReflectApply(getIdentity, fs, []) !== identity) return undefined;
+    if (await ReflectApply(getVersion, fs, []) !== version) return undefined;
+    return freezeObject({ identity, version });
+  } catch {
+    // The read itself surfaces adapter failures with their normal contract.
+    return undefined;
+  }
+}
+
 function buildHostedConfigSourceReadKey(
   effectiveCacheKey: string,
   configBaseDir: string,
   adapter: RuntimeAdapter,
   sourceContext: VirtualConfigSourceContext,
   revisionAtStart: number,
+  previewSnapshot: HostedConfigSourceSnapshot | undefined,
 ): HostedConfigSourceReadKey {
-  // Branch names identify mutable pointers, not immutable source snapshots.
-  // Giving every preview request a fresh identity keeps reads independently
-  // observable while still routing them through the shared admission budget.
-  if (!sourceContext.productionMode) return freezeObject({});
+  // Branch names identify mutable pointers, not immutable source snapshots,
+  // so a preview read is shared only within one named snapshot generation.
+  // An edit advances the generation and therefore starts a new read. Without
+  // a snapshot name, every preview request keeps a fresh identity so its read
+  // stays independently observable while still using the admission budget.
+  if (!sourceContext.productionMode && previewSnapshot === undefined) {
+    return freezeObject({});
+  }
 
   const filesystemId = hostedConfigSourceReadFilesystemId(adapter);
-  return `hosted-config-source-read-v1:${
-    frameConfigIdentityString(decimalIdentityNumber(filesystemId))
-  }${frameConfigIdentityString(effectiveCacheKey)}${frameConfigIdentityString(configBaseDir)}${
+  const identity = `${frameConfigIdentityString(decimalIdentityNumber(filesystemId))}${
+    frameConfigIdentityString(effectiveCacheKey)
+  }${frameConfigIdentityString(configBaseDir)}${
     frameConfigIdentityString(decimalIdentityNumber(revisionAtStart))
   }`;
+  if (sourceContext.productionMode) return `hosted-config-source-read-v1:${identity}`;
+  return `hosted-config-preview-source-read-v1:${identity}${
+    frameConfigIdentityString(previewSnapshot!.identity)
+  }${frameConfigIdentityString(decimalIdentityNumber(previewSnapshot!.version))}`;
 }
 
 async function readHostedConfigSource(
@@ -8835,12 +8877,16 @@ function getConfigInternal(
         if (hosted) {
           let sourceReadLease: HostedConfigSourceReadLease;
           try {
+            const previewSnapshot = sourceContext!.productionMode
+              ? undefined
+              : await captureHostedConfigSourceSnapshot(adapter);
             const sourceReadKey = buildHostedConfigSourceReadKey(
               effectiveCacheKey,
               configBaseDir,
               adapter,
               sourceContext!,
               revisionAtStart,
+              previewSnapshot,
             );
             const sourceReadFlight = getOrCreateHostedConfigSourceReadFlight(
               sourceReadKey,
