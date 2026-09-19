@@ -1413,6 +1413,10 @@ async function withTrustedToolOperations(
       }, { binding: fixedBinding, signal, deadline: Date.now() + 10_000 }))
     );
   } finally {
+    if (Deno.env.get("REPRO_GC") === "1") {
+      await new Promise((r) => setTimeout(r, 0));
+      (globalThis as unknown as { gc: (o: unknown) => void }).gc({ type: "major", execution: "sync" });
+    }
     const watch = (name: string, p: Promise<unknown> | undefined) =>
       void p?.then(() => diag(`${name} ok`), () => diag(`${name} err`));
     watch("local.settled", local?.settled);
