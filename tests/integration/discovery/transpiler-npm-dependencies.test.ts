@@ -60,10 +60,46 @@ function jsStringLiteral(value: string): string {
  * the real veryfront adapter's PathNormalizer: hosted runs address the VFS with
  * relative paths while the transpiler resolves imports against the process cwd.
  */
+/**
+ * The lockfile a project that installed these declarations from the public
+ * registry would hold. Discovery inlines a dependency only against this
+ * evidence, so every fixture that expects an inline carries one, exactly as a
+ * real project does; a fixture that states its own overrides this.
+ */
+function publicRegistryLock(dependencies: Record<string, string>, registry?: string): string {
+  const host = registry ?? "https://registry.npmjs.org/";
+  const packages: Record<string, { version: string; resolved: string }> = {};
+  for (const [name, range] of Object.entries(dependencies)) {
+    const version = range.replace(/^[\^~>=<v\s]+/, "");
+    packages[`node_modules/${name}`] = {
+      version,
+      resolved: `${host}${name}/-/${name.replace(/^@[^/]+\//, "")}-${version}.tgz`,
+    };
+  }
+  return JSON.stringify({ lockfileVersion: 3, packages });
+}
+
+/** The declarations a fixture's package.json states, for the lockfile above. */
+function declaredDependencies(packageJsonText: string | undefined): Record<string, string> {
+  if (packageJsonText === undefined) return {};
+  try {
+    const parsed = JSON.parse(packageJsonText) as { dependencies?: Record<string, string> };
+    return parsed.dependencies ?? {};
+  } catch {
+    return {};
+  }
+}
+
 function createMockAdapter(
-  files: Record<string, string>,
+  input: Record<string, string>,
   options: { projectDir?: string } = {},
 ): FileSystemAdapter {
+  const files: Record<string, string> = "package.json" in input && !("package-lock.json" in input)
+    ? {
+      ...input,
+      "package-lock.json": publicRegistryLock(declaredDependencies(input["package.json"])),
+    }
+    : input;
   const normalize = (path: string): string => {
     const { projectDir } = options;
     if (projectDir && path.startsWith(projectDir)) {
@@ -790,6 +826,110 @@ describe(
       assertEquals(mod.default.text, "pdf text");
       assertEquals(requested.length, 2, "the package module and its chunk are both fetched");
       assertEquals(requested[1]?.includes("chunk.mjs"), true, requested.join(", "));
+    });
+
+    it("refuses to inline a dependency the project's own sources do not vouch for", async () => {
+      // esm.sh serves the PUBLIC package of a name. A project that installs
+      // that name from somewhere else holds a different package, and running
+      // the public one would run a stranger's code in the project's runtime.
+      const pin = { "@veryfront-fixture/pdf-text": "1.8.1" };
+      const source = [
+        `import { extractText } from "@veryfront-fixture/pdf-text";`,
+        `export default { name: "extract", text: extractText() };`,
+      ].join("\n");
+      const cases = [
+        {
+          name: "a lockfile resolving another registry",
+          files: {
+            "package-lock.json": publicRegistryLock(pin, "https://npm.internal.example/"),
+          },
+          reason: "resolves @veryfront-fixture/pdf-text from another registry",
+        },
+        {
+          name: "no lockfile at all",
+          files: { "package-lock.json": "" },
+          reason: "does not resolve @veryfront-fixture/pdf-text",
+        },
+        {
+          name: "a lockfile resolving another version",
+          files: {
+            "package-lock.json": publicRegistryLock({ "@veryfront-fixture/pdf-text": "2.0.0" }),
+          },
+          reason: "resolves a different version",
+        },
+        {
+          name: "an .npmrc pointing the scope elsewhere",
+          files: { ".npmrc": "@veryfront-fixture:registry=https://npm.internal.example/\n" },
+          reason: ".npmrc installs @veryfront-fixture/pdf-text from another registry",
+        },
+      ];
+
+      for (const { name, files, reason } of cases) {
+        const context: FileDiscoveryContext = {
+          platform: "node",
+          fsAdapter: createMockAdapter({
+            "package.json": JSON.stringify({ dependencies: pin }),
+            [toolPath]: source,
+            ...files,
+          }, { projectDir }),
+          baseDir: projectDir,
+          compiledRuntime: true,
+        };
+        const requested: string[] = [];
+        const error = await assertRejects(
+          () =>
+            withMockFetch(
+              (input) => {
+                requested.push(String(input));
+                return Promise.resolve(new Response("export function extractText() {}"));
+              },
+              () => importModule(`file://${projectDir}/${toolPath}`, context),
+            ),
+          Error,
+          undefined,
+          name,
+        );
+        assertEquals(requested, [], `${name}: nothing may be fetched`);
+        assertEquals((error as { slug?: string }).slug, "dependency-missing", name);
+        const detail = String((error as { detail?: string }).detail ?? "");
+        assertEquals(detail.includes(reason), true, `${name}: ${detail}`);
+      }
+    });
+
+    it("inlines when an .npmrc names the public registry explicitly", async () => {
+      const pin = { "@veryfront-fixture/pdf-text": "1.8.1" };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ dependencies: pin }),
+          ".npmrc": "registry=https://registry.npmjs.org\n; a comment\n",
+          [toolPath]: [
+            `import { extractText } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          requested.push(String(input));
+          return Promise.resolve(
+            new Response(`export function extractText() { return "pdf text"; }`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        },
+        () =>
+          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
+            { default: Record<string, unknown> }
+          >,
+      );
+
+      assertEquals(mod.default.text, "pdf text");
+      assertEquals(requested.length, 1);
     });
 
     it("classifies a top-level require nothing can serve", async () => {

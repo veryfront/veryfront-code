@@ -797,6 +797,13 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("names a quoted path containing an escaped delimiter by its file", () => {
+      assertEquals(
+        withDisplayPath(String.raw`Could not resolve "/home/O\"Brien/private/file.ts"`, paths),
+        'Could not resolve "file.ts"',
+      );
+    });
+
     it("names a quoted absolute path with spaces by its file", () => {
       // A home directory can carry a person's name, and a quoted path runs to
       // its closing delimiter rather than to the first space.

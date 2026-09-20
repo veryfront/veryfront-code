@@ -242,6 +242,138 @@ export function readDependencyPins(packageJsonText: string): Record<string, stri
   return pins;
 }
 
+/**
+ * The public npm registry, the only source a project dependency may be
+ * inlined from.
+ *
+ * esm.sh serves the PUBLIC package of a given name, so inlining one is only
+ * the project's own dependency when the project itself resolves that name
+ * from the public registry. A project on a private registry can hold a
+ * package whose name and version also exist publicly, and serving the public
+ * copy would run a stranger's code inside the project's runtime. The
+ * lockfile's `resolved` URL is what says which registry the project actually
+ * installed from, so it is required, and anything else fails closed.
+ */
+const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org/";
+
+/** What a project's lockfile resolved for one package. */
+interface LockedDependency {
+  version: string;
+  resolved: string;
+}
+
+/**
+ * `name -> {version, resolved}` from a project's npm lockfile, for entries
+ * that name a registry source. Only v2/v3 lockfiles (`packages`) carry a
+ * `resolved` URL per package, which is the field this check is about.
+ *
+ * @internal Exported for testing only.
+ */
+export function readLockedDependencies(lockText: string): Record<string, LockedDependency> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lockText);
+  } catch (_) {
+    /* expected: a project may ship an unparseable or absent lockfile */
+    return {};
+  }
+  const packages = (parsed as { packages?: Record<string, unknown> })?.packages;
+  if (!packages || typeof packages !== "object") return {};
+  const locked: Record<string, LockedDependency> = {};
+  for (const [path, entry] of Object.entries(packages)) {
+    // `node_modules/<name>` is a top-level install; a nested path
+    // (`node_modules/a/node_modules/b`) is a transitive copy, which a project
+    // import never names directly.
+    const name = /^node_modules\/((?:@[^/]+\/)?[^/]+)$/.exec(path)?.[1];
+    if (name === undefined || name === "__proto__") continue;
+    const { version, resolved } = (entry ?? {}) as { version?: unknown; resolved?: unknown };
+    if (typeof version !== "string" || typeof resolved !== "string") continue;
+    locked[name] = { version, resolved };
+  }
+  return locked;
+}
+
+/**
+ * Does `.npmrc` point this package's installs somewhere other than the public
+ * registry? A `registry=` line, or a `@scope:registry=` for the package's own
+ * scope, means the project's copy is not the public one.
+ *
+ * @internal Exported for testing only.
+ */
+export function npmrcRedirectsPackage(npmrcText: string, name: string): boolean {
+  const scope = name.startsWith("@") ? name.slice(0, name.indexOf("/")) : null;
+  for (const line of npmrcText.split("\n")) {
+    const statement = line.trim();
+    if (statement.length === 0 || statement.startsWith(";") || statement.startsWith("#")) continue;
+    const match = /^(?:(@[^:\s]+):)?registry\s*=\s*(\S+)$/.exec(statement);
+    if (!match) continue;
+    if (match[1] !== undefined && match[1] !== scope) continue;
+    const configured = match[2]!.replace(/\/*$/, "/");
+    if (configured !== PUBLIC_NPM_REGISTRY) return true;
+  }
+  return false;
+}
+
+/**
+ * Why `name@version` may NOT be inlined from the CDN, or `null` when the
+ * project's own lockfile says it installs that exact version from the public
+ * registry. Failing closed is the point: without that evidence the CDN copy
+ * is a package of the same name, not the project's dependency.
+ */
+function cdnSourceRefusal(
+  sources: ProjectRegistrySources,
+  name: string,
+  version: string,
+): string | null {
+  if (npmrcRedirectsPackage(sources.npmrc, name)) {
+    return `the project's .npmrc installs ${name} from another registry, so the public ` +
+      `package of that name is not this project's dependency`;
+  }
+  const locked = Object.hasOwn(sources.locked, name) ? sources.locked[name] : undefined;
+  if (locked === undefined) {
+    return `the project's lockfile does not resolve ${name}, so the public package of that ` +
+      `name cannot be shown to be this project's dependency -- commit a package-lock.json`;
+  }
+  if (locked.version !== version) {
+    return `the project's lockfile resolves a different version of ${name} than the ` +
+      `declaration names`;
+  }
+  if (!locked.resolved.startsWith(PUBLIC_NPM_REGISTRY)) {
+    return `the project's lockfile resolves ${name} from another registry, so the public ` +
+      `package of that name is not this project's dependency`;
+  }
+  return null;
+}
+
+/** A project's evidence for where its dependencies come from. */
+interface ProjectRegistrySources {
+  locked: Record<string, LockedDependency>;
+  npmrc: string;
+}
+
+async function readProjectFile(context: FileDiscoveryContext, name: string): Promise<string> {
+  const path = pathHelper.join(context.baseDir ?? ".", name);
+  try {
+    return context.fsAdapter
+      ? await context.fsAdapter.readFile(path)
+      : await createFileSystem().readTextFile(path);
+  } catch (_) {
+    /* expected: a project may ship neither file */
+    return "";
+  }
+}
+
+async function readProjectRegistrySources(
+  context: FileDiscoveryContext,
+): Promise<ProjectRegistrySources> {
+  const lockText = await readProjectFile(context, "package-lock.json") ||
+    await readProjectFile(context, "npm-shrinkwrap.json");
+  return {
+    locked: readLockedDependencies(lockText),
+    npmrc: await readProjectFile(context, ".npmrc"),
+  };
+}
+
 async function readProjectDependencyPins(
   context: FileDiscoveryContext,
 ): Promise<Record<string, string>> {
@@ -508,6 +640,7 @@ const MISSING_DEPENDENCY_MARKER = "[veryfront:missing-npm-dependency]";
 export function createProjectDependencyCdnPlugin(
   pins: Record<string, string>,
   onMissing: (specifier: string, reason: string) => void,
+  refuseCdnSource: (name: string, version: string) => string | null = () => null,
 ): Plugin {
   return {
     name: "veryfront-project-npm-cdn",
@@ -577,6 +710,41 @@ export function createProjectDependencyCdnPlugin(
         return { path: `npm:${parsed.name}@${constraint}${tail}`, external: true };
       });
 
+      /**
+       * Report an import nothing may serve.
+       *
+       * A deferred `import()` -- or its CommonJS forms, `require()` and
+       * `require.resolve()` -- inside a handler body is the project's own lazy
+       * path, and often an optional one behind a try/catch. Failing the bundle
+       * for it would delete every unrelated export of the file (tools, agents,
+       * schemas) from discovery, a strictly larger blast radius than the
+       * failure it replaces, so it is deferred to call time. It is not handed
+       * back to the runtime: for an import the project's own declaration
+       * contradicts, the runtime could load the very version package.json
+       * rules out.
+       *
+       * A STATIC import is different: nothing can load the module without it,
+       * so the file was going to fail either way. Failing here is the same
+       * blast radius reported earlier and with a classified reason instead of
+       * Deno's raw constraint text.
+       */
+      const reportMissing = (args: { kind: string }, shown: string, reason: string) => {
+        if (
+          args.kind === "dynamic-import" || args.kind === "require-call" ||
+          args.kind === "require-resolve"
+        ) {
+          return {
+            path: shown,
+            namespace: MISSING_DEPENDENCY_NAMESPACE,
+            pluginData: `${MISSING_DEPENDENCY_MARKER} Cannot load "${shown}": ${reason}`,
+          };
+        }
+        onMissing(shown, reason);
+        // Stops the build; importModule turns the recorded specifiers into a
+        // classified DEPENDENCY_MISSING rather than reading this text back.
+        return { errors: [{ text: `Cannot resolve "${shown}": ${reason}` }] };
+      };
+
       build.onResolve({ filter: /^[^./]/ }, (args) => {
         // Imports reached through a fetched module are the HTTP plugin's.
         if (args.namespace === "http-url") return undefined;
@@ -599,41 +767,15 @@ export function createProjectDependencyCdnPlugin(
           // The specifier is project source and can carry a credential
           // (`npm:pkg@https://<TOKEN>@host/x`), so only its redacted form is
           // reported.
-          const shown = describeNpmImport(args.path);
-
-          // A deferred `import()` -- or its CommonJS forms, `require()` and
-          // `require.resolve()` -- inside a handler body is the project's own
-          // lazy path, and often an optional one behind a try/catch. Failing
-          // the bundle for it would delete every unrelated export of the file
-          // -- tools, agents, schemas -- from discovery, which is a strictly
-          // larger blast radius than the failure it replaces. The failure is
-          // deferred to call time instead, when the import is actually reached.
-          // It is not handed back to the runtime: for an import the project's
-          // own declaration contradicts, the runtime could load the very
-          // version package.json rules out.
-          //
-          // A STATIC import is different: nothing can load the module without
-          // it, so the file was going to fail either way. Failing here is the
-          // same blast radius reported earlier and with a classified reason
-          // instead of Deno's raw constraint text.
-          if (
-            args.kind === "dynamic-import" || args.kind === "require-call" ||
-            args.kind === "require-resolve"
-          ) {
-            return {
-              path: shown,
-              namespace: MISSING_DEPENDENCY_NAMESPACE,
-              pluginData: `${MISSING_DEPENDENCY_MARKER} Cannot load "${shown}": ${decision.reason}`,
-            };
-          }
-
-          onMissing(shown, decision.reason);
-          // Stops the build; importModule turns the recorded specifiers into a
-          // classified DEPENDENCY_MISSING rather than reading this text back.
-          return { errors: [{ text: `Cannot resolve "${shown}": ${decision.reason}` }] };
+          return reportMissing(args, describeNpmImport(args.path), decision.reason);
         }
 
         const { name, version, subpath } = decision;
+        // The CDN serves the PUBLIC package of this name, so it is only this
+        // project's dependency when the project resolves it from the public
+        // registry. Without that evidence nothing is fetched.
+        const refusal = refuseCdnSource(name, version);
+        if (refusal !== null) return reportMissing(args, describeNpmImport(args.path), refusal);
         return {
           path: `${ESM_CDN_BASE}/${name}@${version}${subpath === "." ? "" : subpath.slice(1)}`,
           namespace: "http-url",
@@ -782,7 +924,8 @@ function withoutForeignAbsolutePaths(text: string): string {
   // authority (`file://server/share/...`), with no slash after the scheme.
   const start = String.raw`(?:file:\/\/|[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)`;
   const named = (match: string) => pathHelper.basename(toPortablePath(match)) || match;
-  const quoted = new RegExp(String.raw`(["'\`])(${start}(?:(?!\1)[^\n])*)\1`, "g");
+  // `\\"` inside a quoted path is an escaped delimiter, not the closing one.
+  const quoted = new RegExp(String.raw`(["'\`])(${start}(?:\\.|(?!\1)[^\n])*)\1`, "g");
   // Outside quotes the path may not follow a scheme, a host or another path
   // character, and it ends at whitespace or a closing bracket.
   const bare = new RegExp(
@@ -928,6 +1071,11 @@ export async function importModule(
   // declared dependency pins decide what the bundler inlines below.
   const compiled = context.compiledRuntime ?? isDenoCompiled;
   const dependencyPins = compiled ? await readProjectDependencyPins(context) : {};
+  // Which registry the project itself installs from decides whether the CDN's
+  // copy of a name is its dependency at all.
+  const registrySources = compiled && Object.keys(dependencyPins).length > 0
+    ? await readProjectRegistrySources(context)
+    : { locked: {}, npmrc: "" };
 
   // A shared hosted runtime serves many projects and source generations, so
   // namespace identical relative paths before considering entry contents.
@@ -944,6 +1092,7 @@ export async function importModule(
     await computeHash(source),
     compiled,
     dependencyPins,
+    registrySources,
   ]);
   const cachedEntries = transpileCache.get(cacheKey);
   if (cachedEntries) {
@@ -981,9 +1130,13 @@ export async function importModule(
   const missingDependencies: MissingProjectDependency[] = [];
   if (compiled) {
     plugins.push(
-      createProjectDependencyCdnPlugin(dependencyPins, (specifier, reason) => {
-        missingDependencies.push({ specifier, reason });
-      }),
+      createProjectDependencyCdnPlugin(
+        dependencyPins,
+        (specifier, reason) => {
+          missingDependencies.push({ specifier, reason });
+        },
+        (name, version) => cdnSourceRefusal(registrySources, name, version),
+      ),
     );
     if (Object.keys(dependencyPins).length > 0) {
       plugins.push(createHTTPPlugin({

@@ -391,6 +391,25 @@ describe("classifyProjectNpmImport", () => {
     assertEquals(classifyProjectNpmImport("fs/promises", {}, exactOnly), { kind: "runtime" });
   });
 
+  it("rewrites a versioned framework import the binary cannot resolve", () => {
+    // The full profile records zod at `*` and 4.3.6, so an import naming
+    // 3.25.76 must not be left as written: that constraint resolves to nothing.
+    const wildcard = {
+      packages: { zod: ["3.25.76", "4.3.6"] },
+      constraints: { zod: ["*", "4.3.6"] },
+    } as const;
+    assertEquals(classifyProjectNpmImport("npm:zod@3.25.76", {}, wildcard), {
+      kind: "runtime",
+      specifier: "npm:zod@*",
+    });
+    assertEquals(classifyProjectNpmImport("npm:zod@4.3.6/mini", {}, wildcard), {
+      kind: "runtime",
+      specifier: "npm:zod@4.3.6/mini",
+    });
+    // A bare import still keeps the bare form where a wildcard is recorded.
+    assertEquals(classifyProjectNpmImport("zod", {}, wildcard), { kind: "runtime" });
+  });
+
   it("keeps bare Node builtins on the runtime instead of calling them missing", () => {
     assertEquals(classify("fs"), { kind: "runtime" });
     assertEquals(classify("crypto"), { kind: "runtime" });

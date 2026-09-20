@@ -580,6 +580,11 @@ function embeddedImport(
  * wins; otherwise the highest recorded exact version is the single copy the
  * binary can actually resolve.
  */
+/** The `*` constraint when the binary records one: the framework's own. */
+function recordedWildcard(embedded: EmbeddedNpmSet, name: string): string | null {
+  return (ownEntry(embedded.constraints, name) ?? []).includes("*") ? "*" : null;
+}
+
 export function embeddedConstraintForBareImport(
   name: string,
   embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
@@ -637,6 +642,18 @@ export function classifyProjectNpmImport(
       return { kind: "runtime" };
     }
     if (nodeBuiltinSpecifier(specifier) !== null) return { kind: "runtime" };
+    // A versioned import must be re-emitted under a constraint the binary
+    // records -- `npm:zod@3.25.76` resolves to nothing on a profile that
+    // records `*` and 4.3.6 -- while a bare one keeps its form wherever a
+    // recorded `*` already answers it.
+    if (parsed.version !== null) {
+      const recorded = embeddedConstraintForVersion(parsed.name, parsed.version, embedded) ??
+        recordedWildcard(embedded, parsed.name) ??
+        embeddedConstraintForBareImport(parsed.name, embedded);
+      return recorded === null
+        ? { kind: "runtime" }
+        : runtimeImport(parsed.name, recorded, parsed.subpath);
+    }
     const recorded = embeddedConstraintForBareImport(parsed.name, embedded);
     return recorded === null
       ? { kind: "runtime" }
