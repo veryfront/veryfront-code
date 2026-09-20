@@ -22,6 +22,7 @@ import {
 } from "#cli/shared/config";
 import {
   canPersistAlternativeSlug,
+  describeStaleProjectReference,
   getErrorStatus,
   projectApiReference,
   ProjectReferenceNotFoundError,
@@ -30,6 +31,7 @@ import {
   resolveOrCreateProject,
   shouldPersistProjectLink,
   slugConflictAction,
+  staleProjectReferenceContext,
 } from "#cli/shared/project-resolution";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
@@ -37,6 +39,7 @@ import {
   DEPLOYMENT_ERROR,
   INVALID_ARGUMENT,
   PREVIEW_HOSTNAME_TOO_LONG,
+  PROJECT_LINK_STALE,
   PUSH_CONFLICT,
   sanitizeTerminalDiagnosticText,
   VeryfrontError,
@@ -1235,9 +1238,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           throw projectSlugConflictError(error, projectReferenceSource);
         }
         if (error instanceof ProjectReferenceNotFoundError && error.byId) {
-          throw new Error(
-            `Project "${error.reference}" was not found. Check ${projectReferenceSource.name} or remove it to let Veryfront create a project for this directory.`,
-          );
+          throw PROJECT_LINK_STALE.create({
+            detail: describeStaleProjectReference(error),
+            context: staleProjectReferenceContext(error),
+            cause: error,
+          });
         }
         throw error;
       }

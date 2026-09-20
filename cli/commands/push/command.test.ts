@@ -7,11 +7,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertMatch,
   assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
+import { formatCLIError, VeryfrontError } from "veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -1624,6 +1626,77 @@ describe("push receipt source snapshot", () => {
       ]);
     } finally {
       globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("classifies a project link this account cannot see as project-link-stale", async () => {
+    // Switching accounts leaves .veryfront/project.json pointing at a project
+    // the new token cannot read. The lookup 404s by uuid, which used to reach
+    // the CLI boundary as a bare Error and render as [unknown-error].
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        for (const key of envKeys.slice(2)) Deno.env.delete(key);
+        _resetEnvironmentConfig();
+
+        await writeProjectLink(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "11111111-2222-4333-8444-555555555555",
+          projectSlug: "other-account-project",
+        });
+
+        const error = await withMockFetch(
+          () => Promise.resolve(Response.json({ error: "not found" }, { status: 404 })),
+          async () => {
+            try {
+              await pushCommand({ projectDir, quiet: true });
+            } catch (thrown) {
+              return thrown;
+            }
+            throw new Error("Expected push to reject");
+          },
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "project-link-stale");
+        assertEquals(error.exitCode, 1);
+        assertEquals(error.context, {
+          reference: "11111111-2222-4333-8444-555555555555",
+          projectId: "11111111-2222-4333-8444-555555555555",
+          projectSlug: "other-account-project",
+          source: "local-link",
+          sourceName: ".veryfront/project.json",
+        });
+
+        const rendered = stripAnsi(formatCLIError(error, { color: false, verbose: false }));
+        assertStringIncludes(rendered, "[project-link-stale]");
+        assertEquals(
+          rendered.includes("[unknown-error]"),
+          false,
+          "a stale project link must not degrade to the unclassified error",
+        );
+        // Both identifiers, so the user can tell which project the link names.
+        assertStringIncludes(
+          rendered,
+          'Project "other-account-project" (11111111-2222-4333-8444-555555555555) was not found.',
+        );
+        assertStringIncludes(rendered, ".veryfront/project.json");
+        assertStringIncludes(rendered, "veryfront whoami");
+      });
+    } finally {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }

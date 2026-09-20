@@ -136,6 +136,22 @@ export const BRANCH_NOT_FOUND = defineError({
 });
 
 /**
+ * The directory's project reference names a project the control plane will not
+ * hand back. `.veryfront/project.json` records no owning account, so a deleted
+ * project and one owned by a different account are indistinguishable here: the
+ * suggestion has to cover both.
+ */
+export const PROJECT_LINK_STALE = defineError({
+  slug: "project-link-stale",
+  category: "DEPLOY",
+  status: 404,
+  title: "Linked project not found",
+  suggestion:
+    "The linked project was deleted, or it belongs to an account other than the one you are logged in as. Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json and run veryfront up to create and link a project for this account",
+  exitCode: 1,
+});
+
+/**
  * The project's configuration file uses a construct Veryfront Cloud's
  * configuration evaluator can never accept, so the release would answer 500 to
  * every request. Raised before a release is created; the detail names the file,
@@ -171,4 +187,5 @@ export const DEPLOY_REGISTRY = {
   "source-digest-mismatch": SOURCE_DIGEST_MISMATCH,
   "preview-hostname-too-long": PREVIEW_HOSTNAME_TOO_LONG,
   "branch-not-found": BRANCH_NOT_FOUND,
+  "project-link-stale": PROJECT_LINK_STALE,
 } as const;

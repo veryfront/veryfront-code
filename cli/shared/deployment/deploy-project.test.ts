@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertMatch,
   assertRejects,
   assertStrictEquals,
@@ -22,6 +23,7 @@ import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl, relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
+import { writeProjectLink } from "../project-link.ts";
 import {
   computeSourceDigest,
   resolveGitSource,
@@ -689,6 +691,57 @@ describe("DeployProject", () => {
         );
 
         assertStrictEquals(error, original);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("classifies a project link this account cannot see as project-link-stale", async () => {
+    // The `up`/deploy twin of the push regression: after switching accounts the
+    // local link 404s, and the bare Error this used to raise reached the CLI
+    // boundary unclassified.
+    await withDeployEnv(async () => {
+      const { projectDir } = await createUnlinkedPushedProject();
+      await writeProjectLink(projectDir, {
+        controlPlane: CONTROL_PLANE,
+        projectId: "11111111-2222-4333-8444-555555555555",
+        projectSlug: "other-account-project",
+      });
+      const controlPlane = new InMemoryDeployControlPlane();
+      const notFound = new Error("API request failed: 404 Not Found") as Error & {
+        status: number;
+      };
+      notFound.status = 404;
+      controlPlane.getProjectError = notFound;
+      try {
+        const error = await expectDeployError(() =>
+          createDeployment(controlPlane).execute({
+            projectDir,
+            environment: "production",
+            mode: "dry-run",
+            source: { kind: "already-pushed" },
+          })
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "project-link-stale");
+        assertEquals(error.exitCode, 1);
+        assertEquals(error.context, {
+          reference: "11111111-2222-4333-8444-555555555555",
+          projectId: "11111111-2222-4333-8444-555555555555",
+          projectSlug: "other-account-project",
+          source: "local-link",
+          sourceName: ".veryfront/project.json",
+        });
+        // Byte-identical to what push renders for the same condition: the two
+        // commands used to name the same project by different identifiers.
+        assertEquals(
+          error.detail,
+          'Project "other-account-project" (11111111-2222-4333-8444-555555555555) was not found. ' +
+            "The reference came from .veryfront/project.json; the project may have been deleted, " +
+            "or it may belong to an account other than the one you are logged in as.",
+        );
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
