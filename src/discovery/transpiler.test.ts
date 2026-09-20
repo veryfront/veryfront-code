@@ -13,6 +13,7 @@ import {
   esmCdnModuleSpecifier,
   esmCdnPackageName,
   importModule as importModuleRaw,
+  npmrcRedirectsPackage,
   readDependencyPins,
   withDisplayPath,
 } from "./transpiler.ts";
@@ -835,6 +836,29 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       for (const text of ["/application/tools/x.ts", "/srv/app/tools/x.ts", "/app-old/x.ts"]) {
         assertEquals(withDisplayPath(`see ${text}`, paths), "see x.ts", text);
       }
+    });
+  });
+
+  describe("npmrcRedirectsPackage", () => {
+    it("reads a registry setting with an inline comment, as npm does", () => {
+      assertEquals(
+        npmrcRedirectsPackage("registry=https://npm.internal.example/ # company mirror", "pkg"),
+        true,
+      );
+      assertEquals(
+        npmrcRedirectsPackage("@scope:registry=https://npm.internal.example/ ; mirror", "@scope/p"),
+        true,
+      );
+      assertEquals(
+        npmrcRedirectsPackage("registry=https://registry.npmjs.org/ # the public one", "pkg"),
+        false,
+      );
+      // A comment line, and a scope that is not this package's, say nothing.
+      assertEquals(npmrcRedirectsPackage("# registry=https://npm.internal.example/", "pkg"), false);
+      assertEquals(
+        npmrcRedirectsPackage("@other:registry=https://npm.internal.example/", "@scope/p"),
+        false,
+      );
     });
   });
 

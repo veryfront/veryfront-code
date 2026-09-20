@@ -340,7 +340,7 @@ function compareCores(left: readonly string[], right: readonly string[]): number
  *
  * @internal Exported for testing only.
  */
-export function rangeAdmitsVersion(range: string, version: string): boolean | null {
+function comparatorAdmitsVersion(range: string, version: string): boolean | null {
   const trimmed = range.trim();
   if (URL_SCHEME.test(trimmed) || !EXACT_VERSION.test(version)) return null;
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
@@ -383,6 +383,39 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
       // `=`, `v` and no operator cover exactly the versions the bound names.
       return full ? order === 0 : order >= 0 && below(nextAfter(parts));
   }
+}
+
+/**
+ * Does a range admit an exact version? `null` when the range is not one this
+ * module evaluates, so the caller decides what an unchecked range means.
+ *
+ * A range is alternatives joined by `||`, each a set of comparators that must
+ * all hold, with `a - b` as npm's inclusive hyphen form. One unevaluable
+ * comparator makes the whole range unevaluable rather than quietly false.
+ *
+ * @internal Exported for testing only.
+ */
+export function rangeAdmitsVersion(range: string, version: string): boolean | null {
+  const trimmed = range.trim();
+  if (URL_SCHEME.test(trimmed)) return null;
+  let admitted = false;
+  for (const alternative of trimmed.split("||")) {
+    // npm allows whitespace between an operator and its version.
+    const set = alternative.trim().replace(/(<=|>=|~>|[<>=^~])\s+/g, "$1");
+    if (set.length === 0) return comparatorAdmitsVersion("*", version);
+    const hyphen = /^(\S+)\s+-\s+(\S+)$/.exec(set);
+    const comparators = hyphen ? [`>=${hyphen[1]}`, `<=${hyphen[2]}`] : set.split(/\s+/);
+    // Every comparator is evaluated: one this module cannot read makes the
+    // whole range unevaluable, even when an earlier one already refused.
+    let holds = true;
+    for (const comparator of comparators) {
+      const verdict = comparatorAdmitsVersion(comparator, version);
+      if (verdict === null) return null;
+      if (!verdict) holds = false;
+    }
+    if (holds) admitted = true;
+  }
+  return admitted;
 }
 
 export interface ParsedNpmSpecifier {
@@ -629,6 +662,7 @@ export function classifyProjectNpmImport(
   specifier: string,
   pins: Readonly<Record<string, string>>,
   embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
+  locked: Readonly<Record<string, string>> = {},
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
@@ -671,7 +705,14 @@ export function classifyProjectNpmImport(
   }
 
   const declared = Object.hasOwn(pins, parsed.name) ? pins[parsed.name] : undefined;
-  const pin = declared === undefined ? null : exactVersionNamedByRange(declared);
+  // A declaration that names no single version (`*`, `1.x`, `>=1 <2`) still
+  // has one the project installed: the lockfile's, when the declaration
+  // admits it. Its provenance is checked where the fetch is decided.
+  const lockedVersion = Object.hasOwn(locked, parsed.name) ? locked[parsed.name] : undefined;
+  const pin = declared === undefined ? null : exactVersionNamedByRange(declared) ??
+    (lockedVersion !== undefined && rangeAdmitsVersion(declared, lockedVersion) === true
+      ? lockedVersion
+      : null);
   const request = { ...parsed, declared, pin, embedded };
   return parsed.version !== null && EXACT_VERSION.test(parsed.version)
     ? classifyExactImport(request, parsed.version)

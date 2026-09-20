@@ -304,8 +304,10 @@ export function readLockedDependencies(lockText: string): Record<string, LockedD
 export function npmrcRedirectsPackage(npmrcText: string, name: string): boolean {
   const scope = name.startsWith("@") ? name.slice(0, name.indexOf("/")) : null;
   for (const line of npmrcText.split("\n")) {
-    const statement = line.trim();
-    if (statement.length === 0 || statement.startsWith(";") || statement.startsWith("#")) continue;
+    // npm reads this file as INI: an unescaped `#` or `;` starts a comment,
+    // wherever it appears, so a mirror with a trailing note still applies.
+    const statement = line.replace(/(?<!\\)[#;].*$/, "").trim();
+    if (statement.length === 0) continue;
     const match = /^(?:(@[^:\s]+):)?registry\s*=\s*(\S+)$/.exec(statement);
     if (!match) continue;
     if (match[1] !== undefined && match[1] !== scope) continue;
@@ -668,6 +670,8 @@ export function createProjectDependencyCdnPlugin(
     version: string,
     importRange: string | null,
   ) => CdnSourceDecision = (_name, version) => ({ version }),
+  /** The version the project's lockfile resolved for each declared package. */
+  locked: Record<string, string> = {},
 ): Plugin {
   return {
     name: "veryfront-project-npm-cdn",
@@ -783,7 +787,7 @@ export function createProjectDependencyCdnPlugin(
         const builtin = nodeBuiltinSpecifier(args.path);
         if (builtin) return { path: builtin, external: true };
 
-        const decision = classifyProjectNpmImport(args.path, pins);
+        const decision = classifyProjectNpmImport(args.path, pins, undefined, locked);
         if (decision.kind === "runtime") {
           return decision.specifier === undefined
             ? undefined
@@ -1178,6 +1182,9 @@ export async function importModule(
             version,
             importRange,
           ),
+        Object.fromEntries(
+          Object.entries(registrySources.locked).map(([name, { version }]) => [name, version]),
+        ),
       ),
     );
     if (Object.keys(dependencyPins).length > 0) {

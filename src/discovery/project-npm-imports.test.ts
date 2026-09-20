@@ -280,8 +280,19 @@ describe("rangeAdmitsVersion", () => {
     assertEquals(rangeAdmitsVersion("<=1.9.0-rc.1", "1.9.0"), false);
   });
 
-  it("declines to evaluate anything that is not a single comparator", () => {
-    for (const range of [">=1 <2", "^1.0.0 || ^2.0.0", "latest", "workspace:*", "1.x.3"]) {
+  it("evaluates comparator sets, alternatives and hyphen ranges", () => {
+    assertEquals(rangeAdmitsVersion(">=1 <2", "1.9.0"), true);
+    assertEquals(rangeAdmitsVersion(">=1 <2", "2.0.0"), false);
+    assertEquals(rangeAdmitsVersion("^1.0.0 || ^2.0.0", "2.3.4"), true);
+    assertEquals(rangeAdmitsVersion("^1.0.0 || ^2.0.0", "3.0.0"), false);
+    assertEquals(rangeAdmitsVersion("1.0.0 - 2.0.0", "2.0.0"), true);
+    assertEquals(rangeAdmitsVersion("1.0.0 - 2.0.0", "2.0.1"), false);
+    // One unreadable comparator makes the whole range unevaluable.
+    assertEquals(rangeAdmitsVersion(">=1 <2 SECRET", "1.9.0"), null);
+  });
+
+  it("declines to evaluate a range it cannot read", () => {
+    for (const range of ["latest", "workspace:*", "1.x.3"]) {
       assertEquals(rangeAdmitsVersion(range, "1.8.1"), null, range);
     }
     assertEquals(rangeAdmitsVersion("^1.8.1", "^1.8.1"), null);
@@ -729,10 +740,11 @@ describe("classifyProjectNpmImport", () => {
         declared,
       );
     }
+    // A readable range is quoted verbatim wherever the reason states it.
     for (const declared of [">= 1.2.0 < 2", "1.0.0 - 2.0.0", "^1 || ~2.3", ">=1 <2 || 3.x"]) {
       const decision = classify("npm:unpdf@9.9.9", { unpdf: declared });
       const reason = decision.kind === "missing" ? decision.reason : "";
-      assertEquals(reason.includes(`"${declared}"`), true, `${declared}: ${reason}`);
+      assertEquals(reason.includes(declared), true, `${declared}: ${reason}`);
     }
   });
 
@@ -772,6 +784,23 @@ describe("classifyProjectNpmImport", () => {
     }
     assertEquals(describeNpmImport("npm:pkg@ghp_EXAMPLETOKEN0123456789"), "pkg (with a dist-tag)");
     assertEquals(describeNpmImport("npm:pkg@latest/sub"), "pkg (with a dist-tag)");
+  });
+
+  it("serves the locked version for a range that names none", () => {
+    // `*`, `1.x` and `>=1 <2` name no single version, but the lockfile says
+    // which one the project installed, and the declaration admits it.
+    for (const declared of ["*", "1.x", ">=1 <2"]) {
+      assertEquals(
+        classifyProjectNpmImport("unpdf", { unpdf: declared }, EMBEDDED, { unpdf: "1.9.0" }),
+        { kind: "cdn", name: "unpdf", version: "1.9.0", subpath: "." },
+        declared,
+      );
+    }
+    // A locked version the declaration excludes is not served.
+    assertEquals(
+      classifyProjectNpmImport("unpdf", { unpdf: "^2" }, EMBEDDED, { unpdf: "1.9.0" }).kind,
+      "missing",
+    );
   });
 
   it("serves grandfathered uppercase package names", () => {
@@ -867,10 +896,18 @@ describe("describeNpmImport", () => {
 
 describe("classifyProjectNpmImport with a declaration it cannot evaluate", () => {
   it("refuses an exact import rather than reuse the embedded copy", () => {
+    // The comparator set is evaluable, and it excludes the version asked for.
     assertEquals(classify("npm:lodash@3.10.1", { lodash: ">=4.0.0 <5.0.0" }), {
       kind: "missing",
       name: "lodash",
-      reason: 'the import asks for lodash@3.10.1 and package.json declares ">=4.0.0 <5.0.0", ' +
+      reason: "the import asks for lodash@3.10.1 but package.json declares " +
+        "lodash@>=4.0.0 <5.0.0",
+    });
+    // A declaration this module cannot read is still not taken as admitting.
+    assertEquals(classify("npm:lodash@3.10.1", { lodash: "nightly" }), {
+      kind: "missing",
+      name: "lodash",
+      reason: "the import asks for lodash@3.10.1 and package.json declares a dist-tag, " +
         "which it cannot be checked against -- declare an exact version",
     });
   });

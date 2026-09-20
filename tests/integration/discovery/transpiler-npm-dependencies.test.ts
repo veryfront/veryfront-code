@@ -828,6 +828,48 @@ describe(
       assertEquals(requested[1]?.includes("chunk.mjs"), true, requested.join(", "));
     });
 
+    it("fetches the locked version for a declaration that names none", async () => {
+      // `*` names no version, but the lockfile says which one is installed.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({
+            dependencies: { "@veryfront-fixture/pdf-text": "*" },
+          }),
+          "package-lock.json": publicRegistryLock({ "@veryfront-fixture/pdf-text": "1.9.0" }),
+          [toolPath]: [
+            `import { extractText } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          requested.push(String(input));
+          return Promise.resolve(
+            new Response(`export function extractText() { return "pdf text"; }`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        },
+        () =>
+          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
+            { default: Record<string, unknown> }
+          >,
+      );
+
+      assertEquals(mod.default.text, "pdf text");
+      assertEquals(
+        requested.some((url) => url.includes("@veryfront-fixture/pdf-text@1.9.0")),
+        true,
+        requested.join(", "),
+      );
+    });
+
     it("fetches the version the lockfile resolved for a ranged declaration", async () => {
       // `npm install` writes a caret range and the lock moves ahead of its
       // lower bound, so the locked version is the one the project installed.
