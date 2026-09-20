@@ -21,7 +21,10 @@ function assert(condition, message) {
 }
 
 function verifyContext(payload, project, environment) {
-  assert(payload?.context?.projectSlug === project, `Expected project ${project}`);
+  assert(
+    payload?.context?.projectSlug === project,
+    `Expected project ${project}`,
+  );
   assert(
     payload?.context?.parsedDomain?.environment === environment,
     `Expected environment ${environment}`,
@@ -35,18 +38,33 @@ try {
   for (const routeCase of ROUTE_CASES) {
     for (const project of PROJECTS) {
       const hostname = routeCase.hostname(project);
-      const browserResponse = await page.goto(`http://${hostname}:${PORT}${DEBUG_CONTEXT_PATH}`);
+      const browserResponse = await page.goto(
+        `http://${hostname}:${PORT}${DEBUG_CONTEXT_PATH}`,
+      );
       assert(browserResponse?.ok(), `Browser request failed for ${hostname}`);
-      verifyContext(await browserResponse.json(), project, routeCase.environment);
+      verifyContext(
+        await browserResponse.json(),
+        project,
+        routeCase.environment,
+      );
 
-      const nativeResponse = await api.get(`http://127.0.0.1:${PORT}${DEBUG_CONTEXT_PATH}`, {
-        headers: { host: `${hostname}:${PORT}` },
-      });
+      const nativeResponse = await api.get(
+        `http://127.0.0.1:${PORT}${DEBUG_CONTEXT_PATH}`,
+        {
+          headers: { host: `${hostname}:${PORT}` },
+        },
+      );
       assert(nativeResponse.ok(), `Native request failed for ${hostname}`);
-      verifyContext(await nativeResponse.json(), project, routeCase.environment);
+      verifyContext(
+        await nativeResponse.json(),
+        project,
+        routeCase.environment,
+      );
     }
   }
-  console.log(JSON.stringify({ success: true, browserRequests: 4, nativeRequests: 4 }));
+  console.log(
+    JSON.stringify({ success: true, browserRequests: 4, nativeRequests: 4 }),
+  );
 } finally {
   await api.dispose();
   await browser.close();

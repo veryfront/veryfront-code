@@ -140,7 +140,9 @@ function validateMetadata(
   if (predicateType !== SLSA_PROVENANCE_V1) {
     throw new RegistryReleaseError(
       "provenance",
-      `${spec} does not expose npm SLSA provenance (${predicateType ?? "missing"}).`,
+      `${spec} does not expose npm SLSA provenance (${
+        predicateType ?? "missing"
+      }).`,
       registryErrorContext(options, "SLSA provenance missing"),
     );
   }
@@ -326,16 +328,41 @@ function formatFailureContext(
   }`;
 }
 
+/**
+ * How long to wait for npm to make a just-published version visible.
+ *
+ * A publish is not atomic across npm's metadata: the version can take several
+ * minutes to appear, and the previous 30x10s budget gave up on main three
+ * times while the release itself was fine. Fifteen minutes covers what those
+ * runs needed, and CI can narrow it (the smoke tests do) through the
+ * environment.
+ *
+ * @internal Exported for testing only.
+ */
+export function readPropagationBudget(
+  env: Readonly<Record<string, string | undefined>>,
+): { maxAttempts: number; retryDelayMs: number } {
+  const positiveInteger = (value: string | undefined, fallback: number) => {
+    if (value === undefined || !/^\d+$/.test(value)) return fallback;
+    const parsed = Number(value);
+    return parsed > 0 ? parsed : fallback;
+  };
+  return {
+    maxAttempts: positiveInteger(env.VF_REGISTRY_PROPAGATION_ATTEMPTS, 90),
+    retryDelayMs: positiveInteger(env.VF_REGISTRY_PROPAGATION_DELAY_MS, 10_000),
+  };
+}
+
 async function main(args: string[]): Promise<void> {
   const options = readCliOptions(args);
+  const budget = readPropagationBudget(Deno.env.toObject());
   await Promise.all(options.packages.map((packageName) =>
     pollRegistryPackage({
       packageName,
       version: options.version,
       expectedGitHead: options.gitHead,
       registryUrl: options.registryUrl,
-      maxAttempts: 30,
-      retryDelayMs: 10_000,
+      ...budget,
       requestTimeoutMs: 15_000,
       onRetry: console.log,
     })

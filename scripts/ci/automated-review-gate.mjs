@@ -333,8 +333,9 @@ function parseBase36Identity(value) {
 
 function parseCompactRunBoundReviewRequestKey(requestKey) {
   if (typeof requestKey !== "string") return undefined;
-  const match = /^(base|ready|reopen)-r-([0-9a-z]+)-t-([0-9a-z]+)(?:-e-([0-9a-z]+))?$/i
-    .exec(requestKey);
+  const match =
+    /^(base|ready|reopen)-r-([0-9a-z]+)-t-([0-9a-z]+)(?:-e-([0-9a-z]+))?$/i
+      .exec(requestKey);
   if (!match) return undefined;
   const epochTime = parseBase36Identity(match[3]);
   const eventId = match[4] === undefined
@@ -353,8 +354,9 @@ function parseCompactRunBoundReviewRequestKey(requestKey) {
 
 function parseLegacyRunBoundReviewRequestKey(requestKey) {
   if (typeof requestKey !== "string") return undefined;
-  const match = /^(base|ready|reopen)-run-([1-9]\d*)-at-(\d{13})(?:-event-([1-9]\d*))?$/
-    .exec(requestKey);
+  const match =
+    /^(base|ready|reopen)-run-([1-9]\d*)-at-(\d{13})(?:-event-([1-9]\d*))?$/
+      .exec(requestKey);
   if (!match) return undefined;
   const epochTime = Number(match[3]);
   const eventId = match[4] === undefined ? undefined : Number(match[4]);
@@ -407,7 +409,9 @@ function durableReviewRequestKey(
         latestEpoch.id > 0
       ? latestEpoch.id.toString(36)
       : BigInt(reviewEpochRunKey).toString(36);
-    return `${requestKey}-r-${compactRunKey}-t-${notBefore.toString(36)}${eventIdentity}`;
+    return `${requestKey}-r-${compactRunKey}-t-${
+      notBefore.toString(36)
+    }${eventIdentity}`;
   }
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
     throw new Error("Review epoch event identity is malformed");
@@ -668,7 +672,7 @@ function latestPendingReviewStatus(statuses, pullNumber) {
   const status = latestReviewGateStatusForPull(statuses, pullNumber);
   if (
     status?.state === "pending" &&
-      isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
   ) return status;
   if (!isTrustedOperationalReviewFailure(status, pullNumber)) return undefined;
   const descriptionPrefix = `PR#${pullNumber} `;
@@ -826,7 +830,9 @@ function reviewPropagationRetryDescription(
   const epoch = kind === "unavailable" || kind === "request-unavailable"
     ? `; epoch:${reviewEpochToken(requestKey)}`
     : "";
-  return `${reviewFailureDescription(pullNumber, kind)}${epoch}${REVIEW_PROPAGATION_RETRY_SUFFIX}`;
+  return `${
+    reviewFailureDescription(pullNumber, kind)
+  }${epoch}${REVIEW_PROPAGATION_RETRY_SUFFIX}`;
 }
 
 function reviewPropagationRetryEpoch(description, pullNumber) {
@@ -910,19 +916,23 @@ function latestTerminalReviewStatus(
     ) continue;
     if (boundary !== undefined) {
       if (status.description === rateLimited) {
-        if (!terminalStatusHasBoundaryProof(
-          status,
-          comments,
+        if (
+          !terminalStatusHasBoundaryProof(
+            status,
+            comments,
+            boundary,
+            timeline,
+            headSha,
+          )
+        ) continue;
+      } else if (
+        !pendingHistoryHasBoundaryProof(
+          statuses,
+          pullNumber,
           boundary,
-          timeline,
-          headSha,
-        )) continue;
-      } else if (!pendingHistoryHasBoundaryProof(
-        statuses,
-        pullNumber,
-        boundary,
-        status,
-      )) continue;
+          status,
+        )
+      ) continue;
     }
     return status;
   }
@@ -1707,7 +1717,9 @@ export async function publishAutomatedReviewStatus({
             existingPropagationRetryStatus &&
             existingPropagationRetryKind !== "request-unavailable"
           ) {
-            failure = new Error("Automated review queue propagation is pending");
+            failure = new Error(
+              "Automated review queue propagation is pending",
+            );
             failureKind = existingPropagationRetryKind;
             failureUrl = typeof existingPropagationRetryStatus.target_url ===
                 "string"
@@ -2248,7 +2260,9 @@ async function finalizeReviewFailureStatus({
   targetUrl,
 }) {
   const description = failureKind === "unavailable"
-    ? `${reviewFailureDescription(pullNumber, failureKind)}${REVIEW_RETRY_FINALIZED_SUFFIX}`
+    ? `${
+      reviewFailureDescription(pullNumber, failureKind)
+    }${REVIEW_RETRY_FINALIZED_SUFFIX}`
     : reviewFailureDescription(pullNumber, failureKind);
   const response = await github.rest.repos.createCommitStatus({
     owner,
@@ -2339,7 +2353,9 @@ export async function publishReviewPropagationRetryStatus({
   });
   const statusId = response?.data?.id;
   if (!isPositiveStatusId(statusId)) {
-    throw new TypeError("Review propagation retry status identity is malformed");
+    throw new TypeError(
+      "Review propagation retry status identity is malformed",
+    );
   }
   return { description, statusId };
 }
@@ -2567,9 +2583,8 @@ async function reconcileTimedOutReviewQueue({
     await preserveQueueRetry();
     throw error;
   }
-  const queueFailures = queueResults.filter((entry) =>
-    entry?.state === "failure"
-  ).length;
+  const queueFailures =
+    queueResults.filter((entry) => entry?.state === "failure").length;
   if (result.state === "success" && queueFailures > 0) {
     await preserveQueueRetry();
     throw new Error(
@@ -2814,9 +2829,7 @@ export function selectMergeGroupFailureStatusBoundary({
       publisherStatusId !== undefined
     ? publisherStatusId
     : targetStatusId;
-  return Number.isSafeInteger(statusId) && statusId >= 0
-    ? statusId
-    : undefined;
+  return Number.isSafeInteger(statusId) && statusId >= 0 ? statusId : undefined;
 }
 
 /** Preserve a trusted merge-group success written after one run's boundary. */
@@ -3538,13 +3551,11 @@ async function revalidateAutomatedReviewRequest({
         ...common,
         login,
         pullAuthor: refreshed?.data?.user?.login,
-    }),
+      }),
     latestReviewResetTime(statuses, pullNumber, baseBinding),
     parseRunBoundReviewRequestKey(effectiveRequestKey) !== undefined,
   );
-  return review
-    ? { requested: false, marker, reason: "reviewed" }
-    : undefined;
+  return review ? { requested: false, marker, reason: "reviewed" } : undefined;
 }
 
 /**

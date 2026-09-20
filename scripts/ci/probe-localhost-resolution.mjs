@@ -5,8 +5,12 @@ const HOSTNAMES = [
 
 function readErrorCode(error) {
   if (error && typeof error === "object") {
-    if (typeof error.code === "string" && error.code.length > 0) return error.code;
-    if (typeof error.name === "string" && error.name.length > 0) return error.name;
+    if (typeof error.code === "string" && error.code.length > 0) {
+      return error.code;
+    }
+    if (typeof error.name === "string" && error.name.length > 0) {
+      return error.name;
+    }
   }
   return "UNKNOWN";
 }
@@ -27,7 +31,10 @@ async function resolveWithDeno(hostname) {
       errorCodes.add(readErrorCode(error));
     }
   }
-  return { addresses, errorCode: [...errorCodes].sort(byCodeUnit).join(",") || undefined };
+  return {
+    addresses,
+    errorCode: [...errorCodes].sort(byCodeUnit).join(",") || undefined,
+  };
 }
 
 async function resolveWithNode(hostname) {
@@ -50,17 +57,25 @@ for (const hostname of HOSTNAMES) {
     ? await resolveWithDeno(hostname)
     : await resolveWithNode(hostname);
   const addresses = [...new Set(result.addresses)].sort(byCodeUnit);
-  const addressFamilies = [...new Set(
-    addresses.map((address) => address.includes(":") ? "IPv6" : "IPv4"),
-  )].sort(byCodeUnit);
+  const addressFamilies = [
+    ...new Set(
+      addresses.map((address) => address.includes(":") ? "IPv6" : "IPv4"),
+    ),
+  ].sort(byCodeUnit);
   console.log(JSON.stringify({
     runtime,
     hostname,
     resolved: addresses.length > 0,
     addressFamilies,
     ...(addresses.length > 0
-      ? { loopbackOnly: addresses.every((address) => address === "127.0.0.1" || address === "::1") }
+      ? {
+        loopbackOnly: addresses.every((address) =>
+          address === "127.0.0.1" || address === "::1"
+        ),
+      }
       : {}),
-    ...(addresses.length === 0 ? { errorCode: result.errorCode ?? "UNKNOWN" } : {}),
+    ...(addresses.length === 0
+      ? { errorCode: result.errorCode ?? "UNKNOWN" }
+      : {}),
   }));
 }

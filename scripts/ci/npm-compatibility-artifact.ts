@@ -240,9 +240,13 @@ export async function createNpmCompatibilityArtifact(
       manifest: await readPackageManifest(directory),
     })),
   );
-  packageSources.sort((left, right) => compareText(left.manifest.name, right.manifest.name));
+  packageSources.sort((left, right) =>
+    compareText(left.manifest.name, right.manifest.name)
+  );
 
-  const root = packageSources.find(({ manifest }) => manifest.name === "veryfront");
+  const root = packageSources.find(({ manifest }) =>
+    manifest.name === "veryfront"
+  );
   if (!root) throw new Error("npm compatibility artifact requires veryfront");
   for (const { manifest } of packageSources) {
     if (manifest.version !== root.manifest.version) {

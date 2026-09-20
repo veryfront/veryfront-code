@@ -1,8 +1,13 @@
-import { assertEquals, assertInstanceOf, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   formatRegistryReleaseFailure,
   pollRegistryPackage,
+  readPropagationBudget,
   RegistryReleaseError,
 } from "./registry-release-integrity.ts";
 
@@ -39,6 +44,38 @@ async function captureError(
     return error;
   }
 }
+
+describe("registry propagation budget", () => {
+  it("waits long enough for npm to publish the version everywhere", () => {
+    // The 30x10s budget gave up on main three times while the release itself
+    // was fine: the version simply was not visible yet.
+    const { maxAttempts, retryDelayMs } = readPropagationBudget({});
+    assertEquals(
+      maxAttempts * retryDelayMs >= 900_000,
+      true,
+      `${maxAttempts}x${retryDelayMs}ms`,
+    );
+  });
+
+  it("takes the budget from the environment when CI sets one", () => {
+    assertEquals(
+      readPropagationBudget({
+        VF_REGISTRY_PROPAGATION_ATTEMPTS: "5",
+        VF_REGISTRY_PROPAGATION_DELAY_MS: "2000",
+      }),
+      { maxAttempts: 5, retryDelayMs: 2000 },
+    );
+    // Anything unusable leaves the default in place rather than a zero budget.
+    for (const value of ["0", "-1", "abc", ""]) {
+      assertEquals(
+        readPropagationBudget({ VF_REGISTRY_PROPAGATION_ATTEMPTS: value })
+          .maxAttempts,
+        readPropagationBudget({}).maxAttempts,
+        value,
+      );
+    }
+  });
+});
 
 describe("registry release integrity polling", () => {
   it("retries a missing exact version and accepts it after propagation", async () => {
@@ -138,7 +175,8 @@ describe("registry release integrity polling", () => {
         maxAttempts: 2,
         retryDelayMs: 0,
         requestTimeoutMs: 100,
-        fetcher: () => Promise.resolve(new Response("not found", { status: 404 })),
+        fetcher: () =>
+          Promise.resolve(new Response("not found", { status: 404 })),
         delay: () => Promise.resolve(),
       })
     );
@@ -277,7 +315,8 @@ describe("registry release integrity polling", () => {
         maxAttempts: 1,
         retryDelayMs: 0,
         requestTimeoutMs: 100,
-        fetcher: () => Promise.reject(new Error("registry says\n::error::injected")),
+        fetcher: () =>
+          Promise.reject(new Error("registry says\n::error::injected")),
         delay: () => Promise.resolve(),
       })
     );
@@ -300,7 +339,8 @@ describe("registry release integrity polling", () => {
         maxAttempts: 1,
         retryDelayMs: 0,
         requestTimeoutMs: 100,
-        fetcher: () => Promise.resolve(Response.json(publishedPackage({ dist: {} }))),
+        fetcher: () =>
+          Promise.resolve(Response.json(publishedPackage({ dist: {} }))),
         delay: () => Promise.resolve(),
       })
     );
