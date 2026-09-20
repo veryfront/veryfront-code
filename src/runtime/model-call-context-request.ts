@@ -309,6 +309,10 @@ function suppressOpenAIFunctionToolReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): boolean {
+  // The capability is recorded for OpenAI's own models. Another provider on the
+  // same wire surface builds its request without it, so the recorded context
+  // must not apply it either.
+  if (resolveModelCallProvider(model) !== "openai") return false;
   const catalogId = `openai/${model.modelId}`;
   if (
     model.provider === "veryfront-cloud" &&
