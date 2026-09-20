@@ -101,16 +101,6 @@ export const VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS: ReadonlyArray<
 /** Gateway API version used for a surface without its own entry. */
 export const DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION = "v1";
 
-/** Model ID prefixes accepted for gateway models, one per provider alias, in alias order. */
-export const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES: readonly string[] = Object.freeze([
-  "anthropic/",
-  "openai/",
-  "google/",
-  "google-ai-studio/",
-  "mistral/",
-  "moonshotai/",
-]);
-
 /**
  * Transport capabilities keyed by canonical provider/model ID. Both
  * provider-specific and provider-neutral option resolution consult this table

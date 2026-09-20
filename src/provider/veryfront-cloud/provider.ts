@@ -130,12 +130,18 @@ function createVeryfrontCloudModelInternal(
   const registry = useFirstPartyTransport ? undefined : ensureBuiltinLLMProviders();
   const routing = resolveVeryfrontCloudProviderRouting(provider);
 
+  // A provider that only speaks the OpenAI wire format is promised the Chat
+  // Completions surface and nothing else, so the transport is pinned on every
+  // construction path. Left unset, a reasoning-style model ID or a hosted tool
+  // would select the Responses runtime and call an endpoint the provider does
+  // not serve.
   function createOpenAICompatibleModel(): ModelRuntime {
     if (useFirstPartyTransport) {
       return wrapVeryfrontCloudModel(
         createVeryfrontCloudOpenAIModel(upstreamModelId, {
           apiToken: providerCredential,
           baseURL,
+          openAITransport: "chat-completions",
           fetch,
         }),
         provider,
@@ -149,6 +155,7 @@ function createVeryfrontCloudModelInternal(
           baseURL,
           name: "veryfront-cloud",
           providerName: "openai-compatible",
+          openAITransport: "chat-completions",
           fetch,
         }),
         provider,
@@ -158,6 +165,7 @@ function createVeryfrontCloudModelInternal(
       createVeryfrontCloudOpenAIModel(upstreamModelId, {
         apiToken: providerCredential,
         baseURL,
+        openAITransport: "chat-completions",
         fetch,
       }),
       provider,

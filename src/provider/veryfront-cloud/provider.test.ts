@@ -1209,4 +1209,60 @@ describe("provider/veryfront-cloud", () => {
     );
     assertEquals(result.text, "Hello");
   });
+
+  it("keeps an unlisted provider on chat completions for a reasoning-style model id", async () => {
+    // "gpt-5.4" is a reasoning-style ID. Only the provider that implements the
+    // OpenAI surface natively serves /responses, so an unlisted provider must
+    // stay on /chat/completions however its models are named.
+    setCloudBootstrap();
+    let capturedUrl: string | undefined;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        capturedUrl ??= new Request(input, init).url;
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const model = createVeryfrontCloudInferenceModel(
+      "acme-labs/gpt-5.4",
+      "run-scoped-inference-token",
+    );
+    const result = await model.doStream({ prompt: [] });
+    await drainStream(result.stream);
+
+    assertEquals(capturedUrl, "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions");
+  });
+
+  it("refuses hosted tools on an unlisted provider instead of switching surface", async () => {
+    // A hosted tool is the other way the OpenAI runtime reaches for
+    // /responses. An unlisted provider does not serve that surface, so the
+    // request must fail with a clear message and send nothing.
+    setCloudBootstrap();
+    let requestCount = 0;
+    installMockFetch(
+      (() => {
+        requestCount += 1;
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch,
+    );
+
+    const model = resolveModel("veryfront-cloud/acme-labs/mystery-1") as ModelRuntime;
+
+    await assertRejects(
+      async () =>
+        await model.doStream({
+          prompt: [],
+          tools: [{ type: "provider", name: "web_search", id: "openai.web_search", args: {} }],
+        } as never),
+      TypeError,
+      "OpenAI hosted tools require the Responses API",
+    );
+    assertEquals(requestCount, 0);
+  });
 });

@@ -66,10 +66,28 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     );
     assertEquals(getVeryfrontCloudProviderFromModelId("mistral/mistral-large-2512"), "mistral");
     assertEquals(getVeryfrontCloudProviderFromModelId("moonshotai/kimi-k2.6"), "moonshotai");
+    // A provider the package does not list is kept as written: hosted and
+    // delegated runs install this resolver, so rejecting it here would make a
+    // model the gateway routes unreachable from those flows.
+    assertEquals(getVeryfrontCloudProviderFromModelId("acme-labs/mystery-1"), "acme-labs");
+    assertEquals(
+      getVeryfrontCloudProviderFromModelId("veryfront-cloud/acme-labs/mystery-1"),
+      "acme-labs",
+    );
     assertThrows(
-      () => getVeryfrontCloudProviderFromModelId("unknown/model"),
+      () => getVeryfrontCloudProviderFromModelId("opus"),
       Error,
-      'Unknown model provider prefix "unknown"',
+      'Unknown model provider prefix "opus"',
+    );
+    assertThrows(
+      () => getVeryfrontCloudProviderFromModelId("Acme Labs/mystery-1"),
+      Error,
+      "Unknown model provider prefix",
+    );
+    assertThrows(
+      () => getVeryfrontCloudProviderFromModelId("constructor/mystery-1"),
+      Error,
+      'Unknown model provider prefix "constructor"',
     );
   });
 
@@ -93,12 +111,13 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(findVeryfrontCloudModel("injected"), undefined);
   });
 
-  it("returns undefined for unknown provider prefixes in the try helper", () => {
+  it("returns undefined for unusable provider prefixes in the try helper", () => {
     assertEquals(
       tryGetVeryfrontCloudProviderFromModelId("veryfront-cloud/anthropic/claude-opus-4-8"),
       "anthropic",
     );
-    assertEquals(tryGetVeryfrontCloudProviderFromModelId("unknown/model"), undefined);
+    assertEquals(tryGetVeryfrontCloudProviderFromModelId("acme-labs/mystery-1"), "acme-labs");
+    assertEquals(tryGetVeryfrontCloudProviderFromModelId("opus"), undefined);
   });
 
   it("finds catalog entries for direct and hosted model ids", () => {
@@ -300,7 +319,19 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       resolveVeryfrontCloudGatewayModelId("veryfront-cloud/openai/gpt-5.5"),
       "veryfront-cloud/openai/gpt-5.5",
     );
+    // A provider the package does not list is routed through the gateway too,
+    // so callers that normalize before resolving a model do not fall back to
+    // the global provider registry.
+    assertEquals(
+      resolveVeryfrontCloudGatewayModelId("acme-labs/mystery-1"),
+      "veryfront-cloud/acme-labs/mystery-1",
+    );
     assertEquals(resolveVeryfrontCloudGatewayModelId("opus"), "opus");
+    assertEquals(resolveVeryfrontCloudGatewayModelId("Acme Labs/mystery-1"), "Acme Labs/mystery-1");
+    assertEquals(
+      resolveVeryfrontCloudGatewayModelId("constructor/mystery-1"),
+      "constructor/mystery-1",
+    );
     assertEquals(resolveVeryfrontCloudGatewayModelId(undefined), undefined);
     assertEquals(
       resolveHostedVeryfrontCloudModelId("openai/gpt-5.5"),

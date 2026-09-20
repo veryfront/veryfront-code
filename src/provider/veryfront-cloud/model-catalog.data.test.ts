@@ -33,13 +33,6 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
     assertEquals(functionPaths, []);
   });
 
-  it("keeps one gateway model prefix per provider alias, in alias order", () => {
-    assertEquals(
-      [...catalogData.VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES],
-      catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([alias]) => `${alias}/`),
-    );
-  });
-
   it("lists every provider exactly once in the labels and the display order", () => {
     const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
 

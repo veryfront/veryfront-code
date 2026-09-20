@@ -4,7 +4,6 @@ import {
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID as CATALOG_DEFAULT_MODEL_ID,
   DEFAULT_VERYFRONT_CLOUD_SURFACE,
   VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES,
-  VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES,
   VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX,
   VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES,
   VERYFRONT_CLOUD_PROVIDER_ALIASES,
@@ -281,15 +280,22 @@ export function findVeryfrontCloudModelByModelId(
   return VERYFRONT_CLOUD_CHAT_MODELS.find((model) => model.modelId === normalizedModelId);
 }
 
-/** Return Veryfront Cloud provider from model ID. */
+/**
+ * Return Veryfront Cloud provider from model ID.
+ *
+ * Hosted and delegated runs install this as their provider resolver, so it
+ * accepts the same provider segments the gateway routes: a listed alias
+ * resolves to its canonical ID, and a provider this package does not list is
+ * kept as written. It throws only when the ID carries no usable provider
+ * segment at all.
+ */
 export function getVeryfrontCloudProviderFromModelId(
   modelId: string,
 ): VeryfrontCloudProviderId {
-  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
-  const prefix = normalizedModelId.split("/", 1)[0] ?? "";
-  const provider = normalizeVeryfrontCloudProviderAlias(prefix);
+  const provider = resolveVeryfrontCloudProviderFromModelId(modelId);
   if (provider) return provider;
 
+  const prefix = normalizeVeryfrontCloudModelId(modelId).split("/", 1)[0] ?? "";
   throw INVALID_ARGUMENT.create({
     detail: `Unknown model provider prefix "${prefix}" in model ID "${modelId}"`,
   });
@@ -351,9 +357,10 @@ export function resolveVeryfrontCloudGatewayModelId(
     return modelId;
   }
 
-  return VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES.some((prefix) =>
-      modelId.startsWith(prefix)
-    )
+  // Any ID whose provider segment the gateway can route is prefixed, so a
+  // provider this package does not list reaches the gateway rather than the
+  // global provider registry.
+  return resolveVeryfrontCloudProviderFromModelId(modelId) !== undefined
     ? `${VERYFRONT_CLOUD_MODEL_PREFIX}${modelId}`
     : modelId;
 }
