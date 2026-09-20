@@ -778,25 +778,22 @@ export function withDisplayPath(text: string, paths: DiscoveryPathNames): string
  * left alone: its host is not a filesystem.
  */
 function withoutForeignAbsolutePaths(text: string): string {
-  const path = String.raw`(?:file:\/\/\/?)?(?:[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)`;
+  // `file://` is a start of its own: a UNC file URL puts the share in the
+  // authority (`file://server/share/...`), with no slash after the scheme.
+  const start = String.raw`(?:file:\/\/|[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)`;
   const named = (match: string) => pathHelper.basename(toPortablePath(match)) || match;
+  const quoted = new RegExp(String.raw`(["'\`])(${start}(?:(?!\1)[^\n])*)\1`, "g");
+  // Outside quotes the path may not follow a scheme, a host or another path
+  // character, and it ends at whitespace or a closing bracket.
+  const bare = new RegExp(
+    String.raw`(?:file:\/\/|(?<![A-Za-z0-9._~%@:\/\\-])${start})[^\s"'\`)\]]*`,
+    "g",
+  );
   return text
-    // A quoted path runs to its closing delimiter: a directory name may carry
-    // a space, and stopping at the first one leaves most of the layout.
-    .replace(
-      new RegExp(String.raw`(["'\`])(${path}[^"'\`]*)\1`, "g"),
-      (_match, quote: string, quoted: string) => `${quote}${named(quoted)}${quote}`,
-    )
-    // Otherwise the path may not follow a scheme, a host or another path
-    // character, and it ends at whitespace or a closing bracket.
-    .replace(
-      new RegExp(
-        String
-          .raw`(?:file:\/\/\/?|(?<![A-Za-z0-9._~%@:\/\\-]))(?:[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)[^\s"'\`)\]]*`,
-        "g",
-      ),
-      named,
-    );
+    // A quoted path runs to ITS OWN closing delimiter: a directory name may
+    // carry a space, and a file name may carry the other quote character.
+    .replace(quoted, (_match, quote: string, path: string) => `${quote}${named(path)}${quote}`)
+    .replace(bare, named);
 }
 
 /**

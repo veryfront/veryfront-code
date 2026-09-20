@@ -706,11 +706,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         withDisplayPath('Module not found "file://server/share/project/lib/x.ts"', unc),
         'Module not found "lib/x.ts"',
       );
-      // A share that merely starts with the root's name is left alone.
-      assertEquals(
-        withDisplayPath('at "file://server/share/projecting/x.ts"', unc),
-        'at "file://server/share/projecting/x.ts"',
-      );
+      // A share that merely starts with the root's name is not rendered
+      // relative to it: like any foreign path it is named by its file, with no
+      // mangled fragment (`ing/x.ts`) from cutting the root out of the middle.
+      assertEquals(withDisplayPath('at "file://server/share/projecting/x.ts"', unc), 'at "x.ts"');
     });
 
     it("keeps a filesystem root as the project root", () => {
@@ -775,6 +774,27 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         "fetch https://esm.sh/pkg@1.0.0/x.mjs",
       );
       assertEquals(withDisplayPath("in tools/a.ts", paths), "in tools/a.ts");
+    });
+
+    it("names a foreign UNC file URL and a quoted path with an apostrophe by its file", () => {
+      // A UNC file URL puts the share in the authority, and a legal file name
+      // may contain the other quote character.
+      assertEquals(
+        withDisplayPath('at "file://server/share/private/file.ts"', paths),
+        'at "file.ts"',
+      );
+      assertEquals(
+        withDisplayPath("at file://server/share/private/file.ts", paths),
+        "at file.ts",
+      );
+      assertEquals(
+        withDisplayPath(`Could not resolve "/home/O'Brien/private/file.ts"`, paths),
+        'Could not resolve "file.ts"',
+      );
+      assertEquals(
+        withDisplayPath(`read '/home/say "hi"/file.ts'`, paths),
+        "read 'file.ts'",
+      );
     });
 
     it("names a quoted absolute path with spaces by its file", () => {
