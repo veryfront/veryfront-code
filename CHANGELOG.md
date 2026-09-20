@@ -62,7 +62,11 @@ its own idle watchdog should do. It is read from the host environment for every
 provider stream request, so it covers `veryfront dev` chat, hosted agent runs
 and library use of `agent.generate` / `agent.stream` without code changes; a
 value that is not an integer in range is ignored with a warning and the default
-applies. Custom provider extensions can also pass `idleTimeoutMs` per request
+applies. The warning names the variable and the accepted range but never the
+rejected value, because `.env` expansion can substitute a host secret into it.
+Set it in the host environment, not in a project `.env` file: this is an
+operator safety bound, so a value that `loadEnv` copied out of a project `.env`
+is ignored and the host's own setting stands. Custom provider extensions can also pass `idleTimeoutMs` per request
 to `requestStream`, which takes precedence over the environment.
 
 ### Changed: a response cut at the output token limit reports `PROVIDER_OUTPUT_TRUNCATED`

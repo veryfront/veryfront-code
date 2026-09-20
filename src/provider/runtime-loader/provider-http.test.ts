@@ -15,6 +15,13 @@ import {
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
 import {
+  clearEnvFileValueSources,
+  deleteEnv,
+  markEnvFileValue,
+  setEnv,
+} from "#veryfront/platform/compat/process/env.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import {
   type ProviderRequestRetryEvent,
   runWithProviderRequestObserver,
 } from "./provider-request-observer.ts";
@@ -2162,6 +2169,65 @@ describe("provider-http", () => {
             DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
             `${value} must fall back to the default`,
           );
+        }
+      });
+
+      it("ignores an override a project .env file put in the process environment", () => {
+        // `loadEnv` copies project `.env` entries into the real process
+        // environment, so the plain `getHostEnv` read this used to default to
+        // handed back a project-controlled value: a repository could ship
+        // `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS=0` and switch off the
+        // host's safety bound, restoring the unbounded stalled stream this
+        // change exists to prevent. Only the excluding reader consults the
+        // provenance `loadEnv` recorded, so the default must stay that one.
+        setEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV, "0");
+        markEnvFileValue(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV);
+        try {
+          assertEquals(
+            resolveProviderStreamIdleTimeoutMs(undefined),
+            DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+            "a project .env value must not widen or disable the host's deadline",
+          );
+        } finally {
+          clearEnvFileValueSources();
+          deleteEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV);
+        }
+      });
+
+      it("never echoes a rejected override into the warning", () => {
+        // `.env` expansion substitutes host process values into an entry, so a
+        // line like `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS=$DATABASE_PASSWORD`
+        // arrives here carrying a real credential. Serializing it would write
+        // that credential to the log on every stream request.
+        //
+        // The value below deliberately matches none of the shapes the logger's
+        // own `PROVIDER_CREDENTIAL_PATTERN` scrubs (`sk-`, `ghp_`, `xoxb-`,
+        // `eyJ`). Expansion can pull in *any* host variable -- a database
+        // password, a webhook secret, a session id -- so that pattern is a
+        // backstop for a few known providers, not a reason to log the value.
+        const secret = "9f3c1d7b2a48e6c05f1b-not-a-real-secret";
+        const entries: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          entries.push(entry);
+        });
+        try {
+          assertEquals(
+            resolveProviderStreamIdleTimeoutMs(undefined, () => secret),
+            DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+          );
+        } finally {
+          unsubscribe();
+        }
+
+        const warnings = entries.filter((entry) => entry.level === "warn");
+        assertEquals(warnings.length > 0, true, "a rejected override must still warn");
+        for (const warning of warnings) {
+          assertEquals(
+            JSON.stringify(warning).includes(secret),
+            false,
+            "the rejected value must not reach the log",
+          );
+          assertMatch(warning.message, /VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS/);
         }
       });
 

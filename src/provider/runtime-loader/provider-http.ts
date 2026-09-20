@@ -5,7 +5,7 @@ import { logger } from "#veryfront/utils/logger/logger.ts";
 // Import from process/env.ts, not the process.ts barrel: the barrel also
 // re-exports runCommand, which pulls platform/compat/dynamic-import.ts and its
 // `new Function` into any bundle that reaches this module.
-import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
+import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
 import { notifyProviderRequestRetry } from "./provider-request-observer.ts";
 import { resolveVeryfrontCloudSurface } from "../veryfront-cloud/model-catalog.ts";
 
@@ -111,22 +111,31 @@ export const VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV =
  * Resolve the body idle deadline for one stream request.
  *
  * Precedence is explicit option, then environment, then default. Read through
- * `getHostEnv` rather than `getEnv`: a project `.env` file is untrusted input
- * to the runtime, and this deadline is a safety bound the host operator sets,
- * not something a loaded project should be able to widen or switch off.
+ * `getHostEnvExcludingEnvFile` rather than `getEnv` or `getHostEnv`: a project
+ * `.env` file is untrusted input to the runtime, and this deadline is a safety
+ * bound the host operator sets, not something a loaded project should be able
+ * to widen or switch off. `getHostEnv` is not enough on its own -- `loadEnv`
+ * copies project `.env` entries into the real process environment, so the
+ * plain host read hands back the project's value; only the excluding reader
+ * consults the provenance that `loadEnv` recorded and skips it.
  *
  * A malformed override is ignored with a warning instead of thrown. A typo in
  * a deployment's environment should not fail every provider request, and the
  * fallback still leaves the body bounded; an explicit `idleTimeoutMs` argument
  * is a programming error by comparison and keeps throwing.
  *
+ * The warning names the key and the accepted range but never the rejected
+ * value: `.env` expansion can substitute a host process secret into this
+ * entry, so echoing it back would write that credential to the log.
+ *
  * `readEnv` is a seam, not a feature: reading the real environment is the
- * default, and tests pass a lookup instead of mutating the host process, which
- * the unit-hermeticity audit forbids.
+ * default, and tests pass a lookup rather than mutating the host process. The
+ * one test that does mutate it is the `.env`-provenance case, which has no
+ * other way to exercise the reader this function defaults to.
  */
 export function resolveProviderStreamIdleTimeoutMs(
   idleTimeoutMs: number | undefined,
-  readEnv: (key: string) => string | undefined = getHostEnv,
+  readEnv: (key: string) => string | undefined = getHostEnvExcludingEnvFile,
 ): number {
   if (idleTimeoutMs !== undefined) {
     return normalizeTimerDurationMs(idleTimeoutMs, "idleTimeoutMs");
@@ -141,7 +150,7 @@ export function resolveProviderStreamIdleTimeoutMs(
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_TIMER_DELAY_MS) {
     logger.warn(
       `${VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV} must be an integer between 0 and ` +
-        `${MAX_TIMER_DELAY_MS}; ignoring ${JSON.stringify(configured)} and using the ` +
+        `${MAX_TIMER_DELAY_MS}; ignoring the configured value and using the ` +
         `${DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS}ms default`,
     );
     return DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS;
