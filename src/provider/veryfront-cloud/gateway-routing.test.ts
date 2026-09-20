@@ -25,7 +25,7 @@ const API_BASE_URL = "https://api.veryfront.com";
 /** Routing facts one catalog model resolves to today. */
 type RoutingRow = {
   readonly model: string;
-  readonly vendor: string;
+  readonly provider: string;
   readonly gatewayBaseUrl: string;
   readonly genAiSystem: string | null;
   readonly toolProfile: string;
@@ -35,7 +35,7 @@ function routingRow(modelId: string): RoutingRow {
   const { provider } = parseVeryfrontCloudModelId(modelId, "language");
   return {
     model: modelId,
-    vendor: provider,
+    provider,
     gatewayBaseUrl: getVeryfrontCloudGatewayBaseUrl(API_BASE_URL, provider),
     genAiSystem: resolveGenAiProviderName(modelId),
     toolProfile: getProviderToolProfile(`veryfront-cloud/${modelId}`).provider,
@@ -47,112 +47,112 @@ describe("provider/veryfront-cloud gateway routing", () => {
     assertEquals(VERYFRONT_CLOUD_CHAT_MODELS.map((model) => routingRow(model.modelId)), [
       {
         model: "anthropic/claude-opus-4-8",
-        vendor: "anthropic",
+        provider: "anthropic",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/anthropic/v1",
         genAiSystem: "anthropic",
         toolProfile: "anthropic",
       },
       {
         model: "anthropic/claude-opus-4-6",
-        vendor: "anthropic",
+        provider: "anthropic",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/anthropic/v1",
         genAiSystem: "anthropic",
         toolProfile: "anthropic",
       },
       {
         model: "anthropic/claude-sonnet-4-6",
-        vendor: "anthropic",
+        provider: "anthropic",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/anthropic/v1",
         genAiSystem: "anthropic",
         toolProfile: "anthropic",
       },
       {
         model: "anthropic/claude-haiku-4-5-20251001",
-        vendor: "anthropic",
+        provider: "anthropic",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/anthropic/v1",
         genAiSystem: "anthropic",
         toolProfile: "anthropic",
       },
       {
         model: "openai/gpt-5.5",
-        vendor: "openai",
+        provider: "openai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/openai/v1",
         genAiSystem: "openai",
         toolProfile: "openai",
       },
       {
         model: "openai/gpt-5.4-mini",
-        vendor: "openai",
+        provider: "openai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/openai/v1",
         genAiSystem: "openai",
         toolProfile: "openai",
       },
       {
         model: "openai/gpt-5.4",
-        vendor: "openai",
+        provider: "openai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/openai/v1",
         genAiSystem: "openai",
         toolProfile: "openai",
       },
       {
         model: "openai/gpt-5.4-nano",
-        vendor: "openai",
+        provider: "openai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/openai/v1",
         genAiSystem: "openai",
         toolProfile: "openai",
       },
       {
         model: "openai/gpt-5.2",
-        vendor: "openai",
+        provider: "openai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/openai/v1",
         genAiSystem: "openai",
         toolProfile: "openai",
       },
       {
         model: "google-ai-studio/gemini-3.1-pro-preview",
-        vendor: "google",
+        provider: "google",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/google/v1beta",
         genAiSystem: "gcp.gen_ai",
         toolProfile: "google",
       },
       {
         model: "google-ai-studio/gemini-3.5-flash",
-        vendor: "google",
+        provider: "google",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/google/v1beta",
         genAiSystem: "gcp.gen_ai",
         toolProfile: "google",
       },
       {
         model: "google-ai-studio/gemini-2.5-pro",
-        vendor: "google",
+        provider: "google",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/google/v1beta",
         genAiSystem: "gcp.gen_ai",
         toolProfile: "google",
       },
       {
         model: "google-ai-studio/gemini-2.5-flash",
-        vendor: "google",
+        provider: "google",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/google/v1beta",
         genAiSystem: "gcp.gen_ai",
         toolProfile: "google",
       },
       {
         model: "mistral/mistral-large-2512",
-        vendor: "mistral",
+        provider: "mistral",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/mistral/v1",
         genAiSystem: null,
         toolProfile: "unknown",
       },
       {
         model: "moonshotai/kimi-k2.6",
-        vendor: "moonshotai",
+        provider: "moonshotai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/moonshotai/v1",
         genAiSystem: "moonshotai",
         toolProfile: "moonshot",
       },
       {
         model: "moonshotai/kimi-k2.5",
-        vendor: "moonshotai",
+        provider: "moonshotai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/moonshotai/v1",
         genAiSystem: "moonshotai",
         toolProfile: "moonshot",
@@ -160,8 +160,8 @@ describe("provider/veryfront-cloud gateway routing", () => {
     ]);
   });
 
-  it("keeps the gateway base URL of every accepted vendor alias", () => {
-    // Mistral is the one vendor whose model IDs are gated by the catalog, so
+  it("keeps the gateway base URL of every accepted provider alias", () => {
+    // Mistral is the one provider whose model IDs are gated by the catalog, so
     // the alias is exercised with a listed model rather than a placeholder.
     const aliases: ReadonlyArray<readonly [string, string]> = [
       ["anthropic", "model-x"],

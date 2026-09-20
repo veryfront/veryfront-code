@@ -32,7 +32,7 @@ export type KnownVeryfrontCloudProviderId =
   | "moonshotai";
 
 /**
- * Public API contract for Veryfront Cloud provider ID.
+ * A Veryfront Cloud provider ID: a listed provider, or any other well-formed provider string.
  *
  * Listed providers autocomplete. Any other provider string is accepted as
  * written, so a provider the platform adds is reachable without a release of
@@ -352,7 +352,7 @@ export function findVeryfrontCloudModelByModelId(
 }
 
 /**
- * Return Veryfront Cloud provider from model ID.
+ * Return the Veryfront Cloud provider named by a model ID, including a provider this package does not list.
  *
  * Hosted and delegated runs install this as their provider resolver, so it
  * accepts the same provider segments the gateway routes: a listed alias
@@ -372,7 +372,7 @@ export function getVeryfrontCloudProviderFromModelId(
   });
 }
 
-/** Try to get Veryfront Cloud provider from model ID. */
+/** Return the Veryfront Cloud provider named by a model ID, including one this package does not list, or `undefined` when the ID names none. */
 export function tryGetVeryfrontCloudProviderFromModelId(
   modelId: string,
 ): VeryfrontCloudProviderId | undefined {

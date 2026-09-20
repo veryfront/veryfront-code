@@ -59,7 +59,7 @@ async function drainStream(stream: ReadableStream<unknown>): Promise<void> {
 /**
  * Records the request URL a model builds without asserting on the response
  * body: the wire route is decided before any chunk is parsed, so an empty
- * stream is enough and keeps the fixture free of per-vendor payload shapes.
+ * stream is enough and keeps the fixture free of per-provider payload shapes.
  */
 async function captureGatewayRequestUrl(modelId: string): Promise<string | undefined> {
   let capturedUrl: string | undefined;
@@ -1111,7 +1111,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(seen[0]?.headers.get("authorization"), "Bearer vf_test_provider");
   });
 
-  it("keeps the wire route and provider attribute of one model per vendor", async () => {
+  it("keeps the wire route and provider attribute of one model per provider", async () => {
     setCloudBootstrap();
 
     const routes: Array<[string, string | undefined, unknown]> = [];
