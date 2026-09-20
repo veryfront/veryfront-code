@@ -1701,6 +1701,63 @@ describe("push receipt source snapshot", () => {
       _resetEnvironmentConfig();
     }
   });
+
+  it("does not blame the local link for a VERYFRONT_PROJECT_ID that 404s", async () => {
+    // VERYFRONT_PROJECT_ID also resolves by id, so `byId` alone would have
+    // classified it as a stale local link and told the user to delete
+    // .veryfront/project.json -- a file this reference does not come from.
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        Deno.env.delete("TENANT_PROJECT_SLUG");
+        Deno.env.delete("TENANT_PROJECT_ID");
+        Deno.env.set("VERYFRONT_PROJECT_ID", "11111111-2222-4333-8444-555555555555");
+        _resetEnvironmentConfig();
+
+        const error = await withMockFetch(
+          () => Promise.resolve(Response.json({ error: "not found" }, { status: 404 })),
+          async () => {
+            try {
+              await pushCommand({ projectDir, quiet: true });
+            } catch (thrown) {
+              return thrown;
+            }
+            throw new Error("Expected push to reject");
+          },
+        );
+
+        assertEquals(
+          error instanceof VeryfrontError,
+          false,
+          "an environment-supplied project id is not a stale local link",
+        );
+        assertStringIncludes(
+          (error as Error).message,
+          "Check VERYFRONT_PROJECT_ID",
+        );
+        assertEquals(
+          (error as Error).message.includes(".veryfront/project.json"),
+          false,
+          "the generic message must not name a file this reference never came from",
+        );
+      });
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
 });
 
 describe("push dry-run project bootstrap", () => {

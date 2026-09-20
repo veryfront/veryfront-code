@@ -1238,11 +1238,20 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           throw projectSlugConflictError(error, projectReferenceSource);
         }
         if (error instanceof ProjectReferenceNotFoundError && error.byId) {
-          throw PROJECT_LINK_STALE.create({
-            detail: describeStaleProjectReference(error),
-            context: staleProjectReferenceContext(error),
-            cause: error,
-          });
+          // `byId` alone is not the local link: VERYFRONT_PROJECT_ID and
+          // TENANT_PROJECT_ID also resolve by id, and PROJECT_LINK_STALE's
+          // suggestion names `.veryfront/project.json`, which those references
+          // do not come from. Only the local link gets the classified error.
+          if (error.source.kind === "local-link") {
+            throw PROJECT_LINK_STALE.create({
+              detail: describeStaleProjectReference(error),
+              context: staleProjectReferenceContext(error),
+              cause: error,
+            });
+          }
+          throw new Error(
+            `Project "${error.reference}" was not found. Check ${projectReferenceSource.name} or remove it to let Veryfront create a project for this directory.`,
+          );
         }
         throw error;
       }

@@ -136,10 +136,16 @@ export const BRANCH_NOT_FOUND = defineError({
 });
 
 /**
- * The directory's project reference names a project the control plane will not
- * hand back. `.veryfront/project.json` records no owning account, so a deleted
- * project and one owned by a different account are indistinguishable here: the
- * suggestion has to cover both.
+ * The local link in `.veryfront/project.json` names a project the control
+ * plane will not hand back. The link records no owning account, so a deleted
+ * project and one owned by a different account are indistinguishable here, so
+ * the CLI's detail names both. Reserved for the local link: any other project
+ * reference is misdirected by a suggestion to delete this file.
+ *
+ * This classifies the dead-end; it does not recover from it. Teaching
+ * `veryfront up` to re-link or create a project for the signed-in account, and
+ * adding `veryfront link <slug>` so the remedy is not "delete a dotfile", is
+ * veryfront-issue-inbox#1551.
  */
 export const PROJECT_LINK_STALE = defineError({
   slug: "project-link-stale",
@@ -147,7 +153,7 @@ export const PROJECT_LINK_STALE = defineError({
   status: 404,
   title: "Linked project not found",
   suggestion:
-    "The linked project was deleted, or it belongs to an account other than the one you are logged in as. Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json and run veryfront up to create and link a project for this account",
+    "Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json and run veryfront up to create and link a project for this account",
   exitCode: 1,
 });
 

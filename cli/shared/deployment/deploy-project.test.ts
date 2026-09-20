@@ -748,6 +748,50 @@ describe("DeployProject", () => {
     });
   });
 
+  it("does not blame the local link for a --project reference that 404s", async () => {
+    // `--project <typo>` 404s against a directory whose link is correct.
+    // project-link-stale's suggestion is to delete that link and run
+    // `veryfront up`, which would fork a duplicate project, so the argument
+    // source keeps the generic message instead.
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      const notFound = new Error("API request failed: 404 Not Found") as Error & {
+        status: number;
+      };
+      notFound.status = 404;
+      controlPlane.getProjectError = notFound;
+      try {
+        const error = await expectDeployError(() =>
+          createDeployment(controlPlane).execute({
+            projectDir,
+            environment: "production",
+            mode: "dry-run",
+            projectSlug: "typo-slug",
+            source: { kind: "already-pushed" },
+          })
+        );
+
+        assertEquals(
+          error instanceof VeryfrontError,
+          false,
+          "a --project typo must not be classified as a stale local link",
+        );
+        assertStringIncludes(
+          (error as Error).message,
+          'Project "typo-slug" was not found.',
+        );
+        assertEquals(
+          (error as Error).message.includes(".veryfront/project.json"),
+          false,
+          "the generic message must not tell the user to delete a correct link",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("throws the environment-not-found registry error for missing environments", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
