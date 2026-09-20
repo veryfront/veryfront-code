@@ -24,7 +24,10 @@ import {
   getRuntimeRemoteToolSources,
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
-import { buildRuntimeUsageTraceAttributes } from "#veryfront/agent/runtime/trace-usage.ts";
+import {
+  buildRuntimeUsageTraceAttributes,
+  type RuntimeUsageTraceInput,
+} from "#veryfront/agent/runtime/trace-usage.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
 import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
@@ -194,6 +197,7 @@ export interface RuntimeAgentStreamExecutionDeps {
       context?: Record<string, unknown>,
       callbacks?: {
         onFinish?: (response: AgentResponse) => void;
+        onUsage?: (usage: RuntimeUsageTraceInput) => void;
       },
       modelOverride?: string,
       maxOutputTokensOverride?: number,
@@ -426,6 +430,27 @@ function compactTraceAttributes(
       typeof value === "string" || typeof value === "number" || typeof value === "boolean"
     ),
   ) as Record<string, string | number | boolean>;
+}
+
+/**
+ * Marks a run total as a lower bound rather than the final bill.
+ *
+ * A run that died mid-stream was cut off inside a model call that may already have
+ * been billed without ever reporting usage, so the accumulated total can only be a
+ * floor. That is a fact about the *run*, distinct from `agent.usage.capture_status`,
+ * which is the provider's verdict on a single call's usage payload
+ * ("complete" | "partial" | "missing") and has consumers that read it that way.
+ * Overwriting it here would report a genuinely "missing" capture as "partial".
+ *
+ * Emitted only when there is a total to qualify: a run with no usage attributes at
+ * all must not look like a run whose spend was merely under-captured.
+ */
+function buildRunUsageFloorAttributes(
+  usage: RuntimeUsageTraceInput | null | undefined,
+): Record<string, boolean> {
+  return Object.keys(buildRuntimeUsageTraceAttributes(usage)).length > 0
+    ? { "agent.run.usage_is_floor": true }
+    : {};
 }
 
 function buildInternalAgentRunTraceAttributes(input: {
@@ -971,6 +996,24 @@ export async function createRuntimeAgentStreamResponse(
   });
 
   let completedResponse: AgentResponse | null = null;
+  // Running usage total, updated after every model call. A run that dies mid-stream
+  // never delivers a final response, so this is the only spend figure it can report.
+  let accumulatedUsage: RuntimeUsageTraceInput | null = null;
+  // A clean completion keeps today's semantics: completedResponse.usage IS the run's
+  // accumulated total. The fallback only matters when the run never finished.
+  const resolveRunUsage = (): RuntimeUsageTraceInput | null | undefined =>
+    completedResponse?.usage ?? accumulatedUsage;
+  // One callbacks object for both dispatch branches. The override branch is the only
+  // one a unit test can drive, so separate literals would let the production
+  // (framework dispatch) wiring be deleted with the whole suite still green.
+  const runtimeStreamCallbacks = {
+    onFinish: (response: AgentResponse) => {
+      completedResponse = response;
+    },
+    onUsage: (usage: RuntimeUsageTraceInput) => {
+      accumulatedUsage = usage;
+    },
+  };
   let runtimeStream: ReadableStream<Uint8Array>;
   let closeSandbox = createIdempotentAsyncCleanup();
   const timing = createAgentRunEventTimingAnchor();
@@ -1212,11 +1255,7 @@ export async function createRuntimeAgentStreamResponse(
           ? runtimeDispatch.runtime.stream(
             runtimeMessages,
             runtimeContext,
-            {
-              onFinish: (response) => {
-                completedResponse = response;
-              },
-            },
+            runtimeStreamCallbacks,
             undefined,
             maxOutputTokens,
             abortSignal,
@@ -1225,11 +1264,7 @@ export async function createRuntimeAgentStreamResponse(
             runtimeDispatch.runtime,
             runtimeMessages,
             runtimeContext,
-            {
-              onFinish: (response) => {
-                completedResponse = response;
-              },
-            },
+            runtimeStreamCallbacks,
             undefined,
             maxOutputTokens,
             abortSignal,
@@ -1510,7 +1545,12 @@ export async function createRuntimeAgentStreamResponse(
               "agent.run.saw_visible_output": state.sawVisibleOutput,
               "agent.run.saw_terminal_error": state.sawTerminalError,
               ...(state.sawTerminalError ? { "error.type": "AgentRunTerminalError" } : {}),
-              ...buildRuntimeUsageTraceAttributes(completedResponse?.usage),
+              ...buildRuntimeUsageTraceAttributes(resolveRunUsage()),
+              // A terminal error kills the turn that was in flight; it may have been
+              // billed without ever reporting usage, so the total is a floor. This is a
+              // run-level fact and gets its own attribute: agent.usage.capture_status is
+              // the provider's own capture verdict and must keep carrying that meaning.
+              ...(state.sawTerminalError ? buildRunUsageFloorAttributes(resolveRunUsage()) : {}),
               ...(state.metadata.finishReason
                 ? { "gen_ai.response.finish_reasons": state.metadata.finishReason }
                 : {}),
@@ -1542,6 +1582,10 @@ export async function createRuntimeAgentStreamResponse(
                 "agent.run.final_status": "cancelled",
                 "error.type": "AgentRunCancelledError",
                 "error.message": error.message,
+                ...buildRuntimeUsageTraceAttributes(resolveRunUsage()),
+                // The model call that was in flight at the abort may have been billed
+                // without ever reporting usage, so the total is a floor.
+                ...buildRunUsageFloorAttributes(resolveRunUsage()),
               });
               addSpanEvent(runSpan, "agent.run.cancelled");
               // The control plane also cancels runtime sessions to park canonical runs for tools.
@@ -1569,6 +1613,10 @@ export async function createRuntimeAgentStreamResponse(
                 "agent.run.final_status": "failed",
                 "error.type": error instanceof Error ? error.name : "Error",
                 "error.message": errorMessage,
+                ...buildRuntimeUsageTraceAttributes(resolveRunUsage()),
+                // The model call that was in flight at the failure may have been billed
+                // without ever reporting usage, so the total is a floor.
+                ...buildRunUsageFloorAttributes(resolveRunUsage()),
               });
               addSpanEvent(runSpan, "agent.run.failed");
               logger.error("Internal agent runtime stream failed", {

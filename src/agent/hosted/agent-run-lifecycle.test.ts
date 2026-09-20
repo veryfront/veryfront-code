@@ -157,6 +157,118 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["gen_ai.usage.reasoning.output_tokens"], 1);
   });
 
+  // veryfront/veryfront-issue-inbox#1500: this controller emits a span literally named
+  // "agent.run" for operationName "chat", the same name the internal-agent path emits.
+  // A spend query over that name sums both emitters, so a hosted run that reports only
+  // token counts drags the reported credit total below the billed one on EVERY status,
+  // completed included.
+  it("reports run cost, not only tokens, on the hosted agent.run span", async () => {
+    const span = new RecordingSpan();
+    let spanName: string | undefined;
+    const controller = createHostedAgentRunSpanController({
+      tracer: {
+        startSpan: (name) => {
+          spanName = name;
+          return span;
+        },
+      },
+      operationName: "chat",
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      userId: "user-1",
+      agentId: "agent-1",
+      modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      rootRun: { runId: "run-1", messageId: "message-1" },
+    });
+
+    const adapter = createHostedRootRunLifecycleRuntimeAdapter({
+      authToken: "token",
+      apiUrl: "https://api.example.com",
+      modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      durableRootRun: null,
+      durableRunMirror: null,
+      resolveProvider: (modelId) => modelId.split("/")[1] ?? "unknown",
+      agentRunSpan: controller,
+      createTerminalAdapter: (input) => createRecordingTerminalAdapter(input),
+    });
+
+    await adapter.terminal.onTerminalState({
+      status: "completed",
+      metadata: {
+        modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+        usage: { inputTokens: 120, outputTokens: 40 },
+        billableInputTokens: 118,
+        billableOutputTokens: 40,
+        costUsd: 0.036,
+        providerInputCostUsd: 0.021,
+        providerOutputCostUsd: 0.01,
+        providerCostUsd: 0.031,
+        veryfrontInputChargeUsd: 0.023,
+        veryfrontOutputChargeUsd: 0.012,
+        veryfrontChargeUsd: 0.035,
+        veryfrontBilledUsd: 0.035,
+        costCredits: 34.8974,
+        costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      },
+    });
+
+    assertEquals(spanName, "agent.run");
+    assertEquals(span.attributes["agent.run.final_status"], "completed");
+    assertEquals(span.attributes["gen_ai.usage.total_tokens"], 160);
+    assertEquals(span.attributes["agent.usage.cost_credits"], 34.8974);
+    assertEquals(span.attributes["agent.usage.billable_input_tokens"], 118);
+    assertEquals(span.attributes["agent.usage.billable_output_tokens"], 40);
+    assertEquals(span.attributes["agent.usage.cost_usd"], 0.036);
+    assertEquals(span.attributes["agent.usage.provider_input_cost_usd"], 0.021);
+    assertEquals(span.attributes["agent.usage.provider_output_cost_usd"], 0.01);
+    assertEquals(span.attributes["agent.usage.provider_cost_usd"], 0.031);
+    assertEquals(span.attributes["agent.usage.veryfront_input_charge_usd"], 0.023);
+    assertEquals(span.attributes["agent.usage.veryfront_output_charge_usd"], 0.012);
+    assertEquals(span.attributes["agent.usage.veryfront_charge_usd"], 0.035);
+    assertEquals(span.attributes["agent.usage.veryfront_billed_usd"], 0.035);
+    assertEquals(span.attributes["agent.usage.cost_source"], "gateway");
+    assertEquals(span.attributes["agent.usage.billing_mode"], "deferred");
+    assertEquals(span.attributes["agent.usage.capture_status"], "complete");
+  });
+
+  // The other half of the same fact: a run with nothing to report must leave the spend
+  // attributes absent rather than emit a row of zeroes, so "no spend" stays
+  // distinguishable from "spend not recorded".
+  it("leaves hosted agent.run usage attributes absent when the run reported none", async () => {
+    const span = new RecordingSpan();
+    const controller = createHostedAgentRunSpanController({
+      tracer: { startSpan: () => span },
+      operationName: "chat",
+      projectId: "project-1",
+      userId: "user-1",
+      agentId: "agent-1",
+      modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+    });
+
+    const adapter = createHostedRootRunLifecycleRuntimeAdapter({
+      authToken: "token",
+      apiUrl: "https://api.example.com",
+      modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      durableRootRun: null,
+      durableRunMirror: null,
+      resolveProvider: (modelId) => modelId.split("/")[1] ?? "unknown",
+      agentRunSpan: controller,
+      createTerminalAdapter: (input) => createRecordingTerminalAdapter(input),
+    });
+
+    await adapter.terminal.onTerminalState({
+      status: "failed",
+      terminalErrorCode: "STREAM_ERROR",
+      terminalErrorMessage: "stream broke",
+    });
+
+    assertEquals(span.attributes["agent.run.final_status"], "failed");
+    assertEquals(span.attributes["agent.usage.cost_credits"], undefined);
+    assertEquals(span.attributes["gen_ai.usage.total_tokens"], undefined);
+  });
+
   it("creates a terminal adapter and finalizes the span", async () => {
     const finalized: unknown[] = [];
     let terminalOptions: TerminalAdapterOptions | undefined;

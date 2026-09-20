@@ -15,6 +15,22 @@ export interface HostedLifecycleTerminalState {
       cacheReadInputTokens?: number;
       reasoningTokens?: number;
     };
+    // Billing fields sit beside `usage`, matching ChatMessageMetadata, which is what
+    // the hosted finalizer actually passes here. They were previously dropped from the
+    // type, so the `agent.run` span this metadata finalizes could never report spend.
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
+    providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
+    veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
   };
   terminalErrorCode?: string | null;

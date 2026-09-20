@@ -8,6 +8,7 @@ import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import type { HostedConversationRootRunState } from "../conversation/root-run-lifecycle.ts";
 import {
   type AgentTraceAttributes,
+  type AgentTraceUsage,
   buildAgentRunTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
 } from "./trace-attributes.ts";
@@ -28,15 +29,13 @@ export interface HostedAgentRunTracer {
 export interface HostedAgentRunSpanFinalState {
   status: "completed" | "failed" | "cancelled";
   modelId?: string | null;
-  usage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-    cachedInputTokens?: number;
-    cacheCreationInputTokens?: number;
-    cacheReadInputTokens?: number;
-    reasoningTokens?: number;
-  };
+  /**
+   * Tokens *and* cost. This span is named "agent.run" — the same name the
+   * internal-agent path emits — so a spend query over that name sums both emitters.
+   * While this shape was token-only, every hosted chat run contributed
+   * `agent.usage.cost_credits = absent` to that sum on every status.
+   */
+  usage?: AgentTraceUsage;
   terminalErrorCode?: string | null;
   terminalErrorMessage?: string | null;
 }
@@ -144,6 +143,52 @@ export interface CreateHostedRootRunLifecycleRuntimeAdapterInput {
   ) => ConversationHostedTerminalAdapter;
 }
 
+/**
+ * Flattens hosted terminal metadata into the span's usage shape.
+ *
+ * Token counts arrive nested under `metadata.usage`; the billing fields sit beside it
+ * at the top level (ChatMessageMetadata's layout). The span wants them in one object,
+ * and an all-absent result stays `undefined` so a run with nothing to report emits no
+ * usage attributes rather than a row of zeroes.
+ */
+const HOSTED_RUN_BILLING_USAGE_KEYS = [
+  "billableInputTokens",
+  "billableOutputTokens",
+  "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
+  "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+  "costSource",
+  "billingMode",
+  "usageCaptureStatus",
+] as const satisfies readonly (
+  & keyof NonNullable<HostedLifecycleTerminalState["metadata"]>
+  & keyof AgentTraceUsage
+)[];
+
+function buildHostedAgentRunSpanUsage(
+  metadata: HostedLifecycleTerminalState["metadata"],
+): AgentTraceUsage | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const usage: Record<string, unknown> = { ...metadata.usage };
+  for (const key of HOSTED_RUN_BILLING_USAGE_KEYS) {
+    const value = metadata[key];
+    if (value !== undefined) {
+      usage[key] = value;
+    }
+  }
+
+  return Object.keys(usage).length > 0 ? usage as AgentTraceUsage : undefined;
+}
+
 function finalizeHostedAgentRunSpan(input: {
   agentRunSpan: Pick<HostedAgentRunSpanController, "finalize">;
   modelId: string;
@@ -152,7 +197,7 @@ function finalizeHostedAgentRunSpan(input: {
   input.agentRunSpan.finalize({
     status: input.terminalState.status,
     modelId: input.terminalState.metadata?.modelId ?? input.modelId,
-    usage: input.terminalState.metadata?.usage,
+    usage: buildHostedAgentRunSpanUsage(input.terminalState.metadata),
     terminalErrorCode: input.terminalState.terminalErrorCode,
     terminalErrorMessage: input.terminalState.terminalErrorMessage,
   });
