@@ -366,8 +366,10 @@ async function readProjectFile(context: FileDiscoveryContext, name: string): Pro
 async function readProjectRegistrySources(
   context: FileDiscoveryContext,
 ): Promise<ProjectRegistrySources> {
-  const lockText = await readProjectFile(context, "package-lock.json") ||
-    await readProjectFile(context, "npm-shrinkwrap.json");
+  // npm ignores package-lock.json entirely when a shrinkwrap is present, so
+  // the shrinkwrap is the authoritative record of what the project installs.
+  const lockText = await readProjectFile(context, "npm-shrinkwrap.json") ||
+    await readProjectFile(context, "package-lock.json");
   return {
     locked: readLockedDependencies(lockText),
     npmrc: await readProjectFile(context, ".npmrc"),

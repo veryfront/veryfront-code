@@ -858,6 +858,14 @@ describe(
           reason: "resolves a different version",
         },
         {
+          // npm ignores package-lock.json entirely when a shrinkwrap exists.
+          name: "a shrinkwrap resolving another registry beside a public package lock",
+          files: {
+            "npm-shrinkwrap.json": publicRegistryLock(pin, "https://npm.internal.example/"),
+          },
+          reason: "resolves @veryfront-fixture/pdf-text from another registry",
+        },
+        {
           name: "an .npmrc pointing the scope elsewhere",
           files: { ".npmrc": "@veryfront-fixture:registry=https://npm.internal.example/\n" },
           reason: ".npmrc installs @veryfront-fixture/pdf-text from another registry",
