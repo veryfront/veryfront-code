@@ -149,6 +149,34 @@ describe("provider-http", () => {
       assertEquals(err.retryable, false);
     });
 
+    it("a provider the catalog does not list is classified on the OpenAI envelope", async () => {
+      const err = await buildProviderError(
+        "acme-labs",
+        jsonResponse(429, { error: { code: "insufficient_quota", message: "no credit" } }),
+      );
+      assertEquals(
+        err instanceof ProviderQuotaError,
+        true,
+        "an unlisted provider resolves to the default OpenAI wire surface",
+      );
+      assertEquals(err.retryable, false);
+    });
+
+    it("keeps providers off the OpenAI envelope when their surface differs", async () => {
+      for (const provider of ["anthropic", "google"]) {
+        const err = await buildProviderError(
+          provider,
+          jsonResponse(429, { error: { code: "insufficient_quota", message: "no credit" } }),
+        );
+        assertEquals(
+          err instanceof ProviderQuotaError,
+          false,
+          `${provider} does not speak the OpenAI error envelope`,
+        );
+        assertEquals(err.retryable, true);
+      }
+    });
+
     it("openai 429 truncated before it could be parsed -> retryable rate limit", async () => {
       const err = await buildProviderError(
         "openai",

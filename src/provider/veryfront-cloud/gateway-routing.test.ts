@@ -1,14 +1,14 @@
+/**
+ * Golden record of Veryfront Cloud gateway routing.
+ *
+ * Every assertion here is a pure resolution: no environment, no transport. The
+ * routes these tables describe are exercised end to end in provider.test.ts.
+ */
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { clearModelProviders, resolveModel } from "#veryfront/provider";
-import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveGenAiProviderName } from "#veryfront/agent/hosted/trace-attributes.ts";
 import { getProviderToolProfile } from "#veryfront/agent/runtime/provider-tool-compat.ts";
-import { agent } from "#veryfront/agent";
-import { assertThrows } from "#veryfront/testing/assert.ts";
 import {
   requireVeryfrontCloudWireSurface,
   resolveVeryfrontCloudModelThinking,
@@ -21,7 +21,6 @@ import {
 import { getVeryfrontCloudGatewayBaseUrl, parseVeryfrontCloudModelId } from "./shared.ts";
 
 const API_BASE_URL = "https://api.veryfront.com";
-const CLOUD_ENV_KEYS = ["VERYFRONT_API_TOKEN", "VERYFRONT_PROJECT_SLUG"] as const;
 
 /** Routing facts one catalog model resolves to today. */
 type RoutingRow = {
@@ -43,64 +42,7 @@ function routingRow(modelId: string): RoutingRow {
   };
 }
 
-function setCloudBootstrap(): void {
-  setEnv("VERYFRONT_API_TOKEN", "vf_test_routing");
-  setEnv("VERYFRONT_PROJECT_SLUG", "routing-test-project");
-}
-
-function clearCloudEnv(): void {
-  for (const key of CLOUD_ENV_KEYS) {
-    try {
-      deleteEnv(key);
-    } catch {
-      // expected: env may already be unset
-    }
-  }
-}
-
-/**
- * Records the request URL a model builds without asserting on the response
- * body: the wire route is decided before any chunk is parsed, so an empty
- * stream is enough and keeps the fixture free of per-vendor payload shapes.
- */
-async function captureRequestUrl(modelId: string): Promise<string | undefined> {
-  let capturedUrl: string | undefined;
-  installMockFetch(
-    ((input: URL | Request | string, init?: RequestInit) => {
-      capturedUrl ??= new Request(input, init).url;
-      return Promise.resolve(
-        new Response(new ReadableStream({ start: (controller) => controller.close() }), {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        }),
-      );
-    }) as typeof fetch,
-  );
-
-  const model = resolveModel(`veryfront-cloud/${modelId}`) as ModelRuntime;
-  try {
-    const result = await model.doStream({ prompt: [] } as never);
-    const stream = (result as { stream?: ReadableStream<unknown> }).stream;
-    if (stream) {
-      const reader = stream.getReader();
-      while (!(await reader.read()).done) {
-        // drain: the assertion targets the outgoing request, not the chunks
-      }
-      reader.releaseLock();
-    }
-  } catch {
-    // expected: an empty gateway stream is not a valid provider response
-  }
-  return capturedUrl;
-}
-
 describe("provider/veryfront-cloud gateway routing", () => {
-  afterEach(() => {
-    restoreMockFetch();
-    clearCloudEnv();
-    clearModelProviders();
-  });
-
   it("keeps the routing facts of every catalog model", () => {
     assertEquals(VERYFRONT_CLOUD_CHAT_MODELS.map((model) => routingRow(model.modelId)), [
       {
@@ -244,105 +186,6 @@ describe("provider/veryfront-cloud gateway routing", () => {
         ["moonshotai", "https://api.veryfront.com/ai/gateway/moonshotai/v1"],
       ],
     );
-  });
-
-  it("keeps the wire route and provider attribute of one model per vendor", async () => {
-    setCloudBootstrap();
-
-    const routes: Array<[string, string | undefined, unknown]> = [];
-    for (
-      const modelId of [
-        "anthropic/claude-sonnet-4-6",
-        "openai/gpt-5.5",
-        "openai/gpt-5.4-nano",
-        "google-ai-studio/gemini-3.5-flash",
-        "mistral/mistral-large-2512",
-        "moonshotai/kimi-k2.6",
-      ]
-    ) {
-      const url = await captureRequestUrl(modelId);
-      const model = resolveModel(`veryfront-cloud/${modelId}`) as unknown as {
-        modelProvider?: unknown;
-      };
-      routes.push([modelId, url, model.modelProvider]);
-      restoreMockFetch();
-    }
-
-    assertEquals(routes, [
-      [
-        "anthropic/claude-sonnet-4-6",
-        "https://api.veryfront.com/ai/gateway/anthropic/v1/messages",
-        "anthropic",
-      ],
-      [
-        "openai/gpt-5.5",
-        "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
-        "openai",
-      ],
-      [
-        "openai/gpt-5.4-nano",
-        "https://api.veryfront.com/ai/gateway/openai/v1/responses",
-        "openai",
-      ],
-      [
-        "google-ai-studio/gemini-3.5-flash",
-        "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
-        "google",
-      ],
-      [
-        "mistral/mistral-large-2512",
-        "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
-        "mistral",
-      ],
-      [
-        "moonshotai/kimi-k2.6",
-        "https://api.veryfront.com/ai/gateway/moonshotai/v1/chat/completions",
-        "moonshotai",
-      ],
-    ]);
-  });
-
-  it("reaches a provider the package does not list, with no source change", async () => {
-    setCloudBootstrap();
-    const encoder = new TextEncoder();
-    let capturedRequest: Request | undefined;
-
-    installMockFetch(
-      (async (input: URL | Request | string, init?: RequestInit) => {
-        const request = new Request(input, init);
-        capturedRequest = request;
-        await request.text();
-
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(
-                encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
-              );
-              controller.enqueue(
-                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
-              );
-              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-              controller.close();
-            },
-          }),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
-        );
-      }) as typeof fetch,
-    );
-
-    const assistant = agent({
-      model: "veryfront-cloud/acme-labs/mystery-1",
-      system: "You are concise.",
-    });
-
-    const result = await assistant.generate({ input: "Hi" });
-
-    assertEquals(
-      capturedRequest?.url,
-      "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions",
-    );
-    assertEquals(result.text, "Hello");
   });
 
   it("degrades for an unlisted provider instead of throwing", () => {

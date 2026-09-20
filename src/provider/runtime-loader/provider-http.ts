@@ -343,9 +343,16 @@ function isInvalidRequestEnvelope(
 }
 
 /**
- * Whether the provider uses the OpenAI-compatible error envelope for quota and
- * rate-limit classification. Every provider on the OpenAI wire surface returns
- * that envelope, including providers this package does not list.
+ * Whether the provider returns the OpenAI-compatible error envelope, which
+ * quota and rate-limit classification reads.
+ *
+ * The answer comes from the wire surface the provider speaks. A provider the
+ * catalog does not list resolves to the default surface and is classified on
+ * the OpenAI envelope: that is the envelope an unlisted provider returns in
+ * practice, and classification only fires on fields it actually finds, such as
+ * an `insufficient_quota` code. A provider that answers in some other shape
+ * therefore falls through to the generic handling rather than being
+ * misreported.
  */
 function isOpenAICompatibleProvider(provider: ProviderKind): boolean {
   return resolveVeryfrontCloudSurface(provider) === "openai";

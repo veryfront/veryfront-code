@@ -16,7 +16,14 @@ import {
   type VeryfrontCloudProviderRouting,
 } from "./model-catalog.data.ts";
 
-/** Veryfront Cloud providers listed in the catalog of this package. */
+/**
+ * Veryfront Cloud providers listed in the catalog of this package.
+ *
+ * Internal to the catalog: it keeps the label and display-order tables
+ * exhaustive. It is deliberately not part of the public barrel, because the set
+ * of providers is open and a caller that switched on it exhaustively would
+ * break as soon as a provider is added.
+ */
 export type KnownVeryfrontCloudProviderId =
   | "anthropic"
   | "openai"
