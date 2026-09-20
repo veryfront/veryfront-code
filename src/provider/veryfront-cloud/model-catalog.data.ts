@@ -8,7 +8,30 @@
  * The tables are kept in one place so that they can be produced by a generator.
  * Do not add functions, computed values, or side effects here.
  */
-import type { VeryfrontCloudChatModel, VeryfrontCloudProviderId } from "./model-catalog.ts";
+import type {
+  KnownVeryfrontCloudProviderId,
+  VeryfrontCloudChatModel,
+  VeryfrontCloudProviderId,
+  VeryfrontCloudWireSurface,
+} from "./model-catalog.ts";
+
+/**
+ * Gateway routing for one provider.
+ *
+ * The surface is the wire format the provider's gateway endpoint speaks. It is
+ * the only fact routing needs, so a provider this package does not list is
+ * reachable as soon as its surface is known.
+ */
+export type VeryfrontCloudProviderRouting = {
+  /** Wire format spoken by the provider's gateway endpoint. */
+  readonly surface: VeryfrontCloudWireSurface;
+  /**
+   * Whether the provider implements the surface natively rather than only
+   * speaking its wire format. On the OpenAI surface, native providers can use
+   * the Responses transport; the others keep to Chat Completions.
+   */
+  readonly native?: boolean;
+};
 
 /** Model-specific transport capabilities that cannot be inferred from the provider family. */
 export type VeryfrontCloudModelTransportCapabilities = {
@@ -29,7 +52,7 @@ export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
  * Frozen entries in alias order; build a Map locally if lookup-by-key is needed.
  */
 export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyArray<
-  readonly [string, VeryfrontCloudProviderId]
+  readonly [string, KnownVeryfrontCloudProviderId]
 > = Object.freeze([
   Object.freeze(["anthropic", "anthropic"] as const),
   Object.freeze(["openai", "openai"] as const),
@@ -39,15 +62,44 @@ export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyArray<
   Object.freeze(["moonshotai", "moonshotai"] as const),
 ]);
 
-/** Model ID prefixes accepted for gateway models, one per provider alias, in alias order. */
-export const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES: readonly string[] = Object.freeze([
-  "anthropic/",
-  "openai/",
-  "google/",
-  "google-ai-studio/",
-  "mistral/",
-  "moonshotai/",
+/**
+ * Gateway routing per provider. A provider missing from this table is routed
+ * on the default surface, so the package reaches a provider it does not list
+ * without a code change.
+ * Frozen entries; build a Map locally if lookup-by-key is needed.
+ */
+export const VERYFRONT_CLOUD_PROVIDER_ROUTING: ReadonlyArray<
+  readonly [VeryfrontCloudProviderId, Readonly<VeryfrontCloudProviderRouting>]
+> = Object.freeze([
+  Object.freeze(
+    ["anthropic", Object.freeze({ surface: "anthropic" as const, native: true })] as const,
+  ),
+  Object.freeze(["openai", Object.freeze({ surface: "openai" as const, native: true })] as const),
+  Object.freeze(["google", Object.freeze({ surface: "google" as const, native: true })] as const),
+  Object.freeze(["mistral", Object.freeze({ surface: "openai" as const })] as const),
+  Object.freeze(["moonshotai", Object.freeze({ surface: "openai" as const })] as const),
 ]);
+
+/** Surface used for a provider the routing table does not list. */
+export const DEFAULT_VERYFRONT_CLOUD_SURFACE = "openai";
+
+/** Leading gateway path segments, shared by every surface. */
+export const VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX = "ai/gateway";
+
+/**
+ * Gateway API version per surface, appended after the provider segment.
+ * Frozen entries; build a Map locally if lookup-by-key is needed.
+ */
+export const VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS: ReadonlyArray<
+  readonly [string, string]
+> = Object.freeze([
+  Object.freeze(["anthropic", "v1"] as const),
+  Object.freeze(["openai", "v1"] as const),
+  Object.freeze(["google", "v1beta"] as const),
+]);
+
+/** Gateway API version used for a surface without its own entry. */
+export const DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION = "v1";
 
 /**
  * Transport capabilities keyed by canonical provider/model ID. Both
@@ -225,20 +277,22 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
 );
 
 /** Display label for each provider. */
-export const VERYFRONT_CLOUD_PROVIDER_LABELS: Readonly<Record<VeryfrontCloudProviderId, string>> =
-  Object.freeze({
-    anthropic: "Anthropic",
-    openai: "OpenAI",
-    google: "Google",
-    moonshotai: "Kimi",
-    mistral: "Mistral",
-  });
+export const VERYFRONT_CLOUD_PROVIDER_LABELS: Readonly<
+  Record<KnownVeryfrontCloudProviderId, string>
+> = Object.freeze({
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  moonshotai: "Kimi",
+  mistral: "Mistral",
+});
 
 /** Provider display order. The order is user-visible. */
-export const VERYFRONT_CLOUD_PROVIDER_ORDER: readonly VeryfrontCloudProviderId[] = Object.freeze([
-  "anthropic",
-  "openai",
-  "google",
-  "mistral",
-  "moonshotai",
-]);
+export const VERYFRONT_CLOUD_PROVIDER_ORDER: readonly KnownVeryfrontCloudProviderId[] = Object
+  .freeze([
+    "anthropic",
+    "openai",
+    "google",
+    "mistral",
+    "moonshotai",
+  ]);

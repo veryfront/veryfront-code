@@ -98,6 +98,35 @@ describe("createVeryfrontCloudContextSummaryGenerator", () => {
     assertEquals(visibleTokens, [undefined, undefined, undefined]);
   });
 
+  it("compacts on a provider the package does not list through the gateway", async () => {
+    // Compaction normalizes the configured model before resolving it. An
+    // unlisted provider must still carry the gateway prefix, or the model is
+    // looked up in the global provider registry and compaction fails.
+    const resolvedModelIds: string[] = [];
+    const generator = createVeryfrontCloudContextSummaryGenerator({
+      apiUrl: "https://api.example.com",
+      projectSlug: "demo-project",
+      model: "acme-labs/mystery-1",
+      maxOutputTokens: 500,
+      maxInputTokens: 1_000,
+      resolveModel: (modelId) => {
+        resolvedModelIds.push(modelId);
+        return createModel();
+      },
+      generateText: (): PromiseLike<RuntimeGenerateTextResult> =>
+        Promise.resolve({
+          text: "summary",
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: "stop",
+        }),
+    });
+
+    const result = await generator(summaryInput);
+
+    assertEquals(resolvedModelIds, ["veryfront-cloud/acme-labs/mystery-1"]);
+    assertEquals(result, { text: "summary" });
+  });
+
   it("uses the private inference resolver", async () => {
     const visibleTokens: Array<string | undefined> = [];
     const privateModelResolver = createVeryfrontCloudInferenceModelResolver(

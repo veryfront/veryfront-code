@@ -9,6 +9,7 @@ import type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.t
 interface VeryfrontCloudOpenAIConfig {
   apiToken: string;
   baseURL: string;
+  openAIChatCompletionsOnlyReason?: string;
   openAIChatReasoningWithFunctionTools?: boolean;
   openAITransport?: "chat-completions" | "responses";
   fetch: typeof globalThis.fetch;
@@ -23,6 +24,7 @@ export function createVeryfrontCloudOpenAIModel(
     baseURL: config.baseURL,
     name: "veryfront-cloud",
     providerName: "veryfront-cloud",
+    openAIChatCompletionsOnlyReason: config.openAIChatCompletionsOnlyReason,
     openAIChatReasoningWithFunctionTools: config.openAIChatReasoningWithFunctionTools,
     openAITransport: config.openAITransport,
     fetch: config.fetch,

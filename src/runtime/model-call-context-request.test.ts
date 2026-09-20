@@ -184,6 +184,86 @@ describe("model call request projection", () => {
     }
   });
 
+  it("keeps chat controls for a non-native provider with a reasoning-style model id", () => {
+    // A provider that is not native to the OpenAI surface is pinned to chat
+    // completions, whatever its model IDs look like, so the recorded context
+    // must keep the chat-only controls the request carries.
+    for (
+      const [modelProvider, modelId] of [
+        ["acme-labs", "gpt-5.4"],
+        ["mistral", "mistral-large"],
+        ["moonshotai", "o3"],
+      ] as const
+    ) {
+      const options: ModelRuntimeCallOptions = {
+        prompt,
+        seed: 7,
+        stopSequences: ["STOP"],
+      };
+      const projected = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider,
+        modelId,
+      }, options);
+      const body = buildOpenAIChatRequest(
+        modelId,
+        "veryfront-cloud",
+        options,
+        false,
+        createWarningCollector(),
+      );
+
+      assertEquals(projected?.seed, 7);
+      assertEquals(projected?.stopSequences, ["STOP"]);
+      assertEquals(projected?.seed, body.seed);
+      assertEquals(projected?.stopSequences, body.stop);
+    }
+  });
+
+  it("records the reasoning a non-native provider sends alongside a function tool", () => {
+    // OpenAI's own gpt-5.4 drops reasoning when a function tool is present. That
+    // capability is OpenAI's: another provider on the same wire surface builds
+    // its request without it, so the recorded context must match that request.
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      tools,
+      reasoning: { enabled: true, effort: "high" },
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "acme-labs",
+      modelId: "gpt-5.4",
+    }, options);
+    const body = buildOpenAIChatRequest(
+      "gpt-5.4",
+      "veryfront-cloud",
+      options,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.reasoning_effort, "high");
+    assertEquals(projected?.reasoning, { enabled: true, effort: "high" });
+  });
+
+  it("still drops chat controls for a native provider on the Responses transport", () => {
+    // The native provider keeps its old classification: a reasoning-style ID
+    // selects Responses, which carries neither of these controls.
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      seed: 7,
+      stopSequences: ["STOP"],
+    };
+    const projected = buildModelCallContextRequest({
+      provider: "veryfront-cloud",
+      modelProvider: "openai",
+      modelId: "gpt-5.4-nano",
+    }, options);
+
+    assertEquals(projected?.seed, undefined);
+    assertEquals(projected?.stopSequences, undefined);
+  });
+
   it("matches controls when managed web-search tools select Responses", () => {
     const options: ModelRuntimeCallOptions = {
       prompt,

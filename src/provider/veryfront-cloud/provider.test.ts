@@ -56,6 +56,42 @@ async function drainStream(stream: ReadableStream<unknown>): Promise<void> {
   reader.releaseLock();
 }
 
+/**
+ * Records the request URL a model builds without asserting on the response
+ * body: the wire route is decided before any chunk is parsed, so an empty
+ * stream is enough and keeps the fixture free of per-provider payload shapes.
+ */
+async function captureGatewayRequestUrl(modelId: string): Promise<string | undefined> {
+  let capturedUrl: string | undefined;
+  installMockFetch(
+    ((input: URL | Request | string, init?: RequestInit) => {
+      capturedUrl ??= new Request(input, init).url;
+      return Promise.resolve(
+        new Response(new ReadableStream({ start: (controller) => controller.close() }), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    }) as typeof fetch,
+  );
+
+  const model = resolveModel(`veryfront-cloud/${modelId}`) as ModelRuntime;
+  try {
+    const result = await model.doStream({ prompt: [] } as never);
+    const stream = (result as { stream?: ReadableStream<unknown> }).stream;
+    if (stream) {
+      const reader = stream.getReader();
+      while (!(await reader.read()).done) {
+        // drain: the assertion targets the outgoing request, not the chunks
+      }
+      reader.releaseLock();
+    }
+  } catch {
+    // expected: an empty gateway stream is not a valid provider response
+  }
+  return capturedUrl;
+}
+
 function clearCloudEnv(): void {
   for (const key of CLOUD_ENV_KEYS) {
     try {
@@ -1073,5 +1109,171 @@ describe("provider/veryfront-cloud", () => {
     }
     assertEquals(seen.length, 1);
     assertEquals(seen[0]?.headers.get("authorization"), "Bearer vf_test_provider");
+  });
+
+  it("keeps the wire route and provider attribute of one model per provider", async () => {
+    setCloudBootstrap();
+
+    const routes: Array<[string, string | undefined, unknown]> = [];
+    for (
+      const modelId of [
+        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-5.5",
+        "openai/gpt-5.4-nano",
+        "google-ai-studio/gemini-3.5-flash",
+        "mistral/mistral-large-2512",
+        "moonshotai/kimi-k2.6",
+      ]
+    ) {
+      const url = await captureGatewayRequestUrl(modelId);
+      const model = resolveModel(`veryfront-cloud/${modelId}`) as unknown as {
+        modelProvider?: unknown;
+      };
+      routes.push([modelId, url, model.modelProvider]);
+      restoreMockFetch();
+    }
+
+    assertEquals(routes, [
+      [
+        "anthropic/claude-sonnet-4-6",
+        "https://api.veryfront.com/ai/gateway/anthropic/v1/messages",
+        "anthropic",
+      ],
+      [
+        "openai/gpt-5.5",
+        "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
+        "openai",
+      ],
+      [
+        "openai/gpt-5.4-nano",
+        "https://api.veryfront.com/ai/gateway/openai/v1/responses",
+        "openai",
+      ],
+      [
+        "google-ai-studio/gemini-3.5-flash",
+        "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+        "google",
+      ],
+      [
+        "mistral/mistral-large-2512",
+        "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
+        "mistral",
+      ],
+      [
+        "moonshotai/kimi-k2.6",
+        "https://api.veryfront.com/ai/gateway/moonshotai/v1/chat/completions",
+        "moonshotai",
+      ],
+    ]);
+  });
+
+  it("reaches a provider the package does not list, with no source change", async () => {
+    setCloudBootstrap();
+    const encoder = new TextEncoder();
+    let capturedRequest: Request | undefined;
+
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedRequest = request;
+        await request.text();
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+              );
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const assistant = agent({
+      model: "veryfront-cloud/acme-labs/mystery-1",
+      system: "You are concise.",
+    });
+
+    const result = await assistant.generate({ input: "Hi" });
+
+    assertEquals(
+      capturedRequest?.url,
+      "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions",
+    );
+    assertEquals(result.text, "Hello");
+  });
+
+  it("keeps an unlisted provider on chat completions for a reasoning-style model id", async () => {
+    // "gpt-5.4" is a reasoning-style ID. Only the provider that implements the
+    // OpenAI surface natively serves /responses, so an unlisted provider must
+    // stay on /chat/completions however its models are named.
+    setCloudBootstrap();
+    let capturedUrl: string | undefined;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        capturedUrl ??= new Request(input, init).url;
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const model = createVeryfrontCloudInferenceModel(
+      "acme-labs/gpt-5.4",
+      "run-scoped-inference-token",
+    );
+    const result = await model.doStream({ prompt: [] });
+    await drainStream(result.stream);
+
+    assertEquals(capturedUrl, "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions");
+  });
+
+  it("refuses hosted tools on a chat-surface provider instead of switching surface", async () => {
+    // A hosted tool is the other way the OpenAI runtime reaches for
+    // /responses. Neither a listed provider on the chat surface nor an unlisted
+    // one serves that endpoint, so the request fails locally, names the
+    // provider's surface as the reason, and sends nothing. Before the surface
+    // was pinned, both built a request to /responses on the provider's gateway
+    // path instead.
+    setCloudBootstrap();
+
+    for (const modelId of ["mistral/mistral-large-2512", "moonshotai/kimi-k2.6", "acme-labs/x"]) {
+      let requestCount = 0;
+      installMockFetch(
+        (() => {
+          requestCount += 1;
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+      );
+
+      const model = resolveModel(`veryfront-cloud/${modelId}`) as ModelRuntime;
+      const provider = modelId.slice(0, modelId.indexOf("/"));
+
+      // The reason names the provider's surface, not a limit of the OpenAI
+      // runtime that happens to build the request.
+      await assertRejects(
+        async () =>
+          await model.doStream({
+            prompt: [],
+            tools: [{ type: "provider", name: "web_search", id: "openai.web_search", args: {} }],
+          } as never),
+        TypeError,
+        `Veryfront Cloud provider "${provider}" speaks the OpenAI chat completions surface, ` +
+          "which carries no hosted tools.",
+      );
+      assertEquals(requestCount, 0);
+      restoreMockFetch();
+    }
   });
 });

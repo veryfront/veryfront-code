@@ -33,13 +33,6 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
     assertEquals(functionPaths, []);
   });
 
-  it("keeps one gateway model prefix per provider alias, in alias order", () => {
-    assertEquals(
-      [...catalogData.VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES],
-      catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([alias]) => `${alias}/`),
-    );
-  });
-
   it("lists every provider exactly once in the labels and the display order", () => {
     const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
 
@@ -51,6 +44,26 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
       Object.keys(catalogData.VERYFRONT_CLOUD_PROVIDER_LABELS).sort(),
       [...providers].sort(),
     );
+  });
+
+  it("declares a routed surface for every provider, and a version for every surface", () => {
+    const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
+    const versionedSurfaces = new Set(
+      catalogData.VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS.map(([surface]) => surface),
+    );
+
+    assertEquals(
+      catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING.map(([provider]) => provider).sort(),
+      [...providers].sort(),
+    );
+    for (const [provider, routing] of catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING) {
+      assertEquals(
+        versionedSurfaces.has(routing.surface),
+        true,
+        `no gateway API version for the "${routing.surface}" surface of "${provider}"`,
+      );
+    }
+    assertEquals(versionedSurfaces.has(catalogData.DEFAULT_VERYFRONT_CLOUD_SURFACE), true);
   });
 
   it("publishes the chat model entries unchanged and in the same order", () => {
