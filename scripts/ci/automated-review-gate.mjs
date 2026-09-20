@@ -13,6 +13,13 @@ const CODEX_REVIEW_SUMMARY_ROW =
   /^\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([^"]+)">([^<]+)<\/relative-time> \| `([0-9a-f]{7,40})` \| ([^|\r\n]+) \|$/;
 const CODEX_USAGE_LIMIT =
   /^You have reached your Codex usage limits(?: for [^.]+)?\. Please try again later\.$/i;
+// The review bot bills the code review and the optional security review against
+// separate quotas. This gate requires only the code review, and the bot still
+// delivers it when the security-review quota alone is exhausted, so a notice
+// naming security reviews is not evidence of anything. Every other notice,
+// including the generic one, stays a terminal rate-limit failure: fail closed.
+const CODEX_SECURITY_REVIEW_USAGE_LIMIT =
+  /^You have reached your Codex usage limits for security reviews?\. Please try again later\.$/i;
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
 const REVIEW_REQUEST_MARKER =
   /^<!-- automated-review-request: ([0-9a-f]{40})(?: ([a-z0-9-]{1,64}))? -->\n@codex review$/i;
@@ -747,6 +754,7 @@ function latestCodexUsageLimit(
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
       typeof comment?.body !== "string" ||
       !CODEX_USAGE_LIMIT.test(comment.body.trim()) ||
+      CODEX_SECURITY_REVIEW_USAGE_LIMIT.test(comment.body.trim()) ||
       (!isTrigger && !isProvablyUneditedComment(comment))
     ) continue;
     if (!commentFollowsHeadCommit(timeline, comment.id, headSha)) continue;
