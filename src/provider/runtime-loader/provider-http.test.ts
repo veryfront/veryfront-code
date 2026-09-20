@@ -15,6 +15,7 @@ import {
 } from "./provider-request-observer.ts";
 import {
   buildProviderError,
+  DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
   ProviderOverloadedError,
@@ -2078,6 +2079,180 @@ describe("provider-http", () => {
       assertStrictEquals(error, failure);
       await waitWithin(cancellationStarted.promise, "upstream failure cleanup to start");
       assertStrictEquals(upstreamCancelReason, failure);
+    });
+
+    describe("body idle deadline", () => {
+      it("keeps the default above the consumer stream watchdogs", () => {
+        // The consumer watchdogs know which turn stalled; this one only knows
+        // the socket went quiet. Firing first would relabel a diagnosable
+        // consumer stall as a provider timeout.
+        assertEquals(
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS >
+            DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
+          true,
+        );
+      });
+
+      it("rejects invalid body idle deadlines before issuing a stream request", async () => {
+        for (
+          const idleTimeoutMs of [
+            Number.NaN,
+            Number.POSITIVE_INFINITY,
+            -1,
+            MAX_TIMER_DELAY_MS + 1,
+          ]
+        ) {
+          let attempts = 0;
+          await assertRejects(
+            () =>
+              requestStream({
+                url: "https://provider.test/stream",
+                fetchImpl: () => {
+                  attempts++;
+                  return Promise.resolve(new Response("chunk"));
+                },
+                init: { method: "POST" },
+                providerLabel: "Test provider",
+                providerKind: "openai",
+                idleTimeoutMs,
+              }),
+            RangeError,
+            "idleTimeoutMs",
+          );
+          assertEquals(attempts, 0, "an invalid idle deadline must not reach the provider");
+        }
+      });
+
+      it("fails a body that stalls after its first chunk and aborts the request", async () => {
+        let requestSignal: AbortSignal | undefined;
+        let upstreamCancelReason: unknown;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("first"));
+          },
+          pull() {
+            return new Promise<void>(() => {});
+          },
+          cancel(reason) {
+            upstreamCancelReason = reason;
+          },
+        });
+        const stream = await requestStream({
+          url: "https://provider.test/stream",
+          fetchImpl: (input, init) => {
+            requestSignal = new Request(input, init).signal;
+            return Promise.resolve(new Response(body));
+          },
+          init: { method: "POST" },
+          providerLabel: "veryfront-cloud",
+          providerKind: "openai",
+          modelId: "anthropic/claude-opus-4",
+          idleTimeoutMs: 20,
+        });
+        const reader = stream.getReader();
+
+        assertEquals(
+          await waitWithin(reader.read(), "the first chunk"),
+          { done: false, value: new TextEncoder().encode("first") },
+        );
+        const error = await waitWithin(
+          reader.read().then(
+            () => undefined,
+            (caught: unknown) => caught,
+          ),
+          "the stalled body to time out",
+        );
+
+        assertEquals(error instanceof ProviderRequestError, true);
+        const timeout = error as ProviderRequestError;
+        assertMatch(
+          timeout.message,
+          /^veryfront-cloud request failed: request timed out after \d+ms waiting for the next stream chunk \(20ms deadline, model anthropic\/claude-opus-4\)$/,
+        );
+        assertEquals(timeout.retryable, true);
+        assertEquals(timeout.status, 0);
+        assertEquals(
+          requestSignal?.aborted,
+          true,
+          "an idle body must abort the request, not just error the reader",
+        );
+        assertStrictEquals(requestSignal?.reason, timeout);
+        await waitFor(() => upstreamCancelReason !== undefined);
+        assertStrictEquals(upstreamCancelReason, timeout);
+      });
+
+      it("re-arms on every chunk so a slow but live stream is not cut off", async () => {
+        // Six 40ms gaps outlast the 150ms deadline in total, so a deadline
+        // armed once for the whole body would fire part way through.
+        const chunkCount = 6;
+        const gapMs = 40;
+        let delivered = 0;
+        const body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            await new Promise<void>((resolve) => setTimeout(resolve, gapMs));
+            if (controller.desiredSize === null) return;
+            if (delivered === chunkCount) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(new TextEncoder().encode(String(delivered)));
+            delivered++;
+          },
+        });
+        const stream = await requestStream({
+          url: "https://provider.test/stream",
+          fetchImpl: () => Promise.resolve(new Response(body)),
+          init: { method: "POST" },
+          providerLabel: "Test provider",
+          providerKind: "openai",
+          idleTimeoutMs: 150,
+        });
+
+        const received: string[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const result = await waitWithin(reader.read(), "the next live chunk", 5_000);
+          if (result.done) break;
+          received.push(new TextDecoder().decode(result.value));
+        }
+
+        assertEquals(received, ["0", "1", "2", "3", "4", "5"]);
+      });
+
+      it("leaves the body unbounded when the idle deadline is disabled", async () => {
+        const pullStarted = Promise.withResolvers<void>();
+        const body = new ReadableStream<Uint8Array>({
+          pull() {
+            pullStarted.resolve();
+            return new Promise<void>(() => {});
+          },
+        });
+        const stream = await requestStream({
+          url: "https://provider.test/stream",
+          fetchImpl: () => Promise.resolve(new Response(body)),
+          init: { method: "POST" },
+          providerLabel: "Test provider",
+          providerKind: "openai",
+          idleTimeoutMs: 0,
+        });
+        const reader = stream.getReader();
+        let settled = false;
+        const pendingRead = reader.read().then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        await waitWithin(pullStarted.promise, "the upstream pull to start");
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 60));
+
+        assertEquals(settled, false, "a disabled idle deadline must not bound the body");
+        await waitWithin(reader.cancel(), "consumer cancellation");
+        await waitWithin(pendingRead, "the cancelled read to settle");
+      });
     });
   });
 });

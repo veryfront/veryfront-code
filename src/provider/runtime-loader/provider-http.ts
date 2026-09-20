@@ -49,6 +49,26 @@ const MAX_PROVIDER_STREAM_RETRIES = 2;
  */
 export const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
 
+// Not JSDoc: this paragraph names hosted-infrastructure internals and must
+// stay out of the generated public API reference. The default below is
+// deliberately *above* the 45s `generic_idle` deadline the hosted child-fork
+// watchdog applies (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`) and
+// above the chat stream watchdog's 60s start / 15s output windows. Those
+// consumer watchdogs know which turn stalled and can report it; this one only
+// knows the socket went quiet. It is the floor under callers that have no
+// watchdog at all (`agent.generate`, library embedders), so it must never fire
+// first and relabel a diagnosable consumer stall as a provider timeout.
+/**
+ * Default deadline for the next chunk of a stream response body.
+ *
+ * Armed around each pending read once response headers have arrived, and
+ * disarmed as soon as bytes land, so it measures how long the provider has
+ * been silent rather than how long the whole response takes. Keep it well
+ * above the provider's SSE keepalive interval (the Veryfront Cloud gateway
+ * sends one every 15 seconds) so a healthy but slow response is never cut off.
+ */
+export const DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS = 120_000;
+
 /**
  * Elapsed-time source for the header budget. `Date.now` can step backwards
  * under an NTP or VM clock correction, which would inflate the remaining
@@ -901,17 +921,31 @@ function cancelReaderWithoutWaiting(
 
 type ProviderStreamOutcome = "completed" | "failed" | "cancelled";
 
+/**
+ * Deadline on the wait for the next chunk of a stream body.
+ *
+ * `timeoutMs` of 0 disables it, matching `createRequestDeadline`'s convention.
+ * `createError` is a closure so this helper needs no knowledge of the request
+ * options the error is built from.
+ */
+type ProviderStreamIdleDeadline = {
+  readonly timeoutMs: number;
+  createError(elapsedMs: number): unknown;
+};
+
 function streamWithCleanup(
   stream: ReadableStream<Uint8Array>,
   abortSignal: AbortSignal,
   abortRequest: (reason?: unknown) => void,
   cleanup: () => void,
   onFinish?: (outcome: ProviderStreamOutcome) => void,
+  idle?: ProviderStreamIdleDeadline,
 ): ReadableStream<Uint8Array> {
   const reader = stream.getReader();
   let finished = false;
   let cancellationStarted = false;
   let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let idleTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
   const releaseReader = createReaderReleaser(reader);
   const cancelReader = (reason: unknown): void => {
@@ -919,7 +953,15 @@ function streamWithCleanup(
     cancellationStarted = true;
     cancelReaderWithoutWaiting(reader, reason, releaseReader);
   };
+  const disarmIdleDeadline = (): void => {
+    if (idleTimeoutId === undefined) return;
+    clearTimeout(idleTimeoutId);
+    idleTimeoutId = undefined;
+  };
   const finish = (outcome: ProviderStreamOutcome): boolean => {
+    // Outside the `finished` guard: a losing caller still leaves the timer
+    // armed, and an armed timer past the last read keeps the runtime awake.
+    disarmIdleDeadline();
     if (finished) return false;
     finished = true;
     abortSignal.removeEventListener("abort", abortStream);
@@ -936,6 +978,23 @@ function streamWithCleanup(
     streamController?.error(abortSignal.reason);
     cancelReader(abortSignal.reason);
   };
+  // Arms only around a pending read, so a consumer that stops pulling is not
+  // timed out for its own backpressure: the deadline measures provider
+  // silence, not response length.
+  const armIdleDeadline = (): void => {
+    if (idle === undefined || idle.timeoutMs === 0) return;
+    const armedAt = monotonicMilliseconds();
+    idleTimeoutId = setTimeout(() => {
+      idleTimeoutId = undefined;
+      const error = idle.createError(monotonicMilliseconds() - armedAt);
+      // Same path as a failed read: aborting the request is what releases the
+      // provider connection. Erroring the reader alone leaves the socket open.
+      if (!finish("failed")) return;
+      abortRequest(error);
+      streamController?.error(error);
+      cancelReader(error);
+    }, idle.timeoutMs);
+  };
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -945,8 +1004,10 @@ function streamWithCleanup(
     },
     async pull(controller) {
       if (finished) return;
+      armIdleDeadline();
       try {
         const result = await reader.read();
+        disarmIdleDeadline();
         if (finished) return;
         if (result.done) {
           finish("completed");
@@ -956,6 +1017,7 @@ function streamWithCleanup(
         }
         controller.enqueue(result.value);
       } catch (error) {
+        disarmIdleDeadline();
         if (finish("failed")) {
           abortRequest(error);
           controller.error(error);
@@ -1209,6 +1271,11 @@ export async function requestJson(options: {
  * per-attempt deadline; only replays are shortened to fit the budget. After
  * headers arrive, caller cancellation remains connected to the returned body;
  * consumer cancellation aborts the request and cancels the upstream body.
+ *
+ * The body itself is bounded by a 120-second default idle deadline: a read
+ * that waits that long for the next chunk aborts the request and rejects with
+ * a retryable timeout, so a provider that goes silent mid-response cannot hang
+ * a caller that has no watchdog of its own.
  */
 export async function requestStream(options: {
   url: string;
@@ -1225,12 +1292,25 @@ export async function requestStream(options: {
    * because the first attempt always keeps its own deadline.
    */
   totalHeadersBudgetMs?: number;
+  /**
+   * Deadline on each wait for the next chunk of the response body, once
+   * headers have arrived. Defaults to 120 seconds. `0` disables it and
+   * restores an unbounded body, which only a caller that runs its own idle
+   * watchdog should ask for.
+   */
+  idleTimeoutMs?: number;
 }): Promise<ReadableStream<Uint8Array>> {
   const headersTimeoutMs = options.headersTimeoutMs ??
     DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
   const totalHeadersBudgetMs = normalizeTimerDurationMs(
     options.totalHeadersBudgetMs ?? DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
     "totalHeadersBudgetMs",
+  );
+  // Validated before the first attempt is issued, so a bad value fails fast
+  // instead of surfacing after a provider request has already been sent.
+  const idleTimeoutMs = normalizeTimerDurationMs(
+    options.idleTimeoutMs ?? DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+    "idleTimeoutMs",
   );
   const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
   const requestStartedAt = monotonicMilliseconds();
@@ -1301,6 +1381,15 @@ export async function requestStream(options: {
             outcome,
             durationMs: monotonicMilliseconds() - requestStartedAt,
           }),
+        {
+          timeoutMs: idleTimeoutMs,
+          createError: (elapsedMs) =>
+            providerTimeoutError(options, {
+              waitingFor: "the next stream chunk",
+              timeoutMs: idleTimeoutMs,
+              elapsedMs,
+            }),
+        },
       );
       // Ownership transfers only once the wrapped stream exists: a throw from
       // `streamWithCleanup` (getReader() on an unreadable body) leaves nothing

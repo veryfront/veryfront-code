@@ -11,7 +11,7 @@ import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import { resolveRuntimeExecutionErrorEvent } from "#veryfront/agent/runtime/chat-stream-handler.ts";
-import { ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
+import { ProviderQuotaError, ProviderRequestError } from "#veryfront/provider/runtime-loader.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
@@ -1396,6 +1396,46 @@ describe("runtime-bridge", () => {
       ],
       "buffered generate surfaces provider tool results and failures",
     );
+  });
+
+  it("surfaces a stalled provider body instead of draining forever", async () => {
+    // `generate` has no stream watchdog of its own: the provider's body idle
+    // deadline (DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS) is what ends a stalled
+    // response. This guards that the resulting stream error reaches the caller
+    // rather than being swallowed by the buffering drain loop
+    // (veryfront-issue-inbox#1465).
+    const idleTimeout = new ProviderRequestError({
+      provider: "anthropic",
+      status: 0,
+      message: "request timed out after 120000ms waiting for the next stream chunk",
+      retryable: true,
+    });
+    const model = {
+      ...createStreamModel(
+        "veryfront-cloud",
+        "veryfront-cloud/anthropic/claude-test",
+        async () => ({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", delta: "Hel" });
+              controller.error(idleTimeout);
+            },
+          }),
+        }),
+      ),
+      _generateViaStream: true,
+    };
+
+    const error = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+      temperature: 0,
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+
+    assertStrictEquals(error, idleTimeout);
   });
 
   it("preserves a provider-reported total that differs from input plus output", async () => {

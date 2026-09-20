@@ -32,6 +32,30 @@ gateway path, which a chat-only surface does not serve, so it failed at the
 gateway instead. Reasoning-style model IDs on those providers stay on chat
 completions for the same reason.
 
+### Changed: a stalled provider stream now fails after 120 seconds instead of hanging
+
+Once response headers arrived, a provider response body had no deadline at
+all. A model stream that went silent mid-response blocked its caller forever:
+only `veryfront eval` was protected, by the `--record-timeout` added in
+#4508. `veryfront dev` chat, hosted runs, and any library use of
+`agent.generate` had no bound.
+
+`requestStream` now arms a deadline around each wait for the next body chunk.
+If nothing arrives for `DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` (120 seconds)
+the request is aborted, the connection is released, and the stream rejects with
+a retryable `ProviderRequestError` reading "request timed out after Nms waiting
+for the next stream chunk". The deadline is re-armed on every chunk, so it
+bounds provider silence rather than total response length, and it sits well
+above both the gateway's 15-second SSE keepalive and the consumer stream
+watchdogs, which keep reporting stalls first where they apply.
+
+This needs your decision if you depend on the old behaviour: a caller that
+previously blocked indefinitely on a dead stream now sees a rejection. That is
+the point -- `agent.generate` had no watchdog of its own, so a stalled gateway
+response was indistinguishable from a slow one. Pass `idleTimeoutMs` to
+`requestStream` to widen the window, or `0` to disable it and restore an
+unbounded body, which only a caller running its own idle watchdog should do.
+
 ### Changed: a response cut at the output token limit reports `PROVIDER_OUTPUT_TRUNCATED`
 
 An Anthropic response that stops at the output token limit part way through a

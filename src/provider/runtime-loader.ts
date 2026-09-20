@@ -10,6 +10,7 @@ import type { ModelRuntimePromptMessage, ModelRuntimeToolDefinition } from "./ty
 import {
   buildProviderError,
   DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
   requestJson,
@@ -47,6 +48,7 @@ export { TOOL_INPUT_PENDING_THRESHOLD_MS, withToolInputStatusTransitions };
 export {
   buildProviderError,
   DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   isNumberArray,
   mergeUsage,
