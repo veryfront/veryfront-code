@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 // Import the data module only. Loading model-catalog.ts freezes the chat model
 // entries as a side effect, which would hide a missing freeze in the data module.
@@ -8,13 +8,6 @@ import * as catalogData from "./model-catalog.data.ts";
 function findUnfrozenPaths(value: unknown, path: string, seen: Set<unknown>): string[] {
   if (value === null || typeof value !== "object" || seen.has(value)) return [];
   seen.add(value);
-
-  // A Map cannot be frozen. It is exposed as a ReadonlyMap, so only its values are checked.
-  if (value instanceof Map) {
-    return Array.from(value.entries()).flatMap(([key, entry]) =>
-      findUnfrozenPaths(entry, `${path}.get(${String(key)})`, seen)
-    );
-  }
 
   const own = Object.isFrozen(value) ? [] : [path];
   const children = Array.isArray(value)
@@ -26,11 +19,45 @@ function findUnfrozenPaths(value: unknown, path: string, seen: Set<unknown>): st
 }
 
 describe("provider/veryfront-cloud/model-catalog.data frozen state", () => {
-  it("freezes every entry, map value, and nested object without loading the catalog logic", () => {
+  it("freezes every entry, array, and nested object without loading the catalog logic", () => {
     const unfrozenPaths = Object.entries(catalogData).flatMap(([name, value]) =>
       findUnfrozenPaths(value, name, new Set())
     );
 
     assertEquals(unfrozenPaths, []);
+  });
+
+  it("rejects runtime mutation of the provider alias entries", () => {
+    assertThrows(
+      () => {
+        // deno-lint-ignore no-explicit-any
+        (catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES as any).push(["x", "openai"]);
+      },
+      TypeError,
+    );
+    assertThrows(
+      () => {
+        // deno-lint-ignore no-explicit-any
+        (catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES as any)[0] = ["x", "openai"];
+      },
+      TypeError,
+    );
+  });
+
+  it("rejects runtime mutation of the transport capabilities entries", () => {
+    assertThrows(
+      () => {
+        // deno-lint-ignore no-explicit-any
+        (catalogData.VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES as any).push(["x", {}]);
+      },
+      TypeError,
+    );
+    assertThrows(
+      () => {
+        // deno-lint-ignore no-explicit-any
+        (catalogData.VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES as any)[0] = ["x", {}];
+      },
+      TypeError,
+    );
   });
 });

@@ -24,16 +24,20 @@ export type VeryfrontCloudModelTransportCapabilities = {
  */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
 
-/** Accepted provider aliases mapped to their canonical provider ID. */
-export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyMap<string, VeryfrontCloudProviderId> =
-  new Map<string, VeryfrontCloudProviderId>([
-    ["anthropic", "anthropic"],
-    ["openai", "openai"],
-    ["google", "google"],
-    ["google-ai-studio", "google"],
-    ["mistral", "mistral"],
-    ["moonshotai", "moonshotai"],
-  ]);
+/**
+ * Accepted provider aliases mapped to their canonical provider ID.
+ * Frozen entries in alias order; build a Map locally if lookup-by-key is needed.
+ */
+export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyArray<
+  readonly [string, VeryfrontCloudProviderId]
+> = Object.freeze([
+  Object.freeze(["anthropic", "anthropic"] as const),
+  Object.freeze(["openai", "openai"] as const),
+  Object.freeze(["google", "google"] as const),
+  Object.freeze(["google-ai-studio", "google"] as const),
+  Object.freeze(["mistral", "mistral"] as const),
+  Object.freeze(["moonshotai", "moonshotai"] as const),
+]);
 
 /** Model ID prefixes accepted for gateway models, one per provider alias, in alias order. */
 export const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES: readonly string[] = Object.freeze([
@@ -49,27 +53,41 @@ export const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES: readonly string[] 
  * Transport capabilities keyed by canonical provider/model ID. Both
  * provider-specific and provider-neutral option resolution consult this table
  * so the two representations cannot contradict each other.
+ * Frozen entries; build a Map locally if lookup-by-key is needed.
  */
-export const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES: ReadonlyMap<
-  string,
-  Readonly<VeryfrontCloudModelTransportCapabilities>
-> = new Map<string, Readonly<VeryfrontCloudModelTransportCapabilities>>([
-  ["anthropic/claude-opus-4-7", Object.freeze({ anthropicThinkingMode: "adaptive" })],
-  ["anthropic/claude-opus-4-8", Object.freeze({ anthropicThinkingMode: "adaptive" })],
-  [
-    "openai/gpt-5.4",
-    Object.freeze({
-      openAITransport: "chat-completions",
-      openAIChatReasoningWithFunctionTools: false,
-    }),
-  ],
-  [
-    "openai/gpt-5.5",
-    Object.freeze({
-      openAITransport: "chat-completions",
-      openAIChatReasoningWithFunctionTools: false,
-    }),
-  ],
+export const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES: ReadonlyArray<
+  readonly [string, Readonly<VeryfrontCloudModelTransportCapabilities>]
+> = Object.freeze([
+  Object.freeze(
+    [
+      "anthropic/claude-opus-4-7",
+      Object.freeze({ anthropicThinkingMode: "adaptive" as const }),
+    ] as const,
+  ),
+  Object.freeze(
+    [
+      "anthropic/claude-opus-4-8",
+      Object.freeze({ anthropicThinkingMode: "adaptive" as const }),
+    ] as const,
+  ),
+  Object.freeze(
+    [
+      "openai/gpt-5.4",
+      Object.freeze({
+        openAITransport: "chat-completions" as const,
+        openAIChatReasoningWithFunctionTools: false,
+      }),
+    ] as const,
+  ),
+  Object.freeze(
+    [
+      "openai/gpt-5.5",
+      Object.freeze({
+        openAITransport: "chat-completions" as const,
+        openAIChatReasoningWithFunctionTools: false,
+      }),
+    ] as const,
+  ),
 ]);
 
 /**

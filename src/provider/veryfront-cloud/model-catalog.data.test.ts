@@ -36,12 +36,12 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
   it("keeps one gateway model prefix per provider alias, in alias order", () => {
     assertEquals(
       [...catalogData.VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES],
-      Array.from(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.keys(), (alias) => `${alias}/`),
+      catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([alias]) => `${alias}/`),
     );
   });
 
   it("lists every provider exactly once in the labels and the display order", () => {
-    const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.values());
+    const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
 
     assertEquals(
       [...catalogData.VERYFRONT_CLOUD_PROVIDER_ORDER].sort(),

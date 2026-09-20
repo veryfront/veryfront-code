@@ -59,17 +59,22 @@ export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = CATALOG_DEFAULT_MODEL_ID;
 /** Shared Veryfront Cloud model prefix value. */
 export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 
+/** Private runtime Map for alias lookups, built from the frozen data entries. */
+const _providerAliasMap = new Map(VERYFRONT_CLOUD_PROVIDER_ALIASES);
+/** Private runtime Map for transport-capability lookups, built from the frozen data entries. */
+const _transportCapabilitiesMap = new Map(VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES);
+
 /** Resolve a supported gateway provider alias without consulting object prototypes. */
 export function normalizeVeryfrontCloudProviderAlias(
   provider: string,
 ): VeryfrontCloudProviderId | undefined {
-  return VERYFRONT_CLOUD_PROVIDER_ALIASES.get(provider);
+  return _providerAliasMap.get(provider);
 }
 
 function getVeryfrontCloudModelTransportCapabilities(
   modelId: string,
 ): Readonly<VeryfrontCloudModelTransportCapabilities> | undefined {
-  return VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES.get(
+  return _transportCapabilitiesMap.get(
     normalizeVeryfrontCloudModelId(modelId),
   );
 }
