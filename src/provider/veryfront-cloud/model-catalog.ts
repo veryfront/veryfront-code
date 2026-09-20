@@ -1,4 +1,5 @@
 import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
+import { isOpenAIReasoningModel } from "../shared/openai-reasoning.ts";
 import {
   DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION,
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID as CATALOG_DEFAULT_MODEL_ID,
@@ -224,6 +225,73 @@ export function resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
     ?.openAIChatReasoningWithFunctionTools;
 }
 
+/** Provider name the OpenAI runtime is built under for Veryfront Cloud models. */
+const VERYFRONT_CLOUD_OPENAI_RUNTIME_NAME = "veryfront-cloud";
+
+/**
+ * How a Veryfront Cloud model on the OpenAI surface picks its transport.
+ *
+ * A pinned plan never changes for the life of the model. An unpinned plan is
+ * adaptive: the runtime keeps to chat completions until a request carries a
+ * hosted tool, which only the Responses surface serves.
+ */
+export type VeryfrontCloudOpenAITransportPlan = {
+  readonly transport: "chat-completions" | "responses";
+  readonly pinned: boolean;
+};
+
+const CHAT_COMPLETIONS_PINNED: VeryfrontCloudOpenAITransportPlan = Object.freeze({
+  transport: "chat-completions" as const,
+  pinned: true,
+});
+const RESPONSES_PINNED: VeryfrontCloudOpenAITransportPlan = Object.freeze({
+  transport: "responses" as const,
+  pinned: true,
+});
+const CHAT_COMPLETIONS_ADAPTIVE: VeryfrontCloudOpenAITransportPlan = Object.freeze({
+  transport: "chat-completions" as const,
+  pinned: false,
+});
+
+/**
+ * Transport plan for a provider and upstream model ID on the OpenAI surface.
+ *
+ * Model construction and the durable model-call context both read this, so the
+ * transport recorded against a call cannot drift from the one the request is
+ * built with.
+ */
+export function resolveVeryfrontCloudOpenAITransportPlan(
+  provider: string,
+  upstreamModelId: string,
+): VeryfrontCloudOpenAITransportPlan {
+  const routing = resolveVeryfrontCloudProviderRouting(provider);
+  // A provider that only speaks the OpenAI wire format has no Responses
+  // surface, so nothing can move it off chat completions.
+  if (routing.surface !== "openai" || routing.native !== true) return CHAT_COMPLETIONS_PINNED;
+
+  const catalogModelId = `${provider}/${upstreamModelId}`;
+  const declared = resolveVeryfrontCloudOpenAITransport(catalogModelId);
+  if (declared !== undefined) {
+    return declared === "responses" ? RESPONSES_PINNED : CHAT_COMPLETIONS_PINNED;
+  }
+  if (resolveVeryfrontCloudModelThinking(catalogModelId)?.enabled === true) return RESPONSES_PINNED;
+  if (isOpenAIReasoningModel(upstreamModelId, VERYFRONT_CLOUD_OPENAI_RUNTIME_NAME)) {
+    return RESPONSES_PINNED;
+  }
+  return CHAT_COMPLETIONS_ADAPTIVE;
+}
+
+/** Transport one call uses, given whether that call carries a hosted tool. */
+export function resolveVeryfrontCloudOpenAICallTransport(
+  provider: string,
+  upstreamModelId: string,
+  usesHostedTool: boolean,
+): "chat-completions" | "responses" {
+  const plan = resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId);
+  if (plan.pinned) return plan.transport;
+  return usesHostedTool ? "responses" : "chat-completions";
+}
+
 /** Returns true if the given model ID is a Mistral model in the catalog. */
 export function isSupportedMistralModelId(modelId: string): boolean {
   return VERYFRONT_CLOUD_CHAT_MODELS.some(
@@ -342,7 +410,8 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
 }
 
 /**
- * Prefix a model ID so it resolves through the Veryfront Cloud gateway.
+ * Prefix a model ID so it resolves through the Veryfront Cloud gateway,
+ * including a provider this package does not list.
  *
  * Call this only once Veryfront Cloud is the chosen backend for the run. It
  * prefixes ANY well-formed provider segment, including providers this package

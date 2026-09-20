@@ -19,9 +19,8 @@ import {
 } from "./openai.ts";
 import {
   requireVeryfrontCloudWireSurface,
-  resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
-  resolveVeryfrontCloudOpenAITransport,
+  resolveVeryfrontCloudOpenAITransportPlan,
   resolveVeryfrontCloudProviderRouting,
 } from "./model-catalog.ts";
 
@@ -80,12 +79,6 @@ function wrapVeryfrontCloudModel(
   }
 
   return wrapped;
-}
-
-function shouldUseOpenAIResponsesRuntime(catalogModelId: string): boolean {
-  const transport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
-  if (transport !== undefined) return transport === "responses";
-  return resolveVeryfrontCloudModelThinking(catalogModelId)?.enabled === true;
 }
 
 function createVeryfrontCloudModelInternal(
@@ -244,10 +237,15 @@ function createVeryfrontCloudModelInternal(
       if (!routing.native) return createOpenAICompatibleModel();
 
       const catalogModelId = `${provider}/${upstreamModelId}`;
-      const openAITransport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
+      // One plan decides the transport here and in the durable model-call
+      // context, so what a call records cannot drift from what it sends. An
+      // adaptive plan stays unset, leaving the runtime free to move to the
+      // Responses surface for a request that carries a hosted tool.
+      const transportPlan = resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId);
+      const openAITransport = transportPlan.pinned ? transportPlan.transport : undefined;
       const openAIChatReasoningWithFunctionTools =
         resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogModelId);
-      if (shouldUseOpenAIResponsesRuntime(catalogModelId)) {
+      if (transportPlan.pinned && transportPlan.transport === "responses") {
         if (useFirstPartyTransport) {
           return wrapVeryfrontCloudModel(
             createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {

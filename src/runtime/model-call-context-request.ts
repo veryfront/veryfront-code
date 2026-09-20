@@ -4,13 +4,12 @@ import type {
   RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
 import {
-  isOpenAIReasoningModel,
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "#veryfront/provider/shared/openai-reasoning.ts";
 import { readProviderOptions } from "#veryfront/provider/runtime-loader.ts";
 import {
-  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudProviderRouting,
@@ -72,14 +71,6 @@ function stopControl(value: unknown): string[] | undefined {
     : undefined;
 }
 
-/** Whether the gateway provider speaks the OpenAI wire format natively. */
-function usesNativeOpenAISurface(model: ModelCallRuntimeMetadata): boolean {
-  const provider = resolveModelCallProvider(model);
-  if (provider === undefined) return false;
-  const routing = resolveVeryfrontCloudProviderRouting(provider);
-  return routing.surface === "openai" && routing.native === true;
-}
-
 function usesOpenAIBuilder(model: ModelCallRuntimeMetadata): boolean {
   const provider = resolveModelCallProvider(model);
   if (provider === "openai") return true;
@@ -93,16 +84,18 @@ function managedOpenAITransport(
 ): "chat-completions" | "responses" | undefined {
   // Custom direct runtime transport overrides are not represented by this metadata.
   if (model.provider !== "veryfront-cloud" || !model.modelId) return undefined;
-  const catalogId = `${resolveModelCallProvider(model)}/${model.modelId}`;
-  // Without a fixed override, OpenAIProvider creates an adaptive runtime that
-  // selects Responses per call when hosted tools are present, including on gpt-4o.
-  return resolveVeryfrontCloudOpenAITransport(catalogId) ??
-    ((usesNativeOpenAISurface(model) &&
-        resolveVeryfrontCloudModelThinking(catalogId)?.enabled === true) ||
-        isOpenAIReasoningModel(model.modelId, "veryfront-cloud") ||
-        options.tools?.some((tool) => tool.type === "provider" && tool.id.startsWith("openai."))
-      ? "responses"
-      : "chat-completions");
+  const provider = resolveModelCallProvider(model);
+  if (provider === undefined) return undefined;
+  // The model itself is built from this same plan, so the transport recorded
+  // against the call is the one the request is built with. A provider that is
+  // not native to the OpenAI surface never reaches the Responses transport,
+  // whatever its model IDs look like.
+  return resolveVeryfrontCloudOpenAICallTransport(
+    provider,
+    model.modelId,
+    options.tools?.some((tool) => tool.type === "provider" && tool.id.startsWith("openai.")) ===
+      true,
+  );
 }
 
 function openAIProviderOptions(

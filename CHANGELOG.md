@@ -6,29 +6,29 @@ versions are listed at
 
 ## Unreleased
 
-### Changed: model IDs naming a vendor this package does not list now route through Veryfront Cloud
+### Changed: model IDs naming a provider this package does not list now route through Veryfront Cloud
 
 `resolveVeryfrontCloudGatewayModelId` and its alias
 `resolveHostedVeryfrontCloudModelId` now add the `veryfront-cloud/` prefix to
-any model ID whose vendor segment is well formed, not only to the vendor names
-this package lists. Every ID that routed before routes the same way. A
+any model ID whose provider segment is well formed, not only to the provider
+names this package lists. Every ID that routed before routes the same way. A
 well-formed ID that previously came back unchanged, and so resolved through the
 local provider registry, now resolves through Veryfront Cloud.
 
 This needs your decision if you call either function on IDs that are not meant
 for Veryfront Cloud. Both are prefix helpers for a run that has already chosen
 this backend, not a test for whether an ID belongs to it. Call them only after
-that choice is made. A vendor segment with a typo is also accepted and fails at
-the gateway rather than locally, because nothing in this package knows which
-vendors the platform serves.
+that choice is made. A provider segment with a typo is also accepted and fails
+at the gateway rather than locally, because nothing in this package knows which
+providers the platform serves.
 
-A vendor that speaks only the OpenAI chat completions wire format now keeps to
-that surface on every path. A request that carries a hosted tool fails before
-it is sent, with a message naming the vendor's surface as the reason. Such a
-request previously went to the responses endpoint on that vendor's gateway
-path, which a chat-only surface does not serve, so it failed at the gateway
-instead. Reasoning-style model IDs on those vendors stay on chat completions
-for the same reason.
+A provider that speaks only the OpenAI chat completions wire format now keeps
+to that surface on every path. A request that carries a hosted tool fails
+before it is sent, with a message naming the provider's surface as the reason.
+Such a request previously went to the responses endpoint on that provider's
+gateway path, which a chat-only surface does not serve, so it failed at the
+gateway instead. Reasoning-style model IDs on those providers stay on chat
+completions for the same reason.
 
 ### Changed: a response cut at the output token limit reports `PROVIDER_OUTPUT_TRUNCATED`
 

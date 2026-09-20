@@ -89,7 +89,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       Error,
       'Unknown model provider prefix "constructor"',
     );
-    // The gateway prefix is not a vendor. A doubly prefixed ID would otherwise
+    // The gateway prefix is not a provider. A doubly prefixed ID would otherwise
     // resolve to a provider named after the prefix and build a path that points
     // back at the gateway itself.
     assertThrows(
@@ -341,7 +341,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     );
     assertEquals(resolveVeryfrontCloudGatewayModelId("opus"), "opus");
     // The early return for an already prefixed ID is unchanged, so this never
-    // stacks a second prefix, and the gateway prefix is never a vendor segment.
+    // stacks a second prefix, and the gateway prefix is never a provider segment.
     assertEquals(
       resolveVeryfrontCloudGatewayModelId("veryfront-cloud/veryfront-cloud/mystery-1"),
       "veryfront-cloud/veryfront-cloud/mystery-1",
