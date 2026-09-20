@@ -913,6 +913,42 @@ describe(
       );
     });
 
+    it("finds the lockfile a workspace keeps at its root", async () => {
+      // An npm workspace holds one lockfile at the root while each member has
+      // its own package.json, so stopping at the member would report every
+      // dependency as unvouched for.
+      const member = `${projectDir}/packages/app`;
+      const pin = { "@veryfront-fixture/pdf-text": "1.8.1" };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "packages/app/package.json": JSON.stringify({ dependencies: pin }),
+          "package-lock.json": publicRegistryLock(pin),
+          "packages/app/tool.ts": [
+            `import { extractText } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: member,
+        compiledRuntime: true,
+      };
+
+      const mod = await withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response(`export function extractText() { return "pdf text"; }`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          ),
+        () =>
+          importModule(`file://${member}/tool.ts`, context) as Promise<
+            { default: Record<string, unknown> }
+          >,
+      );
+
+      assertEquals(mod.default.text, "pdf text");
+    });
+
     it("refuses to inline a dependency the project's own sources do not vouch for", async () => {
       // esm.sh serves the PUBLIC package of a name. A project that installs
       // that name from somewhere else holds a different package, and running

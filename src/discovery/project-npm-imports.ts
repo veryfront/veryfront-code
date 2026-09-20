@@ -374,6 +374,9 @@ function comparatorAdmitsVersion(
   // An UPPER bound is a core boundary: a pre-release below that core is under
   // it, which is how `<2` admits `1.5.0-beta`.
   const below = (ceiling: VersionCore) => compareCores(wanted.core, ceiling) < 0;
+  // A partial UPPER bound is npm's next release (`<=1.1` is `<1.2.0`), which a
+  // pre-release of that release precedes, so it is compared as a version.
+  const under = (ceiling: VersionCore) => compareVersions(wanted, { core: ceiling, pre: null }) < 0;
   // A LOWER bound derived from a partial version is npm's release boundary:
   // `>1.1` expands to `>=1.2.0`, and `1.2.0-beta` precedes that release.
   const atLeast = (boundary: VersionCore) =>
@@ -389,12 +392,12 @@ function comparatorAdmitsVersion(
     case ">":
       return full ? order > 0 : atLeast(nextAfter(parts));
     case "<=":
-      return full ? order <= 0 : below(nextAfter(parts));
+      return full ? order <= 0 : under(nextAfter(parts));
     case "<":
       return order < 0;
     default:
       // `=`, `v` and no operator cover exactly the versions the bound names.
-      return full ? order === 0 : atLeast(padded(parts)) && below(nextAfter(parts));
+      return full ? order === 0 : atLeast(padded(parts)) && under(nextAfter(parts));
   }
 }
 
@@ -692,12 +695,14 @@ export function classifyProjectNpmImport(
   embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
   locked: Readonly<Record<string, string>> = {},
   /**
-   * Packages the project's own `.npmrc` or lockfile sources from somewhere
-   * other than the public registry. The binary's embedded artifact is the
-   * FRAMEWORK's copy, so reusing it for one of these would run a package the
-   * project did not install.
+   * Declared packages the project's own lockfile resolves from the public
+   * registry. The binary's embedded artifact is the FRAMEWORK's copy, so a
+   * DECLARED package may only reuse it with that evidence: absent evidence is
+   * not public evidence, and the project's copy may be a private package of
+   * the same coordinate. An UNDECLARED import claims no source of its own, so
+   * the runtime answers it as before.
    */
-  privatelySourced: ReadonlySet<string> = new Set(),
+  publiclySourced: ReadonlySet<string> = new Set(),
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
@@ -755,7 +760,9 @@ export function classifyProjectNpmImport(
     ...parsed,
     declared,
     pin,
-    embedded: privatelySourced.has(parsed.name) ? { packages: {}, constraints: {} } : embedded,
+    embedded: declared !== undefined && !publiclySourced.has(parsed.name)
+      ? { packages: {}, constraints: {} }
+      : embedded,
   };
   return parsed.version !== null && EXACT_VERSION.test(parsed.version)
     ? classifyExactImport(request, parsed.version)

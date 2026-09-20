@@ -1043,14 +1043,29 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           !isFrameworkProvidedPackage(candidate) && versions.some((v) => /^\d+\.\d+\.\d+$/.test(v)),
       )!;
       const version = constraints.find((v) => /^\d+\.\d+\.\d+$/.test(v))!;
+      // The embedded artifact is the framework's copy, so the declaration has
+      // to be vouched for by the project's lockfile before it is reused.
       const { bare } = captureResolvers(
-        createProjectDependencyCdnPlugin({ [name]: version }, () => {}),
+        createProjectDependencyCdnPlugin(
+          { [name]: version },
+          () => {},
+          undefined,
+          {},
+          new Set([name]),
+        ),
       );
 
       assertEquals(await bare(resolveArgs({ path: name })), {
         path: `npm:${name}@${version}`,
         external: true,
       });
+
+      // Without that evidence it is not reused.
+      const { bare: unvouched } = captureResolvers(
+        createProjectDependencyCdnPlugin({ [name]: version }, () => {}),
+      );
+      const decision = await unvouched(resolveArgs({ path: name }));
+      assertEquals((decision as { external?: boolean }).external, undefined);
     });
 
     it("reports a missing import without echoing a credential it carries", async () => {

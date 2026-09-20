@@ -34,11 +34,16 @@ const EMBEDDED = {
   },
 } as const;
 
+/**
+ * Classify against the frozen snapshot, with every declaration vouched for by
+ * a public lockfile entry. Provenance itself is exercised by the tests that
+ * pass that set explicitly, and by the integration tests.
+ */
 function classify(
   specifier: string,
   pins: Record<string, string> = {},
 ): ProjectNpmImport {
-  return classifyProjectNpmImport(specifier, pins, EMBEDDED);
+  return classifyProjectNpmImport(specifier, pins, EMBEDDED, {}, new Set(Object.keys(pins)));
 }
 
 describe("parseNpmSpecifier", () => {
@@ -797,23 +802,28 @@ describe("classifyProjectNpmImport", () => {
     );
   });
 
-  it("does not reuse an embedded copy for a privately sourced package", () => {
-    // The embedded artifact is the framework's, not the project's private
-    // package of the same coordinate.
-    const privately = new Set(["yaml"]);
+  it("reuses an embedded copy only for a declaration with public provenance", () => {
+    // Absent evidence is not public evidence: an embedded artifact is the
+    // framework's copy, so a declared package needs a public lock entry.
     assertEquals(
-      classifyProjectNpmImport("yaml", { yaml: "2.9.0" }, EMBEDDED, {}, privately).kind,
+      classifyProjectNpmImport("npm:yaml@2.9.0", { yaml: "2.9.0" }, EMBEDDED, {}, new Set())
+        .kind,
       "cdn",
     );
     assertEquals(
-      classifyProjectNpmImport("npm:yaml@2.9.0", { yaml: "2.9.0" }, EMBEDDED, {}, privately).kind,
-      "cdn",
+      classifyProjectNpmImport("npm:yaml@2.9.0", { yaml: "2.9.0" }, EMBEDDED, {}, new Set(["yaml"]))
+        .kind,
+      "runtime",
     );
-    // Without that evidence the embedded copy is still reused.
-    assertEquals(classifyProjectNpmImport("npm:yaml@2.9.0", { yaml: "2.9.0" }, EMBEDDED), {
-      kind: "runtime",
-      specifier: "npm:yaml@2.9.0",
-    });
+    // An undeclared import makes no claim about its source, so the runtime's
+    // copy answers it exactly as before.
+    assertEquals(classifyProjectNpmImport("npm:yaml@2.9.0", {}, EMBEDDED).kind, "runtime");
+  });
+
+  it("reads a partial upper bound as the next release", () => {
+    // npm expands `<=1.1` to `<1.2.0`, which a pre-release of 1.2.0 precedes.
+    assertEquals(rangeAdmitsVersion(">=1.2.0-alpha <=1.1", "1.2.0-alpha"), true);
+    assertEquals(rangeAdmitsVersion(">=1.2.0-alpha <=1.1", "1.2.0"), false);
   });
 
   it("reads a partial strict bound as npm's release boundary", () => {

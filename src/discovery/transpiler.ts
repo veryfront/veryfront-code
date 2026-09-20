@@ -382,26 +382,26 @@ function cdnSourceDecision(
 }
 
 /**
- * The declared packages the project's own sources place outside the public
- * registry. The binary's embedded copy is the FRAMEWORK's artifact, so reusing
- * it for one of these would run a package the project never installed.
+ * The declared packages the project's own lockfile vouches for: resolved from
+ * the public registry, with no `.npmrc` sending them elsewhere. Only these may
+ * reuse the binary's embedded copy, which is the FRAMEWORK's artifact.
  */
-function privatelySourcedPackages(
+function publiclySourcedPackages(
   sources: ProjectRegistrySources,
   pins: Readonly<Record<string, string>>,
 ): ReadonlySet<string> {
-  const privately = new Set<string>();
-  if (sources.unverifiableClient !== null) return new Set(Object.keys(pins));
+  const publicly = new Set<string>();
+  if (sources.unverifiableClient !== null) return publicly;
   for (const name of Object.keys(pins)) {
     const locked = Object.hasOwn(sources.locked, name) ? sources.locked[name] : undefined;
     if (
-      npmrcRedirectsPackage(sources.npmrc, name) ||
-      (locked !== undefined && !locked.resolved.startsWith(PUBLIC_NPM_REGISTRY))
+      locked !== undefined && locked.resolved.startsWith(PUBLIC_NPM_REGISTRY) &&
+      !npmrcRedirectsPackage(sources.npmrc, name)
     ) {
-      privately.add(name);
+      publicly.add(name);
     }
   }
-  return privately;
+  return publicly;
 }
 
 /** A project's evidence for where its dependencies come from. */
@@ -416,8 +416,7 @@ interface ProjectRegistrySources {
   unverifiableClient: PackageClient | null;
 }
 
-async function readProjectFile(context: FileDiscoveryContext, name: string): Promise<string> {
-  const path = pathHelper.join(context.baseDir ?? ".", name);
+async function readProjectFile(context: FileDiscoveryContext, path: string): Promise<string> {
   try {
     return context.fsAdapter
       ? await context.fsAdapter.readFile(path)
@@ -428,23 +427,62 @@ async function readProjectFile(context: FileDiscoveryContext, name: string): Pro
   }
 }
 
+/** How far up a workspace a member's lockfile may live. */
+const MAX_WORKSPACE_ANCESTORS = 8;
+
+/**
+ * The directories a lockfile for this project may live in: its own, then its
+ * workspace ancestors. An npm workspace keeps one lockfile at the root while
+ * each member has its own package.json, so stopping at `baseDir` would report
+ * every dependency of a member as unvouched for.
+ */
+function projectLockDirectories(baseDir: string | undefined): string[] {
+  const root = portableRoot(baseDir ?? ".");
+  const directories = [root.length === 0 ? "." : root];
+  // A relative base (a hosted VFS) addresses the project root itself, so it
+  // has no ancestors to search.
+  if (!isAbsoluteMachinePath(directories[0]!)) return directories;
+  for (let depth = 0; depth < MAX_WORKSPACE_ANCESTORS; depth++) {
+    const parent = pathHelper.dirname(directories[directories.length - 1]!);
+    if (parent === directories[directories.length - 1]) break;
+    directories.push(parent);
+  }
+  return directories;
+}
+
 async function readProjectRegistrySources(
   context: FileDiscoveryContext,
 ): Promise<ProjectRegistrySources> {
-  const npmrc = await readProjectFile(context, ".npmrc");
+  const npmrc = await readProjectFile(context, pathHelper.join(context.baseDir ?? ".", ".npmrc"));
   // The repo's own precedence: the lockfile a client wrote owns the project,
-  // and an npm lock inherited from a migration must not outrank it.
-  for (const [file, client] of LOCKFILE_CLIENTS) {
-    if (client === "npm") break;
-    if ((await readProjectFile(context, file)).length > 0) {
-      return { locked: {}, npmrc, unverifiableClient: client };
+  // and an npm lock inherited from a migration must not outrank it. A member
+  // of a workspace keeps its lockfile at the root, so ancestors are searched
+  // in turn, nearest first.
+  for (const directory of projectLockDirectories(context.baseDir)) {
+    for (const [file, client] of LOCKFILE_CLIENTS) {
+      const text = await readProjectFile(context, pathHelper.join(directory, file));
+      if (text.length === 0) continue;
+      if (client !== "npm") return { locked: {}, npmrc, unverifiableClient: client };
+      // npm ignores package-lock.json entirely when a shrinkwrap is present.
+      const shrinkwrap = await readProjectFile(
+        context,
+        pathHelper.join(directory, "npm-shrinkwrap.json"),
+      );
+      return {
+        locked: readLockedDependencies(shrinkwrap || text),
+        npmrc,
+        unverifiableClient: null,
+      };
+    }
+    const shrinkwrap = await readProjectFile(
+      context,
+      pathHelper.join(directory, "npm-shrinkwrap.json"),
+    );
+    if (shrinkwrap.length > 0) {
+      return { locked: readLockedDependencies(shrinkwrap), npmrc, unverifiableClient: null };
     }
   }
-  // npm ignores package-lock.json entirely when a shrinkwrap is present, so
-  // the shrinkwrap is the authoritative record of what the project installs.
-  const lockText = await readProjectFile(context, "npm-shrinkwrap.json") ||
-    await readProjectFile(context, "package-lock.json");
-  return { locked: readLockedDependencies(lockText), npmrc, unverifiableClient: null };
+  return { locked: {}, npmrc, unverifiableClient: null };
 }
 
 async function readProjectDependencyPins(
@@ -735,8 +773,8 @@ export function createProjectDependencyCdnPlugin(
   ) => CdnSourceDecision = (_name, version) => ({ version }),
   /** The version the project's lockfile resolved for each declared package. */
   locked: Record<string, string> = {},
-  /** Declared packages the project sources from a non-public registry. */
-  privatelySourced: ReadonlySet<string> = new Set(),
+  /** Declared packages the project's lockfile resolves from the public registry. */
+  publiclySourced: ReadonlySet<string> = new Set(),
 ): Plugin {
   return {
     name: "veryfront-project-npm-cdn",
@@ -857,7 +895,7 @@ export function createProjectDependencyCdnPlugin(
           pins,
           undefined,
           locked,
-          privatelySourced,
+          publiclySourced,
         );
         if (decision.kind === "runtime") {
           return decision.specifier === undefined
@@ -1258,7 +1296,7 @@ export async function importModule(
         Object.fromEntries(
           Object.entries(registrySources.locked).map(([name, { version }]) => [name, version]),
         ),
-        privatelySourcedPackages(registrySources, dependencyPins),
+        publiclySourcedPackages(registrySources, dependencyPins),
       ),
     );
     if (Object.keys(dependencyPins).length > 0) {
