@@ -12,7 +12,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { join, relative } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, VeryfrontApiClient } from "veryfront/platform";
 import {
   type ApiClient,
   createApiClient,
@@ -1120,18 +1120,40 @@ async function computePushedSourceDigest(
  * Read the declaration maps the API published before its guarded package.json
  * writes. A project whose history is unavailable, empty, or malformed simply
  * has no proof to offer, so the caller falls back to the normal conflict.
+ *
+ * The read goes through the platform's typed reader rather than a hand-rolled
+ * `client.get`, because these bytes decide whether a remote `package.json` is
+ * written over the user's own file.
+ * {@linkcode VeryfrontApiClient.readDependencyMetadataHistory} binds the
+ * response to the project id and branch this push resolved — a history
+ * answered for some other project cannot seed the proof — caps the response
+ * body, and reads every field off own-property descriptors so a crafted
+ * prototype cannot forge a preimage. None of that is worth reimplementing here
+ * badly.
+ *
+ * The client is constructed with the project id already known, so
+ * `initialize()` performs no extra request.
  */
-async function readDependencyPreimages(
-  client: ApiClient,
-  projectRef: string,
-  branch: string,
-): Promise<DependencyPreimage[]> {
-  let response: unknown;
+async function readDependencyPreimages(params: {
+  config: ResolvedConfig;
+  projectRef: string;
+  projectId: string;
+  branch: string;
+}): Promise<DependencyPreimage[]> {
   try {
-    response = await client.get<unknown>(
-      `/projects/${encodeURIComponent(projectRef)}/dependencies/history`,
-      branch === "main" ? undefined : { branch },
+    const historyClient = new VeryfrontApiClient({
+      apiBaseUrl: params.config.apiUrl,
+      ...(params.config.apiToken ? { apiToken: params.config.apiToken } : {}),
+      projectSlug: params.projectRef,
+      projectId: params.projectId,
+    });
+    await historyClient.initialize();
+    const history = await historyClient.readDependencyMetadataHistory(
+      params.branch === "main" ? null : params.branch,
     );
+    // The parsed maps are frozen and null-prototyped; copy each into an
+    // ordinary object so the comparison helpers see a plain record.
+    return history.entries.map((entry) => ({ ...entry.dependencies }));
   } catch (error) {
     // A control plane that predates the history endpoint answers 404 here, and
     // the push falls back to the conflict it raises today. Say so under
@@ -1145,24 +1167,6 @@ async function readDependencyPreimages(
     }
     return [];
   }
-  if (response === null || typeof response !== "object") return [];
-  const entries = (response as { entries?: unknown }).entries;
-  if (!Array.isArray(entries)) return [];
-
-  const preimages: DependencyPreimage[] = [];
-  for (const entry of entries) {
-    if (entry === null || typeof entry !== "object") return [];
-    const declarations = (entry as { dependencies?: unknown }).dependencies;
-    if (declarations === null || typeof declarations !== "object") return [];
-    if (Array.isArray(declarations)) return [];
-    const pairs: Array<[string, string]> = [];
-    for (const [name, value] of Object.entries(declarations)) {
-      if (typeof value !== "string") return [];
-      pairs.push([name, value]);
-    }
-    preimages.push(Object.fromEntries(pairs));
-  }
-  return preimages;
 }
 
 /** A remote package.json rewrite this push can reconcile, before any consent. */
@@ -1191,8 +1195,9 @@ interface ServerDependencyPinAdoption {
  * @returns The adoption, or null when the drift is not an adoptable pin write.
  */
 async function planServerDependencyPinAdoption(params: {
-  client: ApiClient;
+  config: ResolvedConfig;
   projectRef: string;
+  projectId: string;
   branch: string;
   baselineDigest: string | undefined;
   localFiles: readonly UploadOp[];
@@ -1212,11 +1217,12 @@ async function planServerDependencyPinAdoption(params: {
   // the two still agree.
   if (await computeContentDigest(local.content) !== baselineDigest) return null;
 
-  const preimages = await readDependencyPreimages(
-    params.client,
-    params.projectRef,
-    params.branch,
-  );
+  const preimages = await readDependencyPreimages({
+    config: params.config,
+    projectRef: params.projectRef,
+    projectId: params.projectId,
+    branch: params.branch,
+  });
   if (preimages.length === 0) return null;
 
   const pins = adoptedPackageJsonPins(local.content, remote.content, preimages);
@@ -1291,6 +1297,16 @@ function reportAdoptedPins(pins: readonly AdoptedPin[], dryRun: boolean): void {
  * Ask whether declarations the platform added may be written into this
  * checkout. A push that cannot ask refuses, so the drift falls through to the
  * conflict it raises today rather than installing a server-chosen package.
+ *
+ * The refusal names `veryfront push --adopt-new-deps` rather than telling the
+ * reader to "re-run with" the flag, because the command they ran is usually
+ * not `push`. `--adopt-new-deps` is registered on `push` only, and every
+ * embedded caller — the `veryfront up` / `veryfront deploy` refresh push and
+ * the `veryfront dev` watch push — reaches here with `quiet: true`, which is
+ * exactly what makes `canPrompt` false. Those callers cannot be given the flag
+ * without also letting a watch-triggered background push write a server-chosen
+ * package into the tree unattended, so the honest recovery is the explicit
+ * push, which any of them can run first.
  */
 async function confirmAdoptedDependencyAdditions(
   added: readonly AdoptedPin[],
@@ -1303,7 +1319,10 @@ async function confirmAdoptedDependencyAdditions(
       logWarning(
         `Veryfront resolved ${added.length} dependenc${added.length === 1 ? "y" : "ies"} that ` +
           `${PACKAGE_JSON_PATH} does not declare (${names}). They were not written to this ` +
-          `checkout. Re-run with --adopt-new-deps to accept them, or run veryfront pull.`,
+          `checkout, so this push is still reported as a conflict. Run ` +
+          `"veryfront push --adopt-new-deps" to accept them and then retry — ` +
+          `veryfront up and veryfront deploy do not take that flag — or run ` +
+          `"veryfront pull" to take the platform's ${PACKAGE_JSON_PATH}.`,
       );
     }
     return false;
@@ -1731,8 +1750,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const pinAdoption = force || remoteFilesAreBaseline || !project || noAdoptPins
         ? null
         : await planServerDependencyPinAdoption({
-          client,
+          config,
           projectRef: projectApiReference(config),
+          projectId: project.id,
           branch: branchName,
           baselineDigest: baselinePackageJsonDigest,
           localFiles: ops,

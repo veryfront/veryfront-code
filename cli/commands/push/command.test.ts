@@ -6925,6 +6925,11 @@ describe("push deletion ownership", () => {
 });
 
 describe("push dependency pin reconciliation", () => {
+  // The platform's typed history reader binds the response to the project id
+  // the push resolved, and only accepts a UUID there, so the fixtures use the
+  // shape the API actually returns.
+  const PIN_PROJECT_ID = "00000000-0000-4000-8000-000000000123";
+  const OTHER_PROJECT_ID = "00000000-0000-4000-8000-000000000999";
   const BASELINE_PACKAGE_JSON = `${
     JSON.stringify({ name: "demo", dependencies: { react: "^19.2.4" } }, null, 2)
   }\n`;
@@ -6968,7 +6973,7 @@ describe("push dependency pin reconciliation", () => {
 
         await writeSyncTarget(projectDir, {
           controlPlane: "https://control.example.test",
-          projectId: "project-123",
+          projectId: PIN_PROJECT_ID,
           projectSlug: "my-project",
           branch: "main",
           files: {
@@ -6989,7 +6994,7 @@ describe("push dependency pin reconciliation", () => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
           if (request.method === "GET" && url.pathname === "/projects/my-project") {
-            return Response.json({ id: "project-123", slug: "my-project" });
+            return Response.json({ id: PIN_PROJECT_ID, slug: "my-project" });
           }
           if (
             request.method === "GET" &&
@@ -7055,7 +7060,7 @@ describe("push dependency pin reconciliation", () => {
       {
         history: {
           version: 1,
-          project_id: "project-123",
+          project_id: PIN_PROJECT_ID,
           branch: null,
           entries: [
             { dependencies: { react: "^19.2.4" }, expires_at: 1 },
@@ -7085,7 +7090,7 @@ describe("push dependency pin reconciliation", () => {
         push: { quiet: true },
         history: {
           version: 1,
-          project_id: "project-123",
+          project_id: PIN_PROJECT_ID,
           branch: null,
           entries: [
             { dependencies: { react: "^19.2.4" }, expires_at: 1 },
@@ -7110,7 +7115,7 @@ describe("push dependency pin reconciliation", () => {
         push: { noAdoptPins: true },
         history: {
           version: 1,
-          project_id: "project-123",
+          project_id: PIN_PROJECT_ID,
           branch: null,
           entries: [
             { dependencies: { react: "^19.2.4" }, expires_at: 1 },
@@ -7135,7 +7140,7 @@ describe("push dependency pin reconciliation", () => {
         push: { dryRun: true },
         history: {
           version: 1,
-          project_id: "project-123",
+          project_id: PIN_PROJECT_ID,
           branch: null,
           entries: [
             { dependencies: { react: "^19.2.4" }, expires_at: 1 },
@@ -7172,7 +7177,7 @@ describe("push dependency pin reconciliation", () => {
         packageJsonRemote: withAddition,
         history: {
           version: 1,
-          project_id: "project-123",
+          project_id: PIN_PROJECT_ID,
           branch: null,
           entries: [
             { dependencies: { react: "^19.2.4" }, expires_at: 1 },
@@ -7185,6 +7190,75 @@ describe("push dependency pin reconciliation", () => {
         assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
         assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
         assertStringIncludes(output.map(stripAnsi).join("\n"), "--adopt-new-deps");
+      },
+    );
+  });
+
+  it("names a recovery the operator can actually run when it cannot ask", async () => {
+    // The issue's headline command is `veryfront up`, which reaches this push
+    // with `quiet: true` and therefore cannot prompt. `--adopt-new-deps` is
+    // registered on `push` only, so a refusal that says "re-run with
+    // --adopt-new-deps" sends the operator to a flag the command they ran
+    // rejects.
+    const withAddition = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { clsx: "2.1.1", react: "19.3.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        push: { quiet: true },
+        packageJsonRemote: withAddition,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { clsx: "2.1.1", react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+        const text = output.map(stripAnsi).join("\n");
+        assertStringIncludes(text, "veryfront push --adopt-new-deps");
+        assertEquals(
+          /re-run with/i.test(text),
+          false,
+          "the refusal must not tell the operator to re-run the command they ran with a flag " +
+            "that only veryfront push accepts",
+        );
+      },
+    );
+  });
+
+  it("refuses a history answered for a different project", async () => {
+    // These bytes decide whether a remote package.json is written over the
+    // user's own file, so the preimage proof has to be bound to the project
+    // this push resolved. An unbound read would accept another project's
+    // declaration maps as proof.
+    await runPinPush(
+      {
+        history: {
+          version: 1,
+          project_id: OTHER_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
       },
     );
   });
@@ -7203,7 +7277,7 @@ describe("push dependency pin reconciliation", () => {
         packageJsonRemote: withAddition,
         history: {
           version: 1,
-          project_id: "project-123",
+          project_id: PIN_PROJECT_ID,
           branch: null,
           entries: [
             { dependencies: { react: "^19.2.4" }, expires_at: 1 },
@@ -7225,7 +7299,7 @@ describe("push dependency pin reconciliation", () => {
   it("still reports a conflict when no preimage proves the API wrote the pins", async () => {
     await runPinPush(
       {
-        history: { version: 1, project_id: "project-123", branch: null, entries: [] },
+        history: { version: 1, project_id: PIN_PROJECT_ID, branch: null, entries: [] },
       },
       async ({ projectDir, error, puts }) => {
         if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
@@ -7246,7 +7320,7 @@ describe("push dependency pin reconciliation", () => {
         packageJsonRemote: edited,
         history: {
           version: 1,
-          project_id: "project-123",
+          project_id: PIN_PROJECT_ID,
           branch: null,
           entries: [
             { dependencies: { react: "^19.2.4" }, expires_at: 1 },
@@ -7271,7 +7345,7 @@ describe("push dependency pin reconciliation", () => {
         localPackageJson: localEdit,
         history: {
           version: 1,
-          project_id: "project-123",
+          project_id: PIN_PROJECT_ID,
           branch: null,
           entries: [
             { dependencies: { react: "^19.2.4" }, expires_at: 1 },
