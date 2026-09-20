@@ -66,6 +66,13 @@ import { buildStudioUrl } from "../studio/command.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { type PlannedDelete, type PlannedUpload, planPushChanges } from "./plan.ts";
 import {
+  adoptedPackageJsonPins,
+  type AdoptedPin,
+  type DependencyPreimage,
+  formatAdoptedPins,
+  PACKAGE_JSON_PATH,
+} from "./dependency-pins.ts";
+import {
   computeContentDigest,
   preflightSyncState,
   readSyncTarget,
@@ -1079,6 +1086,99 @@ async function computePushedSourceDigest(
   return await computeSourceDigest([...localFiles, ...preservedRemoteFiles]);
 }
 
+/**
+ * Read the declaration maps the API published before its guarded package.json
+ * writes. A project whose history is unavailable, empty, or malformed simply
+ * has no proof to offer, so the caller falls back to the normal conflict.
+ */
+async function readDependencyPreimages(
+  client: ApiClient,
+  projectRef: string,
+  branch: string,
+): Promise<DependencyPreimage[]> {
+  let response: unknown;
+  try {
+    response = await client.get<unknown>(
+      `/projects/${encodeURIComponent(projectRef)}/dependencies/history`,
+      branch === "main" ? undefined : { branch },
+    );
+  } catch {
+    return [];
+  }
+  if (response === null || typeof response !== "object") return [];
+  const entries = (response as { entries?: unknown }).entries;
+  if (!Array.isArray(entries)) return [];
+
+  const preimages: DependencyPreimage[] = [];
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== "object") return [];
+    const declarations = (entry as { dependencies?: unknown }).dependencies;
+    if (declarations === null || typeof declarations !== "object") return [];
+    if (Array.isArray(declarations)) return [];
+    const pairs: Array<[string, string]> = [];
+    for (const [name, value] of Object.entries(declarations)) {
+      if (typeof value !== "string") return [];
+      pairs.push([name, value]);
+    }
+    preimages.push(Object.fromEntries(pairs));
+  }
+  return preimages;
+}
+
+/**
+ * Reconcile a remote package.json that the platform rewrote to pin resolved
+ * dependency versions.
+ *
+ * The rewrite is triggered by a Preview render and lands after the push that
+ * caused it has already recorded the pushed bytes as its sync baseline, so the
+ * next push sees a remote digest the baseline does not explain. Adopting the
+ * remote bytes locally is only safe when nothing else changed: the local file
+ * must still be exactly what was pushed, and the remote content must be
+ * provably the API's own pin write. Anything else is left to
+ * {@link planPushChanges}, which reports it as a conflict.
+ *
+ * @returns The adopted pins, empty when the drift was not adopted.
+ */
+async function adoptServerDependencyPins(params: {
+  client: ApiClient;
+  projectRef: string;
+  branch: string;
+  projectDir: string;
+  baselineDigest: string | undefined;
+  localFiles: readonly UploadOp[];
+  remoteFiles: readonly RemoteFile[];
+}): Promise<AdoptedPin[]> {
+  const { baselineDigest } = params;
+  if (baselineDigest === undefined) return [];
+
+  const local = params.localFiles.find((file) => file.path === PACKAGE_JSON_PATH);
+  const remote = params.remoteFiles.find((file) => file.path === PACKAGE_JSON_PATH);
+  if (!local || !remote || typeof remote.content !== "string") return [];
+
+  const remoteDigest = await computeContentDigest(remote.content);
+  if (remoteDigest === baselineDigest) return [];
+  // A local edit of the same file is the caller's own change and must still win
+  // the conflict, so the baseline content is only recoverable from disk when
+  // the two still agree.
+  if (await computeContentDigest(local.content) !== baselineDigest) return [];
+
+  const preimages = await readDependencyPreimages(
+    params.client,
+    params.projectRef,
+    params.branch,
+  );
+  if (preimages.length === 0) return [];
+
+  const pins = adoptedPackageJsonPins(local.content, remote.content, preimages);
+  if (pins.length === 0) return [];
+
+  await createFileSystem().writeTextFile(
+    join(params.projectDir, PACKAGE_JSON_PATH),
+    remote.content,
+  );
+  return pins;
+}
+
 async function writeAppliedSyncTarget(
   projectDir: string,
   config: ResolvedConfig,
@@ -1284,7 +1384,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         spinner.stop();
         throw error;
       }
-      const ops = sourceSnapshot.files;
+      let ops = sourceSnapshot.files;
       const headDeletedGitPaths = new Set(sourceSnapshot.deletedGitPaths?.head ?? []);
       const ownershipRequiredDeletedGitPaths = new Set(
         sourceSnapshot.deletedGitPaths?.indexOnly ?? [],
@@ -1483,6 +1583,41 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const syncBaselineRemoteFiles = managedRemoteFiles.filter((file) =>
         !ignoreChecker.isProtected(file.path)
       );
+      // A Preview render triggered by an earlier push or `veryfront up` asks the
+      // API to resolve this project's npm declarations, and the API pins the
+      // resolved versions back into package.json after this directory already
+      // recorded the pushed bytes as its baseline. Adopt that write here, so the
+      // conflict rule in plan.ts can stay strict for every other rewrite.
+      const adoptedPins = dryRun || force || remoteFilesAreBaseline || !project
+        ? []
+        : await adoptServerDependencyPins({
+          client,
+          projectRef: projectApiReference(config),
+          branch: branchName,
+          projectDir,
+          baselineDigest: baseline?.files[PACKAGE_JSON_PATH]?.digest,
+          localFiles: ops,
+          remoteFiles: managedRemoteFiles,
+        });
+      if (adoptedPins.length > 0) {
+        // The adopted bytes are now on disk, so the snapshot this push proves
+        // itself against has to describe the directory as it stands.
+        sourceSnapshot = await capturePushSourceSnapshot(
+          projectDir,
+          ignoreChecker,
+          options.expectedCommitSha,
+          options.discoverDeletedGitPaths ?? false,
+          options.expectedRepositoryAvailable,
+        );
+        ops = sourceSnapshot.files;
+        if (!quiet && !jsonOutput) {
+          logInfo(
+            `Adopted ${adoptedPins.length} server-resolved dependency pin${
+              adoptedPins.length === 1 ? "" : "s"
+            } into ${PACKAGE_JSON_PATH} (${formatAdoptedPins(adoptedPins)})`,
+          );
+        }
+      }
       const plan = await planPushChanges({
         localFiles: ops,
         remoteFiles: managedRemoteFiles,

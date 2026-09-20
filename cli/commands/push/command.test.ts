@@ -6923,3 +6923,213 @@ describe("push deletion ownership", () => {
     }
   });
 });
+
+describe("push dependency pin reconciliation", () => {
+  const BASELINE_PACKAGE_JSON = `${
+    JSON.stringify({ name: "demo", dependencies: { react: "^19.2.4" } }, null, 2)
+  }\n`;
+  const PINNED_PACKAGE_JSON = `${
+    JSON.stringify({ name: "demo", dependencies: { react: "19.3.0" } }, null, 2)
+  }\n`;
+
+  interface PinScenario {
+    history: unknown;
+    packageJsonRemote?: string;
+    localPackageJson?: string;
+  }
+
+  async function runPinPush(
+    scenario: PinScenario,
+    assertOutcome: (result: {
+      projectDir: string;
+      error: unknown;
+      output: string[];
+      puts: string[];
+      historyCalls: number;
+    }) => Promise<void>,
+  ): Promise<void> {
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const localPackageJson = scenario.localPackageJson ?? BASELINE_PACKAGE_JSON;
+        await Deno.writeTextFile(`${projectDir}/package.json`, localPackageJson);
+        await runGit("add", ".");
+        await runGit("commit", "--quiet", "-m", "add manifest");
+
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": {
+              digest: await computeContentDigest("export const value = 1;\n"),
+              versionId: "00000000-0000-4000-8000-000000000010",
+            },
+            "package.json": {
+              digest: await computeContentDigest(BASELINE_PACKAGE_JSON),
+              versionId: "00000000-0000-4000-8000-000000000011",
+            },
+          },
+        });
+
+        const puts: string[] = [];
+        let historyCalls = 0;
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (
+            request.method === "GET" &&
+            url.pathname === "/projects/my-project/dependencies/history"
+          ) {
+            historyCalls++;
+            return Response.json(scenario.history);
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: "export const value = 1;\n",
+                  version_id: "00000000-0000-4000-8000-000000000010",
+                },
+                {
+                  path: "package.json",
+                  content: scenario.packageJsonRemote ?? PINNED_PACKAGE_JSON,
+                  version_id: "00000000-0000-4000-8000-000000000012",
+                },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            puts.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        const output: string[] = [];
+        let error: unknown;
+        console.log = captureConsoleLog(output);
+        try {
+          await withMockFetch(fetchHandler, () => pushCommand({ projectDir }));
+        } catch (thrown) {
+          error = thrown;
+        } finally {
+          console.log = originalLog;
+        }
+
+        await assertOutcome({ projectDir, error, output, puts, historyCalls });
+      });
+    } finally {
+      console.log = originalLog;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  }
+
+  it("adopts server-resolved pins instead of failing the next push", async () => {
+    await runPinPush(
+      {
+        history: {
+          version: 1,
+          project_id: "project-123",
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts, historyCalls }) => {
+        assertEquals(error, undefined);
+        assertEquals(historyCalls, 1);
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), PINNED_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 1 server-resolved dependency pin into package.json (react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("still reports a conflict when no preimage proves the API wrote the pins", async () => {
+    await runPinPush(
+      {
+        history: { version: 1, project_id: "project-123", branch: null, entries: [] },
+      },
+      async ({ projectDir, error, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"package.json"');
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("still reports a conflict when the remote rewrite is not a pin tightening", async () => {
+    const edited = `${
+      JSON.stringify({ name: "renamed", dependencies: { react: "19.3.0" } }, null, 2)
+    }\n`;
+    await runPinPush(
+      {
+        packageJsonRemote: edited,
+        history: {
+          version: 1,
+          project_id: "project-123",
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("keeps a local edit of the same manifest as a conflict", async () => {
+    const localEdit = `${
+      JSON.stringify({ name: "demo", dependencies: { react: "^19.2.4", zod: "^3.25.0" } }, null, 2)
+    }\n`;
+    await runPinPush(
+      {
+        localPackageJson: localEdit,
+        history: {
+          version: 1,
+          project_id: "project-123",
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"package.json"');
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), localEdit);
+      },
+    );
+  });
+});
