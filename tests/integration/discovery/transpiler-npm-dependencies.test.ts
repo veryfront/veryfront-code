@@ -922,6 +922,7 @@ describe(
       const context: FileDiscoveryContext = {
         platform: "node",
         fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
           "packages/app/package.json": JSON.stringify({ dependencies: pin }),
           "package-lock.json": publicRegistryLock(pin),
           "packages/app/tool.ts": [
@@ -947,6 +948,129 @@ describe(
       );
 
       assertEquals(mod.default.text, "pdf text");
+    });
+
+    it("refuses an ancestor lockfile that does not own the project", async () => {
+      // A project nested under an unrelated one is not a member of it, so that
+      // project's lockfile says nothing about this project's dependencies.
+      const nested = `${projectDir}/vendor/nested`;
+      const pin = { "@veryfront-fixture/pdf-text": "1.8.1" };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ name: "outer", dependencies: pin }),
+          "package-lock.json": publicRegistryLock(pin),
+          "vendor/nested/package.json": JSON.stringify({ dependencies: pin }),
+          "vendor/nested/tool.ts": [
+            `import { extractText } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: nested,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const error = await assertRejects(
+        () =>
+          withMockFetch(
+            (input) => {
+              requested.push(String(input));
+              return Promise.resolve(new Response("export function extractText() {}"));
+            },
+            () => importModule(`file://${nested}/tool.ts`, context),
+          ),
+        Error,
+      );
+      assertEquals(requested, [], "nothing may be fetched");
+      assertEquals((error as { slug?: string }).slug, "dependency-missing");
+    });
+
+    it("honours the workspace root npmrc and a member's own lock entry", async () => {
+      const member = `${projectDir}/packages/app`;
+      const pin = { "@veryfront-fixture/pdf-text": "1.8.1" };
+      // The root redirects the scope, so the public copy is not this
+      // project's dependency even though the lock still names it publicly.
+      const redirected: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+          ".npmrc": "@veryfront-fixture:registry=https://npm.internal.example/\n",
+          "package-lock.json": publicRegistryLock(pin),
+          "packages/app/package.json": JSON.stringify({ dependencies: pin }),
+          "packages/app/tool.ts": [
+            `import { extractText } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: member,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      await assertRejects(
+        () =>
+          withMockFetch(
+            (input) => {
+              requested.push(String(input));
+              return Promise.resolve(new Response("export function extractText() {}"));
+            },
+            () => importModule(`file://${member}/tool.ts`, redirected),
+          ),
+        Error,
+      );
+      assertEquals(requested, [], "the root .npmrc redirects the scope");
+
+      // The member installs its own version beside the hoisted one.
+      const memberLock = JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/@veryfront-fixture/pdf-text": {
+            version: "1.0.0",
+            resolved: "https://registry.npmjs.org/@veryfront-fixture/pdf-text/-/pdf-text-1.0.0.tgz",
+          },
+          "packages/app/node_modules/@veryfront-fixture/pdf-text": {
+            version: "1.8.1",
+            resolved: "https://registry.npmjs.org/@veryfront-fixture/pdf-text/-/pdf-text-1.8.1.tgz",
+          },
+        },
+      });
+      const scoped: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+          "package-lock.json": memberLock,
+          "packages/app/package.json": JSON.stringify({ dependencies: pin }),
+          "packages/app/tool.ts": [
+            `import { extractText } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: member,
+        compiledRuntime: true,
+      };
+
+      const fetched: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          fetched.push(String(input));
+          return Promise.resolve(
+            new Response(`export function extractText() { return "pdf text"; }`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        },
+        () =>
+          importModule(`file://${member}/tool.ts`, scoped) as Promise<
+            { default: Record<string, unknown> }
+          >,
+      );
+      assertEquals(mod.default.text, "pdf text");
+      assertEquals(
+        fetched.some((url) => url.includes("pdf-text@1.8.1")),
+        true,
+        fetched.join(", "),
+      );
     });
 
     it("refuses to inline a dependency the project's own sources do not vouch for", async () => {

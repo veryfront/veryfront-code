@@ -283,16 +283,32 @@ export function readLockedDependencies(lockText: string): Record<string, LockedD
   if (!packages || typeof packages !== "object") return {};
   const locked: Record<string, LockedDependency> = {};
   for (const [path, entry] of Object.entries(packages)) {
-    // `node_modules/<name>` is a top-level install; a nested path
-    // (`node_modules/a/node_modules/b`) is a transitive copy, which a project
-    // import never names directly.
-    const name = /^node_modules\/((?:@[^/]+\/)?[^/]+)$/.exec(path)?.[1];
-    if (name === undefined || name === "__proto__") continue;
+    // Keyed by the install path, so a workspace member's own copy
+    // (`packages/app/node_modules/pkg`) stays distinct from the hoisted one.
+    if (path === "__proto__" || !/(?:^|\/)node_modules\//.test(path)) continue;
     const { version, resolved } = (entry ?? {}) as { version?: unknown; resolved?: unknown };
     if (typeof version !== "string" || typeof resolved !== "string") continue;
-    locked[name] = { version, resolved };
+    locked[path] = { version, resolved };
   }
   return locked;
+}
+
+/**
+ * What the lockfile resolved for `name` as this project sees it: the member's
+ * own copy first, then the one hoisted to the lock's directory. npm installs a
+ * member-specific version beside the hoisted one when they differ.
+ */
+function lockedDependency(
+  sources: ProjectRegistrySources,
+  name: string,
+): LockedDependency | undefined {
+  const paths = sources.memberPath.length > 0
+    ? [`${sources.memberPath}/node_modules/${name}`, `node_modules/${name}`]
+    : [`node_modules/${name}`];
+  for (const path of paths) {
+    if (Object.hasOwn(sources.locked, path)) return sources.locked[path];
+  }
+  return undefined;
 }
 
 /**
@@ -357,7 +373,7 @@ function cdnSourceDecision(
         `package of that name is not this project's dependency`,
     };
   }
-  const locked = Object.hasOwn(sources.locked, name) ? sources.locked[name] : undefined;
+  const locked = lockedDependency(sources, name);
   if (locked === undefined) {
     return {
       refusal: `the project's lockfile does not resolve ${name}, so the public package of ` +
@@ -381,6 +397,19 @@ function cdnSourceDecision(
   };
 }
 
+/** The version the lockfile resolved for each declared package, by name. */
+function lockedVersionsByName(
+  sources: ProjectRegistrySources,
+  pins: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const versions: Record<string, string> = {};
+  for (const name of Object.keys(pins)) {
+    const locked = lockedDependency(sources, name);
+    if (locked !== undefined) versions[name] = locked.version;
+  }
+  return versions;
+}
+
 /**
  * The declared packages the project's own lockfile vouches for: resolved from
  * the public registry, with no `.npmrc` sending them elsewhere. Only these may
@@ -393,7 +422,7 @@ function publiclySourcedPackages(
   const publicly = new Set<string>();
   if (sources.unverifiableClient !== null) return publicly;
   for (const name of Object.keys(pins)) {
-    const locked = Object.hasOwn(sources.locked, name) ? sources.locked[name] : undefined;
+    const locked = lockedDependency(sources, name);
     if (
       locked !== undefined && locked.resolved.startsWith(PUBLIC_NPM_REGISTRY) &&
       !npmrcRedirectsPackage(sources.npmrc, name)
@@ -408,6 +437,8 @@ function publiclySourcedPackages(
 interface ProjectRegistrySources {
   locked: Record<string, LockedDependency>;
   npmrc: string;
+  /** The project's path inside the lockfile's directory; empty when it owns it. */
+  memberPath: string;
   /**
    * The client whose lockfile owns the project, when it is not npm's. Only an
    * npm lockfile records a `resolved` URL per package, so any other owner
@@ -450,19 +481,72 @@ function projectLockDirectories(baseDir: string | undefined): string[] {
   return directories;
 }
 
+/**
+ * Does the package.json at a workspace root declare `member` (a path relative
+ * to that root) as one of its workspaces? A project merely nested under
+ * another is not a member, and that project's lockfile says nothing about it.
+ */
+function declaresWorkspaceMember(rootPackageJson: string, member: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rootPackageJson);
+  } catch (_) {
+    /* expected: an ancestor may ship an unparseable package.json */
+    return false;
+  }
+  const declared = (parsed as { workspaces?: unknown })?.workspaces;
+  const patterns = Array.isArray(declared)
+    ? declared
+    : (declared as { packages?: unknown })?.packages;
+  if (!Array.isArray(patterns)) return false;
+  return patterns.some((pattern) => {
+    if (typeof pattern !== "string") return false;
+    const trimmed = pattern.replace(/\/+$/, "");
+    // npm's workspace patterns are paths, optionally ending in a `*` segment.
+    if (trimmed.endsWith("/*")) {
+      const prefix = trimmed.slice(0, -2);
+      const rest = member.startsWith(`${prefix}/`) ? member.slice(prefix.length + 1) : null;
+      return rest !== null && rest.length > 0 && !rest.includes("/");
+    }
+    if (trimmed === "*") return !member.includes("/");
+    return trimmed === member;
+  });
+}
+
 async function readProjectRegistrySources(
   context: FileDiscoveryContext,
 ): Promise<ProjectRegistrySources> {
-  const npmrc = await readProjectFile(context, pathHelper.join(context.baseDir ?? ".", ".npmrc"));
+  const directories = projectLockDirectories(context.baseDir);
+  const project = directories[0]!;
+  const npmrcOf = (directory: string) =>
+    readProjectFile(context, pathHelper.join(directory, ".npmrc"));
   // The repo's own precedence: the lockfile a client wrote owns the project,
   // and an npm lock inherited from a migration must not outrank it. A member
   // of a workspace keeps its lockfile at the root, so ancestors are searched
-  // in turn, nearest first.
-  for (const directory of projectLockDirectories(context.baseDir)) {
+  // in turn, nearest first -- but only a root that declares this project as a
+  // member speaks for it.
+  for (const directory of directories) {
+    const memberPath = directory === project
+      ? ""
+      : project.slice(directory.length).replace(/^\/+/, "");
+    if (
+      memberPath.length > 0 &&
+      !declaresWorkspaceMember(
+        await readProjectFile(context, pathHelper.join(directory, "package.json")),
+        memberPath,
+      )
+    ) {
+      continue;
+    }
+    // npm applies the root's config to a member, and either file naming a
+    // private registry is enough to refuse the public copy.
+    const npmrc = memberPath.length === 0
+      ? await npmrcOf(project)
+      : `${await npmrcOf(project)}\n${await npmrcOf(directory)}`;
     for (const [file, client] of LOCKFILE_CLIENTS) {
       const text = await readProjectFile(context, pathHelper.join(directory, file));
       if (text.length === 0) continue;
-      if (client !== "npm") return { locked: {}, npmrc, unverifiableClient: client };
+      if (client !== "npm") return { locked: {}, npmrc, memberPath, unverifiableClient: client };
       // npm ignores package-lock.json entirely when a shrinkwrap is present.
       const shrinkwrap = await readProjectFile(
         context,
@@ -471,6 +555,7 @@ async function readProjectRegistrySources(
       return {
         locked: readLockedDependencies(shrinkwrap || text),
         npmrc,
+        memberPath,
         unverifiableClient: null,
       };
     }
@@ -479,10 +564,15 @@ async function readProjectRegistrySources(
       pathHelper.join(directory, "npm-shrinkwrap.json"),
     );
     if (shrinkwrap.length > 0) {
-      return { locked: readLockedDependencies(shrinkwrap), npmrc, unverifiableClient: null };
+      return {
+        locked: readLockedDependencies(shrinkwrap),
+        npmrc,
+        memberPath,
+        unverifiableClient: null,
+      };
     }
   }
-  return { locked: {}, npmrc, unverifiableClient: null };
+  return { locked: {}, npmrc: await npmrcOf(project), memberPath: "", unverifiableClient: null };
 }
 
 async function readProjectDependencyPins(
@@ -1225,7 +1315,7 @@ export async function importModule(
   // copy of a name is its dependency at all.
   const registrySources = compiled && Object.keys(dependencyPins).length > 0
     ? await readProjectRegistrySources(context)
-    : { locked: {}, npmrc: "", unverifiableClient: null };
+    : { locked: {}, npmrc: "", memberPath: "", unverifiableClient: null };
 
   // A shared hosted runtime serves many projects and source generations, so
   // namespace identical relative paths before considering entry contents.
@@ -1293,9 +1383,7 @@ export async function importModule(
             version,
             importRange,
           ),
-        Object.fromEntries(
-          Object.entries(registrySources.locked).map(([name, { version }]) => [name, version]),
-        ),
+        lockedVersionsByName(registrySources, dependencyPins),
         publiclySourcedPackages(registrySources, dependencyPins),
       ),
     );
