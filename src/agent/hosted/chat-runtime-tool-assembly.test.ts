@@ -1442,7 +1442,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty provider allowlist a
   assertEquals(toolAssembly.runtimeTools.web_fetch, undefined);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly does not duplicate Anthropic provider-native web_fetch with the local fallback", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly uses the authorized local web fetch tool for Anthropic without a native fetch declaration", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1466,10 +1466,10 @@ Deno.test("prepareHostedChatRuntimeToolAssembly does not duplicate Anthropic pro
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["sleep"]);
-  assertEquals(toolAssembly.providerToolNames, ["web_fetch"]);
+  assertEquals(toolAssembly.localToolNames, ["sleep", "web_fetch"]);
+  assertEquals(toolAssembly.providerToolNames, []);
   assertEquals(taskContext.availableToolNames, ["sleep", "web_fetch"]);
-  assertEquals(toolAssembly.runtimeTools.web_fetch, undefined);
+  assertExists(toolAssembly.runtimeTools.web_fetch);
   assertStringIncludes(toolAssembly.systemInstructions, "- web_fetch");
 });
 

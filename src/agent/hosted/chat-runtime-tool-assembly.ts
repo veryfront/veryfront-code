@@ -485,12 +485,8 @@ function shouldIncludeHostedWebFetchFallback(input: {
   sourceProviderToolNames: Set<string>;
   allowedToolNames: ReadonlySet<string> | null;
   allowedProviderToolNames: ReadonlySet<string> | null;
-  providerNativeToolNames: readonly string[];
 }): boolean {
   if (!hasOwn(input.localTools, "web_fetch")) {
-    return false;
-  }
-  if (includesValue(input.providerNativeToolNames, "web_fetch")) {
     return false;
   }
   if (input.allowedProviderToolNames !== null) {
@@ -573,7 +569,6 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       sourceProviderToolNames,
       allowedToolNames,
       allowedProviderToolNames,
-      providerNativeToolNames,
     }) && isIntegrationToolAllowedBySourcePolicy("web_fetch", input.sourceIntegrationPolicy)
   ) {
     const hostedWebFetchTool = postFormInputLocalTools.web_fetch;
