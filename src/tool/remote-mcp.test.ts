@@ -7,7 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
   createRemoteMCPToolSourceFactoryWithTransport,
@@ -28,7 +28,7 @@ describe("tool/remote-mcp", () => {
     const source = createRemoteMCPToolSource(config);
     const requests: Record<string, unknown>[] = [];
     await withMockFetch(async (_url, init) => {
-      const body = JSON.parse(String(init?.body));
+      const body = JSON.parse(String(observeFetchRequestInit(init).body));
       requests.push(body.params);
       return Response.json({
         jsonrpc: "2.0",

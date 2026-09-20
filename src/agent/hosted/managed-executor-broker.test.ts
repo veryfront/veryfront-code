@@ -1,3 +1,7 @@
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { createTrustedManagedExecutorBroker } from "../service/trusted-managed-broker.ts";
 import {
   type ExecutorRuntimeInstall,
@@ -360,9 +364,12 @@ describe("managed executor broker", () => {
     f.input.model.resolver = () => model;
     f.input.installation.grant.allowedToolNames = ["fetch-paper"];
     f.input.installation.grant.hostToolFacadeIds = ["host"];
-    f.input.tools.catalog = new Map([
+    f.input.tools.catalog = new Map<string, { ownerAgentId?: string; shortName?: string }>([
       ["fetch-paper", {}],
-      ["owned-paper", { ownerAgentId: "coder", shortName: "fetch-paper" }],
+      [
+        "owned-paper",
+        markTrustedHostToolProvenance({ ownerAgentId: "coder", shortName: "fetch-paper" }),
+      ],
     ]);
     f.input.tools.sources = new Map([["host", {
       allowedToolNames: new Set(["owned-paper"]),
@@ -389,6 +396,10 @@ describe("managed executor broker", () => {
         artifact: { version: 1, owner, source, root: "project" },
         async install(input, signal) {
           const facades = await createExecutorRuntimeFacades({ input, channel: peer, signal });
+          assertEquals(
+            hasTrustedHostToolProvenance(facades.hostTools.get("host")?.["owned-paper"]),
+            true,
+          );
           const discovery = createExecutorDiscovery({
             binding,
             source,

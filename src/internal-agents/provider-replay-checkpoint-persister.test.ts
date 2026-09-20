@@ -439,7 +439,10 @@ describe("run-scoped provider replay checkpoint persistence", () => {
         runId: RUN_ID,
         runEventAppendToken: token,
         fetch: (_input, init) => {
-          assertEquals(new Headers(init?.headers).get("Authorization"), `Bearer ${token}`);
+          assertEquals(
+            new Headers(observeFetchRequestInit(init).headers).get("Authorization"),
+            `Bearer ${token}`,
+          );
           appended = true;
           return Promise.resolve(Response.json({ appended_count: 1 }));
         },

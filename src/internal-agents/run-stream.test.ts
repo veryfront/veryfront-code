@@ -10,6 +10,7 @@ import {
   type AgentMessage,
   DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,
 } from "#veryfront/agent";
+import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
@@ -29,8 +30,12 @@ import type {
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
-import { tool } from "#veryfront/tool";
-import type { RemoteToolSource, Tool } from "#veryfront/tool";
+import {
+  createToolsFromHostDefinitions,
+  type RemoteToolSource,
+  type Tool,
+  tool,
+} from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
@@ -215,7 +220,78 @@ describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
     skillRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
   });
+
+  it("dispatches canonical control-plane wrappers under an integration deny-all policy", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const runId = "canonical-form";
+    sessionManager.startRun({ runId, threadId: "thread" });
+    const agent = {
+      id: "agent",
+      config: { tools: { veryfront__form_input: true } },
+    } as unknown as Agent;
+    const tools = buildMergedTools(agent, {
+      runId,
+      threadId: "thread",
+      messages: [],
+      context: [],
+      tools: [{
+        name: "veryfront__form_input",
+        description: "Ask for input",
+        parameters: { type: "object", properties: {} },
+      }],
+    }, sessionManager);
+    const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+    assertEquals(
+      (await getAvailableTools(tools, {
+        includeIntegrationTools: false,
+        sourceIntegrationPolicy: policy,
+      })).map((tool) => tool.name),
+      ["veryfront__form_input"],
+    );
+    const result = executeConfiguredTool(
+      "veryfront__form_input",
+      {},
+      tools,
+      { toolCallId: "form" },
+      undefined,
+      undefined,
+      policy,
+    );
+    sessionManager.submitToolResult(runId, { toolCallId: "form", result: { approved: true } });
+    assertEquals(await result, { approved: true });
+  });
+
+  for (const projectCollision of [false, true]) {
+    it(`applies legacy denials to injected canonical controls (project collision: ${projectCollision})`, () => {
+      const agent = {
+        id: "agent",
+        config: { tools: { form_input: false, veryfront__form_input: true } },
+      } as unknown as Agent;
+      const merged = buildMergedTools(
+        agent,
+        {
+          runId: "denied-form",
+          threadId: "thread",
+          messages: [],
+          context: [],
+          tools: [{
+            name: "veryfront__form_input",
+            description: "Form",
+            parameters: { type: "object", properties: {} },
+          }],
+        },
+        new AgentRunSessionManager(),
+        undefined,
+        projectCollision ? { form_input: true } : {},
+      );
+      assertEquals(
+        Boolean(merged && typeof merged.veryfront__form_input === "object"),
+        projectCollision,
+      );
+    });
+  }
 
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
     toolRegistryInternal.clearAll();
@@ -2760,6 +2836,7 @@ describe("internal-agents/run-stream", () => {
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           invoke_agent: { description: "Delegate to another agent" },
+          veryfront__invoke_agent: true,
         },
       },
     } as unknown as Agent;
@@ -2769,7 +2846,11 @@ describe("internal-agents/run-stream", () => {
       threadId: crypto.randomUUID(),
       runId: "run_1",
       messages: [],
-      tools: [],
+      tools: [{
+        name: "veryfront__invoke_agent",
+        description: "Delegate",
+        parameters: { type: "object", properties: {} },
+      }],
       context: [],
       allowDelegation: false,
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
@@ -2803,10 +2884,11 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
-        __vfAllowedRemoteTools: ["invoke_agent"],
+        __vfAllowedRemoteTools: ["invoke_agent", "veryfront__invoke_agent"],
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           invoke_agent: { description: "Delegate to another agent" },
+          veryfront__invoke_agent: true,
         },
       },
     } as unknown as Agent;
@@ -2816,7 +2898,11 @@ describe("internal-agents/run-stream", () => {
       threadId: crypto.randomUUID(),
       runId: "run_1",
       messages: [],
-      tools: [],
+      tools: [{
+        name: "veryfront__invoke_agent",
+        description: "Delegate",
+        parameters: { type: "object", properties: {} },
+      }],
       context: [],
       allowDelegation: false,
       forwardedProps: {
@@ -2850,6 +2936,7 @@ describe("internal-agents/run-stream", () => {
       "a signed request denying delegation must strip invoke_agent from the remote grants too",
     );
     assertEquals(capturedToolNames.includes("invoke_agent"), false);
+    assertEquals(capturedToolNames.includes("veryfront__invoke_agent"), false);
   });
 
   it("preserves invoke_agent delegation when visible skills are hidden from the catalog", async () => {
@@ -3166,6 +3253,214 @@ describe("internal-agents/run-stream", () => {
       ],
     );
   });
+
+  for (
+    const {
+      includeProjectBash,
+      includePlatformBash,
+      ownedProjectDenial = false,
+      ownedProject = false,
+      legacyPlatform = false,
+    } of [
+      { includeProjectBash: false, includePlatformBash: true },
+      { includeProjectBash: false, includePlatformBash: true, legacyPlatform: true },
+      { includeProjectBash: true, includePlatformBash: true },
+      { includeProjectBash: true, includePlatformBash: false },
+      { includeProjectBash: false, includePlatformBash: true, ownedProjectDenial: true },
+      { includeProjectBash: true, includePlatformBash: true, ownedProject: true },
+      { includeProjectBash: true, includePlatformBash: false, ownedProject: true },
+    ]
+  ) {
+    it(`executes distinct bash tools (platform: ${includePlatformBash}, project: ${includeProjectBash}, owned denial: ${ownedProjectDenial}, owned project: ${ownedProject})`, async () => {
+      const expectedNames = [
+        ...(includeProjectBash || legacyPlatform ? ["bash"] : []),
+        ...(includePlatformBash ? ["veryfront__bash"] : []),
+      ];
+      const sessionManager = new AgentRunSessionManager();
+      let capturedTools: Agent["config"]["tools"];
+      const inputSchemaJson = { type: "object" as const, properties: {} };
+      const projectBash = createToolsFromHostDefinitions({
+        bash: {
+          description: "Return the project marker",
+          inputSchemaJson,
+          execute: async () => ({ owner: "project" }),
+        },
+      }).bash!;
+      if (ownedProjectDenial || ownedProject) {
+        toolRegistryInternal.register("collision-agent--bash", {
+          ...projectBash,
+          id: "collision-agent--bash",
+          shortName: "bash",
+          ownerAgentId: "collision-agent",
+        });
+      }
+      const agent = {
+        id: "collision-agent",
+        config: {
+          id: "collision-agent",
+          model: "anthropic/claude-opus-4-6",
+          system: "test",
+          tools: {
+            ...(includePlatformBash ? { veryfront__bash: true } : {}),
+            ...(includeProjectBash || legacyPlatform ? { bash: true } : {}),
+            ...(ownedProjectDenial ? { bash: false } : {}),
+          },
+        },
+      } as unknown as Agent;
+      await createRuntimeAgentStreamResponse(
+        {
+          threadId: crypto.randomUUID(),
+          runId: `canonical-bash-${includeProjectBash}`,
+          messages: [],
+          tools: [],
+          context: [],
+        },
+        agent,
+        {
+          sessionManager,
+          ...(includeProjectBash && !ownedProject ? { localTools: { bash: projectBash } } : {}),
+          createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+          createAgentServiceSandboxTools: async () => ({
+            tools: {
+              bash: {
+                description: "Run platform bash",
+                inputSchemaJson,
+                execute: async () => ({ owner: "platform" }),
+              },
+            },
+            sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+            closeSandbox: async () => {},
+          }),
+          createRuntime: (_agent, mergedTools) => {
+            capturedTools = mergedTools;
+            return {
+              stream: async () =>
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                }),
+            };
+          },
+        },
+      );
+      assertEquals(
+        Object.keys(capturedTools ?? {}).sort(),
+        expectedNames,
+      );
+      if (!capturedTools || capturedTools === true) throw new Error("Expected tools");
+      assertEquals(
+        (await getAvailableTools(capturedTools, {
+          includeIntegrationTools: false,
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "allowlist", integrations: {} },
+        })).map((tool) => tool.name).sort(),
+        expectedNames,
+      );
+      for (
+        const [name, owner] of Object.entries({
+          ...(includePlatformBash ? { veryfront__bash: "platform" } : {}),
+          ...(includeProjectBash
+            ? { bash: "project" }
+            : legacyPlatform
+            ? { bash: "platform" }
+            : {}),
+        })
+      ) {
+        const selected = capturedTools[name];
+        if (!selected || selected === true || !selected.execute) throw new Error(`Missing ${name}`);
+        assertEquals(
+          await executeConfiguredTool(
+            name,
+            {},
+            capturedTools,
+            { toolCallId: name },
+            undefined,
+            undefined,
+            { schemaVersion: 1, mode: "allowlist", integrations: {} },
+          ),
+          {
+            owner,
+          },
+        );
+      }
+    });
+  }
+
+  for (
+    const deniedName of [
+      "bash",
+      "veryfront__bash",
+      "start_background_command",
+      "veryfront__start_background_command",
+    ]
+  ) {
+    it(`does not bypass platform bash denial through an alias: ${deniedName}`, async () => {
+      const deniesBash = deniedName === "bash" || deniedName === "veryfront__bash";
+      let sandboxCalls = 0;
+      let capturedTools: Agent["config"]["tools"];
+      const agent = {
+        id: "denied-bash",
+        config: {
+          id: "denied-bash",
+          model: "anthropic/claude-opus-4-6",
+          system: "test",
+          tools: {
+            veryfront__bash: true,
+            ...(deniesBash
+              ? { bash: true }
+              : { start_background_command: true, veryfront__start_background_command: true }),
+            [deniedName]: false,
+          },
+        },
+      } as unknown as Agent;
+      await createRuntimeAgentStreamResponse(
+        {
+          threadId: crypto.randomUUID(),
+          runId: deniedName,
+          messages: [],
+          tools: [],
+          context: [],
+        },
+        agent,
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+          createAgentServiceSandboxTools: async () => {
+            sandboxCalls++;
+            return {
+              tools: {
+                start_background_command: {
+                  description: "Start a background command",
+                  inputSchemaJson: { type: "object", properties: {} },
+                  execute: async () => "background",
+                },
+                bash: {
+                  description: "Platform bash",
+                  inputSchemaJson: { type: "object", properties: {} },
+                  execute: async () => "platform",
+                },
+              },
+              sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+              closeSandbox: async () => {},
+            };
+          },
+          createRuntime: (_agent, mergedTools) => {
+            capturedTools = mergedTools;
+            return {
+              stream: async () =>
+                new ReadableStream<Uint8Array>({
+                  start(c) {
+                    c.close();
+                  },
+                }),
+            };
+          },
+        },
+      );
+      assertEquals(sandboxCalls, deniesBash ? 0 : 1);
+      assertEquals(Object.keys(capturedTools ?? {}), deniesBash ? [] : ["veryfront__bash"]);
+    });
+  }
 
   it("clears run admission when sandbox setup rejects", async () => {
     const sessionManager = new AgentRunSessionManager();

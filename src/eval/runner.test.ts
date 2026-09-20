@@ -81,6 +81,15 @@ const stalledMetricResult = {
   severity: "gate",
 } as const;
 
+/**
+ * How far below a timer's delay a measured wait may read. The runner measures
+ * with `Date.now()`, which truncates to whole milliseconds, and Node schedules
+ * timers against a loop time cached at the start of the tick, so a 40ms timer
+ * can fire about 1ms early. A duration that includes the wait still lands far
+ * above a target-only measure (1-7ms here).
+ */
+const TIMER_WAIT_TOLERANCE_MS = 2;
+
 describe("eval/runner", () => {
   afterEach(() => {
     _resetShimForTests();
@@ -912,7 +921,7 @@ describe("eval/runner", () => {
 
     assertEquals(report.records[0]?.durationMs, 1);
     assertEquals(
-      reportedMs >= 30,
+      reportedMs >= 30 - TIMER_WAIT_TOLERANCE_MS,
       true,
       `progress duration ${reportedMs}ms must include grading`,
     );
@@ -1063,7 +1072,11 @@ describe("eval/runner", () => {
     // The record keeps the adapter's target measure, as a graded record does.
     assertEquals(report.records[0]?.durationMs, 7);
     assertEquals(report.records[0]?.completed, false);
-    assertEquals(progressMs >= 40, true, `progress duration ${progressMs}ms covers the wait`);
+    assertEquals(
+      progressMs >= 40 - TIMER_WAIT_TOLERANCE_MS,
+      true,
+      `progress duration ${progressMs}ms covers the wait`,
+    );
   });
 
   it("keeps the mapped tool input when the tool times out", async () => {

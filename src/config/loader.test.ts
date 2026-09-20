@@ -10202,6 +10202,513 @@ export default config as const;
         });
       });
 
+      function createSnapshotPreviewAdapter(
+        snapshot: { identity: string; version: number },
+      ): TestAdapter {
+        const adapter = createHostedAdapter();
+        Object.assign(adapter.fs, {
+          getSourceSnapshotIdentity: () => snapshot.identity,
+          getSourceSnapshotVersion: () => snapshot.version,
+        });
+        return adapter;
+      }
+
+      function loadSnapshotPreviewConfig(
+        adapter: TestAdapter,
+        preparedContext: PreparedContext,
+        signal?: AbortSignal,
+      ) {
+        const branch = "feature/preview-burst";
+        return runWithRequestContext(
+          {
+            projectSlug: "preview-burst-project",
+            projectId: "preview-burst-project",
+            token: "token",
+            branch,
+          },
+          () =>
+            getHostedConfig("/hosted/preview-burst-project", adapter, {
+              cacheKey: "preview-burst-project",
+              sourceContext: { productionMode: false, branch },
+              preparedContext,
+              signal,
+            }),
+        );
+      }
+
+      it("coalesces a preview burst for one retained source snapshot into one read and evaluation", async () => {
+        const snapshot = {
+          identity: "branch:preview-burst-project:feature/preview-burst",
+          version: 7,
+        };
+        const adapter = createSnapshotPreviewAdapter(snapshot);
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        const releaseRead = Promise.withResolvers<void>();
+        let reads = 0;
+        let evaluations = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          await releaseRead.promise;
+          return 'export default { title: "burst" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return { title: "burst" };
+        });
+
+        const admission = __getHostedConfigSourceReadStateForTests();
+        const burstSize = admission.maxActive + admission.maxQueued + 2;
+        const requests = Array.from(
+          { length: burstSize },
+          () => loadSnapshotPreviewConfig(adapter, preparedContext),
+        );
+        const settled = Promise.allSettled(requests);
+        try {
+          // Every request is admitted before the single slow read completes.
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          releaseRead.resolve();
+          const results = await settled;
+          const rejected = results.filter((result) => result.status === "rejected");
+          assertEquals(rejected.length, 0, String((rejected[0] as PromiseRejectedResult)?.reason));
+          for (const result of results) {
+            assert(result.status === "fulfilled");
+            assertEquals(result.value.title, "burst");
+          }
+          assertEquals(reads, 1);
+          assertEquals(evaluations, 1);
+        } finally {
+          releaseRead.resolve();
+          await Promise.allSettled(requests);
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("does not start a preview read after the caller aborts during snapshot capture", async () => {
+        const adapter = createHostedAdapter();
+        const probeStarted = Promise.withResolvers<void>();
+        const releaseProbe = Promise.withResolvers<void>();
+        Object.assign(adapter.fs, {
+          getSourceSnapshotIdentity: () => "branch:preview-burst-project:feature/preview-burst",
+          getSourceSnapshotVersion: async () => {
+            probeStarted.resolve();
+            await releaseProbe.promise;
+            return 7;
+          },
+        });
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        let reads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          return 'export default { title: "source" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({ title: "must-not-evaluate" }));
+
+        const controller = new AbortController();
+        const request = loadSnapshotPreviewConfig(adapter, preparedContext, controller.signal);
+        const failure = assertRejects(
+          () => request,
+          DeclarativeConfigEvaluationError,
+        ) as Promise<DeclarativeConfigEvaluationError>;
+        try {
+          await probeStarted.promise;
+          controller.abort();
+          releaseProbe.resolve();
+          const error = await failure;
+          assertEquals(error.reason, "worker-aborted");
+          assertEquals(reads, 0);
+        } finally {
+          releaseProbe.resolve();
+          await Promise.allSettled([request]);
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("admits cold preview snapshot probes through the source-read budget", async () => {
+        const adapter = createHostedAdapter();
+        const releaseProbes = Promise.withResolvers<void>();
+        let probesInFlight = 0;
+        let maxProbesInFlight = 0;
+        Object.assign(adapter.fs, {
+          getSourceSnapshotIdentity: () => "branch:cold-preview:main",
+          getSourceSnapshotVersion: async () => {
+            probesInFlight += 1;
+            maxProbesInFlight = Math.max(maxProbesInFlight, probesInFlight);
+            try {
+              await releaseProbes.promise;
+            } finally {
+              probesInFlight -= 1;
+            }
+            return 1;
+          },
+        });
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          return 'export default { title: "cold" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({ title: "cold" }));
+
+        const admission = __getHostedConfigSourceReadStateForTests();
+        const projectIds = Array.from(
+          { length: admission.maxActive + 2 },
+          (_, index) => `cold-preview-${index}`,
+        );
+        const requests = projectIds.map((projectId) =>
+          runWithRequestContext(
+            { projectSlug: projectId, projectId, token: "token", branch: "main" },
+            () =>
+              getHostedConfig(`/hosted/${projectId}`, adapter, {
+                cacheKey: projectId,
+                sourceContext: { productionMode: false, branch: "main" },
+                preparedContext,
+              }),
+          )
+        );
+        const settled = Promise.allSettled(requests);
+        try {
+          await waitForHostedSourceReadState({
+            active: admission.maxActive,
+            queued: 2,
+            flights: projectIds.length,
+            waiters: projectIds.length,
+          });
+          assertEquals(maxProbesInFlight, admission.maxActive);
+          releaseProbes.resolve();
+          const results = await settled;
+          assertEquals(results.filter((result) => result.status === "rejected").length, 0);
+        } finally {
+          releaseProbes.resolve();
+          await settled;
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("admits cold preview snapshot probes separately for each adapter selector", async () => {
+        const adapter = createHostedAdapter();
+        const releaseProbes = Promise.withResolvers<void>();
+        const warmCredentials = new Set<string>();
+        let probesInFlight = 0;
+        let maxProbesInFlight = 0;
+        Object.assign(adapter.fs, {
+          getSourceSnapshotIdentity: () => "branch:shared-preview:main",
+          getSourceSnapshotVersion: async () => {
+            // A concrete adapter is selected per credential, so each new
+            // credential pays its own cold initialization.
+            const context = getCurrentRequestContext();
+            const token = `${context?.token}:${context?.projectSlug}:${
+              context?.environmentName ?? null
+            }`;
+            if (warmCredentials.has(token)) return 1;
+            probesInFlight += 1;
+            maxProbesInFlight = Math.max(maxProbesInFlight, probesInFlight);
+            try {
+              await releaseProbes.promise;
+            } finally {
+              probesInFlight -= 1;
+            }
+            warmCredentials.add(token);
+            return 1;
+          },
+        });
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          return 'export default { title: "shared" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({ title: "shared" }));
+
+        const admission = __getHostedConfigSourceReadStateForTests();
+        // Each context selects a different concrete adapter: by credential,
+        // by project slug, or by environment name.
+        const contexts = [
+          { projectSlug: "shared-preview", token: "credential-0", environmentName: null },
+          { projectSlug: "shared-preview", token: "credential-1", environmentName: null },
+          { projectSlug: "shared-preview-alias", token: "credential-0", environmentName: null },
+          { projectSlug: "shared-preview", token: "credential-0", environmentName: "staging" },
+        ].slice(0, admission.maxActive + 2);
+        const tokens = contexts.map((context) =>
+          `${context.token}:${context.projectSlug}:${context.environmentName}`
+        );
+        const requests = contexts.map((context) =>
+          runWithRequestContext(
+            {
+              projectSlug: context.projectSlug,
+              projectId: "shared-preview",
+              token: context.token,
+              branch: "main",
+              environmentName: context.environmentName,
+            },
+            () =>
+              getHostedConfig("/hosted/shared-preview", adapter, {
+                cacheKey: "shared-preview",
+                sourceContext: { productionMode: false, branch: "main" },
+                preparedContext,
+              }),
+          )
+        );
+        const settled = Promise.allSettled(requests);
+        try {
+          await waitForHostedSourceReadState({
+            active: admission.maxActive,
+            queued: 2,
+            flights: tokens.length,
+            waiters: tokens.length,
+          });
+          assertEquals(maxProbesInFlight, admission.maxActive);
+          releaseProbes.resolve();
+          const results = await settled;
+          assertEquals(results.filter((result) => result.status === "rejected").length, 0);
+          assertEquals(maxProbesInFlight, admission.maxActive);
+        } finally {
+          releaseProbes.resolve();
+          await settled;
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("does not retry a failed preview snapshot probe outside source-read admission", async () => {
+        const adapter = createHostedAdapter();
+        const releaseProbes = Promise.withResolvers<void>();
+        let probeCalls = 0;
+        let probesInFlight = 0;
+        let maxProbesInFlight = 0;
+        let reads = 0;
+        Object.assign(adapter.fs, {
+          getSourceSnapshotIdentity: () => "branch:failing-preview:main",
+          getSourceSnapshotVersion: async () => {
+            probeCalls += 1;
+            probesInFlight += 1;
+            maxProbesInFlight = Math.max(maxProbesInFlight, probesInFlight);
+            try {
+              await releaseProbes.promise;
+            } finally {
+              probesInFlight -= 1;
+            }
+            throw new Error("adapter initialization failed");
+          },
+        });
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          return 'export default { title: "fallback" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({ title: "fallback" }));
+
+        const admission = __getHostedConfigSourceReadStateForTests();
+        const projectIds = Array.from(
+          { length: admission.maxActive + 2 },
+          (_, index) => `failing-preview-${index}`,
+        );
+        const requests = projectIds.map((projectId) =>
+          runWithRequestContext(
+            { projectSlug: projectId, projectId, token: "token", branch: "main" },
+            () =>
+              getHostedConfig(`/hosted/${projectId}`, adapter, {
+                cacheKey: projectId,
+                sourceContext: { productionMode: false, branch: "main" },
+                preparedContext,
+              }),
+          )
+        );
+        const settled = Promise.allSettled(requests);
+        try {
+          await waitForHostedSourceReadState({
+            active: admission.maxActive,
+            queued: 2,
+            flights: projectIds.length,
+            waiters: projectIds.length,
+          });
+          releaseProbes.resolve();
+          const results = await settled;
+          assertEquals(results.filter((result) => result.status === "rejected").length, 0);
+          // Each context probes once under admission, then falls back to an
+          // unshared admitted read instead of probing again.
+          assertEquals(probeCalls, projectIds.length);
+          assertEquals(maxProbesInFlight, admission.maxActive);
+          assertEquals(reads, projectIds.length);
+        } finally {
+          releaseProbes.resolve();
+          await settled;
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("does not share bytes a request pinned before the preview snapshot advanced", async () => {
+        const snapshot = {
+          identity: "branch:preview-burst-project:feature/preview-burst",
+          version: 8,
+        };
+        const adapter = createSnapshotPreviewAdapter(snapshot);
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        const readStarted = Promise.withResolvers<void>();
+        const releaseRead = Promise.withResolvers<void>();
+        let reads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          readStarted.resolve();
+          await releaseRead.promise;
+          // Mirrors the Veryfront adapter: request-scoped content wins.
+          return getCurrentRequestContext()?.fileCache?.get(path) ?? "after-edit";
+        };
+        __setHostedConfigEvaluatorForTests(async (payload) => ({
+          title: payload.evaluationOptions.source,
+        }));
+
+        const branch = "feature/preview-burst";
+        // A long-running request cached the config before the edit.
+        const pinned = runWithRequestContext(
+          {
+            projectSlug: "preview-burst-project",
+            projectId: "preview-burst-project",
+            token: "token",
+            branch,
+          },
+          () => {
+            getCurrentRequestContext()?.fileCache?.set("/veryfront.config.js", "before-edit");
+            return getHostedConfig("/hosted/preview-burst-project", adapter, {
+              cacheKey: "preview-burst-project",
+              sourceContext: { productionMode: false, branch },
+              preparedContext,
+            });
+          },
+        );
+        let fresh: ReturnType<typeof loadSnapshotPreviewConfig> | undefined;
+        try {
+          await readStarted.promise;
+          fresh = loadSnapshotPreviewConfig(adapter, preparedContext);
+          await waitForHostedSourceReadState({
+            active: 1,
+            queued: 0,
+            flights: 1,
+            waiters: 2,
+          });
+          releaseRead.resolve();
+          assertEquals((await fresh).title, "after-edit");
+          await pinned;
+          assertEquals(reads, 1);
+        } finally {
+          releaseRead.resolve();
+          await Promise.allSettled([pinned, fresh].filter((request) => request !== undefined));
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("reads a changed preview snapshot again instead of joining the previous read", async () => {
+        const snapshot = {
+          identity: "branch:preview-burst-project:feature/preview-burst",
+          version: 7,
+        };
+        const adapter = createSnapshotPreviewAdapter(snapshot);
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        const firstReadStarted = Promise.withResolvers<void>();
+        const releaseFirstRead = Promise.withResolvers<void>();
+        let source = "before-edit";
+        let reads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          const observed = source;
+          reads += 1;
+          if (reads === 1) {
+            firstReadStarted.resolve();
+            await releaseFirstRead.promise;
+          }
+          return observed;
+        };
+        __setHostedConfigEvaluatorForTests(async (payload) => ({
+          title: payload.evaluationOptions.source,
+        }));
+
+        const first = loadSnapshotPreviewConfig(adapter, preparedContext);
+        let second: ReturnType<typeof loadSnapshotPreviewConfig> | undefined;
+        try {
+          await firstReadStarted.promise;
+          // An edit publishes a new snapshot generation while the first read
+          // is still in flight. The next request must not join that read.
+          source = "after-edit";
+          snapshot.version = 8;
+          second = loadSnapshotPreviewConfig(adapter, preparedContext);
+          const secondConfig = await second;
+          assertEquals(secondConfig.title, "after-edit");
+          assertEquals(reads, 2);
+          releaseFirstRead.resolve();
+          assertEquals((await first).title, "before-edit");
+
+          const next = await loadSnapshotPreviewConfig(adapter, preparedContext);
+          assertEquals(next.title, "after-edit");
+          assertEquals(reads, 3);
+        } finally {
+          releaseFirstRead.resolve();
+          await Promise.allSettled(
+            [first, second].filter(
+              (request): request is ReturnType<typeof loadSnapshotPreviewConfig> =>
+                request !== undefined,
+            ),
+          );
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
       it("bounds source reads and retains orphaned active reads until capacity really recovers", async () => {
         const adapter = createHostedAdapter();
         const preparedContext = await prepareProductionContext();

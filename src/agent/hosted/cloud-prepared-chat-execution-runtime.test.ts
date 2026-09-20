@@ -66,6 +66,23 @@ describe("agent/veryfront-cloud-prepared-hosted-chat-execution-runtime", () => {
     assertEquals(typeof options.createRootStreamWatchdog, "function");
   });
 
+  it("resolves a provider the package does not list instead of failing the run", () => {
+    // The gateway routes any valid provider segment, so a hosted run on a
+    // provider this package does not list must reach the runtime rather than
+    // fail while the execution options are prepared.
+    const options = createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions({
+      apiUrl: "https://api.example.com",
+      tracer: createTracer(),
+      logger: { error: () => {}, warn: () => {} },
+      trace: async (_operationName, operation) => await operation(),
+      traceStream: async (operation) => await operation(),
+      setActiveSpanAttributes: () => {},
+    });
+
+    assertEquals(options.resolveProvider("veryfront-cloud/acme-labs/mystery-1"), "acme-labs");
+    assertEquals(options.resolveProvider("acme-labs/mystery-1"), "acme-labs");
+  });
+
   it("default root stream watchdog exempts delegated child tools from the tool-running deadline", () => {
     const previousIdleTimeout = getEnv(VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV);
     const previousToolTimeout = getEnv(VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_ENV);

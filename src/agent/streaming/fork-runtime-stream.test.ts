@@ -32,6 +32,8 @@ import {
   type StartAgentRuntimeForkWithHostToolsInput,
 } from "./fork-runtime-stream.ts";
 
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+
 const encoder = new TextEncoder();
 
 function createRuntimeEventStream(
@@ -902,6 +904,63 @@ describe("agent/fork-runtime-stream", () => {
       assertEquals(parts.at(-1), { type: "text-delta", text: "Done." });
     }
   });
+
+  for (
+    const sourceIntegrationPolicy of [
+      undefined,
+      { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} },
+    ]
+  ) {
+    it(
+      `preserves trusted platform tools in ${
+        sourceIntegrationPolicy ? "restricted" : "unrestricted"
+      } child forks without trusting prefix claims`,
+      async () => {
+        let executions = 0;
+        const trusted = markTrustedHostToolProvenance({
+          description: "Trusted platform shell",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executions++;
+            return { owner: "platform" };
+          },
+        });
+        const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+          apiUrl: "https://api.example.com",
+          authToken: "auth-token",
+          projectId: "project-1",
+          provider: "anthropic",
+          forkModel: "anthropic/claude-sonnet-4",
+          maxSteps: 1,
+          sourceIntegrationPolicy,
+          forkToolNames: ["veryfront__bash", "veryfront__export_data"],
+          forkTools: { veryfront__bash: trusted, veryfront__export_data: { ...trusted } },
+          buildInstructions: () => "Use the platform shell.",
+          prompt: "Run the shell.",
+          runStep: async (input) => {
+            assertEquals(input.forkToolNames, ["veryfront__bash"]);
+            const shell = input.runtimeTools.veryfront__bash;
+            if (shell && typeof shell !== "boolean") {
+              await shell.execute({}, { toolCallId: "shell" });
+            }
+            return {
+              stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+              responsePromise: Promise.resolve({
+                text: "Done.",
+                messages: [],
+                toolCalls: [],
+                status: "completed",
+                metadata: { finishReason: "stop" },
+              }),
+            };
+          },
+        });
+        assertEquals(forkToolNames, ["veryfront__bash"]);
+        for await (const _part of streamResult.fullStream) { /* Consume stream. */ }
+        assertEquals(executions, 1);
+      },
+    );
+  }
 
   it("keeps denied integration tools out of child runtime requests", async () => {
     const capturedInputs: RunAgentRuntimeForkStepInput[] = [];

@@ -8,11 +8,8 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils";
-import {
-  CACHE_INVARIANT_VIOLATION,
-  getErrorMessage,
-  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
-} from "#veryfront/errors";
+import { CACHE_INVARIANT_VIOLATION, getErrorMessage } from "#veryfront/errors";
+import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
@@ -258,10 +255,9 @@ async function validatePreviewConfigSourceSnapshot(
 ): Promise<PreviewSourceSnapshotMarker> {
   const current = await captureRequiredPreviewSourceSnapshotMarker(adapter.fs, projectSlug);
   if (!previewSourceSnapshotMarkersEqual(expected, current)) {
-    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-      detail:
-        `The mutable source snapshot serving "${projectSlug}" changed while request configuration was derived, so this document request must be retried against one generation.`,
-    });
+    throw createSourceSnapshotChangedError(
+      `The mutable source snapshot serving "${projectSlug}" changed while request configuration was derived, so this document request must be retried against one generation.`,
+    );
   }
   return current;
 }

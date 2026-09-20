@@ -1,3 +1,5 @@
+import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { getTrustedProjectEnvIdentity } from "#veryfront/server/project-env/storage.ts";
 import { INVALID_ARGUMENT, NETWORK_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
@@ -20,7 +22,12 @@ import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runt
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import { dynamicTool } from "#veryfront/tool";
 import { markRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   installMockFetch,
@@ -1077,7 +1084,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedSkills, []);
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
-      assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);
+      assertEquals(capturedAllowedRemoteTools, [
+        "get_file",
+        "search_knowledge",
+        "veryfront__get_file",
+        "veryfront__search_knowledge",
+      ]);
       assertEquals(platformMcpFetchCalls, 1);
     } finally {
       restoreMockFetch();
@@ -2754,167 +2766,276 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
-  it("preserves legacy stream policy identities with canonical-default API discovery", async () => {
-    let capturedAllowedRemoteTools: string[] | undefined;
-    let capturedRemoteToolNames: string[] = [];
-    let capturedToolArguments: Record<string, unknown> | undefined;
-    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
-    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+  for (
+    const {
+      canonical,
+      denied,
+      toolMapDenial = false,
+      allowAll = false,
+      allTools = false,
+      legacyAllow = false,
+      canonicalAllow = false,
+      ownedProjectDenial = false,
+    } of [
+      { canonical: false, denied: false },
+      { canonical: true, denied: false },
+      { canonical: false, denied: true },
+      { canonical: true, denied: true },
+      { canonical: true, denied: true, toolMapDenial: true },
+      { canonical: false, denied: true, toolMapDenial: true },
+      { canonical: true, denied: false, allowAll: true },
+      { canonical: true, denied: false, allowAll: true, allTools: true },
+      { canonical: true, denied: false, legacyAllow: true },
+      { canonical: true, denied: false, legacyAllow: true, allTools: true },
+      { canonical: false, denied: false, canonicalAllow: true, allTools: true },
+      { canonical: false, denied: false, canonicalAllow: true },
+      { canonical: true, denied: false, toolMapDenial: true, ownedProjectDenial: true },
+    ]
+  ) {
+    it(`preserves ${canonical ? "canonical" : "legacy"} platform identities through MCP dispatch (denied: ${denied}, map: ${toolMapDenial}, all: ${allowAll}, tools: ${allTools}, legacy allow: ${legacyAllow}, canonical allow: ${canonicalAllow}, owned denial: ${ownedProjectDenial})`, async () => {
+      const selectedName = canonical ? "veryfront__list_uploads" : "list_uploads";
+      let capturedAllowedRemoteTools: string[] | undefined;
+      let capturedRemoteToolNames: string[] = [];
+      let capturedToolArguments: Record<string, unknown> | undefined;
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
-    Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
-    Deno.env.delete("VERYFRONT_API_BASE_URL");
-    installMockFetch(
-      ((url, init) => {
-        assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
-        assertEquals(
-          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-          "Bearer request-scoped-user-token",
-        );
-        const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
-          id: string;
-          method: string;
-          params?: { arguments?: Record<string, unknown>; _meta?: Record<string, unknown> };
-        };
-        if (request.method === "tools/call") {
-          assertEquals(request.params?._meta, undefined);
-          capturedToolArguments = request.params?.arguments;
+      Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
+      Deno.env.delete("VERYFRONT_API_BASE_URL");
+      installMockFetch(
+        ((url, init) => {
+          assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
+          assertEquals(
+            new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+            "Bearer request-scoped-user-token",
+          );
+          const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
+            id: string;
+            method: string;
+            params?: {
+              name?: string;
+              arguments?: Record<string, unknown>;
+              _meta?: Record<string, unknown>;
+            };
+          };
+          if (request.method === "tools/call") {
+            assertEquals(request.params?._meta, undefined);
+            assertEquals(request.params?.name, "list_uploads");
+            capturedToolArguments = request.params?.arguments;
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+                { headers: { "content-type": "application/json" } },
+              ),
+            );
+          }
           return Promise.resolve(
             new Response(
-              JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: request.id,
+                result: {
+                  tools: [
+                    {
+                      name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
+                        ? "list_uploads"
+                        : "veryfront__list_uploads",
+                      description: "List uploads",
+                      inputSchema: {
+                        type: "object",
+                        properties: {
+                          project_reference: { type: "string" },
+                          limit: { type: "number" },
+                        },
+                        required: ["project_reference"],
+                      },
+                    },
+                    {
+                      name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
+                        ? "delete_upload"
+                        : "veryfront__delete_upload",
+                      description: "Delete upload",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              }),
               { headers: { "content-type": "application/json" } },
             ),
           );
-        }
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: request.id,
-              result: {
-                tools: [
-                  {
-                    name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
-                      ? "list_uploads"
-                      : "veryfront__list_uploads",
-                    description: "List uploads",
-                    inputSchema: {
-                      type: "object",
-                      properties: {
-                        project_reference: { type: "string" },
-                        limit: { type: "number" },
-                      },
-                      required: ["project_reference"],
-                    },
-                  },
-                  {
-                    name: request.params?._meta?.["veryfront/tool-names"] === "legacy"
-                      ? "delete_upload"
-                      : "veryfront__delete_upload",
-                    description: "Delete upload",
-                    inputSchema: { type: "object", properties: {} },
-                  },
-                ],
-              },
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }) as typeof fetch,
-    );
-
-    try {
-      const handler = createTestAgentStreamHandler({
-        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
-        getAgent: (id) =>
-          id === "assistant-1"
-            ? createAgentWithConfig("assistant-1", {
-              mcpServers: [{
-                kind: "veryfront-api",
-                toolPolicy: {
-                  allow: ["list_uploads"],
-                  deny: ["delete_upload"],
-                },
-              }],
-            })
-            : undefined,
-        getAllAgentIds: () => ["assistant-1"],
-        sessionManager: new AgentRunSessionManager(),
-        createRuntime: (runtimeAgent) => ({
-          stream: async (_messages, _context, callbacks) => {
-            const runtimeConfig = runtimeAgent.config as
-              & typeof runtimeAgent.config
-              & RuntimeRemoteToolConfig;
-            capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
-            const platformSource = runtimeConfig.__vfRemoteToolSources?.[0];
-            capturedRemoteToolNames = (await platformSource?.listTools({
-              projectId: "untrusted-project",
-            }))?.map((tool) => tool.name) ?? [];
-            await platformSource?.executeTool(
-              "list_uploads",
-              { project_reference: "untrusted-project", limit: 10 },
-              { projectId: "untrusted-project" },
-            );
-            callbacks?.onFinish?.({
-              text: "ok",
-              messages: [],
-              toolCalls: [],
-              status: "completed",
-              usage: {
-                promptTokens: 1,
-                completionTokens: 1,
-                totalTokens: 2,
-              },
-            });
-
-            return new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.close();
-              },
-            });
-          },
-        }),
-      });
-
-      const body = createAgentStreamRequestBody({
-        credentials: { authToken: "request-scoped-user-token" },
-      });
-      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
-        audience: "support-agent-fork",
-        requestId: "run_1",
-      });
-
-      const result = await handler.handle(
-        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-veryfront-control-plane-jws": jws,
-          },
-          body,
-        }),
-        {
-          ...createCtx(publicKeyPem),
-          proxyToken: "run-scoped-token",
-          projectSlug: "support-agent-fork",
-        },
+        }) as typeof fetch,
       );
 
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
-      assertEquals(capturedAllowedRemoteTools, ["list_uploads"]);
-      assertEquals(capturedRemoteToolNames, ["list_uploads", "delete_upload"]);
-      assertEquals(capturedToolArguments, {
-        project_reference: "proj-1",
-        limit: 10,
-      });
-    } finally {
-      restoreMockFetch();
-      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
-      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
-      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
-      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
-    }
-  });
+      try {
+        const handler = createTestAgentStreamHandler({
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: (id) => {
+            if (ownedProjectDenial) {
+              toolRegistryInternal.register("assistant-1--list_uploads", {
+                id: "assistant-1--list_uploads",
+                shortName: "list_uploads",
+                ownerAgentId: "assistant-1",
+                type: "function",
+                description: "Project tool",
+                inputSchema: {} as never,
+                execute: async () => "project",
+              });
+            }
+            return id === "assistant-1"
+              ? createAgentWithConfig("assistant-1", {
+                tools: allTools ? true : {
+                  [selectedName]: true,
+                  ...(toolMapDenial
+                    ? { [canonical ? "list_uploads" : "veryfront__list_uploads"]: false }
+                    : {}),
+                },
+                mcpServers: [{
+                  kind: "veryfront-api",
+                  toolPolicy: {
+                    ...(allowAll ? {} : {
+                      allow: [
+                        legacyAllow
+                          ? "list_uploads"
+                          : canonicalAllow
+                          ? "veryfront__list_uploads"
+                          : selectedName,
+                        "veryfront__unknown_tool",
+                      ],
+                    }),
+                    deny: [
+                      "delete_upload",
+                      ...(denied && !toolMapDenial
+                        ? [canonical ? "list_uploads" : "veryfront__list_uploads"]
+                        : []),
+                    ],
+                  },
+                }],
+              })
+              : undefined;
+          },
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent) => ({
+            stream: async (_messages, _context, callbacks) => {
+              const runtimeConfig = runtimeAgent.config as
+                & typeof runtimeAgent.config
+                & RuntimeRemoteToolConfig;
+              capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+              const platformSource = getRuntimeRemoteToolSources(runtimeConfig)?.find((source) =>
+                source.id === "veryfront-platform-mcp"
+              );
+              capturedRemoteToolNames = (await platformSource?.listTools({
+                projectId: "untrusted-project",
+              }))?.map((tool) => tool.name) ?? [];
+              assertExists(platformSource);
+              const sourcePolicy = {
+                schemaVersion: 1 as const,
+                mode: "allowlist" as const,
+                integrations: {},
+              };
+              if (!denied) {
+                assertEquals(
+                  (await getAvailableTools({ [selectedName]: true }, {
+                    remoteToolSources: [platformSource],
+                    includeIntegrationTools: false,
+                    sourceIntegrationPolicy: sourcePolicy,
+                  })).map((tool) => tool.name),
+                  [selectedName],
+                );
+              }
+              const execute = async () =>
+                await executeConfiguredTool(
+                  selectedName,
+                  { project_reference: "untrusted-project", limit: 10 },
+                  { [selectedName]: true },
+                  { projectId: "untrusted-project" },
+                  capturedAllowedRemoteTools,
+                  [platformSource],
+                  sourcePolicy,
+                );
+              if (denied) await assertRejects(execute);
+              else await execute();
+              callbacks?.onFinish?.({
+                text: "ok",
+                messages: [],
+                toolCalls: [],
+                status: "completed",
+                usage: {
+                  promptTokens: 1,
+                  completionTokens: 1,
+                  totalTokens: 2,
+                },
+              });
+
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          }),
+        });
+
+        const body = createAgentStreamRequestBody({
+          credentials: { authToken: "request-scoped-user-token" },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          audience: "support-agent-fork",
+          requestId: "run_1",
+        });
+
+        const result = await handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          {
+            ...createCtx(publicKeyPem),
+            proxyToken: "run-scoped-token",
+            projectSlug: "support-agent-fork",
+          },
+        );
+
+        assertExists(result.response);
+        if (result.response.status !== 200) throw new Error(await result.response.text());
+        assertEquals(result.response.status, 200);
+        assertEquals(
+          capturedAllowedRemoteTools,
+          denied
+            ? []
+            : ownedProjectDenial
+            ? [selectedName]
+            : ["list_uploads", "veryfront__list_uploads"],
+        );
+        assertEquals(
+          capturedRemoteToolNames,
+          denied
+            ? []
+            : ownedProjectDenial
+            ? [selectedName]
+            : ["list_uploads", "veryfront__list_uploads"],
+        );
+        assertEquals(
+          capturedToolArguments,
+          denied ? undefined : {
+            project_reference: "proj-1",
+            limit: 10,
+          },
+        );
+      } finally {
+        if (ownedProjectDenial) toolRegistryInternal.clearAll();
+        restoreMockFetch();
+        if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+        else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      }
+    });
+  }
 
   it("keeps request-scoped credentials out of project agent environments", async () => {
     let capturedEnv: Record<string, string | undefined> | null = null;
@@ -3138,8 +3259,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
       url: `${TEST_PUBLIC_API_ORIGIN}/mcp`,
       authorization: "Bearer request-scoped-user-token",
     });
-    assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
-    assertEquals(capturedRemoteToolNames, ["search_knowledge", "list_projects"]);
+    assertEquals(capturedAllowedRemoteTools, [
+      "list_projects",
+      "search_knowledge",
+      "veryfront__list_projects",
+      "veryfront__search_knowledge",
+    ]);
+    assertEquals(capturedRemoteToolNames, [
+      "search_knowledge",
+      "list_projects",
+      "veryfront__search_knowledge",
+      "veryfront__list_projects",
+    ]);
     // The environment is resolved before the source config is evaluated, so
     // both the config and the MCP tool headers see the same variables.
     assertEquals(fetchUrls, [
@@ -5307,6 +5438,78 @@ describe("agent stream handler application-error reporting", () => {
     assertExists(attributes);
     assertEquals(attributes["http.status"], 500);
     assertEquals(attributes["project.id"], "proj-1");
+  });
+
+  // A branch edit landing while agents are discovered is expected on a mutable
+  // source. The 503 is correct (the control plane retries the run on the next
+  // generation), but it is not a framework fault and must not page as one.
+  it("reports a branch source change during discovery as a tagged warning", async () => {
+    const entries: LogEntry[] = [];
+    const previousLogLevel = Deno.env.get("LOG_LEVEL");
+    const { captures, restore } = stubApplicationErrorReporter();
+    let sourceFingerprint = "request-snapshot";
+    try {
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => {
+          sourceFingerprint = "discovery-snapshot";
+          return createEmptyDiscoveryResult();
+        },
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+      const ctx = createCtx(publicKeyPem);
+      ctx.proxyToken = "run-scoped-token";
+      const fs = createNoopFsAdapter([]);
+      fs.getSourceSnapshotFingerprint = () => sourceFingerprint;
+      ctx.adapter = { ...ctx.adapter, fs };
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+
+      assertExists(result.response);
+      await result.response.body?.cancel();
+      assertEquals(result.response.status, 503);
+
+      assertEquals(captures.length, 1);
+      const captured = captures[0];
+      assertExists(captured);
+      assertEquals(captured.context.boundary, "agent.stream.request");
+      assertEquals(captured.context.level, "warning");
+      assertEquals(captured.context.errorClass, "source-snapshot-changed");
+
+      const logged = entries.filter(
+        (entry) => entry.message === "Internal agent stream request failed",
+      );
+      assertEquals(logged.length, 1);
+      assertEquals(logged[0]?.level, "warn");
+    } finally {
+      restore();
+      __resetLogRecordEmitterForTests();
+      if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", previousLogLevel);
+      refreshLoggerConfig();
+    }
   });
 
   it("stays silent for a 4xx VeryfrontError so Sentry is not flooded", async () => {

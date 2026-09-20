@@ -1,3 +1,7 @@
+import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
@@ -30,6 +34,44 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
+const trustedPlatformDefinitions = createPrivateWeakStore<object, true>();
+
+function isAllowedBySourcePolicy(
+  name: string,
+  policy: SourceIntegrationPolicyManifest,
+  entry?: unknown,
+  remoteDefinitions: ToolDefinition[] = [],
+): boolean {
+  if (!isReservedPlatformToolName(name)) {
+    return isIntegrationToolAllowedBySourcePolicy(name, policy);
+  }
+  if (hasTrustedHostToolProvenance(entry)) return true;
+  for (let index = 0; index < remoteDefinitions.length; index++) {
+    if (!intrinsicHasOwn(remoteDefinitions, index)) continue;
+    const definition = remoteDefinitions[index]!;
+    if (definition.name === name && trustedPlatformDefinitions.get(definition) === true) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function resolveTrustedPlatformSource(
+  name: string,
+  sources: RemoteToolSource[] = [],
+  context?: ToolExecutionContext,
+): Promise<RemoteToolSource | undefined> {
+  if (!isReservedPlatformToolName(name)) return undefined;
+  for (let index = 0; index < sources.length; index++) {
+    if (!intrinsicHasOwn(sources, index)) continue;
+    const source = sources[index]!;
+    if (hasTrustedPlatformSource(source) && await sourceHasTool(source, name, context)) {
+      return source;
+    }
+  }
+  return undefined;
+}
+
 const logger = serverLogger.component("agent");
 const intrinsicReflectApply = Reflect.apply;
 const intrinsicObjectEntries = Object.entries;
@@ -40,6 +82,19 @@ const intrinsicArrayIncludes = Array.prototype.includes;
 
 function intrinsicIncludes<T>(values: readonly T[], value: T): boolean {
   return intrinsicReflectApply(intrinsicArrayIncludes, values, [value]);
+}
+
+function filterToolDefinitions(
+  definitions: readonly ToolDefinition[],
+  predicate: (definition: ToolDefinition) => boolean,
+): ToolDefinition[] {
+  const filtered: ToolDefinition[] = [];
+  for (let index = 0; index < definitions.length; index++) {
+    if (!intrinsicHasOwn(definitions, index)) continue;
+    const definition = definitions[index]!;
+    if (predicate(definition)) intrinsicReflectApply(intrinsicArrayPush, filtered, [definition]);
+  }
+  return filtered;
 }
 
 /**
@@ -123,7 +178,7 @@ function isRemoteToolAllowed(
  * name first, then an exact registry id — returning only tools visible to the
  * caller (owner-aware).
  */
-function resolveVisibleRegistryTool(
+export function resolveVisibleRegistryTool(
   name: string,
   callerAgentId?: string,
   // deno-lint-ignore no-explicit-any -- generic erasure: registry tools carry any input/output types
@@ -176,7 +231,7 @@ async function getRemoteToolDefinitions(options?: {
   const definitions: ToolDefinition[] = [];
   const seenToolNames = createPrivateSet<string>();
 
-  const addDefinition = (definition: ToolDefinition): void => {
+  const addDefinition = (definition: ToolDefinition, trustedPlatform = false): void => {
     if (seenToolNames.has(definition.name)) {
       return;
     }
@@ -186,6 +241,7 @@ async function getRemoteToolDefinitions(options?: {
     ) {
       return;
     }
+    if (trustedPlatform) trustedPlatformDefinitions.set(definition, true);
     seenToolNames.add(definition.name);
     intrinsicReflectApply(intrinsicArrayPush, definitions, [definition]);
   };
@@ -197,7 +253,13 @@ async function getRemoteToolDefinitions(options?: {
     try {
       const sourceDefs = await source.listTools(remoteToolContext);
       for (let index = 0; index < sourceDefs.length; index++) {
-        if (intrinsicHasOwn(sourceDefs, index)) addDefinition(sourceDefs[index]!);
+        if (intrinsicHasOwn(sourceDefs, index)) {
+          const definition = sourceDefs[index]!;
+          if (isReservedPlatformToolName(definition.name) && !hasTrustedPlatformSource(source)) {
+            continue;
+          }
+          addDefinition(definition, hasTrustedPlatformSource(source));
+        }
       }
     } catch (error) {
       logger.warn("Failed to fetch remote tool definitions from source", {
@@ -243,12 +305,15 @@ async function executeRemoteToolFromSources(
   context: ToolExecutionContext | undefined,
   allowedRemoteToolNames: string[] | undefined,
   remoteToolSources: RemoteToolSource[] | undefined,
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
+  selectedSource?: RemoteToolSource,
 ): Promise<{ handled: boolean; result?: unknown }> {
-  const sources = remoteToolSources ?? [];
+  const sources = selectedSource ? [selectedSource] : remoteToolSources ?? [];
   for (let index = 0; index < sources.length; index++) {
     if (!intrinsicHasOwn(sources, index)) continue;
     const source = sources[index]!;
-    if (!(await sourceHasTool(source, toolName, context))) {
+    if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(source)) continue;
+    if (source !== selectedSource && !(await sourceHasTool(source, toolName, context))) {
       continue;
     }
 
@@ -256,6 +321,13 @@ async function executeRemoteToolFromSources(
       throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }
 
+    if (
+      sourceIntegrationPolicy &&
+      !isIntegrationToolAllowedBySourcePolicy(toolName, sourceIntegrationPolicy) &&
+      !(isReservedPlatformToolName(toolName) && hasTrustedPlatformSource(source))
+    ) {
+      throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
+    }
     return {
       handled: true,
       result: await source.executeTool(toolName, input, context),
@@ -295,7 +367,8 @@ export function resolveConfiguredTool(
   if (configuredEntry && typeof configuredEntry === "object") {
     if (
       options?.allowIntegrationStyleConcreteTools !== true &&
-      getConfiguredRemoteToolName(configuredEntry) === undefined
+      getConfiguredRemoteToolName(configuredEntry) === undefined &&
+      !hasTrustedHostToolProvenance(configuredEntry)
     ) {
       assertLocalToolId(toolName);
       assertLocalToolId(configuredEntry.id);
@@ -313,7 +386,10 @@ export async function executeConfiguredTool(
   context?: ToolExecutionContext,
   allowedRemoteToolNames?: string[],
   remoteToolSources?: RemoteToolSource[],
-  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest = {
+    schemaVersion: 1,
+    mode: "unrestricted",
+  },
   options?: {
     strictConfiguredToolsOnly?: boolean;
   },
@@ -321,10 +397,23 @@ export async function executeConfiguredTool(
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
   const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
   const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);
+  let selectedSource: RemoteToolSource | undefined;
 
   if (
     sourceIntegrationPolicy &&
-    !isIntegrationToolAllowedBySourcePolicy(authorizationToolName, sourceIntegrationPolicy)
+    !isAllowedBySourcePolicy(
+      authorizationToolName,
+      sourceIntegrationPolicy,
+      configuredEntry === true || configuredEntry === undefined
+        ? resolveVisibleRegistryTool(toolName, context?.agentId)
+        : configuredEntry,
+    ) &&
+    !((configuredEntry === undefined || configuredEntry === true) &&
+      (selectedSource = await resolveTrustedPlatformSource(
+        authorizationToolName,
+        remoteToolSources,
+        context,
+      )))
   ) {
     throw new Error(
       `Tool "${authorizationToolName}" is not allowed by the source integration policy`,
@@ -365,6 +454,8 @@ export async function executeConfiguredTool(
     context,
     allowedRemoteToolNames,
     remoteToolSources,
+    sourceIntegrationPolicy,
+    selectedSource,
   );
   if (remoteSourceResult.handled) {
     return remoteSourceResult.result;
@@ -452,7 +543,8 @@ export async function getAvailableTools(
   },
 ): Promise<ToolDefinition[]> {
   if (!toolsConfig) return [];
-  const sourceIntegrationPolicy = options?.sourceIntegrationPolicy;
+  const sourceIntegrationPolicy = options?.sourceIntegrationPolicy ??
+    { schemaVersion: 1, mode: "unrestricted" } as const;
   const strictConfiguredToolsOnly = options?.strictConfiguredToolsOnly === true;
 
   if (toolsConfig === true) {
@@ -486,11 +578,13 @@ export async function getAvailableTools(
       intrinsicReflectApply(intrinsicArrayPush, tools, remoteDefs);
     }
 
-    return sourceIntegrationPolicy
-      ? tools.filter((definition) =>
-        isIntegrationToolAllowedBySourcePolicy(definition.name, sourceIntegrationPolicy)
-      )
-      : tools;
+    return filterToolDefinitions(tools, (definition) =>
+      isAllowedBySourcePolicy(
+        definition.name,
+        sourceIntegrationPolicy,
+        resolveVisibleRegistryTool(definition.name, options?.callerAgentId),
+        tools,
+      ));
   }
 
   const tools: ToolDefinition[] = [];
@@ -519,7 +613,12 @@ export async function getAvailableTools(
     const authorizationToolName = getConfiguredToolAuthorizationName(name, entry);
     if (
       sourceIntegrationPolicy &&
-      !isIntegrationToolAllowedBySourcePolicy(authorizationToolName, sourceIntegrationPolicy)
+      !isAllowedBySourcePolicy(
+        authorizationToolName,
+        sourceIntegrationPolicy,
+        entry === true ? resolveVisibleRegistryTool(name, options?.callerAgentId) : entry,
+        remoteDefs,
+      )
     ) {
       continue;
     }
@@ -556,7 +655,10 @@ export async function getAvailableTools(
       ) {
         continue;
       }
-      if (!strictConfiguredToolsOnly && configuredRemoteToolName === undefined) {
+      if (
+        !strictConfiguredToolsOnly && configuredRemoteToolName === undefined &&
+        !hasTrustedHostToolProvenance(entry)
+      ) {
         assertLocalToolId(name);
         assertLocalToolId(entry.id);
       }
@@ -602,12 +704,13 @@ export async function getAvailableTools(
     );
   }
 
-  return sourceIntegrationPolicy
-    ? tools.filter((definition) =>
-      isIntegrationToolAllowedBySourcePolicy(
-        configuredAuthorizationToolNames.get(definition.name) ?? definition.name,
-        sourceIntegrationPolicy,
-      )
-    )
-    : tools;
+  return filterToolDefinitions(tools, (definition) =>
+    isAllowedBySourcePolicy(
+      configuredAuthorizationToolNames.get(definition.name) ?? definition.name,
+      sourceIntegrationPolicy,
+      toolsConfig[definition.name] === true
+        ? resolveVisibleRegistryTool(definition.name, options?.callerAgentId)
+        : toolsConfig[definition.name],
+      remoteDefs,
+    ));
 }

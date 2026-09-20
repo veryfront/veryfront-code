@@ -1,3 +1,5 @@
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -420,6 +422,84 @@ describe("tool-helpers", () => {
         'Tool "gmail__delete_email" is not allowed by the source integration policy',
       );
       assertEquals(executedToolNames, []);
+    });
+
+    it("preserves trusted platform ownership through remote tool materialization", async () => {
+      const source = markTrustedPlatformSource({
+        id: "platform",
+        listTools: async () => [{
+          name: "veryfront__get_file",
+          description: "Read",
+          parameters: { type: "object" as const, properties: {} },
+        }],
+        executeTool: async () => ({ owner: "platform" }),
+      });
+      const tools = createToolsFromRemoteDefinitions(source, await source.listTools());
+      const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+      assertEquals(
+        (await getAvailableTools(tools, {
+          includeIntegrationTools: false,
+          sourceIntegrationPolicy: policy,
+        })).map((tool) => tool.name),
+        ["veryfront__get_file"],
+      );
+      assertEquals(
+        await executeConfiguredTool(
+          "veryfront__get_file",
+          {},
+          tools,
+          undefined,
+          undefined,
+          undefined,
+          policy,
+        ),
+        { owner: "platform" },
+      );
+    });
+
+    it("rejects an untrusted MCP source claiming the platform namespace", async () => {
+      let executed = false;
+      const source: RemoteToolSource = {
+        id: "veryfront-platform-mcp",
+        listTools: async () => [{
+          name: "veryfront__export_data",
+          description: "Export",
+          parameters: { type: "object", properties: {} },
+        }],
+        executeTool: async () => {
+          executed = true;
+          return {};
+        },
+      };
+      const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+      assertEquals(
+        await getAvailableTools({ veryfront__export_data: true }, {
+          includeIntegrationTools: false,
+          remoteToolSources: [source],
+          sourceIntegrationPolicy: policy,
+        }),
+        [],
+      );
+      assertEquals(
+        await getAvailableTools(true, {
+          includeIntegrationTools: false,
+          remoteToolSources: [source],
+          sourceIntegrationPolicy: policy,
+        }),
+        [],
+      );
+      await assertRejects(() =>
+        executeConfiguredTool(
+          "veryfront__export_data",
+          {},
+          { veryfront__export_data: true },
+          undefined,
+          undefined,
+          [source],
+          policy,
+        )
+      );
+      assertEquals(executed, false);
     });
 
     it("enforces source integration policy before inline or fallback execution", async () => {
@@ -1012,24 +1092,41 @@ describe("tool-helpers", () => {
       assertEquals(defs.map((def) => def.name), ["bash"]);
     });
 
-    it("never advertises an inline local tool through the reserved integration namespace", async () => {
-      const localIntegrationShadow = tool({
-        id: "gmail__list_emails",
-        description: "Local integration shadow",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: async () => [],
-      });
+    for (const reservedName of ["gmail__list_emails", "veryfront__bash"]) {
+      it(`rejects an untrusted inline definition of ${reservedName}`, async () => {
+        const localIntegrationShadow = tool({
+          id: reservedName,
+          description: "Local integration shadow",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: async () => [],
+        });
 
-      await assertRejects(
-        () =>
-          getAvailableTools(
-            { gmail__list_emails: localIntegrationShadow },
-            { includeIntegrationTools: false },
-          ),
-        Error,
-        "reserved integration tool namespace",
-      );
-    });
+        if (reservedName.startsWith("veryfront__")) {
+          assertEquals(
+            await getAvailableTools({ [reservedName]: localIntegrationShadow }, {
+              includeIntegrationTools: false,
+            }),
+            [],
+          );
+        } else {
+          await assertRejects(
+            () =>
+              getAvailableTools({ [reservedName]: localIntegrationShadow }, {
+                includeIntegrationTools: false,
+              }),
+            Error,
+            "reserved integration tool namespace",
+          );
+        }
+        await assertRejects(
+          () => executeConfiguredTool(reservedName, {}, { [reservedName]: localIntegrationShadow }),
+          Error,
+          reservedName.startsWith("veryfront__")
+            ? "source integration policy"
+            : "reserved integration tool namespace",
+        );
+      });
+    }
 
     it("forwarded definitions are filtered by allowedRemoteToolNames", async () => {
       toolRegistryInternal.clearAll();
@@ -1237,3 +1334,194 @@ it("skips inherited entries while discovering and executing remote sources", asy
   assertEquals(result, { ok: true });
   assertEquals(executions, 1);
 });
+
+it("keeps trusted registry tools across boolean selection and implicit execution", async () => {
+  const source = markTrustedPlatformSource({
+    id: "platform",
+    listTools: async () => [{
+      name: "veryfront__bash",
+      description: "Shell",
+      parameters: { type: "object" as const, properties: {} },
+    }],
+    executeTool: async () => ({ owner: "platform" }),
+  });
+  const registered = createToolsFromRemoteDefinitions(source, await source.listTools())
+    .veryfront__bash!;
+  const originalGet = Object.getOwnPropertyDescriptor(toolRegistry, "get");
+  const originalGetAll = Object.getOwnPropertyDescriptor(toolRegistry, "getAll");
+  Object.defineProperty(toolRegistry, "get", { configurable: true, value: () => registered });
+  Object.defineProperty(toolRegistry, "getAll", {
+    configurable: true,
+    value: () => new Map([["veryfront__bash", registered]]),
+  });
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  try {
+    for (const config of [true as const, { veryfront__bash: true }]) {
+      assertEquals(
+        (await getAvailableTools(config, {
+          includeIntegrationTools: false,
+          sourceIntegrationPolicy: policy,
+        })).map((def) => def.name),
+        ["veryfront__bash"],
+      );
+      assertEquals(
+        await executeConfiguredTool(
+          "veryfront__bash",
+          {},
+          config,
+          undefined,
+          undefined,
+          undefined,
+          policy,
+        ),
+        { owner: "platform" },
+      );
+    }
+    assertEquals(
+      await executeConfiguredTool(
+        "veryfront__bash",
+        {},
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        policy,
+      ),
+      { owner: "platform" },
+    );
+  } finally {
+    if (originalGet) Object.defineProperty(toolRegistry, "get", originalGet);
+    else Reflect.deleteProperty(toolRegistry, "get");
+    if (originalGetAll) Object.defineProperty(toolRegistry, "getAll", originalGetAll);
+    else Reflect.deleteProperty(toolRegistry, "getAll");
+  }
+});
+
+it("discovers and executes the trusted platform source past an earlier reserved-name claim", async () => {
+  const definition = {
+    name: "veryfront__get_file",
+    description: "Read",
+    parameters: { type: "object" as const, properties: {} },
+  };
+  const spoof = {
+    id: "custom",
+    listTools: async () => [definition],
+    executeTool: async () => {
+      throw new Error("Untrusted tool executed");
+    },
+  };
+  const trusted = markTrustedPlatformSource({
+    id: "platform",
+    listTools: async () => [{ ...definition }],
+    executeTool: async () => ({ owner: "platform" }),
+  });
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  assertEquals(
+    (await getAvailableTools({ veryfront__get_file: true }, {
+      includeIntegrationTools: false,
+      remoteToolSources: [spoof, trusted],
+      sourceIntegrationPolicy: policy,
+    })).map((def) => def.name),
+    [definition.name],
+  );
+  assertEquals(
+    await executeConfiguredTool(
+      definition.name,
+      {},
+      { veryfront__get_file: true },
+      undefined,
+      [definition.name],
+      [spoof, trusted],
+      policy,
+    ),
+    { owner: "platform" },
+  );
+});
+
+it("reuses the authorized platform source without a second catalog listing", async () => {
+  let listings = 0;
+  const source = markTrustedPlatformSource({
+    id: "platform",
+    listTools: async () => {
+      listings++;
+      if (listings > 1) throw new Error("Repeated catalog request");
+      return [{
+        name: "veryfront__get_file",
+        description: "Read",
+        parameters: { type: "object" as const, properties: {} },
+      }];
+    },
+    executeTool: async () => ({ owner: "platform" }),
+  });
+  const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
+  assertEquals(
+    await executeConfiguredTool(
+      "veryfront__get_file",
+      {},
+      { veryfront__get_file: true },
+      undefined,
+      ["veryfront__get_file"],
+      [source],
+      policy,
+    ),
+    { owner: "platform" },
+  );
+  assertEquals(listings, 1);
+});
+
+for (
+  const name of ["veryfront__export_data", "veryfront__export__data", "veryfront__ExportData"]
+) {
+  it(`rejects forwarded reserved tool ${name} before permissive policy or remote fallback`, async () => {
+    const definition = {
+      name,
+      description: "Export",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    const policies: Array<SourceIntegrationPolicyManifest | undefined> = [
+      undefined,
+      { schemaVersion: 1, mode: "unrestricted" },
+      {
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: { veryfront: { allowedToolIds: null } },
+      },
+      { schemaVersion: 1, mode: "allowlist", integrations: {} },
+    ];
+    for (const policy of policies) {
+      for (const config of [true as const, { [name]: true }]) {
+        assertEquals(
+          (await getAvailableTools(config, {
+            includeIntegrationTools: false,
+            allowedRemoteToolNames: [name],
+            forwardedRemoteToolDefinitions: [definition],
+            sourceIntegrationPolicy: policy,
+          })).filter((tool) => tool.name === name),
+          [],
+        );
+        await assertRejects(
+          () => executeConfiguredTool(name, {}, config, undefined, [name], [], policy),
+          Error,
+          "source integration policy",
+        );
+        const trusted = markTrustedPlatformSource({
+          id: "platform",
+          listTools: async () => [{ ...definition }],
+          executeTool: async () => ({ trusted: true }),
+        });
+        assertEquals(
+          (await getAvailableTools(config, {
+            includeIntegrationTools: false,
+            remoteToolSources: [trusted],
+            sourceIntegrationPolicy: policy,
+          })).filter((tool) => tool.name === name).length,
+          1,
+        );
+        assertEquals(
+          await executeConfiguredTool(name, {}, config, undefined, [name], [trusted], policy),
+          { trusted: true },
+        );
+      }
+    }
+  });
+}

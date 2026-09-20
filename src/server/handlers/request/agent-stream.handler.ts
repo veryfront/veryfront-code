@@ -1,3 +1,9 @@
+import {
+  createPlatformMcpCatalogSource,
+  withPlatformMcpPolicyAliases,
+} from "#veryfront/agent/platform-mcp-tool-source.ts";
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { Agent } from "#veryfront/agent";
 import type { AgentMcpServerConfig } from "#veryfront/agent/types.ts";
 import {
@@ -30,7 +36,10 @@ import {
   type AgentServiceVeryfrontStudioMcpServerConfig,
   createAgentServiceRemoteMcpConfig,
 } from "#veryfront/agent/service/mcp-server-config.ts";
-import { createMcpToolPolicyGate } from "#veryfront/agent/mcp-tool-policy.ts";
+import {
+  createMcpToolPolicyGate,
+  wrapRemoteToolSourceWithMcpPolicy,
+} from "#veryfront/agent/mcp-tool-policy.ts";
 import {
   clientAllowsStudioMcp,
   resolveRuntimeClientProfile,
@@ -71,6 +80,10 @@ import {
   PERMISSION_DENIED,
   SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
+import {
+  createSourceSnapshotChangedError,
+  isSourceSnapshotChangedError,
+} from "#veryfront/errors/source-snapshot-change.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
@@ -385,17 +398,6 @@ function hasVeryfrontPlatformRemoteToolSource(
     false;
 }
 
-function createStaticRemoteToolSource(
-  source: RemoteToolSource,
-  toolDefinitions: ToolDefinition[],
-): RemoteToolSource {
-  return {
-    id: source.id,
-    listTools: async () => toolDefinitions,
-    executeTool: (toolName, args, context) => source.executeTool(toolName, args, context),
-  };
-}
-
 /**
  * Environment label bound to one agent source.
  *
@@ -501,6 +503,20 @@ async function resolveAgentSourceConfig(
   });
 }
 
+function isPlatformToolDeniedByAgent(
+  agent: Agent,
+  toolName: string,
+  aliases: ReadonlyMap<string, string>,
+): boolean {
+  const configuredTools = agent.config.tools;
+  if (!isRecord(configuredTools)) return false;
+  const legacyName = aliases.get(toolName) ?? toolName;
+  const canonicalName = legacyName.includes("__") ? legacyName : `veryfront__${legacyName}`;
+  if (configuredTools[canonicalName] === false) return true;
+  const projectTool = resolveVisibleRegistryTool(legacyName, agent.id);
+  return !projectTool && configuredTools[legacyName] === false;
+}
+
 async function withVeryfrontPlatformRemoteTools(input: {
   agent: Agent;
   token?: string | null;
@@ -549,26 +565,56 @@ async function withVeryfrontPlatformRemoteTools(input: {
     return input.agent;
   }
 
+  const platformCatalog = createPlatformMcpCatalogSource(
+    platformRemoteToolSource,
+    platformToolDefinitions,
+  );
+  const { aliases } = platformCatalog;
+  platformToolDefinitions = platformCatalog.definitions;
+  for (const [canonicalName, legacyName] of aliases) {
+    if (!requestedToolNames.includes(canonicalName) && !requestedToolNames.includes(legacyName)) {
+      continue;
+    }
+    if (!requestedToolNames.includes(canonicalName)) requestedToolNames.push(canonicalName);
+    if (
+      !resolveVisibleRegistryTool(legacyName, input.agent.id) &&
+      !requestedToolNames.includes(legacyName)
+    ) {
+      requestedToolNames.push(legacyName);
+    }
+  }
+
   const platformToolNames = new Set(platformToolDefinitions.map((tool) => tool.name));
   const requestedPlatformToolNames =
     (veryfrontApiMcpPolicy.allowAll ? [...platformToolNames] : requestedToolNames).filter((
       toolName,
-    ) => platformToolNames.has(toolName) && !veryfrontApiMcpPolicy.deniedToolNames.has(toolName));
-  if (requestedPlatformToolNames.length === 0) {
-    return input.agent;
-  }
-
+    ) =>
+      platformToolNames.has(toolName) &&
+      !isPlatformToolDeniedByAgent(input.agent, toolName, aliases) &&
+      !veryfrontApiMcpPolicy.deniedToolNames.has(toolName) &&
+      !veryfrontApiMcpPolicy.deniedToolNames.has(aliases.get(toolName) ?? toolName) &&
+      !veryfrontApiMcpPolicy.deniedToolNames.has(`veryfront__${toolName}`)
+    );
   const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
   const platformRemoteToolSources = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
-    bindRemoteToolSourceToProject(
-      createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions),
+    markTrustedPlatformSource(bindRemoteToolSourceToProject(
+      wrapRemoteToolSourceWithMcpPolicy(
+        platformCatalog.source,
+        { allow: requestedPlatformToolNames },
+      ),
       input.projectId,
-    ),
+    )),
   ];
 
+  const mcpServers = input.agent.config.mcpServers?.map((server) =>
+    server.kind === "veryfront-api"
+      ? { ...server, toolPolicy: withPlatformMcpPolicyAliases(server.toolPolicy) }
+      : server
+  );
   const runtimeConfig: Agent["config"] & RuntimeRemoteToolConfig = {
     ...input.agent.config,
+    ...(mcpServers === undefined ? {} : { mcpServers }),
     __vfAllowedRemoteTools: mergeAllowedRemoteTools(
       runtimeRemoteToolConfig.__vfAllowedRemoteTools,
       requestedPlatformToolNames,
@@ -1096,9 +1142,9 @@ export class AgentStreamHandler extends BaseHandler {
                   "agent-source-config-identity",
                 );
                 if (configSourceFingerprint !== requestSourceFingerprint) {
-                  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                    detail: "The branch source changed while its agent configuration was evaluated",
-                  });
+                  throw createSourceSnapshotChangedError(
+                    "The branch source changed while its agent configuration was evaluated",
+                  );
                 }
               }
               const sourceScopedContext: HandlerContext = {
@@ -1130,10 +1176,9 @@ export class AgentStreamHandler extends BaseHandler {
                         "agent-source-credential-handoff",
                       );
                       if (runtimeSourceFingerprint !== requestSourceFingerprint) {
-                        throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                          detail:
-                            "The branch source changed while credentials were isolated for agent execution",
-                        });
+                        throw createSourceSnapshotChangedError(
+                          "The branch source changed while credentials were isolated for agent execution",
+                        );
                       }
                     }
 
@@ -1148,10 +1193,9 @@ export class AgentStreamHandler extends BaseHandler {
                               "agent-source-discovery-identity",
                             );
                           if (discoverySourceFingerprint !== requestSourceFingerprint) {
-                            throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                              detail:
-                                "The branch source changed while project agents were discovered",
-                            });
+                            throw createSourceSnapshotChangedError(
+                              "The branch source changed while project agents were discovered",
+                            );
                           }
                         }
 
@@ -1322,7 +1366,10 @@ export class AgentStreamHandler extends BaseHandler {
         // reported event are the only places it survives.
         if (response.status >= 500 && !replayed) {
           const cause = describeErrorCause(error.cause);
-          logger.error("Internal agent stream request failed", {
+          // A branch edit landing mid-request is retried by the control plane
+          // on the next generation; only other 5xx failures are errors here.
+          const log = isSourceSnapshotChangedError(error) ? logger.warn : logger.error;
+          log.call(logger, "Internal agent stream request failed", {
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
             status: response.status,

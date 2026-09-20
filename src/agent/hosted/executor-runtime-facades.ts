@@ -1,3 +1,5 @@
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import type { ExecutorChannel } from "../executor/channel.ts";
 import type { HostToolSet } from "#veryfront/tool/host-tools.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
@@ -65,6 +67,7 @@ export async function createExecutorRuntimeFacades(options: {
     const remoteToolSources = new Map<string, RemoteToolSource>();
     for (const source of sources) {
       if (remoteIds.has(source.id)) {
+        if (input.platformToolSourceIds?.includes(source.id)) markTrustedPlatformSource(source);
         remoteToolSources.set(source.id, source);
         continue;
       }
@@ -92,6 +95,10 @@ export async function createExecutorRuntimeFacades(options: {
             );
           },
         };
+      }
+      for (const entry of input.platformHostTools ?? []) {
+        const tool = tools[entry.toolName];
+        if (entry.sourceId === source.id && tool) markTrustedHostToolProvenance(tool);
       }
       hostTools.set(source.id, tools);
     }

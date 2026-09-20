@@ -11,6 +11,7 @@ import {
   runWithExactSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { isSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import {
   ProjectMiddlewareRuntime,
   type ProjectMiddlewareRuntimeContext,
@@ -285,6 +286,7 @@ describe("ProjectMiddlewareRuntime", () => {
       rejection.message.includes("changed after request configuration was derived"),
       true,
     );
+    assertEquals(isSourceSnapshotChangedError(rejection), true);
   });
 
   it("rejects a source change before loading preview middleware", async () => {
@@ -611,6 +613,7 @@ describe("ProjectMiddlewareRuntime", () => {
 
     assertInstanceOf(rejection, Error);
     assertEquals(rejection.message.includes("changed during handler dispatch"), true);
+    assertEquals(isSourceSnapshotChangedError(rejection), true);
   });
 
   it("evicts cached production middleware for the invalidated project", async () => {

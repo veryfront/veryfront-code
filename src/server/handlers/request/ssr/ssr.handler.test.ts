@@ -1,4 +1,5 @@
 import { RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
+import { isSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import * as React from "react";
 import {
@@ -370,6 +371,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
 
         assertInstanceOf(rejection, VeryfrontError);
         assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+        assertEquals(isSourceSnapshotChangedError(rejection), true);
         assertEquals(
           __trackedRequestIdsForTests(),
           [],
@@ -506,6 +508,47 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(await result.response?.text(), "current API response");
       assertEquals(renderCalls, 1);
       assertEquals(reclassificationCalls, 1);
+    });
+
+    it("rejects a still-page SSR result whose source generation changed as a snapshot change", async () => {
+      let version = 1;
+      const adapter = createMockAdapter();
+      adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
+      adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+      adapter.fs.getSourceSnapshotVersion = () => version;
+      const ctx = makeCtx({
+        adapter,
+        projectSlug: "preview-project",
+        requestContext: {
+          token: "",
+          slug: "preview-project",
+          branch: "main",
+          mode: "preview",
+        },
+      });
+
+      // The new generation still routes to the page, but the rendered HTML
+      // came from the old one, so the request must be retried.
+      await preparePreviewDocumentSourceSnapshot(ctx, () => Promise.resolve({ continue: true }));
+
+      const rejection = await assertRejects(() =>
+        new SSRHandler(createMockSSRService({
+          renderPage: () => {
+            version++;
+            return Promise.resolve({
+              status: 200,
+              html: "<html>mixed-generation page</html>",
+              isStreaming: false,
+              cacheStrategy: "short" as const,
+              slug: "review",
+            });
+          },
+        })).handle(new Request("http://localhost/review"), ctx)
+      );
+
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.status, 503);
+      assertEquals(isSourceSnapshotChangedError(rejection), true);
     });
 
     it("rejects a legacy ensure-only adapter for a preview document", async () => {

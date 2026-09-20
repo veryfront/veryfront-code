@@ -189,16 +189,25 @@ function codexCompletionReaction(
 
 function codexRateLimitComment(
   createdAt = "2026-08-25T08:01:00Z",
+  body = "You have reached your Codex usage limits. Please try again later.",
 ) {
   return {
     id: 103,
     user: bot("chatgpt-codex-connector[bot]", CODEX_ID),
-    body:
-      "You have reached your Codex usage limits for security reviews. Please try again later.",
+    body,
     html_url: "https://example.test/rate-limit",
     created_at: createdAt,
     updated_at: createdAt,
   };
+}
+
+function codexSecurityReviewRateLimitComment(
+  createdAt = "2026-08-25T08:01:00Z",
+) {
+  return codexRateLimitComment(
+    createdAt,
+    "You have reached your Codex usage limits for security reviews. Please try again later.",
+  );
 }
 
 function pendingAutomatedReviewStatus(
@@ -2396,6 +2405,189 @@ describe("automated review publication", () => {
 
     assertEquals(result.state, "success");
     assertEquals(fixture.published[0]?.state, "success");
+  });
+
+  it("keeps waiting when only the security-review quota is exhausted", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexSecurityReviewRateLimitComment()]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:05:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
+  });
+
+  it("ignores a triggering security-review quota notice", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexSecurityReviewRateLimitComment()]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewFailureCommentId: 103,
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("accepts exact-head proof alongside a security-review quota notice", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[
+          codexSecurityReviewRateLimitComment(),
+          codexComment(HEAD.slice(0, 10), {
+            id: 104,
+            created_at: "2026-08-25T08:02:00Z",
+            updated_at: "2026-08-25T08:02:00Z",
+          }),
+        ]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+          { event: "commented", id: 104 },
+        ]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:05:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "success");
+    assertEquals(fixture.published[0]?.state, "success");
+  });
+
+  it("still times out a pending review behind a security-review quota notice", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexSecurityReviewRateLimitComment()]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:30:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.description, "PR#1 automated review timed out");
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("still fails on a code-review quota notice", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexRateLimitComment(
+          "2026-08-25T08:01:00Z",
+          "You have reached your Codex usage limits for code reviews. Please try again later.",
+        )]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:05:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.description, "PR#1 automated review rate limited");
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("drops a terminal failure proven only by a security-review quota notice", async () => {
+    const limitComment = codexSecurityReviewRateLimitComment(
+      "2026-08-25T08:00:01Z",
+    );
+    const terminalStatus = automatedReviewStatus({
+      id: 105,
+      state: "failure",
+      description: "PR#1 automated review rate limited",
+      target_url: limitComment.html_url,
+      created_at: "2026-08-25T08:00:02Z",
+    });
+    const fixture = githubFixture({
+      pages: {
+        comments: [[limitComment]],
+        events: [[{
+          event: "reopened",
+          id: 102,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[terminalStatus]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "reopened", id: 102 },
+          { event: "commented", id: 103 },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published[0]?.state, "pending");
   });
 
   it("fails pending review evidence at the 30-minute timeout", async () => {

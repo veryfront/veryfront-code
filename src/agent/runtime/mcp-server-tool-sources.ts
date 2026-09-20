@@ -1,4 +1,13 @@
 import {
+  createLivePlatformMcpSource,
+  withPlatformMcpPolicyAliases,
+} from "../platform-mcp-tool-source.ts";
+import {
+  hasTrustedPlatformSource,
+  inheritTrustedPlatformSource,
+  markTrustedPlatformSource,
+} from "#veryfront/tool/platform-source-provenance.ts";
+import {
   concatPrivateArrays,
   filterPrivateArray,
   flatMapPrivateArray,
@@ -173,9 +182,12 @@ function propagateBootstrapIdentity(
   input: RemoteToolSource,
   output: RemoteToolSource,
 ): RemoteToolSource {
-  return isBootstrapIdentityRemoteToolSource(input)
-    ? markBootstrapIdentityRemoteToolSource(output)
-    : output;
+  return inheritTrustedPlatformSource(
+    input,
+    isBootstrapIdentityRemoteToolSource(input)
+      ? markBootstrapIdentityRemoteToolSource(output)
+      : output,
+  );
 }
 
 export function constrainRuntimeRemoteToolSources(
@@ -298,7 +310,7 @@ export function bindRemoteToolSourceToProject(
     defaultProjectId: projectId,
   });
 
-  return {
+  return inheritTrustedPlatformSource(source, {
     id: source.id,
     listTools: (context) => catalog.listTools(withServerProject(context, projectId)),
     async executeTool(toolName, args, context) {
@@ -313,7 +325,7 @@ export function bindRemoteToolSourceToProject(
         execution.executeContext,
       );
     },
-  };
+  });
 }
 
 function createVeryfrontApiMcpServerToolSource(
@@ -360,10 +372,12 @@ function createVeryfrontApiMcpServerToolSource(
       }
       : {}),
   });
-  const policySource = createMcpToolPolicySource(source, server.toolPolicy);
-  return markBootstrapIdentityRemoteToolSource(
-    bindRemoteToolSourceToProject(policySource, projectId),
+  const policySource = createLivePlatformMcpSource(
+    createMcpToolPolicySource(source, withPlatformMcpPolicyAliases(server.toolPolicy)),
   );
+  return markTrustedPlatformSource(markBootstrapIdentityRemoteToolSource(
+    bindRemoteToolSourceToProject(policySource, projectId),
+  ));
 }
 
 function requiresInjectedStudioMcpServerToolSource(server: AgentVeryfrontMcpServerConfig): never {
@@ -504,7 +518,17 @@ export function getRuntimeRemoteToolSources(
       // A retained source keeps its provenance: a deeper child must still be
       // able to re-derive its own bootstrap source past an inherited alias
       // this level only policy-narrowed.
-      return propagateBootstrapIdentity(source, createMcpToolPolicySource(source, policy));
+      // Trusted platform sources get the same live canonical catalog as a
+      // configured platform server, so legacy-only listings still expose
+      // `veryfront__*` names.
+      return propagateBootstrapIdentity(
+        source,
+        hasTrustedPlatformSource(source)
+          ? createLivePlatformMcpSource(
+            createMcpToolPolicySource(source, withPlatformMcpPolicyAliases(policy)),
+          )
+          : createMcpToolPolicySource(source, policy),
+      );
     },
   );
   const remoteToolSources = concatPrivateArrays(

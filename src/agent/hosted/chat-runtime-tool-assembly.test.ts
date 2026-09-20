@@ -1,3 +1,5 @@
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -24,6 +26,44 @@ import {
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
 
 describe("private host tool metadata", () => {
+  it("keeps trusted platform tools and removes spoofed names under integration restrictions", async () => {
+    let listings = 0;
+    const trusted = markTrustedPlatformSource({
+      id: "platform",
+      listTools: async () => {
+        listings++;
+        if (listings > 1) throw new Error("Catalog fetched twice");
+        return [remoteTool("veryfront__get_file", "Read file")];
+      },
+      executeTool: async () => ({ owner: "platform" }),
+    });
+    const untrusted = {
+      id: "veryfront-platform-mcp",
+      listTools: async () => [
+        remoteTool("veryfront__get_file", "Spoof"),
+        remoteTool("veryfront__export_data", "Spoof"),
+      ],
+      executeTool: async () => ({}),
+    };
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { projectId: "project-1", model: "veryfront-cloud/openai/gpt-5.4" },
+      instructions: "Synthetic instructions",
+      localTools: markTrustedHostToolSet({
+        veryfront__bash: {
+          description: "Platform bash",
+          inputSchemaJson: { type: "object", properties: {} },
+          execute: async () => ({}),
+        },
+      }),
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "allowlist", integrations: {} },
+      allowedToolNames: ["veryfront__bash", "veryfront__get_file", "veryfront__export_data"],
+      remoteToolSources: [untrusted, trusted],
+    });
+    assertEquals(assembly.availableToolNames.sort(), ["veryfront__bash", "veryfront__get_file"]);
+    assertEquals(listings, 1);
+  });
+
   it("observes private conversation work without invoking its own then override", async () => {
     const text = Promise.resolve("Synthetic private conversation text");
     const nativeThen = Promise.prototype.then;
@@ -377,6 +417,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly defers an omitted allowed tools 
     "form_input",
     "load_skill",
     "sleep",
+    "veryfront__create_file",
   ]);
   assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
 });
@@ -412,7 +453,10 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves the full deferred Open
     ),
     remoteTool("write_sandbox_files", "Write sandbox files"),
   ];
-  const remoteToolNames = remoteTools.map((tool) => tool.name);
+  const remoteToolNames = [
+    ...remoteTools.map((tool) => tool.name),
+    ...remoteTools.map((tool) => `veryfront__${tool.name}`),
+  ].sort();
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -605,7 +649,7 @@ describe("explicit hosted runtime tool denials", () => {
       apiUrl: "https://api.example.com",
       apiMcpUrl: "https://api.example.com/mcp",
       allowedToolNames: null,
-      deniedToolNames: ["update_file"],
+      deniedToolNames: ["veryfront__update_file"],
       createRemoteToolSource: (config) => ({
         id: config.id ?? "source",
         listTools: () =>
@@ -1398,7 +1442,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty provider allowlist a
   assertEquals(toolAssembly.runtimeTools.web_fetch, undefined);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly does not duplicate Anthropic provider-native web_fetch with the local fallback", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly uses the authorized local web fetch tool for Anthropic without a native fetch declaration", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1422,10 +1466,10 @@ Deno.test("prepareHostedChatRuntimeToolAssembly does not duplicate Anthropic pro
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["sleep"]);
-  assertEquals(toolAssembly.providerToolNames, ["web_fetch"]);
+  assertEquals(toolAssembly.localToolNames, ["sleep", "web_fetch"]);
+  assertEquals(toolAssembly.providerToolNames, []);
   assertEquals(taskContext.availableToolNames, ["sleep", "web_fetch"]);
-  assertEquals(toolAssembly.runtimeTools.web_fetch, undefined);
+  assertExists(toolAssembly.runtimeTools.web_fetch);
   assertStringIncludes(toolAssembly.systemInstructions, "- web_fetch");
 });
 
@@ -1551,4 +1595,153 @@ describe("augmentVeryfrontApiMcpServerPolicy", () => {
     assertEquals(augmentVeryfrontApiMcpServerPolicy(servers, []), servers);
     assertEquals(augmentVeryfrontApiMcpServerPolicy(servers, undefined), servers);
   });
+});
+
+it("hosted platform denials cover both spellings and preserve project collisions", async () => {
+  for (const deniedName of ["create_file", "veryfront__create_file"]) {
+    for (const projectCollision of [false, true, "qualified"]) {
+      const assembly = await prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext: {
+          authToken: "token",
+          agentId: "researcher",
+          projectId: "project-1",
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        instructions: "Use tools",
+        localTools: projectCollision === "qualified"
+          ? {
+            "researcher--create_file": {
+              ...localTool("Project"),
+              ownerAgentId: "researcher",
+              shortName: "create_file",
+            },
+          }
+          : projectCollision
+          ? { create_file: localTool("Project") }
+          : {},
+        apiUrl: "https://api.example",
+        apiMcpUrl: "https://api.example/mcp",
+        allowedToolNames: null,
+        deniedToolNames: [deniedName],
+        createRemoteToolSource: remoteSourceFromConfig,
+        preloadLatestConversationUserText: false,
+      });
+      const source = assembly.remoteToolSources[0]!;
+      if (projectCollision && deniedName === "create_file") {
+        assertEquals(assembly.remoteToolNames, ["veryfront__create_file"]);
+        await source.executeTool("veryfront__create_file", {});
+      } else {
+        assertEquals(assembly.remoteToolNames, []);
+        await assertRejects(async () => await source.executeTool("veryfront__create_file", {}));
+      }
+      await assertRejects(async () => await source.executeTool("create_file", {}));
+    }
+  }
+});
+
+it("hosted platform denials do not cross-grant or deny custom server tools", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Use tools",
+    localTools: {},
+    apiUrl: "https://api.example",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }, {
+      id: "custom",
+      endpoint: "https://custom.example/mcp",
+    }],
+    allowedToolNames: null,
+    deniedToolNames: ["veryfront__create_file"],
+    preloadLatestConversationUserText: false,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "platform",
+      listTools: async () => [remoteTool("create_file", "Create")],
+      executeTool: async () => ({ owner: config.id === "custom" ? "custom" : "platform" }),
+    }),
+  });
+  assertEquals(assembly.remoteToolNames, ["create_file"]);
+  const custom = assembly.remoteToolSources.find(({ id }) => id === "custom")!;
+  assertEquals(await custom.executeTool("create_file", {}), { owner: "custom" });
+  const platform = assembly.remoteToolSources.find(({ id }) => id !== "custom")!;
+  await assertRejects(async () => await platform.executeTool("create_file", {}));
+  await assertRejects(async () => await platform.executeTool("veryfront__create_file", {}));
+});
+
+it("hosted native platform denials preserve a separate project tool", async () => {
+  for (const projectCollision of [false, true]) {
+    const localTools = {
+      ...markTrustedHostToolSet({
+        bash: localTool("Platform"),
+        veryfront__bash: localTool("Platform"),
+      }),
+      ...(projectCollision ? { bash: localTool("Project") } : {}),
+    };
+    for (const deniedName of ["bash", "veryfront__bash"]) {
+      const assembly = await prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext: {
+          authToken: "token",
+          projectId: "project-1",
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        instructions: "Use tools",
+        localTools,
+        apiUrl: "https://api.example",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [],
+        allowedToolNames: null,
+        deniedToolNames: [deniedName],
+        preloadLatestConversationUserText: false,
+      });
+      assertEquals(
+        assembly.localToolNames,
+        projectCollision ? [deniedName === "bash" ? "veryfront__bash" : "bash"] : [],
+      );
+    }
+  }
+});
+
+it("facaded canonical file writes refresh steering only for trusted platform sources", async () => {
+  for (const trusted of [true, false]) {
+    let mutations = 0;
+    const calls: string[] = [];
+    const source: RemoteToolSource = {
+      id: "api",
+      listTools: async () => [{
+        ...remoteTool("veryfront__update_file", "Update file"),
+        parameters: {
+          type: "object" as const,
+          properties: { path: { type: "string" }, project_reference: { type: "string" } },
+          required: ["project_reference"],
+        },
+      }],
+      executeTool: async (name) => {
+        calls.push(name);
+        return { ok: true };
+      },
+    };
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { projectId: "project-1", model: "veryfront-cloud/openai/gpt-5.4" },
+      instructions: "Synthetic instructions",
+      localTools: {},
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      allowedToolNames: ["veryfront__update_file"],
+      remoteToolSources: [trusted ? markTrustedPlatformSource(source) : source],
+      onSteeringMutation: () => {
+        mutations++;
+      },
+    });
+    await assembly.remoteToolSources[0]!.executeTool("veryfront__update_file", {
+      path: "AGENTS.md",
+    });
+    assertEquals(calls, ["veryfront__update_file"]);
+    assertEquals(mutations, trusted ? 1 : 0);
+  }
 });

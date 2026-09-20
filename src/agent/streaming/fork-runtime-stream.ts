@@ -36,10 +36,8 @@ import {
   shouldContinueForkRuntimeStep,
 } from "./fork-runtime-step-progress.ts";
 import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
-import {
-  applySourceIntegrationPolicy,
-  type SourceIntegrationPolicyManifest,
-} from "#veryfront/integrations/source-policy.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { isToolAllowedBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 
 const IntrinsicReadableStream = ReadableStream;
 
@@ -178,9 +176,17 @@ export function startAgentRuntimeForkWithHostTools<
       forkModel: input.forkModel,
       forkTools,
     });
-  const forkToolNames = input.sourceIntegrationPolicy
-    ? applySourceIntegrationPolicy(requestedForkToolNames, input.sourceIntegrationPolicy)
-    : requestedForkToolNames;
+  // Reserved platform names need trusted provenance even without a connector policy.
+  const sourcePolicy = input.sourceIntegrationPolicy ??
+    { schemaVersion: 1, mode: "unrestricted" } as const;
+  const forkToolNames = requestedForkToolNames.filter((name) => {
+    const tool = runtimeTools[name];
+    return isToolAllowedBySourcePolicy(
+      name,
+      sourcePolicy,
+      typeof tool === "object" ? tool : undefined,
+    );
+  });
   const providerNativeToolNames = new Set(
     getProviderNativeToolNames({
       provider: input.provider,

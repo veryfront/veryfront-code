@@ -18,7 +18,8 @@ import {
 } from "./context.ts";
 import {
   isSupportedMistralModelId,
-  normalizeVeryfrontCloudProviderAlias,
+  resolveVeryfrontCloudGatewayPath,
+  resolveVeryfrontCloudProviderId,
   type VeryfrontCloudProviderId,
 } from "./model-catalog.ts";
 import {
@@ -66,14 +67,6 @@ interface ParsedVeryfrontCloudModelId {
   provider: VeryfrontCloudProviderId;
   modelId: string;
 }
-
-const GATEWAY_PATHS = new Map<VeryfrontCloudProviderId, string>([
-  ["anthropic", "ai/gateway/anthropic/v1"],
-  ["openai", "ai/gateway/openai/v1"],
-  ["google", "ai/gateway/google/v1beta"],
-  ["mistral", "ai/gateway/mistral/v1"],
-  ["moonshotai", "ai/gateway/moonshotai/v1"],
-]);
 
 function readNativeURLString(
   url: URL,
@@ -209,7 +202,7 @@ export function parseVeryfrontCloudModelId(
   }
 
   const rawProvider = modelId.slice(0, slashIndex);
-  const normalizedProvider = normalizeVeryfrontCloudProviderAlias(rawProvider);
+  const normalizedProvider = resolveVeryfrontCloudProviderId(rawProvider);
   const upstreamModelId = modelId.slice(slashIndex + 1);
 
   if (
@@ -294,7 +287,7 @@ export function getVeryfrontCloudGatewayBaseUrl(
   apiBaseUrl: string,
   provider: VeryfrontCloudProviderId,
 ): string {
-  const gatewayPath = GATEWAY_PATHS.get(provider);
+  const gatewayPath = resolveVeryfrontCloudGatewayPath(provider);
   if (!gatewayPath) {
     throw new TypeError(`Unsupported Veryfront Cloud provider "${String(provider)}"`);
   }

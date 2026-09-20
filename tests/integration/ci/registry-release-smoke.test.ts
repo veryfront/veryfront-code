@@ -228,11 +228,11 @@ exit 0
       const log = await Deno.readTextFile(npmLog);
       assertStringIncludes(
         log,
-        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts veryfront@${version} @example/runtime-kit@${version} @veryfront/ext-parser-babel@${version}`,
+        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts --prefer-online veryfront@${version} @example/runtime-kit@${version} @veryfront/ext-parser-babel@${version}`,
       );
       assertStringIncludes(
         log,
-        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts @veryfront/ext-auth-jwt@${version}`,
+        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts --prefer-online @veryfront/ext-auth-jwt@${version}`,
       );
       assertEquals(
         log.match(new RegExp(`registry=${registryUrl}`, "g"))?.length,
@@ -635,3 +635,250 @@ exit 0
     await Deno.remove(tempDir, { recursive: true });
   }
 }
+
+const SKEW_VERSION = "1.2.3-rc.45";
+
+/**
+ * npm stub whose `install` replays one scripted failure per attempt, then
+ * succeeds. Attempt N prints `$VF_FAKE_NPM_DIR/fail-N` and exits 1; a missing
+ * file means the install succeeds. A failed attempt leaves a partial project
+ * behind, and the next attempt records whether it saw that leftover, so a
+ * retry that reuses a dirty project is observable.
+ */
+const SCRIPTED_INSTALL_NPM = `#!/usr/bin/env bash
+${NPM_STUB_LOGLEVEL_PREAMBLE}
+case "\${1:-}" in
+  init | pkg) exit 0 ;;
+  install)
+    count=0
+    if [ -f "\$VF_FAKE_NPM_DIR/count" ]; then count="\$(cat "\$VF_FAKE_NPM_DIR/count")"; fi
+    count=\$((count + 1))
+    printf '%s' "\$count" >"\$VF_FAKE_NPM_DIR/count"
+    printf 'args=%s\\n' "\$*" >>"\$VF_FAKE_NPM_DIR/log"
+    if [ -e node_modules/.partial-attempt ] || [ -e package-lock.json ]; then
+      printf 'leftover=%s\\n' "\$count" >>"\$VF_FAKE_NPM_DIR/log"
+    fi
+    if [ -f "\$VF_FAKE_NPM_DIR/fail-\$count" ]; then
+      mkdir -p node_modules
+      : >node_modules/.partial-attempt
+      : >package-lock.json
+      while IFS= read -r line; do vf_say_error "\$line"; done <"\$VF_FAKE_NPM_DIR/fail-\$count"
+      exit 1
+    fi
+    mkdir -p node_modules/jose
+    exit 0
+    ;;
+esac
+exit 0
+`;
+
+interface ScriptedInstallResult {
+  code: number;
+  stderr: string;
+  installArgs: string[];
+  leftovers: string[];
+}
+
+/**
+ * Run the registry install smoke with `failures[i]` as the npm output of
+ * install attempt i + 1. `node` always fails, so an install that eventually
+ * succeeds surfaces as the behavior classification (21) rather than 20.
+ */
+async function runScriptedRegistryInstall(
+  failures: string[][],
+  maxAttempts: number,
+): Promise<ScriptedInstallResult> {
+  const tempDir = await makeTempDir({ prefix: "vf-registry-skew-" });
+  const binDir = `${tempDir}/bin`;
+  const npmDir = `${tempDir}/npm`;
+  await Deno.mkdir(binDir);
+  await Deno.mkdir(npmDir);
+  await writeExecutable(`${binDir}/npm`, SCRIPTED_INSTALL_NPM);
+  await writeExecutable(`${binDir}/node`, "#!/bin/bash\nexit 1\n");
+  for (const [index, lines] of failures.entries()) {
+    await Deno.writeTextFile(
+      `${npmDir}/fail-${index + 1}`,
+      lines.join("\n") + "\n",
+    );
+  }
+
+  try {
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", installSmokePath],
+      env: {
+        PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+        VF_FAKE_NPM_DIR: npmDir,
+        VF_NPM_REGISTRY_INSTALL_ATTEMPTS: String(maxAttempts),
+        VF_NPM_REGISTRY_RETRY_DELAY_MS: "0",
+        VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-blob-gcs\n@veryfront/ext-auth-jwt",
+        VF_NPM_REGISTRY_URL: "https://registry.npmjs.org/",
+        VF_NPM_REGISTRY_VERSION: SKEW_VERSION,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const log = await Deno.readTextFile(`${npmDir}/log`).catch(() => "");
+    const lines = log.trim().split("\n").filter(Boolean);
+    return {
+      code: output.code,
+      stderr: decoder.decode(output.stderr),
+      installArgs: lines.filter((line) => line.startsWith("args="))
+        .map((line) => line.slice("args=".length)),
+      leftovers: lines.filter((line) => line.startsWith("leftover=")),
+    };
+  } finally {
+    await Deno.remove(tempDir, { recursive: true });
+  }
+}
+
+/** The stale-packument signature npm printed in CI run 35445818678. */
+const STALE_PACKUMENT_ERESOLVE = [
+  "npm error code ERESOLVE",
+  "npm error ERESOLVE unable to resolve dependency tree",
+  "npm error While resolving: veryfront-npm-smoke-abc@1.0.0",
+  "npm error Found: veryfront@undefined",
+  `npm error   veryfront@"${SKEW_VERSION}" from the root project`,
+  "npm error Could not resolve dependency:",
+  `npm error peer veryfront@"^${SKEW_VERSION}" from @veryfront/ext-blob-gcs@${SKEW_VERSION}`,
+];
+
+const MISSING_VERSION_ETARGET = [
+  "npm error code ETARGET",
+  `npm error notarget No matching version found for @veryfront/ext-blob-gcs@${SKEW_VERSION}.`,
+];
+
+/** A 404 that names only the exact version's tarball URL. */
+const MISSING_TARBALL_ONLY_E404 = [
+  "npm error code E404",
+  `npm error 404 Not Found - GET https://registry.npmjs.org/@veryfront/ext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz - Not found`,
+];
+
+/** The same tarball 404 with the scope separator URL-encoded. */
+const MISSING_ENCODED_TARBALL_E404 = [
+  "npm error code E404",
+  `npm error 404 Not Found - GET https://registry.npmjs.org/@veryfront%2fext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz - Not found`,
+];
+
+describe("exact-version registry install propagation retry", () => {
+  it("retries a stale-packument install and continues once npm sees the version", async () => {
+    const result = await runScriptedRegistryInstall(
+      [
+        STALE_PACKUMENT_ERESOLVE,
+        MISSING_VERSION_ETARGET,
+        MISSING_TARBALL_ONLY_E404,
+        MISSING_ENCODED_TARBALL_E404,
+      ],
+      5,
+    );
+
+    // Root install: four skewed attempts, then success; the behavior phase
+    // (stubbed node) then fails, proving the install itself passed.
+    assertEquals(result.code, 21, result.stderr);
+    assertEquals(result.installArgs.length, 5);
+    assertStringIncludes(
+      result.stderr,
+      "attempt 1/5 hit npm registry propagation skew (ERESOLVE: veryfront@undefined)",
+    );
+    assertStringIncludes(
+      result.stderr,
+      `attempt 2/5 hit npm registry propagation skew (ETARGET: @veryfront/ext-blob-gcs@${SKEW_VERSION})`,
+    );
+    assertStringIncludes(
+      result.stderr,
+      `attempt 3/5 hit npm registry propagation skew (E404: @veryfront/ext-blob-gcs@${SKEW_VERSION})`,
+    );
+    assertStringIncludes(
+      result.stderr,
+      `attempt 4/5 hit npm registry propagation skew (E404: @veryfront/ext-blob-gcs@${SKEW_VERSION})`,
+    );
+    // Each retry starts from a clean project and revalidates cached metadata.
+    assertEquals(result.leftovers, []);
+    for (const args of result.installArgs) {
+      assertStringIncludes(args, "--prefer-online");
+    }
+  });
+
+  it("fails immediately on an install error that is not propagation skew", async () => {
+    for (
+      const failure of [
+        [
+          "npm error code E401",
+          "npm error 401 Unauthorized - GET https://registry.npmjs.org/veryfront",
+        ],
+        [
+          "npm error code ERESOLVE",
+          "npm error Found: react@18.3.1",
+          `npm error peer react@"^19.0.0" from veryfront@${SKEW_VERSION}`,
+        ],
+        [
+          "npm error code ETARGET",
+          "npm error notarget No matching version found for left-pad@9.9.9.",
+        ],
+        [
+          "npm error code ETARGET",
+          "npm error notarget No matching version found for veryfront@1.2.3-rc.4.",
+        ],
+        [
+          "npm error code E404",
+          "npm error 404 Not Found - GET https://registry.npmjs.org/veryfront-typo",
+        ],
+        // Same basename and version, different scope: not a package under test.
+        [
+          "npm error code E404",
+          `npm error 404 Not Found - GET https://registry.npmjs.org/@other/ext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz`,
+        ],
+        [
+          "npm error code E404",
+          `npm error 404 Not Found - GET https://registry.npmjs.org/@other%2fext-blob-gcs/-/ext-blob-gcs-${SKEW_VERSION}.tgz`,
+        ],
+        // A scoped package whose name equals the unscoped package under test.
+        [
+          "npm error code E404",
+          `npm error 404 Not Found - GET https://registry.npmjs.org/@other/veryfront/-/veryfront-${SKEW_VERSION}.tgz`,
+        ],
+      ]
+    ) {
+      const result = await runScriptedRegistryInstall([failure, failure], 5);
+
+      assertEquals(result.code, 20, result.stderr);
+      assertEquals(result.installArgs.length, 1, failure.join("\n"));
+      assertEquals(result.stderr.includes("propagation skew"), false);
+      assertStringIncludes(result.stderr, failure.join("\n"));
+    }
+  });
+
+  it("gives up after the bounded attempts and keeps the sanitized diagnostics", async () => {
+    const missingTarball = [
+      "npm error code E404",
+      `npm error 404 Not Found - GET https://registry.npmjs.org/veryfront/-/veryfront-${SKEW_VERSION}.tgz`,
+      `npm error 404  'veryfront@${SKEW_VERSION}' is not in this registry.`,
+      "npm error need auth //registry.npmjs.org/:_authToken=giveup-token-must-not-appear",
+    ];
+    const result = await runScriptedRegistryInstall(
+      [missingTarball, missingTarball, missingTarball, missingTarball],
+      3,
+    );
+
+    assertEquals(result.code, 20, result.stderr);
+    assertEquals(result.installArgs.length, 3);
+    assertStringIncludes(
+      result.stderr,
+      "attempt 2/3 hit npm registry propagation skew (E404: veryfront@",
+    );
+    assertEquals(result.stderr.includes("attempt 3/3 hit"), false);
+    assertStringIncludes(
+      result.stderr,
+      "[registry=https://registry.npmjs.org/ specs=2 attempts=3]",
+    );
+    assertStringIncludes(
+      result.stderr,
+      `'veryfront@${SKEW_VERSION}' is not in this registry.`,
+    );
+    assertEquals(result.stderr.includes("giveup-token-must-not-appear"), false);
+    assertStringIncludes(result.stderr, "_authToken=<redacted>");
+    assertStringIncludes(
+      result.stderr,
+      "SMOKE FAIL: exact-version registry install failed",
+    );
+  });
+});

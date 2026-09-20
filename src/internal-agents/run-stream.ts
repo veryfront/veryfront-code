@@ -1,3 +1,8 @@
+import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
+import {
+  markTrustedHostToolProvenance,
+  markTrustedHostToolSet,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import {
   type Agent,
   type AgentMessage as Message,
@@ -219,7 +224,7 @@ function createInjectedStudioTool(
   parameters: Record<string, unknown> | undefined,
   sessionManager: AgentRunSessionManager,
 ): Tool {
-  return {
+  const tool: Tool = {
     id: toolName,
     type: "function",
     description: description ?? toolName,
@@ -244,14 +249,33 @@ function createInjectedStudioTool(
       return waitResult.result;
     },
   };
+  return controlPlaneNames.some((name) => toolName === `veryfront__${name}`)
+    ? markTrustedHostToolProvenance(tool)
+    : tool;
 }
+
+const controlPlaneNames = [
+  "form_input",
+  "invoke_agent",
+  "web_search",
+  "web_fetch",
+  "studio_todo_write",
+];
 
 function isExplicitlyDeniedToolName(
   agent: Agent,
   deniedToolNames: ReadonlySet<string>,
   toolName: string,
+  localTools?: Record<string, Tool | boolean>,
 ): boolean {
   if (deniedToolNames.has(toolName)) return true;
+  for (const name of controlPlaneNames) {
+    if (toolName !== name && toolName !== `veryfront__${name}`) continue;
+    const projectTool = localTools?.[name] ?? resolveVisibleRegistryTool(name, agent.id);
+    if (!projectTool && (deniedToolNames.has(name) || deniedToolNames.has(`veryfront__${name}`))) {
+      return true;
+    }
+  }
   const registryTool = toolRegistry.get(toolName);
   return Boolean(
     registryTool &&
@@ -289,7 +313,12 @@ export function buildMergedTools(
       .filter((tool) =>
         !failClosedUnrestrictedSelector &&
         !authoritativeSourceToolNames.has(tool.name) &&
-        !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, tool.name) &&
+        !isExplicitlyDeniedToolName(
+          agent,
+          explicitlyDeniedToolNames,
+          tool.name,
+          availableLocalTools,
+        ) &&
         !serverResolvedProjectToolNames.has(tool.name) &&
         !(tool.name === INVOKE_AGENT_TOOL_ID && configOwnsDelegation)
       )
@@ -336,12 +365,7 @@ export function buildMergedTools(
     if (entry === true) {
       // Registry lookups are owner-aware: another agent's owned tool behaves
       // as if it does not exist for this agent.
-      const visibleRegistryTool = (() => {
-        const registryTool = toolRegistry.get(toolName);
-        return registryTool && isToolVisibleTo(registryTool, { agentId: agent.id })
-          ? registryTool
-          : undefined;
-      })();
+      const visibleRegistryTool = resolveVisibleRegistryTool(toolName, agent.id);
       const serverResolvedProjectTool = serverResolvedProjectToolNames.has(toolName)
         ? visibleRegistryTool
         : undefined;
@@ -352,7 +376,8 @@ export function buildMergedTools(
         availableForwardedToolNames?.includes(toolName) ||
         sourceAllowedRemoteToolNames.includes(toolName)
       ) {
-        merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ?? true;
+        merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ??
+          (visibleRegistryTool?.ownerAgentId ? visibleRegistryTool : true);
       }
       continue;
     }
@@ -458,16 +483,35 @@ function createIdempotentAsyncCleanup(
   };
 }
 
-function shouldExposeSandboxBash(agent: Agent): boolean {
+function selectedSandboxToolNames(
+  toolName: string,
+  agent: Agent,
+  deps: RuntimeAgentStreamExecutionDeps,
+): string[] {
   const tools = agent.config.tools;
-  return isRecord(tools) && tools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME] === true;
+  if (!isRecord(tools)) return [];
+  const canonicalName = `veryfront__${toolName}`;
+  if (tools[canonicalName] === false) return [];
+  const projectTool = deps.localTools?.[toolName] ?? resolveVisibleRegistryTool(toolName, agent.id);
+  const hasProjectTool = Boolean(
+    projectTool &&
+      (projectTool === true || isToolVisibleTo(projectTool, { agentId: agent.id })),
+  );
+  if (!hasProjectTool && tools[toolName] === false) return [];
+  return [
+    ...(!hasProjectTool && tools[toolName] === true ? [toolName] : []),
+    ...(tools[canonicalName] === true ? [canonicalName] : []),
+  ];
 }
 
 async function buildProjectAgentSandboxTools(input: {
   agent: Agent;
   deps: RuntimeAgentStreamExecutionDeps;
 }): Promise<{ tools?: Record<string, Tool | boolean>; closeSandbox?: () => Promise<void> }> {
-  if (!shouldExposeSandboxBash(input.agent)) {
+  if (
+    selectedSandboxToolNames(PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME, input.agent, input.deps)
+      .length === 0
+  ) {
     return {};
   }
 
@@ -498,13 +542,22 @@ async function buildProjectAgentSandboxTools(input: {
 
   try {
     const declaredTools = input.agent.config.tools;
-    const materializedTools = createToolsFromHostDefinitions(sandboxResult.tools);
-    const configuredTools = isRecord(declaredTools)
+    const selectedHostTools = isRecord(declaredTools)
       ? Object.fromEntries(
-        Object.entries(materializedTools).filter(([toolName]) => declaredTools[toolName] === true),
+        Object.entries(sandboxResult.tools).flatMap(([toolName, definition]) => {
+          return selectedSandboxToolNames(toolName, input.agent, input.deps).map((
+            name,
+          ) => [name, definition]);
+        }),
       )
       : {};
-    if (!configuredTools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]) {
+    const configuredTools = createToolsFromHostDefinitions(
+      markTrustedHostToolSet(selectedHostTools),
+    );
+    if (
+      !configuredTools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME] &&
+      !configuredTools[`veryfront__${PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME}`]
+    ) {
       await closeSandbox();
       return {};
     }
@@ -641,7 +694,9 @@ function applyDelegationAuthority(
   }
 
   const filtered = Object.fromEntries(
-    Object.entries(mergedTools).filter(([toolName]) => toolName !== INVOKE_AGENT_TOOL_ID),
+    Object.entries(mergedTools).filter(([toolName]) =>
+      toolName !== INVOKE_AGENT_TOOL_ID && toolName !== `veryfront__${INVOKE_AGENT_TOOL_ID}`
+    ),
   );
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
@@ -948,7 +1003,8 @@ export async function createRuntimeAgentStreamResponse(
     const forwardedIntegrationToolDefs = explicitlyDeniedToolNames.size === 0
       ? forwardedIntegrationToolDefsWithDenied
       : forwardedIntegrationToolDefsWithDenied?.filter(
-        (tool) => !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, tool.name),
+        (tool) =>
+          !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, tool.name, deps.localTools),
       );
     const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
     // A restrictive toolAllowlist caps remote exposure too: it intersects the
@@ -970,10 +1026,13 @@ export async function createRuntimeAgentStreamResponse(
     const denialFilteredRemoteToolNames = explicitlyDeniedToolNames.size === 0
       ? runtimeAllowedRemoteToolNames
       : runtimeAllowedRemoteToolNames?.filter(
-        (toolName) => !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName),
+        (toolName) =>
+          !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName, deps.localTools),
       );
     const allowedRemoteToolNames = input.allowDelegation === false
-      ? denialFilteredRemoteToolNames?.filter((toolName) => toolName !== INVOKE_AGENT_TOOL_ID)
+      ? denialFilteredRemoteToolNames?.filter((toolName) =>
+        toolName !== INVOKE_AGENT_TOOL_ID && toolName !== `veryfront__${INVOKE_AGENT_TOOL_ID}`
+      )
       : denialFilteredRemoteToolNames;
     const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
     closeSandbox = sandboxTools.closeSandbox ?? closeSandbox;
@@ -1014,7 +1073,7 @@ export async function createRuntimeAgentStreamResponse(
     );
     const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
       modelSupportedProviderToolNames.has(toolName) &&
-      !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName)
+      !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName, deps.localTools)
     );
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
     const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
