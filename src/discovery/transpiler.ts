@@ -34,6 +34,7 @@ import { COMPILATION_ERROR, DEPENDENCY_MISSING, FILE_NOT_FOUND } from "#veryfron
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import { LOCKFILE_CLIENTS, type PackageClient } from "#veryfront/utils/package-client.ts";
 
 type TranspileCacheEntry = {
   /** Content hashes of every file esbuild bundled into the module besides the entry. */
@@ -343,6 +344,13 @@ function cdnSourceDecision(
   named: string,
   importRange: string | null,
 ): CdnSourceDecision {
+  if (sources.unverifiableClient !== null) {
+    return {
+      refusal: `the project's ${sources.unverifiableClient} lockfile owns its dependencies and ` +
+        `does not record which registry each came from, so the public package of that name ` +
+        `cannot be shown to be this project's dependency`,
+    };
+  }
   if (npmrcRedirectsPackage(sources.npmrc, name)) {
     return {
       refusal: `the project's .npmrc installs ${name} from another registry, so the public ` +
@@ -383,6 +391,7 @@ function privatelySourcedPackages(
   pins: Readonly<Record<string, string>>,
 ): ReadonlySet<string> {
   const privately = new Set<string>();
+  if (sources.unverifiableClient !== null) return new Set(Object.keys(pins));
   for (const name of Object.keys(pins)) {
     const locked = Object.hasOwn(sources.locked, name) ? sources.locked[name] : undefined;
     if (
@@ -399,6 +408,12 @@ function privatelySourcedPackages(
 interface ProjectRegistrySources {
   locked: Record<string, LockedDependency>;
   npmrc: string;
+  /**
+   * The client whose lockfile owns the project, when it is not npm's. Only an
+   * npm lockfile records a `resolved` URL per package, so any other owner
+   * leaves provenance unverifiable and nothing may be inlined.
+   */
+  unverifiableClient: PackageClient | null;
 }
 
 async function readProjectFile(context: FileDiscoveryContext, name: string): Promise<string> {
@@ -416,14 +431,20 @@ async function readProjectFile(context: FileDiscoveryContext, name: string): Pro
 async function readProjectRegistrySources(
   context: FileDiscoveryContext,
 ): Promise<ProjectRegistrySources> {
+  const npmrc = await readProjectFile(context, ".npmrc");
+  // The repo's own precedence: the lockfile a client wrote owns the project,
+  // and an npm lock inherited from a migration must not outrank it.
+  for (const [file, client] of LOCKFILE_CLIENTS) {
+    if (client === "npm") break;
+    if ((await readProjectFile(context, file)).length > 0) {
+      return { locked: {}, npmrc, unverifiableClient: client };
+    }
+  }
   // npm ignores package-lock.json entirely when a shrinkwrap is present, so
   // the shrinkwrap is the authoritative record of what the project installs.
   const lockText = await readProjectFile(context, "npm-shrinkwrap.json") ||
     await readProjectFile(context, "package-lock.json");
-  return {
-    locked: readLockedDependencies(lockText),
-    npmrc: await readProjectFile(context, ".npmrc"),
-  };
+  return { locked: readLockedDependencies(lockText), npmrc, unverifiableClient: null };
 }
 
 async function readProjectDependencyPins(
@@ -1166,7 +1187,7 @@ export async function importModule(
   // copy of a name is its dependency at all.
   const registrySources = compiled && Object.keys(dependencyPins).length > 0
     ? await readProjectRegistrySources(context)
-    : { locked: {}, npmrc: "" };
+    : { locked: {}, npmrc: "", unverifiableClient: null };
 
   // A shared hosted runtime serves many projects and source generations, so
   // namespace identical relative paths before considering entry contents.

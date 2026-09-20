@@ -816,6 +816,15 @@ describe("classifyProjectNpmImport", () => {
     });
   });
 
+  it("reads a partial strict bound as npm's release boundary", () => {
+    // npm expands `>1.1` to `>=1.2.0`, and 1.2.0-beta is below that release.
+    assertEquals(rangeAdmitsVersion(">=1.2.0-beta >1.1", "1.2.0-beta"), false);
+    assertEquals(rangeAdmitsVersion(">=1.2.0-beta >1.1", "1.2.0"), true);
+    assertEquals(rangeAdmitsVersion(">=1.2.0-beta >=1.2", "1.2.0-beta"), false);
+    // An upper bound still admits a pre-release below its core.
+    assertEquals(rangeAdmitsVersion(">=1.5.0-beta <2", "1.5.0-beta"), true);
+  });
+
   it("lets a wildcard comparator admit a pre-release the set names", () => {
     // `*` vetoes pre-releases on its own, but not when another comparator in
     // the set names one on the same core.

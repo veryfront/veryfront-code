@@ -371,7 +371,13 @@ function comparatorAdmitsVersion(
   }
 
   const order = compareVersions(wanted, lower);
+  // An UPPER bound is a core boundary: a pre-release below that core is under
+  // it, which is how `<2` admits `1.5.0-beta`.
   const below = (ceiling: VersionCore) => compareCores(wanted.core, ceiling) < 0;
+  // A LOWER bound derived from a partial version is npm's release boundary:
+  // `>1.1` expands to `>=1.2.0`, and `1.2.0-beta` precedes that release.
+  const atLeast = (boundary: VersionCore) =>
+    compareVersions(wanted, { core: boundary, pre: null }) >= 0;
   switch (operator) {
     case "^":
       return order >= 0 && below(caretCeiling(parts));
@@ -379,16 +385,16 @@ function comparatorAdmitsVersion(
     case "~>":
       return order >= 0 && below(tildeCeiling(parts));
     case ">=":
-      return order >= 0;
+      return full ? order >= 0 : atLeast(padded(parts));
     case ">":
-      return full ? order > 0 : !below(nextAfter(parts));
+      return full ? order > 0 : atLeast(nextAfter(parts));
     case "<=":
       return full ? order <= 0 : below(nextAfter(parts));
     case "<":
       return order < 0;
     default:
       // `=`, `v` and no operator cover exactly the versions the bound names.
-      return full ? order === 0 : order >= 0 && below(nextAfter(parts));
+      return full ? order === 0 : atLeast(padded(parts)) && below(nextAfter(parts));
   }
 }
 

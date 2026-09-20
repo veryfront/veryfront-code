@@ -952,6 +952,13 @@ describe(
           reason: "resolves @veryfront-fixture/pdf-text from another registry",
         },
         {
+          // The repo's own precedence: a pnpm lock owns the project, so a
+          // stale npm lock says nothing about where the package comes from.
+          name: "a pnpm lockfile beside a public package lock",
+          files: { "pnpm-lock.yaml": "lockfileVersion: '9.0'\n" },
+          reason: "pnpm",
+        },
+        {
           name: "an .npmrc pointing the scope elsewhere",
           files: { ".npmrc": "@veryfront-fixture:registry=https://npm.internal.example/\n" },
           reason: ".npmrc installs @veryfront-fixture/pdf-text from another registry",
