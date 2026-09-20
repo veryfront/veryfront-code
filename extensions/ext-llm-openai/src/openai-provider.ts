@@ -119,6 +119,22 @@ function getLLMOpenAIProviderName(config: LLMProviderConfig): string {
 
 type OpenAIModelTransport = "auto" | "chat-completions" | "responses";
 
+/**
+ * Message raised when a Chat Completions transport is asked for a hosted tool.
+ *
+ * A caller that pins the transport because the model's own surface has no
+ * hosted tools can supply the reason, so the failure names that surface rather
+ * than reading as a limit of this runtime.
+ */
+function getOpenAIChatCompletionsOnlyReason(config: LLMProviderConfig): string | undefined {
+  const reason = config.openAIChatCompletionsOnlyReason;
+  if (reason === undefined) return undefined;
+  if (typeof reason !== "string" || reason.length === 0) {
+    throw new TypeError("OpenAI chat completions reason must be a non-empty string");
+  }
+  return reason;
+}
+
 function getOpenAIModelTransport(config: LLMProviderConfig): OpenAIModelTransport {
   const transport = config.openAITransport;
   if (transport === undefined) return "auto";
@@ -1241,11 +1257,13 @@ function requestUsesOpenAIHostedTool(optionsForRuntime: OpenAICompatibleLanguage
 
 function createOpenAIChatCompletionsOnlyRuntime(
   chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
+  hostedToolReason?: string,
 ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   function assertHostedToolsSupported(options: OpenAICompatibleLanguageOptions): void {
     if (requestUsesOpenAIHostedTool(options)) {
       throw new TypeError(
-        "OpenAI hosted tools require the Responses API and are unavailable with Chat Completions",
+        hostedToolReason ??
+          "OpenAI hosted tools require the Responses API and are unavailable with Chat Completions",
       );
     }
   }
@@ -1365,7 +1383,10 @@ export class OpenAIProvider implements LLMProvider {
       return responsesRuntime;
     }
     if (transport === "chat-completions") {
-      return createOpenAIChatCompletionsOnlyRuntime(chatRuntime);
+      return createOpenAIChatCompletionsOnlyRuntime(
+        chatRuntime,
+        getOpenAIChatCompletionsOnlyReason(config),
+      );
     }
 
     return createOpenAIAdaptiveModelRuntime(

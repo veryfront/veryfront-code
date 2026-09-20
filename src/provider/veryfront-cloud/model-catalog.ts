@@ -110,11 +110,14 @@ export function normalizeVeryfrontCloudProviderAlias(
 
 /**
  * Names rejected as a provider ID, so a provider segment can never be confused
- * with a member every object carries.
+ * with a member every object carries, and the gateway prefix can never be read
+ * as a provider. Without the latter, a doubly prefixed ID would resolve to a
+ * provider named after the prefix itself and build a self-referential path.
  */
 const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
   ...Object.getOwnPropertyNames(Object.prototype),
   "prototype",
+  VERYFRONT_CLOUD_MODEL_PREFIX.slice(0, -1),
 ]);
 
 /** Shape required of a provider ID: lowercase words joined by hyphens or dots. */
@@ -338,7 +341,25 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
   return model.modelId;
 }
 
-/** Resolves Veryfront Cloud gateway model ID. */
+/**
+ * Prefix a model ID so it resolves through the Veryfront Cloud gateway.
+ *
+ * Call this only once Veryfront Cloud is the chosen backend for the run. It
+ * prefixes ANY well-formed provider segment, including providers this package
+ * does not list, so it must not be used to test whether an ID belongs to
+ * Veryfront Cloud. An ID that already carries the prefix, an ID with no
+ * well-formed provider segment, and the explicitly unsupported models are
+ * returned unchanged.
+ *
+ * Every ID that routed before routes the same way. Well-formed IDs that did
+ * not resolve before now do, which is the point: a provider the platform adds
+ * needs no release of this package.
+ *
+ * Known limitation: a typo in an otherwise well-formed provider segment is
+ * accepted here and fails at the gateway rather than locally. Nothing in this
+ * package knows which providers the platform serves until the served model
+ * list is consumed.
+ */
 export function resolveVeryfrontCloudGatewayModelId(
   modelId: string | undefined,
 ): string | undefined {
@@ -478,5 +499,11 @@ export function groupVeryfrontCloudModelsByProvider(): Array<{
   })).filter((group) => group.models.length > 0);
 }
 
-/** Resolves hosted Veryfront Cloud model ID. */
+/**
+ * Prefix a model ID for a hosted run. Alias of
+ * {@link resolveVeryfrontCloudGatewayModelId}, with the same contract: call it
+ * only once Veryfront Cloud is the chosen backend, because it prefixes ANY
+ * well-formed provider segment, including providers this package does not
+ * list. Read that function's documentation before calling this one.
+ */
 export const resolveHostedVeryfrontCloudModelId = resolveVeryfrontCloudGatewayModelId;

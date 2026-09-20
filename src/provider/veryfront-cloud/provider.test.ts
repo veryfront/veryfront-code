@@ -1239,30 +1239,41 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(capturedUrl, "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions");
   });
 
-  it("refuses hosted tools on an unlisted provider instead of switching surface", async () => {
+  it("refuses hosted tools on a chat-surface provider instead of switching surface", async () => {
     // A hosted tool is the other way the OpenAI runtime reaches for
-    // /responses. An unlisted provider does not serve that surface, so the
-    // request must fail with a clear message and send nothing.
+    // /responses. Neither a listed provider on the chat surface nor an unlisted
+    // one serves that endpoint, so the request fails locally, names the
+    // provider's surface as the reason, and sends nothing. Before the surface
+    // was pinned, both built a request to /responses on the provider's gateway
+    // path instead.
     setCloudBootstrap();
-    let requestCount = 0;
-    installMockFetch(
-      (() => {
-        requestCount += 1;
-        return Promise.resolve(new Response("{}", { status: 200 }));
-      }) as typeof fetch,
-    );
 
-    const model = resolveModel("veryfront-cloud/acme-labs/mystery-1") as ModelRuntime;
+    for (const modelId of ["mistral/mistral-large-2512", "moonshotai/kimi-k2.6", "acme-labs/x"]) {
+      let requestCount = 0;
+      installMockFetch(
+        (() => {
+          requestCount += 1;
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+      );
 
-    await assertRejects(
-      async () =>
-        await model.doStream({
-          prompt: [],
-          tools: [{ type: "provider", name: "web_search", id: "openai.web_search", args: {} }],
-        } as never),
-      TypeError,
-      "OpenAI hosted tools require the Responses API",
-    );
-    assertEquals(requestCount, 0);
+      const model = resolveModel(`veryfront-cloud/${modelId}`) as ModelRuntime;
+      const provider = modelId.slice(0, modelId.indexOf("/"));
+
+      // The reason names the provider's surface, not a limit of the OpenAI
+      // runtime that happens to build the request.
+      await assertRejects(
+        async () =>
+          await model.doStream({
+            prompt: [],
+            tools: [{ type: "provider", name: "web_search", id: "openai.web_search", args: {} }],
+          } as never),
+        TypeError,
+        `Veryfront Cloud provider "${provider}" speaks the OpenAI chat completions surface, ` +
+          "which carries no hosted tools.",
+      );
+      assertEquals(requestCount, 0);
+      restoreMockFetch();
+    }
   });
 });
