@@ -86,11 +86,20 @@ export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = CATALOG_DEFAULT_MODEL_ID;
 /** Shared Veryfront Cloud model prefix value. */
 export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 
+/** Private runtime Map for alias lookups, built from the frozen data entries. */
+const _providerAliasMap = new Map(VERYFRONT_CLOUD_PROVIDER_ALIASES);
+/** Private runtime Map for transport-capability lookups, built from the frozen data entries. */
+const _transportCapabilitiesMap = new Map(VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES);
+/** Private runtime Map for provider routing lookups, built from the frozen data entries. */
+const _providerRoutingMap = new Map(VERYFRONT_CLOUD_PROVIDER_ROUTING);
+/** Private runtime Map for gateway API version lookups, built from the frozen data entries. */
+const _surfaceGatewayApiVersionMap = new Map(VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS);
+
 /** Resolve a supported gateway provider alias without consulting object prototypes. */
 export function normalizeVeryfrontCloudProviderAlias(
   provider: string,
 ): KnownVeryfrontCloudProviderId | undefined {
-  return VERYFRONT_CLOUD_PROVIDER_ALIASES.get(provider);
+  return _providerAliasMap.get(provider);
 }
 
 /**
@@ -130,7 +139,7 @@ export function resolveVeryfrontCloudProviderRouting(
   provider: string,
 ): Readonly<VeryfrontCloudProviderRouting> {
   const canonical = normalizeVeryfrontCloudProviderAlias(provider) ?? provider;
-  return VERYFRONT_CLOUD_PROVIDER_ROUTING.get(canonical) ?? DEFAULT_PROVIDER_ROUTING;
+  return _providerRoutingMap.get(canonical) ?? DEFAULT_PROVIDER_ROUTING;
 }
 
 /** Wire format the given provider's gateway endpoint speaks. */
@@ -164,7 +173,7 @@ export function requireVeryfrontCloudWireSurface(
 export function resolveVeryfrontCloudGatewayPath(provider: string): string | undefined {
   const providerId = resolveVeryfrontCloudProviderId(provider);
   if (!providerId) return undefined;
-  const apiVersion = VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS.get(
+  const apiVersion = _surfaceGatewayApiVersionMap.get(
     resolveVeryfrontCloudSurface(providerId),
   ) ?? DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION;
   return `${VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX}/${providerId}/${apiVersion}`;
@@ -186,7 +195,7 @@ export function resolveVeryfrontCloudProviderFromModelId(
 function getVeryfrontCloudModelTransportCapabilities(
   modelId: string,
 ): Readonly<VeryfrontCloudModelTransportCapabilities> | undefined {
-  return VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES.get(
+  return _transportCapabilitiesMap.get(
     normalizeVeryfrontCloudModelId(modelId),
   );
 }

@@ -47,31 +47,37 @@ export type VeryfrontCloudModelTransportCapabilities = {
  */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
 
-/** Accepted provider aliases mapped to their canonical provider ID. */
-export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyMap<string, KnownVeryfrontCloudProviderId> =
-  new Map<string, KnownVeryfrontCloudProviderId>([
-    ["anthropic", "anthropic"],
-    ["openai", "openai"],
-    ["google", "google"],
-    ["google-ai-studio", "google"],
-    ["mistral", "mistral"],
-    ["moonshotai", "moonshotai"],
-  ]);
+/**
+ * Accepted provider aliases mapped to their canonical provider ID.
+ * Frozen entries in alias order; build a Map locally if lookup-by-key is needed.
+ */
+export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyArray<
+  readonly [string, KnownVeryfrontCloudProviderId]
+> = Object.freeze([
+  Object.freeze(["anthropic", "anthropic"] as const),
+  Object.freeze(["openai", "openai"] as const),
+  Object.freeze(["google", "google"] as const),
+  Object.freeze(["google-ai-studio", "google"] as const),
+  Object.freeze(["mistral", "mistral"] as const),
+  Object.freeze(["moonshotai", "moonshotai"] as const),
+]);
 
 /**
  * Gateway routing per provider. A provider missing from this table is routed
  * on the default surface, so the package reaches a provider it does not list
  * without a code change.
+ * Frozen entries; build a Map locally if lookup-by-key is needed.
  */
-export const VERYFRONT_CLOUD_PROVIDER_ROUTING: ReadonlyMap<
-  VeryfrontCloudProviderId,
-  Readonly<VeryfrontCloudProviderRouting>
-> = new Map<VeryfrontCloudProviderId, Readonly<VeryfrontCloudProviderRouting>>([
-  ["anthropic", Object.freeze({ surface: "anthropic", native: true })],
-  ["openai", Object.freeze({ surface: "openai", native: true })],
-  ["google", Object.freeze({ surface: "google", native: true })],
-  ["mistral", Object.freeze({ surface: "openai" })],
-  ["moonshotai", Object.freeze({ surface: "openai" })],
+export const VERYFRONT_CLOUD_PROVIDER_ROUTING: ReadonlyArray<
+  readonly [VeryfrontCloudProviderId, Readonly<VeryfrontCloudProviderRouting>]
+> = Object.freeze([
+  Object.freeze(
+    ["anthropic", Object.freeze({ surface: "anthropic" as const, native: true })] as const,
+  ),
+  Object.freeze(["openai", Object.freeze({ surface: "openai" as const, native: true })] as const),
+  Object.freeze(["google", Object.freeze({ surface: "google" as const, native: true })] as const),
+  Object.freeze(["mistral", Object.freeze({ surface: "openai" as const })] as const),
+  Object.freeze(["moonshotai", Object.freeze({ surface: "openai" as const })] as const),
 ]);
 
 /** Surface used for a provider the routing table does not list. */
@@ -80,11 +86,16 @@ export const DEFAULT_VERYFRONT_CLOUD_SURFACE = "openai";
 /** Leading gateway path segments, shared by every surface. */
 export const VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX = "ai/gateway";
 
-/** Gateway API version per surface, appended after the provider segment. */
-export const VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS: ReadonlyMap<string, string> = new Map([
-  ["anthropic", "v1"],
-  ["openai", "v1"],
-  ["google", "v1beta"],
+/**
+ * Gateway API version per surface, appended after the provider segment.
+ * Frozen entries; build a Map locally if lookup-by-key is needed.
+ */
+export const VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS: ReadonlyArray<
+  readonly [string, string]
+> = Object.freeze([
+  Object.freeze(["anthropic", "v1"] as const),
+  Object.freeze(["openai", "v1"] as const),
+  Object.freeze(["google", "v1beta"] as const),
 ]);
 
 /** Gateway API version used for a surface without its own entry. */
@@ -104,27 +115,41 @@ export const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES: readonly string[] 
  * Transport capabilities keyed by canonical provider/model ID. Both
  * provider-specific and provider-neutral option resolution consult this table
  * so the two representations cannot contradict each other.
+ * Frozen entries; build a Map locally if lookup-by-key is needed.
  */
-export const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES: ReadonlyMap<
-  string,
-  Readonly<VeryfrontCloudModelTransportCapabilities>
-> = new Map<string, Readonly<VeryfrontCloudModelTransportCapabilities>>([
-  ["anthropic/claude-opus-4-7", Object.freeze({ anthropicThinkingMode: "adaptive" })],
-  ["anthropic/claude-opus-4-8", Object.freeze({ anthropicThinkingMode: "adaptive" })],
-  [
-    "openai/gpt-5.4",
-    Object.freeze({
-      openAITransport: "chat-completions",
-      openAIChatReasoningWithFunctionTools: false,
-    }),
-  ],
-  [
-    "openai/gpt-5.5",
-    Object.freeze({
-      openAITransport: "chat-completions",
-      openAIChatReasoningWithFunctionTools: false,
-    }),
-  ],
+export const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES: ReadonlyArray<
+  readonly [string, Readonly<VeryfrontCloudModelTransportCapabilities>]
+> = Object.freeze([
+  Object.freeze(
+    [
+      "anthropic/claude-opus-4-7",
+      Object.freeze({ anthropicThinkingMode: "adaptive" as const }),
+    ] as const,
+  ),
+  Object.freeze(
+    [
+      "anthropic/claude-opus-4-8",
+      Object.freeze({ anthropicThinkingMode: "adaptive" as const }),
+    ] as const,
+  ),
+  Object.freeze(
+    [
+      "openai/gpt-5.4",
+      Object.freeze({
+        openAITransport: "chat-completions" as const,
+        openAIChatReasoningWithFunctionTools: false,
+      }),
+    ] as const,
+  ),
+  Object.freeze(
+    [
+      "openai/gpt-5.5",
+      Object.freeze({
+        openAITransport: "chat-completions" as const,
+        openAIChatReasoningWithFunctionTools: false,
+      }),
+    ] as const,
+  ),
 ]);
 
 /**
