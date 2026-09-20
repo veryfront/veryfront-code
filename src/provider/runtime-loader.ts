@@ -15,6 +15,7 @@ import {
   parseRetryAfterMs,
   requestJson,
   requestStream,
+  VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV,
   waitForProviderStreamRetry,
 } from "./runtime-loader/provider-http.ts";
 import { readRecord } from "./runtime-loader/provider-records.ts";
@@ -57,6 +58,7 @@ export {
   readRecord,
   requestJson,
   requestStream,
+  VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV,
   waitForProviderStreamRetry,
 };
 export type { RuntimePromptMessage } from "./types.ts";

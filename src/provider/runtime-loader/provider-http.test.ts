@@ -5,8 +5,13 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS } from "../../agent/hosted/child-fork-execution-runner.ts";
+import {
+  DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+  DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+} from "../../agent/streaming/lifecycle/watchdog-compat-adapter.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
 import {
@@ -24,7 +29,18 @@ import {
   ProviderRequestError,
   requestJson,
   requestStream,
+  resolveProviderStreamIdleTimeoutMs,
+  VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV,
 } from "./provider-http.ts";
+
+/** A response body that delivers nothing and never completes. */
+function stalledBody(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    pull() {
+      return new Promise<void>(() => {});
+    },
+  });
+}
 
 function jsonResponse(status: number, body: unknown, headers?: Record<string, string>): Response {
   return new Response(typeof body === "string" ? body : JSON.stringify(body), {
@@ -2082,15 +2098,110 @@ describe("provider-http", () => {
     });
 
     describe("body idle deadline", () => {
-      it("keeps the default above the consumer stream watchdogs", () => {
-        // The consumer watchdogs know which turn stalled; this one only knows
-        // the socket went quiet. Firing first would relabel a diagnosable
-        // consumer stall as a provider timeout.
+      it("pins the default against the consumer watchdog windows", () => {
+        // This deadline counts bytes on the wire; the consumer watchdogs count
+        // semantic chunks, so an equal or smaller window here does not
+        // pre-empt them while the provider keeps sending SSE pings or gateway
+        // keepalives. The relations are asserted rather than described because
+        // the comment on DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS reasons from
+        // all three, and a silent drift on either side would leave that
+        // reasoning stating something untrue.
         assertEquals(
           DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS >
             DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
           true,
+          "the hosted child-fork watchdog must keep reporting a fork stall first",
         );
+        assertEquals(
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+          DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+          "the chat idle window and this deadline are deliberately the same length",
+        );
+        assertEquals(
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS <
+            DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+          true,
+          "a provider-executed tool run is bounded by wire silence, not by the tool window",
+        );
+      });
+
+      it("resolves the deadline from option, then environment, then default", () => {
+        // The environment knob is the only reachable one for `veryfront dev`,
+        // hosted runs and `agent.generate` callers, because no shipped
+        // provider extension exposes `idleTimeoutMs` as a model option.
+        const env = (value: string | undefined) => (key: string) =>
+          key === VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV ? value : undefined;
+
+        assertEquals(
+          resolveProviderStreamIdleTimeoutMs(undefined, env(undefined)),
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+        );
+        assertEquals(resolveProviderStreamIdleTimeoutMs(undefined, env("45000")), 45_000);
+        assertEquals(
+          resolveProviderStreamIdleTimeoutMs(undefined, env("0")),
+          0,
+          "0 must disable the deadline rather than fall back to the default",
+        );
+        assertEquals(
+          resolveProviderStreamIdleTimeoutMs(20, env("0")),
+          20,
+          "an explicit deadline must win over the environment",
+        );
+        assertEquals(
+          resolveProviderStreamIdleTimeoutMs(undefined, env("   ")),
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+        );
+      });
+
+      it("ignores a malformed environment override instead of failing the request", () => {
+        // A typo in a deployment's environment must not take every provider
+        // request down with it, and the body stays bounded by the default.
+        for (const value of ["not-a-number", "-1", "12.5", String(MAX_TIMER_DELAY_MS + 1)]) {
+          assertEquals(
+            resolveProviderStreamIdleTimeoutMs(undefined, () => value),
+            DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+            `${value} must fall back to the default`,
+          );
+        }
+      });
+
+      it("bounds a stalled body at the default deadline with no configuration", async () => {
+        // The shipped path: no `idleTimeoutMs` argument and no environment
+        // override, so the 120s default is what has to fire. Fake time keeps
+        // that a fast test without weakening it to a constant comparison.
+        using time = new FakeTime();
+        let requestSignal: AbortSignal | undefined;
+        const stream = await requestStream({
+          url: "https://provider.test/stream",
+          fetchImpl: (input, init) => {
+            requestSignal = new Request(input, init).signal;
+            return Promise.resolve(new Response(stalledBody()));
+          },
+          init: { method: "POST" },
+          providerLabel: "Test provider",
+          providerKind: "openai",
+        });
+        const read = stream.getReader().read().then(
+          () => undefined,
+          (caught: unknown) => caught,
+        );
+
+        await time.tickAsync(DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS - 1);
+        assertEquals(
+          requestSignal?.aborted,
+          false,
+          "the deadline must not fire before the default elapses",
+        );
+
+        await time.tickAsync(1);
+        const error = await read;
+
+        assertEquals(error instanceof ProviderRequestError, true);
+        assertMatch(
+          (error as ProviderRequestError).message,
+          /waiting for the next stream chunk \(120000ms deadline\)$/,
+        );
+        assertEquals(requestSignal?.aborted, true);
       });
 
       it("rejects invalid body idle deadlines before issuing a stream request", async () => {

@@ -45,16 +45,25 @@ If nothing arrives for `DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` (120 seconds)
 the request is aborted, the connection is released, and the stream rejects with
 a retryable `ProviderRequestError` reading "request timed out after Nms waiting
 for the next stream chunk". The deadline is re-armed on every chunk, so it
-bounds provider silence rather than total response length, and it sits well
-above both the gateway's 15-second SSE keepalive and the consumer stream
-watchdogs, which keep reporting stalls first where they apply.
+bounds provider silence rather than total response length. It counts bytes on
+the wire, not semantic parts, so the gateway's 15-second SSE keepalives and a
+provider's own `ping` frames keep it from firing while a response is still
+being worked on -- including while a provider-executed tool (web search, web
+fetch, code execution, the MCP connector) runs with the response held open.
 
 This needs your decision if you depend on the old behaviour: a caller that
 previously blocked indefinitely on a dead stream now sees a rejection. That is
 the point -- `agent.generate` had no watchdog of its own, so a stalled gateway
-response was indistinguishable from a slow one. Pass `idleTimeoutMs` to
-`requestStream` to widen the window, or `0` to disable it and restore an
-unbounded body, which only a caller running its own idle watchdog should do.
+response was indistinguishable from a slow one.
+
+Set `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` to widen the window, or to `0`
+to disable it and restore an unbounded body, which only a deployment running
+its own idle watchdog should do. It is read from the host environment for every
+provider stream request, so it covers `veryfront dev` chat, hosted agent runs
+and library use of `agent.generate` / `agent.stream` without code changes; a
+value that is not an integer in range is ignored with a warning and the default
+applies. Custom provider extensions can also pass `idleTimeoutMs` per request
+to `requestStream`, which takes precedence over the environment.
 
 ### Changed: a response cut at the output token limit reports `PROVIDER_OUTPUT_TRUNCATED`
 

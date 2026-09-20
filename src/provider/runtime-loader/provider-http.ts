@@ -2,6 +2,10 @@ import { readRecord } from "./provider-records.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
+// Import from process/env.ts, not the process.ts barrel: the barrel also
+// re-exports runCommand, which pulls platform/compat/dynamic-import.ts and its
+// `new Function` into any bundle that reaches this module.
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { notifyProviderRequestRetry } from "./provider-request-observer.ts";
 import { resolveVeryfrontCloudSurface } from "../veryfront-cloud/model-catalog.ts";
 
@@ -50,14 +54,34 @@ const MAX_PROVIDER_STREAM_RETRIES = 2;
 export const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
 
 // Not JSDoc: this paragraph names hosted-infrastructure internals and must
-// stay out of the generated public API reference. The default below is
-// deliberately *above* the 45s `generic_idle` deadline the hosted child-fork
-// watchdog applies (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`) and
-// above the chat stream watchdog's 60s start / 15s output windows. Those
-// consumer watchdogs know which turn stalled and can report it; this one only
-// knows the socket went quiet. It is the floor under callers that have no
-// watchdog at all (`agent.generate`, library embedders), so it must never fire
-// first and relabel a diagnosable consumer stall as a provider timeout.
+// stay out of the generated public API reference. Where the default below
+// sits relative to the consumer watchdogs (all three relations are pinned by
+// "pins the default against the consumer watchdog windows" in
+// provider-http.test.ts, so moving either side breaks a test rather than this
+// comment):
+//   * above the hosted child-fork `generic_idle` deadline, 45s
+//     (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`);
+//   * exactly equal to the chat stream watchdog's idle window, 120s
+//     (`DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS`);
+//   * below that watchdog's tool-running window, 300s
+//     (`DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS`).
+// The equal and below cases do not make this deadline pre-empt a consumer
+// stall, because the two count different things: the consumer watchdogs count
+// *semantic chunks*, this one counts *bytes on the wire*. A provider that is
+// still working keeps bytes flowing -- Anthropic sends SSE `ping` frames
+// (handled in anthropic-stream.ts) and the Veryfront Cloud gateway sends a
+// keepalive every 15s -- and those bytes re-arm this deadline without
+// advancing any consumer window. That includes the case the phase difference
+// would otherwise break: a provider-executed tool (web_search, web_fetch,
+// code_execution, the MCP connector) holds the HTTP response open and emits
+// no chunk while it runs, which is what the 300s tool-running window is for,
+// but the connection is not silent. So this deadline fires only on a socket
+// that has gone genuinely quiet, which is the one stall no consumer watchdog
+// can diagnose better, and it is the only bound at all for callers that have
+// no watchdog (`agent.generate`, library embedders).
+// The 60s/15s figures in src/agent/streaming/lifecycle/policy.ts belong to the
+// strict lifecycle policy and apply only under VF_STREAM_LIFECYCLE_MODE of
+// `shadow` or `active`, not to the legacy default this comment compares to.
 /**
  * Default deadline for the next chunk of a stream response body.
  *
@@ -66,8 +90,65 @@ export const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
  * been silent rather than how long the whole response takes. Keep it well
  * above the provider's SSE keepalive interval (the Veryfront Cloud gateway
  * sends one every 15 seconds) so a healthy but slow response is never cut off.
+ *
+ * Override it per request with `requestStream`'s `idleTimeoutMs`, or for a
+ * whole process with `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS`.
  */
 export const DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+/**
+ * Environment key overriding the stream body idle deadline, in milliseconds.
+ *
+ * This is the knob for callers that never touch `requestStream` themselves --
+ * `veryfront dev` chat, hosted agent runs, and library use of
+ * `agent.generate` / `agent.stream` -- because no shipped provider extension
+ * exposes `idleTimeoutMs` as a model option. `0` disables the deadline.
+ */
+export const VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV =
+  "VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS";
+
+/**
+ * Resolve the body idle deadline for one stream request.
+ *
+ * Precedence is explicit option, then environment, then default. Read through
+ * `getHostEnv` rather than `getEnv`: a project `.env` file is untrusted input
+ * to the runtime, and this deadline is a safety bound the host operator sets,
+ * not something a loaded project should be able to widen or switch off.
+ *
+ * A malformed override is ignored with a warning instead of thrown. A typo in
+ * a deployment's environment should not fail every provider request, and the
+ * fallback still leaves the body bounded; an explicit `idleTimeoutMs` argument
+ * is a programming error by comparison and keeps throwing.
+ *
+ * `readEnv` is a seam, not a feature: reading the real environment is the
+ * default, and tests pass a lookup instead of mutating the host process, which
+ * the unit-hermeticity audit forbids.
+ */
+export function resolveProviderStreamIdleTimeoutMs(
+  idleTimeoutMs: number | undefined,
+  readEnv: (key: string) => string | undefined = getHostEnv,
+): number {
+  if (idleTimeoutMs !== undefined) {
+    return normalizeTimerDurationMs(idleTimeoutMs, "idleTimeoutMs");
+  }
+
+  const configured = readEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV)?.trim();
+  if (configured === undefined || configured === "") {
+    return DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS;
+  }
+
+  const parsed = Number(configured);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_TIMER_DELAY_MS) {
+    logger.warn(
+      `${VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV} must be an integer between 0 and ` +
+        `${MAX_TIMER_DELAY_MS}; ignoring ${JSON.stringify(configured)} and using the ` +
+        `${DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS}ms default`,
+    );
+    return DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS;
+  }
+
+  return parsed;
+}
 
 /**
  * Elapsed-time source for the header budget. `Date.now` can step backwards
@@ -981,6 +1062,13 @@ function streamWithCleanup(
   // Arms only around a pending read, so a consumer that stops pulling is not
   // timed out for its own backpressure: the deadline measures provider
   // silence, not response length.
+  //
+  // That costs a setTimeout/clearTimeout pair per chunk on the hot path.
+  // Measured at ~1.15us per pair on this runtime, so a 5,000-chunk response
+  // spends under 6ms on timers across a response lasting tens of seconds. A
+  // polling interval over a `lastChunkAt` timestamp would trade that for
+  // deadline precision and a timer that outlives the read it is guarding, so
+  // the exact per-read arm stays.
   const armIdleDeadline = (): void => {
     if (idle === undefined || idle.timeoutMs === 0) return;
     const armedAt = monotonicMilliseconds();
@@ -1275,7 +1363,9 @@ export async function requestJson(options: {
  * The body itself is bounded by a 120-second default idle deadline: a read
  * that waits that long for the next chunk aborts the request and rejects with
  * a retryable timeout, so a provider that goes silent mid-response cannot hang
- * a caller that has no watchdog of its own.
+ * a caller that has no watchdog of its own. Tune it per request with
+ * `idleTimeoutMs`, or process-wide with
+ * `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS`.
  */
 export async function requestStream(options: {
   url: string;
@@ -1294,9 +1384,11 @@ export async function requestStream(options: {
   totalHeadersBudgetMs?: number;
   /**
    * Deadline on each wait for the next chunk of the response body, once
-   * headers have arrived. Defaults to 120 seconds. `0` disables it and
-   * restores an unbounded body, which only a caller that runs its own idle
-   * watchdog should ask for.
+   * headers have arrived. Defaults to
+   * `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` when that is set to a valid
+   * value, and to 120 seconds otherwise. `0` disables it and restores an
+   * unbounded body, which only a caller that runs its own idle watchdog
+   * should ask for.
    */
   idleTimeoutMs?: number;
 }): Promise<ReadableStream<Uint8Array>> {
@@ -1306,12 +1398,9 @@ export async function requestStream(options: {
     options.totalHeadersBudgetMs ?? DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
     "totalHeadersBudgetMs",
   );
-  // Validated before the first attempt is issued, so a bad value fails fast
-  // instead of surfacing after a provider request has already been sent.
-  const idleTimeoutMs = normalizeTimerDurationMs(
-    options.idleTimeoutMs ?? DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
-    "idleTimeoutMs",
-  );
+  // Resolved before the first attempt is issued, so a bad explicit value fails
+  // fast instead of surfacing after a provider request has already been sent.
+  const idleTimeoutMs = resolveProviderStreamIdleTimeoutMs(options.idleTimeoutMs);
   const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
   const requestStartedAt = monotonicMilliseconds();
   let retryCount = 0;
@@ -1383,6 +1472,16 @@ export async function requestStream(options: {
           }),
         {
           timeoutMs: idleTimeoutMs,
+          // `providerTimeoutError` marks this retryable, and unlike every
+          // other retryable timeout here it can fire *after* provider output
+          // has reached the caller. `requestStream` never acts on it itself --
+          // `bodyClaimAttempted` has already blocked replays by this point --
+          // so the flag is advice carried outward (stream-outcome.ts maps it
+          // onto StreamLifecycleError.retryable), and the advice is sound for
+          // its consumers today: nothing retries automatically, and a human or
+          // caller re-running the request starts a fresh turn. A future
+          // automatic retry loop must check whether output was already
+          // emitted before replaying, or it will duplicate half a turn.
           createError: (elapsedMs) =>
             providerTimeoutError(options, {
               waitingFor: "the next stream chunk",
