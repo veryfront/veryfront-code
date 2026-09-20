@@ -340,7 +340,11 @@ function compareCores(left: readonly string[], right: readonly string[]): number
  *
  * @internal Exported for testing only.
  */
-function comparatorAdmitsVersion(range: string, version: string): boolean | null {
+function comparatorAdmitsVersion(
+  range: string,
+  version: string,
+  prereleaseAdmitted = false,
+): boolean | null {
   const trimmed = range.trim();
   if (URL_SCHEME.test(trimmed) || !EXACT_VERSION.test(version)) return null;
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
@@ -359,7 +363,10 @@ function comparatorAdmitsVersion(range: string, version: string): boolean | null
   const lower = { core: padded(parts), pre: full ? prereleaseOf(bound) : null };
   // npm's pre-release rule: a pre-release is admitted only by a range that
   // names a pre-release on the same core version.
-  if (wanted.pre !== null && (lower.pre === null || compareCores(wanted.core, lower.core) !== 0)) {
+  if (
+    wanted.pre !== null && !prereleaseAdmitted &&
+    (lower.pre === null || compareCores(wanted.core, lower.core) !== 0)
+  ) {
     return false;
   }
 
@@ -385,6 +392,15 @@ function comparatorAdmitsVersion(range: string, version: string): boolean | null
   }
 }
 
+/** Does this comparator name a pre-release on the same core as `version`? */
+function namesPrereleaseOnCore(comparator: string, version: string): boolean {
+  const trimmed = comparator.trim();
+  const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
+  const bound = boundAfterOperator(trimmed, operator);
+  if (!EXACT_VERSION.test(bound) || prereleaseOf(bound) === null) return false;
+  return compareCores(coreOf(bound), coreOf(version)) === 0;
+}
+
 /**
  * Does a range admit an exact version? `null` when the range is not one this
  * module evaluates, so the caller decides what an unchecked range means.
@@ -405,11 +421,17 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
     if (set.length === 0) return comparatorAdmitsVersion("*", version);
     const hyphen = /^(\S+)\s+-\s+(\S+)$/.exec(set);
     const comparators = hyphen ? [`>=${hyphen[1]}`, `<=${hyphen[2]}`] : set.split(/\s+/);
+    // npm's pre-release rule applies to the SET: a pre-release is admitted
+    // when one comparator names a pre-release on the same core, and the other
+    // comparators are then read without that veto of their own.
+    const prereleaseAdmitted = comparators.some((comparator) =>
+      namesPrereleaseOnCore(comparator, version)
+    );
     // Every comparator is evaluated: one this module cannot read makes the
     // whole range unevaluable, even when an earlier one already refused.
     let holds = true;
     for (const comparator of comparators) {
-      const verdict = comparatorAdmitsVersion(comparator, version);
+      const verdict = comparatorAdmitsVersion(comparator, version, prereleaseAdmitted);
       if (verdict === null) return null;
       if (!verdict) holds = false;
     }
@@ -663,6 +685,13 @@ export function classifyProjectNpmImport(
   pins: Readonly<Record<string, string>>,
   embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
   locked: Readonly<Record<string, string>> = {},
+  /**
+   * Packages the project's own `.npmrc` or lockfile sources from somewhere
+   * other than the public registry. The binary's embedded artifact is the
+   * FRAMEWORK's copy, so reusing it for one of these would run a package the
+   * project did not install.
+   */
+  privatelySourced: ReadonlySet<string> = new Set(),
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
@@ -709,11 +738,19 @@ export function classifyProjectNpmImport(
   // has one the project installed: the lockfile's, when the declaration
   // admits it. Its provenance is checked where the fetch is decided.
   const lockedVersion = Object.hasOwn(locked, parsed.name) ? locked[parsed.name] : undefined;
-  const pin = declared === undefined ? null : exactVersionNamedByRange(declared) ??
-    (lockedVersion !== undefined && rangeAdmitsVersion(declared, lockedVersion) === true
-      ? lockedVersion
-      : null);
-  const request = { ...parsed, declared, pin, embedded };
+  // The lockfile's version is the one the project installed, so it is
+  // preferred over the lower bound a range happens to name.
+  const admittedLock = declared !== undefined && lockedVersion !== undefined &&
+      rangeAdmitsVersion(declared, lockedVersion) === true
+    ? lockedVersion
+    : null;
+  const pin = declared === undefined ? null : admittedLock ?? exactVersionNamedByRange(declared);
+  const request = {
+    ...parsed,
+    declared,
+    pin,
+    embedded: privatelySourced.has(parsed.name) ? { packages: {}, constraints: {} } : embedded,
+  };
   return parsed.version !== null && EXACT_VERSION.test(parsed.version)
     ? classifyExactImport(request, parsed.version)
     : classifyUnversionedImport(request);

@@ -777,6 +777,17 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(withDisplayPath("in tools/a.ts", paths), "in tools/a.ts");
     });
 
+    it("names a foreign native UNC path by its file", () => {
+      assertEquals(
+        withDisplayPath(String.raw`read "\\server\share\Users\name\file.ts"`, paths),
+        'read "file.ts"',
+      );
+      assertEquals(
+        withDisplayPath(String.raw`at \\server\share\Users\name\file.ts`, paths),
+        "at file.ts",
+      );
+    });
+
     it("names a foreign UNC file URL and a quoted path with an apostrophe by its file", () => {
       // A UNC file URL puts the share in the authority, and a legal file name
       // may contain the other quote character.
@@ -852,6 +863,28 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(
         npmrcRedirectsPackage("registry=https://registry.npmjs.org/ # the public one", "pkg"),
         false,
+      );
+      // npm takes the last value of each key, and a scoped registry wins.
+      assertEquals(
+        npmrcRedirectsPackage(
+          "registry=https://npm.internal.example/\n@scope:registry=https://registry.npmjs.org/",
+          "@scope/p",
+        ),
+        false,
+      );
+      assertEquals(
+        npmrcRedirectsPackage(
+          "registry=https://npm.internal.example/\nregistry=https://registry.npmjs.org/",
+          "pkg",
+        ),
+        false,
+      );
+      assertEquals(
+        npmrcRedirectsPackage(
+          "@scope:registry=https://registry.npmjs.org/\n@scope:registry=https://npm.internal.example/",
+          "@scope/p",
+        ),
+        true,
       );
       // A comment line, and a scope that is not this package's, say nothing.
       assertEquals(npmrcRedirectsPackage("# registry=https://npm.internal.example/", "pkg"), false);

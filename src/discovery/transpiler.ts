@@ -303,6 +303,10 @@ export function readLockedDependencies(lockText: string): Record<string, LockedD
  */
 export function npmrcRedirectsPackage(npmrcText: string, name: string): boolean {
   const scope = name.startsWith("@") ? name.slice(0, name.indexOf("/")) : null;
+  // npm takes the LAST value of each key, and a package's scoped registry
+  // takes precedence over the default one.
+  let globalRegistry: string | undefined;
+  let scopedRegistry: string | undefined;
   for (const line of npmrcText.split("\n")) {
     // npm reads this file as INI: an unescaped `#` or `;` starts a comment,
     // wherever it appears, so a mirror with a trailing note still applies.
@@ -310,11 +314,12 @@ export function npmrcRedirectsPackage(npmrcText: string, name: string): boolean 
     if (statement.length === 0) continue;
     const match = /^(?:(@[^:\s]+):)?registry\s*=\s*(\S+)$/.exec(statement);
     if (!match) continue;
-    if (match[1] !== undefined && match[1] !== scope) continue;
-    const configured = match[2]!.replace(/\/*$/, "/");
-    if (configured !== PUBLIC_NPM_REGISTRY) return true;
+    const value = match[2]!.replace(/\/*$/, "/");
+    if (match[1] === undefined) globalRegistry = value;
+    else if (match[1] === scope) scopedRegistry = value;
   }
-  return false;
+  const effective = scopedRegistry ?? globalRegistry;
+  return effective !== undefined && effective !== PUBLIC_NPM_REGISTRY;
 }
 
 /** The coordinate to fetch, or why nothing may be fetched for this import. */
@@ -366,6 +371,28 @@ function cdnSourceDecision(
     refusal: `the project's lockfile resolves a version of ${name} that the project's own ` +
       `declaration or this import does not admit`,
   };
+}
+
+/**
+ * The declared packages the project's own sources place outside the public
+ * registry. The binary's embedded copy is the FRAMEWORK's artifact, so reusing
+ * it for one of these would run a package the project never installed.
+ */
+function privatelySourcedPackages(
+  sources: ProjectRegistrySources,
+  pins: Readonly<Record<string, string>>,
+): ReadonlySet<string> {
+  const privately = new Set<string>();
+  for (const name of Object.keys(pins)) {
+    const locked = Object.hasOwn(sources.locked, name) ? sources.locked[name] : undefined;
+    if (
+      npmrcRedirectsPackage(sources.npmrc, name) ||
+      (locked !== undefined && !locked.resolved.startsWith(PUBLIC_NPM_REGISTRY))
+    ) {
+      privately.add(name);
+    }
+  }
+  return privately;
 }
 
 /** A project's evidence for where its dependencies come from. */
@@ -672,6 +699,8 @@ export function createProjectDependencyCdnPlugin(
   ) => CdnSourceDecision = (_name, version) => ({ version }),
   /** The version the project's lockfile resolved for each declared package. */
   locked: Record<string, string> = {},
+  /** Declared packages the project sources from a non-public registry. */
+  privatelySourced: ReadonlySet<string> = new Set(),
 ): Plugin {
   return {
     name: "veryfront-project-npm-cdn",
@@ -787,7 +816,13 @@ export function createProjectDependencyCdnPlugin(
         const builtin = nodeBuiltinSpecifier(args.path);
         if (builtin) return { path: builtin, external: true };
 
-        const decision = classifyProjectNpmImport(args.path, pins, undefined, locked);
+        const decision = classifyProjectNpmImport(
+          args.path,
+          pins,
+          undefined,
+          locked,
+          privatelySourced,
+        );
         if (decision.kind === "runtime") {
           return decision.specifier === undefined
             ? undefined
@@ -961,7 +996,9 @@ export function withDisplayPath(text: string, paths: DiscoveryPathNames): string
 function withoutForeignAbsolutePaths(text: string): string {
   // `file://` is a start of its own: a UNC file URL puts the share in the
   // authority (`file://server/share/...`), with no slash after the scheme.
-  const start = String.raw`(?:file:\/\/|[A-Za-z]:[\/\\]|\/\/(?=[^\/])|\/)`;
+  // A native UNC path starts with two backslashes, the portable form with two
+  // slashes, and a file URL with its scheme.
+  const start = String.raw`(?:file:\/\/|[A-Za-z]:[\/\\]|\\\\(?=[^\\])|\/\/(?=[^\/])|\/)`;
   const named = (match: string) => pathHelper.basename(toPortablePath(match)) || match;
   // `\\"` inside a quoted path is an escaped delimiter, not the closing one.
   const quoted = new RegExp(String.raw`(["'\`])(${start}(?:\\.|(?!\1)[^\n])*)\1`, "g");
@@ -1185,6 +1222,7 @@ export async function importModule(
         Object.fromEntries(
           Object.entries(registrySources.locked).map(([name, { version }]) => [name, version]),
         ),
+        privatelySourcedPackages(registrySources, dependencyPins),
       ),
     );
     if (Object.keys(dependencyPins).length > 0) {

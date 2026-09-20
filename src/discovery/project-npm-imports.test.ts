@@ -786,6 +786,44 @@ describe("classifyProjectNpmImport", () => {
     assertEquals(describeNpmImport("npm:pkg@latest/sub"), "pkg (with a dist-tag)");
   });
 
+  it("prefers the locked version over the range's lower bound", () => {
+    // `^1.8.0` declared, `^1.9.0` imported, 1.9.2 locked: the lower bound 1.8.0
+    // is not what the project installed, and the import excludes it.
+    assertEquals(
+      classifyProjectNpmImport("npm:unpdf@^1.9.0", { unpdf: "^1.8.0" }, EMBEDDED, {
+        unpdf: "1.9.2",
+      }),
+      { kind: "cdn", name: "unpdf", version: "1.9.2", subpath: "." },
+    );
+  });
+
+  it("does not reuse an embedded copy for a privately sourced package", () => {
+    // The embedded artifact is the framework's, not the project's private
+    // package of the same coordinate.
+    const privately = new Set(["yaml"]);
+    assertEquals(
+      classifyProjectNpmImport("yaml", { yaml: "2.9.0" }, EMBEDDED, {}, privately).kind,
+      "cdn",
+    );
+    assertEquals(
+      classifyProjectNpmImport("npm:yaml@2.9.0", { yaml: "2.9.0" }, EMBEDDED, {}, privately).kind,
+      "cdn",
+    );
+    // Without that evidence the embedded copy is still reused.
+    assertEquals(classifyProjectNpmImport("npm:yaml@2.9.0", { yaml: "2.9.0" }, EMBEDDED), {
+      kind: "runtime",
+      specifier: "npm:yaml@2.9.0",
+    });
+  });
+
+  it("admits a pre-release the comparator set as a whole names", () => {
+    // npm admits 1.5.0-beta here: one comparator names a pre-release on that
+    // core, and `<2` is not required to name one of its own.
+    assertEquals(rangeAdmitsVersion(">=1.5.0-beta <2", "1.5.0-beta"), true);
+    assertEquals(rangeAdmitsVersion(">=1.5.0-beta <2", "1.6.0-beta"), false);
+    assertEquals(rangeAdmitsVersion(">=1.5.0 <2", "1.5.0-beta"), false);
+  });
+
   it("serves the locked version for a range that names none", () => {
     // `*`, `1.x` and `>=1 <2` name no single version, but the lockfile says
     // which one the project installed, and the declaration admits it.
