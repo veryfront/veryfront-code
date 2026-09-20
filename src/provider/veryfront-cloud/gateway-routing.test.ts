@@ -7,7 +7,17 @@ import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { resolveGenAiProviderName } from "#veryfront/agent/hosted/trace-attributes.ts";
 import { getProviderToolProfile } from "#veryfront/agent/runtime/provider-tool-compat.ts";
-import { VERYFRONT_CLOUD_CHAT_MODELS } from "./model-catalog.ts";
+import { agent } from "#veryfront/agent";
+import { assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  requireVeryfrontCloudWireSurface,
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
+  resolveVeryfrontCloudOpenAITransport,
+  resolveVeryfrontCloudReasoningOption,
+  resolveVeryfrontCloudThinkingProviderOptions,
+  VERYFRONT_CLOUD_CHAT_MODELS,
+} from "./model-catalog.ts";
 import { getVeryfrontCloudGatewayBaseUrl, parseVeryfrontCloudModelId } from "./shared.ts";
 
 const API_BASE_URL = "https://api.veryfront.com";
@@ -290,5 +300,86 @@ describe("provider/veryfront-cloud gateway routing", () => {
         "moonshotai",
       ],
     ]);
+  });
+
+  it("reaches a provider the package does not list, with no source change", async () => {
+    setCloudBootstrap();
+    const encoder = new TextEncoder();
+    let capturedRequest: Request | undefined;
+
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedRequest = request;
+        await request.text();
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+              );
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const assistant = agent({
+      model: "veryfront-cloud/acme-labs/mystery-1",
+      system: "You are concise.",
+    });
+
+    const result = await assistant.generate({ input: "Hi" });
+
+    assertEquals(
+      capturedRequest?.url,
+      "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions",
+    );
+    assertEquals(result.text, "Hello");
+  });
+
+  it("degrades for an unlisted provider instead of throwing", () => {
+    assertEquals(
+      getVeryfrontCloudGatewayBaseUrl(API_BASE_URL, "acme-labs"),
+      "https://api.veryfront.com/ai/gateway/acme-labs/v1",
+    );
+    assertEquals(resolveGenAiProviderName("acme-labs/mystery-1"), null);
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/mystery-1").provider, "unknown");
+  });
+
+  it("ignores capabilities it has no entry for instead of throwing", () => {
+    assertEquals(resolveVeryfrontCloudOpenAITransport("acme-labs/mystery-1"), undefined);
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("acme-labs/mystery-1"),
+      undefined,
+    );
+    assertEquals(resolveVeryfrontCloudModelThinking("acme-labs/mystery-1"), undefined);
+    assertEquals(
+      resolveVeryfrontCloudThinkingProviderOptions("acme-labs/mystery-1", { enabled: true }),
+      undefined,
+    );
+    assertEquals(
+      resolveVeryfrontCloudReasoningOption("acme-labs/mystery-1", {
+        enabled: true,
+        effort: "high",
+      }),
+      { enabled: true, effort: "high" },
+    );
+  });
+
+  it("names the surface when the package builds no request for it", () => {
+    assertEquals(requireVeryfrontCloudWireSurface("openai"), "openai");
+    assertThrows(
+      () => requireVeryfrontCloudWireSurface("a-later-wire-format"),
+      Error,
+      'Veryfront Cloud wire surface "a-later-wire-format" is not supported',
+    );
   });
 });

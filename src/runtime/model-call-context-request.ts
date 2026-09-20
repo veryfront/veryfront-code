@@ -13,6 +13,7 @@ import {
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
+  resolveVeryfrontCloudProviderRouting,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { ModelCallRequest } from "./model-call-context.ts";
 
@@ -71,10 +72,19 @@ function stopControl(value: unknown): string[] | undefined {
     : undefined;
 }
 
+/** Whether the gateway provider speaks the OpenAI wire format natively. */
+function usesNativeOpenAISurface(model: ModelCallRuntimeMetadata): boolean {
+  const provider = resolveModelCallProvider(model);
+  if (provider === undefined) return false;
+  const routing = resolveVeryfrontCloudProviderRouting(provider);
+  return routing.surface === "openai" && routing.native === true;
+}
+
 function usesOpenAIBuilder(model: ModelCallRuntimeMetadata): boolean {
   const provider = resolveModelCallProvider(model);
-  return provider === "openai" || (model.provider === "veryfront-cloud" &&
-    (provider === "mistral" || provider === "moonshotai"));
+  if (provider === "openai") return true;
+  return model.provider === "veryfront-cloud" && provider !== undefined &&
+    resolveVeryfrontCloudProviderRouting(provider).surface === "openai";
 }
 
 function managedOpenAITransport(
@@ -87,7 +97,7 @@ function managedOpenAITransport(
   // Without a fixed override, OpenAIProvider creates an adaptive runtime that
   // selects Responses per call when hosted tools are present, including on gpt-4o.
   return resolveVeryfrontCloudOpenAITransport(catalogId) ??
-    ((resolveModelCallProvider(model) === "openai" &&
+    ((usesNativeOpenAISurface(model) &&
         resolveVeryfrontCloudModelThinking(catalogId)?.enabled === true) ||
         isOpenAIReasoningModel(model.modelId, "veryfront-cloud") ||
         options.tools?.some((tool) => tool.type === "provider" && tool.id.startsWith("openai."))

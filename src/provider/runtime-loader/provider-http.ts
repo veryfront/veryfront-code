@@ -3,14 +3,23 @@ import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { notifyProviderRequestRetry } from "./provider-request-observer.ts";
+import { resolveVeryfrontCloudSurface } from "../veryfront-cloud/model-catalog.ts";
 
 /**
  * Which provider runtime a request is being sent to.
- * `mistral` and `moonshotai` use the OpenAI-compatible wire format and are
- * therefore treated as "openai" for error classification purposes; they are
- * listed here so call sites can pass accurate labels without a cast.
+ *
+ * The listed providers autocomplete. Any other provider name is accepted, so a
+ * call site can pass an accurate label for a provider this package does not
+ * list without a cast. Error classification reads the wire surface the provider
+ * speaks, not its name.
  */
-export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moonshotai";
+export type ProviderKind =
+  | "anthropic"
+  | "openai"
+  | "google"
+  | "mistral"
+  | "moonshotai"
+  | (string & Record<never, never>);
 
 /** Bytes inspected for structured provider error classification. */
 const MAX_ERROR_BODY_BYTES = 8_000;
@@ -335,10 +344,11 @@ function isInvalidRequestEnvelope(
 
 /**
  * Whether the provider uses the OpenAI-compatible error envelope for quota and
- * rate-limit classification.
+ * rate-limit classification. Every provider on the OpenAI wire surface returns
+ * that envelope, including providers this package does not list.
  */
 function isOpenAICompatibleProvider(provider: ProviderKind): boolean {
-  return provider === "openai" || provider === "mistral" || provider === "moonshotai";
+  return resolveVeryfrontCloudSurface(provider) === "openai";
 }
 
 /** Parses retry after ms. */

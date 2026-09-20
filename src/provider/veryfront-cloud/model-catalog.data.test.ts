@@ -53,6 +53,28 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
     );
   });
 
+  it("declares a routed surface for every provider, and a version for every surface", () => {
+    const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.values());
+
+    assertEquals(
+      [...catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING.keys()].sort(),
+      [...providers].sort(),
+    );
+    for (const [provider, routing] of catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING) {
+      assertEquals(
+        catalogData.VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS.has(routing.surface),
+        true,
+        `no gateway API version for the "${routing.surface}" surface of "${provider}"`,
+      );
+    }
+    assertEquals(
+      catalogData.VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS.has(
+        catalogData.DEFAULT_VERYFRONT_CLOUD_SURFACE,
+      ),
+      true,
+    );
+  });
+
   it("publishes the chat model entries unchanged and in the same order", () => {
     assertEquals(
       VERYFRONT_CLOUD_CHAT_MODELS.map((model) => model.id),

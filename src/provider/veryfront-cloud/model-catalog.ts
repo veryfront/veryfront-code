@@ -1,22 +1,49 @@
 import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
 import {
+  DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION,
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID as CATALOG_DEFAULT_MODEL_ID,
+  DEFAULT_VERYFRONT_CLOUD_SURFACE,
   VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES,
   VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES,
+  VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX,
   VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES,
   VERYFRONT_CLOUD_PROVIDER_ALIASES,
   VERYFRONT_CLOUD_PROVIDER_LABELS as PROVIDER_LABELS,
   VERYFRONT_CLOUD_PROVIDER_ORDER as PROVIDER_ORDER,
+  VERYFRONT_CLOUD_PROVIDER_ROUTING,
+  VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS,
   type VeryfrontCloudModelTransportCapabilities,
+  type VeryfrontCloudProviderRouting,
 } from "./model-catalog.data.ts";
 
-/** Public API contract for Veryfront Cloud provider ID. */
-export type VeryfrontCloudProviderId =
+/** Veryfront Cloud providers listed in the catalog of this package. */
+export type KnownVeryfrontCloudProviderId =
   | "anthropic"
   | "openai"
   | "google"
   | "mistral"
   | "moonshotai";
+
+/**
+ * Public API contract for Veryfront Cloud provider ID.
+ *
+ * Listed providers autocomplete. Any other provider string is accepted as
+ * written, so a provider the platform adds is reachable without a release of
+ * this package.
+ */
+export type VeryfrontCloudProviderId =
+  | KnownVeryfrontCloudProviderId
+  | (string & Record<never, never>);
+
+/** Wire format a Veryfront Cloud gateway endpoint speaks. */
+export type VeryfrontCloudWireSurface = "openai" | "anthropic" | "google";
+
+/**
+ * Surface named by catalog data. Implemented surfaces autocomplete; any other
+ * value is carried through, so data can name a surface a later release builds
+ * requests for.
+ */
+export type VeryfrontCloudSurfaceId = VeryfrontCloudWireSurface | (string & Record<never, never>);
 
 /** Configuration used by Veryfront Cloud model thinking. */
 export type VeryfrontCloudModelThinkingConfig = {
@@ -62,8 +89,98 @@ export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 /** Resolve a supported gateway provider alias without consulting object prototypes. */
 export function normalizeVeryfrontCloudProviderAlias(
   provider: string,
-): VeryfrontCloudProviderId | undefined {
+): KnownVeryfrontCloudProviderId | undefined {
   return VERYFRONT_CLOUD_PROVIDER_ALIASES.get(provider);
+}
+
+/**
+ * Names rejected as a provider ID, so a provider segment can never be confused
+ * with a member every object carries.
+ */
+const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  ...Object.getOwnPropertyNames(Object.prototype),
+  "prototype",
+]);
+
+/** Shape required of a provider ID: lowercase words joined by hyphens or dots. */
+const PROVIDER_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+
+/**
+ * Resolve the provider segment of a gateway model ID, including providers this
+ * package does not list. A listed alias resolves to its canonical ID; any other
+ * value is kept as written once it is a safe single path segment.
+ */
+export function resolveVeryfrontCloudProviderId(
+  provider: string,
+): VeryfrontCloudProviderId | undefined {
+  const alias = normalizeVeryfrontCloudProviderAlias(provider);
+  if (alias) return alias;
+  return PROVIDER_ID_PATTERN.test(provider) && !RESERVED_PROVIDER_IDS.has(provider)
+    ? provider
+    : undefined;
+}
+
+/** Routing used for a provider the catalog data does not list. */
+const DEFAULT_PROVIDER_ROUTING: Readonly<VeryfrontCloudProviderRouting> = Object.freeze({
+  surface: DEFAULT_VERYFRONT_CLOUD_SURFACE,
+});
+
+/** Gateway routing declared for a provider, or the default for an unlisted one. */
+export function resolveVeryfrontCloudProviderRouting(
+  provider: string,
+): Readonly<VeryfrontCloudProviderRouting> {
+  const canonical = normalizeVeryfrontCloudProviderAlias(provider) ?? provider;
+  return VERYFRONT_CLOUD_PROVIDER_ROUTING.get(canonical) ?? DEFAULT_PROVIDER_ROUTING;
+}
+
+/** Wire format the given provider's gateway endpoint speaks. */
+export function resolveVeryfrontCloudSurface(provider: string): VeryfrontCloudSurfaceId {
+  return resolveVeryfrontCloudProviderRouting(provider).surface;
+}
+
+/** Wire surfaces this package builds requests for. */
+const WIRE_SURFACES: ReadonlySet<string> = new Set(["openai", "anthropic", "google"]);
+
+/**
+ * Narrow a declared surface to one this package builds requests for.
+ *
+ * Catalog data can name a surface a later release adds, so the check is on the
+ * value rather than on the type.
+ */
+export function requireVeryfrontCloudWireSurface(
+  surface: VeryfrontCloudSurfaceId,
+): VeryfrontCloudWireSurface {
+  if (WIRE_SURFACES.has(surface)) return surface as VeryfrontCloudWireSurface;
+  throw NOT_SUPPORTED.create({
+    detail: `Veryfront Cloud wire surface "${surface}" is not supported by this package version`,
+  });
+}
+
+/**
+ * Gateway path for a provider, or undefined when the provider ID cannot be a
+ * path segment. The surface decides the API version, so a provider the catalog
+ * does not list resolves to a path of the same shape.
+ */
+export function resolveVeryfrontCloudGatewayPath(provider: string): string | undefined {
+  const providerId = resolveVeryfrontCloudProviderId(provider);
+  if (!providerId) return undefined;
+  const apiVersion = VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS.get(
+    resolveVeryfrontCloudSurface(providerId),
+  ) ?? DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION;
+  return `${VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX}/${providerId}/${apiVersion}`;
+}
+
+/**
+ * Provider segment of a gateway model ID, including providers this package does
+ * not list. Returns undefined when the ID carries no usable provider segment.
+ */
+export function resolveVeryfrontCloudProviderFromModelId(
+  modelId: string,
+): VeryfrontCloudProviderId | undefined {
+  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
+  const slashIndex = normalizedModelId.indexOf("/");
+  if (slashIndex <= 0) return undefined;
+  return resolveVeryfrontCloudProviderId(normalizedModelId.slice(0, slashIndex));
 }
 
 function getVeryfrontCloudModelTransportCapabilities(
@@ -250,7 +367,7 @@ export function resolveVeryfrontCloudReasoningOption(
   modelId: string,
   thinking: VeryfrontCloudModelThinkingConfig | undefined,
 ): VeryfrontCloudModelThinkingConfig | undefined {
-  if (!tryGetVeryfrontCloudProviderFromModelId(modelId)) {
+  if (!resolveVeryfrontCloudProviderFromModelId(modelId)) {
     return undefined;
   }
 
@@ -288,8 +405,8 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
     return undefined;
   }
 
-  const provider = getVeryfrontCloudProviderFromModelId(modelId);
-  if (provider !== "anthropic") {
+  const provider = resolveVeryfrontCloudProviderFromModelId(modelId);
+  if (!provider || resolveVeryfrontCloudSurface(provider) !== "anthropic") {
     return undefined;
   }
 
@@ -325,7 +442,7 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
 
 /** Group Veryfront Cloud models by provider. */
 export function groupVeryfrontCloudModelsByProvider(): Array<{
-  readonly provider: VeryfrontCloudProviderId;
+  readonly provider: KnownVeryfrontCloudProviderId;
   readonly label: string;
   readonly models: readonly VeryfrontCloudChatModel[];
 }> {
