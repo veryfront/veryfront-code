@@ -828,6 +828,49 @@ describe(
       assertEquals(requested[1]?.includes("chunk.mjs"), true, requested.join(", "));
     });
 
+    it("fetches the version the lockfile resolved for a ranged declaration", async () => {
+      // `npm install` writes a caret range and the lock moves ahead of its
+      // lower bound, so the locked version is the one the project installed.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({
+            dependencies: { "@veryfront-fixture/pdf-text": "^1.8.1" },
+          }),
+          "package-lock.json": publicRegistryLock({ "@veryfront-fixture/pdf-text": "1.9.0" }),
+          [toolPath]: [
+            `import { extractText } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", text: extractText() };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          requested.push(String(input));
+          return Promise.resolve(
+            new Response(`export function extractText() { return "pdf text"; }`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        },
+        () =>
+          importModule(`file://${projectDir}/${toolPath}`, context) as Promise<
+            { default: Record<string, unknown> }
+          >,
+      );
+
+      assertEquals(mod.default.text, "pdf text");
+      assertEquals(
+        requested.some((url) => url.includes("@veryfront-fixture/pdf-text@1.9.0")),
+        true,
+        requested.join(", "),
+      );
+    });
+
     it("refuses to inline a dependency the project's own sources do not vouch for", async () => {
       // esm.sh serves the PUBLIC package of a name. A project that installs
       // that name from somewhere else holds a different package, and running
@@ -851,11 +894,12 @@ describe(
           reason: "does not resolve @veryfront-fixture/pdf-text",
         },
         {
-          name: "a lockfile resolving another version",
+          // The declaration is exact here, so 2.0.0 is not a version it admits.
+          name: "a lockfile resolving a version the declaration excludes",
           files: {
             "package-lock.json": publicRegistryLock({ "@veryfront-fixture/pdf-text": "2.0.0" }),
           },
-          reason: "resolves a different version",
+          reason: "resolves a version of @veryfront-fixture/pdf-text that the project",
         },
         {
           // npm ignores package-lock.json entirely when a shrinkwrap exists.

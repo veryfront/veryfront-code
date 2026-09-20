@@ -23,6 +23,7 @@ import {
   isFrameworkProvidedPackage,
   nodeBuiltinSpecifier,
   parseNpmSpecifier,
+  rangeAdmitsVersion,
 } from "./project-npm-imports.ts";
 import { createHTTPPlugin } from "#veryfront/transforms/esm/http-bundler.ts";
 import { readHttpModuleText } from "#veryfront/transforms/shared/http-module-response.ts";
@@ -314,35 +315,55 @@ export function npmrcRedirectsPackage(npmrcText: string, name: string): boolean 
   return false;
 }
 
+/** The coordinate to fetch, or why nothing may be fetched for this import. */
+type CdnSourceDecision = { version: string } | { refusal: string };
+
 /**
- * Why `name@version` may NOT be inlined from the CDN, or `null` when the
- * project's own lockfile says it installs that exact version from the public
- * registry. Failing closed is the point: without that evidence the CDN copy
- * is a package of the same name, not the project's dependency.
+ * Which version of `name` the CDN may serve, or why none may be.
+ *
+ * The project's lockfile is both the provenance evidence and the version of
+ * record: `npm install` writes a range and the lock moves ahead of its lower
+ * bound, so the locked version -- not the range's lower bound -- is the one
+ * the project installed. It is served only when the declaration and the
+ * import's own range both admit it. Failing closed is the point: without that
+ * evidence the CDN copy is a package of the same name, not this project's
+ * dependency.
  */
-function cdnSourceRefusal(
+function cdnSourceDecision(
   sources: ProjectRegistrySources,
+  declared: string | undefined,
   name: string,
-  version: string,
-): string | null {
+  named: string,
+  importRange: string | null,
+): CdnSourceDecision {
   if (npmrcRedirectsPackage(sources.npmrc, name)) {
-    return `the project's .npmrc installs ${name} from another registry, so the public ` +
-      `package of that name is not this project's dependency`;
+    return {
+      refusal: `the project's .npmrc installs ${name} from another registry, so the public ` +
+        `package of that name is not this project's dependency`,
+    };
   }
   const locked = Object.hasOwn(sources.locked, name) ? sources.locked[name] : undefined;
   if (locked === undefined) {
-    return `the project's lockfile does not resolve ${name}, so the public package of that ` +
-      `name cannot be shown to be this project's dependency -- commit a package-lock.json`;
-  }
-  if (locked.version !== version) {
-    return `the project's lockfile resolves a different version of ${name} than the ` +
-      `declaration names`;
+    return {
+      refusal: `the project's lockfile does not resolve ${name}, so the public package of ` +
+        `that name cannot be shown to be this project's dependency -- commit a ` +
+        `package-lock.json`,
+    };
   }
   if (!locked.resolved.startsWith(PUBLIC_NPM_REGISTRY)) {
-    return `the project's lockfile resolves ${name} from another registry, so the public ` +
-      `package of that name is not this project's dependency`;
+    return {
+      refusal: `the project's lockfile resolves ${name} from another registry, so the public ` +
+        `package of that name is not this project's dependency`,
+    };
   }
-  return null;
+  if (locked.version === named) return { version: named };
+  const admits = (range: string | null | undefined) =>
+    range === null || range === undefined || rangeAdmitsVersion(range, locked.version) === true;
+  if (admits(declared) && admits(importRange)) return { version: locked.version };
+  return {
+    refusal: `the project's lockfile resolves a version of ${name} that the project's own ` +
+      `declaration or this import does not admit`,
+  };
 }
 
 /** A project's evidence for where its dependencies come from. */
@@ -642,7 +663,11 @@ const MISSING_DEPENDENCY_MARKER = "[veryfront:missing-npm-dependency]";
 export function createProjectDependencyCdnPlugin(
   pins: Record<string, string>,
   onMissing: (specifier: string, reason: string) => void,
-  refuseCdnSource: (name: string, version: string) => string | null = () => null,
+  resolveCdnSource: (
+    name: string,
+    version: string,
+    importRange: string | null,
+  ) => CdnSourceDecision = (_name, version) => ({ version }),
 ): Plugin {
   return {
     name: "veryfront-project-npm-cdn",
@@ -775,11 +800,19 @@ export function createProjectDependencyCdnPlugin(
         const { name, version, subpath } = decision;
         // The CDN serves the PUBLIC package of this name, so it is only this
         // project's dependency when the project resolves it from the public
-        // registry. Without that evidence nothing is fetched.
-        const refusal = refuseCdnSource(name, version);
-        if (refusal !== null) return reportMissing(args, describeNpmImport(args.path), refusal);
+        // registry -- and the version it locked is the one it installed.
+        const source = resolveCdnSource(
+          name,
+          version,
+          parseNpmSpecifier(args.path)?.version ?? null,
+        );
+        if ("refusal" in source) {
+          return reportMissing(args, describeNpmImport(args.path), source.refusal);
+        }
         return {
-          path: `${ESM_CDN_BASE}/${name}@${version}${subpath === "." ? "" : subpath.slice(1)}`,
+          path: `${ESM_CDN_BASE}/${name}@${source.version}${
+            subpath === "." ? "" : subpath.slice(1)
+          }`,
           namespace: "http-url",
         };
       });
@@ -1137,7 +1170,14 @@ export async function importModule(
         (specifier, reason) => {
           missingDependencies.push({ specifier, reason });
         },
-        (name, version) => cdnSourceRefusal(registrySources, name, version),
+        (name, version, importRange) =>
+          cdnSourceDecision(
+            registrySources,
+            Object.hasOwn(dependencyPins, name) ? dependencyPins[name] : undefined,
+            name,
+            version,
+            importRange,
+          ),
       ),
     );
     if (Object.keys(dependencyPins).length > 0) {
