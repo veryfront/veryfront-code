@@ -345,17 +345,30 @@ export function readPropagationBudget(
   const positiveInteger = (value: string | undefined, fallback: number) => {
     if (value === undefined || !/^\d+$/.test(value)) return fallback;
     const parsed = Number(value);
-    return parsed > 0 ? parsed : fallback;
+    // A digit-only value can still be unusable: `Infinity` never exhausts the
+    // loop, and an unsafe integer stops the attempt counter advancing.
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
   };
   return {
-    maxAttempts: positiveInteger(env.VF_REGISTRY_PROPAGATION_ATTEMPTS, 90),
+    // The poll waits BETWEEN attempts, so 91 attempts spend 90 delays: the
+    // fifteen minutes this budget promises.
+    maxAttempts: positiveInteger(env.VF_REGISTRY_PROPAGATION_ATTEMPTS, 91),
     retryDelayMs: positiveInteger(env.VF_REGISTRY_PROPAGATION_DELAY_MS, 10_000),
   };
 }
 
 async function main(args: string[]): Promise<void> {
   const options = readCliOptions(args);
-  const budget = readPropagationBudget(Deno.env.toObject());
+  // Read individually: enumerating the environment needs unrestricted access,
+  // and the smoke script grants only these two variables.
+  const budget = readPropagationBudget({
+    VF_REGISTRY_PROPAGATION_ATTEMPTS: Deno.env.get(
+      "VF_REGISTRY_PROPAGATION_ATTEMPTS",
+    ),
+    VF_REGISTRY_PROPAGATION_DELAY_MS: Deno.env.get(
+      "VF_REGISTRY_PROPAGATION_DELAY_MS",
+    ),
+  });
   await Promise.all(options.packages.map((packageName) =>
     pollRegistryPackage({
       packageName,

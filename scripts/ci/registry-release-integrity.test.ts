@@ -49,9 +49,10 @@ describe("registry propagation budget", () => {
   it("waits long enough for npm to publish the version everywhere", () => {
     // The 30x10s budget gave up on main three times while the release itself
     // was fine: the version simply was not visible yet.
+    // The poll waits BETWEEN attempts, so n attempts spend (n-1) delays.
     const { maxAttempts, retryDelayMs } = readPropagationBudget({});
     assertEquals(
-      maxAttempts * retryDelayMs >= 900_000,
+      (maxAttempts - 1) * retryDelayMs >= 900_000,
       true,
       `${maxAttempts}x${retryDelayMs}ms`,
     );
@@ -66,7 +67,9 @@ describe("registry propagation budget", () => {
       { maxAttempts: 5, retryDelayMs: 2000 },
     );
     // Anything unusable leaves the default in place rather than a zero budget.
-    for (const value of ["0", "-1", "abc", ""]) {
+    // A digit-only value can still be unusable: `Infinity` never exhausts the
+    // loop, and an unsafe integer stops the attempt counter advancing.
+    for (const value of ["0", "-1", "abc", "", "1e400", "99999999999999999999"]) {
       assertEquals(
         readPropagationBudget({ VF_REGISTRY_PROPAGATION_ATTEMPTS: value })
           .maxAttempts,
