@@ -13,7 +13,9 @@ versions are listed at
 any model ID whose provider segment is well formed, not only to the provider
 names this package lists. Every ID that routed before routes the same way. A
 well-formed ID that previously came back unchanged, and so resolved through the
-local provider registry, now resolves through Veryfront Cloud.
+local provider registry, now resolves through Veryfront Cloud. One exception is
+unchanged: a `mistral/` ID this package does not support still comes back
+without the prefix.
 
 This needs your decision if you call either function on IDs that are not meant
 for Veryfront Cloud. Both are prefix helpers for a run that has already chosen
