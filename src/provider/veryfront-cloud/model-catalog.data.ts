@@ -72,134 +72,137 @@ export const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES: ReadonlyMap<
   ],
 ]);
 
-/** Chat model entries in display order. The order is user-visible. */
+/**
+ * Chat model entries in display order. The order is user-visible. Each entry is
+ * frozen here, so the data is immutable for any module that imports it.
+ */
 export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatModel[] = Object.freeze(
   [
-    {
+    Object.freeze({
       id: "opus",
       modelId: "anthropic/claude-opus-4-8",
       provider: "anthropic",
       name: "Claude Opus 4.8",
       description: "Most capable for ambitious work",
       thinkingBudgetTokens: 2048,
-    },
-    {
+    }),
+    Object.freeze({
       id: "claude-opus-4-6",
       modelId: "anthropic/claude-opus-4-6",
       provider: "anthropic",
       name: "Claude Opus 4.6",
       description: "Previous Opus generation for compatibility-sensitive agents",
       thinkingBudgetTokens: 2048,
-    },
-    {
+    }),
+    Object.freeze({
       id: "sonnet",
       modelId: "anthropic/claude-sonnet-4-6",
       provider: "anthropic",
       name: "Claude Sonnet 4.6",
       description: "Most efficient for everyday tasks",
       thinkingBudgetTokens: 2048,
-    },
-    {
+    }),
+    Object.freeze({
       id: "haiku",
       modelId: "anthropic/claude-haiku-4-5-20251001",
       provider: "anthropic",
       name: "Claude Haiku 4.5",
       description: "Fastest for quick answers",
       thinkingBudgetTokens: 1024,
-    },
-    {
+    }),
+    Object.freeze({
       id: "gpt-5.5",
       modelId: "openai/gpt-5.5",
       provider: "openai",
       name: "GPT-5.5",
       description: "Most capable OpenAI model",
       thinking: true,
-    },
-    {
+    }),
+    Object.freeze({
       id: "gpt-5.4-mini",
       modelId: "openai/gpt-5.4-mini",
       provider: "openai",
       name: "GPT-5.4 Mini",
       description: "Fast OpenAI model for cost-efficient everyday work",
       thinking: true,
-    },
-    {
+    }),
+    Object.freeze({
       id: "gpt-5.4",
       modelId: "openai/gpt-5.4",
       provider: "openai",
       name: "GPT-5.4",
       description: "Production-proven OpenAI frontier model",
       thinking: true,
-    },
-    {
+    }),
+    Object.freeze({
       id: "gpt-5.4-nano",
       modelId: "openai/gpt-5.4-nano",
       provider: "openai",
       name: "GPT-5.4 Nano",
       description: "Lowest-cost OpenAI model for lightweight work",
       thinking: true,
-    },
-    {
+    }),
+    Object.freeze({
       id: "gpt-5.2",
       modelId: "openai/gpt-5.2",
       provider: "openai",
       name: "GPT-5.2",
       description: "Previous OpenAI frontier generation",
       thinking: true,
-    },
-    {
+    }),
+    Object.freeze({
       id: "gemini-3.1-pro-preview",
       modelId: "google-ai-studio/gemini-3.1-pro-preview",
       provider: "google",
       name: "Gemini 3.1 Pro Preview",
       description: "Advanced reasoning and analysis",
       thinking: true,
-    },
-    {
+    }),
+    Object.freeze({
       id: "gemini-3.5-flash",
       modelId: "google-ai-studio/gemini-3.5-flash",
       provider: "google",
       name: "Gemini 3.5 Flash",
       description: "Fast and cost-efficient",
-    },
-    {
+    }),
+    Object.freeze({
       id: "gemini-2.5-pro",
       modelId: "google-ai-studio/gemini-2.5-pro",
       provider: "google",
       name: "Gemini 2.5 Pro",
       description: "Previous Google Pro model",
       thinking: true,
-    },
-    {
+    }),
+    Object.freeze({
       id: "gemini-2.5-flash",
       modelId: "google-ai-studio/gemini-2.5-flash",
       provider: "google",
       name: "Gemini 2.5 Flash",
       description: "Previous Google Flash model",
-    },
-    {
+    }),
+    Object.freeze({
       id: "mistral-large-2512",
       modelId: "mistral/mistral-large-2512",
       provider: "mistral",
       name: "Mistral Large 3",
       description: "Most capable Mistral model",
-    },
-    {
+    }),
+    Object.freeze({
       id: "kimi-k2.6",
       modelId: "moonshotai/kimi-k2.6",
       provider: "moonshotai",
       name: "Kimi K2.6",
       description: "Deep thinking and multimodal",
       thinking: true,
-    },
-    {
+    }),
+    Object.freeze({
       id: "kimi-k2.5",
       modelId: "moonshotai/kimi-k2.5",
       provider: "moonshotai",
       name: "Kimi K2.5",
       description: "Previous Kimi generation",
       thinking: true,
-    },
+    }),
   ],
 );
 
