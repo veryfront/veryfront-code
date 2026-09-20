@@ -392,6 +392,49 @@ async function writeFiles(
   return { written, failed };
 }
 
+/** How many overwritten paths a prompt or warning spells out before eliding. */
+const OVERWRITE_LIST_LIMIT = 10;
+
+/**
+ * The managed paths this pull would overwrite whose local content is not what
+ * the remote holds.
+ *
+ * Pull's contract is that the remote wins, but a count ("write 42 managed local
+ * files") tells the user nothing about which of their own edits are about to
+ * disappear. Issue #1456 hit exactly that: the only recovery from a push
+ * conflict was a pull, and the pull silently overwrote an unrelated local edit.
+ * Naming the files costs one read each and is the difference between an
+ * overwrite the user chose and one they discover later in `git diff`.
+ *
+ * A path that does not exist locally is a creation, not a discarded edit, so it
+ * is not reported. An unreadable path is left out rather than guessed at.
+ */
+async function findOverwrittenLocalEdits(ops: readonly WriteOp[]): Promise<string[]> {
+  const fs = createFileSystem();
+  const modified: string[] = [];
+  for (let i = 0; i < ops.length; i += CONCURRENCY) {
+    const batch = ops.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map(async (op) => {
+      try {
+        return await fs.readTextFile(op.path) === op.content ? null : op.relativePath;
+      } catch {
+        return null;
+      }
+    }));
+    for (const path of results) {
+      if (path !== null) modified.push(path);
+    }
+  }
+  return modified.sort();
+}
+
+/** `a, b, c and 4 more`, so a large overwrite set stays readable. */
+function formatOverwrittenPaths(paths: readonly string[]): string {
+  const shown = paths.slice(0, OVERWRITE_LIST_LIMIT).join(", ");
+  const remaining = paths.length - OVERWRITE_LIST_LIMIT;
+  return remaining > 0 ? `${shown} and ${remaining} more` : shown;
+}
+
 async function listManagedLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
@@ -614,6 +657,7 @@ async function confirmPullWrite(
   writeCount: number,
   deleteCount: number,
   bootstrapWriteCount: number,
+  overwrittenLocalEdits: readonly string[] = [],
 ): Promise<boolean> {
   if (isInteractive() && !isTTY()) {
     throw INVALID_ARGUMENT.create({
@@ -630,7 +674,20 @@ async function confirmPullWrite(
     actions.push(`create or update ${bootstrapWriteCount} local project files`);
   }
   const action = actions.join(" and ");
+  // The overwrite list goes above the prompt rather than inside it: the answer
+  // to "continue?" depends on which of the user's own edits are in it.
+  if (overwrittenLocalEdits.length > 0) warnOverwrittenLocalEdits(overwrittenLocalEdits);
   return await confirmPrompt(`This will ${action} in ${projectDir}. Continue?`, false);
+}
+
+/** Name the local edits a pull is about to discard, so it never does so silently. */
+function warnOverwrittenLocalEdits(paths: readonly string[]): void {
+  logWarning(
+    `Pull will overwrite ${paths.length} local file${paths.length === 1 ? "" : "s"} that ${
+      paths.length === 1 ? "differs" : "differ"
+    } from the remote copy: ${formatOverwrittenPaths(paths)}.`,
+  );
+  logInfo("Commit or stash those changes first to keep them.");
 }
 
 function syncBranchForPullSource(source: PullSource): string | null {
@@ -783,6 +840,12 @@ async function pullSingleProject(
     );
   }
 
+  // Which local edits this pull discards is the one thing a count cannot say,
+  // and --yes is consent to skip the prompt, not consent to lose work unseen.
+  const overwrittenLocalEdits = writeOps.length > 0
+    ? await findOverwrittenLocalEdits(writeOps)
+    : [];
+
   if (
     !force &&
     !dryRun &&
@@ -793,11 +856,14 @@ async function pullSingleProject(
       writeOps.length,
       deleteOps.length,
       bootstrapPlan.writeCount,
+      overwrittenLocalEdits,
     );
     if (!confirmed) {
       cliLogger.info("Pull cancelled.");
       return { written: 0, deleted: 0, cancelled: true };
     }
+  } else if (overwrittenLocalEdits.length > 0 && !quiet) {
+    warnOverwrittenLocalEdits(overwrittenLocalEdits);
   }
 
   if (!dryRun && syncBranchForPullSource(source)) {

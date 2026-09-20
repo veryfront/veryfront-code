@@ -36,6 +36,18 @@ export type PackageJsonDriftClassification = "server-pins" | "user-edit";
 export interface AdoptedPin {
   name: string;
   version: string;
+  /**
+   * True when the declaration exists only on the remote side, i.e. the resolver
+   * added a dependency the local manifest never declared.
+   *
+   * The API's writer does this for any specifier a render resolved that the
+   * manifest did not declare (`applyResolvedPins` writes `nextDeps[name]` when
+   * `!current`), so it is a legitimate part of a pin write. It is nonetheless a
+   * different trust question from tightening a range the user chose: the name
+   * and the version are both the server's, and `veryfront dev` installs them.
+   * Callers must obtain explicit consent before adopting one.
+   */
+  added: boolean;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -225,13 +237,13 @@ function tightenedPins(
     if (isExactSemver(declaration)) return null;
     if (!isExactSemver(next)) return null;
     if (!satisfiesDeclaredRange(next, declaration)) return null;
-    pins.push({ name, version: next });
+    pins.push({ name, version: next, added: false });
   }
 
   for (const [name, declaration] of Object.entries(remote)) {
     if (Object.hasOwn(baseline, name)) continue;
     if (!isExactSemver(declaration)) return null;
-    pins.push({ name, version: declaration });
+    pins.push({ name, version: declaration, added: true });
   }
 
   return pins;
@@ -317,4 +329,19 @@ export function adoptedPackageJsonPins(
 /** Human-readable summary of adopted pins, e.g. `react 19.3.0, zod 3.25.1`. */
 export function formatAdoptedPins(pins: readonly AdoptedPin[]): string {
   return pins.map((pin) => `${pin.name} ${pin.version}`).join(", ");
+}
+
+/**
+ * The pins that introduce a declaration the local manifest never had.
+ *
+ * Tightening `"react": "^19.2.4"` to `19.3.0` stays inside a range the user
+ * already chose, so the preimage proof is enough to adopt it. An addition is
+ * not bounded by anything the user wrote: the package name and the version are
+ * both chosen remotely, and the next `veryfront dev` installs them. Anyone with
+ * `project.files.write` can seed both halves of the preimage proof by writing
+ * the manifest and triggering a resolve, so additions need consent from the
+ * person whose checkout is about to receive them.
+ */
+export function addedDeclarationPins(pins: readonly AdoptedPin[]): AdoptedPin[] {
+  return pins.filter((pin) => pin.added);
 }

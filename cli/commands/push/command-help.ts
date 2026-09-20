@@ -34,6 +34,14 @@ export const pushHelp: CommandHelp = {
       flag: "-q, --quiet",
       description: "Suppress progress and summary output",
     },
+    {
+      flag: "--no-adopt-pins",
+      description: "Never reconcile a server-written dependency pin set into local package.json",
+    },
+    {
+      flag: "--adopt-new-deps",
+      description: "Accept resolved dependencies package.json does not declare, without asking",
+    },
   ],
   examples: [
     "veryfront push",
@@ -47,6 +55,8 @@ export const pushHelp: CommandHelp = {
     "Preview branch names use lowercase letters, numbers, and hyphens",
     "By default, push uploads local files and preserves remote-only files",
     "Push rejects files changed remotely since the last pull or push",
+    "Dependency versions the platform resolved into package.json are adopted locally and reported",
+    "A resolved dependency package.json never declared is only written after you confirm it",
     "Run pull and reconcile changes with Git before retrying a rejected push",
     "Use --force only when you intend to overwrite remote changes",
     "Use --prune to remove managed remote files that are missing locally",

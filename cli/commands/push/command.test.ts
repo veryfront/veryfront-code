@@ -6936,6 +6936,7 @@ describe("push dependency pin reconciliation", () => {
     history: unknown;
     packageJsonRemote?: string;
     localPackageJson?: string;
+    push?: Partial<Parameters<typeof pushCommand>[0]>;
   }
 
   async function runPinPush(
@@ -6949,6 +6950,7 @@ describe("push dependency pin reconciliation", () => {
     }) => Promise<void>,
   ): Promise<void> {
     const originalLog = console.log;
+    const originalWarn = console.warn;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
@@ -7022,19 +7024,27 @@ describe("push dependency pin reconciliation", () => {
 
         const output: string[] = [];
         let error: unknown;
+        // The adoption notice is a warning: it reports a change to a tracked
+        // file the user did not make, and it must survive `quiet`.
         console.log = captureConsoleLog(output);
+        console.warn = captureConsoleLog(output);
         try {
-          await withMockFetch(fetchHandler, () => pushCommand({ projectDir }));
+          await withMockFetch(
+            fetchHandler,
+            () => pushCommand({ projectDir, ...scenario.push }),
+          );
         } catch (thrown) {
           error = thrown;
         } finally {
           console.log = originalLog;
+          console.warn = originalWarn;
         }
 
         await assertOutcome({ projectDir, error, output, puts, historyCalls });
       });
     } finally {
       console.log = originalLog;
+      console.warn = originalWarn;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
@@ -7061,6 +7071,152 @@ describe("push dependency pin reconciliation", () => {
         assertStringIncludes(
           output.map(stripAnsi).join("\n"),
           "Adopted 1 server-resolved dependency pin into package.json (react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("reports the adopted pins even when the caller asked for a quiet push", async () => {
+    // `veryfront up` and `veryfront deploy` refresh through `pushCommand({
+    // quiet: true })`, which is the flow this reconciliation exists for. A
+    // rewrite of a tracked file is not progress output and must survive it.
+    await runPinPush(
+      {
+        push: { quiet: true },
+        history: {
+          version: 1,
+          project_id: "project-123",
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        assertEquals(error, undefined);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), PINNED_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 1 server-resolved dependency pin into package.json (react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("leaves the manifest alone and keeps the conflict under --no-adopt-pins", async () => {
+    await runPinPush(
+      {
+        push: { noAdoptPins: true },
+        history: {
+          version: 1,
+          project_id: "project-123",
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, historyCalls }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(historyCalls, 0);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("reaches the same verdict in a dry run without touching the manifest", async () => {
+    // A dry run that reports a hard conflict for a state the real push sails
+    // through is worse than no dry run at all.
+    await runPinPush(
+      {
+        push: { dryRun: true },
+        history: {
+          version: 1,
+          project_id: "project-123",
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        assertEquals(error, undefined);
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Would adopt 1 server-resolved dependency pin into package.json (react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("does not write a dependency the resolver added without explicit consent", async () => {
+    // The preimage proof shows the API's writer produced the bytes, not that
+    // the user wanted them: anyone with project.files.write can set the remote
+    // manifest and trigger a resolve to seed both halves. A tightening stays
+    // inside a range the user declared; a brand-new package does not.
+    const withAddition = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { clsx: "2.1.1", react: "19.3.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        packageJsonRemote: withAddition,
+        history: {
+          version: 1,
+          project_id: "project-123",
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { clsx: "2.1.1", react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+        assertStringIncludes(output.map(stripAnsi).join("\n"), "--adopt-new-deps");
+      },
+    );
+  });
+
+  it("writes a dependency the resolver added once --adopt-new-deps is passed", async () => {
+    const withAddition = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { clsx: "2.1.1", react: "19.3.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        push: { adoptNewDeps: true },
+        packageJsonRemote: withAddition,
+        history: {
+          version: 1,
+          project_id: "project-123",
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { clsx: "2.1.1", react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        assertEquals(error, undefined);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), withAddition);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 2 server-resolved dependency pins into package.json (react 19.3.0, clsx 2.1.1)",
         );
       },
     );

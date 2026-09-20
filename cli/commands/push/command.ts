@@ -32,7 +32,7 @@ import {
   slugConflictAction,
 } from "#cli/shared/project-resolution";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
-import { isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { confirmPrompt, isTTY, isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
 import {
   DEPLOYMENT_ERROR,
   INVALID_ARGUMENT,
@@ -66,12 +66,14 @@ import { buildStudioUrl } from "../studio/command.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { type PlannedDelete, type PlannedUpload, planPushChanges } from "./plan.ts";
 import {
+  addedDeclarationPins,
   adoptedPackageJsonPins,
   type AdoptedPin,
   type DependencyPreimage,
   formatAdoptedPins,
   PACKAGE_JSON_PATH,
 } from "./dependency-pins.ts";
+import { isInteractive } from "../../shared/interactive.ts";
 import {
   computeContentDigest,
   preflightSyncState,
@@ -99,6 +101,10 @@ export const getPushArgsSchema = defineSchema((v) =>
     prune: v.boolean().default(false),
     dryRun: v.boolean().default(false),
     quiet: v.boolean().default(false),
+    /** Never reconcile a server-written dependency pin set into package.json. */
+    noAdoptPins: v.boolean().default(false),
+    /** Accept dependencies the platform resolved but package.json never declared. */
+    adoptNewDeps: v.boolean().default(false),
   })
 );
 
@@ -117,6 +123,8 @@ const parseKnownPushArgs = createArgParser(PushArgsSchema, {
   prune: { keys: ["prune"], type: "boolean" },
   dryRun: CommonArgs.dryRun,
   quiet: CommonArgs.quiet,
+  noAdoptPins: { keys: ["no-adopt-pins"], type: "boolean" },
+  adoptNewDeps: { keys: ["adopt-new-deps"], type: "boolean" },
 });
 
 export function parsePushArgs(
@@ -154,6 +162,18 @@ export interface PushOptions {
   dryRun?: boolean;
   /** Quiet mode - suppress spinner/progress output */
   quiet?: boolean;
+  /**
+   * Never reconcile a server-written dependency pin set into the local
+   * package.json. The drift is reported as the push conflict it is today.
+   */
+  noAdoptPins?: boolean;
+  /**
+   * Adopt declarations the platform resolved that package.json never declared,
+   * without asking. Without this the addition needs an interactive
+   * confirmation, because the package name and version are both chosen
+   * remotely.
+   */
+  adoptNewDeps?: boolean;
   /** Reject when HEAD no longer matches the commit that selected this push. */
   expectedCommitSha?: string | null;
   /** Reject when Git repository availability changed after push selection. */
@@ -290,6 +310,16 @@ function sourceSnapshotsMatch(
 
 function sourceChangedError(): Error {
   return new Error("Local source changed during push. Run veryfront push again.");
+}
+
+/** Whether two source captures cover exactly the same set of relative paths. */
+function samePathSet(
+  left: readonly UploadOp[],
+  right: readonly UploadOp[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const paths = new Set(left.map((file) => file.path));
+  return right.every((file) => paths.has(file.path));
 }
 
 function gitProvenanceError(): Error {
@@ -1102,7 +1132,17 @@ async function readDependencyPreimages(
       `/projects/${encodeURIComponent(projectRef)}/dependencies/history`,
       branch === "main" ? undefined : { branch },
     );
-  } catch {
+  } catch (error) {
+    // A control plane that predates the history endpoint answers 404 here, and
+    // the push falls back to the conflict it raises today. Say so under
+    // --verbose rather than leaving the reconciliation looking broken.
+    if (isVerbose()) {
+      cliLogger.info(
+        `Dependency pin history unavailable (${
+          sanitizeTerminalDiagnosticText(error instanceof Error ? error.message : String(error))
+        }); a package.json rewrite will be reported as a conflict.`,
+      );
+    }
     return [];
   }
   if (response === null || typeof response !== "object") return [];
@@ -1125,9 +1165,17 @@ async function readDependencyPreimages(
   return preimages;
 }
 
+/** A remote package.json rewrite this push can reconcile, before any consent. */
+interface ServerDependencyPinAdoption {
+  /** The declarations the rewrite changed. */
+  pins: AdoptedPin[];
+  /** The remote bytes that would replace the local manifest. */
+  content: string;
+}
+
 /**
- * Reconcile a remote package.json that the platform rewrote to pin resolved
- * dependency versions.
+ * Classify a remote package.json that the platform may have rewritten to pin
+ * resolved dependency versions.
  *
  * The rewrite is triggered by a Preview render and lands after the push that
  * caused it has already recorded the pushed bytes as its sync baseline, so the
@@ -1137,46 +1185,135 @@ async function readDependencyPreimages(
  * provably the API's own pin write. Anything else is left to
  * {@link planPushChanges}, which reports it as a conflict.
  *
- * @returns The adopted pins, empty when the drift was not adopted.
+ * This function never touches the working tree, so a dry run can reach the same
+ * verdict the real push will.
+ *
+ * @returns The adoption, or null when the drift is not an adoptable pin write.
  */
-async function adoptServerDependencyPins(params: {
+async function planServerDependencyPinAdoption(params: {
   client: ApiClient;
   projectRef: string;
   branch: string;
-  projectDir: string;
   baselineDigest: string | undefined;
   localFiles: readonly UploadOp[];
   remoteFiles: readonly RemoteFile[];
-}): Promise<AdoptedPin[]> {
+}): Promise<ServerDependencyPinAdoption | null> {
   const { baselineDigest } = params;
-  if (baselineDigest === undefined) return [];
+  if (baselineDigest === undefined) return null;
 
   const local = params.localFiles.find((file) => file.path === PACKAGE_JSON_PATH);
   const remote = params.remoteFiles.find((file) => file.path === PACKAGE_JSON_PATH);
-  if (!local || !remote || typeof remote.content !== "string") return [];
+  if (!local || !remote || typeof remote.content !== "string") return null;
 
   const remoteDigest = await computeContentDigest(remote.content);
-  if (remoteDigest === baselineDigest) return [];
+  if (remoteDigest === baselineDigest) return null;
   // A local edit of the same file is the caller's own change and must still win
   // the conflict, so the baseline content is only recoverable from disk when
   // the two still agree.
-  if (await computeContentDigest(local.content) !== baselineDigest) return [];
+  if (await computeContentDigest(local.content) !== baselineDigest) return null;
 
   const preimages = await readDependencyPreimages(
     params.client,
     params.projectRef,
     params.branch,
   );
-  if (preimages.length === 0) return [];
+  if (preimages.length === 0) return null;
 
   const pins = adoptedPackageJsonPins(local.content, remote.content, preimages);
-  if (pins.length === 0) return [];
+  if (pins.length === 0) return null;
 
-  await createFileSystem().writeTextFile(
-    join(params.projectDir, PACKAGE_JSON_PATH),
-    remote.content,
+  return { pins, content: remote.content };
+}
+
+/**
+ * Write an adopted manifest over the local one, re-reading the file first.
+ *
+ * The classification ran against the push source snapshot, which was captured
+ * earlier; an edit made in between is a local change this push has never seen,
+ * and overwriting it would be exactly the silent discard the conflict rule
+ * exists to prevent. Re-reading closes all but the last instants of that
+ * window.
+ *
+ * @returns Whether the manifest was replaced.
+ */
+async function writeAdoptedManifest(
+  projectDir: string,
+  expectedDigest: string,
+  content: string,
+): Promise<boolean> {
+  const manifestPath = join(projectDir, PACKAGE_JSON_PATH);
+  const fs = createFileSystem();
+  let current: string;
+  try {
+    current = await fs.readTextFile(manifestPath);
+  } catch {
+    return false;
+  }
+  if (await computeContentDigest(current) !== expectedDigest) return false;
+  await fs.writeTextFile(manifestPath, content);
+  return true;
+}
+
+/**
+ * Announce that this push rewrote the working tree's package.json.
+ *
+ * Deliberately not gated on `quiet`: `quiet` suppresses progress and the result
+ * envelope, and every embedded caller passes it — including the
+ * `veryfront up` / `veryfront deploy` refresh push, which is the flow this
+ * reconciliation exists for. A change to a tracked file the user did not make
+ * is not progress output, and leaving it unreported is what would turn a clean
+ * checkout dirty behind their back.
+ */
+function reportAdoptedPins(pins: readonly AdoptedPin[], dryRun: boolean): void {
+  if (isJsonMode()) {
+    streamJsonLine({
+      type: "dependency-pins-adopted",
+      data: {
+        path: PACKAGE_JSON_PATH,
+        dryRun,
+        pins: pins.map((pin) => ({ name: pin.name, version: pin.version, added: pin.added })),
+      },
+    });
+    return;
+  }
+  const count = `${pins.length} server-resolved dependency pin${pins.length === 1 ? "" : "s"}`;
+  logWarning(
+    dryRun
+      ? `Would adopt ${count} into ${PACKAGE_JSON_PATH} (${formatAdoptedPins(pins)}). ` +
+        `A real push replaces your local ${PACKAGE_JSON_PATH} with the platform's copy.`
+      : `Adopted ${count} into ${PACKAGE_JSON_PATH} (${formatAdoptedPins(pins)}). ` +
+        `Your local ${PACKAGE_JSON_PATH} was replaced with the platform's copy, ` +
+        `so this checkout now has an uncommitted change.`,
   );
-  return pins;
+}
+
+/**
+ * Ask whether declarations the platform added may be written into this
+ * checkout. A push that cannot ask refuses, so the drift falls through to the
+ * conflict it raises today rather than installing a server-chosen package.
+ */
+async function confirmAdoptedDependencyAdditions(
+  added: readonly AdoptedPin[],
+  canPrompt: boolean,
+): Promise<boolean> {
+  const names = added.map((pin) => sanitizeTerminalDiagnosticText(`${pin.name} ${pin.version}`))
+    .join(", ");
+  if (!canPrompt) {
+    if (!isJsonMode()) {
+      logWarning(
+        `Veryfront resolved ${added.length} dependenc${added.length === 1 ? "y" : "ies"} that ` +
+          `${PACKAGE_JSON_PATH} does not declare (${names}). They were not written to this ` +
+          `checkout. Re-run with --adopt-new-deps to accept them, or run veryfront pull.`,
+      );
+    }
+    return false;
+  }
+  return await confirmPrompt(
+    `Veryfront resolved ${added.length} dependenc${
+      added.length === 1 ? "y" : "ies"
+    } that ${PACKAGE_JSON_PATH} does not declare (${names}). Write them into ${PACKAGE_JSON_PATH}?`,
+    false,
+  );
 }
 
 async function writeAppliedSyncTarget(
@@ -1245,6 +1382,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         force = false,
         dryRun = false,
         quiet = false,
+        noAdoptPins = false,
+        adoptNewDeps: adoptNewDependencies = false,
       } = options;
       const pruneRemoteMissing = options.prune ?? false;
       const selectedPrunePaths = new Set(options.prunePaths ?? []);
@@ -1588,34 +1727,67 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       // resolved versions back into package.json after this directory already
       // recorded the pushed bytes as its baseline. Adopt that write here, so the
       // conflict rule in plan.ts can stay strict for every other rewrite.
-      const adoptedPins = dryRun || force || remoteFilesAreBaseline || !project
-        ? []
-        : await adoptServerDependencyPins({
+      const baselinePackageJsonDigest = baseline?.files[PACKAGE_JSON_PATH]?.digest;
+      const pinAdoption = force || remoteFilesAreBaseline || !project || noAdoptPins
+        ? null
+        : await planServerDependencyPinAdoption({
           client,
           projectRef: projectApiReference(config),
           branch: branchName,
-          projectDir,
-          baselineDigest: baseline?.files[PACKAGE_JSON_PATH]?.digest,
+          baselineDigest: baselinePackageJsonDigest,
           localFiles: ops,
           remoteFiles: managedRemoteFiles,
         });
-      if (adoptedPins.length > 0) {
-        // The adopted bytes are now on disk, so the snapshot this push proves
-        // itself against has to describe the directory as it stands.
-        sourceSnapshot = await capturePushSourceSnapshot(
-          projectDir,
-          ignoreChecker,
-          options.expectedCommitSha,
-          options.discoverDeletedGitPaths ?? false,
-          options.expectedRepositoryAvailable,
-        );
-        ops = sourceSnapshot.files;
-        if (!quiet && !jsonOutput) {
-          logInfo(
-            `Adopted ${adoptedPins.length} server-resolved dependency pin${
-              adoptedPins.length === 1 ? "" : "s"
-            } into ${PACKAGE_JSON_PATH} (${formatAdoptedPins(adoptedPins)})`,
+      if (pinAdoption) {
+        // The spinner owns the current terminal line, so every notice below has
+        // to claim it first or it lands inside the animation.
+        spinner.stop();
+        const added = addedDeclarationPins(pinAdoption.pins);
+        // A tightening stays inside a range the user declared. An addition is a
+        // package name and a version chosen entirely by whoever can write the
+        // remote manifest, and `veryfront dev` installs it, so it needs consent
+        // that is not just "a push happened".
+        const additionsAllowed = added.length === 0 || adoptNewDependencies ||
+          await confirmAdoptedDependencyAdditions(
+            added,
+            isInteractive() && isTTY() && !quiet && !jsonOutput,
           );
+        if (additionsAllowed) {
+          const adopted = dryRun ||
+            await writeAdoptedManifest(
+              projectDir,
+              // `planServerDependencyPinAdoption` only returns an adoption when
+              // the snapshot's bytes are the baseline's, so this is the digest
+              // the file on disk must still have.
+              baselinePackageJsonDigest ?? "",
+              pinAdoption.content,
+            );
+          if (adopted && dryRun) {
+            // Keep the dry run's plan honest without touching the working tree:
+            // the real push reaches the planner with these bytes in place.
+            ops = ops.map((op) =>
+              op.path === PACKAGE_JSON_PATH ? { ...op, content: pinAdoption.content } : op
+            );
+          } else if (adopted) {
+            // The adopted bytes are now on disk, so the snapshot this push
+            // proves itself against has to describe the directory as it stands.
+            const recaptured = await capturePushSourceSnapshot(
+              projectDir,
+              ignoreChecker,
+              options.expectedCommitSha,
+              options.discoverDeletedGitPaths ?? false,
+              options.expectedRepositoryAvailable,
+            );
+            // Everything derived from the first snapshot above — the local path
+            // set, the Git deletion sets, the prune selection — stays in use,
+            // so the second capture may only differ in file contents. A tree
+            // that gained or lost a path between the two captures would make
+            // the plan mix them.
+            if (!samePathSet(sourceSnapshot.files, recaptured.files)) throw sourceChangedError();
+            sourceSnapshot = recaptured;
+            ops = sourceSnapshot.files;
+          }
+          if (adopted) reportAdoptedPins(pinAdoption.pins, dryRun);
         }
       }
       const plan = await planPushChanges({

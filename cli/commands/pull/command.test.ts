@@ -2639,3 +2639,70 @@ describe("pullCommand", () => {
     }
   });
 });
+
+describe("pull local edit reporting", () => {
+  /**
+   * Issue #1456's only recovery from the package.json push conflict was a
+   * pull, and the pull "silently overwrote an unrelated local edit": the
+   * confirmation counts files, and `--yes` skips it entirely. Naming the
+   * differing paths is what makes the overwrite a choice.
+   */
+  async function runPullWithLocalEdit(
+    options: { force: boolean },
+  ): Promise<{ warnings: string[]; content: string }> {
+    const originalWarn = console.warn;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const projectDir = await makeTempDir();
+    const warnings: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.set("VERYFRONT_PROJECT_SLUG", "alpha");
+      _resetEnvironmentConfig();
+
+      await Deno.writeTextFile(join(projectDir, "app.ts"), "export const value = 2;\n");
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      await withMockFetch(
+        (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname === "/projects/alpha") {
+            return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+          }
+          if (url.pathname === "/projects/alpha/files") {
+            return Promise.resolve(Response.json({
+              data: [{
+                path: "app.ts",
+                content: "export const value = 1;\n",
+                version_id: "00000000-0000-4000-8000-000000000001",
+              }],
+              page_info: {},
+            }));
+          }
+          throw new Error(`Unexpected request: ${url.pathname}`);
+        },
+        () => pullCommand({ projectDir, force: options.force }),
+      );
+
+      return { warnings, content: await Deno.readTextFile(join(projectDir, "app.ts")) };
+    } finally {
+      console.warn = originalWarn;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  }
+
+  it("names the local files it overwrites even when --yes skips the prompt", async () => {
+    const { warnings, content } = await runPullWithLocalEdit({ force: true });
+
+    assertEquals(content, "export const value = 1;\n");
+    assertStringIncludes(
+      warnings.join("\n"),
+      "Pull will overwrite 1 local file that differs from the remote copy: app.ts.",
+    );
+  });
+});

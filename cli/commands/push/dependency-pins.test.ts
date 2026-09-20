@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  addedDeclarationPins,
   adoptedPackageJsonPins,
   classifyPackageJsonDrift,
   type DependencyPreimage,
@@ -183,5 +184,35 @@ describe("classifyPackageJsonDrift", () => {
 
   it("reports no adopted pins for a user edit", () => {
     assertEquals(adoptedPackageJsonPins(BASELINE_CONTENT, PINNED_CONTENT, []), []);
+  });
+
+  it("marks a tightening of a locally declared range as not added", () => {
+    assertEquals(adoptedPackageJsonPins(BASELINE_CONTENT, PINNED_CONTENT, PREIMAGES), [
+      { name: "react", version: "19.3.0", added: false },
+      { name: "zod", version: "3.25.7", added: false },
+    ]);
+    assertEquals(
+      addedDeclarationPins(adoptedPackageJsonPins(BASELINE_CONTENT, PINNED_CONTENT, PREIMAGES)),
+      [],
+    );
+  });
+
+  it("flags a declaration the resolver added, which the local manifest never had", () => {
+    // The API writes `nextDeps[name]` for any resolved specifier the manifest
+    // does not declare, so an addition is a real pin write - but the name and
+    // the version are both remote, so the caller has to ask before adopting it.
+    const remote = apiWrite({
+      ...PINNED_PKG,
+      dependencies: { clsx: "2.1.1", react: "19.3.0", zod: "3.25.7" },
+    });
+    const preimages: DependencyPreimage[] = [
+      { react: "^19.2.4", zod: "~3.25.0" },
+      { clsx: "2.1.1", react: "19.3.0", zod: "3.25.7" },
+    ];
+    assertEquals(classifyPackageJsonDrift(BASELINE_CONTENT, remote, preimages), "server-pins");
+    assertEquals(
+      addedDeclarationPins(adoptedPackageJsonPins(BASELINE_CONTENT, remote, preimages)),
+      [{ name: "clsx", version: "2.1.1", added: true }],
+    );
   });
 });
