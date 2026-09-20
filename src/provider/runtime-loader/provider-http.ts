@@ -1019,8 +1019,8 @@ function streamWithCleanup(
   abortSignal: AbortSignal,
   abortRequest: (reason?: unknown) => void,
   cleanup: () => void,
-  onFinish?: (outcome: ProviderStreamOutcome) => void,
-  idle?: ProviderStreamIdleDeadline,
+  onFinish: (outcome: ProviderStreamOutcome) => void,
+  idle: ProviderStreamIdleDeadline,
 ): ReadableStream<Uint8Array> {
   const reader = stream.getReader();
   let finished = false;
@@ -1048,7 +1048,7 @@ function streamWithCleanup(
     abortSignal.removeEventListener("abort", abortStream);
     cleanup();
     try {
-      onFinish?.(outcome);
+      onFinish(outcome);
     } catch {
       // Stream observation must not change stream behavior.
     }
@@ -1070,7 +1070,7 @@ function streamWithCleanup(
   // deadline precision and a timer that outlives the read it is guarding, so
   // the exact per-read arm stays.
   const armIdleDeadline = (): void => {
-    if (idle === undefined || idle.timeoutMs === 0) return;
+    if (idle.timeoutMs === 0) return;
     const armedAt = monotonicMilliseconds();
     idleTimeoutId = setTimeout(() => {
       idleTimeoutId = undefined;
