@@ -659,6 +659,21 @@ export const fetchProjectDependencySource: DependencySourceTransport =
     guardedOutboundFetch(input, init, { authorizeUrl: authorizeProjectDependencySourceUrl })
   );
 
+/** The name the emitted module gives the `require.resolve` stand-in. */
+const REQUIRE_RESOLVE_HELPER = "__veryfrontRequireResolve";
+
+/**
+ * The stand-in itself. It names no specifier: the argument is project text
+ * that can carry anything, and the reason is the same for every probe.
+ */
+function requireResolveHelperSource(): string {
+  const message = `${MISSING_DEPENDENCY_MARKER} Cannot serve a require.resolve() probe: ` +
+    `discovery bundles a project's dependencies at build time, so there is no module path ` +
+    `to return. Import the package instead, or move the work to an extension or a sandbox ` +
+    `session.`;
+  return `function ${REQUIRE_RESOLVE_HELPER}() { throw new Error(${JSON.stringify(message)}); }`;
+}
+
 /** Where a deferred import nothing may serve is bundled as a throwing module. */
 const MISSING_DEPENDENCY_NAMESPACE = "veryfront-missing-npm-dependency";
 
@@ -1243,6 +1258,13 @@ export async function importModule(
       target: "es2022",
       jsx: "automatic",
       jsxImportSource: "react",
+      // esbuild leaves `require.resolve` as `__require.resolve`, which the
+      // emitted module does not define, so a probe failed with a bare
+      // TypeError. Discovery bundles a project's dependencies at build time,
+      // so there is no path to return; the probe now fails with a classified
+      // reason, at call time for a lazy one exactly like a deferred import.
+      define: compiled ? { "require.resolve": REQUIRE_RESOLVE_HELPER } : undefined,
+      banner: compiled ? { js: requireResolveHelperSource() } : undefined,
       resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
       plugins,
       // Externalize all bare-specifier imports so npm packages a tool/agent file

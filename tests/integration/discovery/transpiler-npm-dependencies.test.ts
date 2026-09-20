@@ -1026,6 +1026,32 @@ describe(
       assertEquals(requested.length, 1);
     });
 
+    it("classifies a top-level require.resolve nothing can serve", async () => {
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ dependencies: {} }),
+          [toolPath]: [
+            `const where = require.resolve("@veryfront-fixture/never-declared");`,
+            `export default { name: "probe", where };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const error = await assertRejects(
+        () => importModule(`file://${projectDir}/${toolPath}`, context),
+        Error,
+      );
+      assertEquals((error as { slug?: string }).slug, "dependency-missing");
+      const detail = String((error as { detail?: string }).detail ?? "");
+      // esbuild leaves the probe as `__require.resolve`, so the failure is at
+      // call time; what it must not be is an unclassified TypeError.
+      assertEquals(detail.includes("require.resolve"), true, detail);
+      assertEquals(detail.includes("is not a function"), false, detail);
+    });
+
     it("classifies a top-level require nothing can serve", async () => {
       // esbuild reports a module-scope `require()` with the same kind as a
       // lazy one, so the deferred module runs at import time. Its failure is

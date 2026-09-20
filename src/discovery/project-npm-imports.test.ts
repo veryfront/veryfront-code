@@ -816,6 +816,13 @@ describe("classifyProjectNpmImport", () => {
     });
   });
 
+  it("lets a wildcard comparator admit a pre-release the set names", () => {
+    // `*` vetoes pre-releases on its own, but not when another comparator in
+    // the set names one on the same core.
+    assertEquals(rangeAdmitsVersion("* >=1.2.3-alpha", "1.2.3-beta"), true);
+    assertEquals(rangeAdmitsVersion("*", "1.2.3-beta"), false);
+  });
+
   it("admits a pre-release the comparator set as a whole names", () => {
     // npm admits 1.5.0-beta here: one comparator names a pre-release on that
     // core, and `<2` is not required to name one of its own.

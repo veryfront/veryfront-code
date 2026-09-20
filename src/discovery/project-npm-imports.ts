@@ -355,7 +355,7 @@ function comparatorAdmitsVersion(
   // way. A strict one is npm's EMPTY range: no version is above every version.
   if (/^[xX*](?:\.[xX*])*$/.test(bound)) {
     if (operator === ">" || operator === "<") return false;
-    return wanted.pre === null;
+    return wanted.pre === null || prereleaseAdmitted;
   }
   const parts = boundParts(bound);
   if (parts === null) return null;
