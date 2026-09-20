@@ -102,11 +102,15 @@ function jsonEquals(left: unknown, right: unknown): boolean {
     return left.every((item, index) => jsonEquals(item, right[index]));
   }
   if (typeof left !== "object" || typeof right !== "object") return false;
-  const leftKeys = Object.keys(left as JsonObject).sort();
-  const rightKeys = Object.keys(right as JsonObject).sort();
-  if (leftKeys.length !== rightKeys.length) return false;
-  if (leftKeys.some((key, index) => key !== rightKeys[index])) return false;
-  return leftKeys.every((key) => jsonEquals((left as JsonObject)[key], (right as JsonObject)[key]));
+  const leftObject = left as JsonObject;
+  const rightObject = right as JsonObject;
+  const leftKeys = Object.keys(leftObject);
+  if (leftKeys.length !== Object.keys(rightObject).length) return false;
+  // Own-key membership, not sorted-list equality: the key sets match when they
+  // are the same size and every left key is present on the right.
+  return leftKeys.every((key) =>
+    Object.hasOwn(rightObject, key) && jsonEquals(leftObject[key], rightObject[key])
+  );
 }
 
 /** Everything outside the two dependency sections, which a pin write leaves alone. */

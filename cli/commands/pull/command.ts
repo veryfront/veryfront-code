@@ -395,6 +395,13 @@ async function writeFiles(
 /** How many overwritten paths a prompt or warning spells out before eliding. */
 const OVERWRITE_LIST_LIMIT = 10;
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /**
  * The managed paths this pull would overwrite whose local content is not what
  * the remote holds.
@@ -425,7 +432,7 @@ async function findOverwrittenLocalEdits(ops: readonly WriteOp[]): Promise<strin
       if (path !== null) modified.push(path);
     }
   }
-  return modified.sort();
+  return modified.sort(compareCodeUnits);
 }
 
 /** `a, b, c and 4 more`, so a large overwrite set stays readable. */
