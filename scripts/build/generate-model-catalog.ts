@@ -78,12 +78,24 @@ export function stripTrailingSlashes(value: string): string {
  * an operator's value, so a base that is not an absolute URL is refused
  * without echoing it.
  */
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" ||
+    hostname === "[::1]" || hostname === "::1";
+}
+
 export function buildCatalogUrl(baseUrl: string): string {
   let url: URL;
   try {
     url = new URL(baseUrl);
   } catch {
     throw new Error(`${BASE_URL_ENV} is not an absolute URL`);
+  }
+  // The token travels in the Authorization header, so the base must be TLS.
+  // Plain http is allowed only towards this machine, for a local API.
+  if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+    throw new Error(
+      `${BASE_URL_ENV} must use https (http is accepted for loopback addresses only)`,
+    );
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error(`${BASE_URL_ENV} must be an http(s) URL`);

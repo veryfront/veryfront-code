@@ -152,6 +152,24 @@ describe("the catalog URL", () => {
     );
   });
 
+  it("accepts plain http towards loopback addresses only, since the token rides along", () => {
+    for (
+      const base of [
+        "http://localhost:20000",
+        "http://127.0.0.1:20000/",
+        "http://[::1]:20000",
+      ]
+    ) {
+      assertEquals(buildCatalogUrl(base).endsWith("/ai/models"), true);
+    }
+    const error = assertThrows(
+      () => buildCatalogUrl("http://api.example.invalid"),
+      Error,
+    ) as Error;
+    assertEquals(error.message.includes("must use https"), true);
+    assertEquals(error.message.includes("api.example.invalid"), false);
+  });
+
   it("refuses a base that is not an absolute http(s) URL, without echoing it", () => {
     for (
       const base of [
