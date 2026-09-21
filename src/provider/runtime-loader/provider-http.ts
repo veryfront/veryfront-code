@@ -144,9 +144,10 @@ export const VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV =
  * entry, so echoing it back would write that credential to the log.
  *
  * `readEnv` is a seam, not a feature: reading the real environment is the
- * default, and tests pass a lookup rather than mutating the host process. The
- * one test that does mutate it is the `.env`-provenance case, which has no
- * other way to exercise the reader this function defaults to.
+ * default, and most tests pass a lookup rather than mutating the host process.
+ * Two tests do mutate it -- the `.env`-provenance case and the
+ * `requestStream` environment-override case -- because both exercise the
+ * default reader this function falls back to, which injecting past would skip.
  */
 export function resolveProviderStreamIdleTimeoutMs(
   idleTimeoutMs: number | undefined,
