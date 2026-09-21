@@ -728,6 +728,37 @@ describe("npm package publishing", () => {
     });
   });
 
+  it("bounds every metadata lookup with a fetch timeout and a single retry", async () => {
+    await withTempDir(async (stateDir) => {
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { printf "%s\\n" "$*" >> "$NPM_LOG"; }',
+          "sleep() { :; }",
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          "exit 0",
+        ].join("\n"),
+        {
+          NPM_LOG: npmLog,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "1",
+          NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS: "45000",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals((await Deno.readTextFile(npmLog)).trim().split("\n"), [
+        "view veryfront@0.1.1261 gitHead --fetch-timeout=45000 --fetch-retries=1",
+        "view veryfront@0.1.1261 gitHead --fetch-timeout=45000 --fetch-retries=1",
+      ]);
+    });
+  });
+
   it("waits for an existing RC version's missing gitHead metadata", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;
@@ -777,7 +808,7 @@ describe("npm package publishing", () => {
         calls.filter((line) => line.startsWith("publish")).length,
         0,
       );
-      assertEquals(calls.filter((line) => line.endsWith("gitHead")).length, 4);
+      assertEquals(calls.filter((line) => / gitHead( |$)/.test(line)).length, 4);
     });
   });
 

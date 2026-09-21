@@ -140,6 +140,10 @@ NPM_GIT_HEAD_WAIT_DELAY_SECONDS="${NPM_GIT_HEAD_WAIT_DELAY_SECONDS:-10}"
 # their metadata checks.
 NPM_GIT_HEAD_WAIT_TOTAL_SECONDS="${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS:-1800}"
 NPM_GIT_HEAD_WAIT_SPENT_SECONDS=0
+# Bound each metadata lookup: npm's defaults (5-minute fetch timeout, 2
+# retries) would let a single `npm view` run ~15 minutes, and every package
+# needs at least one confirming lookup.
+NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS:-60000}"
 
 is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
@@ -326,7 +330,7 @@ wait_for_npm_git_head() {
   # mismatches as immediate failures.
   for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
     LOOKUP_STARTED_AT="$(date +%s)"
-    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
     # Every lookup is charged, including ones that succeed: a stalled registry
     # read (npm's default fetch timeout is minutes, with retries) is waiting too.
     LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
@@ -348,7 +352,7 @@ wait_for_npm_git_head() {
     NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS ))
   done
 
-  PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+  PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
   [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
 }
 
