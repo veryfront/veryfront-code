@@ -449,9 +449,18 @@ function readTransportCapabilities(
   const reasoningMode = served.capabilities.reasoning === true
     ? served.capabilities.reasoning_mode
     : undefined;
+  // `anthropicThinkingMode` is a fact about the Anthropic wire format: the
+  // runtime reads it only when building Anthropic provider options, and on
+  // any other surface it would merely suppress the generic reasoning option
+  // and leave the model without thinking. So it is emitted only for a
+  // provider the overlay routes over the Anthropic surface.
+  const surface =
+    new Map(overlay.providerRouting).get(served.provider)?.surface ??
+      overlay.defaultSurface;
   const transport = served.capabilities.transport;
   const entry: TransportCapabilities = {
-    ...(reasoningMode !== undefined && KNOWN_REASONING_MODES.has(reasoningMode)
+    ...(surface === "anthropic" && reasoningMode !== undefined &&
+        KNOWN_REASONING_MODES.has(reasoningMode)
       ? { anthropicThinkingMode: reasoningMode as "adaptive" }
       : {}),
     ...(transport !== undefined && KNOWN_OPENAI_TRANSPORTS.has(transport)
@@ -1317,7 +1326,7 @@ export function renderModelCatalogModule(data: ModelCatalogData): string {
     "] as const) satisfies readonly KnownVeryfrontCloudProviderId[];",
     "",
     "/**",
-    " * Display label for each DISPLAYED provider — the providers in the display",
+    " * Display label for each DISPLAYED provider: the providers in the display",
     " * order, not every known one. A known provider the catalog lists no chat",
     " * model for keeps its alias and routing rows but has no label row, and the",
     " * type says so rather than requiring one.",

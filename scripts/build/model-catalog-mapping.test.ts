@@ -351,6 +351,34 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertEquals(on?.thinkingBudgetTokens, 512);
   });
 
+  it("emits the adaptive thinking mode only for a provider on the Anthropic surface", () => {
+    // The runtime reads `anthropicThinkingMode` only when it builds Anthropic
+    // provider options; on another surface the flag would suppress the
+    // generic reasoning option and leave the model without thinking at all.
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      providerRouting: [
+        ["acme-labs", { surface: "anthropic", native: true }],
+        ["beta-works", { surface: "openai" }],
+      ],
+    };
+    const onAnthropic = buildModelCatalogData(fakePayload(), overlay);
+    // Keyed by the canonical provider, not by the alias the model is
+    // published under: the package resolves the prefix to the canonical
+    // provider before it looks the transport facts up.
+    assertEquals(
+      new Map(onAnthropic.modelTransportCapabilities).get(
+        "acme-labs/mystery-1",
+      ),
+      { anthropicThinkingMode: "adaptive" },
+    );
+    const onOpenAI = buildModelCatalogData(fakePayload(), OVERLAY);
+    assertEquals(
+      new Map(onOpenAI.modelTransportCapabilities).get("acme-labs/mystery-1"),
+      undefined,
+    );
+  });
+
   it("carries the served transport facts and the overlay facts, and drops unknown values", () => {
     const data = buildModelCatalogData(fakePayload(), OVERLAY);
 
@@ -358,10 +386,9 @@ describe("scripts/build/model-catalog-mapping", () => {
       // Retained first: the catalog stopped serving it, the package still
       // resolves it. A retained entry for a served model is ignored.
       ["acme-labs/gone-0", { anthropicThinkingMode: "adaptive" }],
-      // Keyed by the canonical provider, not by the alias the model is
-      // published under: the package resolves the prefix to the canonical
-      // provider before it looks the transport facts up.
-      ["acme-labs/mystery-1", { anthropicThinkingMode: "adaptive" }],
+      // `mystery-1` reports an adaptive reasoning mode, but acme-labs routes
+      // over the OpenAI surface, where that fact has no reading; see the
+      // Anthropic-surface case below for the entry it contributes there.
       ["beta-works/riddle-9", {
         openAITransport: "chat-completions",
         openAIChatReasoningWithFunctionTools: false,
