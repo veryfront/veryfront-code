@@ -54,6 +54,14 @@ export interface PollRegistryPackageOptions {
   fetcher?: typeof fetch;
   delay?: (milliseconds: number) => Promise<void>;
   onRetry?: (message: string) => void;
+  /**
+   * How long the whole poll may take. A lookup that answers slowly spends its
+   * request timeout on top of the retry delay, so counting attempts alone
+   * does not bound the wall clock the surrounding job is sized for.
+   */
+  budgetMs?: number;
+  /** The clock, for tests. */
+  now?: () => number;
 }
 
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
@@ -254,10 +262,19 @@ export async function pollRegistryPackage(
     registryErrorContext(options, "version is not available yet"),
   );
 
+  const now = options.now ?? Date.now;
+  const budgetMs = options.budgetMs ?? (options.maxAttempts - 1) * options.retryDelayMs;
+  const deadline = now() + budgetMs;
+
   for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
     const result = await attemptRegistryLookup(options, fetcher, spec);
     if (result.kind === "metadata") return result.metadata;
     lastFailure = result.failure;
+
+    // The next attempt would finish past the budget, so this was the last. A
+    // caller that sets no delay (the unit tests) states its bound in attempts
+    // alone and is left to them.
+    if (budgetMs > 0 && now() + options.retryDelayMs >= deadline) break;
 
     if (attempt < options.maxAttempts) {
       options.onRetry?.(

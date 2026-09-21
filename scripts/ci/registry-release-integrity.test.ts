@@ -54,6 +54,38 @@ describe("registry propagation budget", () => {
     );
   });
 
+  it("stops polling at the budget however slow each lookup is", async () => {
+    // A lookup that takes its full request timeout must not stretch the poll
+    // past the budget: the job around it is sized for that budget.
+    let attempts = 0;
+    let now = 0;
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 1_000,
+        retryDelayMs: 10_000,
+        requestTimeoutMs: 15_000,
+        budgetMs: 60_000,
+        now: () => now,
+        delay: (ms) => {
+          now += ms;
+          return Promise.resolve();
+        },
+        fetcher: () => {
+          attempts += 1;
+          // Each lookup spends its whole request timeout.
+          now += 15_000;
+          return Promise.resolve(new Response("{}", { status: 404 }));
+        },
+      })
+    );
+    assertEquals(error.classification, "missing-version");
+    // 60s of budget at 25s per attempt: three lookups, never a thousand.
+    assertEquals(attempts, 3);
+  });
+
   it("takes the budget from the environment when CI sets one", () => {
     assertEquals(
       readPropagationBudget({
