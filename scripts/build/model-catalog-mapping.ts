@@ -124,6 +124,42 @@ const MODEL_FIELDS: readonly FieldSpec[] = [
   { key: "capabilities", type: "an object", required: false },
 ];
 
+/**
+ * Shape a provider segment must have, restated from `model-catalog.ts`.
+ *
+ * The runtime takes the provider from a model id by cutting at the first `/`
+ * and passing the segment to `resolveVeryfrontCloudProviderId`, which requires
+ * this shape. A generated entry that does not satisfy it is published but
+ * unroutable, so the generator refuses it rather than shipping it. A test pins
+ * this against the runtime's own source, so the two cannot drift apart.
+ */
+export const PROVIDER_SEGMENT_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+
+/**
+ * Segments the runtime refuses, so a provider can never be confused with a
+ * member every object carries, nor with the gateway prefix itself.
+ */
+export const RESERVED_PROVIDER_SEGMENTS: ReadonlySet<string> = new Set([
+  ...Object.getOwnPropertyNames(Object.prototype),
+  "prototype",
+  "veryfront-cloud",
+]);
+
+/** The gateway prefix the runtime strips before parsing a model id. */
+const GATEWAY_MODEL_PREFIX = "veryfront-cloud/";
+
+/** True when the runtime can take a provider segment from this model id. */
+function isRoutableModelId(modelId: string): boolean {
+  // The runtime strips the gateway prefix first, so an id that carries it has
+  // nothing left to cut.
+  if (modelId.startsWith(GATEWAY_MODEL_PREFIX)) return false;
+  const slashIndex = modelId.indexOf("/");
+  if (slashIndex <= 0) return false;
+  const segment = modelId.slice(0, slashIndex);
+  return PROVIDER_SEGMENT_PATTERN.test(segment) &&
+    !RESERVED_PROVIDER_SEGMENTS.has(segment);
+}
+
 const CAPABILITY_FIELDS: readonly FieldSpec[] = [
   { key: "reasoning", type: "a boolean", required: false },
   { key: "reasoning_mode", type: "a string", required: false },
@@ -215,6 +251,13 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
     checkFields(model, MODEL_ID_FIELD, `models[${index}]`);
     const subject = `model "${model.id as string}"`;
     checkFields(model, MODEL_FIELDS, subject);
+
+    if (!isRoutableModelId(model.modelId as string)) {
+      fail(
+        `${subject} modelId "${model.modelId}" carries no provider segment the ` +
+          `runtime can route`,
+      );
+    }
 
     const capabilities = model.capabilities === undefined
       ? {}
@@ -345,11 +388,16 @@ export function buildModelCatalogData(
     fail("no served model carries the fields an entry needs");
   }
 
+  // A listed provider that serves no model is legitimate: the platform may
+  // list one with nothing routable right now. It contributes no group, so it
+  // is left out of every table rather than failing the run.
+  const servedProviders = providerOrder.filter((provider) =>
+    labelByProvider.has(provider)
+  );
   const providerAliases: (readonly [string, string])[] = [];
   const providerLabels: (readonly [string, string])[] = [];
-  for (const provider of providerOrder) {
-    const label = labelByProvider.get(provider) ??
-      fail(`provider "${provider}" has no model to take a display label from`);
+  for (const provider of servedProviders) {
+    const label = labelByProvider.get(provider) as string;
     providerLabels.push([provider, label]);
     providerAliases.push([provider, provider]);
     for (const prefix of [...aliasPrefixes.get(provider) ?? []].sort()) {
@@ -358,7 +406,7 @@ export function buildModelCatalogData(
   }
 
   const routingByProvider = new Map(overlay.providerRouting);
-  const providerRouting = providerOrder.map((provider) =>
+  const providerRouting = servedProviders.map((provider) =>
     // A provider the overlay does not route falls back to the surface the
     // package already uses for an unlisted provider, so routing stays
     // declared for every provider the catalog names.
@@ -399,7 +447,7 @@ export function buildModelCatalogData(
     modelTransportCapabilities,
     chatModels,
     providerLabels,
-    providerOrder,
+    providerOrder: servedProviders,
   };
   // The output has to be readable back by the package's lookups, so it is
   // checked here rather than left to whoever reviews the generated diff.
@@ -474,6 +522,27 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
   );
   if (duplicateRouting.length > 0) {
     fail(`provider routing declared twice for: ${duplicateRouting.join(", ")}`);
+  }
+
+  // `groupVeryfrontCloudModelsByProvider` walks the provider order and picks
+  // each provider's models, so a model whose provider is not in that order is
+  // published but never shown. The served order is the platform's own
+  // statement, so a model outside it is a contradiction to report, not a
+  // position for this generator to invent.
+  const ordered = new Set(data.providerOrder);
+  const ungrouped = [
+    ...new Set(
+      data.chatModels.filter((model) => !ordered.has(model.provider)).map((
+        model,
+      ) => `${model.id} (${model.provider})`),
+    ),
+  ];
+  if (ungrouped.length > 0) {
+    fail(
+      `provider not in the provider order, so these models are never listed: ${
+        ungrouped.join(", ")
+      }`,
+    );
   }
 
   // `model-catalog.ts` throws at module load when the default names no entry,

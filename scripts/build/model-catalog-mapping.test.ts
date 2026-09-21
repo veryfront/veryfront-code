@@ -10,7 +10,9 @@ import {
   findStaleOverlayKeys,
   findUnroutedProviders,
   type ModelCatalogData,
+  PROVIDER_SEGMENT_PATTERN,
   renderModelCatalogModule,
+  RESERVED_PROVIDER_SEGMENTS,
 } from "./model-catalog-mapping.ts";
 import type { ModelCatalogOverlay } from "./model-catalog-overlay.ts";
 
@@ -530,16 +532,118 @@ describe("scripts/build/model-catalog-mapping", () => {
       Error,
       'model "plain-3" modelId must be a string, not a number',
     );
+  });
 
-    const unlabelled = {
+  it("omits a listed provider that serves no model, rather than failing", () => {
+    // The platform may list a provider with nothing routable right now. That
+    // is not a broken payload: the provider simply contributes no group.
+    const payload = {
       ...fakePayload(),
       providers: ["acme-labs", "beta-works", "ghost-co"],
     };
-    assertThrows(
-      () => buildModelCatalogData(unlabelled, OVERLAY),
-      Error,
-      'provider "ghost-co" has no model',
+
+    const data = buildModelCatalogData(payload, OVERLAY);
+
+    assertEquals(data.providerOrder, ["acme-labs", "beta-works"]);
+    assertEquals(
+      data.providerLabels.some(([provider]) => provider === "ghost-co"),
+      false,
     );
+    assertEquals(
+      data.providerAliases.some(([, provider]) => provider === "ghost-co"),
+      false,
+    );
+    assertEquals(
+      data.providerRouting.some(([provider]) => provider === "ghost-co"),
+      false,
+    );
+  });
+
+  it("rejects a model whose provider the catalog does not list", () => {
+    const payload = fakePayload();
+    (payload.models as Record<string, unknown>[])[1].provider = "unlisted-co";
+
+    assertThrows(
+      () => buildModelCatalogData(payload, OVERLAY),
+      Error,
+      "not in the provider order",
+    );
+  });
+
+  /**
+   * Model ids the runtime cannot take a provider from. A generated entry
+   * carrying one of these is published but unroutable, because
+   * `resolveVeryfrontCloudProviderFromModelId` returns undefined for it.
+   */
+  const UNROUTABLE_MODEL_IDS = [
+    "no-slash-at-all",
+    "/leading-slash",
+    // `normalizeVeryfrontCloudModelId` strips this prefix, leaving no segment.
+    "veryfront-cloud/already-prefixed",
+    // The runtime requires a lowercase path segment.
+    "UPPER/case",
+    "under_score/x",
+    // Reserved, so a provider segment can never collide with an object member.
+    "prototype/x",
+    "constructor/x",
+  ];
+
+  for (const modelId of UNROUTABLE_MODEL_IDS) {
+    it(`rejects a model id the runtime cannot route: ${modelId}`, () => {
+      const payload = fakePayload();
+      (payload.models as Record<string, unknown>[])[1].modelId = modelId;
+      assertThrows(
+        () => buildModelCatalogData(payload, OVERLAY),
+        Error,
+        'model "riddle-9" modelId',
+      );
+    });
+  }
+
+  it("keeps its model id rule in step with the runtime's", async () => {
+    // The generator restates what `resolveVeryfrontCloudProviderFromModelId`
+    // accepts, because importing it here would pull the whole runtime into a
+    // build script. This pins the restatement: if the runtime changes how it
+    // parses a model id, this fails and says so, rather than the generator
+    // quietly admitting ids the package cannot route.
+    const runtime = await Deno.readTextFile(
+      new URL(
+        "../../src/provider/veryfront-cloud/model-catalog.ts",
+        import.meta.url,
+      ),
+    );
+
+    assertStringIncludes(runtime, String(PROVIDER_SEGMENT_PATTERN));
+    assertStringIncludes(
+      runtime,
+      'const slashIndex = normalizedModelId.indexOf("/");',
+    );
+    assertStringIncludes(runtime, "if (slashIndex <= 0) return undefined;");
+    for (const reserved of ["prototype", "constructor"]) {
+      assertEquals(RESERVED_PROVIDER_SEGMENTS.has(reserved), true);
+    }
+  });
+
+  it("accepts the model ids the runtime can take a provider from", () => {
+    for (
+      const modelId of [
+        "beta-works-api/other-1",
+        "beta.works/riddle-9",
+        "a1/b2",
+      ]
+    ) {
+      const payload = fakePayload();
+      (payload.models as Record<string, unknown>[])[1].modelId = modelId;
+      // The default names this model by its id, so it moves with it.
+      payload.defaultModelId = modelId;
+
+      const data = buildModelCatalogData(payload, OVERLAY);
+
+      assertEquals(
+        data.chatModels.some((model) => model.modelId === modelId),
+        true,
+      );
+    }
   });
 
   it("rejects a present capabilities value that is not an object", () => {
@@ -719,18 +823,27 @@ describe("scripts/build/model-catalog-mapping", () => {
       "provider routing",
     ],
     [
+      "a model whose provider is not in the provider order",
+      (data) => ({
+        ...data,
+        providerOrder: data.providerOrder.filter((p) => p !== "beta-works"),
+      }),
+      "not in the provider order",
+    ],
+    [
       "a default that names no entry",
       (data) => ({ ...data, defaultModelId: "not-a-published-id" }),
       "default model",
     ],
     [
       "a routed surface with no gateway API version",
+      // Only the surface changes, so every provider keeps its place and this
+      // breaks the version rule and nothing else.
       (data) => ({
         ...data,
-        providerRouting: [["acme-labs", { surface: "a-new-surface" }]],
-        providerOrder: ["acme-labs"],
-        providerLabels: [["acme-labs", "Acme Labs"]],
-        providerAliases: [["acme-labs", "acme-labs"]],
+        providerRouting: data.providerRouting.map(([provider]) =>
+          [provider, { surface: "a-new-surface" }] as const
+        ),
       }),
       "gateway API version",
     ],
