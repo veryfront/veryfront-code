@@ -320,6 +320,18 @@ publish_npm_package_with_retry() {
   return 1
 }
 
+# One bounded gitHead lookup, charged to the shared budget whatever it returns:
+# a stalled registry read (npm's default fetch timeout is minutes, with
+# retries) is waiting too. Sets PUBLISHED_GIT_HEAD.
+lookup_npm_git_head() {
+  LOOKUP_STARTED_AT="$(date +%s)"
+  PUBLISHED_GIT_HEAD="$(npm view "$1@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
+  LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
+  if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
+  fi
+}
+
 # Poll the npm registry until PACKAGE_NAME@VERSION reports a gitHead. Succeeds
 # only when that gitHead matches GITHUB_SHA. Leaves the last observed value in
 # the global PUBLISHED_GIT_HEAD for callers' error messages.
@@ -329,14 +341,7 @@ wait_for_npm_git_head() {
   # Allow NPM_GIT_HEAD_WAIT_ATTEMPTS empty reads while preserving hash
   # mismatches as immediate failures.
   for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
-    LOOKUP_STARTED_AT="$(date +%s)"
-    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
-    # Every lookup is charged, including ones that succeed: a stalled registry
-    # read (npm's default fetch timeout is minutes, with retries) is waiting too.
-    LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
-    if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
-      NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
-    fi
+    lookup_npm_git_head "${PACKAGE_NAME}"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
     fi
@@ -352,7 +357,7 @@ wait_for_npm_git_head() {
     NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS ))
   done
 
-  PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
+  lookup_npm_git_head "${PACKAGE_NAME}"
   [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
 }
 

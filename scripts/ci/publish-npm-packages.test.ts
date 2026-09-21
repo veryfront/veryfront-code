@@ -759,6 +759,48 @@ describe("npm package publishing", () => {
     });
   });
 
+  it("charges the final confirmation lookup to the shared metadata budget", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      const clockFile = `${stateDir}/clock`;
+      await Deno.writeTextFile(countFile, "0");
+      await Deno.writeTextFile(clockFile, "1000");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          '  clock="$(cat "$CLOCK_FILE")"',
+          '  printf "%s" "$((clock + 50))" > "$CLOCK_FILE"',
+          "}",
+          "sleep() { :; }",
+          'date() { cat "$CLOCK_FILE"; }',
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          'wait_for_npm_git_head "@veryfront/ext-auth-jwt" && exit 4',
+          "exit 0",
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          CLOCK_FILE: clockFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "2",
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "200",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      // Package 1: 2 polling reads + a charged 50s confirmation (170s spent);
+      // package 2: its first read spends the budget, then one confirmation.
+      assertEquals(await Deno.readTextFile(countFile), "5");
+    });
+  });
+
   it("waits for an existing RC version's missing gitHead metadata", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;
