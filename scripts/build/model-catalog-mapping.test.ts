@@ -1207,6 +1207,25 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
+  it("refuses a routing key the runtime would never resolve", () => {
+    // The runtime resolves a provider before reading its routing row, and
+    // refuses one outside the provider shape or reserved; a row under such a
+    // key renders and type-checks but is never read.
+    for (const key of ["", "Acme Labs", "veryfront-cloud", "constructor"]) {
+      const overlay: ModelCatalogOverlay = {
+        ...OVERLAY,
+        providerRouting: [...OVERLAY.providerRouting, [key, {
+          surface: "openai",
+        }]],
+      };
+      assertThrows(
+        () => assertOverlayInvariants(overlay),
+        Error,
+        `overlay providerRouting key "${key}"`,
+      );
+    }
+  });
+
   it("refuses a served model whose provider segment names another provider", () => {
     // The same shadowing through the derived path: `beta-works/x` served with
     // provider acme-labs would make every beta-works id resolve as acme-labs,

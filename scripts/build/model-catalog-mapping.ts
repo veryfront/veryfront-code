@@ -790,6 +790,17 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       overlay.retainedProviderAliases.map(([key]) => key),
     ],
   ];
+  // A routing row is looked up by the provider the runtime resolves, which
+  // refuses a key outside the provider shape or reserved; such a row would
+  // render, type-check and never be read, and the ids it routes would take
+  // another surface. The overlay names repository values, so the key is
+  // printed.
+  for (const [provider] of overlay.providerRouting) {
+    const unusable = describeUnusableProvider(provider);
+    if (unusable !== undefined) {
+      fail(`overlay providerRouting key "${provider}" ${unusable}`);
+    }
+  }
   // The aliases the overlay itself declares are known here; the ones the
   // served catalog implies are checked once the catalog has been read. A
   // retained "alias" that is itself a routed provider is not an alias but a
