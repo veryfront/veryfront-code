@@ -12,21 +12,16 @@
  * that capability is off: a thinking budget says how much a model thinks, not
  * that it thinks, and is not emitted for a model served as non-reasoning.
  *
- * The routing facts below are the clearest example: the catalog serves a list
- * of provider ids and no wire surface for any of them, so routing is kept here
- * for now. Move it into the generator's mapped set the moment the platform
- * serves a surface, and delete it from here in the same change.
+ * The surface a provider's gateway endpoint speaks used to live here, because
+ * the catalog served a list of provider ids and nothing else about routing.
+ * The catalog now serves a surface per model, so the generator derives the
+ * routing table from it and this file no longer names a vendor's surface. What
+ * remains below is client-side: which providers this package may use a native
+ * transport with, the surface it assumes for a provider the catalog says
+ * nothing about, and the gateway path it builds.
  *
  * @module scripts/build/model-catalog-overlay
  */
-
-/** Gateway routing for one provider, as the generated module declares it. */
-export type OverlayProviderRouting = {
-  /** Wire format spoken by the provider's gateway endpoint. */
-  readonly surface: string;
-  /** Whether the provider implements the surface natively. */
-  readonly native?: boolean;
-};
 
 /** Model-specific transport capabilities, as the generated module declares them. */
 export type OverlayTransportCapabilities = {
@@ -38,12 +33,18 @@ export type OverlayTransportCapabilities = {
 /** Every hand-maintained fact the generator merges into the catalog data. */
 export type ModelCatalogOverlay = {
   /**
-   * Gateway routing per provider. The served catalog names no wire surface,
-   * so routing cannot be derived from it.
+   * Providers that implement their surface natively rather than only speaking
+   * its wire format. The served catalog names the surface a provider's gateway
+   * endpoint speaks, never how the provider relates to it, and the runtime
+   * reads this per provider: on the OpenAI surface a native provider may use
+   * the Responses transport, and the others keep to Chat Completions.
    */
-  readonly providerRouting:
-    readonly (readonly [string, OverlayProviderRouting])[];
-  /** Surface used for a provider this overlay does not list. */
+  readonly nativeProviders: readonly string[];
+  /**
+   * Surface assumed for a provider the served catalog names no surface for.
+   * Which surfaces this package can speak at all is its own fact, not the
+   * platform's.
+   */
   readonly defaultSurface: string;
   /** Leading gateway path segments, shared by every surface. */
   readonly gatewayPathPrefix: string;
@@ -94,13 +95,7 @@ export type ModelCatalogOverlay = {
 
 /** The overlay the generator merges. Edit this by hand; edit nothing generated. */
 export const MODEL_CATALOG_OVERLAY: ModelCatalogOverlay = {
-  providerRouting: [
-    ["anthropic", { surface: "anthropic", native: true }],
-    ["openai", { surface: "openai", native: true }],
-    ["google", { surface: "google", native: true }],
-    ["mistral", { surface: "openai" }],
-    ["moonshotai", { surface: "openai" }],
-  ],
+  nativeProviders: ["anthropic", "openai", "google"],
   defaultSurface: "openai",
   gatewayPathPrefix: "ai/gateway",
   surfaceGatewayApiVersions: [

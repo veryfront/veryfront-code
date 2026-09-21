@@ -27,9 +27,21 @@
 
 import type {
   ModelCatalogOverlay,
-  OverlayProviderRouting,
   OverlayTransportCapabilities,
 } from "./model-catalog-overlay.ts";
+
+/**
+ * Gateway routing for one provider of the generated module.
+ *
+ * The surface is read from the served models; the native flag is the overlay's,
+ * because it says how this package may talk to the provider rather than what
+ * the provider speaks. The surface is a plain string: the runtime, not this
+ * generator, decides which surfaces it can build requests for.
+ */
+export type ProviderRouting = {
+  readonly surface: string;
+  readonly native?: boolean;
+};
 
 /** One chat model entry of the generated module. */
 export type ChatModelEntry = {
@@ -49,8 +61,7 @@ export type TransportCapabilities = OverlayTransportCapabilities;
 export type ModelCatalogData = {
   readonly defaultModelId: string;
   readonly providerAliases: readonly (readonly [string, string])[];
-  readonly providerRouting:
-    readonly (readonly [string, OverlayProviderRouting])[];
+  readonly providerRouting: readonly (readonly [string, ProviderRouting])[];
   readonly defaultSurface: string;
   readonly gatewayPathPrefix: string;
   readonly surfaceGatewayApiVersions: readonly (readonly [string, string])[];
@@ -129,6 +140,11 @@ const MODEL_FIELDS: readonly FieldSpec[] = [
   { key: "name", type: "a string", required: true },
   { key: "description", type: "a string", required: false },
   { key: "providerLabel", type: "a string", required: true },
+  // The wire format the provider's gateway endpoint speaks, as the platform
+  // names it. Optional and unconstrained: a vendor may be served before it has
+  // a gateway descriptor, and which values mean anything is the runtime's
+  // question, not this generator's.
+  { key: "surface", type: "a string", required: false },
   { key: "capabilities", type: "an object", required: false },
 ];
 
@@ -290,6 +306,7 @@ type ServedModel = {
   readonly name: string;
   readonly description?: string;
   readonly providerLabel: string;
+  readonly surface?: string;
   readonly capabilities: ServedCapabilities;
 };
 
@@ -343,6 +360,11 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
       name: model.name as string,
       description: model.description as string | undefined,
       providerLabel: model.providerLabel as string,
+      // An empty surface names no wire format, so it is read as the absence
+      // of one rather than published as a routing row nothing can speak.
+      surface: model.surface === "" ? undefined : model.surface as
+        | string
+        | undefined,
       capabilities: capabilities as ServedCapabilities,
     };
   });
@@ -376,6 +398,10 @@ type ServedFacts = {
   readonly canonicalIds: string[];
   /** Display label per provider, taken from that provider's models. */
   readonly labels: Map<string, string>;
+  /** Wire surface per provider, taken from the models of it that name one. */
+  readonly surfaces: Map<string, string>;
+  /** Position of the model each provider's surface was first taken from. */
+  readonly surfacePositions: Map<string, number>;
   /** Model-id prefixes that differ from the provider they name. */
   readonly aliasPrefixes: Map<string, Set<string>>;
   /** Position of the first model that implied each `<provider>/<prefix>` alias. */
@@ -439,6 +465,7 @@ function capabilityKey(served: ServedModel): string {
 function readTransportCapabilities(
   served: ServedModel,
   overlay: ModelCatalogOverlay,
+  surface: string,
 ): TransportCapabilities | undefined {
   const functionToolReasoning = new Map(
     overlay.openAIChatReasoningWithFunctionTools,
@@ -453,10 +480,7 @@ function readTransportCapabilities(
   // runtime reads it only when building Anthropic provider options, and on
   // any other surface it would merely suppress the generic reasoning option
   // and leave the model without thinking. So it is emitted only for a
-  // provider the overlay routes over the Anthropic surface.
-  const surface =
-    new Map(overlay.providerRouting).get(served.provider)?.surface ??
-      overlay.defaultSurface;
+  // provider the catalog serves on the Anthropic surface.
   const transport = served.capabilities.transport;
   const entry: TransportCapabilities = {
     ...(surface === "anthropic" && reasoningMode !== undefined &&
@@ -495,6 +519,25 @@ function recordProviderFacts(
     );
   }
 
+  // The routing table is keyed by provider too, so two models of one provider
+  // served on different surfaces leave no honest row to publish. A model that
+  // names no surface makes no claim, so it neither sets one nor contradicts
+  // one. Named by position: the surfaces and the provider are served values.
+  if (served.surface !== undefined) {
+    const routed = facts.surfaces.get(served.provider);
+    if (routed === undefined) {
+      facts.surfaces.set(served.provider, served.surface);
+      facts.surfacePositions.set(served.provider, index);
+    } else if (routed !== served.surface) {
+      fail(
+        `models[${
+          facts.surfacePositions.get(served.provider)
+        }] and models[${index}] ` +
+          "are served on conflicting surfaces for their provider",
+      );
+    }
+  }
+
   // A model id whose provider segment differs from the canonical provider
   // names an accepted provider alias.
   const slashIndex = served.modelId.indexOf("/");
@@ -521,20 +564,47 @@ function readServedModels(
     transportCapabilities: [],
     canonicalIds: [],
     labels: new Map(),
+    surfaces: new Map(),
+    surfacePositions: new Map(),
     aliasPrefixes: new Map(),
     aliasPositions: new Map(),
     labelPositions: new Map(),
   };
+  // The provider facts are gathered first, over every model: a model's
+  // transport facts are read against the surface its provider is served on,
+  // and any model of that provider may be the one that names it.
   for (const [index, served] of catalog.models.entries()) {
+    recordProviderFacts(served, index, facts);
+  }
+  for (const served of catalog.models) {
     facts.chatModels.push(readChatModel(served, overlay));
     facts.canonicalIds.push(capabilityKey(served));
-    const capabilities = readTransportCapabilities(served, overlay);
+    const capabilities = readTransportCapabilities(
+      served,
+      overlay,
+      surfaceOf(facts, overlay, served.provider),
+    );
     if (capabilities !== undefined) {
       facts.transportCapabilities.push([capabilityKey(served), capabilities]);
     }
-    recordProviderFacts(served, index, facts);
   }
   return facts;
+}
+
+/**
+ * The surface a provider is served on.
+ *
+ * A provider none of whose models names one falls back to the surface this
+ * package assumes for a provider it knows nothing about, which is also what a
+ * provider the catalog lists no model for gets. The generator reports every
+ * such provider, so the fallback is never silent.
+ */
+function surfaceOf(
+  facts: ServedFacts,
+  overlay: ModelCatalogOverlay,
+  provider: string,
+): string {
+  return facts.surfaces.get(provider) ?? overlay.defaultSurface;
 }
 
 /**
@@ -552,16 +622,20 @@ function buildProviderTables(
   providerLabels: (readonly [string, string])[];
 } {
   // The runtime consults the alias map BEFORE it accepts a provider as
-  // written, so a retained alias is checked for the two ways it could hijack
-  // ids: a key outside the served-alias shape would make ids the runtime
-  // deliberately refuses resolve, and a key that names another provider —
-  // listed, or routed by the overlay — would send that provider's every id
-  // to the alias's target. The overlay names repository values, so they are
-  // printed.
+  // written, so a retained alias is checked for the ways it could send a
+  // request somewhere it does not belong: a key outside the served-alias shape
+  // would make ids the runtime deliberately refuses resolve; a key that names
+  // another provider — listed, or named by the overlay — would send that
+  // provider's every id to the alias's target; and a target the served catalog
+  // names no surface for, whether because it lists the provider without one or
+  // does not list it at all, is routed on the default surface, so the alias
+  // would resolve and then speak the wrong wire format. The overlay names
+  // repository values, so they are printed.
   const providers = new Set([
     ...listedProviders,
-    ...overlay.providerRouting.map(([provider]) => provider),
+    ...overlay.nativeProviders,
   ]);
+  const listed = new Set(listedProviders);
   for (const [alias, provider] of overlay.retainedProviderAliases) {
     const unusable = describeUnusableProvider(alias);
     if (unusable !== undefined) {
@@ -570,6 +644,28 @@ function buildProviderTables(
     if (alias !== provider && providers.has(alias)) {
       fail(
         `overlay retainedProviderAliases alias "${alias}" names a provider of its own, so it cannot stand for "${provider}"`,
+      );
+    }
+    // The overlay already states this ("the value is the canonical provider,
+    // which the catalog must still serve"); until now nothing checked it.
+    // Generation fails rather than publishing the alias, because there is no
+    // honest surface to route it on: nothing served names one, and writing one
+    // here by hand is the per-vendor table this generator removed. A self
+    // alias publishes no row at all, so it misroutes nothing.
+    if (alias === provider) continue;
+    if (!listed.has(provider)) {
+      fail(
+        `overlay retainedProviderAliases keeps "${alias}" for "${provider}", which the served catalog no longer lists, so the alias would resolve and then route on the default surface: drop the alias, or serve the provider again`,
+      );
+    }
+    // Being listed is not enough. The alias is published so that callers can
+    // keep sending its ids, and the runtime resolves it to this provider and
+    // then reads that provider's routing. With no served surface the row falls
+    // back to the default one, which is a warning for an ordinary provider but
+    // a wrong wire format promised to a caller here.
+    if (!facts.surfaces.has(provider)) {
+      fail(
+        `overlay retainedProviderAliases keeps "${alias}" for "${provider}", which the served catalog lists without naming a surface for it, so the alias would resolve and then route on the default surface: serve a surface for the provider, or drop the alias`,
       );
     }
   }
@@ -588,7 +684,7 @@ function buildProviderTables(
     // (or starts) spelling an alias the overlay retains anyway.
     const derived = [...facts.aliasPrefixes.get(provider) ?? []];
     // A derived alias is held to the same rule as a retained one: a prefix
-    // that names another provider — listed, or routed by the overlay — would
+    // that names another provider — listed, or named by the overlay — would
     // send that provider's every id here, since the runtime reads the alias
     // map before accepting a provider as written. Named by the position of
     // the model that implied it: the prefix is a served value.
@@ -609,45 +705,32 @@ function buildProviderTables(
       .sort(compareCodePoints);
     for (const prefix of prefixes) providerAliases.push([prefix, provider]);
   }
-  // A retained alias for a provider the catalog lists no chat model for
-  // follows the served groups, in overlay order. Like a routing row, an alias
-  // is a fact about ids the runtime accepts, not about the chat list: model
-  // ids of that provider the runtime resolves without a chat entry still go
-  // through it, and its routing row is kept by `routedProviders` on the same
-  // reasoning. Its provider has no label or display-order row, which only the
-  // chat list needs.
-  const served = new Set(providerOrder);
-  for (const [alias, provider] of overlay.retainedProviderAliases) {
-    if (!served.has(provider) && alias !== provider) {
-      providerAliases.push([alias, provider]);
-    }
-  }
+  // Every retained alias has been emitted by the loop above. Its target is
+  // listed and has a served surface, which it can only have from a served
+  // model of its own, and every served model yields a chat entry, so the
+  // target is always in the display order this walked. A provider outside it
+  // no longer reaches here: the checks refuse the alias instead of publishing
+  // one that resolves onto the default surface.
   return { providerAliases, providerLabels };
 }
 
 /**
- * The providers that need a routing row: every provider the catalog lists, in
- * served order — with or without a chat model — then every provider the
- * overlay routes that the catalog does not name, in overlay order.
+ * The retained transport rows that reach the generated module.
  *
- * Routing is a fact about a provider's gateway surface, not about which chat
- * models the catalog lists for it, so a routing row is never conditioned on a
- * chat entry, a display row or a retained transport row being present. Model
- * ids the runtime resolves without any of them (an embedding model, for one)
- * still route through these rows, and dropping a row would move them to the
- * default surface. A listed provider the overlay does not route gets the
- * default surface as a row, so the generated diff shows what an overlay entry
- * would change.
+ * A retained row is ignored once the catalog serves the model again: the
+ * served entry carries the transport facts, and the stale row must not outlive
+ * it as an override. Such a row reaches nothing, so it is neither emitted nor
+ * judged, and both callers ask this one predicate rather than restating it.
  */
-function routedProviders(
-  listedProviders: readonly string[],
-  overlayRouting: readonly (readonly [string, unknown])[],
-): string[] {
-  const providers = [...listedProviders];
-  for (const [provider] of overlayRouting) {
-    if (!providers.includes(provider)) providers.push(provider);
-  }
-  return providers;
+function retainedTransportRows(
+  facts: ServedFacts,
+  overlay: ModelCatalogOverlay,
+): readonly (readonly [string, TransportCapabilities])[] {
+  // Same key space as the rows themselves: canonical provider, upstream id.
+  const served = new Set(facts.canonicalIds);
+  return overlay.retainedTransportCapabilities.filter(([modelId]) =>
+    !served.has(modelId)
+  );
 }
 
 /**
@@ -660,12 +743,8 @@ function buildTransportTable(
   facts: ServedFacts,
   overlay: ModelCatalogOverlay,
 ): (readonly [string, TransportCapabilities])[] {
-  // Same key space as the rows themselves: canonical provider, upstream id.
-  const served = new Set(facts.canonicalIds);
   return [
-    ...overlay.retainedTransportCapabilities.filter(([modelId]) =>
-      !served.has(modelId)
-    ),
+    ...retainedTransportRows(facts, overlay),
     ...facts.transportCapabilities,
   ];
 }
@@ -685,6 +764,10 @@ export function buildModelCatalogData(
   assertOverlayInvariants(overlay);
   const catalog = parseServedCatalog(payload);
   const facts = readServedModels(catalog, overlay);
+  // Needs the served surfaces, so it cannot travel with the overlay's own
+  // invariants; it is still an overlay failure and is reported before the
+  // generated tables are checked.
+  assertRetainedThinkingModes(facts, overlay);
 
   // The display order and the label table are about the chat list, so a
   // listed provider with no chat model has no row in either: nothing would be
@@ -693,6 +776,7 @@ export function buildModelCatalogData(
   // `findListedProvidersWithoutModels` names it for the operator — a
   // provider that only serves models this package lists no chat entry for
   // (an embedding model, say) is a state the catalog may legitimately be in.
+  const nativeProviders = new Set(overlay.nativeProviders);
   const withModels = new Set(facts.chatModels.map((model) => model.provider));
   const providerOrder = catalog.providers.filter((provider) =>
     withModels.has(provider)
@@ -704,7 +788,6 @@ export function buildModelCatalogData(
     facts,
     overlay,
   );
-  const routingByProvider = new Map(overlay.providerRouting);
   const transportCapabilities = buildTransportTable(facts, overlay);
   const defaultEntry = facts.chatModels.find(
     (model) => model.modelId === catalog.defaultModelId,
@@ -714,23 +797,21 @@ export function buildModelCatalogData(
   const data: ModelCatalogData = {
     defaultModelId: defaultEntry.id,
     providerAliases,
-    // A provider the overlay does not route falls back to the surface the
-    // package already uses for an unlisted provider, so routing stays declared
-    // for every provider the catalog names. Every provider the overlay routes
-    // keeps its row whether or not the catalog still names it: model ids of
-    // that provider resolve through the row regardless of any chat entry, and
-    // dropping it would send them on the default surface, i.e. the wrong
-    // protocol.
-    providerRouting: routedProviders(
-      catalog.providers,
-      overlay.providerRouting,
-    ).map(
+    // Every provider the catalog lists gets a row, in served order, with or
+    // without a chat model: routing is a fact about a provider's gateway
+    // surface, not about which chat models the catalog lists for it. Model ids
+    // the runtime resolves without a chat entry, a display row or a transport
+    // row (an embedding model, for one) still route through these rows. A
+    // provider none of whose models names a surface takes the default one, and
+    // the generator reports it so the generated diff is read knowing that.
+    providerRouting: catalog.providers.map(
       (provider) =>
-        [
-          provider,
-          routingByProvider.get(provider) ??
-            { surface: overlay.defaultSurface },
-        ] as const,
+        [provider, {
+          surface: surfaceOf(facts, overlay, provider),
+          // The overlay's, not the catalog's: the served surface says what the
+          // provider speaks, this says how this package may speak it.
+          ...(nativeProviders.has(provider) ? { native: true } : {}),
+        }] as const,
     ),
     defaultSurface: overlay.defaultSurface,
     gatewayPathPrefix: overlay.gatewayPathPrefix,
@@ -744,17 +825,20 @@ export function buildModelCatalogData(
   // The output has to be readable back by the package's lookups, so it is
   // checked here rather than left to whoever reviews the generated diff.
   assertCatalogInvariants(data);
-  // Last, so a contradiction in the catalog itself is reported before a
-  // spelling in the overlay: an overlay key spelled with an alias the served
-  // ids imply is refused too (the retained aliases were checked with the
-  // overlay's own invariants).
-  refuseNoncanonicalOverlayKeys(
+  // Last, over every alias the runtime will accept: the ones the overlay
+  // retains and the ones the served ids imply. It runs here, after the alias
+  // table itself has been built, so a retained "alias" that is really another
+  // provider is reported as the shadowing it is rather than as a key spelled
+  // with an alias, and so that a contradiction in the catalog is reported
+  // before a spelling in the overlay.
+  refuseAliasedOverlayKeys(
     overlay,
-    new Map(
-      [...facts.aliasPrefixes].flatMap(([provider, prefixes]) =>
+    new Map([
+      ...overlay.retainedProviderAliases,
+      ...[...facts.aliasPrefixes].flatMap(([provider, prefixes]) =>
         [...prefixes].map((prefix) => [prefix, provider] as const)
       ),
-    ),
+    ]),
   );
   return data;
 }
@@ -779,7 +863,7 @@ function findDuplicates(keys: readonly string[]): readonly string[] {
  */
 export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
   const tables: ReadonlyArray<readonly [string, readonly string[]]> = [
-    ["providerRouting", overlay.providerRouting.map(([key]) => key)],
+    ["nativeProviders", overlay.nativeProviders],
     [
       "surfaceGatewayApiVersions",
       overlay.surfaceGatewayApiVersions.map(([key]) => key),
@@ -790,32 +874,18 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       overlay.retainedProviderAliases.map(([key]) => key),
     ],
   ];
-  // A routing row is looked up by the provider the runtime resolves, which
-  // refuses a key outside the provider shape or reserved; such a row would
-  // render, type-check and never be read, and the ids it routes would take
-  // another surface. The overlay names repository values, so the key is
+  // A native flag is read for the provider the runtime resolves, which refuses
+  // a name outside the provider shape or reserved; such an entry would
+  // type-check and never match anything, and the provider would quietly lose
+  // its native transport. The overlay names repository values, so the entry is
   // printed.
-  for (const [provider] of overlay.providerRouting) {
+  for (const provider of overlay.nativeProviders) {
     const unusable = describeUnusableProvider(provider);
     if (unusable !== undefined) {
-      fail(`overlay providerRouting key "${provider}" ${unusable}`);
+      fail(`overlay nativeProviders entry "${provider}" ${unusable}`);
     }
   }
-  // The aliases the overlay itself declares are known here; the ones the
-  // served catalog implies are checked once the catalog has been read. A
-  // retained "alias" that is itself a routed provider is not an alias but a
-  // shadowing, which the alias table's own check names for what it is.
-  const routedProviders = new Set(
-    overlay.providerRouting.map(([provider]) => provider),
-  );
-  refuseNoncanonicalOverlayKeys(
-    overlay,
-    new Map(
-      overlay.retainedProviderAliases.filter(([alias]) =>
-        !routedProviders.has(alias)
-      ),
-    ),
-  );
+  refuseUnroutableOverlayKeys(overlay);
   for (const [name, keys] of tables) {
     const duplicates = findDuplicates(keys);
     if (duplicates.length > 0) {
@@ -845,23 +915,6 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       }`,
     );
   }
-  // `anthropicThinkingMode` has a reading only on the Anthropic surface (see
-  // `readTransportCapabilities`); a retained row that declares it for a
-  // provider routed elsewhere would suppress the generic reasoning option and
-  // leave the model without thinking. The overlay is the repository's own,
-  // so the entry is named.
-  const routing = new Map(overlay.providerRouting);
-  for (const [modelId, capabilities] of overlay.retainedTransportCapabilities) {
-    if (capabilities.anthropicThinkingMode === undefined) continue;
-    const slashIndex = modelId.indexOf("/");
-    const provider = slashIndex > 0 ? modelId.slice(0, slashIndex) : modelId;
-    const surface = routing.get(provider)?.surface ?? overlay.defaultSurface;
-    if (surface !== "anthropic") {
-      fail(
-        `overlay retainedTransportCapabilities declares anthropicThinkingMode for "${modelId}", whose provider routes over the "${surface}" surface`,
-      );
-    }
-  }
   // The runtime builds the gateway URL as
   // `${gatewayPathPrefix}/${provider}/${apiVersion}` by plain interpolation, so
   // an empty or malformed component yields a URL that points somewhere else.
@@ -881,6 +934,39 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
     const badVersion = describeUnusablePathComponent(version, false);
     if (badVersion !== undefined) {
       fail(`overlay gateway API version for ${surface} ${badVersion}`);
+    }
+  }
+}
+
+/**
+ * Refuse a retained thinking mode the runtime would read on the wrong surface.
+ *
+ * `anthropicThinkingMode` has a reading only on the Anthropic surface (see
+ * `readTransportCapabilities`); a retained row that declares it for a provider
+ * routed anywhere else would suppress the generic reasoning option and leave
+ * the model without thinking. Judged against the EFFECTIVE surface, the one
+ * the generated row will carry: the served surface where the catalog names
+ * one, the default otherwise. A provider the catalog says nothing about is
+ * routed on the default surface all the same, so skipping it would ship
+ * exactly the contradiction this refuses. The key is the overlay's own value,
+ * so it is named; the surface is served data, so it is not.
+ *
+ * Only the rows that reach the module are judged. A row for a model the
+ * catalog serves again is dropped by {@link retainedTransportRows} and carries
+ * nothing, so failing generation over it would refuse a value no one can read.
+ */
+function assertRetainedThinkingModes(
+  facts: ServedFacts,
+  overlay: ModelCatalogOverlay,
+): void {
+  for (const [modelId, capabilities] of retainedTransportRows(facts, overlay)) {
+    if (capabilities.anthropicThinkingMode === undefined) continue;
+    const slashIndex = modelId.indexOf("/");
+    const provider = slashIndex > 0 ? modelId.slice(0, slashIndex) : modelId;
+    if (surfaceOf(facts, overlay, provider) !== "anthropic") {
+      fail(
+        `overlay retainedTransportCapabilities declares anthropicThinkingMode for "${modelId}", whose provider does not route on the Anthropic surface`,
+      );
     }
   }
 }
@@ -949,20 +1035,17 @@ function overlayModelKeyTables(
 }
 
 /**
- * Refuse an overlay key the runtime would never look up. Every model-keyed
- * table is read by the CANONICAL id — the gateway prefix stripped, the
- * provider segment resolved through the alias table — so a key that is not
- * one is a row that is never found, and the fact it carries silently
- * disappears: a key carrying the `veryfront-cloud/` prefix, one with no
- * provider segment, or one whose provider segment is one of `aliases` (alias
- * → canonical provider) and stops matching the moment the catalog serves the
- * model under its canonical spelling. The shape rule is the one served ids
- * are held to. The overlay is the repository's own, so the key is named.
+ * Refuse an overlay key the runtime could not even parse as a model id.
+ *
+ * Every model-keyed table is read by the CANONICAL id, so a key carrying the
+ * `veryfront-cloud/` prefix or no provider segment is a row that is never
+ * found, and the fact it carries silently disappears. The shape rule is the
+ * one served ids are held to. This part needs nothing but the overlay; whether
+ * the provider segment is an alias is decided once the catalog has been read,
+ * by {@link refuseAliasedOverlayKeys}. The overlay is the repository's own, so
+ * the key is named.
  */
-function refuseNoncanonicalOverlayKeys(
-  overlay: ModelCatalogOverlay,
-  aliases: ReadonlyMap<string, string>,
-): void {
+function refuseUnroutableOverlayKeys(overlay: ModelCatalogOverlay): void {
   for (const [table, keys] of overlayModelKeyTables(overlay)) {
     for (const key of keys) {
       const unroutable = describeUnroutableModelId(key);
@@ -971,6 +1054,26 @@ function refuseNoncanonicalOverlayKeys(
           `overlay ${table} key "${key}" ${unroutable}; keys are canonical model ids`,
         );
       }
+    }
+  }
+}
+
+/**
+ * Refuse an overlay key whose provider segment is a provider ALIAS.
+ *
+ * The runtime resolves the provider segment through the alias table before it
+ * looks a model-keyed row up, so a key spelled with an alias is never found,
+ * and it stops matching the moment the catalog serves the model under its
+ * canonical spelling. `aliases` maps alias to canonical provider and covers
+ * both sources: the aliases the overlay retains and the ones the served ids
+ * imply. The overlay is the repository's own, so the key is named.
+ */
+function refuseAliasedOverlayKeys(
+  overlay: ModelCatalogOverlay,
+  aliases: ReadonlyMap<string, string>,
+): void {
+  for (const [table, keys] of overlayModelKeyTables(overlay)) {
+    for (const key of keys) {
       const slashIndex = key.indexOf("/");
       const provider = key.slice(0, slashIndex);
       const canonical = aliases.get(provider);
@@ -1161,21 +1264,18 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
   }
 
   // `resolveVeryfrontCloudGatewayPath` reads the version for the surface a
-  // provider routes on, so every routed surface needs one, as does the
-  // surface used for a provider the table does not list.
+  // provider routes on and falls back to the default version for a surface the
+  // table does not list. The default SURFACE is this package's own value, so a
+  // missing version for it is a repository mistake and is refused here. A
+  // SERVED surface with no version is not: the catalog may name a surface a
+  // later release builds requests for, and refusing it would make adding a
+  // vendor a code change again. Such a request is refused at call time, by
+  // `requireVeryfrontCloudWireSurface`, before a path is used.
   const versioned = new Set(
     data.surfaceGatewayApiVersions.map(([surface]) => surface),
   );
-  const unversioned = [
-    ...new Set(data.providerRouting.map(([, routing]) => routing.surface)),
-    data.defaultSurface,
-  ].filter((surface) => !versioned.has(surface));
-  if (unversioned.length > 0) {
-    fail(
-      `no gateway API version for surface: ${
-        [...new Set(unversioned)].join(", ")
-      }`,
-    );
+  if (!versioned.has(data.defaultSurface)) {
+    fail("no gateway API version for the default surface");
   }
 }
 
@@ -1206,20 +1306,28 @@ export function findListedProvidersWithoutModels(
 }
 
 /**
- * Listed providers the overlay declares no routing for, as positions in the
+ * Listed providers no served model names a surface for, as positions in the
  * served `providers` list (`providers[2]`; the names are served values and
  * this list is printed). Walks the LISTED providers, not the display order: a
  * provider with no chat model has no display row but still routes its other
- * ids, on the default surface unless the overlay says otherwise, and that is
+ * ids, on the default surface until a served model names one, and that is
  * exactly where a wrong wire format would go unnoticed.
+ *
+ * Reads the payload itself, as {@link listServedProviders} does, so the
+ * report does not depend on the generated tables: a provider on the default
+ * surface is indistinguishable in them from one served on it.
  */
-export function findUnroutedProviders(
-  listedProviders: readonly string[],
-  overlay: ModelCatalogOverlay,
+export function findProvidersWithoutSurface(
+  payload: unknown,
 ): readonly string[] {
-  const routed = new Set(overlay.providerRouting.map(([provider]) => provider));
-  return listedProviders.flatMap((provider, index) =>
-    routed.has(provider) ? [] : [`providers[${index}]`]
+  const catalog = parseServedCatalog(payload);
+  const named = new Set(
+    catalog.models.flatMap((model) =>
+      model.surface === undefined ? [] : [model.provider]
+    ),
+  );
+  return catalog.providers.flatMap((provider, index) =>
+    named.has(provider) ? [] : [`providers[${index}]`]
   );
 }
 
@@ -1276,7 +1384,7 @@ function renderChatModel(model: ChatModelEntry): string {
   return `Object.freeze({ ${fields.join(", ")} }),`;
 }
 
-function renderRouting(routing: OverlayProviderRouting): string {
+function renderRouting(routing: ProviderRouting): string {
   const fields = [`surface: ${quote(routing.surface)} as const`];
   if (routing.native !== undefined) fields.push(`native: ${routing.native}`);
   return `Object.freeze({ ${fields.join(", ")} })`;
@@ -1307,7 +1415,7 @@ export function renderModelCatalogModule(data: ModelCatalogData): string {
     "  KnownVeryfrontCloudProviderId,",
     "  VeryfrontCloudChatModel,",
     "  VeryfrontCloudProviderId,",
-    "  VeryfrontCloudWireSurface,",
+    "  VeryfrontCloudSurfaceId,",
     '} from "./model-catalog.ts";',
     "",
     "/**",
@@ -1318,8 +1426,12 @@ export function renderModelCatalogModule(data: ModelCatalogData): string {
     " * reachable as soon as its surface is known.",
     " */",
     "export type VeryfrontCloudProviderRouting = {",
-    "  /** Wire format spoken by the provider's gateway endpoint. */",
-    "  readonly surface: VeryfrontCloudWireSurface;",
+    "  /**",
+    "   * Wire format spoken by the provider's gateway endpoint. The catalog can",
+    "   * name one this package builds no request for; such a value is carried",
+    "   * here and refused when a request is built, never at import.",
+    "   */",
+    "  readonly surface: VeryfrontCloudSurfaceId;",
     "  /**",
     "   * Whether the provider implements the surface natively rather than only",
     "   * speaking its wire format. On the OpenAI surface, native providers can use",

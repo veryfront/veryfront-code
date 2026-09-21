@@ -13,7 +13,7 @@ import type {
   KnownVeryfrontCloudProviderId,
   VeryfrontCloudChatModel,
   VeryfrontCloudProviderId,
-  VeryfrontCloudWireSurface,
+  VeryfrontCloudSurfaceId,
 } from "./model-catalog.ts";
 
 /**
@@ -24,8 +24,12 @@ import type {
  * reachable as soon as its surface is known.
  */
 export type VeryfrontCloudProviderRouting = {
-  /** Wire format spoken by the provider's gateway endpoint. */
-  readonly surface: VeryfrontCloudWireSurface;
+  /**
+   * Wire format spoken by the provider's gateway endpoint. The catalog can
+   * name one this package builds no request for; such a value is carried
+   * here and refused when a request is built, never at import.
+   */
+  readonly surface: VeryfrontCloudSurfaceId;
   /**
    * Whether the provider implements the surface natively rather than only
    * speaking its wire format. On the OpenAI surface, native providers can use
