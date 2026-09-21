@@ -547,10 +547,16 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       ),
     ];
 
-    await assertRejects(
+    const error = await assertRejects(
       () => collectParts(streamFromText(events.join(""))),
       ProviderRequestError,
       `retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} empty fragments`,
+    );
+    // The fixed diagnostic stays reachable as the wrapper's cause.
+    assertInstanceOf(error.cause, RangeError);
+    assertEquals(
+      (error.cause as Error).message,
+      `Anthropic retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} empty fragments (text delta)`,
     );
   });
 

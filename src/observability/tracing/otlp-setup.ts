@@ -43,6 +43,7 @@ import {
   sanitizeTelemetryAttributes,
   sanitizeTelemetryAttributeValue,
   sanitizeTelemetryText,
+  telemetryErrorCauseType,
   type TelemetryErrorDetail,
   telemetryErrorType,
 } from "../telemetry-error.ts";
@@ -371,6 +372,13 @@ function boundedSpanError(error: unknown): unknown {
  */
 function reportSpanFailure(span: Span, error: unknown, options: WithSpanOptions | undefined): void {
   const statusError = spanErrorStatus(error, options);
+  runTelemetryOperation(
+    () => {
+      const causeType = telemetryErrorCauseType(error);
+      if (causeType !== undefined) span.setAttribute("error.cause.type", causeType);
+    },
+    "Failed to classify span error cause",
+  );
   setSpanErrorStatus(span, statusError, statusError === error ? "withStack" : "withoutStack");
 }
 
