@@ -135,8 +135,9 @@ NPM_GIT_HEAD_WAIT_ATTEMPTS="${NPM_GIT_HEAD_WAIT_ATTEMPTS:-180}"
 NPM_GIT_HEAD_WAIT_DELAY_SECONDS="${NPM_GIT_HEAD_WAIT_DELAY_SECONDS:-10}"
 # One budget for the whole release, not per package: a registry incident that
 # delays metadata for many of the ~30 packages must not multiply the wait past
-# the job limit and strand a partial publish. Only time spent waiting counts,
-# so slow publishes of later packages do not eat into their metadata checks.
+# the job limit and strand a partial publish. Only time spent in metadata
+# lookups and waits counts, so slow publishes of later packages do not eat into
+# their metadata checks.
 NPM_GIT_HEAD_WAIT_TOTAL_SECONDS="${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS:-1800}"
 NPM_GIT_HEAD_WAIT_SPENT_SECONDS=0
 
@@ -324,12 +325,19 @@ wait_for_npm_git_head() {
   # Allow NPM_GIT_HEAD_WAIT_ATTEMPTS empty reads while preserving hash
   # mismatches as immediate failures.
   for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
+    LOOKUP_STARTED_AT="$(date +%s)"
     PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
     fi
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
+    fi
+    # A stalled registry lookup (npm's default fetch timeout is minutes, with
+    # retries) is waiting too, so it is charged to the shared budget.
+    LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
+    if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
+      NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
     fi
     if [ "${NPM_GIT_HEAD_WAIT_SPENT_SECONDS}" -ge "${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}" ]; then
       echo "Shared npm metadata wait of ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s is spent; checking ${PACKAGE_NAME}@${VERSION} once more." >&2
