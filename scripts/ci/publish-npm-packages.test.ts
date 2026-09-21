@@ -504,6 +504,78 @@ describe("npm package publishing", () => {
     });
   });
 
+  // A stable publish on 2026-09-21 landed 58 minutes after `npm publish` started
+  // and its gitHead metadata appeared 43 seconds after a five-minute wait gave
+  // up, so the release failed after npm had already published the version.
+  it("tolerates npm gitHead metadata appearing after the former five-minute window", async () => {
+    const stateDir = await Deno.makeTempDir();
+    const countFile = `${stateDir}/npm-view-count`;
+    await Deno.writeTextFile(countFile, "0");
+
+    try {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          '  if [ "$count" -ge 100 ]; then',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "  fi",
+          "}",
+          "sleep() { :; }",
+          'wait_for_npm_git_head "veryfront"',
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1260",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(await Deno.readTextFile(countFile), "100");
+    } finally {
+      await Deno.remove(stateDir, { recursive: true });
+    }
+  });
+
+  it("bounds the gitHead metadata wait by NPM_GIT_HEAD_WAIT_ATTEMPTS", async () => {
+    const stateDir = await Deno.makeTempDir();
+    const countFile = `${stateDir}/npm-view-count`;
+    await Deno.writeTextFile(countFile, "0");
+
+    try {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          "}",
+          "sleep() { :; }",
+          'if wait_for_npm_git_head "veryfront"; then exit 0; else exit 7; fi',
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1260",
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "3",
+        },
+      );
+
+      assertEquals(output.code, 7);
+      // Three polling reads plus the final confirmation read.
+      assertEquals(await Deno.readTextFile(countFile), "4");
+    } finally {
+      await Deno.remove(stateDir, { recursive: true });
+    }
+  });
+
   it("waits for an existing RC version's missing gitHead metadata", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;

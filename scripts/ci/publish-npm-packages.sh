@@ -128,6 +128,11 @@ verify_npm_compatibility_artifact() {
 # the publish is retried as if it were a fresh attempt.
 NPM_PUBLISH_CONFLICT_ATTEMPTS="${NPM_PUBLISH_CONFLICT_ATTEMPTS:-5}"
 NPM_PUBLISH_CONFLICT_DELAY_SECONDS="${NPM_PUBLISH_CONFLICT_DELAY_SECONDS:-15}"
+# Stable publishes have landed close to an hour after `npm publish` started, and
+# the gitHead metadata can trail the version further. Poll for up to 30 minutes
+# by default so a publish that did land is not reported as a failed release.
+NPM_GIT_HEAD_WAIT_ATTEMPTS="${NPM_GIT_HEAD_WAIT_ATTEMPTS:-180}"
+NPM_GIT_HEAD_WAIT_DELAY_SECONDS="${NPM_GIT_HEAD_WAIT_DELAY_SECONDS:-10}"
 
 is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
@@ -310,9 +315,9 @@ publish_npm_package_with_retry() {
 wait_for_npm_git_head() {
   PACKAGE_NAME="$1"
   # npm can expose a published version before its gitHead metadata converges.
-  # Allow up to five minutes of empty reads while preserving hash mismatches as
-  # immediate failures.
-  for attempt in $(seq 1 60); do
+  # Allow NPM_GIT_HEAD_WAIT_ATTEMPTS empty reads while preserving hash
+  # mismatches as immediate failures.
+  for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
     PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
@@ -320,8 +325,8 @@ wait_for_npm_git_head() {
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
     fi
-    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/60)."
-    sleep 5
+    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/${NPM_GIT_HEAD_WAIT_ATTEMPTS})."
+    sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
   done
 
   PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
