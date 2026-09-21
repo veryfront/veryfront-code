@@ -127,6 +127,23 @@ describe("an unplanned failure", () => {
       "failed to open a path",
     ],
     [
+      "replaces an unquoted Windows drive-letter path written with forward slashes",
+      new Error("failed to open C:/Users/someone/secret/catalog.data.ts"),
+      "failed to open a path",
+    ],
+    [
+      "consumes a quoted Windows path written with forward slashes whole",
+      new Error("cannot read 'C:/Users/alice private/(work)/catalog.ts' now"),
+      "cannot read 'catalog.ts' now",
+    ],
+    [
+      "consumes a quoted UNC path whole",
+      new Error(
+        'cannot read "\\\\build-host\\share\\alice private\\generate.ts"',
+      ),
+      'cannot read "generate.ts"',
+    ],
+    [
       "replaces an unquoted UNC path",
       new Error("failed to open \\\\build-host\\share\\place\\generate.ts"),
       "failed to open a path",

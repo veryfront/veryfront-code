@@ -739,7 +739,7 @@ export function buildModelCatalogData(
   // spelling in the overlay: an overlay key spelled with an alias the served
   // ids imply is refused too (the retained aliases were checked with the
   // overlay's own invariants).
-  refuseAliasKeyedOverlayRows(
+  refuseNoncanonicalOverlayKeys(
     overlay,
     new Map(
       [...facts.aliasPrefixes].flatMap(([provider, prefixes]) =>
@@ -788,7 +788,7 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
   const routedProviders = new Set(
     overlay.providerRouting.map(([provider]) => provider),
   );
-  refuseAliasKeyedOverlayRows(
+  refuseNoncanonicalOverlayKeys(
     overlay,
     new Map(
       overlay.retainedProviderAliases.filter(([alias]) =>
@@ -929,20 +929,29 @@ function overlayModelKeyTables(
 }
 
 /**
- * Refuse an overlay key whose provider segment is one of `aliases` (alias →
- * canonical provider). The runtime looks every model-keyed table up by the
- * CANONICAL id, so a row keyed by an alias is never found: the fact it carries
- * silently disappears the moment the catalog stops serving the model under
- * that spelling. The overlay is the repository's own, so the key is named.
+ * Refuse an overlay key the runtime would never look up. Every model-keyed
+ * table is read by the CANONICAL id — the gateway prefix stripped, the
+ * provider segment resolved through the alias table — so a key that is not
+ * one is a row that is never found, and the fact it carries silently
+ * disappears: a key carrying the `veryfront-cloud/` prefix, one with no
+ * provider segment, or one whose provider segment is one of `aliases` (alias
+ * → canonical provider) and stops matching the moment the catalog serves the
+ * model under its canonical spelling. The shape rule is the one served ids
+ * are held to. The overlay is the repository's own, so the key is named.
  */
-function refuseAliasKeyedOverlayRows(
+function refuseNoncanonicalOverlayKeys(
   overlay: ModelCatalogOverlay,
   aliases: ReadonlyMap<string, string>,
 ): void {
   for (const [table, keys] of overlayModelKeyTables(overlay)) {
     for (const key of keys) {
+      const unroutable = describeUnroutableModelId(key);
+      if (unroutable !== undefined) {
+        fail(
+          `overlay ${table} key "${key}" ${unroutable}; keys are canonical model ids`,
+        );
+      }
       const slashIndex = key.indexOf("/");
-      if (slashIndex <= 0) continue;
       const provider = key.slice(0, slashIndex);
       const canonical = aliases.get(provider);
       if (canonical !== undefined && canonical !== provider) {

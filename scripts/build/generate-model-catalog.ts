@@ -183,8 +183,13 @@ async function formatModule(repoRoot: string, source: string): Promise<string> {
   await writer.close();
   const output = await process.output();
   if (!output.success) {
+    // The formatter's diagnostics are external output: they may quote the
+    // module, run to several lines and name machine paths, so they take the
+    // same route as any other unplanned failure.
     throw new ModelCatalogError(
-      `deno fmt failed: ${new TextDecoder().decode(output.stderr).trim()}`,
+      `deno fmt failed: ${
+        formatFailure(new TextDecoder().decode(output.stderr))
+      }`,
     );
   }
   return new TextDecoder().decode(output.stdout);
@@ -232,23 +237,20 @@ export function formatFailure(error: unknown): string {
   // cannot leave the rest of the path standing. An UNQUOTED absolute path has
   // no boundary a reader can trust once spaces are allowed in it, so it and
   // everything after it on the line are replaced: the words before the path
-  // are the actionable part of such a message. POSIX and file-URL paths first,
-  // then Windows drive-letter (`C:\...`) and UNC (`\\server\share\...`).
-  const lastSegment = (path: string, separator: string) =>
-    path.slice(path.lastIndexOf(separator) + 1) || "a path";
+  // are the actionable part of such a message. A path is POSIX (`/...`), a
+  // Windows drive letter with either slash (`C:\...`, `C:/...`) or UNC
+  // (`\\server\share\...`); the last segment ends at either separator.
+  const lastSegment = (path: string) =>
+    path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1) ||
+    "a path";
   const withoutPaths = flattened
     .replace(
-      /(["'])(\/[^"']*)\1/g,
+      /(["'])((?:\/|[A-Za-z]:[\\/]|\\\\)[^"']*)\1/g,
       (_match, quote: string, path: string) =>
-        `${quote}${lastSegment(path, "/")}${quote}`,
-    )
-    .replace(
-      /(["'])((?:[A-Za-z]:|\\)\\[^"']*)\1/g,
-      (_match, quote: string, path: string) =>
-        `${quote}${lastSegment(path, "\\")}${quote}`,
+        `${quote}${lastSegment(path)}${quote}`,
     )
     .replace(/(?<![:\w/])\/.*$/, "a path")
-    .replace(/(?:\b[A-Za-z]:|\\)\\.*$/, "a path");
+    .replace(/(?:\b[A-Za-z]:[\\/]|\\\\).*$/, "a path");
   if (withoutPaths === "") return "no reason was given";
   return withoutPaths.length > MAX_FAILURE_LINE
     ? `${withoutPaths.slice(0, MAX_FAILURE_LINE)}...`

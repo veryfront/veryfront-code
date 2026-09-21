@@ -384,6 +384,34 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  it("refuses an overlay row whose key is not a canonical model id", () => {
+    // The runtime strips the gateway prefix and then looks the table up, so a
+    // key that carries the prefix, or has no provider segment, is never found.
+    for (
+      const [key, reason] of [
+        [
+          "veryfront-cloud/acme-labs/gone-2",
+          'carries the "veryfront-cloud/" prefix',
+        ],
+        ["gone-2", "has no provider segment"],
+        ["acme-labs/", "has no model segment"],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          assertOverlayInvariants({
+            ...OVERLAY,
+            retainedTransportCapabilities: [
+              ...OVERLAY.retainedTransportCapabilities,
+              [key, { openAITransport: "responses" }],
+            ],
+          }),
+        Error,
+        `overlay retainedTransportCapabilities key "${key}" ${reason}`,
+      );
+    }
+  });
+
   it("refuses an overlay row keyed by a provider alias instead of the canonical provider", () => {
     // The runtime looks every model-keyed table up by the canonical id, so a
     // row keyed by an alias is never found. Both sources of aliases are
