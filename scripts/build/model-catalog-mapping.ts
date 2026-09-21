@@ -626,21 +626,24 @@ function buildProviderTables(
 }
 
 /**
- * The providers that need a routing row: every provider in the served order,
- * then every provider the overlay routes that the catalog does not name, in
- * overlay order.
+ * The providers that need a routing row: every provider the catalog lists, in
+ * served order — with or without a chat model — then every provider the
+ * overlay routes that the catalog does not name, in overlay order.
  *
  * Routing is a fact about a provider's gateway surface, not about which chat
  * models the catalog lists for it, so a routing row is never conditioned on a
- * chat entry or a retained transport row being present. Model ids the runtime
- * resolves without either (an embedding model, for one) still route through
- * these rows, and dropping a row would move them to the default surface.
+ * chat entry, a display row or a retained transport row being present. Model
+ * ids the runtime resolves without any of them (an embedding model, for one)
+ * still route through these rows, and dropping a row would move them to the
+ * default surface. A listed provider the overlay does not route gets the
+ * default surface as a row, so the generated diff shows what an overlay entry
+ * would change.
  */
 function routedProviders(
-  providerOrder: readonly string[],
+  listedProviders: readonly string[],
   overlayRouting: readonly (readonly [string, unknown])[],
 ): string[] {
-  const providers = [...providerOrder];
+  const providers = [...listedProviders];
   for (const [provider] of overlayRouting) {
     if (!providers.includes(provider)) providers.push(provider);
   }
@@ -719,7 +722,7 @@ export function buildModelCatalogData(
     // dropping it would send them on the default surface, i.e. the wrong
     // protocol.
     providerRouting: routedProviders(
-      providerOrder,
+      catalog.providers,
       overlay.providerRouting,
     ).map(
       (provider) =>

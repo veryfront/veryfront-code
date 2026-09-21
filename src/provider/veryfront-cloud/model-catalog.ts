@@ -80,8 +80,7 @@ function requireThinkingBudgetTokens(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   if (!isPositiveSafeInteger(value)) {
     throw INVALID_ARGUMENT.create({
-      detail:
-        "Veryfront Cloud thinking budgetTokens must be a positive safe integer",
+      detail: "Veryfront Cloud thinking budgetTokens must be a positive safe integer",
     });
   }
   return value;
@@ -186,8 +185,7 @@ export function requireVeryfrontCloudWireSurface(
 ): VeryfrontCloudWireSurface {
   if (WIRE_SURFACES.has(surface)) return surface as VeryfrontCloudWireSurface;
   throw NOT_SUPPORTED.create({
-    detail:
-      `Veryfront Cloud wire surface "${surface}" is not supported by this package version`,
+    detail: `Veryfront Cloud wire surface "${surface}" is not supported by this package version`,
   });
 }
 
@@ -316,9 +314,7 @@ export function resolveVeryfrontCloudOpenAITransportPlan(
   const catalogModelId = `${provider}/${upstreamModelId}`;
   const declared = resolveVeryfrontCloudOpenAITransport(catalogModelId);
   if (declared !== undefined) {
-    return declared === "responses"
-      ? RESPONSES_PINNED
-      : CHAT_COMPLETIONS_PINNED;
+    return declared === "responses" ? RESPONSES_PINNED : CHAT_COMPLETIONS_PINNED;
   }
   if (resolveVeryfrontCloudModelThinking(catalogModelId)?.enabled === true) {
     return RESPONSES_PINNED;
@@ -371,20 +367,19 @@ export function isSupportedMistralModelId(modelId: string): boolean {
 }
 
 /** Shared Veryfront Cloud chat models value. */
-export const VERYFRONT_CLOUD_CHAT_MODELS: readonly VeryfrontCloudChatModel[] =
-  Object.freeze(
-    VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES.map((model) => {
-      if (
-        model.thinkingBudgetTokens !== undefined &&
-        !isPositiveSafeInteger(model.thinkingBudgetTokens)
-      ) {
-        throw new TypeError(
-          `Veryfront Cloud model "${model.id}" thinkingBudgetTokens must be a positive safe integer`,
-        );
-      }
-      return Object.freeze(model);
-    }),
-  );
+export const VERYFRONT_CLOUD_CHAT_MODELS: readonly VeryfrontCloudChatModel[] = Object.freeze(
+  VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES.map((model) => {
+    if (
+      model.thinkingBudgetTokens !== undefined &&
+      !isPositiveSafeInteger(model.thinkingBudgetTokens)
+    ) {
+      throw new TypeError(
+        `Veryfront Cloud model "${model.id}" thinkingBudgetTokens must be a positive safe integer`,
+      );
+    }
+    return Object.freeze(model);
+  }),
+);
 
 const defaultVeryfrontCloudChatModel = VERYFRONT_CLOUD_CHAT_MODELS.find(
   (model) => model.id === DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
@@ -396,11 +391,9 @@ if (!defaultVeryfrontCloudChatModel) {
 }
 
 /** Catalog-backed default model descriptor. */
-export const DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL =
-  defaultVeryfrontCloudChatModel;
+export const DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL = defaultVeryfrontCloudChatModel;
 /** Canonical direct provider/model ID for the default chat model. */
-export const DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID =
-  DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.modelId;
+export const DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID = DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.modelId;
 /** Canonical hosted runtime ID for the default chat model. */
 export const DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID =
   `${VERYFRONT_CLOUD_MODEL_PREFIX}${DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID}`;
@@ -449,8 +442,7 @@ export function getVeryfrontCloudProviderFromModelId(
 
   const prefix = normalizeVeryfrontCloudModelId(modelId).split("/", 1)[0] ?? "";
   throw INVALID_ARGUMENT.create({
-    detail:
-      `Unknown model provider prefix "${prefix}" in model ID "${modelId}"`,
+    detail: `Unknown model provider prefix "${prefix}" in model ID "${modelId}"`,
   });
 }
 
@@ -653,9 +645,7 @@ export function groupVeryfrontCloudModelsByProvider(): Array<{
     provider,
     label: PROVIDER_LABELS[provider],
     models: Object.freeze(
-      VERYFRONT_CLOUD_CHAT_MODELS.filter((model) =>
-        model.provider === provider
-      ),
+      VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === provider),
     ),
   })).filter((group) => group.models.length > 0);
 }
@@ -667,5 +657,4 @@ export function groupVeryfrontCloudModelsByProvider(): Array<{
  * well-formed provider segment, including providers this package does not
  * list. Read that function's documentation before calling this one.
  */
-export const resolveHostedVeryfrontCloudModelId =
-  resolveVeryfrontCloudGatewayModelId;
+export const resolveHostedVeryfrontCloudModelId = resolveVeryfrontCloudGatewayModelId;

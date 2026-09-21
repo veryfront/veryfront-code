@@ -579,6 +579,28 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  it("keeps a routing row for a listed provider with no chat model", () => {
+    // Such a provider has no display or label row, but its ids still route,
+    // so the generated table must say on which surface — and name it, so the
+    // operator can see what an overlay entry would change.
+    const payload = fakePayload();
+    payload.providers = [...(payload.providers as string[]), "ghost"];
+    const overlay: ModelCatalogOverlay = { ...OVERLAY, providerRouting: [] };
+    const data = buildModelCatalogData(payload, overlay);
+
+    assertEquals(data.providerOrder.includes("ghost"), false);
+    assertEquals(data.providerRouting, [
+      ["acme-labs", { surface: "openai" }],
+      ["beta-works", { surface: "openai" }],
+      ["ghost", { surface: "openai" }],
+    ]);
+    assertEquals(findUnroutedProviders(listServedProviders(payload), overlay), [
+      "providers[0]",
+      "providers[1]",
+      "providers[2]",
+    ]);
+  });
+
   it("produces the same module text on every run over the same payload", () => {
     const first = renderModelCatalogModule(
       buildModelCatalogData(fakePayload(), OVERLAY),

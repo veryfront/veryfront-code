@@ -1,9 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertExists,
-  assertThrows,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   canonicalVeryfrontCloudModelKey,
@@ -57,9 +53,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   });
 
   it("recognizes a supported Mistral model through any spelling of its id", () => {
-    const [mistral] = VERYFRONT_CLOUD_CHAT_MODELS.filter((model) =>
-      model.provider === "mistral"
-    );
+    const [mistral] = VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === "mistral");
     assertExists(mistral);
     assertEquals(isSupportedMistralModelId(mistral.modelId), true);
     assertEquals(
