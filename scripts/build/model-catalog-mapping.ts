@@ -130,16 +130,17 @@ const MODEL_FIELDS: readonly FieldSpec[] = [
  * The runtime takes the provider from a model id by cutting at the first `/`
  * and passing the segment to `resolveVeryfrontCloudProviderId`, which requires
  * this shape. A generated entry that does not satisfy it is published but
- * unroutable, so the generator refuses it rather than shipping it. A test pins
- * this against the runtime's own source, so the two cannot drift apart.
+ * unroutable, so the generator refuses it rather than shipping it. An
+ * integration test pins this rule to the runtime's behaviour, so the two
+ * cannot drift apart.
  */
-export const PROVIDER_SEGMENT_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+const PROVIDER_SEGMENT_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 
 /**
  * Segments the runtime refuses, so a provider can never be confused with a
  * member every object carries, nor with the gateway prefix itself.
  */
-export const RESERVED_PROVIDER_SEGMENTS: ReadonlySet<string> = new Set([
+const RESERVED_PROVIDER_SEGMENTS: ReadonlySet<string> = new Set([
   ...Object.getOwnPropertyNames(Object.prototype),
   "prototype",
   "veryfront-cloud",
@@ -169,7 +170,9 @@ const GATEWAY_MODEL_PREFIX = "veryfront-cloud/";
  * in the catalog, are conditions of a particular call, not properties of a
  * catalog entry.
  */
-function describeUnroutableModelId(modelId: string): string | undefined {
+export function describeUnroutableModelId(
+  modelId: string,
+): string | undefined {
   // The runtime strips the gateway prefix first, so an id that carries it has
   // nothing left to cut.
   if (modelId.startsWith(GATEWAY_MODEL_PREFIX)) {

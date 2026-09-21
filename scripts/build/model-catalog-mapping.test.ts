@@ -10,9 +10,7 @@ import {
   findStaleOverlayKeys,
   findUnroutedProviders,
   type ModelCatalogData,
-  PROVIDER_SEGMENT_PATTERN,
   renderModelCatalogModule,
-  RESERVED_PROVIDER_SEGMENTS,
 } from "./model-catalog-mapping.ts";
 import type { ModelCatalogOverlay } from "./model-catalog-overlay.ts";
 
@@ -604,44 +602,6 @@ describe("scripts/build/model-catalog-mapping", () => {
       );
     });
   }
-
-  it("keeps its model id rule in step with the runtime's", async () => {
-    // The generator restates what `resolveVeryfrontCloudProviderFromModelId`
-    // accepts, because importing it here would pull the whole runtime into a
-    // build script. This pins the restatement: if the runtime changes how it
-    // parses a model id, this fails and says so, rather than the generator
-    // quietly admitting ids the package cannot route.
-    const runtime = await Deno.readTextFile(
-      new URL(
-        "../../src/provider/veryfront-cloud/model-catalog.ts",
-        import.meta.url,
-      ),
-    );
-
-    assertStringIncludes(runtime, String(PROVIDER_SEGMENT_PATTERN));
-    assertStringIncludes(
-      runtime,
-      'const slashIndex = normalizedModelId.indexOf("/");',
-    );
-    assertStringIncludes(runtime, "if (slashIndex <= 0) return undefined;");
-
-    // The second half of the rule lives in `shared.ts`: the upstream segment
-    // must be non-empty and already trimmed, and nothing more.
-    const shared = await Deno.readTextFile(
-      new URL("../../src/provider/veryfront-cloud/shared.ts", import.meta.url),
-    );
-    assertStringIncludes(
-      shared,
-      "const upstreamModelId = modelId.slice(slashIndex + 1);",
-    );
-    assertStringIncludes(
-      shared,
-      "IntrinsicReflectApply(StringPrototypeTrim, upstreamModelId, []) !== upstreamModelId",
-    );
-    for (const reserved of ["prototype", "constructor"]) {
-      assertEquals(RESERVED_PROVIDER_SEGMENTS.has(reserved), true);
-    }
-  });
 
   it("accepts the model ids the runtime can take a provider from", () => {
     for (
