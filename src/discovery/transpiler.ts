@@ -1299,33 +1299,74 @@ function closingBracket(pattern: string, open: number): number {
   if (pattern[index] === "!" || pattern[index] === "^") index++;
   if (pattern[index] === "]") index++;
   for (; index < pattern.length; index++) {
+    // A POSIX class carries a `]` of its own, which does not end the class --
+    // but only a NAMED one: minimatch reads `[[:bogus:]]` as the ordinary
+    // members `[:bogus` and a literal `]` after them.
+    const posix = pattern.startsWith("[:", index) ? pattern.indexOf(":]", index + 2) : -1;
+    if (posix >= 0 && POSIX_CLASSES.has(pattern.slice(index + 2, posix))) {
+      index = posix + 1;
+      continue;
+    }
     if (pattern[index] === "]") return index;
   }
   return -1;
 }
 
+/**
+ * The POSIX classes minimatch names, as the tests they stand for. A workspace
+ * may spell a member set `[[:alpha:]]` as readily as `[a-zA-Z]`, and npm's
+ * matcher reads both.
+ */
+const POSIX_CLASSES: ReadonlyMap<string, RegExp> = new Map([
+  ["alnum", /[\p{L}\p{Nl}\p{Nd}]/u],
+  ["alpha", /[\p{L}\p{Nl}]/u],
+  ["ascii", /[\x00-\x7f]/],
+  ["blank", /[\p{Zs}\t]/u],
+  ["cntrl", /[\p{Cc}]/u],
+  ["digit", /[\p{Nd}]/u],
+  ["graph", /[^\p{Z}\p{C}]/u],
+  ["lower", /[\p{Ll}]/u],
+  // `print` really is the control characters in minimatch's own table, not
+  // the printable ones. Matching npm is the job here, not POSIX.
+  ["print", /[\p{C}]/u],
+  ["punct", /[\p{P}]/u],
+  ["space", /[\p{Z}\t\r\n\v\f]/u],
+  ["upper", /[\p{Lu}]/u],
+  ["word", /[\p{L}\p{Nl}\p{Nd}\p{Pc}]/u],
+  ["xdigit", /[A-Fa-f0-9]/],
+]);
+
 /** A `[...]` body as the test it stands for, ranges and negation included. */
 function characterClass(body: string): SegmentToken {
   const negated = body.startsWith("!") || body.startsWith("^");
   const members = negated ? body.slice(1) : body;
-  const ranges: [string, string][] = [];
+  const tests: ((char: string) => boolean)[] = [];
   for (let index = 0; index < members.length; index++) {
-    const from = members[index]!;
-    const dashed = members[index + 1] === "-" && index + 2 < members.length;
-    if (dashed) {
-      ranges.push([from, members[index + 2]!]);
-      index += 2;
-    } else {
-      ranges.push([from, from]);
+    const posix = members.startsWith("[:", index) ? members.indexOf(":]", index + 2) : -1;
+    const named = posix < 0 ? undefined : POSIX_CLASSES.get(members.slice(index + 2, posix));
+    if (named !== undefined) {
+      tests.push((char) => named.test(char));
+      index = posix + 1;
+      continue;
     }
+    const from = members[index]!;
+    // A `-` before the class's own end, or before a POSIX class, is a literal
+    // member rather than a range.
+    const dashed = members[index + 1] === "-" && index + 2 < members.length &&
+      !members.startsWith("[:", index + 2);
+    const to = dashed ? members[index + 2]! : from;
+    if (dashed) index += 2;
+    tests.push((char) => char >= from && char <= to);
   }
-  const listed = (char: string) => ranges.some(([from, to]) => char >= from && char <= to);
+  const listed = (char: string) => tests.some((test) => test(char));
   return {
     kind: "class",
     matches: (char) => listed(char) !== negated,
-    // A class that LISTS the dot names it explicitly, which is what minimatch
-    // asks for; one that merely fails to exclude it does not.
-    dotExplicit: !negated && listed("."),
+    // Only a class that is NOTHING BUT the dot reaches a leading one:
+    // minimatch collapses `[.]` to the literal `\.` and drops its guard,
+    // while `[.a]` and `[[:punct:]]` keep the guard even though both admit a
+    // dot elsewhere in the name.
+    dotExplicit: !negated && members === ".",
   };
 }
 

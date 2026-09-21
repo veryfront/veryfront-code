@@ -1196,6 +1196,20 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/[sx]tore-web"]), "apps/store-web");
       assertEquals(await declaring(["apps/[!x]tore-web"]), "apps/store-web");
       assertEquals(await declaring(["apps/[x-z]tore-web"]), "");
+      // POSIX classes, including negated and mixed with literal members. An
+      // unnamed one is not a class at all: minimatch reads `[[:bogus:]]` as
+      // the members `[:bogus` and a literal `]` after them.
+      assertEquals(await declaring(["apps/[[:alpha:]]tore-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps/[[:digit:]]tore-web"]), "");
+      assertEquals(await declaring(["apps/[![:digit:]]tore-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps/[[:alpha:]_]tore-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps/[[:bogus:]]tore-web"]), "");
+      // Only a class that is NOTHING BUT the dot reaches a leading one.
+      assertEquals(await declaring(["apps/[.a]hidden"], `${PROJECT}/apps/.hidden`), "");
+      assertEquals(
+        await declaring(["apps/[[:punct:]]hidden"], `${PROJECT}/apps/.hidden`),
+        "",
+      );
       assertEquals(await declaring(["apps/?tore-web"]), "apps/store-web");
       assertEquals(await declaring(["apps/??ore-web"]), "apps/store-web");
       assertEquals(await declaring(["apps/?ore-web"]), "");
