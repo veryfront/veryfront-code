@@ -60,7 +60,10 @@ export interface PollRegistryPackageOptions {
    * attempts alone does not bound the wall clock the surrounding job is sized
    * for. The last lookup may begin at the deadline and still take its request
    * timeout, so the poll ends within `budgetMs + requestTimeoutMs`: thirty
-   * minutes and a quarter by default, which the job's forty accommodate.
+   * minutes and a quarter by default. The job holds that PLUS the setup
+   * before it and the install smoke after it, which
+   * tests/integration/ci/registry-release-workflow.test.ts checks against the
+   * workflow itself.
    */
   budgetMs?: number;
   /** The clock, for tests. */
@@ -372,8 +375,7 @@ function formatFailureContext(
  * gave up once more on 2026-09-21 (rc.19779 returned from `npm publish` at
  * 01:43:10Z and the registry recorded it at 02:03:27Z, twenty minutes later,
  * while the poll stopped at 02:01:49Z). Thirty minutes covers that with
- * headroom and still lands inside the job's forty; CI can narrow it (the
- * smoke tests do) through the environment.
+ * headroom; CI can narrow it (the smoke tests do) through the environment.
  *
  * @internal Exported for testing only.
  */

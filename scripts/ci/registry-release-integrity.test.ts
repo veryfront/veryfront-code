@@ -5,7 +5,6 @@ import {
   pollRegistryPackage,
   readPropagationBudget,
   RegistryReleaseError,
-  REQUEST_TIMEOUT_MS,
 } from "./registry-release-integrity.ts";
 
 const PACKAGE_NAME = "@veryfront/ext-auth-jwt";
@@ -55,25 +54,6 @@ describe("registry propagation budget", () => {
       (maxAttempts - 1) * retryDelayMs >= 1_800_000,
       true,
       `${maxAttempts}x${retryDelayMs}ms`,
-    );
-  });
-
-  it("stays inside the job the workflow gives it", async () => {
-    // The last lookup may begin at the deadline and still spend its request
-    // timeout, so the poll ends within budget + one request. Outgrowing the
-    // job's timeout would trade a classified failure for a killed runner,
-    // which reports nothing about the release at all.
-    const workflow = await Deno.readTextFile(
-      new URL("../../.github/workflows/cicd.yml", import.meta.url),
-    );
-    const job = workflow.slice(workflow.indexOf("  quality-gate-registry:"));
-    const timeoutMinutes = Number(/timeout-minutes:\s*(\d+)/.exec(job)?.[1]);
-    const { maxAttempts, retryDelayMs } = readPropagationBudget({});
-    const pollMs = (maxAttempts - 1) * retryDelayMs + REQUEST_TIMEOUT_MS;
-    assertEquals(
-      pollMs < timeoutMinutes * 60_000,
-      true,
-      `${pollMs}ms poll vs ${timeoutMinutes}m job`,
     );
   });
 
