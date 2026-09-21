@@ -10,10 +10,18 @@
 #     access, no project access. It is passed to exactly one step, through
 #     `env`, never as a command argument, and is never printed.
 #
-# A run that produces data an open sync pull request already carries leaves
-# that pull request untouched, so its head, its CI and the review held against
-# that head all survive. A run that finds the catalog back at what main carries
-# says so and leaves any open sync pull request to be closed by hand.
+# What a run does with the generated data, once it differs from main:
+#
+#   no sync branch on the remote  -> commit, push, open a pull request
+#   branch matches, pull request open -> nothing; the head, its CI and the
+#                                    review held against it all survive
+#   branch matches, no pull request open -> open one for the commit already
+#                                    there, rather than pushing another
+#   branch differs                -> commit, push, update the open pull
+#                                    request or open one
+#
+# A run that finds the catalog back at what main carries says so and leaves any
+# open sync pull request to be closed, and its branch deleted, by hand.
 #
 # This workflow runs on a schedule and on manual dispatch only. Nothing on a
 # pull_request path reads the secret, so forks and outside contributors never
@@ -70,7 +78,8 @@ jobs:
           if git diff --quiet -- "${DATA_FILE}"; then
             echo "changed=false" >> "${GITHUB_OUTPUT}"
             echo "The served catalog matches the committed data."
-            echo "If a sync pull request is open, it is now stale: close it by hand."
+            echo "Any open sync pull request is now stale: close it by hand and"
+            echo "delete its branch, so a later change opens a fresh one."
             exit 0
           fi
           echo "changed=true" >> "${GITHUB_OUTPUT}"
@@ -112,30 +121,43 @@ jobs:
           set -euo pipefail
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
-          # An open sync pull request that already carries this exact data must
-          # be left alone. Rewriting its head would rerun CI, invalidate the
-          # review held against that head, and mutate the pull request while it
-          # may be queued. Only the two workflow-controlled names are used
-          # here; nothing from the fetched catalog reaches the shell.
+          # Does the sync branch on the remote already carry exactly this data?
+          # Only the two workflow-controlled names are used here; nothing from
+          # the fetched catalog reaches the shell.
+          branch_matches=false
           if git fetch --no-tags --depth=1 "${remote}" "refs/heads/${SYNC_BRANCH}"; then
             if git diff --quiet FETCH_HEAD -- "${DATA_FILE}"; then
-              echo "The open sync branch already carries this data. Leaving it untouched."
-              exit 0
+              branch_matches=true
             fi
-            echo "The open sync branch is behind the served catalog. Updating it."
+          fi
+          open_pr="$(gh pr list --head "${SYNC_BRANCH}" --state open --json number --jq '.[].number')"
+
+          # An open pull request that already carries this data must be left
+          # alone. Rewriting its head would rerun CI, invalidate the review
+          # held against that head, and mutate the pull request while it may be
+          # queued. A branch that matches with NOTHING tracking it is a
+          # different case: the pull request was closed without deleting the
+          # branch, and main is still stale, so one has to be opened.
+          if [ "${branch_matches}" = true ] && [ -n "${open_pr}" ]; then
+            echo "The open sync pull request already carries this data. Leaving it untouched."
+            exit 0
           fi
 
-          git config user.name "veryfront-release[bot]"
-          git config user.email "veryfront-release[bot]@users.noreply.github.com"
-          git checkout -B "${SYNC_BRANCH}"
-          git add -- "${DATA_FILE}"
-          git commit -m "chore(provider): sync the Veryfront Cloud model catalog data"
-          # The checkout persists no credentials, so this push authenticates
-          # itself with the App token, exactly as the release job does. The
-          # branch is written by this workflow and by nothing else, and the
-          # concurrency group admits one run at a time, so the previous sync
-          # commit is always the one being replaced.
-          git push --force "${remote}" "HEAD:refs/heads/${SYNC_BRANCH}"
+          if [ "${branch_matches}" = true ]; then
+            echo "The sync branch carries this data but no pull request tracks it. Opening one."
+          else
+            git config user.name "veryfront-release[bot]"
+            git config user.email "veryfront-release[bot]@users.noreply.github.com"
+            git checkout -B "${SYNC_BRANCH}"
+            git add -- "${DATA_FILE}"
+            git commit -m "chore(provider): sync the Veryfront Cloud model catalog data"
+            # The checkout persists no credentials, so this push authenticates
+            # itself with the App token, exactly as the release job does. The
+            # branch is written by this workflow and by nothing else, and the
+            # concurrency group admits one run at a time, so the previous sync
+            # commit is always the one being replaced.
+            git push --force "${remote}" "HEAD:refs/heads/${SYNC_BRANCH}"
+          fi
 
           # The body carries model ids and nothing else.
           body_file="${RUNNER_TEMP}/model-catalog-pr-body.md"
@@ -151,7 +173,7 @@ jobs:
             fi
           } > "${body_file}"
 
-          if [ -n "$(gh pr list --head "${SYNC_BRANCH}" --state open --json number --jq '.[].number')" ]; then
+          if [ -n "${open_pr}" ]; then
             gh pr edit "${SYNC_BRANCH}" --body-file "${body_file}"
           else
             gh pr create \
