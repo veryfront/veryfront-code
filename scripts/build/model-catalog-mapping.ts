@@ -531,17 +531,15 @@ function buildProviderTables(
   providerAliases: (readonly [string, string])[];
   providerLabels: (readonly [string, string])[];
 } {
-  // An alias the catalog no longer implies is kept only for a provider the
-  // catalog still serves: the alias table maps onto the provider table, and a
-  // row for an unserved provider would be a provider the runtime cannot
-  // label, order or route. The overlay names a repository value, so it is
-  // printed.
-  const served = new Set(providerOrder);
-  for (const [alias, provider] of overlay.retainedProviderAliases) {
-    if (!served.has(provider)) {
-      fail(
-        `overlay retainedProviderAliases keeps "${alias}" for provider "${provider}", which the catalog does not serve`,
-      );
+  for (const [alias] of overlay.retainedProviderAliases) {
+    // The runtime consults the alias map BEFORE its own provider-shape and
+    // reserved-name checks, so an alias outside the served-alias shape would
+    // make ids the runtime deliberately refuses resolve. Same rule as for a
+    // served provider segment. The overlay names a repository value, so it
+    // is printed.
+    const unusable = describeUnusableProvider(alias);
+    if (unusable !== undefined) {
+      fail(`overlay retainedProviderAliases alias "${alias}" ${unusable}`);
     }
   }
 
@@ -556,7 +554,11 @@ function buildProviderTables(
     providerAliases.push([provider, provider]);
     // Derived from the served ids and retained by the overlay, as one sorted
     // group per provider, so the table does not move when the catalog stops
-    // (or starts) spelling an alias the overlay retains anyway.
+    // (or starts) spelling an alias the overlay retains anyway. A retained
+    // alias for a provider the catalog does not serve lands nowhere: the alias
+    // table maps onto the provider table, and the runtime has no row to reach
+    // for that provider. `findDroppedRetainedAliases` names those for the
+    // operator.
     const retained = overlay.retainedProviderAliases
       .filter(([, target]) => target === provider)
       .map(([alias]) => alias);
@@ -634,8 +636,10 @@ export function buildModelCatalogData(
   // upstream defect, and saying so is this generator's job. Served-ness is
   // decided by a model naming the provider, never by a label being found.
   const withModels = new Set(facts.chatModels.map((model) => model.provider));
-  const unserved = providerOrder.filter((provider) =>
-    !withModels.has(provider)
+  // Named by position in the parsed `providers` list (empty and repeated
+  // names already dropped), not by value: the value is served data.
+  const unserved = providerOrder.flatMap((provider, index) =>
+    withModels.has(provider) ? [] : [`providers[${index}]`]
   );
   if (unserved.length > 0) {
     fail(`listed provider serves no model: ${unserved.join(", ")}`);
@@ -1046,6 +1050,22 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
       }`,
     );
   }
+}
+
+/**
+ * Retained aliases the generated table does not carry, because the catalog
+ * serves no model of their provider. Not a failure: the runtime has no row
+ * for the provider, so the alias could reach nothing. Reported so the overlay
+ * entry can be retired when the provider is really gone.
+ */
+export function findDroppedRetainedAliases(
+  data: ModelCatalogData,
+  overlay: ModelCatalogOverlay,
+): readonly string[] {
+  const served = new Set(data.providerOrder);
+  return overlay.retainedProviderAliases
+    .filter(([, provider]) => !served.has(provider))
+    .map(([alias, provider]) => `${alias} -> ${provider}`);
 }
 
 /** Providers the catalog names that the overlay declares no routing for. */

@@ -9,6 +9,7 @@ import {
   assertOverlayInvariants,
   buildModelCatalogData,
   compareCodePoints,
+  findDroppedRetainedAliases,
   findUnroutedProviders,
   type ModelCatalogData,
   renderModelCatalogModule,
@@ -562,7 +563,7 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertThrows(
       () => buildModelCatalogData(payload, OVERLAY),
       Error,
-      "listed provider serves no model: ghost-co",
+      "listed provider serves no model: providers[2]",
     );
   });
 
@@ -990,16 +991,45 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
-  it("refuses to retain an alias for a provider the catalog does not serve", () => {
+  it("refuses a retained alias outside the served-alias shape", () => {
+    // The runtime reads the alias map before its own shape and reserved-name
+    // checks, so a malformed or reserved alias here would make ids it refuses
+    // on purpose resolve.
+    for (const alias of ["", "Acme Labs", "veryfront-cloud", "__proto__"]) {
+      const overlay: ModelCatalogOverlay = {
+        ...OVERLAY,
+        retainedProviderAliases: [[alias, "acme-labs"]],
+      };
+      assertThrows(
+        () => buildModelCatalogData(fakePayload(), overlay),
+        Error,
+        `overlay retainedProviderAliases alias "${alias}"`,
+      );
+    }
+  });
+
+  it("drops a retained alias for a provider the catalog does not serve, and names it", () => {
+    // The alias table maps onto the provider table, so an alias for a provider
+    // with no row could reach nothing. It is left out rather than refused —
+    // the real overlay must apply to any catalog, including one that has
+    // moved on from a provider — and reported for the operator to retire.
     const overlay: ModelCatalogOverlay = {
       ...OVERLAY,
-      retainedProviderAliases: [["gamma-api", "gamma"]],
+      retainedProviderAliases: [["gamma-api", "gamma"], ["acme", "acme-labs"]],
     };
-    assertThrows(
-      () => buildModelCatalogData(fakePayload(), overlay),
-      Error,
-      'overlay retainedProviderAliases keeps "gamma-api" for provider "gamma"',
+    const data = buildModelCatalogData(fakePayload(), overlay);
+    assertEquals(
+      data.providerAliases.some(([alias]) => alias === "gamma-api"),
+      false,
     );
+    assertEquals(
+      data.providerAliases.some(([alias]) => alias === "acme"),
+      true,
+    );
+    assertEquals(findDroppedRetainedAliases(data, overlay), [
+      "gamma-api -> gamma",
+    ]);
+    assertEquals(findDroppedRetainedAliases(data, OVERLAY), []);
   });
 
   it("keeps a provider's routing with no chat model and no transport row of it left", () => {
