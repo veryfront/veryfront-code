@@ -37,6 +37,7 @@ const OVERLAY: ModelCatalogOverlay = {
     ["beta-works/plain-3", 512],
   ],
   openAIChatReasoningWithFunctionTools: [["beta-works/riddle-9", false]],
+  knownProviders: ["acme-labs", "beta-works"],
   retainedTransportCapabilities: [
     ["acme-labs/gone-0", { anthropicThinkingMode: "adaptive" }],
     // Served and carrying a transport fact, so the served entry lands.
@@ -544,28 +545,94 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
-  it("omits a listed provider that serves no model, rather than failing", () => {
-    // The platform may list a provider with nothing routable right now. That
-    // is not a broken payload: the provider simply contributes no group.
+  it("rejects a listed provider that serves no model", () => {
+    // The platform derives its provider list from the models it serves, so
+    // this state cannot come from a correct payload.
     const payload = {
       ...fakePayload(),
       providers: ["acme-labs", "beta-works", "ghost-co"],
     };
 
-    const data = buildModelCatalogData(payload, OVERLAY);
+    assertThrows(
+      () => buildModelCatalogData(payload, OVERLAY),
+      Error,
+      "listed provider serves no model: ghost-co",
+    );
+  });
 
-    assertEquals(data.providerOrder, ["acme-labs", "beta-works"]);
-    assertEquals(
-      data.providerLabels.some(([provider]) => provider === "ghost-co"),
-      false,
+  it("rejects models of one provider that disagree about its display label", () => {
+    const payload = fakePayload();
+    (payload.models as Record<string, unknown>[])[2].providerLabel =
+      "Beta Works Ltd";
+
+    assertThrows(
+      () => buildModelCatalogData(payload, OVERLAY),
+      Error,
+      "conflicting display labels",
     );
-    assertEquals(
-      data.providerAliases.some(([, provider]) => provider === "ghost-co"),
-      false,
+  });
+
+  it("refuses to drop a provider the package's public type still lists", () => {
+    // Writing this file would turn an upstream change into a typecheck failure
+    // somewhere else, long after the run that caused it.
+    const payload = fakePayload();
+    payload.models = (payload.models as Record<string, unknown>[]).filter(
+      (model) => model.provider !== "acme-labs",
     );
-    assertEquals(
-      data.providerRouting.some(([provider]) => provider === "ghost-co"),
-      false,
+    payload.providers = ["beta-works"];
+    payload.defaultModelId = "beta-works/riddle-9";
+
+    assertThrows(
+      () => buildModelCatalogData(payload, OVERLAY),
+      Error,
+      "public type change",
+    );
+  });
+
+  it("rejects an overlay table that declares a key twice", () => {
+    for (
+      const overlay of [
+        {
+          ...OVERLAY,
+          entryIds: [...OVERLAY.entryIds, ["acme-labs-api/mystery-1", "other"]],
+        },
+        {
+          ...OVERLAY,
+          thinkingBudgetTokens: [...OVERLAY.thinkingBudgetTokens, [
+            "beta-works/plain-3",
+            8,
+          ]],
+        },
+        {
+          ...OVERLAY,
+          providerRouting: [...OVERLAY.providerRouting, ["acme-labs", {
+            surface: "openai",
+          }]],
+        },
+        {
+          ...OVERLAY,
+          knownProviders: [...OVERLAY.knownProviders, "acme-labs"],
+        },
+      ] as ModelCatalogOverlay[]
+    ) {
+      assertThrows(
+        () => buildModelCatalogData(fakePayload(), overlay),
+        Error,
+        "declares a key twice",
+      );
+    }
+  });
+
+  it("rejects an overlay that publishes one id for several models", () => {
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      entryIds: [...OVERLAY.entryIds, ["beta-works/riddle-9", "mystery"]],
+    };
+
+    assertThrows(
+      () => buildModelCatalogData(fakePayload(), overlay),
+      Error,
+      "publishes one id for several models",
     );
   });
 

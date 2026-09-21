@@ -341,6 +341,7 @@ export function buildModelCatalogData(
   payload: unknown,
   overlay: ModelCatalogOverlay,
 ): ModelCatalogData {
+  assertOverlayInvariants(overlay);
   const catalog = parseServedCatalog(payload);
   const providerOrder = [...catalog.providers];
 
@@ -404,9 +405,17 @@ export function buildModelCatalogData(
       servedTransportCapabilities.push([modelId, capabilityEntry]);
     }
 
+    // The label table is keyed by provider, so two models of one provider
+    // offering different labels leaves no honest answer to publish.
     const label = served.providerLabel;
-    if (label !== undefined && !labelByProvider.has(provider)) {
+    const knownLabel = labelByProvider.get(provider);
+    if (knownLabel === undefined) {
       labelByProvider.set(provider, label);
+    } else if (knownLabel !== label) {
+      fail(
+        `provider "${provider}" is served with conflicting display labels: ` +
+          `"${knownLabel}" and "${label}"`,
+      );
     }
 
     // A model ID whose provider segment differs from the canonical provider
@@ -435,12 +444,19 @@ export function buildModelCatalogData(
   const providersWithModels = new Set(
     chatModels.map((model) => model.provider),
   );
-  const servedProviders = providerOrder.filter((provider) =>
-    providersWithModels.has(provider)
+  // The platform derives its provider list from the models it serves, so a
+  // listed provider with no model cannot come from a correct payload: it is an
+  // upstream defect, and saying so is this generator's job.
+  const unserved = providerOrder.filter((provider) =>
+    !providersWithModels.has(provider)
   );
+  if (unserved.length > 0) {
+    fail(`listed provider serves no model: ${unserved.join(", ")}`);
+  }
+
   const providerAliases: (readonly [string, string])[] = [];
   const providerLabels: (readonly [string, string])[] = [];
-  for (const provider of servedProviders) {
+  for (const provider of providerOrder) {
     const label = labelByProvider.get(provider) ??
       fail(
         `provider "${provider}" serves a model but carries no display label`,
@@ -453,7 +469,7 @@ export function buildModelCatalogData(
   }
 
   const routingByProvider = new Map(overlay.providerRouting);
-  const providerRouting = servedProviders.map((provider) =>
+  const providerRouting = providerOrder.map((provider) =>
     // A provider the overlay does not route falls back to the surface the
     // package already uses for an unlisted provider, so routing stays
     // declared for every provider the catalog names.
@@ -494,8 +510,26 @@ export function buildModelCatalogData(
     modelTransportCapabilities,
     chatModels,
     providerLabels,
-    providerOrder: servedProviders,
+    providerOrder,
   };
+  // The label table is keyed by `KnownVeryfrontCloudProviderId`, which is
+  // hand-written and public, so a provider leaving the catalog drops a key the
+  // type still requires. Writing that file would turn an upstream change into
+  // a typecheck failure somewhere else, long after the run that caused it, so
+  // it is refused here and named instead. Removing a provider is a public type
+  // change, and a person makes it.
+  const publishedProviders = new Set(data.providerOrder);
+  const missingKnown = overlay.knownProviders.filter(
+    (provider) => !publishedProviders.has(provider),
+  );
+  if (missingKnown.length > 0) {
+    fail(
+      `the catalog no longer serves ${missingKnown.join(", ")}, which ` +
+        `KnownVeryfrontCloudProviderId still lists. Removing a provider is a ` +
+        `public type change: update that union and this overlay by hand.`,
+    );
+  }
+
   // The output has to be readable back by the package's lookups, so it is
   // checked here rather than left to whoever reviews the generated diff.
   assertCatalogInvariants(data);
@@ -525,6 +559,51 @@ function findDuplicates(keys: readonly string[]): readonly string[] {
  * unreachable. These are the preconditions of those lookups, not house style,
  * so generation fails rather than shipping data that cannot be read back.
  */
+/**
+ * Every keyed table the generator consumes from the overlay.
+ *
+ * Each is turned into a `Map`, here or in the package, so a key written twice
+ * keeps one row and discards the other without saying which. The overlay is
+ * hand-edited, which is exactly where that happens.
+ */
+export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
+  const tables: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ["providerRouting", overlay.providerRouting.map(([key]) => key)],
+    [
+      "surfaceGatewayApiVersions",
+      overlay.surfaceGatewayApiVersions.map(([key]) => key),
+    ],
+    ["entryIds", overlay.entryIds.map(([key]) => key)],
+    ["thinkingBudgetTokens", overlay.thinkingBudgetTokens.map(([key]) => key)],
+    [
+      "openAIChatReasoningWithFunctionTools",
+      overlay.openAIChatReasoningWithFunctionTools.map(([key]) => key),
+    ],
+    [
+      "retainedTransportCapabilities",
+      overlay.retainedTransportCapabilities.map(([key]) => key),
+    ],
+    ["knownProviders", overlay.knownProviders],
+  ];
+  for (const [name, keys] of tables) {
+    const duplicates = findDuplicates(keys);
+    if (duplicates.length > 0) {
+      fail(`overlay ${name} declares a key twice: ${duplicates.join(", ")}`);
+    }
+  }
+  // Two entry ids pointing at one published id would collide in the catalog.
+  const duplicateEntryIds = findDuplicates(
+    overlay.entryIds.map(([, id]) => id),
+  );
+  if (duplicateEntryIds.length > 0) {
+    fail(
+      `overlay entryIds publishes one id for several models: ${
+        duplicateEntryIds.join(", ")
+      }`,
+    );
+  }
+}
+
 export function assertCatalogInvariants(data: ModelCatalogData): void {
   const duplicateIds = findDuplicates(data.chatModels.map((model) => model.id));
   if (duplicateIds.length > 0) {
@@ -560,6 +639,22 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     fail(
       `transport capabilities declared twice for: ${
         duplicateCapabilities.join(", ")
+      }`,
+    );
+  }
+
+  const duplicateLabels = findDuplicates(
+    data.providerLabels.map(([provider]) => provider),
+  );
+  if (duplicateLabels.length > 0) {
+    fail(`display label declared twice for: ${duplicateLabels.join(", ")}`);
+  }
+
+  const duplicateOrder = findDuplicates([...data.providerOrder]);
+  if (duplicateOrder.length > 0) {
+    fail(
+      `provider listed twice in the display order: ${
+        duplicateOrder.join(", ")
       }`,
     );
   }

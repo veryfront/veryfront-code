@@ -71,6 +71,17 @@ export type ModelCatalogOverlay = {
   readonly openAIChatReasoningWithFunctionTools:
     readonly (readonly [string, boolean])[];
   /**
+   * Providers named by `KnownVeryfrontCloudProviderId` in `model-catalog.ts`.
+   *
+   * That union is hand-written and public: the generated label table is keyed
+   * by it, so a provider leaving the catalog drops a key the type still
+   * requires. The generator refuses to write that file rather than let it fail
+   * a later typecheck, and refuses on a provider it cannot key a label for.
+   * Adding or removing a provider here is the same edit as adding or removing
+   * it from the union, and both are a person's decision.
+   */
+  readonly knownProviders: readonly string[];
+  /**
    * Transport capabilities for models the catalog no longer serves but this
    * package still resolves options for, keyed by canonical model ID. Dropping
    * one would silently change how an existing request is built, so it is kept
@@ -113,6 +124,7 @@ export const MODEL_CATALOG_OVERLAY: ModelCatalogOverlay = {
     ["openai/gpt-5.4", false],
     ["openai/gpt-5.5", false],
   ],
+  knownProviders: ["anthropic", "openai", "google", "mistral", "moonshotai"],
   retainedTransportCapabilities: [
     // Still named by `src/agent/runtime/model-capabilities.ts` and pinned by
     // the catalog and hosted-runtime tests, so the package keeps resolving
