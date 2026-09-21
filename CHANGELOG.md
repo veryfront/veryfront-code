@@ -35,10 +35,21 @@ completions for the same reason.
 ### Changed: a stalled provider stream now fails after 120 seconds instead of hanging
 
 Once response headers arrived, a provider response body had no deadline at
-all. A model stream that went silent mid-response blocked its caller forever:
-only `veryfront eval` was protected, by the `--record-timeout` added in
-#4508. `veryfront dev` chat, hosted runs, and any library use of
-`agent.generate` had no bound.
+all. A model stream that went silent mid-response blocked its caller until the
+caller cancelled.
+
+Streamed callers were already covered by a watchdog above this layer:
+`veryfront dev` chat and everything else that streams through the agent
+runtime stop at 60 seconds before the first output part and 15 seconds after
+it, hosted child forks stop at 45 seconds, and hosted chat runs carry their
+own idle and 300-second tool-running windows. `veryfront eval` gained
+`--record-timeout` in #4508.
+
+What had no bound was the non-streaming drain. `agent.generate` collects a
+result by looping over a stream with no timer of its own, and every Veryfront
+Cloud gateway model routes generate through `doStream`, so a stalled gateway
+response hung `agent.generate` and any library embedder on that path
+indefinitely.
 
 `requestStream` now arms a deadline around each wait for the next body chunk.
 If nothing arrives for `DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` (120 seconds)
@@ -46,10 +57,16 @@ the request is aborted, the connection is released, and the stream rejects with
 a retryable `ProviderRequestError` reading "request timed out after Nms waiting
 for the next stream chunk". The deadline is re-armed on every chunk, so it
 bounds provider silence rather than total response length. It counts bytes on
-the wire, not semantic parts, so the gateway's 15-second SSE keepalives and a
-provider's own `ping` frames keep it from firing while a response is still
-being worked on -- including while a provider-executed tool (web search, web
-fetch, code execution, the MCP connector) runs with the response held open.
+the wire, not semantic parts, and it disarms on any bytes the body yields, so
+a keepalive, an SSE comment line or a progress event re-arms it whether or not
+the extension decodes that event. That is what keeps it from firing while a
+provider-executed tool (web search, web fetch, code execution, the MCP
+connector) runs with the response held open. Two transports make this
+explicit: Anthropic sends SSE `ping` frames, and the Veryfront Cloud gateway
+sends a keepalive every 15 seconds. A directly-configured OpenAI or Google
+model publishes no keepalive interval that Veryfront relies on, so if you run
+one that can hold a response open silently for longer than the default, raise
+the setting below.
 
 This needs your decision if you depend on the old behaviour: a caller that
 previously blocked indefinitely on a dead stream now sees a rejection. That is

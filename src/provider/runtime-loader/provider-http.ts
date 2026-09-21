@@ -54,34 +54,49 @@ const MAX_PROVIDER_STREAM_RETRIES = 2;
 export const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
 
 // Not JSDoc: this paragraph names hosted-infrastructure internals and must
-// stay out of the generated public API reference. Where the default below
-// sits relative to the consumer watchdogs (all three relations are pinned by
-// "pins the default against the consumer watchdog windows" in
-// provider-http.test.ts, so moving either side breaks a test rather than this
-// comment):
-//   * above the hosted child-fork `generic_idle` deadline, 45s
-//     (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`);
-//   * exactly equal to the chat stream watchdog's idle window, 120s
-//     (`DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS`);
-//   * below that watchdog's tool-running window, 300s
-//     (`DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS`).
-// The equal and below cases do not make this deadline pre-empt a consumer
-// stall, because the two count different things: the consumer watchdogs count
-// *semantic chunks*, this one counts *bytes on the wire*. A provider that is
-// still working keeps bytes flowing -- Anthropic sends SSE `ping` frames
-// (handled in anthropic-stream.ts) and the Veryfront Cloud gateway sends a
-// keepalive every 15s -- and those bytes re-arm this deadline without
-// advancing any consumer window. That includes the case the phase difference
-// would otherwise break: a provider-executed tool (web_search, web_fetch,
-// code_execution, the MCP connector) holds the HTTP response open and emits
-// no chunk while it runs, which is what the 300s tool-running window is for,
-// but the connection is not silent. So this deadline fires only on a socket
-// that has gone genuinely quiet, which is the one stall no consumer watchdog
-// can diagnose better, and it is the only bound at all for callers that have
-// no watchdog (`agent.generate`, library embedders).
-// The 60s/15s figures in src/agent/streaming/lifecycle/policy.ts belong to the
-// strict lifecycle policy and apply only under VF_STREAM_LIFECYCLE_MODE of
-// `shadow` or `active`, not to the legacy default this comment compares to.
+// stay out of the generated public API reference.
+//
+// This deadline is the last bound, not the first one. Every streaming
+// consumer in this repository already stops a silent turn sooner:
+//   * `veryfront dev` chat and every other caller of `processStream` are
+//     bounded by chat-stream-handler.ts, `STREAM_START_IDLE_MS` 60s before
+//     the first output part and `STREAM_OUTPUT_IDLE_MS` 15s after it. Those
+//     two apply unconditionally, with no VF_STREAM_LIFECYCLE_MODE gate; the
+//     identical 60s/15s figures in streaming/lifecycle/policy.ts are the
+//     strict lifecycle policy's copy and *are* mode-gated, which is a
+//     separate thing from the legacy default above.
+//   * hosted child forks stop at `generic_idle` 45s
+//     (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`).
+//   * hosted chat runs carry `createChatStreamWatchdog`, whose idle window is
+//     `DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS` and whose tool-running window is
+//     `DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS` 300s.
+// What has no watchdog at all is the non-streaming drain: `agent.generate`
+// goes through `buildGenerateResultFromStream` in runtime-bridge.ts, which
+// loops over the parts with no timer, and veryfront-cloud sets
+// `_generateViaStream` for every gateway model. That caller, and library
+// embedders on the same path, are what this default exists for.
+//
+// Two relations still matter and are pinned by "pins the default against the
+// consumer watchdog windows" in provider-http.test.ts, so drift on either
+// side breaks a test rather than this comment: the default stays above the
+// 45s fork deadline, so a fork stall is still reported as a fork stall, and
+// below the 300s tool-running window. The second relation does not make this
+// deadline pre-empt a tool run, because the two count different things: the
+// consumer watchdogs count *semantic chunks*, this one counts *bytes on the
+// wire*, and `streamWithCleanup` disarms on any bytes the body yields before
+// provider-sse.ts has parsed them. Any keepalive, SSE comment line or
+// progress event re-arms it whether or not the extension decodes that event.
+//
+// Evidence that a provider-executed tool run (web_search, web_fetch,
+// code_execution, the MCP connector) keeps the socket busy is specific to
+// two transports: Anthropic sends SSE `ping` frames, and the Veryfront Cloud
+// gateway sends a keepalive every 15s. A directly-configured OpenAI or Google
+// model has no keepalive contract in this repository -- ext-llm-openai and
+// ext-llm-google call `requestStream` with no `idleTimeoutMs` and decode no
+// heartbeat -- so for those the argument rests on the transport emitting
+// *something* during a tool call rather than on a documented interval. If a
+// deployment finds one that does go quiet for longer than the default,
+// `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` is the escape hatch.
 /**
  * Default deadline for the next chunk of a stream response body.
  *
@@ -1487,10 +1502,15 @@ export async function requestStream(options: {
           // `bodyClaimAttempted` has already blocked replays by this point --
           // so the flag is advice carried outward (stream-outcome.ts maps it
           // onto StreamLifecycleError.retryable), and the advice is sound for
-          // its consumers today: nothing retries automatically, and a human or
-          // caller re-running the request starts a fresh turn. A future
-          // automatic retry loop must check whether output was already
-          // emitted before replaying, or it will duplicate half a turn.
+          // its consumers today. One of them does replay automatically:
+          // ext-llm-anthropic/src/anthropic-provider.ts keys a mid-turn replay
+          // loop on exactly this flag (`isReplayableAnthropicStreamFailure`).
+          // It cannot duplicate output, because `yieldedThisAttempt`
+          // short-circuits its catch before the predicate is consulted, so a
+          // timeout that fired after the first chunk rethrows rather than
+          // replays. That guard, not the absence of a retry loop, is what
+          // makes the flag safe here; any other automatic retry must carry an
+          // equivalent check before replaying a half-emitted turn.
           createError: (elapsedMs) =>
             providerTimeoutError(options, {
               waitingFor: "the next stream chunk",

@@ -8,10 +8,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS } from "../../agent/hosted/child-fork-execution-runner.ts";
-import {
-  DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
-  DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
-} from "../../agent/streaming/lifecycle/watchdog-compat-adapter.ts";
+import { DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS } from "../../agent/streaming/lifecycle/watchdog-compat-adapter.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
 import {
@@ -2107,22 +2104,28 @@ describe("provider-http", () => {
     describe("body idle deadline", () => {
       it("pins the default against the consumer watchdog windows", () => {
         // This deadline counts bytes on the wire; the consumer watchdogs count
-        // semantic chunks, so an equal or smaller window here does not
-        // pre-empt them while the provider keeps sending SSE pings or gateway
-        // keepalives. The relations are asserted rather than described because
-        // the comment on DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS reasons from
-        // all three, and a silent drift on either side would leave that
-        // reasoning stating something untrue.
+        // semantic chunks, so a smaller window here does not pre-empt them
+        // while the provider keeps sending SSE pings or gateway keepalives.
+        // Both relations are asserted rather than described because the
+        // comment on DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS reasons from
+        // them, and a silent drift on either side would leave that reasoning
+        // stating something untrue.
+        //
+        // `DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS` is deliberately not pinned.
+        // It is also 120s today, but that is two independent choices landing
+        // on the same round number, not a designed relation. It governs hosted
+        // chat runs through `createChatStreamWatchdog`, a different caller
+        // from the unwatched `agent.generate` drain this default exists for,
+        // and it lives in the lifecycle rollout's compatibility adapter. An
+        // equality assertion there would fail this suite for a change that
+        // says nothing about the provider deadline. The 300s tool-running
+        // window below is pinned because that relation does carry design
+        // content: this deadline must not pre-empt a tool run.
         assertEquals(
           DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS >
             DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
           true,
           "the hosted child-fork watchdog must keep reporting a fork stall first",
-        );
-        assertEquals(
-          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
-          DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
-          "the chat idle window and this deadline are deliberately the same length",
         );
         assertEquals(
           DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS <
@@ -2268,6 +2271,63 @@ describe("provider-http", () => {
           /waiting for the next stream chunk \(120000ms deadline\)$/,
         );
         assertEquals(requestSignal?.aborted, true);
+      });
+
+      it("bounds a stalled body at the host environment override", async () => {
+        // The environment knob is the whole answer to the issue's
+        // "configurable" item, because no shipped provider extension forwards
+        // `idleTimeoutMs`. Every other test in this block either calls
+        // `resolveProviderStreamIdleTimeoutMs` directly with an injected
+        // reader or passes an explicit `idleTimeoutMs`, so swapping the
+        // resolver call inside `requestStream` for a plain default would leave
+        // all of them green while the knob stopped working for every caller
+        // the CHANGELOG names. This one drives `requestStream` with nothing
+        // but the environment set, so it fails on that swap.
+        //
+        // It mutates the real host environment rather than injecting a reader
+        // for the same reason "ignores an override a project .env file put in
+        // the process environment" does: the seam under test is the default
+        // argument `requestStream` relies on, and injecting past it would test
+        // the mock instead.
+        using time = new FakeTime();
+        const overrideMs = 5_000;
+        setEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV, String(overrideMs));
+        try {
+          let requestSignal: AbortSignal | undefined;
+          const stream = await requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (input, init) => {
+              requestSignal = new Request(input, init).signal;
+              return Promise.resolve(new Response(stalledBody()));
+            },
+            init: { method: "POST" },
+            providerLabel: "Test provider",
+            providerKind: "openai",
+          });
+          const read = stream.getReader().read().then(
+            () => undefined,
+            (caught: unknown) => caught,
+          );
+
+          await time.tickAsync(overrideMs - 1);
+          assertEquals(
+            requestSignal?.aborted,
+            false,
+            "the configured window must not fire early",
+          );
+
+          await time.tickAsync(1);
+          const error = await read;
+
+          assertEquals(error instanceof ProviderRequestError, true);
+          assertMatch(
+            (error as ProviderRequestError).message,
+            /waiting for the next stream chunk \(5000ms deadline\)$/,
+          );
+          assertEquals(requestSignal?.aborted, true);
+        } finally {
+          deleteEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV);
+        }
       });
 
       it("rejects invalid body idle deadlines before issuing a stream request", async () => {
