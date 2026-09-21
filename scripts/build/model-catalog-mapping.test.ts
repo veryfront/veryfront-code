@@ -814,6 +814,16 @@ describe("scripts/build/model-catalog-mapping", () => {
       "not in the provider order",
     ],
     [
+      "a published id that carries a slash without being the model id",
+      (data) => ({
+        ...data,
+        chatModels: data.chatModels.map((model, index) =>
+          index === 0 ? { ...model, id: "acme-labs/mystery" } : model
+        ),
+      }),
+      "never resolves",
+    ],
+    [
       "a default that names no entry",
       (data) => ({ ...data, defaultModelId: "not-a-published-id" }),
       "default model",

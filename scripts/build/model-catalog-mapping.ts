@@ -559,6 +559,21 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     fail(`provider routing declared twice for: ${duplicateRouting.join(", ")}`);
   }
 
+  // `resolveVeryfrontCloudModelId` matches a request against the model ids
+  // first, and returns any remaining request that contains a slash as already
+  // canonical, so it never reaches the lookup by published id. A published id
+  // carrying a slash is therefore reachable only when it IS its own model id.
+  const unreachable = data.chatModels
+    .filter((model) => model.id !== model.modelId && model.id.includes("/"))
+    .map((model) => `${model.id} (${model.modelId})`);
+  if (unreachable.length > 0) {
+    fail(
+      `published id contains a slash without being the model id, so it never resolves: ${
+        unreachable.join(", ")
+      }`,
+    );
+  }
+
   // `groupVeryfrontCloudModelsByProvider` walks the provider order and picks
   // each provider's models, so a model whose provider is not in that order is
   // published but never shown. The served order is the platform's own
