@@ -723,6 +723,11 @@ describe("scripts/build/model-catalog-mapping", () => {
         "ai\\gateway",
         // `URL.pathname` decodes and then removes the dot segment.
         "ai/%2e%2e/gateway",
+        // `URL.pathname` rewrites these to `%3F` / `%23`; a route with them
+        // would target an endpoint that does not exist.
+        "ai/gateway?x",
+        "ai#gateway",
+        "ai/gätewäy",
       ]
     ) {
       assertThrows(
@@ -741,6 +746,8 @@ describe("scripts/build/model-catalog-mapping", () => {
         "v1\\beta",
         "%2E%2e",
         "v%31",
+        "v1?beta",
+        "v1#beta",
       ]
     ) {
       assertThrows(

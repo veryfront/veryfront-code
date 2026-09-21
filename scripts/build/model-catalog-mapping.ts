@@ -837,24 +837,25 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
 }
 
 /**
+ * The characters a gateway path segment may carry: RFC 3986's unreserved set.
+ * An allowlist, not a list of the characters `URL.pathname` is known to
+ * rewrite (`\\`, `%`, `?`, `#`, whitespace, ...): the assembled route is
+ * assigned to `URL.pathname`, and anything outside this set is either
+ * transformed there or has a meaning of its own in a URL.
+ */
+const PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._~-]+$/;
+
+/**
  * Why a value cannot be a component of the gateway path, or undefined when it
- * can: non-empty, no whitespace, no leading or trailing slash, no empty, `.`
- * or `..` segment; a single segment unless `allowSegments`.
+ * can: non-empty, no leading or trailing slash, no empty, `.` or `..`
+ * segment, every segment within the unreserved characters; a single segment
+ * unless `allowSegments`.
  */
 function describeUnusablePathComponent(
   value: string,
   allowSegments: boolean,
 ): string | undefined {
   if (value === "") return "is empty";
-  if (/\s/.test(value)) return `contains whitespace: ${quote(value)}`;
-  // `URL.pathname` normalizes a backslash to a slash, so `v1\beta` would reach
-  // the gateway as two segments while passing the single-segment rule below.
-  if (value.includes("\\")) return `contains a backslash: ${quote(value)}`;
-  // `URL.pathname` also decodes `%2e` / `%2e%2e` into dot segments before it
-  // normalizes them away, so an encoded spelling would pass the check below
-  // and then remove segments from the assembled path. Nothing here needs
-  // percent-encoding, so any percent sign is refused.
-  if (value.includes("%")) return `contains a percent sign: ${quote(value)}`;
   if (value.startsWith("/") || value.endsWith("/")) {
     return `starts or ends with a slash: ${quote(value)}`;
   }
@@ -868,6 +869,11 @@ function describeUnusablePathComponent(
     )
   ) {
     return `has an empty or relative segment: ${quote(value)}`;
+  }
+  if (segments.some((segment) => !PATH_SEGMENT_PATTERN.test(segment))) {
+    return `has a segment outside the unreserved URL characters (letters, digits, "-", ".", "_", "~"): ${
+      quote(value)
+    }`;
   }
   return undefined;
 }
