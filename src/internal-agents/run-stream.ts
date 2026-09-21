@@ -433,24 +433,42 @@ function compactTraceAttributes(
 }
 
 /**
- * Marks a run total as a lower bound rather than the final bill.
+ * Builds the run's usage attributes, marking a total that is only a lower bound.
  *
- * A run that died mid-stream was cut off inside a model call that may already have
- * been billed without ever reporting usage, so the accumulated total can only be a
- * floor. That is a fact about the *run*, distinct from `agent.usage.capture_status`,
- * which is the provider's verdict on a single call's usage payload
- * ("complete" | "partial" | "missing") and has consumers that read it that way.
- * Overwriting it here would report a genuinely "missing" capture as "partial".
+ * `agent.run.usage_is_floor` records *where the number came from*: the run never
+ * delivered a final response, so the figure is the accumulator's running total and
+ * the model call in flight at the error or abort may already have been billed
+ * without ever reporting usage.
  *
- * Emitted only when there is a total to qualify: a run with no usage attributes at
- * all must not look like a run whose spend was merely under-captured.
+ * It is deliberately not gated on the run's outcome. A run can finish with a
+ * complete total and still be marked failed: on an empty assistant turn `onFinish`
+ * delivers the exact total, and only then does `finalizeAgUiEventsUnstamped`
+ * (src/agent/ag-ui/encoder.ts) raise `EMPTY_ASSISTANT_OUTPUT` and set
+ * `sawTerminalError`. An outcome gate would stamp that exact total as a floor. The
+ * converse is just as wrong: a run that dies on the cancelled or failed branch
+ * *after* `onFinish` fired publishes a complete total, and marking it
+ * unconditionally would understate what the span actually knows.
+ *
+ * It is also deliberately not `agent.usage.capture_status`, which is the provider's
+ * verdict on a single call's usage payload ("complete" | "partial" | "missing") and
+ * has consumers that read it that way; overwriting it would report a genuinely
+ * "missing" capture as "partial".
+ *
+ * The marker qualifies a total, so it is emitted only when there is one: a run with
+ * no usage attributes at all must not look like one whose spend was under-captured.
  */
-function buildRunUsageFloorAttributes(
-  usage: RuntimeUsageTraceInput | null | undefined,
-): Record<string, boolean> {
-  return Object.keys(buildRuntimeUsageTraceAttributes(usage)).length > 0
-    ? { "agent.run.usage_is_floor": true }
-    : {};
+function buildRunUsageTraceAttributes(input: {
+  completedUsage: RuntimeUsageTraceInput | null | undefined;
+  accumulatedUsage: RuntimeUsageTraceInput | null | undefined;
+}): Record<string, string | number | boolean> {
+  const usageIsFloor = input.completedUsage === undefined || input.completedUsage === null;
+  const attributes = buildRuntimeUsageTraceAttributes(
+    usageIsFloor ? input.accumulatedUsage : input.completedUsage,
+  );
+
+  return usageIsFloor && Object.keys(attributes).length > 0
+    ? { ...attributes, "agent.run.usage_is_floor": true }
+    : attributes;
 }
 
 function buildInternalAgentRunTraceAttributes(input: {
@@ -1000,9 +1018,13 @@ export async function createRuntimeAgentStreamResponse(
   // never delivers a final response, so this is the only spend figure it can report.
   let accumulatedUsage: RuntimeUsageTraceInput | null = null;
   // A clean completion keeps today's semantics: completedResponse.usage IS the run's
-  // accumulated total. The fallback only matters when the run never finished.
-  const resolveRunUsage = (): RuntimeUsageTraceInput | null | undefined =>
-    completedResponse?.usage ?? accumulatedUsage;
+  // accumulated total. The accumulator only matters when the run never finished, and
+  // that difference -- not the run's outcome -- is what the floor marker publishes.
+  const resolveRunUsageAttributes = (): Record<string, string | number | boolean> =>
+    buildRunUsageTraceAttributes({
+      completedUsage: completedResponse?.usage,
+      accumulatedUsage,
+    });
   // One callbacks object for both dispatch branches. The override branch is the only
   // one a unit test can drive, so separate literals would let the production
   // (framework dispatch) wiring be deleted with the whole suite still green.
@@ -1545,12 +1567,11 @@ export async function createRuntimeAgentStreamResponse(
               "agent.run.saw_visible_output": state.sawVisibleOutput,
               "agent.run.saw_terminal_error": state.sawTerminalError,
               ...(state.sawTerminalError ? { "error.type": "AgentRunTerminalError" } : {}),
-              ...buildRuntimeUsageTraceAttributes(resolveRunUsage()),
-              // A terminal error kills the turn that was in flight; it may have been
-              // billed without ever reporting usage, so the total is a floor. This is a
-              // run-level fact and gets its own attribute: agent.usage.capture_status is
-              // the provider's own capture verdict and must keep carrying that meaning.
-              ...(state.sawTerminalError ? buildRunUsageFloorAttributes(resolveRunUsage()) : {}),
+              // Carries `agent.run.usage_is_floor` when the run never delivered a final
+              // response, which is not the same question as whether it ended in error:
+              // an empty assistant turn reaches here with an exact total and
+              // `sawTerminalError` already set by the AG-UI finalizer.
+              ...resolveRunUsageAttributes(),
               ...(state.metadata.finishReason
                 ? { "gen_ai.response.finish_reasons": state.metadata.finishReason }
                 : {}),
@@ -1582,10 +1603,9 @@ export async function createRuntimeAgentStreamResponse(
                 "agent.run.final_status": "cancelled",
                 "error.type": "AgentRunCancelledError",
                 "error.message": error.message,
-                ...buildRuntimeUsageTraceAttributes(resolveRunUsage()),
-                // The model call that was in flight at the abort may have been billed
-                // without ever reporting usage, so the total is a floor.
-                ...buildRunUsageFloorAttributes(resolveRunUsage()),
+                // The model call in flight at the abort may have been billed without
+                // ever reporting usage, so an accumulator total is marked a floor.
+                ...resolveRunUsageAttributes(),
               });
               addSpanEvent(runSpan, "agent.run.cancelled");
               // The control plane also cancels runtime sessions to park canonical runs for tools.
@@ -1613,10 +1633,9 @@ export async function createRuntimeAgentStreamResponse(
                 "agent.run.final_status": "failed",
                 "error.type": error instanceof Error ? error.name : "Error",
                 "error.message": errorMessage,
-                ...buildRuntimeUsageTraceAttributes(resolveRunUsage()),
-                // The model call that was in flight at the failure may have been billed
-                // without ever reporting usage, so the total is a floor.
-                ...buildRunUsageFloorAttributes(resolveRunUsage()),
+                // The model call in flight at the failure may have been billed without
+                // ever reporting usage, so an accumulator total is marked a floor.
+                ...resolveRunUsageAttributes(),
               });
               addSpanEvent(runSpan, "agent.run.failed");
               logger.error("Internal agent runtime stream failed", {

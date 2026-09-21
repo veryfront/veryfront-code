@@ -4124,6 +4124,86 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], undefined);
   });
 
+  // Fail-first regression for the floor marker's gate. `agent.run.usage_is_floor` says
+  // where the figure came from, not how the run ended, and those are different
+  // questions. A provider can return an empty assistant turn: `onFinish` delivers the
+  // exact total, then `finalizeAgUiEventsUnstamped` (src/agent/ag-ui/encoder.ts)
+  // raises EMPTY_ASSISTANT_OUTPUT and sets `sawTerminalError`, so the run is stamped
+  // failed. Gating the marker on that flag -- as this branch first did -- published an
+  // exact total as a lower bound, poisoning the very signal #1500's reconciliation is
+  // meant to trust.
+  it("does not mark a complete total as a floor on a run that failed after finishing", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "empty-output-agent",
+      config: {
+        id: "empty-output-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_empty_output_usage",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          // Both sources are populated, so the assertion below shows which one the
+          // span reported rather than which one happened to be the only one set.
+          callbacks?.onUsage?.({
+            promptTokens: 120,
+            completionTokens: 40,
+            totalTokens: 160,
+            costCredits: 34.8974,
+          });
+          callbacks?.onFinish?.({
+            text: "",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: {
+              promptTokens: 120,
+              completionTokens: 40,
+              totalTokens: 160,
+              costCredits: 34.8974,
+              costSource: "gateway",
+              usageCaptureStatus: "complete",
+            },
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"message-start","messageId":"assistant-1"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    const body = await response.text();
+
+    // The run genuinely ends as a terminal error: the empty-output guard fired.
+    assertStringIncludes(body, "EMPTY_ASSISTANT_OUTPUT");
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.attributes["agent.run.saw_terminal_error"], true);
+    // ...and the total on it is the one onFinish delivered, so it is exact, not a floor.
+    assertEquals(runSpan?.attributes["agent.usage.cost_credits"], 34.8974);
+    assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 160);
+    assertEquals(runSpan?.attributes["agent.run.usage_is_floor"], undefined);
+  });
+
   // Guard, not a fail-first regression: this assertion already holds on the unfixed
   // code. It exists so a later "just default the usage attributes to zero" change
   // cannot land -- a run that never reached a model must leave the spend attributes

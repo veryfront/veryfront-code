@@ -5,7 +5,10 @@ import {
   createHostedRootRunLifecycleRuntimeAdapter,
   type HostedAgentRunSpan,
 } from "./agent-run-lifecycle.ts";
-import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
+import {
+  createConversationHostedTerminalAdapter,
+  dispatchConversationHostedTerminalState,
+} from "../conversation/hosted-terminal.ts";
 import type { ConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 
@@ -157,12 +160,18 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["gen_ai.usage.reasoning.output_tokens"], 1);
   });
 
-  // veryfront/veryfront-issue-inbox#1500: this controller emits a span literally named
-  // "agent.run" for operationName "chat", the same name the internal-agent path emits.
-  // A spend query over that name sums both emitters, so a hosted run that reports only
-  // token counts drags the reported credit total below the billed one on EVERY status,
-  // completed included.
-  it("reports run cost, not only tokens, on the hosted agent.run span", async () => {
+  // veryfront/veryfront-issue-inbox#1500: the hosted run span reported token counts
+  // and no spend, on every status.
+  //
+  // Driven through the production entry point -- dispatchConversationHostedTerminalState
+  // over the REAL conversation terminal adapter -- because that adapter's projection
+  // (toConversationHostedTerminalState) is where the cost fields were being dropped.
+  // A stand-in adapter that copies metadata through would keep this test green while
+  // production reported nothing, which is exactly how the gap survived review.
+  //
+  // `operationName` is the value chat-execution-runtime.ts actually passes, so the
+  // span name asserted below is the name production emits.
+  it("reports run cost, not only tokens, on the hosted agent run span", async () => {
     const span = new RecordingSpan();
     let spanName: string | undefined;
     const controller = createHostedAgentRunSpanController({
@@ -172,11 +181,12 @@ describe("hosted-agent-run-lifecycle", () => {
           return span;
         },
       },
-      operationName: "chat",
+      operationName: "invoke_agent",
       conversationId: "conversation-1",
       projectId: "project-1",
       userId: "user-1",
       agentId: "agent-1",
+      agentName: "Ops Agent",
       modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
       rootRun: { runId: "run-1", messageId: "message-1" },
     });
@@ -189,10 +199,9 @@ describe("hosted-agent-run-lifecycle", () => {
       durableRunMirror: null,
       resolveProvider: (modelId) => modelId.split("/")[1] ?? "unknown",
       agentRunSpan: controller,
-      createTerminalAdapter: (input) => createRecordingTerminalAdapter(input),
     });
 
-    await adapter.terminal.onTerminalState({
+    await dispatchConversationHostedTerminalState(adapter, {
       status: "completed",
       metadata: {
         modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
@@ -214,7 +223,9 @@ describe("hosted-agent-run-lifecycle", () => {
       },
     });
 
-    assertEquals(spanName, "agent.run");
+    // Not "agent.run": no production caller passes operationName "chat" or a spanName
+    // override, so this emitter never joins a { name = "agent.run" } query.
+    assertEquals(spanName, "invoke_agent Ops Agent");
     assertEquals(span.attributes["agent.run.final_status"], "completed");
     assertEquals(span.attributes["gen_ai.usage.total_tokens"], 160);
     assertEquals(span.attributes["agent.usage.cost_credits"], 34.8974);
@@ -235,15 +246,16 @@ describe("hosted-agent-run-lifecycle", () => {
 
   // The other half of the same fact: a run with nothing to report must leave the spend
   // attributes absent rather than emit a row of zeroes, so "no spend" stays
-  // distinguishable from "spend not recorded".
-  it("leaves hosted agent.run usage attributes absent when the run reported none", async () => {
+  // distinguishable from "spend not recorded". Same production path as above.
+  it("leaves hosted run span usage attributes absent when the run reported none", async () => {
     const span = new RecordingSpan();
     const controller = createHostedAgentRunSpanController({
       tracer: { startSpan: () => span },
-      operationName: "chat",
+      operationName: "invoke_agent",
       projectId: "project-1",
       userId: "user-1",
       agentId: "agent-1",
+      agentName: "Ops Agent",
       modelId: "veryfront-cloud/anthropic/claude-sonnet-4-6",
     });
 
@@ -255,10 +267,9 @@ describe("hosted-agent-run-lifecycle", () => {
       durableRunMirror: null,
       resolveProvider: (modelId) => modelId.split("/")[1] ?? "unknown",
       agentRunSpan: controller,
-      createTerminalAdapter: (input) => createRecordingTerminalAdapter(input),
     });
 
-    await adapter.terminal.onTerminalState({
+    await dispatchConversationHostedTerminalState(adapter, {
       status: "failed",
       terminalErrorCode: "STREAM_ERROR",
       terminalErrorMessage: "stream broke",

@@ -30,10 +30,18 @@ export interface HostedAgentRunSpanFinalState {
   status: "completed" | "failed" | "cancelled";
   modelId?: string | null;
   /**
-   * Tokens *and* cost. This span is named "agent.run" — the same name the
-   * internal-agent path emits — so a spend query over that name sums both emitters.
-   * While this shape was token-only, every hosted chat run contributed
-   * `agent.usage.cost_credits = absent` to that sum on every status.
+   * Tokens *and* cost.
+   *
+   * This span is **not** named `agent.run` in production. No caller passes
+   * `operationName: "chat"` and none supplies `spanName`, so the name resolved below
+   * is always `invoke_agent <agentName>`; hosted runs were never part of a
+   * `{ name = "agent.run" }` spend sum and were never diluting one.
+   *
+   * What they were doing is reporting token counts with no spend at all, on every
+   * status, so hosted spend could not be read off a trace by any query. That is what
+   * this shape fixes. The span keeps its `invoke_agent` name deliberately: the same
+   * controller also spans delegated sub-agent runs, so renaming it would make a
+   * name-based spend sum double count a parent and its children.
    */
   usage?: AgentTraceUsage;
   terminalErrorCode?: string | null;

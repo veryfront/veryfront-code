@@ -14,10 +14,9 @@ export type AgentTraceAttributes = Record<string, AgentTraceAttributeValue>;
 /**
  * Public API contract for agent trace usage.
  *
- * Carries the billing fields as well as the token counts: the hosted chat path emits
- * a span named `agent.run`, the same name the internal-agent path emits, and spend
- * dashboards sum both emitters. A token-only shape here made every hosted run report
- * `agent.usage.cost_credits` as absent, under-reporting the total.
+ * Carries the billing fields as well as the token counts. The hosted path's run span
+ * (named `invoke_agent <agentName>`, not `agent.run`) was reporting tokens and no
+ * spend at all, so hosted runs carried no queryable cost on any status.
  */
 export type AgentTraceUsage = {
   inputTokens?: number;
@@ -172,13 +171,17 @@ export function resolveGenAiProviderName(modelId: string | null | undefined): st
 }
 
 /**
- * Both `agent.run` emitters share one attribute builder.
+ * Both agent run span emitters share one attribute builder.
  *
- * The internal-agent path (src/internal-agents/run-stream.ts) already used
- * {@link buildRuntimeUsageTraceAttributes}; the hosted path had a parallel token-only
- * copy, so the same span name carried a different attribute set depending on which
- * surface produced it. Delegating keeps token naming identical and gives hosted runs
- * the `agent.usage.*` billing attributes the spend dashboards query.
+ * The internal-agent path (src/internal-agents/run-stream.ts, span `agent.run`)
+ * already used {@link buildRuntimeUsageTraceAttributes}; the hosted path (span
+ * `invoke_agent <agentName>`) had a parallel token-only copy, so two spans describing
+ * the same kind of work carried different attribute sets. Delegating keeps token
+ * naming identical and gives hosted runs the `agent.usage.*` billing attributes.
+ *
+ * Note for anyone building a spend roll-up on these attributes: the hosted emitter
+ * also spans delegated sub-agent runs, so summing `agent.usage.cost_credits` across
+ * `invoke_agent` spans without filtering will count a parent and its children.
  */
 function buildUsageTraceAttributes(usage?: AgentTraceUsage): AgentTraceAttributes {
   return compactTraceAttributes(buildRuntimeUsageTraceAttributes(usage));
