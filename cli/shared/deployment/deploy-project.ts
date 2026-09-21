@@ -374,8 +374,9 @@ async function ensureProjectLinkedForDeploy(
       // VERYFRONT_PROJECT_*, module config, environment config, an inferred
       // directory name), none of which the link file has any say over: telling
       // a `--project <typo>` user to delete this directory's correct link and
-      // run `veryfront up` would fork a duplicate project, and a fresh clone
-      // with no link at all would be pointed at a file that does not exist.
+      // let the next run create a project in its place would fork a duplicate,
+      // and a fresh clone with no link at all would be pointed at a file that
+      // does not exist.
       // Those sources keep the generic, source-neutral message instead.
       if (error.source.kind === "local-link") {
         throw PROJECT_LINK_STALE.create({

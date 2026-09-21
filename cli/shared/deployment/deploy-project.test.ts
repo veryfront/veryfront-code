@@ -755,9 +755,9 @@ describe("DeployProject", () => {
 
   it("does not blame the local link for a --project reference that 404s", async () => {
     // `--project <typo>` 404s against a directory whose link is correct.
-    // project-link-stale's suggestion is to delete that link and run
-    // `veryfront up`, which would fork a duplicate project, so the argument
-    // source keeps the generic message instead.
+    // project-link-stale's suggestion is to delete that link and let the next
+    // run create and link a project, which would fork a duplicate, so the
+    // argument source keeps the generic message instead.
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
       const controlPlane = new InMemoryDeployControlPlane();
