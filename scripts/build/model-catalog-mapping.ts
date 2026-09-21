@@ -822,6 +822,23 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       }`,
     );
   }
+  // `anthropicThinkingMode` has a reading only on the Anthropic surface (see
+  // `readTransportCapabilities`); a retained row that declares it for a
+  // provider routed elsewhere would suppress the generic reasoning option and
+  // leave the model without thinking. The overlay is the repository's own,
+  // so the entry is named.
+  const routing = new Map(overlay.providerRouting);
+  for (const [modelId, capabilities] of overlay.retainedTransportCapabilities) {
+    if (capabilities.anthropicThinkingMode === undefined) continue;
+    const slashIndex = modelId.indexOf("/");
+    const provider = slashIndex > 0 ? modelId.slice(0, slashIndex) : modelId;
+    const surface = routing.get(provider)?.surface ?? overlay.defaultSurface;
+    if (surface !== "anthropic") {
+      fail(
+        `overlay retainedTransportCapabilities declares anthropicThinkingMode for "${modelId}", whose provider routes over the "${surface}" surface`,
+      );
+    }
+  }
   // The runtime builds the gateway URL as
   // `${gatewayPathPrefix}/${provider}/${apiVersion}` by plain interpolation, so
   // an empty or malformed component yields a URL that points somewhere else.

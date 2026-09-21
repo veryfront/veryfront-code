@@ -41,12 +41,15 @@ const OVERLAY: ModelCatalogOverlay = {
   ],
   openAIChatReasoningWithFunctionTools: [["beta-works/riddle-9", false]],
   retainedTransportCapabilities: [
-    ["acme-labs/gone-0", { anthropicThinkingMode: "adaptive" }],
+    // acme-labs routes over the OpenAI surface, so its retained fact is a
+    // transport, not an Anthropic thinking mode (which the overlay invariants
+    // refuse there).
+    ["acme-labs/gone-0", { openAITransport: "responses" }],
     // Served and carrying a transport fact, so the served entry lands.
     ["beta-works/riddle-9", { openAITransport: "responses" }],
     // Served but carrying no transport fact at all. Still served, so the
     // retained entry is dropped rather than kept as a stale override.
-    ["beta-works/plain-3", { anthropicThinkingMode: "adaptive" }],
+    ["beta-works/plain-3", { openAITransport: "responses" }],
   ],
   retainedProviderAliases: [],
 };
@@ -379,13 +382,41 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  it("refuses a retained adaptive thinking row for a provider off the Anthropic surface", () => {
+    // Same rule as for a served reasoning mode, applied to the overlay's own
+    // rows: off the Anthropic surface the flag only suppresses the generic
+    // reasoning option, so the row would silently drop thinking.
+    const retained = [
+      ...OVERLAY.retainedTransportCapabilities,
+      ["acme-labs/gone-1", { anthropicThinkingMode: "adaptive" }],
+    ] as const;
+    assertThrows(
+      () =>
+        assertOverlayInvariants({
+          ...OVERLAY,
+          retainedTransportCapabilities: retained,
+        }),
+      Error,
+      'overlay retainedTransportCapabilities declares anthropicThinkingMode for "acme-labs/gone-1"',
+    );
+    // Routed over Anthropic, the same row is fine.
+    assertOverlayInvariants({
+      ...OVERLAY,
+      providerRouting: [
+        ["acme-labs", { surface: "anthropic", native: true }],
+        ["beta-works", { surface: "openai" }],
+      ],
+      retainedTransportCapabilities: retained,
+    });
+  });
+
   it("carries the served transport facts and the overlay facts, and drops unknown values", () => {
     const data = buildModelCatalogData(fakePayload(), OVERLAY);
 
     assertEquals(data.modelTransportCapabilities, [
       // Retained first: the catalog stopped serving it, the package still
       // resolves it. A retained entry for a served model is ignored.
-      ["acme-labs/gone-0", { anthropicThinkingMode: "adaptive" }],
+      ["acme-labs/gone-0", { openAITransport: "responses" }],
       // `mystery-1` reports an adaptive reasoning mode, but acme-labs routes
       // over the OpenAI surface, where that fact has no reading; see the
       // Anthropic-surface case below for the entry it contributes there.
