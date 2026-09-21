@@ -9,6 +9,7 @@ import {
   assertOverlayInvariants,
   buildModelCatalogData,
   compareCodePoints,
+  findListedProvidersWithoutModels,
   findUnroutedProviders,
   type ModelCatalogData,
   renderModelCatalogModule,
@@ -660,19 +661,36 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
-  it("rejects a listed provider that serves no model", () => {
-    // The platform derives its provider list from the models it serves, so
-    // this state cannot come from a correct payload.
+  it("leaves a listed provider with no chat model out of the order and labels, and names it", () => {
+    // A provider whose models this package lists no chat entry for (an
+    // embedding model, say) is a legitimate state, not a defect: it gets no
+    // display or label row, keeps whatever routing the overlay gives it, and
+    // is reported by position for the operator.
     const payload = {
       ...fakePayload(),
-      providers: ["acme-labs", "beta-works", "ghost-co"],
+      providers: ["acme-labs", "ghost-co", "beta-works"],
+    };
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      providerRouting: [...OVERLAY.providerRouting, ["ghost-co", {
+        surface: "anthropic",
+      }]],
     };
 
-    assertThrows(
-      () => buildModelCatalogData(payload, OVERLAY),
-      Error,
-      "listed provider serves no model: providers[2]",
+    const data = buildModelCatalogData(payload, overlay);
+
+    assertEquals(data.providerOrder, ["acme-labs", "beta-works"]);
+    assertEquals(
+      data.providerLabels.some(([provider]) => provider === "ghost-co"),
+      false,
     );
+    assertEquals(new Map(data.providerRouting).get("ghost-co"), {
+      surface: "anthropic",
+    });
+    assertEquals(findListedProvidersWithoutModels(payload, data), [
+      "providers[1]",
+    ]);
+    assertEquals(findListedProvidersWithoutModels(fakePayload(), data), []);
   });
 
   // The served provider is not only routed through: it is rendered as a key of

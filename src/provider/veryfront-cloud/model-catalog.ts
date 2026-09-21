@@ -206,7 +206,7 @@ export function resolveVeryfrontCloudProviderFromModelId(
  * The key the capability rows are stored under: `<canonical provider>/<upstream id>`.
  *
  * A gateway model ID may carry the `veryfront-cloud/` prefix and may name its
- * provider by a listed alias (`google-ai-studio/…` for `google`); the rows are
+ * provider by a listed alias (`google-ai-studio/...` for `google`); the rows are
  * keyed by the canonical provider, so both are normalized away here. An ID
  * with no provider segment is returned as normalized.
  */

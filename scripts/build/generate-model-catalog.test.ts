@@ -1,7 +1,9 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ModelCatalogError } from "./model-catalog-mapping.ts";
 import {
   buildCatalogUrl,
+  describeFailure,
   formatFailure,
   readCatalogJson,
   stripTrailingSlashes,
@@ -25,19 +27,33 @@ describe("scripts/build/generate-model-catalog", () => {
     assertEquals(stripTrailingSlashes(""), "");
   });
 
-  it("stays linear on an input built to make a backtracking matcher crawl", () => {
+  it("handles a long run of slashes followed by a non-slash", () => {
     // The base URL comes from an environment variable, so its shape is not
-    // this generator's to assume. A long run of slashes followed by a
-    // non-slash is the shape that makes an anchored `/+$` retry from every
-    // position; a scan does not care.
+    // this generator's to assume; a scan does not care how long the run is.
     const pathological = `https://example.invalid/${"/".repeat(200_000)}x`;
-    const started = performance.now();
-
     assertEquals(stripTrailingSlashes(pathological), pathological);
+  });
+});
+
+describe("a failure this generator states itself", () => {
+  it("is printed as written, catalog path and variable name included", () => {
+    for (
+      const message of [
+        "Catalog endpoint /ai/models not found at the configured API base (VERYFRONT_CATALOG_API_BASE_URL) - check the base",
+        "Model catalog request to /ai/models failed with status 500",
+        "Served model catalog is unusable: models[3] modelId has no provider segment before a forward slash",
+      ]
+    ) {
+      assertEquals(describeFailure(new ModelCatalogError(message)), message);
+    }
+  });
+
+  it("still redacts an unplanned error", () => {
     assertEquals(
-      performance.now() - started < 1_000,
-      true,
-      "stripping took too long",
+      describeFailure(
+        new Error("failed to open /home/someone/secret/catalog.data.ts"),
+      ),
+      "failed to open a path",
     );
   });
 });

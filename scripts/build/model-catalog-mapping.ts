@@ -77,8 +77,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/**
+ * A failure this generator states itself: the served catalog or the overlay
+ * cannot be turned into a usable module, and the message says why in words
+ * chosen here — positions and field names, never a served value. The command
+ * prints it as it is; only an UNPLANNED error goes through the redaction
+ * formatter, which would otherwise cut these messages down too.
+ */
+export class ModelCatalogError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelCatalogError";
+  }
+}
+
 function fail(detail: string): never {
-  throw new Error(`Served model catalog is unusable: ${detail}`);
+  throw new ModelCatalogError(`Served model catalog is unusable: ${detail}`);
 }
 
 /** Type a consumed field must carry when it is present. */
@@ -676,22 +690,19 @@ export function buildModelCatalogData(
 ): ModelCatalogData {
   assertOverlayInvariants(overlay);
   const catalog = parseServedCatalog(payload);
-  const providerOrder = [...catalog.providers];
   const facts = readServedModels(catalog, overlay);
 
-  // The platform derives its provider list from the models it serves, so a
-  // listed provider with no model cannot come from a correct payload: it is an
-  // upstream defect, and saying so is this generator's job. Served-ness is
-  // decided by a model naming the provider, never by a label being found.
+  // The display order and the label table are about the chat list, so a
+  // listed provider with no chat model has no row in either: nothing would be
+  // shown under it, and its label is taken from its models. It keeps whatever
+  // alias and routing rows the overlay gives it, like a retained provider, and
+  // `findListedProvidersWithoutModels` names it for the operator — a
+  // provider that only serves models this package lists no chat entry for
+  // (an embedding model, say) is a state the catalog may legitimately be in.
   const withModels = new Set(facts.chatModels.map((model) => model.provider));
-  // Named by position in the parsed `providers` list (empty and repeated
-  // names already dropped), not by value: the value is served data.
-  const unserved = providerOrder.flatMap((provider, index) =>
-    withModels.has(provider) ? [] : [`providers[${index}]`]
+  const providerOrder = catalog.providers.filter((provider) =>
+    withModels.has(provider)
   );
-  if (unserved.length > 0) {
-    fail(`listed provider serves no model: ${unserved.join(", ")}`);
-  }
 
   const { providerAliases, providerLabels } = buildProviderTables(
     providerOrder,
@@ -1004,99 +1015,74 @@ function chatModelPositions(
  * value: the values are the platform's data and the message is terminal output.
  */
 export function assertCatalogInvariants(data: ModelCatalogData): void {
-  const duplicateIds = describeDuplicatePositions(
-    "chatModels",
-    data.chatModels.map((model) => model.id),
-  );
-  if (duplicateIds.length > 0) {
-    fail(
-      `published id claimed by more than one model: ${duplicateIds.join(", ")}`,
-    );
-  }
-
-  const duplicateModelIds = describeDuplicatePositions(
-    "chatModels",
-    data.chatModels.map((model) => model.modelId),
-  );
-  if (duplicateModelIds.length > 0) {
-    fail(
-      `model id claimed by more than one entry: ${
-        duplicateModelIds.join(", ")
-      }`,
-    );
-  }
-
-  // Two entries may differ in their raw ids and still be ONE model to the
-  // runtime, which resolves a provider alias before it rebuilds the lookup key
-  // as <canonical provider>/<upstream id> — the same key the capability rows
-  // use. Publishing both would offer one model twice, with whichever thinking
-  // default happened to be listed first.
-  const duplicateRuntimeIds = describeDuplicatePositions(
-    "chatModels",
-    data.chatModels.map((model) => {
-      const slashIndex = model.modelId.indexOf("/");
-      const upstream = slashIndex > 0
-        ? model.modelId.slice(slashIndex + 1)
-        : model.modelId;
-      return `${model.provider}/${upstream}`;
-    }),
-  );
-  if (duplicateRuntimeIds.length > 0) {
-    fail(
-      `entries collapse to one runtime model: ${
-        duplicateRuntimeIds.join(", ")
-      }`,
-    );
-  }
-
-  const duplicateAliases = describeDuplicatePositions(
-    "providerAliases",
-    data.providerAliases.map(([alias]) => alias),
-  );
-  if (duplicateAliases.length > 0) {
-    fail(
-      `provider alias mapped more than once: ${duplicateAliases.join(", ")}`,
-    );
-  }
-
-  const duplicateCapabilities = describeDuplicatePositions(
-    "modelTransportCapabilities",
-    data.modelTransportCapabilities.map(([modelId]) => modelId),
-  );
-  if (duplicateCapabilities.length > 0) {
-    fail(
-      `transport capabilities declared twice for: ${
-        duplicateCapabilities.join(", ")
-      }`,
-    );
-  }
-
-  const duplicateLabels = describeDuplicatePositions(
-    "providerLabels",
-    data.providerLabels.map(([provider]) => provider),
-  );
-  if (duplicateLabels.length > 0) {
-    fail(`display label declared twice for: ${duplicateLabels.join(", ")}`);
-  }
-
-  const duplicateOrder = describeDuplicatePositions(
-    "providerOrder",
-    data.providerOrder,
-  );
-  if (duplicateOrder.length > 0) {
-    fail(
-      `provider listed twice in the display order: ${
-        duplicateOrder.join(", ")
-      }`,
-    );
-  }
-
-  const duplicateRouting = describeDuplicatePositions(
-    "providerRouting",
-    data.providerRouting.map(([provider]) => provider),
-  );
-  if (duplicateRouting.length > 0) {
-    fail(`provider routing declared twice for: ${duplicateRouting.join(", ")}`);
+  // Every table the runtime reads by first match or through a Map: a key that
+  // appears twice makes an entry unreachable rather than reporting itself.
+  const runtimeId = (model: ChatModelEntry) => {
+    const slashIndex = model.modelId.indexOf("/");
+    const upstream = slashIndex > 0
+      ? model.modelId.slice(slashIndex + 1)
+      : model.modelId;
+    return `${model.provider}/${upstream}`;
+  };
+  const uniqueKeyTables: ReadonlyArray<
+    readonly [table: string, keys: readonly string[], message: string]
+  > = [
+    [
+      "chatModels",
+      data.chatModels.map((model) => model.id),
+      "published id claimed by more than one model",
+    ],
+    [
+      "chatModels",
+      data.chatModels.map((model) => model.modelId),
+      "model id claimed by more than one entry",
+    ],
+    // Two entries may differ in their raw ids and still be ONE model to the
+    // runtime, which resolves a provider alias before it rebuilds the lookup
+    // key as <canonical provider>/<upstream id> — the same key the capability
+    // rows use. Publishing both would offer one model twice, with whichever
+    // thinking default happened to be listed first.
+    [
+      "chatModels",
+      data.chatModels.map(runtimeId),
+      "entries collapse to one runtime model",
+    ],
+    [
+      "providerAliases",
+      data.providerAliases.map(([alias]) => alias),
+      "provider alias mapped more than once",
+    ],
+    [
+      "modelTransportCapabilities",
+      data.modelTransportCapabilities.map(([modelId]) => modelId),
+      "transport capabilities declared twice for",
+    ],
+    [
+      "providerLabels",
+      data.providerLabels.map(([provider]) => provider),
+      "display label declared twice for",
+    ],
+    [
+      "providerOrder",
+      data.providerOrder,
+      "provider listed twice in the display order",
+    ],
+    [
+      "providerRouting",
+      data.providerRouting.map(([provider]) => provider),
+      "provider routing declared twice for",
+    ],
+    // This table is read through a Map too, so a surface declared twice keeps
+    // one version and discards the other without saying which.
+    [
+      "surfaceGatewayApiVersions",
+      data.surfaceGatewayApiVersions.map(([surface]) => surface),
+      "gateway API version declared twice for",
+    ],
+  ];
+  for (const [table, keys, message] of uniqueKeyTables) {
+    const duplicates = describeDuplicatePositions(table, keys);
+    if (duplicates.length > 0) fail(`${message}: ${duplicates.join(", ")}`);
   }
 
   // `resolveVeryfrontCloudModelId` reads a request as `alias ||
@@ -1159,18 +1145,6 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     );
   }
 
-  // This table is read through a Map too, so a surface declared twice keeps
-  // one version and discards the other without saying which.
-  const duplicateVersions = describeDuplicatePositions(
-    "surfaceGatewayApiVersions",
-    data.surfaceGatewayApiVersions.map(([surface]) => surface),
-  );
-  if (duplicateVersions.length > 0) {
-    fail(
-      `gateway API version declared twice for: ${duplicateVersions.join(", ")}`,
-    );
-  }
-
   // `resolveVeryfrontCloudGatewayPath` reads the version for the surface a
   // provider routes on, so every routed surface needs one, as does the
   // surface used for a provider the table does not list.
@@ -1188,6 +1162,24 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
       }`,
     );
   }
+}
+
+/**
+ * Listed providers with no chat model, as positions in the served `providers`
+ * list (`providers[2]`; the values are served data). They get no display or
+ * label row — see `buildModelCatalogData` — and are reported so a provider
+ * that unexpectedly lost every chat model is noticed. The generated diff
+ * shows the name.
+ */
+export function findListedProvidersWithoutModels(
+  payload: unknown,
+  data: ModelCatalogData,
+): readonly string[] {
+  const listed = parseServedCatalog(payload).providers;
+  const ordered = new Set(data.providerOrder);
+  return listed.flatMap((provider, index) =>
+    ordered.has(provider) ? [] : [`providers[${index}]`]
+  );
 }
 
 /**

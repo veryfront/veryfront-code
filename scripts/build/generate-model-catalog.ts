@@ -31,7 +31,9 @@
 import { fromFileUrl } from "#std/path";
 import {
   buildModelCatalogData,
+  findListedProvidersWithoutModels,
   findUnroutedProviders,
+  ModelCatalogError,
   renderModelCatalogModule,
 } from "./model-catalog-mapping.ts";
 import { MODEL_CATALOG_OVERLAY } from "./model-catalog-overlay.ts";
@@ -88,17 +90,17 @@ export function buildCatalogUrl(baseUrl: string): string {
   try {
     url = new URL(baseUrl);
   } catch {
-    throw new Error(`${BASE_URL_ENV} is not an absolute URL`);
+    throw new ModelCatalogError(`${BASE_URL_ENV} is not an absolute URL`);
   }
   // The token travels in the Authorization header, so the base must be TLS.
   // Plain http is allowed only towards this machine, for a local API.
   if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
-    throw new Error(
+    throw new ModelCatalogError(
       `${BASE_URL_ENV} must use https (http is accepted for loopback addresses only)`,
     );
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error(`${BASE_URL_ENV} must be an http(s) URL`);
+    throw new ModelCatalogError(`${BASE_URL_ENV} must be an http(s) URL`);
   }
   url.pathname = `${stripTrailingSlashes(url.pathname)}${CATALOG_PATH}`;
   url.hash = "";
@@ -130,18 +132,18 @@ async function fetchServedCatalog(
     // The two failures a person hits look nothing alike and are worth telling
     // apart. Neither message carries the token or the response body.
     if (response.status === 404) {
-      throw new Error(
+      throw new ModelCatalogError(
         `Catalog endpoint ${CATALOG_PATH} not found at the configured API base ` +
           `(${BASE_URL_ENV}) - check the base`,
       );
     }
     if (response.status === 401 || response.status === 403) {
-      throw new Error(
+      throw new ModelCatalogError(
         `Model catalog request was refused with status ${response.status}: ` +
           `the token is missing or not allowed to read the catalog`,
       );
     }
-    throw new Error(
+    throw new ModelCatalogError(
       `Model catalog request to ${CATALOG_PATH} failed with status ${response.status}`,
     );
   }
@@ -160,7 +162,7 @@ export async function readCatalogJson(response: Response): Promise<unknown> {
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(
+    throw new ModelCatalogError(
       `Model catalog response from ${CATALOG_PATH} was not valid JSON`,
     );
   }
@@ -181,7 +183,7 @@ async function formatModule(repoRoot: string, source: string): Promise<string> {
   await writer.close();
   const output = await process.output();
   if (!output.success) {
-    throw new Error(
+    throw new ModelCatalogError(
       `deno fmt failed: ${new TextDecoder().decode(output.stderr).trim()}`,
     );
   }
@@ -203,6 +205,19 @@ const MAX_FAILURE_LINE = 400;
  * filesystem paths are cut back to their last segment, and the result is
  * bounded.
  */
+/**
+ * What the command prints for a failure. A {@link ModelCatalogError} is a
+ * message this generator wrote itself — positions, field names, the catalog
+ * path, an environment variable's name — and is printed as it is. Anything
+ * else is unplanned and goes through {@link formatFailure}, which would cut
+ * the catalog path out of the planned messages too if it saw them.
+ */
+export function describeFailure(error: unknown): string {
+  return error instanceof ModelCatalogError
+    ? error.message
+    : formatFailure(error);
+}
+
 export function formatFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const flattened = raw
@@ -257,6 +272,20 @@ async function main(): Promise<number> {
   const payload = await fetchServedCatalog(baseUrl, token);
   const data = buildModelCatalogData(payload, MODEL_CATALOG_OVERLAY);
 
+  const withoutModels = findListedProvidersWithoutModels(
+    payload,
+    data,
+  );
+  if (withoutModels.length > 0) {
+    console.error(
+      `Listed providers with no chat model, left out of the display order ` +
+        `and the labels: ${
+          withoutModels.join(", ")
+        } (positions in the served ` +
+        `provider list; the generated diff names them).`,
+    );
+  }
+
   const unrouted = findUnroutedProviders(data, MODEL_CATALOG_OVERLAY);
   if (unrouted.length > 0) {
     console.error(
@@ -302,7 +331,7 @@ if (import.meta.main) {
     // reaches here is unplanned, so it is reported the same way: one line, no
     // stack, and nothing the process was holding.
     console.error(
-      `Generating ${DATA_FILE} failed: ${formatFailure(error)}`,
+      `Generating ${DATA_FILE} failed: ${describeFailure(error)}`,
     );
   }
   Deno.exit(code);
