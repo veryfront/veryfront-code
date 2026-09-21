@@ -28,9 +28,11 @@
 #                                      main the queue produced.
 #
 # "Pull request" above means one whose head is the sync branch in THIS
-# repository. The lookup goes through that ref, so a pull request opened from a
-# fork is never in the result set, whatever its branch is called, however many
-# of them there are.
+# repository and whose base is the base branch. The lookup goes through that
+# ref, so a pull request opened from a fork is never in the result set,
+# whatever its branch is called, however many of them there are. Every run
+# regenerates from the base branch, including a manual dispatch started
+# somewhere else.
 #
 # A run that finds the catalog back at what main carries says so and leaves any
 # open sync pull request to be closed, and its branch deleted, by hand.
@@ -59,6 +61,10 @@ concurrency:
 env:
   SYNC_BRANCH: automation/model-catalog
   DATA_FILE: src/provider/veryfront-cloud/model-catalog.data.ts
+  # The branch this job regenerates from and opens its pull request against.
+  # One name for the checkout, the base of the pull request and the lookup, so
+  # the three cannot drift apart.
+  BASE_BRANCH: main
 
 jobs:
   sync:
@@ -70,6 +76,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Always regenerate from the base branch. A manual dispatch can be
+          # started from any ref, and without this the sync branch would be
+          # built on that ref's history while its pull request targets the
+          # base, so the diff would carry whatever else that ref changed.
+          ref: ${{ env.BASE_BRANCH }}
           # Every checkout in this repository refuses the persisted token: the
           # sync push must authenticate with the App token, not with the
           # workflow's own read-only credential.
@@ -164,9 +175,9 @@ jobs:
           # shellcheck disable=SC2016  # $o, $r and $q are GraphQL variables,
           # bound by the -F flags below. They must reach the API unexpanded.
           pr_state="$(gh api graphql \
-            -f query='query($o:String!,$r:String!,$q:String!){repository(owner:$o,name:$r){ref(qualifiedName:$q){associatedPullRequests(states:OPEN,first:5){nodes{number isInMergeQueue isCrossRepository headRefName}}}}}' \
+            -f query='query($o:String!,$r:String!,$q:String!){repository(owner:$o,name:$r){ref(qualifiedName:$q){associatedPullRequests(states:OPEN,first:5){nodes{number isInMergeQueue isCrossRepository headRefName baseRefName}}}}}' \
             -F o="${GITHUB_REPOSITORY%%/*}" -F r="${GITHUB_REPOSITORY##*/}" -F q="refs/heads/${SYNC_BRANCH}" \
-            --jq '[(.data.repository.ref.associatedPullRequests.nodes // [])[] | select(.isCrossRepository == false and .headRefName == env.SYNC_BRANCH)][0] // {} | "\(.number // "")|\(.isInMergeQueue // false)"')"
+            --jq '[(.data.repository.ref.associatedPullRequests.nodes // [])[] | select(.isCrossRepository == false and .headRefName == env.SYNC_BRANCH and .baseRefName == env.BASE_BRANCH)][0] // {} | "\(.number // "")|\(.isInMergeQueue // false)"')"
           open_pr="${pr_state%%|*}"
           pr_queued="${pr_state##*|}"
 
@@ -227,7 +238,7 @@ jobs:
             gh pr edit "${open_pr}" --body-file "${body_file}"
           else
             gh pr create \
-              --base main \
+              --base "${BASE_BRANCH}" \
               --head "${SYNC_BRANCH}" \
               --title "chore(provider): sync the Veryfront Cloud model catalog data" \
               --body-file "${body_file}"
