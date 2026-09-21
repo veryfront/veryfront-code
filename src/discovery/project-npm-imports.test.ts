@@ -332,13 +332,40 @@ describe("rangeAdmitsVersion", () => {
     assertEquals(rangeAdmitsVersion("<0.0.0-0 || ^1.2.3-alpha", "1.2.3-alpha"), true);
   });
 
-  it("reads `>=0.0.0` as npm's any-release comparator", () => {
+  it("reads a `>=` at zero as npm's any-release comparator", () => {
     // npm rewrites it to the same empty comparator `*` becomes and drops it
     // from any set that holds another, so the set's own pre-release rule
-    // decides -- `>=0.0.0` no longer vetoes what `>=0.0.0-alpha` admits.
-    assertEquals(rangeAdmitsVersion(">=0.0.0 >=0.0.0-alpha", "0.0.0-beta"), true);
-    assertEquals(rangeAdmitsVersion(">=0.0.0", "1.0.0-alpha"), false);
-    assertEquals(rangeAdmitsVersion(">=0.0.0", "1.0.0"), true);
+    // decides -- it no longer vetoes what `>=0.0.0-alpha` admits.
+    for (const zero of [">=0.0.0", ">=0", ">=0.0", ">=0.x", ">=0.0.x", ">= 0.0.0"]) {
+      assertEquals(rangeAdmitsVersion(`${zero} >=0.0.0-alpha`, "0.0.0-beta"), true, zero);
+      assertEquals(rangeAdmitsVersion(zero, "1.0.0-alpha"), false, zero);
+      assertEquals(rangeAdmitsVersion(zero, "1.0.0"), true, zero);
+    }
+    // A `v` prefix does not: npm applies the rewrite to the comparator as
+    // written, which still carries the `v` at that point, so `>=v0.0.0` stays
+    // an ordinary lower bound that no pre-release satisfies.
+    assertEquals(rangeAdmitsVersion(">=v0.0.0 >=0.0.0-alpha", "0.0.0-beta"), false);
+    // The same drop applies to every DERIVED lower bound at zero: `^0`,
+    // `~0.0` and `0.x` all expand to a set whose `>=0.0.0` npm rewrites away,
+    // so each admits `0.0.0-0` once the set names a pre-release on that core.
+    for (const zero of ["0", "0.0", "0.x", "^0", "~0.0", "^0.0.0"]) {
+      assertEquals(rangeAdmitsVersion(`${zero} ~0.0.0-0`, "0.0.0-0"), true, zero);
+      // Alone, the bound still admits no pre-release: nothing names one.
+      assertEquals(rangeAdmitsVersion(zero, "0.0.0-0"), false, zero);
+    }
+    // A hyphen range's left side is the same `>=0` this drops, so its upper
+    // bound is all that is left to satisfy.
+    assertEquals(rangeAdmitsVersion("0 - 1", "0.0.0-0"), false);
+    assertEquals(rangeAdmitsVersion("0 - 1", "1.5.0"), true);
+    // Written in full, `0.0.0` is one equality comparator npm keeps as
+    // written, so it names 0.0.0 and nothing below it.
+    assertEquals(rangeAdmitsVersion("0.0.0 ~0.0.0-0", "0.0.0-0"), false);
+    // Nor does a bound above zero: `>=0.0.1` is an ordinary lower bound that
+    // `0.0.1-beta` sits below, whatever else the set admits.
+    assertEquals(rangeAdmitsVersion(">=0.0.1 >=0.0.1-alpha", "0.0.1-beta"), false);
+    // Nor does one that names a pre-release, which npm leaves as written.
+    assertEquals(rangeAdmitsVersion(">=0.0.0-0", "0.0.0-beta"), true);
+    assertEquals(rangeAdmitsVersion(">=0.0.0-0", "1.0.0-beta"), false);
   });
 
   it("declines to evaluate a range it cannot read", () => {
@@ -360,40 +387,52 @@ describe("isFrameworkProvidedPackage", () => {
     assertEquals(isFrameworkProvidedPackage("node:fs"), true);
   });
 
-  it("claims an OpenTelemetry package only where identity or the binary says so", () => {
-    const embedded = {
-      packages: { "@opentelemetry/instrumentation-http": ["0.209.0"] },
-      constraints: { "@opentelemetry/instrumentation-http": ["0.209.0"] },
-    };
-    // The global API packages are identity-critical whatever the binary froze.
-    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api", embedded), true);
-    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api-logs", embedded), true);
-    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api/experimental", embedded), true);
-    // One the binary recorded a constraint for is the runtime's to answer.
-    assertEquals(
-      isFrameworkProvidedPackage("@opentelemetry/instrumentation-http", embedded),
-      true,
-    );
-    // One it never froze is an ordinary project dependency: claiming it left a
-    // bare `npm:` specifier no compiled binary can resolve.
-    assertEquals(
-      isFrameworkProvidedPackage("@opentelemetry/instrumentation-langchain", embedded),
-      false,
-    );
+  it("claims only OpenTelemetry's identity-critical packages", () => {
+    // The API packages register a process-wide global everything else
+    // resolves through, so a second copy silently drops every span.
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api"), true);
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api-logs"), true);
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api/experimental"), true);
+    // The rest of the scope is ordinary npm, whatever the binary froze: one
+    // the binary never carried left a bare `npm:` specifier it cannot
+    // resolve, and one it did carry may be a private fork in this project
+    // that the framework's public copy must not stand in for. Both are the
+    // declaration and the lockfile's to answer.
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/instrumentation-http"), false);
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/core"), false);
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/instrumentation-langchain"), false);
   });
 
-  it("inlines an OpenTelemetry package the runtime does not embed", () => {
-    const embedded = { packages: {}, constraints: {} };
-    const name = "@opentelemetry/instrumentation-langchain";
+  it("puts an ordinary OpenTelemetry package through the ordinary path", () => {
+    const name = "@opentelemetry/core";
+    const embedded = { packages: { [name]: ["2.9.0"] }, constraints: { [name]: ["2.9.0"] } };
+    // Declared, publicly locked at the embedded version: the binary's copy.
     assertEquals(
       classifyProjectNpmImport(
         name,
-        { [name]: "0.1.0" },
+        { [name]: "2.9.0" },
         embedded,
-        { [name]: "0.1.0" },
-        new Set([name]),
+        { [name]: "2.9.0" },
+        new Set([
+          name,
+        ]),
       ),
-      { kind: "cdn", name, version: "0.1.0", subpath: "." },
+      { kind: "runtime", specifier: `npm:${name}@2.9.0` },
+    );
+    // Declared but NOT publicly locked: a private fork of that coordinate,
+    // which the framework's public copy may not stand in for.
+    assertEquals(
+      classifyProjectNpmImport(name, { [name]: "2.9.0" }, embedded, { [name]: "2.9.0" }, new Set())
+        .kind,
+      "cdn",
+    );
+    // One the binary never froze is inlined from the version declared.
+    const absent = "@opentelemetry/instrumentation-langchain";
+    assertEquals(
+      classifyProjectNpmImport(absent, { [absent]: "0.1.0" }, { packages: {}, constraints: {} }, {
+        [absent]: "0.1.0",
+      }, new Set([absent])),
+      { kind: "cdn", name: absent, version: "0.1.0", subpath: "." },
     );
   });
 
@@ -489,23 +528,39 @@ describe("classifyProjectNpmImport", () => {
     assertEquals(classifyProjectNpmImport("fs/promises", {}, exactOnly), { kind: "runtime" });
   });
 
-  it("rewrites a versioned framework import the binary cannot resolve", () => {
-    // The full profile records zod at `*` and 4.3.6, so an import naming
-    // 3.25.76 must not be left as written: that constraint resolves to nothing.
+  it("never answers a versioned framework import with another version", () => {
+    // The full profile records zod at `*` and 4.3.6 while carrying two
+    // versions, so `*` is ambiguous from here. Emitting it for an import
+    // naming 3.25.76 handed zod 4 -- a different major -- to code that asked
+    // for 3, and a second copy is what the identity guard exists to stop, so
+    // the import is reported instead.
     const wildcard = {
       packages: { zod: ["3.25.76", "4.3.6"] },
       constraints: { zod: ["*", "4.3.6"] },
     } as const;
     assertEquals(classifyProjectNpmImport("npm:zod@3.25.76", {}, wildcard), {
-      kind: "runtime",
-      specifier: "npm:zod@*",
+      kind: "missing",
+      name: "zod",
+      reason: "the runtime provides zod and carries no version satisfying zod@3.25.76",
     });
     assertEquals(classifyProjectNpmImport("npm:zod@4.3.6/mini", {}, wildcard), {
       kind: "runtime",
       specifier: "npm:zod@4.3.6/mini",
     });
+    // A recorded `*` DOES answer the one version the binary froze under it.
+    const single = {
+      packages: { zod: ["4.3.6"] },
+      constraints: { zod: ["*"] },
+    } as const;
+    assertEquals(classifyProjectNpmImport("npm:zod@4.3.6", {}, single), {
+      kind: "runtime",
+      specifier: "npm:zod@*",
+    });
     // A bare import still keeps the bare form where a wildcard is recorded.
     assertEquals(classifyProjectNpmImport("zod", {}, wildcard), { kind: "runtime" });
+    // A binary that records nothing for the package leaves it as written,
+    // which is what every uncompiled run resolves.
+    assertEquals(classifyProjectNpmImport("npm:react@18.0.0", {}, wildcard), { kind: "runtime" });
   });
 
   it("keeps bare Node builtins on the runtime instead of calling them missing", () => {

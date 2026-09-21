@@ -1125,8 +1125,8 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         "packages/app/package.json": "{}",
         "packages/app/.npmrc": "registry=https://registry.npmjs.org/\n",
       }, member);
-      assertEquals(sources.npmrc.includes("npm.internal.example"), true);
-      assertEquals(sources.memberNpmrc.includes("registry.npmjs.org"), true);
+      assertEquals(npmrcRegistryFor(sources.npmrc, "pkg"), "https://npm.internal.example/");
+      assertEquals(npmrcRegistryFor(sources.memberNpmrc, "pkg"), "https://registry.npmjs.org/");
     });
 
     it("matches the workspace patterns npm's own globs accept", async () => {
@@ -1153,12 +1153,42 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/*/pkg"]), "");
       assertEquals(await declaring(["apps"]), "");
       assertEquals(await declaring(["apps/store-x*"]), "");
+      // minimatch's other syntax counts too: braces, classes and `?`.
+      assertEquals(await declaring(["apps/{store-web,other}"]), "apps/store-web");
+      assertEquals(await declaring(["{apps,libs}/{store,other}-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps/[sx]tore-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps/[!x]tore-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps/[x-z]tore-web"]), "");
+      assertEquals(await declaring(["apps/?tore-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps/??ore-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps/?ore-web"]), "");
+      // An even number of leading `!` is a literal, not a negation.
+      assertEquals(await declaring(["!!apps/store-web"]), "apps/store-web");
+      // A later positive pattern CANCELS an earlier negation that covers it,
+      // which is how npm reads an override written after an exclusion.
+      assertEquals(
+        await declaring(["**", "!apps/**", "apps/store-web"]),
+        "apps/store-web",
+      );
+      // The negation still stands when nothing written after it overrides.
+      assertEquals(await declaring(["**", "!apps/**", "libs/other"]), "");
       // A trailing `**` spans zero segments, and a trailing `*` inside one
       // may match nothing left of the name.
       assertEquals(await declaring(["apps/store-web/**"]), "apps/store-web");
       assertEquals(await declaring(["apps/store-web*"]), "apps/store-web");
       // `workspaces` that is neither a list nor `{ packages }` declares none.
       assertEquals(await declaring({ nope: ["apps/*"] }), "");
+    });
+
+    it("never reads a directory under node_modules as a workspace member", async () => {
+      const vendored = `${PROJECT}/node_modules/vendored`;
+      const sources = await sourcesFor({
+        "package.json": JSON.stringify({ workspaces: ["**"] }),
+        "package-lock.json": publicLock("unpdf", "1.8.1"),
+        "node_modules/vendored/package.json": "{}",
+      }, vendored);
+      assertEquals(sources.memberPath, "");
+      assertEquals(sources.locked, {});
     });
 
     it("reads no evidence at all from a project that ships none", async () => {
@@ -1310,31 +1340,71 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       });
     });
 
-    it("leaves a name the lockfile nests at two versions unpinned", () => {
-      // esm.sh resolves one version per name for a build, so such a name
-      // cannot be expressed as a pin -- and is never guessed at.
+    it("refuses a name the lockfile nests at two versions", () => {
+      // esm.sh resolves one version per name for a build, so a graph that
+      // nests two of them cannot be pinned. Dropping the name instead left
+      // the CDN free to choose, which is the same gap in a quieter form.
       const given = sources({
         "node_modules/unpdf": entry("1.9.0", { glyphs: "^2.0.0", ms: "^2.1.0" }),
         "node_modules/glyphs": entry("2.3.4", { ms: "^1.0.0" }),
         "node_modules/glyphs/node_modules/ms": entry("1.0.0"),
         "node_modules/ms": entry("2.1.3"),
       });
-      assertEquals(cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null), {
-        version: "1.9.0",
-        dependencyPins: ["glyphs@2.3.4"],
-      });
+      const decision = cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null);
+      assert("refusal" in decision);
+      assertEquals(
+        decision.refusal.includes("two versions of ms under unpdf"),
+        true,
+        decision.refusal,
+      );
     });
 
-    it("leaves a name the lockfile does not carry to the CDN", () => {
-      // An optional dependency skipped on this platform, or a peer the host
-      // supplies: the project holds no copy for a public one to stand in for.
-      const given = sources({
-        "node_modules/unpdf": entry("1.9.0", { fsevents: "^2.3.0" }),
-      });
-      assertEquals(cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null), {
+    it("ignores a peer the package itself marks optional", () => {
+      // `peerDependenciesMeta` is the package's own statement that the peer
+      // may be absent, so an install without it is still complete.
+      const locked = readLockedDependencies(JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/unpdf": {
+            version: "1.9.0",
+            resolved: `${PUBLIC}/unpdf/-/unpdf-1.9.0.tgz`,
+            peerDependencies: { fsevents: "^2.3.0" },
+            peerDependenciesMeta: { fsevents: { optional: true } },
+          },
+        },
+      }));
+      assertEquals(cdnSourceDecision(sources(locked), "^1.8.0", "unpdf", "1.8.0", null), {
         version: "1.9.0",
         dependencyPins: [],
       });
+      // A peer the package does NOT mark optional is an edge like any other.
+      const required = readLockedDependencies(JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/unpdf": {
+            version: "1.9.0",
+            resolved: `${PUBLIC}/unpdf/-/unpdf-1.9.0.tgz`,
+            peerDependencies: { fsevents: "^2.3.0" },
+          },
+        },
+      }));
+      assert("refusal" in cdnSourceDecision(sources(required), "^1.8.0", "unpdf", "1.8.0", null));
+    });
+
+    it("refuses an edge the lockfile does not resolve", () => {
+      // An optional dependency skipped on this platform reaches here too, and
+      // the answer is the same: the CDN would resolve that range itself,
+      // against the public registry, so the build is not the project's own.
+      const given = sources({
+        "node_modules/unpdf": entry("1.9.0", { fsevents: "^2.3.0" }),
+      });
+      const decision = cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null);
+      assert("refusal" in decision);
+      assertEquals(
+        decision.refusal.includes("does not resolve fsevents, which unpdf depends on"),
+        true,
+        decision.refusal,
+      );
     });
 
     it("refuses when a transitive dependency is resolved privately", () => {
@@ -1430,6 +1500,30 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
     it("withholds a package the .npmrc sends elsewhere", () => {
       const redirected = { ...sources, npmrc: "registry=https://npm.internal.example/" };
       assertEquals([...publiclySourcedPackages(redirected, { unpdf: "^1.8.0" })], []);
+    });
+
+    it("withholds a package whose own dependencies are not vouched for", () => {
+      // The embedded artifact carries the FRAMEWORK's transitive graph, so a
+      // private fork anywhere underneath the package would be replaced by the
+      // public copy the binary froze.
+      const withPrivateTransitive: ProjectRegistrySources = {
+        ...sources,
+        locked: {
+          "node_modules/unpdf": {
+            version: "1.9.0",
+            resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.9.0.tgz",
+            link: false,
+            dependencies: { glyphs: "^2.0.0" },
+          },
+          "node_modules/glyphs": {
+            version: "2.3.4",
+            resolved: "https://npm.internal.example/glyphs.tgz",
+            link: false,
+            dependencies: {},
+          },
+        },
+      };
+      assertEquals([...publiclySourcedPackages(withPrivateTransitive, { unpdf: "^1.8.0" })], []);
     });
 
     it("vouches for nothing when another client owns the lockfile", () => {
@@ -1564,19 +1658,18 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         })),
         { path: `npm:react-dom@${version}/client`, external: true },
       );
-      // A version the binary does not record falls back to a recorded
-      // constraint for the same package: the plugin runs only on a compiled
-      // binary, where a bare `npm:react-dom` resolves to nothing.
-      const fallback = await httpUrl(resolveArgs({
-        path: "https://esm.sh/react-dom@0.0.1/es2022/client.mjs",
-        importer,
-        namespace: "http-url",
-      })) as { path: string; external: boolean };
-      assert(
-        recorded!.includes(fallback.path.slice("npm:react-dom@".length, -"/client".length)),
-        `expected a recorded react-dom constraint, got ${fallback.path}`,
+      // A version the binary does not record is NOT rewritten to one it does:
+      // handing the inlined dependency another major of the package it asked
+      // for is the identity failure this guard exists to stop. The bare
+      // specifier is left instead, which is what an uncompiled run resolves.
+      assertEquals(
+        await httpUrl(resolveArgs({
+          path: "https://esm.sh/react-dom@0.0.1/es2022/client.mjs",
+          importer,
+          namespace: "http-url",
+        })),
+        { path: "react-dom/client", external: true },
       );
-      assertEquals(fallback.external, true);
     });
 
     it("leaves every other CDN import to the HTTP plugin", async () => {

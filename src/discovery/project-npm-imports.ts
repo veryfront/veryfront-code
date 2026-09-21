@@ -90,11 +90,8 @@ export function nodeBuiltinSpecifier(name: string): string | null {
  * framework hands its own instance to discovered modules, or because it is a
  * Node builtin with no npm coordinate at all?
  */
-export function isFrameworkProvidedPackage(
-  name: string,
-  embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
-): boolean {
-  return isFrameworkPackage(name, embedded) || nodeBuiltinSpecifier(name) !== null;
+export function isFrameworkProvidedPackage(name: string): boolean {
+  return isFrameworkPackage(name) || nodeBuiltinSpecifier(name) !== null;
 }
 
 /**
@@ -114,18 +111,16 @@ function packageNameOf(specifier: string): string {
 }
 
 /** A package the framework hands its own instance of, subpaths included. */
-function isFrameworkPackage(name: string, embedded: EmbeddedNpmSet): boolean {
+function isFrameworkPackage(name: string): boolean {
   if (FRAMEWORK_PROVIDED_PACKAGES.has(name) || name.startsWith("veryfront/")) return true;
-  if (!name.startsWith("@opentelemetry/")) return false;
-  const packageName = packageNameOf(name);
-  if (OTEL_GLOBAL_API_PACKAGES.has(packageName)) return true;
-  // The rest of the scope is ordinary npm. `@opentelemetry/instrumentation-*`
-  // alone holds dozens of packages a given binary never froze, and calling one
-  // of those the runtime's left a bare `npm:` specifier no compiled binary can
-  // resolve -- the exact failure this module exists to stop. Only a constraint
-  // the binary actually recorded makes the shortcut true; without one the
-  // package is the project's to declare, lock and inline like any other.
-  return ownEntry(embedded.constraints, packageName) !== undefined;
+  // The rest of the OpenTelemetry scope is ordinary npm. It holds dozens of
+  // packages a given binary never froze -- calling one of those the runtime's
+  // left a bare `npm:` specifier no compiled binary can resolve -- and even a
+  // package the binary DID freeze may be a private fork in this project,
+  // which the framework's public copy must not silently stand in for. Both
+  // questions are the ordinary path's to answer, from the declaration and the
+  // lockfile, so only the identity-critical API packages shortcut it.
+  return OTEL_GLOBAL_API_PACKAGES.has(packageNameOf(name));
 }
 
 /**
@@ -304,6 +299,9 @@ function tildeCeiling(parts: readonly string[]): VersionCore {
   return nextAfter(parts.length === 3 ? parts.slice(0, 2) : parts);
 }
 
+/** The zero version core, which npm's range expansion treats as no bound. */
+const ZERO_CORE: VersionCore = ["0", "0", "0"];
+
 function coreOf(version: string): VersionCore {
   return padded(version.split(/[-+]/, 1)[0]!.split(".").map(normalizeDigits));
 }
@@ -361,11 +359,17 @@ function compareCores(left: readonly string[], right: readonly string[]): number
 
 /**
  * npm's any-release comparator spelled as a bound: its bundled semver rewrites
- * `>=0.0.0` to the same empty comparator `*` becomes, and then drops it from
- * any set that holds another. `>=0.0.0 >=0.0.0-alpha` is therefore just
+ * a `>=` at zero to the same empty comparator `*` becomes, and then drops it
+ * from any set that holds another. `>=0.0.0 >=0.0.0-alpha` is therefore just
  * `>=0.0.0-alpha`, which admits `0.0.0-beta`.
+ *
+ * Every spelling that expands to `0.0.0` counts -- `>=0`, `>=0.0`, `>=0.x`,
+ * `>=0.0.x` -- because the expansion runs before the rewrite. A `v` prefix
+ * does NOT: npm applies the rewrite to the comparator as written, and
+ * `>=v0.0.0` still carries its `v` at that point, so it stays an ordinary
+ * lower bound that no pre-release satisfies.
  */
-const ANY_RELEASE_COMPARATOR = /^>=\s*v?0\.0\.0$/;
+const ANY_RELEASE_COMPARATOR = /^>=\s*(?:0|[xX*])(?:\.(?:0|[xX*])){0,2}(?:\+[0-9A-Za-z.-]+)?$/;
 
 /**
  * Does a single-comparator range admit an exact version? `null` when the range
@@ -432,6 +436,12 @@ function boundAdmitsVersion(
   lower: { core: VersionCore; pre: string[] | null },
 ): boolean {
   const order = compareVersions(wanted, lower);
+  // A DERIVED lower bound AT ZERO vanishes: npm expands `^0`, `~0.0`, `0.x`
+  // and a hyphen range's left side to a set whose `>=0.0.0` it then rewrites
+  // to the empty comparator and drops. `0 ~0.0.0-0` is therefore just
+  // `<1.0.0-0 >=0.0.0-0 <0.1.0-0`, which admits `0.0.0-0` -- a version that
+  // sorts below the 0.0.0 release the bound was written as.
+  const lowerDropped = lower.pre === null && compareCores(lower.core, ZERO_CORE) === 0;
   // A DERIVED upper bound carries npm's `-0` sentinel: `^1.2.3` expands to
   // `<2.0.0-0` and `<=1.1` to `<1.2.0-0`, both of which every pre-release of
   // the ceiling outranks. So the test is on the core alone -- under the
@@ -445,10 +455,10 @@ function boundAdmitsVersion(
     compareVersions(wanted, { core: boundary, pre: null }) >= 0;
   switch (operator) {
     case "^":
-      return order >= 0 && below(caretCeiling(parts));
+      return (lowerDropped || order >= 0) && below(caretCeiling(parts));
     case "~":
     case "~>":
-      return order >= 0 && below(tildeCeiling(parts));
+      return (lowerDropped || order >= 0) && below(tildeCeiling(parts));
     case ">=":
       return full ? order >= 0 : atLeast(padded(parts));
     case ">":
@@ -462,7 +472,11 @@ function boundAdmitsVersion(
       return full ? order < 0 : below(padded(parts));
     default:
       // `=`, `v` and no operator cover exactly the versions the bound names.
-      return full ? order === 0 : atLeast(padded(parts)) && below(nextAfter(parts));
+      // Written in full that is one equality comparator, which npm keeps as
+      // written; abbreviated it is a range, whose zero lower bound vanishes.
+      return full
+        ? order === 0
+        : (lowerDropped || atLeast(padded(parts))) && below(nextAfter(parts));
   }
 }
 
@@ -739,23 +753,23 @@ function recordedWildcard(embedded: EmbeddedNpmSet, name: string): string | null
 }
 
 /**
- * The runtime decision for a pin the binary records only under the
- * framework's own `*`, or `null` when it records no such thing.
+ * The framework's own `*` constraint when it is known to resolve to `version`,
+ * or `null` when it is not.
  *
- * A recorded `*` resolves to the versions the binary froze for that name, so
- * when it froze exactly one and that one IS the pin, the import is already in
- * the binary and a CDN copy would be a second one. Two frozen versions leave
- * `*` ambiguous from here, so neither is claimed.
+ * A recorded `*` resolves to whatever the binary froze for that name, so it
+ * answers a version only when the binary froze exactly one and that one IS
+ * the version. Two frozen versions leave `*` ambiguous from here, and handing
+ * an import a `*` that resolves to some other version is how `npm:zod@3` came
+ * back as zod 4.
  */
-function wildcardImportForVersion(
+function wildcardConstraintForVersion(
   embedded: EmbeddedNpmSet,
   name: string,
   version: string,
-  subpath: string,
-): ProjectNpmImport | null {
+): string | null {
   if (recordedWildcard(embedded, name) === null) return null;
   const carried = ownEntry(embedded.packages, name) ?? [];
-  return carried.length === 1 && carried[0] === version ? runtimeImport(name, "*", subpath) : null;
+  return carried.length === 1 && carried[0] === version ? "*" : null;
 }
 
 export function embeddedConstraintForBareImport(
@@ -815,7 +829,7 @@ export function classifyProjectNpmImport(
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
-  if (isRuntimeProvidedImport(specifier, parsed.name, embedded)) {
+  if (isRuntimeProvidedImport(specifier, parsed.name)) {
     return classifyRuntimeProvidedImport(specifier, parsed, embedded);
   }
   if (!isContainedSubpath(parsed.subpath)) {
@@ -877,16 +891,34 @@ function classifyRuntimeProvidedImport(
   const { name, version, subpath } = parsed;
   if (name === "veryfront" || name.startsWith("veryfront/")) return { kind: "runtime" };
   if (nodeBuiltinSpecifier(specifier) !== null) return { kind: "runtime" };
+  // A bare import keeps its form wherever a recorded `*` already answers it.
+  if (version === null) {
+    const bare = embeddedConstraintForBareImport(name, embedded);
+    return bare === null ? { kind: "runtime" } : runtimeImport(name, bare, subpath);
+  }
   // A versioned import must be re-emitted under a constraint the binary
   // records -- `npm:zod@3.25.76` resolves to nothing on a profile that records
-  // `*` and 4.3.6 -- while a bare one keeps its form wherever a recorded `*`
-  // already answers it.
-  const recorded = version === null ? null : (
-    embeddedConstraintForVersion(name, version, embedded) ??
-      recordedWildcard(embedded, name)
-  );
-  const constraint = recorded ?? embeddedConstraintForBareImport(name, embedded);
-  return constraint === null ? { kind: "runtime" } : runtimeImport(name, constraint, subpath);
+  // `*` and 4.3.6 -- and that constraint has to be one the import's own
+  // version satisfies. Falling back to a recorded `*` regardless answered
+  // `npm:zod@3.25.76` with `npm:zod@*`, which that profile resolves to zod 4:
+  // a different major, handed to code that asked for 3.
+  const constraint = embeddedConstraintForVersion(name, version, embedded) ??
+    wildcardConstraintForVersion(embedded, name, version);
+  if (constraint !== null) return runtimeImport(name, constraint, subpath);
+  // The binary records this package but nothing that serves this version, and
+  // the framework's instance is the only one the import may have: a second
+  // copy is what the identity guard exists to stop. So it is reported.
+  if (ownEntry(embedded.constraints, name) !== undefined) {
+    return {
+      kind: "missing",
+      name,
+      reason: `the runtime provides ${name} and carries no version satisfying ` +
+        describeImportedVersion(name, version),
+    };
+  }
+  // The binary records nothing for it at all, which is every uncompiled run:
+  // the specifier is left as written, for the runtime to resolve as before.
+  return { kind: "runtime" };
 }
 
 /**
@@ -895,13 +927,9 @@ function classifyRuntimeProvidedImport(
  * `npm:buffer@6.0.3` is the npm `buffer` package, not `node:buffer` -- so only
  * the framework's own packages keep that form on the runtime.
  */
-function isRuntimeProvidedImport(
-  specifier: string,
-  name: string,
-  embedded: EmbeddedNpmSet,
-): boolean {
+function isRuntimeProvidedImport(specifier: string, name: string): boolean {
   // The framework hands out its own instance of these, subpaths included.
-  if (isFrameworkPackage(name, embedded)) return true;
+  if (isFrameworkPackage(name)) return true;
   // A builtin is one only as a whole: `buffer/` is the npm package (the
   // documented way to bypass the builtin) and `fs/custom` is no builtin at
   // all, so neither is the runtime's. An explicit `npm:` coordinate names the
@@ -1116,7 +1144,9 @@ function classifyUnversionedImport(
     // The runtime already carries exactly what the project declared: keep the
     // single in-binary copy rather than fetch a second one.
     const inBinary = embeddedImport(embedded, name, pin, subpath) ??
-      wildcardImportForVersion(embedded, name, pin, subpath);
+      (wildcardConstraintForVersion(embedded, name, pin) === null
+        ? null
+        : runtimeImport(name, "*", subpath));
     if (inBinary !== null) return inBinary;
     return { kind: "cdn", name, version: pin, subpath };
   }

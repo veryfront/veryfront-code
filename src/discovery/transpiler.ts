@@ -298,6 +298,11 @@ const LOCKED_REGISTRY_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za
 /** The dependency ranges one lockfile entry declares, whatever its format. */
 function lockedEntryDependencies(entry: Record<string, unknown>): Record<string, string> {
   const ranges: Record<string, string> = {};
+  // A peer the package itself marks optional may legitimately be absent, so
+  // it is not an edge the install has to account for.
+  const optionalPeers = new Set(
+    Object.entries(optionalMeta(entry)).filter(([, meta]) => meta).map(([name]) => name),
+  );
   // v2/v3 entries carry the package's own manifest fields; a v1 entry records
   // the same edges under `requires`.
   for (const field of ["dependencies", "optionalDependencies", "peerDependencies", "requires"]) {
@@ -305,10 +310,23 @@ function lockedEntryDependencies(entry: Record<string, unknown>): Record<string,
     if (!group || typeof group !== "object") continue;
     for (const [name, range] of Object.entries(group as Record<string, unknown>)) {
       if (name === "__proto__" || typeof range !== "string") continue;
+      if (optionalPeers.has(name)) continue;
       ranges[name] = range;
     }
   }
   return ranges;
+}
+
+/** Which peers a lock entry's `peerDependenciesMeta` marks optional. */
+function optionalMeta(entry: Record<string, unknown>): Record<string, boolean> {
+  const meta = entry.peerDependenciesMeta;
+  if (!meta || typeof meta !== "object") return {};
+  const optional: Record<string, boolean> = {};
+  for (const [name, value] of Object.entries(meta as Record<string, unknown>)) {
+    if (name === "__proto__") continue;
+    optional[name] = (value as { optional?: unknown } | null)?.optional === true;
+  }
+  return optional;
 }
 
 /** A path key and the entry it addresses, keyed the way v2/v3 locks are. */
@@ -600,28 +618,33 @@ function transitiveLockedDependencies(
   rootName: string,
 ): { pins: string[] } | { refusal: string } {
   const pinned = new Map<string, string>();
-  // A name the lockfile installs at two versions at once. esm.sh resolves one
-  // version per name for a build, so such a name cannot be pinned; it is only
-  // ever dropped, never guessed at.
-  const nested = new Set<string>();
   const visited = new Set<string>([rootPath]);
   const queue: string[] = [rootPath];
   while (queue.length > 0) {
     const path = queue.shift()!;
     for (const dependency of Object.keys(sources.locked[path]!.dependencies)) {
       const found = lockedDependencyFrom(sources.locked, path, dependency);
-      // A name the lockfile does not carry at all is one the project never
-      // installed -- an optional dependency skipped on this platform, or a
-      // peer the host supplies -- so the project holds no copy for a public
-      // one to stand in for. It is left to the CDN, as `npm install` would
-      // have left it to the registry.
-      if (found === undefined) continue;
+      // A name the lockfile does not resolve is a name the CDN would resolve
+      // for itself, against the public registry, at build time -- so the
+      // bundle could execute a package and version the project never
+      // installed. An optional dependency skipped on this platform reaches
+      // here too, and refusing it is the same answer for the same reason:
+      // this build cannot be shown to be the project's own.
+      if (found === undefined) return { refusal: unresolvedEdgeRefusal(rootName, dependency) };
       // Present and private is the substitution this refuses: the project's
       // own copy of that name is not the one esm.sh would serve.
       if (!resolvesFromPublicRegistry(sources, found.entry, dependency)) {
         return { refusal: privateTransitiveRefusal(rootName, dependency) };
       }
-      recordTransitivePin(pinned, nested, dependency, found.entry.version);
+      const already = pinned.get(dependency);
+      // esm.sh resolves one version per name for a build, so a name the
+      // lockfile nests at two versions cannot be expressed as a pin at all.
+      // Dropping it instead left the CDN free to choose, which is the same
+      // gap in a quieter form.
+      if (already !== undefined && already !== found.entry.version) {
+        return { refusal: nestedVersionsRefusal(rootName, dependency) };
+      }
+      pinned.set(dependency, found.entry.version);
       if (pinned.size > MAX_TRANSITIVE_LOCKED_DEPENDENCIES) {
         return { refusal: oversizedGraphRefusal(rootName) };
       }
@@ -630,19 +653,19 @@ function transitiveLockedDependencies(
       queue.push(found.path);
     }
   }
-  return { pins: pinList(pinned, nested) };
+  return { pins: pinList(pinned) };
 }
 
-/** Note the version one edge resolved to, or that the name has two of them. */
-function recordTransitivePin(
-  pinned: Map<string, string>,
-  nested: Set<string>,
-  name: string,
-  version: string,
-): void {
-  if (pinned.get(name) === version) return;
-  if (pinned.has(name)) nested.add(name);
-  pinned.set(name, version);
+/** Why an edge the lockfile does not resolve stops the build. */
+function unresolvedEdgeRefusal(rootName: string, name: string): string {
+  return `the project's lockfile does not resolve ${name}, which ${rootName} depends on, so ` +
+    `the CDN build of ${rootName} would resolve it against the public registry on its own`;
+}
+
+/** Why a name installed twice cannot be pinned for the CDN. */
+function nestedVersionsRefusal(rootName: string, name: string): string {
+  return `the project installs two versions of ${name} under ${rootName}, and the CDN build ` +
+    `resolves one version per name, so this project's graph cannot be pinned for it`;
 }
 
 /** Why the CDN build of `rootName` cannot carry the public copy of `name`. */
@@ -663,9 +686,8 @@ function oversizedGraphRefusal(rootName: string): string {
  * produces the same URL however the lockfile happens to be ordered, and by
  * code unit rather than locale so that stays true on every host.
  */
-function pinList(pinned: ReadonlyMap<string, string>, nested: ReadonlySet<string>): string[] {
+function pinList(pinned: ReadonlyMap<string, string>): string[] {
   return [...pinned]
-    .filter(([name]) => !nested.has(name))
     .map(([name, version]) => `${name}@${version}`)
     .toSorted((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
@@ -765,9 +787,14 @@ export function publiclySourcedPackages(
   if (sources.unverifiableClient !== null) return publicly;
   for (const name of Object.keys(pins)) {
     const locked = lockedDependency(sources, name);
-    if (locked !== undefined && resolvesFromPublicRegistry(sources, locked.entry, name)) {
-      publicly.add(name);
-    }
+    if (locked === undefined || !resolvesFromPublicRegistry(sources, locked.entry, name)) continue;
+    // The embedded artifact carries the FRAMEWORK's transitive graph, not this
+    // project's, so the package alone being public is not enough: a private
+    // fork or an override anywhere underneath it would be replaced by the
+    // public copy the binary froze. The same walk the CDN path makes is what
+    // says the two graphs can stand in for each other.
+    if ("refusal" in transitiveLockedDependencies(sources, locked.path, name)) continue;
+    publicly.add(name);
   }
   return publicly;
 }
@@ -854,20 +881,48 @@ function declaresWorkspaceMember(rootPackageJson: string, member: string): boole
     ? declared
     : (declared as { packages?: unknown })?.packages;
   if (!Array.isArray(patterns)) return false;
+  // npm never crawls into node_modules for members, whatever the patterns say.
+  if (member.split("/").includes("node_modules")) return false;
+  const { included, excluded } = workspacePatterns(patterns);
   const segments = member.split("/");
-  let matched = false;
+  const matches = (pattern: string) => matchesWorkspacePattern(pattern.split("/"), segments);
+  return included.some(matches) && !excluded.some(matches);
+}
+
+/**
+ * The include and exclude patterns a `workspaces` list comes to, in npm's own
+ * order-sensitive reading (`appendNegatedPatterns` in @npmcli/map-workspaces).
+ *
+ * A later positive pattern CANCELS an earlier negation that covers it, which
+ * is what makes `["packages/**", "!packages/private/**", "packages/private/app"]`
+ * name `packages/private/app` after all. Treating every negation as final
+ * rejected that member and with it the workspace root's authoritative
+ * lockfile. An odd number of leading `!` negates; an even number is a literal.
+ */
+function workspacePatterns(
+  patterns: readonly unknown[],
+): { included: string[]; excluded: string[] } {
+  const included: string[] = [];
+  const excluded: string[] = [];
   for (const pattern of patterns) {
     if (typeof pattern !== "string") continue;
-    const negated = pattern.startsWith("!");
-    const normalized = normalizeWorkspacePattern(negated ? pattern.slice(1) : pattern);
+    const marks = /^!*/.exec(pattern)![0].length;
+    const normalized = normalizeWorkspacePattern(pattern.slice(marks));
     if (normalized.length === 0) continue;
-    if (!matchesWorkspacePattern(normalized.split("/"), segments)) continue;
-    // A negated pattern removes what the positive ones matched, wherever it
-    // is written, which is how `["packages/*", "!packages/private"]` reads.
-    if (negated) return false;
-    matched = true;
+    for (const expanded of expandBraces(normalized)) {
+      if (marks % 2 === 1) {
+        excluded.push(expanded);
+        continue;
+      }
+      // The cancellation is pattern against pattern, as npm does it: the
+      // negation is the glob and the later positive is the path it covers.
+      const survives = (negated: string) =>
+        !matchesWorkspacePattern(negated.split("/"), expanded.split("/"));
+      excluded.splice(0, excluded.length, ...excluded.filter(survives));
+      included.push(expanded);
+    }
   }
-  return matched;
+  return { included, excluded };
 }
 
 /** A workspace pattern without its `./` prefix or its trailing separators. */
@@ -916,17 +971,169 @@ function matchesWorkspacePattern(
   return p === pattern.length;
 }
 
+/**
+ * How many patterns one brace expansion may produce. The pattern is project
+ * text, and nested alternatives multiply, so a hostile `{a,b}` twenty deep
+ * would otherwise be a million patterns to match against.
+ */
+const MAX_WORKSPACE_PATTERN_ALTERNATIVES = 64;
+
+/**
+ * A pattern with its brace alternatives written out: `packages/{app,web}` is
+ * `["packages/app", "packages/web"]`, which is how npm's minimatch reads it.
+ * An unbalanced or empty `{` stays literal, as minimatch leaves it.
+ */
+function expandBraces(pattern: string): string[] {
+  const open = unescapedIndexOf(pattern, "{");
+  const close = open < 0 ? -1 : matchingBrace(pattern, open);
+  if (close < 0) return [pattern];
+  const alternatives = splitBraceBody(pattern.slice(open + 1, close));
+  if (alternatives.length < 2) return [pattern];
+  const head = pattern.slice(0, open);
+  const tail = pattern.slice(close + 1);
+  const expanded: string[] = [];
+  for (const alternative of alternatives) {
+    for (const rest of expandBraces(`${head}${alternative}${tail}`)) {
+      if (expanded.length >= MAX_WORKSPACE_PATTERN_ALTERNATIVES) return expanded;
+      expanded.push(rest);
+    }
+  }
+  return expanded;
+}
+
+/** The first `needle` that is not escaped by a backslash, or -1. */
+function unescapedIndexOf(text: string, needle: string): number {
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === "\\") index++;
+    else if (text[index] === needle) return index;
+  }
+  return -1;
+}
+
+/** The `}` that closes the `{` at `open`, or -1 when nothing does. */
+function matchingBrace(pattern: string, open: number): number {
+  let depth = 0;
+  for (let index = open; index < pattern.length; index++) {
+    const char = pattern[index];
+    if (char === "\\") index++;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) return index;
+  }
+  return -1;
+}
+
+/** A brace body split on its own commas, leaving nested braces intact. */
+function splitBraceBody(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < body.length; index++) {
+    const char = body[index];
+    if (char === "\\") index++;
+    else if (char === "{") depth++;
+    else if (char === "}") depth--;
+    else if (char === "," && depth === 0) {
+      parts.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(body.slice(start));
+  return parts;
+}
+
+/** One unit of a pattern segment, as minimatch reads it. */
+type SegmentToken =
+  | { kind: "star" }
+  | { kind: "any" }
+  | { kind: "class"; matches: (char: string) => boolean }
+  | { kind: "char"; char: string };
+
+/**
+ * A pattern segment as the units it matches with: `*` for any run of
+ * characters, `?` for exactly one, `[a-z]` for a class, `\` escaping the
+ * character after it, and everything else literal.
+ */
+function segmentTokens(pattern: string): SegmentToken[] {
+  const tokens: SegmentToken[] = [];
+  for (let index = 0; index < pattern.length; index++) {
+    const char = pattern[index]!;
+    if (char === "\\" && index + 1 < pattern.length) {
+      tokens.push({ kind: "char", char: pattern[++index]! });
+      continue;
+    }
+    if (char === "*") {
+      tokens.push({ kind: "star" });
+      continue;
+    }
+    if (char === "?") {
+      tokens.push({ kind: "any" });
+      continue;
+    }
+    const close = char === "[" ? closingBracket(pattern, index) : -1;
+    if (close < 0) {
+      tokens.push({ kind: "char", char });
+      continue;
+    }
+    tokens.push(characterClass(pattern.slice(index + 1, close)));
+    index = close;
+  }
+  return tokens;
+}
+
+/** The `]` that closes the class opened at `open`, or -1 when nothing does. */
+function closingBracket(pattern: string, open: number): number {
+  // A `]` immediately after the opener, or after its negation mark, is a
+  // literal member of the class rather than its end.
+  let index = open + 1;
+  if (pattern[index] === "!" || pattern[index] === "^") index++;
+  if (pattern[index] === "]") index++;
+  for (; index < pattern.length; index++) {
+    if (pattern[index] === "]") return index;
+  }
+  return -1;
+}
+
+/** A `[...]` body as the test it stands for, ranges and negation included. */
+function characterClass(body: string): SegmentToken {
+  const negated = body.startsWith("!") || body.startsWith("^");
+  const members = negated ? body.slice(1) : body;
+  const ranges: [string, string][] = [];
+  for (let index = 0; index < members.length; index++) {
+    const from = members[index]!;
+    const dashed = members[index + 1] === "-" && index + 2 < members.length;
+    if (dashed) {
+      ranges.push([from, members[index + 2]!]);
+      index += 2;
+    } else {
+      ranges.push([from, from]);
+    }
+  }
+  return {
+    kind: "class",
+    matches: (char) => ranges.some(([from, to]) => char >= from && char <= to) !== negated,
+  };
+}
+
+/** Does one token match one character? */
+function matchesToken(token: SegmentToken, char: string): boolean {
+  if (token.kind === "any") return true;
+  if (token.kind === "class") return token.matches(char);
+  return token.kind === "char" && token.char === char;
+}
+
 /** Does one pattern segment, with `*` standing for any run of characters, match? */
 function matchesSegment(pattern: string, name: string): boolean {
+  const tokens = segmentTokens(pattern);
   let p = 0;
   let n = 0;
   let star = -1;
   let matchedTo = 0;
   while (n < name.length) {
-    if (p < pattern.length && pattern[p] === "*") {
+    const token = tokens[p];
+    if (token?.kind === "star") {
       star = p++;
       matchedTo = n;
-    } else if (p < pattern.length && pattern[p] === name[n]) {
+    } else if (token !== undefined && matchesToken(token, name[n]!)) {
       p++;
       n++;
     } else if (star < 0) {
@@ -936,8 +1143,8 @@ function matchesSegment(pattern: string, name: string): boolean {
       n = ++matchedTo;
     }
   }
-  while (p < pattern.length && pattern[p] === "*") p++;
-  return p === pattern.length;
+  while (tokens[p]?.kind === "star") p++;
+  return p === tokens.length;
 }
 
 /** What one directory's lockfiles say, or `null` when it holds none. */
@@ -1431,16 +1638,19 @@ export function createProjectDependencyCdnPlugin(
         // JSX element in the inlined dependency fails when it loads.
         const specifier = esmCdnModuleSpecifier(url)!;
         // A compiled binary resolves `npm:` by constraint, and some framework
-        // packages are recorded only at exact versions (`react-dom`,
-        // `@opentelemetry/*`), so the URL's own version is re-emitted when the
-        // binary records it. Without one the bare specifier is left as before,
-        // which is what an uncompiled run resolves.
-        // The URL's own version when the binary records it, otherwise any
-        // constraint it records for that package: this plugin runs only on a
-        // compiled binary, where a bare `npm:react-dom` resolves to nothing.
-        const constraint = (parsed.version.length > 0
+        // packages are recorded only at exact versions (`react-dom`), so the
+        // URL's own version is re-emitted when the binary records it. Without
+        // one the bare specifier is left as before, which is what an
+        // uncompiled run resolves.
+        //
+        // A constraint the URL's version does NOT satisfy is never used: a
+        // URL for react-dom 18 rewritten to the binary's 19 constraint hands
+        // the inlined dependency a different major of the package it asked
+        // for. Only a bare URL, which names no version, takes whatever
+        // constraint the binary records.
+        const constraint = parsed.version.length > 0
           ? embeddedConstraintForVersion(parsed.name, parsed.version)
-          : null) ?? embeddedConstraintForBareImport(parsed.name);
+          : embeddedConstraintForBareImport(parsed.name);
         if (constraint === null) {
           return { path: specifier, external: true };
         }
@@ -1861,7 +2071,11 @@ export async function importModule(
     await computeHash(source),
     compiled,
     dependencyPins,
-    registrySources,
+    // Hashed, not embedded: `registrySources` holds the whole parsed lockfile,
+    // and a key is retained for every discovered module, so copying a
+    // multi-megabyte graph into each one grew the cache by the lockfile's size
+    // times the number of files discovered.
+    await computeHash(JSON.stringify(registrySources)),
   ]);
   const cachedEntries = transpileCache.get(cacheKey);
   if (cachedEntries) {
