@@ -54,6 +54,17 @@ export interface PollRegistryPackageOptions {
   fetcher?: typeof fetch;
   delay?: (milliseconds: number) => Promise<void>;
   onRetry?: (message: string) => void;
+  /**
+   * How long the poll may keep STARTING lookups. A lookup that answers slowly
+   * spends its request timeout on top of the retry delay, so counting
+   * attempts alone does not bound the wall clock the surrounding job is sized
+   * for. The last lookup may begin at the deadline and still take its request
+   * timeout, so the poll ends within `budgetMs + requestTimeoutMs`: fifteen
+   * minutes and a quarter by default, which the job's forty accommodate.
+   */
+  budgetMs?: number;
+  /** The clock, for tests. */
+  now?: () => number;
 }
 
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
@@ -254,16 +265,29 @@ export async function pollRegistryPackage(
     registryErrorContext(options, "version is not available yet"),
   );
 
+  const now = options.now ?? Date.now;
+  const budgetMs = options.budgetMs ?? (options.maxAttempts - 1) * options.retryDelayMs;
+  const deadline = now() + budgetMs;
+
   for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
     const result = await attemptRegistryLookup(options, fetcher, spec);
     if (result.kind === "metadata") return result.metadata;
     lastFailure = result.failure;
 
+    // The budget is spent, so this was the last lookup. A caller that sets no
+    // delay (the unit tests) states its bound in attempts alone.
+    const remainingMs = deadline - now();
+    if (budgetMs > 0 && remainingMs <= 0) break;
+
     if (attempt < options.maxAttempts) {
       options.onRetry?.(
         `Waiting for ${spec} registry propagation (attempt ${attempt}/${options.maxAttempts}).`,
       );
-      await delay(options.retryDelayMs);
+      // The last wait is shortened to what is left, so a lookup still begins
+      // at the deadline however long each one takes.
+      await delay(
+        budgetMs > 0 ? Math.min(options.retryDelayMs, remainingMs) : options.retryDelayMs,
+      );
     }
   }
 
@@ -326,16 +350,54 @@ function formatFailureContext(
   }`;
 }
 
+/**
+ * How long to wait for npm to make a just-published version visible.
+ *
+ * A publish is not atomic across npm's metadata: the version can take several
+ * minutes to appear, and the previous 30x10s budget gave up on main three
+ * times while the release itself was fine. Fifteen minutes covers what those
+ * runs needed, and CI can narrow it (the smoke tests do) through the
+ * environment.
+ *
+ * @internal Exported for testing only.
+ */
+export function readPropagationBudget(
+  env: Readonly<Record<string, string | undefined>>,
+): { maxAttempts: number; retryDelayMs: number } {
+  const positiveInteger = (value: string | undefined, fallback: number) => {
+    if (value === undefined || !/^\d+$/.test(value)) return fallback;
+    const parsed = Number(value);
+    // A digit-only value can still be unusable: `Infinity` never exhausts the
+    // loop, and an unsafe integer stops the attempt counter advancing.
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+  };
+  return {
+    // The poll waits BETWEEN attempts, so 91 attempts spend 90 delays: the
+    // fifteen minutes this budget promises.
+    maxAttempts: positiveInteger(env.VF_REGISTRY_PROPAGATION_ATTEMPTS, 91),
+    retryDelayMs: positiveInteger(env.VF_REGISTRY_PROPAGATION_DELAY_MS, 10_000),
+  };
+}
+
 async function main(args: string[]): Promise<void> {
   const options = readCliOptions(args);
+  // Read individually: enumerating the environment needs unrestricted access,
+  // and the smoke script grants only these two variables.
+  const budget = readPropagationBudget({
+    VF_REGISTRY_PROPAGATION_ATTEMPTS: Deno.env.get(
+      "VF_REGISTRY_PROPAGATION_ATTEMPTS",
+    ),
+    VF_REGISTRY_PROPAGATION_DELAY_MS: Deno.env.get(
+      "VF_REGISTRY_PROPAGATION_DELAY_MS",
+    ),
+  });
   await Promise.all(options.packages.map((packageName) =>
     pollRegistryPackage({
       packageName,
       version: options.version,
       expectedGitHead: options.gitHead,
       registryUrl: options.registryUrl,
-      maxAttempts: 30,
-      retryDelayMs: 10_000,
+      ...budget,
       requestTimeoutMs: 15_000,
       onRetry: console.log,
     })

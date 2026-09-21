@@ -76,6 +76,7 @@ registry_release_smoke_main() {
 
 	set +e
 	deno run --no-config --no-lock --allow-net="$registry_authority" \
+		--allow-env=VF_REGISTRY_PROPAGATION_ATTEMPTS,VF_REGISTRY_PROPAGATION_DELAY_MS \
 		"$root_dir/scripts/ci/registry-release-integrity.ts" \
 		--version "$version" \
 		--git-head "$GITHUB_SHA" \
