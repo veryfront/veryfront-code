@@ -1317,23 +1317,25 @@ function closingBracket(pattern: string, open: number): number {
  * may spell a member set `[[:alpha:]]` as readily as `[a-zA-Z]`, and npm's
  * matcher reads both.
  */
-const POSIX_CLASSES: ReadonlyMap<string, RegExp> = new Map([
-  ["alnum", /[\p{L}\p{Nl}\p{Nd}]/u],
-  ["alpha", /[\p{L}\p{Nl}]/u],
-  ["ascii", /[\x00-\x7f]/],
-  ["blank", /[\p{Zs}\t]/u],
-  ["cntrl", /[\p{Cc}]/u],
-  ["digit", /[\p{Nd}]/u],
-  ["graph", /[^\p{Z}\p{C}]/u],
-  ["lower", /[\p{Ll}]/u],
+const POSIX_CLASSES: ReadonlyMap<string, (char: string) => boolean> = new Map([
+  ["alnum", (char: string) => /[\p{L}\p{Nl}\p{Nd}]/u.test(char)],
+  ["alpha", (char: string) => /[\p{L}\p{Nl}]/u.test(char)],
+  // Written as a code point rather than a range: a regular expression for it
+  // spells out control characters, which the linter reads as a mistake.
+  ["ascii", (char: string) => char.codePointAt(0)! <= 0x7f],
+  ["blank", (char: string) => /[\p{Zs}\t]/u.test(char)],
+  ["cntrl", (char: string) => /[\p{Cc}]/u.test(char)],
+  ["digit", (char: string) => /[\p{Nd}]/u.test(char)],
+  ["graph", (char: string) => /[^\p{Z}\p{C}]/u.test(char)],
+  ["lower", (char: string) => /[\p{Ll}]/u.test(char)],
   // `print` really is the control characters in minimatch's own table, not
   // the printable ones. Matching npm is the job here, not POSIX.
-  ["print", /[\p{C}]/u],
-  ["punct", /[\p{P}]/u],
-  ["space", /[\p{Z}\t\r\n\v\f]/u],
-  ["upper", /[\p{Lu}]/u],
-  ["word", /[\p{L}\p{Nl}\p{Nd}\p{Pc}]/u],
-  ["xdigit", /[A-Fa-f0-9]/],
+  ["print", (char: string) => /[\p{C}]/u.test(char)],
+  ["punct", (char: string) => /[\p{P}]/u.test(char)],
+  ["space", (char: string) => /[\p{Z}\t\r\n\v\f]/u.test(char)],
+  ["upper", (char: string) => /[\p{Lu}]/u.test(char)],
+  ["word", (char: string) => /[\p{L}\p{Nl}\p{Nd}\p{Pc}]/u.test(char)],
+  ["xdigit", (char: string) => /[A-Fa-f0-9]/.test(char)],
 ]);
 
 /** A `[...]` body as the test it stands for, ranges and negation included. */
@@ -1345,7 +1347,7 @@ function characterClass(body: string): SegmentToken {
     const posix = members.startsWith("[:", index) ? members.indexOf(":]", index + 2) : -1;
     const named = posix < 0 ? undefined : POSIX_CLASSES.get(members.slice(index + 2, posix));
     if (named !== undefined) {
-      tests.push((char) => named.test(char));
+      tests.push(named);
       index = posix + 1;
       continue;
     }
