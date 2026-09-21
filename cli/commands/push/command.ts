@@ -66,12 +66,12 @@ import { buildStudioUrl } from "../studio/command.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { type PlannedDelete, type PlannedUpload, planPushChanges } from "./plan.ts";
 import {
-  addedDeclarationPins,
   adoptedPackageJsonPins,
   type AdoptedPin,
   type DependencyPreimage,
   formatAdoptedPins,
   PACKAGE_JSON_PATH,
+  pinsRequiringConsent,
 } from "./dependency-pins.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import {
@@ -168,10 +168,13 @@ export interface PushOptions {
    */
   noAdoptPins?: boolean;
   /**
-   * Adopt declarations the platform resolved that package.json never declared,
-   * without asking. Without this the addition needs an interactive
-   * confirmation, because the package name and version are both chosen
-   * remotely.
+   * Adopt dependency changes the platform's resolver chose on its own, without
+   * asking: a declaration package.json never declared, and a declaration the
+   * resolver moved between `dependencies` and `devDependencies`. Without this
+   * they need an interactive confirmation, because neither is bounded by a
+   * range the user wrote — the package name and version of an addition are
+   * both chosen remotely, and a move turns a dev-only package into a
+   * production dependency.
    */
   adoptNewDeps?: boolean;
   /** Reject when HEAD no longer matches the commit that selected this push. */
@@ -1277,26 +1280,44 @@ function reportAdoptedPins(pins: readonly AdoptedPin[], dryRun: boolean): void {
       data: {
         path: PACKAGE_JSON_PATH,
         dryRun,
-        pins: pins.map((pin) => ({ name: pin.name, version: pin.version, added: pin.added })),
+        pins: pins.map((pin) => ({
+          name: pin.name,
+          version: pin.version,
+          added: pin.added,
+          movedFrom: pin.sectionMove?.from ?? null,
+          movedTo: pin.sectionMove?.to ?? null,
+        })),
       },
     });
     return;
   }
   const count = `${pins.length} server-resolved dependency pin${pins.length === 1 ? "" : "s"}`;
+  // A pin name is remote-controlled, and under `--adopt-new-deps` it reaches
+  // this line without passing through the confirmation that sanitizes it.
+  const detail = sanitizeTerminalDiagnosticText(formatAdoptedPins(pins));
   logWarning(
     dryRun
-      ? `Would adopt ${count} into ${PACKAGE_JSON_PATH} (${formatAdoptedPins(pins)}). ` +
+      ? `Would adopt ${count} into ${PACKAGE_JSON_PATH} (${detail}). ` +
         `A real push replaces your local ${PACKAGE_JSON_PATH} with the platform's copy.`
-      : `Adopted ${count} into ${PACKAGE_JSON_PATH} (${formatAdoptedPins(pins)}). ` +
+      : `Adopted ${count} into ${PACKAGE_JSON_PATH} (${detail}). ` +
         `Your local ${PACKAGE_JSON_PATH} was replaced with the platform's copy, ` +
         `so this checkout now has an uncommitted change.`,
   );
 }
 
 /**
- * Ask whether declarations the platform added may be written into this
- * checkout. A push that cannot ask refuses, so the drift falls through to the
- * conflict it raises today rather than installing a server-chosen package.
+ * Ask whether dependency changes the platform chose on its own may be written
+ * into this checkout. A push that cannot ask refuses, so the drift falls
+ * through to the conflict it raises today rather than installing a
+ * server-chosen package or promoting a dev-only one into production.
+ *
+ * Two kinds of change reach here. An addition is a package name and a version
+ * both chosen remotely. A section move is the API's `applyResolvedPins`
+ * writing `nextDeps[name]` and deleting `nextDevDeps[name]` for every
+ * non-exact declaration it resolves, so a `devDependencies` entry the render
+ * resolved comes back as a production dependency; nothing in the preimage
+ * proof can rule that in, because the published preimages are the merged
+ * declaration map and the merge has already erased the section.
  *
  * The refusal names `veryfront push --adopt-new-deps` rather than telling the
  * reader to "re-run with" the flag, because the command they ran is usually
@@ -1308,18 +1329,18 @@ function reportAdoptedPins(pins: readonly AdoptedPin[], dryRun: boolean): void {
  * package into the tree unattended, so the honest recovery is the explicit
  * push, which any of them can run first.
  */
-async function confirmAdoptedDependencyAdditions(
-  added: readonly AdoptedPin[],
+async function confirmAdoptedDependencyChanges(
+  changed: readonly AdoptedPin[],
   canPrompt: boolean,
 ): Promise<boolean> {
-  const names = added.map((pin) => sanitizeTerminalDiagnosticText(`${pin.name} ${pin.version}`))
-    .join(", ");
+  const names = sanitizeTerminalDiagnosticText(formatAdoptedPins(changed));
+  const subject = `${changed.length} dependenc${changed.length === 1 ? "y" : "ies"} in ` +
+    `${PACKAGE_JSON_PATH} by more than a version (${names})`;
   if (!canPrompt) {
     if (!isJsonMode()) {
       logWarning(
-        `Veryfront resolved ${added.length} dependenc${added.length === 1 ? "y" : "ies"} that ` +
-          `${PACKAGE_JSON_PATH} does not declare (${names}). They were not written to this ` +
-          `checkout, so this push is still reported as a conflict. Run ` +
+        `Veryfront's dependency resolver changed ${subject}. Those changes were not written ` +
+          `to this checkout, so this push is still reported as a conflict. Run ` +
           `"veryfront push --adopt-new-deps" to accept them and then retry — ` +
           `veryfront up and veryfront deploy do not take that flag — or run ` +
           `"veryfront pull" to take the platform's ${PACKAGE_JSON_PATH}.`,
@@ -1328,9 +1349,7 @@ async function confirmAdoptedDependencyAdditions(
     return false;
   }
   return await confirmPrompt(
-    `Veryfront resolved ${added.length} dependenc${
-      added.length === 1 ? "y" : "ies"
-    } that ${PACKAGE_JSON_PATH} does not declare (${names}). Write them into ${PACKAGE_JSON_PATH}?`,
+    `Veryfront's dependency resolver changed ${subject}. Write them into ${PACKAGE_JSON_PATH}?`,
     false,
   );
 }
@@ -1762,17 +1781,18 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         // The spinner owns the current terminal line, so every notice below has
         // to claim it first or it lands inside the animation.
         spinner.stop();
-        const added = addedDeclarationPins(pinAdoption.pins);
+        const needsConsent = pinsRequiringConsent(pinAdoption.pins);
         // A tightening stays inside a range the user declared. An addition is a
         // package name and a version chosen entirely by whoever can write the
-        // remote manifest, and `veryfront dev` installs it, so it needs consent
-        // that is not just "a push happened".
-        const additionsAllowed = added.length === 0 || adoptNewDependencies ||
-          await confirmAdoptedDependencyAdditions(
-            added,
+        // remote manifest, and `veryfront dev` installs it. A section move
+        // turns a dev-only declaration into a production dependency. Neither is
+        // covered by "a push happened", so both need consent.
+        const changesAllowed = needsConsent.length === 0 || adoptNewDependencies ||
+          await confirmAdoptedDependencyChanges(
+            needsConsent,
             isInteractive() && isTTY() && !quiet && !jsonOutput,
           );
-        if (additionsAllowed) {
+        if (changesAllowed) {
           const adopted = dryRun ||
             await writeAdoptedManifest(
               projectDir,
@@ -1782,6 +1802,15 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               baselinePackageJsonDigest ?? "",
               pinAdoption.content,
             );
+          // Reported before anything that can throw: the bytes are already on
+          // disk at this point, and `capturePushSourceSnapshot` and the path-set
+          // check below both raise. A throw between the write and the notice
+          // would leave the tracked manifest replaced with the platform's copy,
+          // nothing printed, and no way back into this path on the next push —
+          // the local digest no longer matches the baseline, so
+          // `planServerDependencyPinAdoption` returns null and the conflict
+          // becomes permanent.
+          if (adopted) reportAdoptedPins(pinAdoption.pins, dryRun);
           if (adopted && dryRun) {
             // Keep the dry run's plan honest without touching the working tree:
             // the real push reaches the planner with these bytes in place.
@@ -1807,7 +1836,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             sourceSnapshot = recaptured;
             ops = sourceSnapshot.files;
           }
-          if (adopted) reportAdoptedPins(pinAdoption.pins, dryRun);
         }
       }
       const plan = await planPushChanges({

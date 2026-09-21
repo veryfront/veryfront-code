@@ -8,6 +8,7 @@ import {
   classifyPackageJsonDrift,
   type DependencyPreimage,
   formatAdoptedPins,
+  pinsRequiringConsent,
 } from "./dependency-pins.ts";
 
 /** Serialize exactly the way the API's package.json writer does. */
@@ -49,7 +50,11 @@ describe("classifyPackageJsonDrift", () => {
     );
   });
 
-  it("adopts a declaration the resolver moved out of devDependencies", () => {
+  it("reports a declaration the resolver moved out of devDependencies as a move", () => {
+    // `applyResolvedPins` writes `nextDeps[name]` and deletes `nextDevDeps[name]`
+    // for every non-exact declaration it resolves, so the dev-only package comes
+    // back as a production dependency. The published preimages are the merged
+    // declaration map, so they cannot show the move - only the sections can.
     const baseline = apiWrite({
       name: "demo",
       dependencies: { react: "19.3.0" },
@@ -60,13 +65,93 @@ describe("classifyPackageJsonDrift", () => {
       dependencies: { react: "19.3.0", zod: "3.25.7" },
       devDependencies: {},
     });
+    const preimages: DependencyPreimage[] = [
+      { react: "19.3.0", zod: "^3.25.0" },
+      { react: "19.3.0", zod: "3.25.7" },
+    ];
 
+    assertEquals(classifyPackageJsonDrift(baseline, remote, preimages), "server-pins");
+    const pins = adoptedPackageJsonPins(baseline, remote, preimages);
+    assertEquals(pins, [
+      {
+        name: "zod",
+        version: "3.25.7",
+        added: false,
+        sectionMove: { from: "devDependencies", to: "dependencies" },
+      },
+    ]);
+    // The move is not an addition, but it is just as unbounded by anything the
+    // user wrote, so it has to reach the same consent gate.
+    assertEquals(addedDeclarationPins(pins), []);
+    assertEquals(pinsRequiringConsent(pins), pins);
     assertEquals(
-      classifyPackageJsonDrift(baseline, remote, [
-        { react: "19.3.0", zod: "^3.25.0" },
-        { react: "19.3.0", zod: "3.25.7" },
-      ]),
-      "server-pins",
+      formatAdoptedPins(pins),
+      "zod 3.25.7 (moved from devDependencies to dependencies)",
+    );
+  });
+
+  it("reports a declaration the resolver moved into a section the file lacked", () => {
+    // `buildPackageJsonContent` writes `dependencies` unconditionally, so a
+    // manifest with only devDependencies gains the section outright.
+    const baseline = apiWrite({ name: "demo", devDependencies: { zod: "^3.25.0" } });
+    const remote = apiWrite({
+      name: "demo",
+      devDependencies: {},
+      dependencies: { zod: "3.25.7" },
+    });
+    const preimages: DependencyPreimage[] = [{ zod: "^3.25.0" }, { zod: "3.25.7" }];
+
+    assertEquals(classifyPackageJsonDrift(baseline, remote, preimages), "server-pins");
+    assertEquals(
+      pinsRequiringConsent(adoptedPackageJsonPins(baseline, remote, preimages)).map((pin) =>
+        pin.sectionMove
+      ),
+      [{ from: "devDependencies", to: "dependencies" }],
+    );
+  });
+
+  it("rejects a write that resolves a name declared in both sections", () => {
+    // The API resolves such a name through the devDependencies declaration and
+    // writes the result into `dependencies`, replacing the exact version the
+    // user pinned there. Merging the sections hid that behind the range, which
+    // defeated the "already exact" guard; comparing per section refuses it.
+    const baseline = apiWrite({
+      name: "demo",
+      dependencies: { zod: "3.25.1" },
+      devDependencies: { zod: "^3.25.0" },
+    });
+    const remote = apiWrite({
+      name: "demo",
+      dependencies: { zod: "3.25.7" },
+      devDependencies: {},
+    });
+    assertEquals(
+      classifyPackageJsonDrift(baseline, remote, [{ zod: "^3.25.0" }, { zod: "3.25.7" }]),
+      "user-edit",
+    );
+  });
+
+  it("adopts a tightening in a file that also declares an untouched shadowed name", () => {
+    // Refusing the shadowed name only applies when the write touched it: a
+    // manifest that merely contains one still reconciles its other pins.
+    const baseline = apiWrite({
+      name: "demo",
+      dependencies: { react: "^19.2.4", zod: "3.25.1" },
+      devDependencies: { zod: "3.25.1" },
+    });
+    const remote = apiWrite({
+      name: "demo",
+      dependencies: { react: "19.3.0", zod: "3.25.1" },
+      devDependencies: { zod: "3.25.1" },
+    });
+    const preimages: DependencyPreimage[] = [
+      { react: "^19.2.4", zod: "3.25.1" },
+      { react: "19.3.0", zod: "3.25.1" },
+    ];
+    assertEquals(classifyPackageJsonDrift(baseline, remote, preimages), "server-pins");
+    assertEquals(
+      formatAdoptedPins(adoptedPackageJsonPins(baseline, remote, preimages)),
+      "react 19.3.0",
     );
   });
 
@@ -188,11 +273,15 @@ describe("classifyPackageJsonDrift", () => {
 
   it("marks a tightening of a locally declared range as not added", () => {
     assertEquals(adoptedPackageJsonPins(BASELINE_CONTENT, PINNED_CONTENT, PREIMAGES), [
-      { name: "react", version: "19.3.0", added: false },
-      { name: "zod", version: "3.25.7", added: false },
+      { name: "react", version: "19.3.0", added: false, sectionMove: null },
+      { name: "zod", version: "3.25.7", added: false, sectionMove: null },
     ]);
     assertEquals(
       addedDeclarationPins(adoptedPackageJsonPins(BASELINE_CONTENT, PINNED_CONTENT, PREIMAGES)),
+      [],
+    );
+    assertEquals(
+      pinsRequiringConsent(adoptedPackageJsonPins(BASELINE_CONTENT, PINNED_CONTENT, PREIMAGES)),
       [],
     );
   });
@@ -212,7 +301,11 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(BASELINE_CONTENT, remote, preimages), "server-pins");
     assertEquals(
       addedDeclarationPins(adoptedPackageJsonPins(BASELINE_CONTENT, remote, preimages)),
-      [{ name: "clsx", version: "2.1.1", added: true }],
+      [{ name: "clsx", version: "2.1.1", added: true, sectionMove: null }],
+    );
+    assertEquals(
+      formatAdoptedPins(adoptedPackageJsonPins(BASELINE_CONTENT, remote, preimages)),
+      "clsx 2.1.1 (added), react 19.3.0, zod 3.25.7",
     );
   });
 });

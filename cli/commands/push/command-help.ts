@@ -40,7 +40,8 @@ export const pushHelp: CommandHelp = {
     },
     {
       flag: "--adopt-new-deps",
-      description: "Accept resolved dependencies package.json does not declare, without asking",
+      description:
+        "Accept resolved dependencies package.json does not declare, or that the resolver moved between dependencies and devDependencies, without asking",
     },
   ],
   examples: [
@@ -56,7 +57,7 @@ export const pushHelp: CommandHelp = {
     "By default, push uploads local files and preserves remote-only files",
     "Push rejects files changed remotely since the last pull or push",
     "Dependency versions the platform resolved into package.json are adopted locally and reported",
-    "A resolved dependency package.json never declared is only written after you confirm it",
+    "A resolved dependency package.json never declared, or that the resolver moved out of devDependencies, is only written after you confirm it",
     "Run pull and reconcile changes with Git before retrying a rejected push",
     "Use --force only when you intend to overwrite remote changes",
     "Use --prune to remove managed remote files that are missing locally",

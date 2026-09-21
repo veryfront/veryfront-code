@@ -32,6 +32,25 @@ export type DependencyPreimage = Readonly<Record<string, string>>;
 /** How a remote `package.json` differs from the local sync baseline. */
 export type PackageJsonDriftClassification = "server-pins" | "user-edit";
 
+/** A dependency section of `package.json`. */
+export type DependencySection = "dependencies" | "devDependencies";
+
+/**
+ * The sections a declaration sat in before and after the platform's write.
+ *
+ * `applyResolvedPins` in the API does `nextDeps[name] = version` followed by
+ * `delete nextDevDeps[name]` for every non-exact declaration it resolves, and
+ * `buildPackageJsonContent` writes `dependencies` unconditionally. A ranged
+ * devDependency the render resolved therefore comes back as a production
+ * dependency, which is a different change from tightening a version: it
+ * changes what `npm install --production` installs and what a bundler treats
+ * as runtime code.
+ */
+export interface SectionMove {
+  from: DependencySection;
+  to: DependencySection;
+}
+
 /** One declaration the platform tightened from a range to an exact version. */
 export interface AdoptedPin {
   name: string;
@@ -48,6 +67,15 @@ export interface AdoptedPin {
    * Callers must obtain explicit consent before adopting one.
    */
   added: boolean;
+  /**
+   * Set when the write also moved the declaration between `dependencies` and
+   * `devDependencies`, null when it stayed where the user put it.
+   *
+   * Like an addition this is not bounded by anything the user wrote, so
+   * callers must obtain explicit consent before adopting it, and the notice
+   * has to name the move rather than reporting a bare version.
+   */
+  sectionMove: SectionMove | null;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -81,14 +109,36 @@ function parseSection(value: unknown): Record<string, string> | null {
 }
 
 /**
- * Merge both sections the way the API does, with devDependencies last so a name
- * declared in both resolves to the devDependencies declaration.
+ * Both dependency sections, kept apart.
+ *
+ * The API parses the file into one merged map and the preimages it publishes
+ * are in that merged shape, but the file it writes is not: it can move a name
+ * from `devDependencies` into `dependencies`. Comparing the merged maps hides
+ * exactly that move, so the classification works on the sections and only the
+ * preimage proof uses the merged view.
  */
-function mergedDeclarations(pkg: JsonObject): Record<string, string> | null {
+interface DeclarationSections {
+  dependencies: Record<string, string>;
+  devDependencies: Record<string, string>;
+}
+
+function declarationSections(pkg: JsonObject): DeclarationSections | null {
   const deps = parseSection(pkg.dependencies);
   const devDeps = parseSection(pkg.devDependencies);
   if (!deps || !devDeps) return null;
-  return Object.fromEntries([...Object.entries(deps), ...Object.entries(devDeps)]);
+  return { dependencies: deps, devDependencies: devDeps };
+}
+
+/**
+ * Merge both sections the way the API does, with devDependencies last so a name
+ * declared in both resolves to the devDependencies declaration. This is the
+ * shape the published preimages are in.
+ */
+function mergedDeclarations(sections: DeclarationSections): Record<string, string> {
+  return Object.fromEntries([
+    ...Object.entries(sections.dependencies),
+    ...Object.entries(sections.devDependencies),
+  ]);
 }
 
 /** Deep structural equality over JSON values. Key order is not significant. */
@@ -227,29 +277,63 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
  * whose new value is not an exact version or does not satisfy the old range, or
  * a rewrite of a declaration that was already exact (the resolver never
  * replaces one).
+ *
+ * The comparison is per section, so a declaration that changed sections is
+ * reported as such instead of looking like a plain tightening, and a name
+ * declared in both sections is refused outright whenever it is part of the
+ * change: the API resolves that name through the devDependencies declaration
+ * and writes the result into `dependencies`, which would silently replace an
+ * exact version the user pinned in `dependencies`.
  */
 function tightenedPins(
-  baseline: Readonly<Record<string, string>>,
-  remote: Readonly<Record<string, string>>,
+  baseline: DeclarationSections,
+  remote: DeclarationSections,
 ): AdoptedPin[] | null {
   const pins: AdoptedPin[] = [];
+  const names = new Set([
+    ...Object.keys(baseline.dependencies),
+    ...Object.keys(baseline.devDependencies),
+    ...Object.keys(remote.dependencies),
+    ...Object.keys(remote.devDependencies),
+  ]);
 
-  for (const [name, declaration] of Object.entries(baseline)) {
-    const next = remote[name];
-    if (next === undefined) return null;
-    if (next === declaration) continue;
-    if (isExactSemver(declaration)) return null;
-    if (!isExactSemver(next)) return null;
-    if (!satisfiesDeclaredRange(next, declaration)) return null;
-    pins.push({ name, version: next, added: false });
+  for (const name of names) {
+    const beforeDep = baseline.dependencies[name];
+    const beforeDev = baseline.devDependencies[name];
+    const afterDep = remote.dependencies[name];
+    const afterDev = remote.devDependencies[name];
+    // Untouched in both sections, including a name declared in both and left
+    // alone by the write.
+    if (beforeDep === afterDep && beforeDev === afterDev) continue;
+    // A name this write touched must sit in exactly one section on each side.
+    if (beforeDep !== undefined && beforeDev !== undefined) return null;
+    if (afterDep !== undefined && afterDev !== undefined) return null;
+
+    const before = beforeDep ?? beforeDev;
+    const after = afterDep ?? afterDev;
+    if (after === undefined) return null;
+    if (!isExactSemver(after)) return null;
+
+    if (before === undefined) {
+      pins.push({ name, version: after, added: true, sectionMove: null });
+      continue;
+    }
+    if (isExactSemver(before)) return null;
+    if (!satisfiesDeclaredRange(after, before)) return null;
+
+    const from: DependencySection = beforeDep !== undefined ? "dependencies" : "devDependencies";
+    const to: DependencySection = afterDep !== undefined ? "dependencies" : "devDependencies";
+    pins.push({
+      name,
+      version: after,
+      added: false,
+      sectionMove: from === to ? null : { from, to },
+    });
   }
 
-  for (const [name, declaration] of Object.entries(remote)) {
-    if (Object.hasOwn(baseline, name)) continue;
-    if (!isExactSemver(declaration)) return null;
-    pins.push({ name, version: declaration, added: true });
-  }
-
+  // Stable output for the notice and for the tests that pin it: the order the
+  // sections are iterated in is the order the file declares them.
+  pins.sort((left, right) => left.name.localeCompare(right.name));
   return pins;
 }
 
@@ -283,11 +367,11 @@ function classify(
   // The remote bytes must be what the API's writer would have produced.
   if (!isApiSerialization(remotePkg, remoteContent)) return userEdit;
 
-  const baselineDeclarations = mergedDeclarations(baselinePkg);
-  const remoteDeclarations = mergedDeclarations(remotePkg);
-  if (!baselineDeclarations || !remoteDeclarations) return userEdit;
+  const baselineSections = declarationSections(baselinePkg);
+  const remoteSections = declarationSections(remotePkg);
+  if (!baselineSections || !remoteSections) return userEdit;
 
-  const pins = tightenedPins(baselineDeclarations, remoteDeclarations);
+  const pins = tightenedPins(baselineSections, remoteSections);
   // A drift with no tightened declaration is a reformat or a key reorder, not a
   // pin write, and adopting it would silently discard a local edit.
   if (!pins || pins.length === 0) return userEdit;
@@ -295,8 +379,8 @@ function classify(
   // Proof that the API, not a person, produced this write: it publishes the
   // declaration map it read and the one it is about to write before mutating
   // the file, so both sides of an adopted drift must appear in that history.
-  if (!matchesPreimage(baselineDeclarations, preimages)) return userEdit;
-  if (!matchesPreimage(remoteDeclarations, preimages)) return userEdit;
+  if (!matchesPreimage(mergedDeclarations(baselineSections), preimages)) return userEdit;
+  if (!matchesPreimage(mergedDeclarations(remoteSections), preimages)) return userEdit;
 
   return { classification: "server-pins", pins };
 }
@@ -330,9 +414,24 @@ export function adoptedPackageJsonPins(
   return result.classification === "server-pins" ? result.pins : [];
 }
 
-/** Human-readable summary of adopted pins, e.g. `react 19.3.0, zod 3.25.1`. */
+/**
+ * Human-readable summary of adopted pins, e.g.
+ * `react 19.3.0, clsx 2.1.1 (added), zod 3.25.7 (moved from devDependencies to
+ * dependencies)`.
+ *
+ * A bare `name version` would describe a section move as if it were an
+ * ordinary tightening, which is the one thing the reader has to be told: the
+ * declaration they put in `devDependencies` is now a production dependency.
+ */
 export function formatAdoptedPins(pins: readonly AdoptedPin[]): string {
-  return pins.map((pin) => `${pin.name} ${pin.version}`).join(", ");
+  return pins.map((pin) => {
+    const pinned = `${pin.name} ${pin.version}`;
+    if (pin.added) return `${pinned} (added)`;
+    if (pin.sectionMove) {
+      return `${pinned} (moved from ${pin.sectionMove.from} to ${pin.sectionMove.to})`;
+    }
+    return pinned;
+  }).join(", ");
 }
 
 /**
@@ -348,4 +447,22 @@ export function formatAdoptedPins(pins: readonly AdoptedPin[]): string {
  */
 export function addedDeclarationPins(pins: readonly AdoptedPin[]): AdoptedPin[] {
   return pins.filter((pin) => pin.added);
+}
+
+/**
+ * The pins that change more than a version, so that adopting them without
+ * asking would make a decision on the user's behalf.
+ *
+ * Besides {@link addedDeclarationPins} this covers a declaration the write
+ * moved between `dependencies` and `devDependencies`. The move is not a
+ * reporting detail: `applyResolvedPins` promotes every non-exact declaration it
+ * resolves into `dependencies`, so a dev-only package silently becomes a
+ * production dependency in the user's tracked manifest, changing what
+ * `npm install --production` installs and what a bundler pulls into the
+ * runtime graph. The preimage proof cannot rule it in, because the preimages
+ * are the API's merged declaration map and the merge has already erased which
+ * section each name came from.
+ */
+export function pinsRequiringConsent(pins: readonly AdoptedPin[]): AdoptedPin[] {
+  return pins.filter((pin) => pin.added || pin.sectionMove !== null);
 }

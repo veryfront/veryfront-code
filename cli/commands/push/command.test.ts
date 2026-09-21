@@ -6942,6 +6942,17 @@ describe("push dependency pin reconciliation", () => {
     packageJsonRemote?: string;
     localPackageJson?: string;
     push?: Partial<Parameters<typeof pushCommand>[0]>;
+    /** The bytes the sync baseline records, which default to the local ones. */
+    baselinePackageJson?: string;
+    /**
+     * Runs while the push is reading the preimage history: after it captured
+     * its source snapshot, before the adoption writes the manifest.
+     */
+    onHistoryRequest?: (project: { projectDir: string; runGit: GitProject["runGit"] }) => Promise<
+      void
+    >;
+    /** Pin the push to the commit HEAD is on when it starts. */
+    pinExpectedCommitSha?: boolean;
   }
 
   async function runPinPush(
@@ -6966,7 +6977,8 @@ describe("push dependency pin reconciliation", () => {
         Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
         _resetEnvironmentConfig();
 
-        const localPackageJson = scenario.localPackageJson ?? BASELINE_PACKAGE_JSON;
+        const baselinePackageJson = scenario.baselinePackageJson ?? BASELINE_PACKAGE_JSON;
+        const localPackageJson = scenario.localPackageJson ?? baselinePackageJson;
         await Deno.writeTextFile(`${projectDir}/package.json`, localPackageJson);
         await runGit("add", ".");
         await runGit("commit", "--quiet", "-m", "add manifest");
@@ -6982,7 +6994,7 @@ describe("push dependency pin reconciliation", () => {
               versionId: "00000000-0000-4000-8000-000000000010",
             },
             "package.json": {
-              digest: await computeContentDigest(BASELINE_PACKAGE_JSON),
+              digest: await computeContentDigest(baselinePackageJson),
               versionId: "00000000-0000-4000-8000-000000000011",
             },
           },
@@ -7001,6 +7013,7 @@ describe("push dependency pin reconciliation", () => {
             url.pathname === "/projects/my-project/dependencies/history"
           ) {
             historyCalls++;
+            await scenario.onHistoryRequest?.({ projectDir, runGit });
             return Response.json(scenario.history);
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
@@ -7034,9 +7047,17 @@ describe("push dependency pin reconciliation", () => {
         console.log = captureConsoleLog(output);
         console.warn = captureConsoleLog(output);
         try {
+          const expectedCommitSha = scenario.pinExpectedCommitSha
+            ? await runGit("rev-parse", "HEAD")
+            : undefined;
           await withMockFetch(
             fetchHandler,
-            () => pushCommand({ projectDir, ...scenario.push }),
+            () =>
+              pushCommand({
+                projectDir,
+                ...scenario.push,
+                ...(expectedCommitSha ? { expectedCommitSha } : {}),
+              }),
           );
         } catch (thrown) {
           error = thrown;
@@ -7290,7 +7311,134 @@ describe("push dependency pin reconciliation", () => {
         assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), withAddition);
         assertStringIncludes(
           output.map(stripAnsi).join("\n"),
-          "Adopted 2 server-resolved dependency pins into package.json (react 19.3.0, clsx 2.1.1)",
+          "Adopted 2 server-resolved dependency pins into package.json " +
+            "(clsx 2.1.1 (added), react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("does not promote a devDependency into dependencies without explicit consent", async () => {
+    // `applyResolvedPins` writes `nextDeps[name]` and deletes `nextDevDeps[name]`
+    // for every non-exact declaration it resolves, so a ranged devDependency the
+    // render resolved comes back as a production dependency. The merged preimage
+    // map cannot show that, and the version alone looks like an ordinary
+    // tightening, so nothing but the sections stands between the user and an
+    // unrequested change to what `npm install --production` installs.
+    const baseline = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "19.3.0" }, devDependencies: { zod: "^3.25.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    const promoted = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "19.3.0", zod: "3.25.7" }, devDependencies: {} },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        baselinePackageJson: baseline,
+        packageJsonRemote: promoted,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "19.3.0", zod: "^3.25.0" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0", zod: "3.25.7" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), baseline);
+        const text = output.map(stripAnsi).join("\n");
+        assertStringIncludes(text, "zod 3.25.7 (moved from devDependencies to dependencies)");
+        assertStringIncludes(text, "veryfront push --adopt-new-deps");
+      },
+    );
+  });
+
+  it("names the section move in the notice once --adopt-new-deps is passed", async () => {
+    const baseline = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "19.3.0" }, devDependencies: { zod: "^3.25.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    const promoted = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "19.3.0", zod: "3.25.7" }, devDependencies: {} },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        push: { adoptNewDeps: true },
+        baselinePackageJson: baseline,
+        packageJsonRemote: promoted,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "19.3.0", zod: "^3.25.0" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0", zod: "3.25.7" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        assertEquals(error, undefined);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), promoted);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 1 server-resolved dependency pin into package.json " +
+            "(zod 3.25.7 (moved from devDependencies to dependencies))",
+        );
+      },
+    );
+  });
+
+  it("reports the adopted pins even when the push fails after the write", async () => {
+    // The manifest is replaced before the push re-captures its source snapshot,
+    // and that recapture throws when HEAD moved underneath it. A notice printed
+    // after the recapture would never run: the tracked file would be sitting
+    // there rewritten with nothing said, and the next push cannot re-enter this
+    // path because the local digest no longer matches the baseline.
+    await runPinPush(
+      {
+        pinExpectedCommitSha: true,
+        onHistoryRequest: async ({ runGit }) => {
+          await runGit("commit", "--quiet", "--allow-empty", "-m", "concurrent commit");
+        },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertStringIncludes(error.message, "Local source changed during push");
+        assertEquals(puts, []);
+        // The write already landed, so the report is the only thing telling the
+        // user their checkout now differs from what they committed.
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), PINNED_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 1 server-resolved dependency pin into package.json (react 19.3.0)",
         );
       },
     );
