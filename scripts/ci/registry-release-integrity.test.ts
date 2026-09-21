@@ -54,6 +54,34 @@ describe("registry propagation budget", () => {
     );
   });
 
+  it("spends every attempt the budget allows when lookups answer at once", async () => {
+    // Fast 404s: the budget must still buy all 91 lookups, so a version that
+    // appears in the final ten seconds of the window is still seen.
+    let attempts = 0;
+    let now = 0;
+    const { maxAttempts, retryDelayMs } = readPropagationBudget({});
+    await captureError(() =>
+      pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts,
+        retryDelayMs,
+        requestTimeoutMs: 15_000,
+        now: () => now,
+        delay: (ms) => {
+          now += ms;
+          return Promise.resolve();
+        },
+        fetcher: () => {
+          attempts += 1;
+          return Promise.resolve(new Response("{}", { status: 404 }));
+        },
+      })
+    );
+    assertEquals(attempts, maxAttempts);
+  });
+
   it("stops polling at the budget however slow each lookup is", async () => {
     // A lookup that takes its full request timeout must not stretch the poll
     // past the budget: the job around it is sized for that budget.

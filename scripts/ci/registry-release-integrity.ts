@@ -271,10 +271,11 @@ export async function pollRegistryPackage(
     if (result.kind === "metadata") return result.metadata;
     lastFailure = result.failure;
 
-    // The next attempt would finish past the budget, so this was the last. A
+    // The next attempt would START past the budget, so this was the last: a
+    // lookup beginning exactly at the deadline is the one the budget buys. A
     // caller that sets no delay (the unit tests) states its bound in attempts
     // alone and is left to them.
-    if (budgetMs > 0 && now() + options.retryDelayMs >= deadline) break;
+    if (budgetMs > 0 && now() + options.retryDelayMs > deadline) break;
 
     if (attempt < options.maxAttempts) {
       options.onRetry?.(
