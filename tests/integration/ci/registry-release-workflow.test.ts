@@ -3,6 +3,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl } from "#std/path";
 import { parse } from "#std/yaml/parse";
+import {
+  readPropagationBudget,
+  REQUEST_TIMEOUT_MS,
+} from "../../../scripts/ci/registry-release-integrity.ts";
+import { DEFAULT_SMOKE_BUDGET_MS } from "../../../scripts/test/npm-install-smoke.ts";
 
 type YamlRecord = Record<string, unknown>;
 const MERGE_CORRECTNESS_DEPENDENCIES = [
@@ -23,6 +28,19 @@ const RELEASE_SCRIPT_PATH = fromFileUrl(
   new URL("../../../scripts/ci/publish-github-release.sh", import.meta.url),
 );
 const decoder = new TextDecoder();
+
+/**
+ * What `scripts/test/npm-install-smoke.ts` may spend after the poll returns.
+ *
+ * Its own step timeouts do not bound it -- a registry install retries
+ * propagation skew five times at ten minutes each, and it runs two of them --
+ * so the smoke enforces this budget on itself and caps every command at what
+ * is left of it. That makes the number here the smoke's real ceiling rather
+ * than a guess at its typical two to five minutes, which is what the job has
+ * to hold: the poll only spends its own budget on the runs where npm is
+ * slowest, and those are the runs where the smoke has least room.
+ */
+const SMOKE_ALLOWANCE_MS = DEFAULT_SMOKE_BUDGET_MS;
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -672,6 +690,32 @@ describe("registry release workflow", () => {
         GITHUB_SHA: "${{ github.sha }}",
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
       },
+    );
+  });
+
+  it("gives the registry gate room for the poll and the smoke that follows", async () => {
+    // The job runs three things in series, and the poll is only the middle
+    // one. Sizing its budget against the whole job left the runner able to be
+    // killed while the smoke was still installing -- an unclassified failure
+    // in place of the classified one the poll exists to produce.
+    const jobs = await readJobs();
+    const gate = asRecord(jobs["quality-gate-registry"], "registry quality gate job");
+    const setupStep = steps(gate, "registry quality gate job").find((step) =>
+      String(step.uses) === "./.github/actions/setup-deno"
+    );
+    const setupMs = Number(asRecord(setupStep ?? {}, "setup step")["timeout-minutes"]) * 60_000;
+    assert(Number.isFinite(setupMs) && setupMs > 0, "setup-deno must bound its own step");
+
+    const { maxAttempts, retryDelayMs } = readPropagationBudget({});
+    // The last lookup may begin at the deadline and still spend its request
+    // timeout, so the poll ends within budget plus one request.
+    const pollMs = (maxAttempts - 1) * retryDelayMs + REQUEST_TIMEOUT_MS;
+    const jobMs = Number(gate["timeout-minutes"]) * 60_000;
+
+    assert(
+      setupMs + pollMs + SMOKE_ALLOWANCE_MS <= jobMs,
+      `setup ${setupMs}ms + poll ${pollMs}ms + smoke ${SMOKE_ALLOWANCE_MS}ms exceeds the ` +
+        `${jobMs}ms job`,
     );
   });
 

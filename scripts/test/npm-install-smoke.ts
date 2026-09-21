@@ -236,6 +236,65 @@ interface RunResult {
 
 const decoder = new TextDecoder();
 
+/**
+ * The wall clock the whole smoke may spend once a budget is started.
+ *
+ * Its own step timeouts do not bound it: a registry-mode install retries
+ * propagation skew up to five times at ten minutes each, and the smoke runs
+ * two of them, so the permitted worst case is over an hour and a half -- far
+ * past the job that runs it. Without a budget the runner is simply killed
+ * mid-install, which reports nothing about the release at all; the release
+ * gate exists to say WHY it failed, so the smoke has to be the one that
+ * stops. `registry-release-workflow.test.ts` sizes the job against this.
+ *
+ * Every wait honours it, not only the child commands: `run` caps a command at
+ * what is left, `budgetedDelay` caps a readiness poll, and `fetchWithTimeout`
+ * caps a request. A ceiling one phase can walk past is not a ceiling.
+ *
+ * @internal Exported so the workflow test can size the job against it.
+ */
+export const DEFAULT_SMOKE_BUDGET_MS = 20 * 60_000;
+
+let smokeDeadline = Number.POSITIVE_INFINITY;
+
+/**
+ * An operation stopped because the smoke ran out of budget, not because that
+ * operation was itself slow. Carried as its own error so the caller can
+ * classify it: an install cut short this way is an install failure, and
+ * reporting it as a behaviour failure sends the reader to the wrong place.
+ */
+class SmokeBudgetExpired extends Error {
+  constructor(what: string) {
+    super(`the smoke budget ran out during ${what}`);
+  }
+}
+
+/** Stop here when nothing is left, so no wait can outlive the budget. */
+function requireSmokeBudget(what: string): number {
+  const remainingMs = remainingSmokeBudgetMs();
+  if (remainingMs <= 0) throw new SmokeBudgetExpired(what);
+  return remainingMs;
+}
+
+/** Start the budget. Until this is called the smoke is bounded only by its steps. */
+function startSmokeBudget(): number {
+  const budgetMs = nonNegativeIntegerEnv(
+    "VF_NPM_SMOKE_BUDGET_MS",
+    DEFAULT_SMOKE_BUDGET_MS,
+  );
+  smokeDeadline = budgetMs > 0
+    ? Date.now() + budgetMs
+    : Number.POSITIVE_INFINITY;
+  return budgetMs;
+}
+
+/** What is left of it, or `Infinity` when none was started. */
+function remainingSmokeBudgetMs(): number {
+  return smokeDeadline === Number.POSITIVE_INFINITY
+    ? Number.POSITIVE_INFINITY
+    : smokeDeadline - Date.now();
+}
+
 async function run(
   command: string,
   args: string[],
@@ -246,8 +305,15 @@ async function run(
     timeoutMs: number;
   },
 ): Promise<RunResult> {
+  // A command may not outlive the budget: an install that starts with two
+  // minutes left is given two, not its own ten.
+  const remainingMs = requireSmokeBudget(command);
+  const budgeted = remainingMs < options.timeoutMs;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    Math.min(options.timeoutMs, remainingMs),
+  );
   try {
     const output = await new Deno.Command(command, {
       args,
@@ -264,6 +330,11 @@ async function run(
     return { code: output.code, stdout, stderr, combined: stdout + stderr };
   } catch (error) {
     if (controller.signal.aborted) {
+      // Which clock ran out decides what the reader is told: the command's own
+      // timeout names the command, the budget names the smoke.
+      if (budgeted) {
+        throw new SmokeBudgetExpired(`${command} ${args.join(" ")}`);
+      }
       throw new Error(
         `${command} ${args.join(" ")} timed out after ${options.timeoutMs}ms`,
       );
@@ -560,12 +631,22 @@ async function npmInstall(
   const lockfile = `${workDir}/package-lock.json`;
   const freshProject = !(await pathExists(nodeModules)) &&
     !(await pathExists(lockfile));
+  const registryUrl = plan.npmEnv?.NPM_CONFIG_REGISTRY ??
+    "https://registry.npmjs.org";
   for (let attempt = 1;; attempt++) {
-    const result = await run("npm", [...args, "--prefer-online", ...specs], {
-      cwd: workDir,
-      env: plan.npmEnv,
-      timeoutMs: 600_000,
-    });
+    let result: RunResult;
+    try {
+      result = await run("npm", [...args, "--prefer-online", ...specs], {
+        cwd: workDir,
+        env: plan.npmEnv,
+        timeoutMs: 600_000,
+      });
+    } catch (error) {
+      // An install the budget cut short is an install failure: reporting it
+      // as a behaviour failure sends the reader to the wrong half of the gate.
+      if (!(error instanceof SmokeBudgetExpired)) throw error;
+      failRegistryInstall(error.message, registryUrl, specs.length, attempt);
+    }
     if (result.code === 0) return;
 
     const skew = attempt < maxAttempts
@@ -576,15 +657,15 @@ async function npmInstall(
       )
       : undefined;
     if (!skew) {
-      failRegistryInstall(
-        result.combined,
-        plan.npmEnv?.NPM_CONFIG_REGISTRY ?? "https://registry.npmjs.org",
-        specs.length,
-        attempt,
-      );
+      failRegistryInstall(result.combined, registryUrl, specs.length, attempt);
     }
 
     const delayMs = registryRetryDelayMs(attempt);
+    // A retry that cannot finish inside what is left is not a retry, it is
+    // the runner being killed with the failure unexplained.
+    if (remainingSmokeBudgetMs() <= delayMs) {
+      failRegistryInstall(result.combined, registryUrl, specs.length, attempt);
+    }
     console.error(
       `Registry install attempt ${attempt}/${maxAttempts} hit npm registry propagation skew (${skew}); retrying in ${
         Math.round(delayMs / 1000)
@@ -1242,6 +1323,14 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * A wait bounded by the budget as well as its own length, so a readiness poll
+ * cannot carry the smoke past its deadline one interval at a time.
+ */
+function budgetedDelay(ms: number, what: string): Promise<void> {
+  return delay(Math.min(ms, requireSmokeBudget(what)));
+}
+
 async function fetchWithTimeout(
   url: URL | string,
   timeoutMs: number,
@@ -1249,7 +1338,9 @@ async function fetchWithTimeout(
 ): Promise<{ status: number; body: string; headers: Headers }> {
   const response = await fetch(url, {
     ...init,
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: AbortSignal.timeout(
+      Math.min(timeoutMs, requireSmokeBudget(String(url))),
+    ),
   });
   return {
     status: response.status,
@@ -1273,7 +1364,7 @@ async function checkStarterDevServer(
       ready = true;
       break;
     }
-    await delay(250);
+    await budgetedDelay(250, "the dev server readiness wait");
   }
   if (!ready) {
     fail(
@@ -1416,7 +1507,7 @@ async function checkWorkflowTimeout(
       } catch {
         // Poll again until the deadline.
       }
-      await delay(250);
+      await budgetedDelay(250, "the workflow run poll");
     }
 
     const node = runDetail?.nodeStates?.["call-provider"];
@@ -1502,7 +1593,13 @@ async function runSmoke(workDir: string): Promise<void> {
 
   try {
     const plan = await prepareArtifacts(workDir);
-    if (plan.registryMode) smokeFailureStatus = 21;
+    if (plan.registryMode) {
+      smokeFailureStatus = 21;
+      const budgetMs = startSmokeBudget();
+      console.log(
+        `npm install smoke: budget ${Math.round(budgetMs / 60_000)} minutes.`,
+      );
+    }
 
     await runChecked("npm init", "npm", ["init", "-y"], {
       cwd: workDir,

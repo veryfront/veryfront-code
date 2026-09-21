@@ -43,20 +43,23 @@ async function captureError(
 
 describe("registry propagation budget", () => {
   it("waits long enough for npm to publish the version everywhere", () => {
-    // The 30x10s budget gave up on main three times while the release itself
-    // was fine: the version simply was not visible yet.
+    // `npm publish` returns before the version is readable and nothing calls
+    // back when it becomes one, so the budget has to cover npm's slowest
+    // processing. The 30x10s budget gave up on main three times and fifteen
+    // minutes once more: rc.19779 was published at 01:43:10Z and recorded at
+    // 02:03:27Z, twenty minutes later.
     // The poll waits BETWEEN attempts, so n attempts spend (n-1) delays.
     const { maxAttempts, retryDelayMs } = readPropagationBudget({});
     assertEquals(
-      (maxAttempts - 1) * retryDelayMs >= 900_000,
+      (maxAttempts - 1) * retryDelayMs >= 1_800_000,
       true,
       `${maxAttempts}x${retryDelayMs}ms`,
     );
   });
 
   it("spends every attempt the budget allows when lookups answer at once", async () => {
-    // Fast 404s: the budget must still buy all 91 lookups, so a version that
-    // appears in the final ten seconds of the window is still seen.
+    // Fast 404s: the budget must still buy every lookup it allows, so a
+    // version that appears in the final ten seconds of the window is seen.
     let attempts = 0;
     let now = 0;
     const { maxAttempts, retryDelayMs } = readPropagationBudget({});
