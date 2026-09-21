@@ -499,6 +499,25 @@ describe("scripts/build/model-catalog-mapping", () => {
       "is not one of the served models",
     );
 
+    // A listed entry missing an identity field is a broken payload, not a
+    // removal: dropping it would produce a pull request deleting a model the
+    // platform still serves.
+    const malformed = fakePayload();
+    delete (malformed.models as Record<string, unknown>[])[1].name;
+    assertThrows(
+      () => buildModelCatalogData(malformed, OVERLAY),
+      Error,
+      'model "riddle-9" is missing',
+    );
+
+    const untyped = fakePayload();
+    (untyped.models as Record<string, unknown>[])[2].modelId = 42;
+    assertThrows(
+      () => buildModelCatalogData(untyped, OVERLAY),
+      Error,
+      "is missing",
+    );
+
     const unlabelled = {
       ...fakePayload(),
       providers: ["acme-labs", "beta-works", "ghost-co"],

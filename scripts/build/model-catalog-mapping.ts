@@ -105,9 +105,11 @@ function fail(detail: string): never {
  * an unknown capability key are all dropped rather than carried.
  *
  * Throws when the payload cannot describe a usable catalog: an empty model or
- * provider list, a default model that no entry claims, or a provider with no
- * model to take its display label from. A scheduled run that throws fails
- * loudly, which is the intended alert.
+ * provider list, a listed model that cannot be identified, a default model
+ * that no entry claims, or a provider with no model to take its display label
+ * from. A scheduled run that throws fails loudly, which is the intended alert.
+ * Nothing is ever dropped quietly: a model that vanishes from the output has
+ * to have vanished from the catalog.
  */
 export function buildModelCatalogData(
   payload: unknown,
@@ -115,9 +117,11 @@ export function buildModelCatalogData(
 ): ModelCatalogData {
   const root = asRecord(payload) ?? fail("the payload is not a JSON object");
 
-  const servedModels = readArray(root, "models").map(asRecord).filter((
-    model,
-  ): model is Record<string, unknown> => model !== undefined);
+  // An entry that is not an object is malformed for the same reason one with
+  // no identity is, so it is not quietly dropped either.
+  const servedModels = readArray(root, "models").map((model, index) =>
+    asRecord(model) ?? fail(`entry ${index} is not an object`)
+  );
   if (servedModels.length === 0) fail("it lists no model");
 
   const providerOrder: string[] = [];
@@ -139,12 +143,33 @@ export function buildModelCatalogData(
   const labelByProvider = new Map<string, string>();
   const aliasPrefixes = new Map<string, Set<string>>();
 
-  for (const served of servedModels) {
+  for (const [index, served] of servedModels.entries()) {
     const servedId = readString(served, "id");
     const modelId = readString(served, "modelId");
     const provider = readString(served, "provider");
     const name = readString(served, "name");
-    if (!servedId || !modelId || !provider || !name) continue;
+    // A listed entry that cannot be identified is a broken payload, not a
+    // model being withdrawn. Skipping it would generate an ordinary-looking
+    // removal, and merging that would drop a model, and its aliases, that the
+    // platform still serves. Fail instead, so the scheduled run is the alert.
+    if (
+      servedId === undefined || modelId === undefined ||
+      provider === undefined || name === undefined
+    ) {
+      const missing = ([
+        ["id", servedId],
+        ["modelId", modelId],
+        ["provider", provider],
+        ["name", name],
+      ] as const).filter(([, value]) => value === undefined).map(([field]) =>
+        field
+      );
+      fail(
+        `model "${servedId ?? modelId ?? `entry ${index}`}" is missing ${
+          missing.join(", ")
+        }`,
+      );
+    }
 
     const capabilities = asRecord(served.capabilities) ?? {};
     // `reasoning` is the served name for this fact and the only one read: the
