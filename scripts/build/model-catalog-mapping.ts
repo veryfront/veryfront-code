@@ -537,9 +537,14 @@ function readServedModels(
   return facts;
 }
 
-/** The alias and label tables, in provider order. */
+/**
+ * The alias and label tables, in provider order. `listedProviders` is the
+ * served `providers` list whole: a provider the display order leaves out for
+ * lacking a chat model is still a provider, and an alias may not stand for it.
+ */
 function buildProviderTables(
   providerOrder: readonly string[],
+  listedProviders: readonly string[],
   facts: ServedFacts,
   overlay: ModelCatalogOverlay,
 ): {
@@ -550,11 +555,11 @@ function buildProviderTables(
   // written, so a retained alias is checked for the two ways it could hijack
   // ids: a key outside the served-alias shape would make ids the runtime
   // deliberately refuses resolve, and a key that names another provider —
-  // served, or routed by the overlay — would send that provider's every id
+  // listed, or routed by the overlay — would send that provider's every id
   // to the alias's target. The overlay names repository values, so they are
   // printed.
   const providers = new Set([
-    ...providerOrder,
+    ...listedProviders,
     ...overlay.providerRouting.map(([provider]) => provider),
   ]);
   for (const [alias, provider] of overlay.retainedProviderAliases) {
@@ -583,7 +588,7 @@ function buildProviderTables(
     // (or starts) spelling an alias the overlay retains anyway.
     const derived = [...facts.aliasPrefixes.get(provider) ?? []];
     // A derived alias is held to the same rule as a retained one: a prefix
-    // that names another provider — served, or routed by the overlay — would
+    // that names another provider — listed, or routed by the overlay — would
     // send that provider's every id here, since the runtime reads the alias
     // map before accepting a provider as written. Named by the position of
     // the model that implied it: the prefix is a served value.
@@ -692,6 +697,7 @@ export function buildModelCatalogData(
 
   const { providerAliases, providerLabels } = buildProviderTables(
     providerOrder,
+    catalog.providers,
     facts,
     overlay,
   );

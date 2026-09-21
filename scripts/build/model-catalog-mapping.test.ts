@@ -1214,6 +1214,23 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
+  it("refuses a served model whose provider segment names a listed provider with no chat model", () => {
+    // A listed provider the display order leaves out (nothing to show under
+    // it) is still a provider: `ghost/x` served under acme-labs would send
+    // every ghost id to Acme, and the served list says ghost is its own.
+    const sentinel = "served-value-must-not-print";
+    const payload = fakePayload();
+    payload.providers = [...(payload.providers as string[]), "ghost"];
+    const model = (payload.models as Record<string, unknown>[])[0]!;
+    model.modelId = `ghost/${sentinel}`;
+    const error = assertThrows(
+      () => buildModelCatalogData(payload, OVERLAY),
+      Error,
+      "models[0] carries a provider segment that names another provider",
+    ) as Error;
+    assertEquals(error.message.includes(sentinel), false);
+  });
+
   it("refuses a retained alias that names another provider", () => {
     // The runtime reads the alias map before accepting a provider as written,
     // so `["beta-works", "acme-labs"]` would send every beta-works id to
