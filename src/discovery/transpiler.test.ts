@@ -1180,10 +1180,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
       // The negation still stands when nothing written after it overrides.
       assertEquals(await declaring(["**", "!apps/**", "libs/other"]), "");
-      // A trailing `**` stands for at least one segment, so it names what is
-      // UNDER the member and not the member; a trailing `*` inside a segment
-      // may still match nothing left of the name.
-      assertEquals(await declaring(["apps/store-web/**"]), "");
+      // A trailing `**` may stand for nothing: npm appends a separator to
+      // every pattern before globbing, so it matches the directory itself.
+      // A trailing `*` inside a segment may match nothing left of the name.
+      assertEquals(await declaring(["apps/store-web/**"]), "apps/store-web");
       assertEquals(await declaring(["apps/store-web*"]), "apps/store-web");
       // minimatch's extglobs: one alternative, zero or one, zero or more, one
       // or more, and anything that is none of them.
@@ -1196,6 +1196,17 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/@(a|b)"]), "");
       // A mark with no group after it is the wildcard it has always been.
       assertEquals(await declaring(["apps/*"]), "apps/store-web");
+      // A `!` group refuses what its alternatives plus the TAIL would match,
+      // which is how minimatch reads it: `a!(pp|xx)*` excludes `app`.
+      assertEquals(await declaring(["apps/s!(tore-web)*"]), "");
+      assertEquals(await declaring(["apps/s!(hop)*"]), "apps/store-web");
+      // Brace ranges, numeric and alphabetic.
+      assertEquals(await declaring(["apps/{store-web,a}"]), "apps/store-web");
+      assertEquals(await declaring(["{a..z}pps/store-web"]), "apps/store-web");
+      assertEquals(await declaring(["apps{1..3}/store-web"]), "");
+      // `..` walks back, and a pattern that walks out of the root names none.
+      assertEquals(await declaring(["libs/../apps/*"]), "apps/store-web");
+      assertEquals(await declaring(["../apps/*"]), "");
       // minimatch does not let a wildcard match a leading dot, and neither
       // does this: an ancestor npm would not call a workspace owner must not
       // supply the project's provenance.

@@ -935,7 +935,9 @@ function workspacePatterns(
     const marks = /^!*/.exec(pattern)![0].length;
     const normalized = normalizeWorkspacePattern(pattern.slice(marks));
     if (normalized.length === 0) continue;
-    for (const expanded of expandBraces(normalized)) {
+    for (const alternative of expandBraces(normalized)) {
+      const expanded = walkedPattern(alternative);
+      if (expanded === null || expanded.length === 0) continue;
       if (marks % 2 === 1) {
         excluded.push(expanded);
         continue;
@@ -997,9 +999,11 @@ function matchesWorkspacePattern(
       m = ++matchedTo;
     }
   }
-  // A trailing `**` stands for at least one segment, as minimatch has it:
-  // `packages/**` names what is under `packages`, never `packages` itself.
-  // Anything left over here is a `**` that consumed nothing.
+  // A trailing `**` may stand for nothing at all. npm appends a separator to
+  // every workspace pattern before globbing it (`getGlobPattern`), so it
+  // matches the DIRECTORY: `minimatch("packages/app/", "packages/app/**/")`
+  // is true, and `packages/app/**` names `packages/app` itself.
+  while (pattern[p] === "**") p++;
   return p === pattern.length;
 }
 
@@ -1019,7 +1023,8 @@ function expandBraces(pattern: string): string[] {
   const open = unescapedIndexOf(pattern, "{");
   const close = open < 0 ? -1 : matchingBrace(pattern, open);
   if (close < 0) return [pattern];
-  const alternatives = splitBraceBody(pattern.slice(open + 1, close));
+  const body = pattern.slice(open + 1, close);
+  const alternatives = braceSequence(body) ?? splitBraceBody(body);
   if (alternatives.length < 2) return [pattern];
   const head = pattern.slice(0, open);
   const tail = pattern.slice(close + 1);
@@ -1052,6 +1057,44 @@ function matchingBrace(pattern: string, open: number): number {
     else if (char === "}" && --depth === 0) return index;
   }
   return -1;
+}
+
+/**
+ * A `{from..to}` or `{from..to..step}` sequence written out, or `null` when
+ * the body is not one. npm's brace expansion supports both the numeric and
+ * the single-character alphabetic form, and a workspace may name its members
+ * with either.
+ */
+function braceSequence(body: string): string[] | null {
+  const numeric = /^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$/.exec(body);
+  if (numeric) {
+    const from = Number(numeric[1]);
+    const to = Number(numeric[2]);
+    const step = Math.abs(Number(numeric[3] ?? 1)) || 1;
+    return sequence(from, to, step, (value) => String(value));
+  }
+  const alphabetic = /^([A-Za-z])\.\.([A-Za-z])(?:\.\.(-?\d+))?$/.exec(body);
+  if (!alphabetic) return null;
+  const from = alphabetic[1]!.codePointAt(0)!;
+  const to = alphabetic[2]!.codePointAt(0)!;
+  const step = Math.abs(Number(alphabetic[3] ?? 1)) || 1;
+  return sequence(from, to, step, (value) => String.fromCodePoint(value));
+}
+
+/** The values from `from` to `to` inclusive, in whichever direction that is. */
+function sequence(
+  from: number,
+  to: number,
+  step: number,
+  render: (value: number) => string,
+): string[] {
+  const values: string[] = [];
+  const direction = from <= to ? step : -step;
+  for (let value = from; direction > 0 ? value <= to : value >= to; value += direction) {
+    if (values.length >= MAX_WORKSPACE_PATTERN_ALTERNATIVES) break;
+    values.push(render(value));
+  }
+  return values;
 }
 
 /** A brace body split on its own commas, leaving nested braces intact. */
@@ -1113,7 +1156,9 @@ function segmentTokens(pattern: string): SegmentToken[] {
       }
     }
     if (char === "*") {
-      tokens.push({ kind: "star" });
+      // `a**b` is `a*b`: within one segment a run of stars is still one run,
+      // and minimatch collapses them before compiling.
+      if (tokens[tokens.length - 1]?.kind !== "star") tokens.push({ kind: "star" });
       continue;
     }
     if (char === "?") {
@@ -1223,8 +1268,13 @@ function allowsLeadingDot(token: SegmentToken | undefined): boolean {
   if (token === undefined) return false;
   if (token.kind === "char") return token.char === ".";
   if (token.kind === "class") return token.dotExplicit;
-  // A group reaches a dot through whichever alternative names one.
-  return token.kind === "extglob" && token.mark !== "!" &&
+  if (token.kind !== "extglob" || token.mark === "!") return false;
+  // minimatch compiles the guard once, at the first unit. For a group it goes
+  // INSIDE each alternative, so the group reaches a dot when an alternative
+  // names one -- or when the group can match nothing at all, which leaves the
+  // guard unreached and the rest of the segment free to take it. `!(...)` is
+  // the exception: its guard sits before the run and binds either way.
+  return token.mark === "?" || token.mark === "*" ||
     token.alternatives.some((alternative) => allowsLeadingDot(alternative[0]));
 }
 
@@ -1292,15 +1342,41 @@ function matchesExtglob(
 ): boolean {
   const token = tokens[index] as Extract<SegmentToken, { kind: "extglob" }>;
   const rest = (end: number) => matchesTokens(tokens, index + 1, name, end, memo);
+  // The guard lives inside each alternative, so an alternative that actually
+  // consumes the segment's leading dot has to name it: `*(?)` does not match
+  // `.ab`, while `?([a-c])*` does by matching nothing here.
+  const guarded = offset === 0 && name.startsWith(".");
   const consumes = (from: number, to: number) =>
     token.alternatives.some((alternative) =>
+      (!guarded || to === from || allowsLeadingDot(alternative[0])) &&
       matchesTokens(alternative, 0, name.slice(from, to), 0, new Map())
     );
   if (token.mark === "!") {
-    for (let end = offset; end <= name.length; end++) {
-      if (!consumes(offset, end) && rest(end)) return true;
+    // minimatch folds the tokens AFTER the group into the negative lookahead,
+    // so the refusal is over the whole remainder rather than the group's own
+    // run: `!(a)b` excludes `ab`, and `a!(pp|xx)*` excludes `app` and `axxy`.
+    // Testing each run on its own instead accepted those, by letting the
+    // group consume nothing and the trailing `*` take the `pp`.
+    const tail = tokens.slice(index + 1);
+    const remainder = name.slice(offset);
+    // One exception in how the tail joins the lookahead: a `*` that is the
+    // WHOLE tail of a group opening the segment has to consume something, so
+    // `!(a)*` still names `a` itself while `!(a)b*` refuses `ab`. minimatch
+    // compiles the first as `a[^/]+?` and the second as `ab[^/]*?`.
+    const forbidden = index === 0 && tail.length === 1 && tail[0]!.kind === "star"
+      ? [{ kind: "any" } as SegmentToken, ...tail]
+      : tail;
+    for (const alternative of token.alternatives) {
+      // A `*` alternative has to consume something too, for the same reason:
+      // minimatch compiles it as `[^/]+?` inside the lookahead, so `!(*)a`
+      // refuses `aba` and not merely `a`.
+      const refuses = alternative.length === 1 && alternative[0]!.kind === "star"
+        ? [{ kind: "any" } as SegmentToken, ...alternative]
+        : alternative;
+      if (matchesTokens([...refuses, ...forbidden], 0, remainder, 0, new Map())) return false;
     }
-    return false;
+    // Refused nothing, so the group is an ordinary run with the tail after it.
+    return matchesTokens([{ kind: "star" }, ...tail], 0, remainder, 0, new Map());
   }
   // `?` and `*` let the group stand for nothing at all; `@` and `+` do not.
   if ((token.mark === "?" || token.mark === "*") && rest(offset)) return true;
@@ -1366,6 +1442,33 @@ async function projectLockOwners(
     if (declaresWorkspaceMember(root, memberPath)) owners.push({ directory, memberPath });
   }
   return owners;
+}
+
+/**
+ * A pattern with its `..` segments walked, or `null` when it names nothing.
+ *
+ * `a/../b` names `b`, as npm has it. Two forms name nothing instead: a `..`
+ * with nothing to walk back through leaves the workspace root, and a `..`
+ * after a `.` finds no directory to leave -- `minimatch` refuses both.
+ *
+ * A `.` on its own is NOT resolved, because minimatch does not resolve one
+ * either: `minimatch("a/", "./a/")` is false. npm's own `./` prefix works
+ * only because `appendNegatedPatterns` strips it before globbing, which
+ * {@link normalizeWorkspacePattern} does too.
+ */
+function walkedPattern(pattern: string): string | null {
+  const segments: string[] = [];
+  for (const segment of pattern.split("/")) {
+    if (segment !== "..") {
+      segments.push(segment);
+      continue;
+    }
+    const walked = segments.pop();
+    // Nothing to walk back through leaves the root; a `.` is no directory to
+    // leave, so neither names a member.
+    if (walked === undefined || walked === ".") return null;
+  }
+  return segments.join("/");
 }
 
 /** A path with its leading separators removed. */
