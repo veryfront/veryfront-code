@@ -1381,40 +1381,30 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
-  it("keeps a retained alias for a provider the catalog lists no chat model for", () => {
-    // An alias is about the ids the runtime accepts, not about the chat list:
-    // ids of the provider the runtime resolves without a chat entry still go
-    // through it. Such rows follow the served groups, in overlay order; the
-    // provider itself gets no label or display-order row. The catalog still
-    // LISTS the provider, so the alias resolves onto a routing row.
+  it("refuses a retained alias for a listed provider with no served surface", () => {
+    // Being listed is not enough. The alias exists so callers can keep sending
+    // its ids; the runtime resolves it to this provider and then reads that
+    // provider's routing, which with no served surface falls back to the
+    // default one. For an ordinary provider that is a reported fallback, but
+    // here it is a wrong wire format promised to a caller, so generation
+    // fails. This replaces the case where such an alias was published: a
+    // listed provider with no served surface has no served model either, since
+    // every served model yields both a chat entry and its provider's surface.
     const payload = fakePayload();
     payload.providers = [...(payload.providers as string[]), "gamma"];
     const overlay: ModelCatalogOverlay = {
       ...OVERLAY,
       nativeProviders: [...OVERLAY.nativeProviders, "gamma"],
-      retainedProviderAliases: [["gamma-api", "gamma"], ["gamma", "gamma"], [
-        "acme",
-        "acme-labs",
-      ]],
+      retainedProviderAliases: [["gamma-api", "gamma"]],
     };
-    const data = buildModelCatalogData(payload, overlay);
-    const aliases = data.providerAliases.map(([alias]) => alias);
-    assertEquals(aliases.indexOf("acme") < aliases.indexOf("gamma-api"), true);
-    assertEquals(new Map(data.providerAliases).get("gamma-api"), "gamma");
-    // The provider's own name is not an alias row for an unserved provider.
-    assertEquals(aliases.includes("gamma"), false);
-    assertEquals(data.providerOrder.includes("gamma"), false);
-    assertEquals(
-      data.providerLabels.some(([provider]) => provider === "gamma"),
-      false,
-    );
-    // Listed but serving no model, so it routes on the default surface and is
-    // reported, exactly as any other listed provider with no served surface.
-    // The overlay names it native, and that flag is the overlay's to give.
-    assertEquals(new Map(data.providerRouting).get("gamma"), {
-      surface: "openai",
-      native: true,
-    });
+
+    const error = assertThrows(
+      () => buildModelCatalogData(payload, overlay),
+      Error,
+      'overlay retainedProviderAliases keeps "gamma-api" for "gamma", which the served catalog lists without naming a surface for it',
+    ) as Error;
+    assertStringIncludes(error.message, "serve a surface for the provider");
+    // The warning alone is what this refusal replaces.
     assertEquals(findProvidersWithoutSurface(payload), ["providers[2]"]);
   });
 

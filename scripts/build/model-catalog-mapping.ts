@@ -622,14 +622,15 @@ function buildProviderTables(
   providerLabels: (readonly [string, string])[];
 } {
   // The runtime consults the alias map BEFORE it accepts a provider as
-  // written, so a retained alias is checked for the three ways it could send
-  // a request somewhere it does not belong: a key outside the served-alias
-  // shape would make ids the runtime deliberately refuses resolve; a key that
-  // names another provider — listed, or named by the overlay — would send
-  // that provider's every id to the alias's target; and a target the catalog
-  // no longer lists has no routing row, so the alias would resolve and then
-  // take the default surface. The overlay names repository values, so they
-  // are printed.
+  // written, so a retained alias is checked for the ways it could send a
+  // request somewhere it does not belong: a key outside the served-alias shape
+  // would make ids the runtime deliberately refuses resolve; a key that names
+  // another provider — listed, or named by the overlay — would send that
+  // provider's every id to the alias's target; and a target the served catalog
+  // names no surface for, whether because it lists the provider without one or
+  // does not list it at all, is routed on the default surface, so the alias
+  // would resolve and then speak the wrong wire format. The overlay names
+  // repository values, so they are printed.
   const providers = new Set([
     ...listedProviders,
     ...overlay.nativeProviders,
@@ -651,9 +652,20 @@ function buildProviderTables(
     // honest surface to route it on: nothing served names one, and writing one
     // here by hand is the per-vendor table this generator removed. A self
     // alias publishes no row at all, so it misroutes nothing.
-    if (alias !== provider && !listed.has(provider)) {
+    if (alias === provider) continue;
+    if (!listed.has(provider)) {
       fail(
         `overlay retainedProviderAliases keeps "${alias}" for "${provider}", which the served catalog no longer lists, so the alias would resolve and then route on the default surface: drop the alias, or serve the provider again`,
+      );
+    }
+    // Being listed is not enough. The alias is published so that callers can
+    // keep sending its ids, and the runtime resolves it to this provider and
+    // then reads that provider's routing. With no served surface the row falls
+    // back to the default one, which is a warning for an ordinary provider but
+    // a wrong wire format promised to a caller here.
+    if (!facts.surfaces.has(provider)) {
+      fail(
+        `overlay retainedProviderAliases keeps "${alias}" for "${provider}", which the served catalog lists without naming a surface for it, so the alias would resolve and then route on the default surface: serve a surface for the provider, or drop the alias`,
       );
     }
   }
@@ -693,19 +705,12 @@ function buildProviderTables(
       .sort(compareCodePoints);
     for (const prefix of prefixes) providerAliases.push([prefix, provider]);
   }
-  // A retained alias for a provider the catalog lists no chat model for
-  // follows the served groups, in overlay order. An alias is a fact about ids
-  // the runtime accepts, not about the chat list: model ids of that provider
-  // the runtime resolves without a chat entry still go through it. Its
-  // provider has no label or display-order row, which only the chat list
-  // needs, but it does have a routing row, because the catalog still lists
-  // it — the check above refused the alias otherwise.
-  const served = new Set(providerOrder);
-  for (const [alias, provider] of overlay.retainedProviderAliases) {
-    if (!served.has(provider) && alias !== provider) {
-      providerAliases.push([alias, provider]);
-    }
-  }
+  // Every retained alias has been emitted by the loop above. Its target is
+  // listed and has a served surface, which it can only have from a served
+  // model of its own, and every served model yields a chat entry, so the
+  // target is always in the display order this walked. A provider outside it
+  // no longer reaches here: the checks refuse the alias instead of publishing
+  // one that resolves onto the default surface.
   return { providerAliases, providerLabels };
 }
 
