@@ -7444,6 +7444,53 @@ describe("push dependency pin reconciliation", () => {
     );
   });
 
+  it("says so when the manifest changed on disk after the push read it", async () => {
+    // `writeAdoptedManifest` re-reads the file and declines when its digest no
+    // longer matches the baseline, which is correct - that edit is a local
+    // change this push never saw. The user still has to be told why the push
+    // failed with an untouched file, or the CLI looks like it did nothing.
+    const localEdit = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "^19.2.4" }, private: true },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        onHistoryRequest: async ({ projectDir }) => {
+          await Deno.writeTextFile(`${projectDir}/package.json`, localEdit);
+        },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(puts, []);
+        // The local edit is still there: the adoption wrote nothing.
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), localEdit);
+        const text = output.map(stripAnsi).join("\n");
+        assertStringIncludes(
+          text,
+          "your local copy changed after this push read it, so nothing was written",
+        );
+        assertEquals(
+          text.includes("Adopted 1 server-resolved dependency pin"),
+          false,
+          "a declined adoption must not report itself as adopted",
+        );
+      },
+    );
+  });
+
   it("still reports a conflict when no preimage proves the API wrote the pins", async () => {
     await runPinPush(
       {

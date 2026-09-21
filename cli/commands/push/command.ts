@@ -1306,6 +1306,31 @@ function reportAdoptedPins(pins: readonly AdoptedPin[], dryRun: boolean): void {
 }
 
 /**
+ * Say why a classified pin write was not adopted after all.
+ *
+ * {@link writeAdoptedManifest} declines when `package.json` changed on disk
+ * between the push's source capture and the write, which is the right call -
+ * that edit is a local change this push never saw. But the push then fails
+ * with the bare conflict, and without this the user has no way to tell that
+ * the CLI recognised the drift, decided against writing, and left their file
+ * exactly as it was.
+ */
+function reportDeclinedPinAdoption(): void {
+  if (isJsonMode()) {
+    streamJsonLine({
+      type: "dependency-pins-declined",
+      data: { path: PACKAGE_JSON_PATH, reason: "local-manifest-changed" },
+    });
+    return;
+  }
+  logWarning(
+    `Veryfront resolved dependency pins into the remote ${PACKAGE_JSON_PATH}, but your local ` +
+      `copy changed after this push read it, so nothing was written and the push is reported ` +
+      `as a conflict. Re-run the push to reconcile it.`,
+  );
+}
+
+/**
  * Ask whether dependency changes the platform chose on its own may be written
  * into this checkout. A push that cannot ask refuses, so the drift falls
  * through to the conflict it raises today rather than installing a
@@ -1811,6 +1836,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           // `planServerDependencyPinAdoption` returns null and the conflict
           // becomes permanent.
           if (adopted) reportAdoptedPins(pinAdoption.pins, dryRun);
+          else reportDeclinedPinAdoption();
           if (adopted && dryRun) {
             // Keep the dry run's plan honest without touching the working tree:
             // the real push reaches the planner with these bytes in place.
