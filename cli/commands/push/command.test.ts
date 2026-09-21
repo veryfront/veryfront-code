@@ -6953,6 +6953,8 @@ describe("push dependency pin reconciliation", () => {
     >;
     /** Pin the push to the commit HEAD is on when it starts. */
     pinExpectedCommitSha?: boolean;
+    /** Run the push in JSON mode, as an agent or CI consumer would. */
+    jsonMode?: boolean;
   }
 
   async function runPinPush(
@@ -7050,15 +7052,20 @@ describe("push dependency pin reconciliation", () => {
           const expectedCommitSha = scenario.pinExpectedCommitSha
             ? await runGit("rev-parse", "HEAD")
             : undefined;
-          await withMockFetch(
-            fetchHandler,
-            () =>
-              pushCommand({
-                projectDir,
-                ...scenario.push,
-                ...(expectedCommitSha ? { expectedCommitSha } : {}),
-              }),
-          );
+          if (scenario.jsonMode) setJsonMode(true);
+          try {
+            await withMockFetch(
+              fetchHandler,
+              () =>
+                pushCommand({
+                  projectDir,
+                  ...scenario.push,
+                  ...(expectedCommitSha ? { expectedCommitSha } : {}),
+                }),
+            );
+          } finally {
+            if (scenario.jsonMode) setJsonMode(false);
+          }
         } catch (thrown) {
           error = thrown;
         } finally {
@@ -7487,6 +7494,92 @@ describe("push dependency pin reconciliation", () => {
           false,
           "a declined adoption must not report itself as adopted",
         );
+      },
+    );
+  });
+
+  it("streams the adoption as an NDJSON line in JSON mode", async () => {
+    // An agent or CI consumer never sees the warning, so the machine-readable
+    // stream has to carry the same facts: what was pinned, and whether the
+    // write moved or added a declaration rather than tightening one.
+    await runPinPush(
+      {
+        jsonMode: true,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        assertEquals(error, undefined);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), PINNED_PACKAGE_JSON);
+        const events = output.map(stripAnsi).flatMap((line) => {
+          try {
+            return [JSON.parse(line) as Record<string, unknown>];
+          } catch {
+            return [];
+          }
+        });
+        const adopted = events.find((event) => event.type === "dependency-pins-adopted");
+        assertEquals(adopted?.data, {
+          path: "package.json",
+          dryRun: false,
+          pins: [{
+            name: "react",
+            version: "19.3.0",
+            added: false,
+            movedFrom: null,
+            movedTo: null,
+          }],
+        });
+      },
+    );
+  });
+
+  it("streams a declined adoption as an NDJSON line in JSON mode", async () => {
+    const localEdit = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "^19.2.4" }, private: true },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        jsonMode: true,
+        onHistoryRequest: async ({ projectDir }) => {
+          await Deno.writeTextFile(`${projectDir}/package.json`, localEdit);
+        },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), localEdit);
+        const events = output.map(stripAnsi).flatMap((line) => {
+          try {
+            return [JSON.parse(line) as Record<string, unknown>];
+          } catch {
+            return [];
+          }
+        });
+        const declined = events.find((event) => event.type === "dependency-pins-declined");
+        assertEquals(declined?.data, {
+          path: "package.json",
+          reason: "local-manifest-changed",
+        });
       },
     );
   });
