@@ -440,6 +440,30 @@ function lockedDependencyFrom(
 }
 
 /**
+ * An INI line up to its comment: an unescaped `#` or `;` starts one wherever
+ * it appears, so a mirror with a trailing note still applies.
+ *
+ * Scanned rather than matched. A regular expression for this is anchored at
+ * the end (`[#;].*$`), the shape that goes super-linear on a long line, and
+ * the line here is project text.
+ */
+function withoutComment(line: string): string {
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (char === "\\") index++;
+    else if (char === "#" || char === ";") return line.slice(0, index);
+  }
+  return line;
+}
+
+/** `value` with exactly one trailing separator, whatever it ended with. */
+function withTrailingSlash(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return `${value.slice(0, end)}/`;
+}
+
+/**
  * One `.npmrc` read the way npm's INI parser reads it: the LAST value of each
  * key, comments stripped, and surrounding quotes removed. A key written on its
  * own is INI's `true`.
@@ -447,9 +471,7 @@ function lockedDependencyFrom(
 function readNpmrc(npmrcText: string): Map<string, string> {
   const values = new Map<string, string>();
   for (const line of npmrcText.split("\n")) {
-    // An unescaped `#` or `;` starts a comment wherever it appears, so a
-    // mirror with a trailing note still applies.
-    const statement = line.replace(/(?<!\\)[#;].*$/, "").trim();
+    const statement = withoutComment(line).trim();
     // A section header addresses no key this reads.
     if (statement.length === 0 || statement.startsWith("[")) continue;
     const separator = statement.indexOf("=");
@@ -476,7 +498,7 @@ export function npmrcRegistryFor(npmrcText: string, name: string): string | unde
   const scope = name.startsWith("@") ? name.slice(0, name.indexOf("/")) : null;
   const effective = (scope === null ? undefined : values.get(`${scope}:registry`)) ??
     values.get("registry");
-  return effective === undefined ? undefined : effective.replace(/\/*$/, "/");
+  return effective === undefined ? undefined : withTrailingSlash(effective);
 }
 
 /**
@@ -597,33 +619,55 @@ function transitiveLockedDependencies(
       // Present and private is the substitution this refuses: the project's
       // own copy of that name is not the one esm.sh would serve.
       if (!resolvesFromPublicRegistry(sources, found.entry, dependency)) {
-        return {
-          refusal: `the project resolves ${dependency}, which ${rootName} depends on, from ` +
-            `another registry, so the CDN build of ${rootName} would carry the public package ` +
-            `of that name instead of this project's`,
-        };
+        return { refusal: privateTransitiveRefusal(rootName, dependency) };
       }
-      if (pinned.get(dependency) !== found.entry.version) {
-        if (pinned.has(dependency)) nested.add(dependency);
-        pinned.set(dependency, found.entry.version);
-      }
+      recordTransitivePin(pinned, nested, dependency, found.entry.version);
       if (pinned.size > MAX_TRANSITIVE_LOCKED_DEPENDENCIES) {
-        return {
-          refusal: `the project's lockfile puts more than ` +
-            `${MAX_TRANSITIVE_LOCKED_DEPENDENCIES} packages under ${rootName}, too many to ` +
-            `pin the CDN build to`,
-        };
+        return { refusal: oversizedGraphRefusal(rootName) };
       }
-      if (!visited.has(found.path)) {
-        visited.add(found.path);
-        queue.push(found.path);
-      }
+      if (visited.has(found.path)) continue;
+      visited.add(found.path);
+      queue.push(found.path);
     }
   }
-  const pins = [...pinned]
+  return { pins: pinList(pinned, nested) };
+}
+
+/** Note the version one edge resolved to, or that the name has two of them. */
+function recordTransitivePin(
+  pinned: Map<string, string>,
+  nested: Set<string>,
+  name: string,
+  version: string,
+): void {
+  if (pinned.get(name) === version) return;
+  if (pinned.has(name)) nested.add(name);
+  pinned.set(name, version);
+}
+
+/** Why the CDN build of `rootName` cannot carry the public copy of `name`. */
+function privateTransitiveRefusal(rootName: string, name: string): string {
+  return `the project resolves ${name}, which ${rootName} depends on, from another registry, ` +
+    `so the CDN build of ${rootName} would carry the public package of that name instead of ` +
+    `this project's`;
+}
+
+/** Why a dependency graph this large cannot be pinned. */
+function oversizedGraphRefusal(rootName: string): string {
+  return `the project's lockfile puts more than ${MAX_TRANSITIVE_LOCKED_DEPENDENCIES} ` +
+    `packages under ${rootName}, too many to pin the CDN build to`;
+}
+
+/**
+ * The pins a CDN URL carries, in code-unit order. Sorted, so the same install
+ * produces the same URL however the lockfile happens to be ordered, and by
+ * code unit rather than locale so that stays true on every host.
+ */
+function pinList(pinned: ReadonlyMap<string, string>, nested: ReadonlySet<string>): string[] {
+  return [...pinned]
     .filter(([name]) => !nested.has(name))
-    .map(([name, version]) => `${name}@${version}`);
-  return { pins: pins.sort() };
+    .map(([name, version]) => `${name}@${version}`)
+    .toSorted((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 /**
@@ -773,8 +817,8 @@ function projectLockDirectories(baseDir: string | undefined): string[] {
   // has no ancestors to search.
   if (!isAbsoluteMachinePath(directories[0]!)) return directories;
   for (let depth = 0; depth < MAX_WORKSPACE_ANCESTORS; depth++) {
-    const parent = pathHelper.dirname(directories[directories.length - 1]!);
-    if (parent === directories[directories.length - 1]) break;
+    const parent = pathHelper.dirname(directories.at(-1)!);
+    if (parent === directories.at(-1)) break;
     directories.push(parent);
   }
   return directories;
@@ -816,7 +860,11 @@ function declaresWorkspaceMember(rootPackageJson: string, member: string): boole
 
 /** A workspace pattern without its `./` prefix or its trailing separators. */
 function normalizeWorkspacePattern(pattern: string): string {
-  return pattern.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  let start = pattern.startsWith("./") ? 1 : 0;
+  while (pattern[start] === "/") start++;
+  let end = pattern.length;
+  while (end > start && pattern[end - 1] === "/") end--;
+  return pattern.slice(start, end);
 }
 
 /**
@@ -880,6 +928,59 @@ function matchesSegment(pattern: string, name: string): boolean {
   return p === pattern.length;
 }
 
+/** What one directory's lockfiles say, or `null` when it holds none. */
+async function lockedInDirectory(
+  context: FileDiscoveryContext,
+  directory: string,
+): Promise<Pick<ProjectRegistrySources, "locked" | "unverifiableClient"> | null> {
+  const shrinkwrap = await readProjectFile(
+    context,
+    pathHelper.join(directory, "npm-shrinkwrap.json"),
+  );
+  // Within one directory the repo's own precedence decides: the lockfile a
+  // client wrote owns the project, and an npm lock inherited from a migration
+  // must not outrank it.
+  for (const [file, client] of LOCKFILE_CLIENTS) {
+    const text = await readProjectFile(context, pathHelper.join(directory, file));
+    if (text.length === 0) continue;
+    if (client !== "npm") return { locked: {}, unverifiableClient: client };
+    // npm ignores package-lock.json entirely when a shrinkwrap is present.
+    return { locked: readLockedDependencies(shrinkwrap || text), unverifiableClient: null };
+  }
+  if (shrinkwrap.length === 0) return null;
+  return { locked: readLockedDependencies(shrinkwrap), unverifiableClient: null };
+}
+
+/**
+ * The directories that speak for this project: its own, and each ancestor
+ * that declares it a workspace member. A project merely nested under another
+ * is not a member, and that project's lockfile says nothing about it.
+ */
+async function projectLockOwners(
+  context: FileDiscoveryContext,
+  directories: readonly string[],
+): Promise<{ directory: string; memberPath: string }[]> {
+  const project = directories[0]!;
+  const owners: { directory: string; memberPath: string }[] = [];
+  for (const directory of directories) {
+    if (directory === project) {
+      owners.push({ directory, memberPath: "" });
+      continue;
+    }
+    const memberPath = withoutLeadingSlashes(project.slice(directory.length));
+    const root = await readProjectFile(context, pathHelper.join(directory, "package.json"));
+    if (declaresWorkspaceMember(root, memberPath)) owners.push({ directory, memberPath });
+  }
+  return owners;
+}
+
+/** A path with its leading separators removed. */
+function withoutLeadingSlashes(path: string): string {
+  let start = 0;
+  while (path[start] === "/") start++;
+  return path.slice(start);
+}
+
 async function readProjectRegistrySources(
   context: FileDiscoveryContext,
 ): Promise<ProjectRegistrySources> {
@@ -887,66 +988,23 @@ async function readProjectRegistrySources(
   const project = directories[0]!;
   const npmrcOf = (directory: string) =>
     readProjectFile(context, pathHelper.join(directory, ".npmrc"));
-  // Every directory that speaks for this project: its own, and each ancestor
-  // that declares it a workspace member. A project merely nested under another
-  // is not a member, and that project's lockfile says nothing about it.
-  const owners: { directory: string; memberPath: string }[] = [];
-  for (const directory of directories) {
-    const memberPath = directory === project
-      ? ""
-      : project.slice(directory.length).replace(/^\/+/, "");
-    if (
-      memberPath.length > 0 &&
-      !declaresWorkspaceMember(
-        await readProjectFile(context, pathHelper.join(directory, "package.json")),
-        memberPath,
-      )
-    ) {
-      continue;
-    }
-    owners.push({ directory, memberPath });
-  }
+  const owners = await projectLockOwners(context, directories);
   // The OUTERMOST of them owns the install: every workspace client keeps one
   // lockfile at the root and none in the members, so a lock beside a member is
   // a leftover from before it joined. Taking the nearest one instead let a
   // stale `package-lock.json` in a pnpm or Yarn member outrank the root's
   // authoritative lockfile, and with it decide provenance.
-  for (const { directory, memberPath } of owners.reverse()) {
-    // npm reads the config beside the lockfile it is resolving; a member's own
-    // file is reported as ignored, so it is carried separately.
-    const npmrc = await npmrcOf(directory);
-    const memberNpmrc = memberPath.length === 0 ? "" : await npmrcOf(project);
-    const shrinkwrapOf = (at: string) =>
-      readProjectFile(context, pathHelper.join(at, "npm-shrinkwrap.json"));
-    // Within one directory the repo's own precedence decides: the lockfile a
-    // client wrote owns the project, and an npm lock inherited from a
-    // migration must not outrank it.
-    for (const [file, client] of LOCKFILE_CLIENTS) {
-      const text = await readProjectFile(context, pathHelper.join(directory, file));
-      if (text.length === 0) continue;
-      if (client !== "npm") {
-        return { locked: {}, npmrc, memberNpmrc, memberPath, unverifiableClient: client };
-      }
-      // npm ignores package-lock.json entirely when a shrinkwrap is present.
-      const shrinkwrap = await shrinkwrapOf(directory);
-      return {
-        locked: readLockedDependencies(shrinkwrap || text),
-        npmrc,
-        memberNpmrc,
-        memberPath,
-        unverifiableClient: null,
-      };
-    }
-    const shrinkwrap = await shrinkwrapOf(directory);
-    if (shrinkwrap.length > 0) {
-      return {
-        locked: readLockedDependencies(shrinkwrap),
-        npmrc,
-        memberNpmrc,
-        memberPath,
-        unverifiableClient: null,
-      };
-    }
+  for (const { directory, memberPath } of owners.toReversed()) {
+    const found = await lockedInDirectory(context, directory);
+    if (found === null) continue;
+    return {
+      ...found,
+      // npm reads the config beside the lockfile it is resolving; a member's
+      // own file is reported as ignored, so it is carried separately.
+      npmrc: await npmrcOf(directory),
+      memberNpmrc: memberPath.length === 0 ? "" : await npmrcOf(project),
+      memberPath,
+    };
   }
   return {
     locked: {},
@@ -1232,10 +1290,11 @@ const DEFERRED_DEPENDENCY_CONTEXT = { veryfrontDeferredDependency: true } as con
 
 /** The statements a bundled module runs to fail with `detail` when reached. */
 function deferredDependencyThrow(detail: string): string {
-  const create = JSON.stringify(DEFERRED_DEPENDENCY_ERROR_GLOBAL);
-  return `const create = globalThis[${create}]; ` +
-    `throw typeof create === "function" ? create(${JSON.stringify(detail)}) : ` +
-    `new Error(${JSON.stringify(`${MISSING_DEPENDENCY_MARKER} ${detail}`)});`;
+  const global = JSON.stringify(DEFERRED_DEPENDENCY_ERROR_GLOBAL);
+  const typed = JSON.stringify(detail);
+  const marked = JSON.stringify(`${MISSING_DEPENDENCY_MARKER} ${detail}`);
+  return `const create = globalThis[${global}]; ` +
+    `throw typeof create === "function" ? create(${typed}) : new Error(${marked});`;
 }
 
 /**

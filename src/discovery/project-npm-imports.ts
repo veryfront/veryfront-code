@@ -289,7 +289,7 @@ function padded(parts: readonly string[]): VersionCore {
 /** The version just past every one a partial bound covers: `2.3` -> `2.4.0`. */
 function nextAfter(parts: readonly string[]): VersionCore {
   const next = [...parts];
-  next[next.length - 1] = incrementDigits(next[next.length - 1]!);
+  next[next.length - 1] = incrementDigits(next.at(-1)!);
   return padded(next);
 }
 
@@ -416,7 +416,21 @@ function comparatorAdmitsVersion(
   ) {
     return false;
   }
+  return boundAdmitsVersion(operator, parts, full, wanted, lower);
+}
 
+/**
+ * Does the bound a comparator names admit the version, once the pre-release
+ * rule has had its say? `parts` is the bound's numeric core as written, so its
+ * length is what tells an abbreviated bound from a full one.
+ */
+function boundAdmitsVersion(
+  operator: string | undefined,
+  parts: readonly string[],
+  full: boolean,
+  wanted: { core: VersionCore; pre: string[] | null },
+  lower: { core: VersionCore; pre: string[] | null },
+): boolean {
   const order = compareVersions(wanted, lower);
   // A DERIVED upper bound carries npm's `-0` sentinel: `^1.2.3` expands to
   // `<2.0.0-0` and `<=1.1` to `<1.2.0-0`, both of which every pre-release of
@@ -802,31 +816,7 @@ export function classifyProjectNpmImport(
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
   if (isRuntimeProvidedImport(specifier, parsed.name, embedded)) {
-    // A framework package still has to be emitted under a constraint the
-    // binary records: `npm:zod` is the constraint `zod@*`, which a profile
-    // that froze only `zod@4.3.6` cannot answer. The framework's own
-    // specifiers (`veryfront/...`) become globals, and a Node builtin has no
-    // npm coordinate, so neither takes a constraint.
-    if (parsed.name === "veryfront" || parsed.name.startsWith("veryfront/")) {
-      return { kind: "runtime" };
-    }
-    if (nodeBuiltinSpecifier(specifier) !== null) return { kind: "runtime" };
-    // A versioned import must be re-emitted under a constraint the binary
-    // records -- `npm:zod@3.25.76` resolves to nothing on a profile that
-    // records `*` and 4.3.6 -- while a bare one keeps its form wherever a
-    // recorded `*` already answers it.
-    if (parsed.version !== null) {
-      const recorded = embeddedConstraintForVersion(parsed.name, parsed.version, embedded) ??
-        recordedWildcard(embedded, parsed.name) ??
-        embeddedConstraintForBareImport(parsed.name, embedded);
-      return recorded === null
-        ? { kind: "runtime" }
-        : runtimeImport(parsed.name, recorded, parsed.subpath);
-    }
-    const recorded = embeddedConstraintForBareImport(parsed.name, embedded);
-    return recorded === null
-      ? { kind: "runtime" }
-      : runtimeImport(parsed.name, recorded, parsed.subpath);
+    return classifyRuntimeProvidedImport(specifier, parsed, embedded);
   }
   if (!isContainedSubpath(parsed.subpath)) {
     // The subpath is project text and may carry anything, so it is not echoed.
@@ -868,6 +858,35 @@ export function classifyProjectNpmImport(
   return parsed.version !== null && EXACT_VERSION.test(parsed.version)
     ? classifyExactImport(request, parsed.version)
     : classifyUnversionedImport(request);
+}
+
+/**
+ * The decision for an import only the runtime may answer.
+ *
+ * A framework package still has to be emitted under a constraint the binary
+ * records: `npm:zod` is the constraint `zod@*`, which a profile that froze
+ * only `zod@4.3.6` cannot answer. The framework's own specifiers
+ * (`veryfront/...`) become globals, and a Node builtin has no npm coordinate,
+ * so neither takes a constraint.
+ */
+function classifyRuntimeProvidedImport(
+  specifier: string,
+  parsed: ParsedNpmSpecifier,
+  embedded: EmbeddedNpmSet,
+): ProjectNpmImport {
+  const { name, version, subpath } = parsed;
+  if (name === "veryfront" || name.startsWith("veryfront/")) return { kind: "runtime" };
+  if (nodeBuiltinSpecifier(specifier) !== null) return { kind: "runtime" };
+  // A versioned import must be re-emitted under a constraint the binary
+  // records -- `npm:zod@3.25.76` resolves to nothing on a profile that records
+  // `*` and 4.3.6 -- while a bare one keeps its form wherever a recorded `*`
+  // already answers it.
+  const recorded = version === null ? null : (
+    embeddedConstraintForVersion(name, version, embedded) ??
+      recordedWildcard(embedded, name)
+  );
+  const constraint = recorded ?? embeddedConstraintForBareImport(name, embedded);
+  return constraint === null ? { kind: "runtime" } : runtimeImport(name, constraint, subpath);
 }
 
 /**
