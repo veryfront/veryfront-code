@@ -823,6 +823,17 @@ describe("scripts/build/model-catalog-mapping", () => {
       "published id",
     ],
     [
+      "a published id that is empty",
+      (data) => ({
+        ...data,
+        chatModels: [
+          { ...data.chatModels[0], id: "" },
+          ...data.chatModels.slice(1),
+        ],
+      }),
+      "published id is empty",
+    ],
+    [
       "a model id claimed twice",
       (data) => ({
         ...data,

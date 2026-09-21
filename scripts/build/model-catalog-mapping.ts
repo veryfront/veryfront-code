@@ -703,6 +703,23 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     fail(`provider routing declared twice for: ${duplicateRouting.join(", ")}`);
   }
 
+  // `resolveVeryfrontCloudModelId` reads a request as `alias ||
+  // DEFAULT_VERYFRONT_CLOUD_MODEL_ID`, so an empty published id is
+  // indistinguishable from no request and quietly resolves the default model.
+  // Checking the published id covers both the served id and an `entryIds` row
+  // the overlay left empty, which would otherwise pass every other invariant
+  // while shipping a model nobody can select.
+  const unselectable = data.chatModels
+    .filter((model) => model.id === "")
+    .map((model) => model.modelId);
+  if (unselectable.length > 0) {
+    fail(
+      `published id is empty, so the model resolves as the default instead: ${
+        unselectable.join(", ")
+      }`,
+    );
+  }
+
   // `resolveVeryfrontCloudModelId` matches a request against the model ids
   // first, and returns any remaining request that contains a slash as already
   // canonical, so it never reaches the lookup by published id. A published id
