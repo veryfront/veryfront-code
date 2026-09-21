@@ -17,9 +17,12 @@ import {
   sanitizeStructuredTelemetryData,
   sanitizeTelemetryAttributes,
   sanitizeTelemetryAttributeValue,
+  summarizeErrorCausesForLog,
   type TelemetryAttributeValue,
+  telemetryErrorCauseType,
   telemetryErrorType,
 } from "./telemetry-error.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 describe("observability/telemetry-error", () => {
@@ -876,5 +879,59 @@ describe("observability/telemetry-error", () => {
 
     assertEquals(snapshot.message.length, MAX_STRING_DISPLAY_LENGTH);
     assertEquals(snapshot.stack?.length, MAX_STRING_DISPLAY_LENGTH);
+  });
+
+  describe("wrapped causes", () => {
+    it("classifies a provider stream failure and its private cause", () => {
+      const failure = createRuntimeProviderStreamFailure(
+        new RangeError("partial_json exceeded for private@example.com"),
+      );
+
+      assertEquals(telemetryErrorType(failure), "RuntimeProviderStreamFailure");
+      assertEquals(telemetryErrorCauseType(failure), "RangeError");
+      assertEquals(
+        telemetryErrorType(Object.assign(new Error("x"), { name: "RuntimeProviderStreamFailure" })),
+        "Error",
+        "a lookalike name must not claim the provider stream failure type",
+      );
+    });
+
+    it("classifies a native cause without running accessors", () => {
+      const coded = Object.assign(new Error("reset"), { code: "ECONNRESET" });
+      assertEquals(telemetryErrorCauseType(new TypeError("read", { cause: coded })), "ECONNRESET");
+      assertEquals(telemetryErrorCauseType(new Error("no cause")), undefined);
+
+      let accessorCalls = 0;
+      const accessorBacked = new Error("outer");
+      Object.defineProperty(accessorBacked, "cause", {
+        get() {
+          accessorCalls++;
+          return new RangeError("hidden");
+        },
+      });
+      assertEquals(telemetryErrorCauseType(accessorBacked), undefined);
+      assertEquals(summarizeErrorCausesForLog(accessorBacked), undefined);
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("summarizes a bounded, cycle-safe cause chain for logs", () => {
+      const inner = Object.assign(new Error("y".repeat(5000)), { code: "ECONNRESET" });
+      const middle = new TypeError("error reading a body from connection", { cause: inner });
+      (inner as { cause?: unknown }).cause = middle;
+      const summary = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(middle));
+
+      assertExists(summary);
+      assertEquals(summary.length, 2);
+      assertEquals(summary[0], {
+        name: "TypeError",
+        message: "error reading a body from connection",
+      });
+      assertEquals(summary[1]?.code, "ECONNRESET");
+      assertEquals(summary[1]?.message.length, LOG_PREVIEW_MAX_LENGTH_CHARS);
+      assertEquals(
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure("bare string")),
+        [{ name: "Unknown", message: "bare string" }],
+      );
+    });
   });
 });

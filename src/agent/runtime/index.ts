@@ -352,7 +352,10 @@ import {
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
-import { telemetryErrorType } from "#veryfront/observability/telemetry-error.ts";
+import {
+  summarizeErrorCausesForLog,
+  telemetryErrorType,
+} from "#veryfront/observability/telemetry-error.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import {
@@ -2738,7 +2741,13 @@ export class AgentRuntime {
             }
 
             this.status = "error";
-            logger.error("Agent stream error", { error });
+            // A provider stream failure keeps its cause private, so the log
+            // names the wrapped failures explicitly (bounded and redacted).
+            const errorCauses = summarizeErrorCausesForLog(error);
+            logger.error("Agent stream error", {
+              error,
+              ...(errorCauses ? { errorCauses } : {}),
+            });
             sendSSE(controller, encoder, errorEvent);
             closeSSEStream(controller);
           } finally {
