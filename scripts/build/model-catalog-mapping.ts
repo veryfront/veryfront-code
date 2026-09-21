@@ -108,14 +108,8 @@ const CATALOG_FIELDS: readonly FieldSpec[] = [
   { key: "defaultModelId", type: "a string", required: true },
 ];
 
-/** Identity fields, validated first so later failures can name the model. */
-const MODEL_ID_FIELD: readonly FieldSpec[] = [{
-  key: "id",
-  type: "a string",
-  required: true,
-}];
-
 const MODEL_FIELDS: readonly FieldSpec[] = [
+  { key: "id", type: "a string", required: true },
   { key: "modelId", type: "a string", required: true },
   { key: "provider", type: "a string", required: true },
   { key: "name", type: "a string", required: true },
@@ -208,7 +202,7 @@ export function describeUnroutableModelId(
   const segment = modelId.slice(0, slashIndex);
   const unusableSegment = describeUnusableProvider(segment);
   if (unusableSegment !== undefined) {
-    return `has a provider segment "${segment}" that ${unusableSegment}`;
+    return `has a provider segment that ${unusableSegment}`;
   }
 
   const upstream = modelId.slice(slashIndex + 1);
@@ -299,26 +293,27 @@ type ServedCatalog = {
  * with an unexpected shape, and no wrong-typed value can be coerced into a
  * plausible-looking absence. Unknown keys are dropped here, which is the
  * allowlist; unknown string values pass through and are judged later.
+ *
+ * A failure names the entry by its position (`models[3]`) and the field, never
+ * by a served value: these messages reach the terminal, and a value that has
+ * just failed validation is exactly the one not to print.
  */
 export function parseServedCatalog(payload: unknown): ServedCatalog {
   const root = asRecord(payload) ?? fail("the payload is not a JSON object");
   checkFields(root, CATALOG_FIELDS, "the catalog");
 
   const models = (root.models as readonly unknown[]).map((entry, index) => {
+    const subject = `models[${index}]`;
     const model = asRecord(entry) ??
-      fail(`models[${index}] must be an object, not ${describe(entry)}`);
-    checkFields(model, MODEL_ID_FIELD, `models[${index}]`);
-    const subject = `model "${model.id as string}"`;
+      fail(`${subject} must be an object, not ${describe(entry)}`);
     checkFields(model, MODEL_FIELDS, subject);
 
     const unroutable = describeUnroutableModelId(model.modelId as string);
-    if (unroutable !== undefined) {
-      fail(`${subject} modelId "${model.modelId}" ${unroutable}`);
-    }
+    if (unroutable !== undefined) fail(`${subject} modelId ${unroutable}`);
 
     const unusableProvider = describeUnusableProvider(model.provider as string);
     if (unusableProvider !== undefined) {
-      fail(`${subject} provider "${model.provider}" ${unusableProvider}`);
+      fail(`${subject} provider ${unusableProvider}`);
     }
 
     const capabilities = model.capabilities === undefined
@@ -340,12 +335,12 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
   if (models.length === 0) fail("it lists no model");
 
   const providers: string[] = [];
-  for (const provider of root.providers as readonly string[]) {
+  for (
+    const [index, provider] of (root.providers as readonly string[]).entries()
+  ) {
     if (provider === "" || providers.includes(provider)) continue;
     const unusable = describeUnusableProvider(provider);
-    if (unusable !== undefined) {
-      fail(`listed provider "${provider}" ${unusable}`);
-    }
+    if (unusable !== undefined) fail(`providers[${index}] ${unusable}`);
     providers.push(provider);
   }
   if (providers.length === 0) fail("it lists no provider");
@@ -540,23 +535,22 @@ function buildProviderTables(
 
 /**
  * The providers that need a routing row: every provider in the served order,
- * then any provider a retained transport row belongs to that the catalog no
- * longer names, in overlay order — only where the overlay actually routes it.
+ * then every provider the overlay routes that the catalog does not name, in
+ * overlay order.
+ *
+ * Routing is a fact about a provider's gateway surface, not about which chat
+ * models the catalog lists for it, so a routing row is never conditioned on a
+ * chat entry or a retained transport row being present. Model ids the runtime
+ * resolves without either (an embedding model, for one) still route through
+ * these rows, and dropping a row would move them to the default surface.
  */
 function routedProviders(
   providerOrder: readonly string[],
-  transportCapabilities: readonly (readonly [string, TransportCapabilities])[],
-  routingByProvider: ReadonlyMap<string, unknown>,
+  overlayRouting: readonly (readonly [string, unknown])[],
 ): string[] {
   const providers = [...providerOrder];
-  for (const [modelId] of transportCapabilities) {
-    const slashIndex = modelId.indexOf("/");
-    if (slashIndex <= 0) continue;
-    const provider = modelId.slice(0, slashIndex);
-    if (providers.includes(provider) || !routingByProvider.has(provider)) {
-      continue;
-    }
-    providers.push(provider);
+  for (const [provider] of overlayRouting) {
+    if (!providers.includes(provider)) providers.push(provider);
   }
   return providers;
 }
@@ -619,23 +613,21 @@ export function buildModelCatalogData(
   const defaultEntry = facts.chatModels.find(
     (model) => model.modelId === catalog.defaultModelId,
   ) ??
-    fail(
-      `the default model "${catalog.defaultModelId}" is not one of the served models`,
-    );
+    fail("the default model is not one of the served models");
 
   const data: ModelCatalogData = {
     defaultModelId: defaultEntry.id,
     providerAliases,
     // A provider the overlay does not route falls back to the surface the
     // package already uses for an unlisted provider, so routing stays declared
-    // for every provider the catalog names. A provider the catalog no longer
-    // names but whose model the overlay RETAINS keeps its routing too: the
-    // retained model still resolves, and dropping the row would send it on the
-    // default surface, i.e. the wrong protocol.
+    // for every provider the catalog names. Every provider the overlay routes
+    // keeps its row whether or not the catalog still names it: model ids of
+    // that provider resolve through the row regardless of any chat entry, and
+    // dropping it would send them on the default surface, i.e. the wrong
+    // protocol.
     providerRouting: routedProviders(
       providerOrder,
-      transportCapabilities,
-      routingByProvider,
+      overlay.providerRouting,
     ).map(
       (provider) =>
         [

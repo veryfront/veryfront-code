@@ -522,7 +522,7 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertThrows(
       () => buildModelCatalogData(malformed, OVERLAY),
       Error,
-      'model "riddle-9" is missing',
+      "models[1] is missing",
     );
 
     // A present value of the wrong type says so, rather than being reported
@@ -536,7 +536,7 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertThrows(
       () => buildModelCatalogData(unlabelledModel, OVERLAY),
       Error,
-      'model "riddle-9" is missing providerLabel',
+      "models[1] is missing providerLabel",
     );
 
     const untyped = fakePayload();
@@ -544,7 +544,7 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertThrows(
       () => buildModelCatalogData(untyped, OVERLAY),
       Error,
-      'model "plain-3" modelId must be a string, not a number',
+      "models[2] modelId must be a string, not a number",
     );
   });
 
@@ -586,7 +586,7 @@ describe("scripts/build/model-catalog-mapping", () => {
       assertThrows(
         () => buildModelCatalogData(payload, OVERLAY),
         Error,
-        `model "riddle-9" provider "${provider}"`,
+        "models[1] provider",
       );
     });
 
@@ -599,10 +599,61 @@ describe("scripts/build/model-catalog-mapping", () => {
       assertThrows(
         () => buildModelCatalogData(payload, OVERLAY),
         Error,
-        `listed provider "${provider}"`,
+        "providers[2]",
       );
     });
   }
+
+  it("names a refused entry by position, never by a served value", () => {
+    // These messages reach the terminal. A payload that is valid JSON but
+    // carries a malformed entry must not get the entry's own values echoed
+    // back: the value that just failed validation is exactly the one not to
+    // print, and the id beside it is served data too.
+    const sentinel = "SERVED-VALUE-MUST-NOT-PRINT";
+    const cases: ReadonlyArray<(model: Record<string, unknown>) => void> = [
+      (model) => {
+        model.id = sentinel;
+        delete model.modelId;
+      },
+      (model) => model.modelId = `${sentinel}-no-slash`,
+      (model) => model.modelId = `${sentinel.toUpperCase()}/x`,
+      (model) => model.provider = sentinel,
+      (model) => model.capabilities = sentinel,
+    ];
+    for (const apply of cases) {
+      const payload = fakePayload();
+      apply((payload.models as Record<string, unknown>[])[1]);
+      const error = assertThrows(
+        () => buildModelCatalogData(payload, OVERLAY),
+        Error,
+        "models[1]",
+      ) as Error;
+      assertEquals(error.message.includes(sentinel), false);
+      assertEquals(error.message.includes(sentinel.toUpperCase()), false);
+    }
+
+    const listed = {
+      ...fakePayload(),
+      providers: ["acme-labs", "beta-works", sentinel],
+    };
+    const listedError = assertThrows(
+      () => buildModelCatalogData(listed, OVERLAY),
+      Error,
+      "providers[2]",
+    ) as Error;
+    assertEquals(listedError.message.includes(sentinel), false);
+
+    const unservedDefault = {
+      ...fakePayload(),
+      defaultModelId: `beta-works/${sentinel}`,
+    };
+    const defaultError = assertThrows(
+      () => buildModelCatalogData(unservedDefault, OVERLAY),
+      Error,
+      "the default model is not one of the served models",
+    ) as Error;
+    assertEquals(defaultError.message.includes(sentinel), false);
+  });
 
   it("rejects a served provider that is empty before it reaches the shape rule", () => {
     // The allowlist requires the field, so an empty name is named as missing
@@ -613,7 +664,7 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertThrows(
       () => buildModelCatalogData(payload, OVERLAY),
       Error,
-      'model "riddle-9" is missing provider',
+      "models[1] is missing provider",
     );
   });
 
@@ -806,7 +857,7 @@ describe("scripts/build/model-catalog-mapping", () => {
       assertThrows(
         () => buildModelCatalogData(payload, OVERLAY),
         Error,
-        'model "riddle-9" modelId',
+        "models[1] modelId",
       );
     });
   }
@@ -867,6 +918,49 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  it("keeps a provider's routing with no chat model and no transport row of it left", () => {
+    // Routing is a fact about the provider's gateway surface. A model id the
+    // runtime resolves without a chat entry or a transport row — an embedding
+    // model, say — still routes through the row, so the row cannot depend on
+    // either being present. The catalog drops acme-labs entirely and the
+    // overlay retains nothing of it: the routing row stays, in overlay order.
+    const payload = fakePayload();
+    const models = (payload.models as Record<string, unknown>[]).filter(
+      (model) => model.provider !== "acme-labs",
+    );
+    payload.models = models;
+    payload.providers = (payload.providers as string[]).filter(
+      (provider) => provider !== "acme-labs",
+    );
+    payload.defaultModelId = models[0]!.modelId;
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      retainedTransportCapabilities: OVERLAY.retainedTransportCapabilities
+        .filter(([id]) => !id.startsWith("acme-labs/")),
+      providerRouting: [
+        ...OVERLAY.providerRouting,
+        ["embed-only", { surface: "anthropic" }],
+      ],
+    };
+
+    const data = buildModelCatalogData(payload, overlay);
+
+    assertEquals(data.providerOrder.includes("acme-labs"), false);
+    assertEquals(
+      data.modelTransportCapabilities.some(([id]) =>
+        id.startsWith("acme-labs/")
+      ),
+      false,
+    );
+    const routing = new Map(data.providerRouting);
+    assertEquals(routing.get("acme-labs"), { surface: "openai", native: true });
+    assertEquals(routing.get("embed-only"), { surface: "anthropic" });
+    assertEquals(
+      data.providerRouting.map(([provider]) => provider),
+      [...data.providerOrder, "acme-labs", "embed-only"],
+    );
+  });
+
   it("keeps the function-tool reasoning flag even for a non-reasoning model", () => {
     // Unlike a thinking budget or a reasoning mode, this flag is not a claim
     // that the model reasons. It says that WHEN reasoning is applied on the
@@ -908,7 +1002,7 @@ describe("scripts/build/model-catalog-mapping", () => {
       assertThrows(
         () => buildModelCatalogData(payload, OVERLAY),
         Error,
-        'model "riddle-9" capabilities',
+        "models[1] capabilities",
       );
     }
   });
