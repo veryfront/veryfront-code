@@ -10274,7 +10274,9 @@ export default config as const;
           // instrumented run a fixed pause can end while requests are still
           // being admitted, and the ones left out are then refused.
           await waitFor(
-            () => __getHostedConfigSourceReadStateForTests().waiters + 1 >= burstSize,
+            // Every waiter is counted, the request that created the flight
+            // included, so the whole burst has joined at `burstSize`.
+            () => __getHostedConfigSourceReadStateForTests().waiters >= burstSize,
             {
               interval: 5,
               message: `Expected all ${burstSize} requests to join the single read`,
