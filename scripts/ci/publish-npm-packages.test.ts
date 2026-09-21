@@ -508,11 +508,10 @@ describe("npm package publishing", () => {
   // and its gitHead metadata appeared 43 seconds after a five-minute wait gave
   // up, so the release failed after npm had already published the version.
   it("tolerates npm gitHead metadata appearing after the former five-minute window", async () => {
-    const stateDir = await Deno.makeTempDir();
-    const countFile = `${stateDir}/npm-view-count`;
-    await Deno.writeTextFile(countFile, "0");
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      await Deno.writeTextFile(countFile, "0");
 
-    try {
       const output = await runBash(
         [
           "set -euo pipefail",
@@ -537,17 +536,14 @@ describe("npm package publishing", () => {
 
       assertEquals(output.code, 0, decoder.decode(output.stderr));
       assertEquals(await Deno.readTextFile(countFile), "100");
-    } finally {
-      await Deno.remove(stateDir, { recursive: true });
-    }
+    });
   });
 
   it("bounds the gitHead metadata wait by NPM_GIT_HEAD_WAIT_ATTEMPTS", async () => {
-    const stateDir = await Deno.makeTempDir();
-    const countFile = `${stateDir}/npm-view-count`;
-    await Deno.writeTextFile(countFile, "0");
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      await Deno.writeTextFile(countFile, "0");
 
-    try {
       const output = await runBash(
         [
           "set -euo pipefail",
@@ -571,17 +567,14 @@ describe("npm package publishing", () => {
       assertEquals(output.code, 7);
       // Three polling reads plus the final confirmation read.
       assertEquals(await Deno.readTextFile(countFile), "4");
-    } finally {
-      await Deno.remove(stateDir, { recursive: true });
-    }
+    });
   });
 
   it("shares one gitHead metadata deadline across every package in a release", async () => {
-    const stateDir = await Deno.makeTempDir();
-    const countFile = `${stateDir}/npm-view-count`;
-    await Deno.writeTextFile(countFile, "0");
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      await Deno.writeTextFile(countFile, "0");
 
-    try {
       const output = await runBash(
         [
           "set -euo pipefail",
@@ -608,9 +601,7 @@ describe("npm package publishing", () => {
 
       assertEquals(output.code, 0, decoder.decode(output.stderr));
       assertEquals(await Deno.readTextFile(countFile), "4");
-    } finally {
-      await Deno.remove(stateDir, { recursive: true });
-    }
+    });
   });
 
   it("waits for an existing RC version's missing gitHead metadata", async () => {
