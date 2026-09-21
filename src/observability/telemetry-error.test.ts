@@ -948,16 +948,15 @@ describe("observability/telemetry-error", () => {
           message: "Anthropic retained content exceeded 8192 empty fragments (text delta)",
         }],
       );
+      // Shape-only matches are not enough: a provider or custom runtime can put
+      // customer data inside an otherwise familiar template.
       assertEquals(
-        summarize(
-          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
-        ),
-        [{
-          name: "RangeError",
-          message:
-            "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
-        }],
+        summarize("openai request failed: invalid successful stream (customer account 123456789)"),
+        [{ name: "RangeError", messageRedacted: true }],
       );
+      assertEquals(summarize("Anthropic retained content exceeded 8192 items (customer secret)"), [
+        { name: "RangeError", messageRedacted: true },
+      ]);
       assertEquals(summarize("Tool input: my card number is <REDACTED> and my prompt says hello"), [
         { name: "RangeError", messageRedacted: true },
       ]);

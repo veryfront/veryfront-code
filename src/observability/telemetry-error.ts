@@ -614,17 +614,19 @@ export interface LoggedErrorCause {
 }
 
 /**
- * Cause messages that Veryfront itself authors from fixed templates and that
- * carry no customer content, prompts, model output, or infrastructure names.
+ * Cause messages matched exactly against fixed, fully enumerated templates that
+ * cannot carry customer content, prompts, model output, or infrastructure names,
+ * whichever component throws them. Shape-only patterns are not allowed.
  * Any other cause message may embed untrusted data, so only its fixed
  * classification (name, code) is logged.
  */
 const LOGGABLE_CAUSE_MESSAGE_PATTERNS: readonly RegExp[] = [
-  // Provider stream parser bounds (extensions/ext-llm-*).
-  /^Anthropic (?:partial_json|retained content) exceeded \d+ (?:deltas|items|empty fragments|UTF-8 bytes)(?: \([a-z ]{1,40}\))?$/,
-  // Provider adapters' fixed stream-validation issues.
-  /^[a-z0-9-]{1,40} request failed: invalid successful stream \([a-z0-9_ .,-]{1,160}\)$/,
-  // Runtime transport failures with fixed wording.
+  // Provider stream parser bounds (extensions/ext-llm-anthropic). Fully
+  // enumerated: only fixed words, a count, and a fixed issue label, so no
+  // variable text can be carried even if another component throws the same
+  // shape.
+  /^Anthropic (?:partial_json|retained content) exceeded \d{1,12} (?:deltas|items|empty fragments|UTF-8 bytes)(?: \((?:content block|text delta|thinking delta|citation delta)\))?$/,
+  // Runtime transport failure with fixed wording.
   /^error reading a body from connection$/,
 ];
 
