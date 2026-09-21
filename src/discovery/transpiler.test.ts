@@ -1180,10 +1180,22 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
       // The negation still stands when nothing written after it overrides.
       assertEquals(await declaring(["**", "!apps/**", "libs/other"]), "");
-      // A trailing `**` spans zero segments, and a trailing `*` inside one
-      // may match nothing left of the name.
-      assertEquals(await declaring(["apps/store-web/**"]), "apps/store-web");
+      // A trailing `**` stands for at least one segment, so it names what is
+      // UNDER the member and not the member; a trailing `*` inside a segment
+      // may still match nothing left of the name.
+      assertEquals(await declaring(["apps/store-web/**"]), "");
       assertEquals(await declaring(["apps/store-web*"]), "apps/store-web");
+      // minimatch's extglobs: one alternative, zero or one, zero or more, one
+      // or more, and anything that is none of them.
+      assertEquals(await declaring(["apps/@(store-web|other)"]), "apps/store-web");
+      assertEquals(await declaring(["apps/?(store-web)"]), "apps/store-web");
+      assertEquals(await declaring(["apps/*(store-web)"]), "apps/store-web");
+      assertEquals(await declaring(["apps/+(store-web)"]), "apps/store-web");
+      assertEquals(await declaring(["apps/!(other)"]), "apps/store-web");
+      assertEquals(await declaring(["apps/!(store-web)"]), "");
+      assertEquals(await declaring(["apps/@(a|b)"]), "");
+      // A mark with no group after it is the wildcard it has always been.
+      assertEquals(await declaring(["apps/*"]), "apps/store-web");
       // minimatch does not let a wildcard match a leading dot, and neither
       // does this: an ancestor npm would not call a workspace owner must not
       // supply the project's provenance.
@@ -1526,6 +1538,57 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
     it("withholds a package the .npmrc sends elsewhere", () => {
       const redirected = { ...sources, npmrc: "registry=https://npm.internal.example/" };
       assertEquals([...publiclySourcedPackages(redirected, { unpdf: "^1.8.0" })], []);
+    });
+
+    it("withholds a package whose transitive versions the binary does not carry", () => {
+      // Reusing the embedded copy hands the project the FRAMEWORK's
+      // transitive graph. A public override to another public version passes
+      // the provenance walk and still differs, so the binary has to carry the
+      // very versions the project locked.
+      const embedded = { packages: { glyphs: ["2.3.4"] }, constraints: {} };
+      const withTransitive: ProjectRegistrySources = {
+        ...sources,
+        locked: {
+          "node_modules/unpdf": {
+            version: "1.9.0",
+            resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.9.0.tgz",
+            link: false,
+            dependencies: { glyphs: "^2.0.0" },
+          },
+          "node_modules/glyphs": {
+            version: "2.3.4",
+            resolved: "https://registry.npmjs.org/glyphs/-/glyphs-2.3.4.tgz",
+            link: false,
+            dependencies: {},
+          },
+        },
+      };
+      assertEquals(
+        [...publiclySourcedPackages(withTransitive, { unpdf: "^1.8.0" }, embedded)],
+        ["unpdf"],
+      );
+      // The project overrode it to another public version the binary does not
+      // carry, so the two graphs are not interchangeable.
+      const overridden: ProjectRegistrySources = {
+        ...withTransitive,
+        locked: {
+          ...withTransitive.locked,
+          "node_modules/glyphs": {
+            ...withTransitive.locked["node_modules/glyphs"]!,
+            version: "2.4.0",
+          },
+        },
+      };
+      assertEquals([...publiclySourcedPackages(overridden, { unpdf: "^1.8.0" }, embedded)], []);
+      // Two frozen versions leave which one the embedded copy reaches
+      // undecidable, so neither is claimed.
+      assertEquals(
+        [...publiclySourcedPackages(withTransitive, { unpdf: "^1.8.0" }, {
+          packages: { glyphs: ["2.3.4", "2.4.0"] },
+          constraints: {},
+        })],
+        [],
+      );
     });
 
     it("withholds a package whose own dependencies are not vouched for", () => {

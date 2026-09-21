@@ -20,6 +20,8 @@ import {
   describeNpmImport,
   embeddedConstraintForBareImport,
   embeddedConstraintForVersion,
+  embeddedNpmPackagesForRuntime,
+  type EmbeddedNpmSet,
   isFrameworkProvidedPackage,
   nodeBuiltinSpecifier,
   parseNpmSpecifier,
@@ -782,6 +784,7 @@ export function lockedVersionsByName(
 export function publiclySourcedPackages(
   sources: ProjectRegistrySources,
   pins: Readonly<Record<string, string>>,
+  embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
 ): ReadonlySet<string> {
   const publicly = new Set<string>();
   if (sources.unverifiableClient !== null) return publicly;
@@ -790,13 +793,36 @@ export function publiclySourcedPackages(
     if (locked === undefined || !resolvesFromPublicRegistry(sources, locked.entry, name)) continue;
     // The embedded artifact carries the FRAMEWORK's transitive graph, not this
     // project's, so the package alone being public is not enough: a private
-    // fork or an override anywhere underneath it would be replaced by the
-    // public copy the binary froze. The same walk the CDN path makes is what
-    // says the two graphs can stand in for each other.
-    if ("refusal" in transitiveLockedDependencies(sources, locked.path, name)) continue;
+    // fork, or an override to a different public version, anywhere underneath
+    // it would be replaced by the copy the binary froze. The same walk the CDN
+    // path makes is what finds those.
+    const transitive = transitiveLockedDependencies(sources, locked.path, name);
+    if ("refusal" in transitive) continue;
+    // Verified is still not identical: the walk says the project's graph is
+    // public, and this says the binary's is the SAME graph. Without it a
+    // project that overrides one transitive to another public version still
+    // got the binary's copy, and with it the framework's version of that
+    // override.
+    if (!transitive.pins.every((pin) => embeddedCarriesExactly(embedded, pin))) continue;
     publicly.add(name);
   }
   return publicly;
+}
+
+/**
+ * Does the binary carry this `name@version` and no other version of it?
+ *
+ * One frozen version is what makes the answer knowable from here: the binary
+ * resolves its own imports against whatever it froze, so a second version of
+ * the same name leaves which one the embedded package reaches undecidable.
+ */
+function embeddedCarriesExactly(embedded: EmbeddedNpmSet, pin: string): boolean {
+  const separator = pin.lastIndexOf("@");
+  const name = pin.slice(0, separator);
+  const version = pin.slice(separator + 1);
+  if (!Object.hasOwn(embedded.packages, name)) return false;
+  const carried = embedded.packages[name]!;
+  return carried.length === 1 && carried[0] === version;
 }
 
 /**
@@ -971,7 +997,9 @@ function matchesWorkspacePattern(
       m = ++matchedTo;
     }
   }
-  while (p < pattern.length && pattern[p] === "**") p++;
+  // A trailing `**` stands for at least one segment, as minimatch has it:
+  // `packages/**` names what is under `packages`, never `packages` itself.
+  // Anything left over here is a `**` that consumed nothing.
   return p === pattern.length;
 }
 
@@ -1045,11 +1073,15 @@ function splitBraceBody(body: string): string[] {
   return parts;
 }
 
+/** The repetition an extglob's leading mark asks for. */
+type ExtglobMark = "@" | "?" | "*" | "+" | "!";
+
 /** One unit of a pattern segment, as minimatch reads it. */
 type SegmentToken =
   | { kind: "star" }
   | { kind: "any" }
   | { kind: "class"; matches: (char: string) => boolean; dotExplicit: boolean }
+  | { kind: "extglob"; mark: ExtglobMark; alternatives: SegmentToken[][] }
   | { kind: "char"; char: string };
 
 /**
@@ -1064,6 +1096,21 @@ function segmentTokens(pattern: string): SegmentToken[] {
     if (char === "\\" && index + 1 < pattern.length) {
       tokens.push({ kind: "char", char: pattern[++index]! });
       continue;
+    }
+    // Read before `*` and `?` stand for themselves: in `*(app|web)` the mark
+    // belongs to the group, and taking it as a wildcard left the `(app|web)`
+    // behind as literal text.
+    if (isExtglobMark(char) && pattern[index + 1] === "(") {
+      const closed = matchingParenthesis(pattern, index + 1);
+      if (closed >= 0) {
+        tokens.push({
+          kind: "extglob",
+          mark: char,
+          alternatives: splitExtglobBody(pattern.slice(index + 2, closed)).map(segmentTokens),
+        });
+        index = closed;
+        continue;
+      }
     }
     if (char === "*") {
       tokens.push({ kind: "star" });
@@ -1082,6 +1129,42 @@ function segmentTokens(pattern: string): SegmentToken[] {
     index = close;
   }
   return tokens;
+}
+
+/** The marks minimatch reads as an extglob when a `(` follows them. */
+function isExtglobMark(char: string): char is ExtglobMark {
+  return char === "@" || char === "?" || char === "*" || char === "+" || char === "!";
+}
+
+/** The `)` that closes the `(` at `open`, or -1 when nothing does. */
+function matchingParenthesis(pattern: string, open: number): number {
+  let depth = 0;
+  for (let index = open; index < pattern.length; index++) {
+    const char = pattern[index];
+    if (char === "\\") index++;
+    else if (char === "(") depth++;
+    else if (char === ")" && --depth === 0) return index;
+  }
+  return -1;
+}
+
+/** An extglob body split on its own `|`, leaving nested groups intact. */
+function splitExtglobBody(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < body.length; index++) {
+    const char = body[index];
+    if (char === "\\") index++;
+    else if (char === "(") depth++;
+    else if (char === ")") depth--;
+    else if (char === "|" && depth === 0) {
+      parts.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(body.slice(start));
+  return parts;
 }
 
 /** The `]` that closes the class opened at `open`, or -1 when nothing does. */
@@ -1139,34 +1222,104 @@ function matchesToken(token: SegmentToken, char: string): boolean {
 function allowsLeadingDot(token: SegmentToken | undefined): boolean {
   if (token === undefined) return false;
   if (token.kind === "char") return token.char === ".";
-  return token.kind === "class" && token.dotExplicit;
+  if (token.kind === "class") return token.dotExplicit;
+  // A group reaches a dot through whichever alternative names one.
+  return token.kind === "extglob" && token.mark !== "!" &&
+    token.alternatives.some((alternative) => allowsLeadingDot(alternative[0]));
 }
 
-/** Does one pattern segment, with `*` standing for any run of characters, match? */
+/**
+ * Does one pattern segment match a name?
+ *
+ * Matched recursively rather than with two pointers, because an extglob can
+ * repeat and a `*` can split anywhere. Every (token, offset) pair is memoized,
+ * so a pattern that is project text costs work in the length of the name and
+ * the pattern rather than exponentially in either.
+ */
 function matchesSegment(pattern: string, name: string): boolean {
   const tokens = segmentTokens(pattern);
   if (name.startsWith(".") && !allowsLeadingDot(tokens[0])) return false;
-  let p = 0;
-  let n = 0;
-  let star = -1;
-  let matchedTo = 0;
-  while (n < name.length) {
-    const token = tokens[p];
-    if (token?.kind === "star") {
-      star = p++;
-      matchedTo = n;
-    } else if (token !== undefined && matchesToken(token, name[n]!)) {
-      p++;
-      n++;
-    } else if (star < 0) {
-      return false;
-    } else {
-      p = star + 1;
-      n = ++matchedTo;
+  return matchesTokens(tokens, 0, name, 0, new Map());
+}
+
+function matchesTokens(
+  tokens: readonly SegmentToken[],
+  index: number,
+  name: string,
+  offset: number,
+  memo: Map<string, boolean>,
+): boolean {
+  if (index === tokens.length) return offset === name.length;
+  const key = `${index}:${offset}`;
+  const known = memo.get(key);
+  if (known !== undefined) return known;
+  const answer = matchesTokenHere(tokens, index, name, offset, memo);
+  memo.set(key, answer);
+  return answer;
+}
+
+/** The token at `index` against `name` from `offset`, and the rest after it. */
+function matchesTokenHere(
+  tokens: readonly SegmentToken[],
+  index: number,
+  name: string,
+  offset: number,
+  memo: Map<string, boolean>,
+): boolean {
+  const token = tokens[index]!;
+  if (token.kind === "star") {
+    for (let end = offset; end <= name.length; end++) {
+      if (matchesTokens(tokens, index + 1, name, end, memo)) return true;
     }
+    return false;
   }
-  while (tokens[p]?.kind === "star") p++;
-  return p === tokens.length;
+  if (token.kind === "extglob") return matchesExtglob(tokens, index, name, offset, memo);
+  return offset < name.length && matchesToken(token, name[offset]!) &&
+    matchesTokens(tokens, index + 1, name, offset + 1, memo);
+}
+
+/**
+ * An extglob group, per minimatch: `@(a|b)` is exactly one alternative,
+ * `?(a|b)` zero or one, `*(a|b)` zero or more, `+(a|b)` one or more, and
+ * `!(a|b)` any run that is not one of them.
+ */
+function matchesExtglob(
+  tokens: readonly SegmentToken[],
+  index: number,
+  name: string,
+  offset: number,
+  memo: Map<string, boolean>,
+): boolean {
+  const token = tokens[index] as Extract<SegmentToken, { kind: "extglob" }>;
+  const rest = (end: number) => matchesTokens(tokens, index + 1, name, end, memo);
+  const consumes = (from: number, to: number) =>
+    token.alternatives.some((alternative) =>
+      matchesTokens(alternative, 0, name.slice(from, to), 0, new Map())
+    );
+  if (token.mark === "!") {
+    for (let end = offset; end <= name.length; end++) {
+      if (!consumes(offset, end) && rest(end)) return true;
+    }
+    return false;
+  }
+  // `?` and `*` let the group stand for nothing at all; `@` and `+` do not.
+  if ((token.mark === "?" || token.mark === "*") && rest(offset)) return true;
+  const repeats = token.mark === "*" || token.mark === "+";
+  const ends = (from: number) => {
+    const found: number[] = [];
+    for (let end = from; end <= name.length; end++) if (consumes(from, end)) found.push(end);
+    return found;
+  };
+  const seen = new Set<number>();
+  const queue = ends(offset);
+  while (queue.length > 0) {
+    const end = queue.shift()!;
+    if (seen.has(end)) continue;
+    seen.add(end);
+    if (rest(end)) return true;
+    if (repeats) queue.push(...ends(end));
+  }
+  return false;
 }
 
 /** What one directory's lockfiles say, or `null` when it holds none. */
