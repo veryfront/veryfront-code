@@ -961,6 +961,10 @@ function matchesWorkspacePattern(
       m++;
     } else if (star < 0) {
       return false;
+    } else if (member[matchedTo]!.startsWith(".")) {
+      // `**` does not descend into a dot directory, and minimatch does not
+      // either: a pattern has to name one explicitly to reach it.
+      return false;
     } else {
       // Give the last `**` one more segment and retry from just after it.
       p = star + 1;
@@ -1045,7 +1049,7 @@ function splitBraceBody(body: string): string[] {
 type SegmentToken =
   | { kind: "star" }
   | { kind: "any" }
-  | { kind: "class"; matches: (char: string) => boolean }
+  | { kind: "class"; matches: (char: string) => boolean; dotExplicit: boolean }
   | { kind: "char"; char: string };
 
 /**
@@ -1108,9 +1112,13 @@ function characterClass(body: string): SegmentToken {
       ranges.push([from, from]);
     }
   }
+  const listed = (char: string) => ranges.some(([from, to]) => char >= from && char <= to);
   return {
     kind: "class",
-    matches: (char) => ranges.some(([from, to]) => char >= from && char <= to) !== negated,
+    matches: (char) => listed(char) !== negated,
+    // A class that LISTS the dot names it explicitly, which is what minimatch
+    // asks for; one that merely fails to exclude it does not.
+    dotExplicit: !negated && listed("."),
   };
 }
 
@@ -1121,9 +1129,23 @@ function matchesToken(token: SegmentToken, char: string): boolean {
   return token.kind === "char" && token.char === char;
 }
 
+/**
+ * May this pattern segment start matching a name that begins with a dot?
+ *
+ * Only an explicit dot does: minimatch leaves `packages/*` and `packages/?x`
+ * refusing `packages/.hidden`, and so must this, or an ancestor npm does not
+ * consider a workspace owner would be trusted for the project's provenance.
+ */
+function allowsLeadingDot(token: SegmentToken | undefined): boolean {
+  if (token === undefined) return false;
+  if (token.kind === "char") return token.char === ".";
+  return token.kind === "class" && token.dotExplicit;
+}
+
 /** Does one pattern segment, with `*` standing for any run of characters, match? */
 function matchesSegment(pattern: string, name: string): boolean {
   const tokens = segmentTokens(pattern);
+  if (name.startsWith(".") && !allowsLeadingDot(tokens[0])) return false;
   let p = 0;
   let n = 0;
   let star = -1;
@@ -1648,13 +1670,31 @@ export function createProjectDependencyCdnPlugin(
         // the inlined dependency a different major of the package it asked
         // for. Only a bare URL, which names no version, takes whatever
         // constraint the binary records.
-        const constraint = parsed.version.length > 0
-          ? embeddedConstraintForVersion(parsed.name, parsed.version)
-          : embeddedConstraintForBareImport(parsed.name);
-        if (constraint === null) {
-          return { path: specifier, external: true };
-        }
         const tail = specifier.slice(parsed.name.length);
+        if (parsed.version.length === 0) {
+          // A bare CDN URL names no version, so whatever constraint the
+          // binary records answers it; without one the specifier is left as
+          // written, which is what an uncompiled run resolves.
+          const bare = embeddedConstraintForBareImport(parsed.name);
+          return bare === null
+            ? { path: specifier, external: true }
+            : { path: `npm:${parsed.name}@${bare}${tail}`, external: true };
+        }
+        const constraint = embeddedConstraintForVersion(parsed.name, parsed.version);
+        if (constraint === null) {
+          // Leaving the bare specifier here discarded the version the CDN
+          // source asked for: `rewriteForDeno` turns `react-dom` into
+          // `npm:react-dom`, whose recorded constraint is whatever the
+          // framework froze. The dependency would run against a version it
+          // did not ask for, and a second copy is what this guard exists to
+          // stop, so the mismatch is reported instead.
+          return reportMissing(
+            args,
+            describeNpmImport(`npm:${parsed.name}@${parsed.version}`),
+            `the runtime provides ${parsed.name} and carries no version this dependency's ` +
+              `own copy can be reconciled with`,
+          );
+        }
         return { path: `npm:${parsed.name}@${constraint}${tail}`, external: true };
       });
 

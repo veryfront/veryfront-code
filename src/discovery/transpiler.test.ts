@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
@@ -1131,12 +1137,14 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
 
     it("matches the workspace patterns npm's own globs accept", async () => {
       const member = `${PROJECT}/apps/store-web`;
-      const declaring = async (workspaces: unknown) =>
+      const declaring = async (workspaces: unknown, at = member) =>
         (await sourcesFor({
           "package.json": JSON.stringify({ workspaces }),
           "package-lock.json": publicLock("unpdf", "1.8.1"),
           "apps/store-web/package.json": "{}",
-        }, member)).memberPath;
+          "apps/.hidden/package.json": "{}",
+          ".apps/web/package.json": "{}",
+        }, at)).memberPath;
 
       // A `*` stands for part of ONE segment; `**` spans any number of them,
       // backtracking when a later segment has to line up.
@@ -1176,6 +1184,24 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       // may match nothing left of the name.
       assertEquals(await declaring(["apps/store-web/**"]), "apps/store-web");
       assertEquals(await declaring(["apps/store-web*"]), "apps/store-web");
+      // minimatch does not let a wildcard match a leading dot, and neither
+      // does this: an ancestor npm would not call a workspace owner must not
+      // supply the project's provenance.
+      assertEquals(await declaring(["apps/*"], `${PROJECT}/apps/.hidden`), "");
+      assertEquals(await declaring(["apps/**"], `${PROJECT}/apps/.hidden`), "");
+      assertEquals(await declaring(["**"], `${PROJECT}/apps/.hidden`), "");
+      assertEquals(await declaring(["apps/?hidden"], `${PROJECT}/apps/.hidden`), "");
+      assertEquals(await declaring(["**/web"], `${PROJECT}/.apps/web`), "");
+      // Named explicitly, it is a member like any other.
+      assertEquals(
+        await declaring(["apps/.hidden"], `${PROJECT}/apps/.hidden`),
+        "apps/.hidden",
+      );
+      assertEquals(await declaring(["apps/.*"], `${PROJECT}/apps/.hidden`), "apps/.hidden");
+      assertEquals(
+        await declaring(["apps/[.]hidden"], `${PROJECT}/apps/.hidden`),
+        "apps/.hidden",
+      );
       // `workspaces` that is neither a list nor `{ packages }` declares none.
       assertEquals(await declaring({ nope: ["apps/*"] }), "");
     });
@@ -1615,19 +1641,24 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
     const pins = { "@veryfront-fixture/pdf-text": "1.8.1" };
 
     it("hands framework packages reached from CDN source back to the runtime", async () => {
-      const { httpUrl } = captureResolvers(createProjectDependencyCdnPlugin(pins, () => {}));
+      const missing: string[] = [];
+      const { httpUrl } = captureResolvers(
+        createProjectDependencyCdnPlugin(pins, (specifier) => missing.push(specifier)),
+      );
       const importer = "https://esm.sh/@veryfront-fixture/pdf-text@1.8.1";
 
-      assertEquals(
-        await httpUrl(resolveArgs({
-          path: "https://esm.sh/zod@3.25.76/es2022/zod.mjs",
-          importer,
-          namespace: "http-url",
-        })),
-        // The binary records `zod` at `*` and 4.3.6, not at this version, so
-        // the bare specifier is kept.
-        { path: "zod", external: true },
-      );
+      // The binary records `zod` at `*` and 4.3.6, not at this version.
+      // Keeping the bare specifier discarded the version the CDN source asked
+      // for -- `rewriteForDeno` turns `zod` into `npm:zod`, which that
+      // constraint resolves to zod 4 -- so the mismatch is reported instead.
+      const mismatch = await httpUrl(resolveArgs({
+        path: "https://esm.sh/zod@3.25.76/es2022/zod.mjs",
+        importer,
+        namespace: "http-url",
+      })) as { errors?: { text: string }[] };
+      assert(mismatch.errors?.[0], "a framework version mismatch must fail the build");
+      assertStringIncludes(mismatch.errors[0].text, "zod@3.25.76");
+      assertEquals(missing, ["zod@3.25.76"]);
       // Re-emitted under the constraint the binary records for that version,
       // subpath included; see the framework-constraint test below.
       assertEquals(
@@ -1658,17 +1689,27 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         })),
         { path: `npm:react-dom@${version}/client`, external: true },
       );
-      // A version the binary does not record is NOT rewritten to one it does:
-      // handing the inlined dependency another major of the package it asked
-      // for is the identity failure this guard exists to stop. The bare
-      // specifier is left instead, which is what an uncompiled run resolves.
-      assertEquals(
-        await httpUrl(resolveArgs({
-          path: "https://esm.sh/react-dom@0.0.1/es2022/client.mjs",
-          importer,
-          namespace: "http-url",
-        })),
-        { path: "react-dom/client", external: true },
+      // A version the binary does not record is NOT rewritten to one it does,
+      // and NOT stripped to a bare specifier either: handing the inlined
+      // dependency another major of the package it asked for is the identity
+      // failure this guard exists to stop, so it is reported.
+      const mismatch = await httpUrl(resolveArgs({
+        path: "https://esm.sh/react-dom@0.0.1/es2022/client.mjs",
+        importer,
+        namespace: "http-url",
+      })) as { errors?: { text: string }[] };
+      assert(mismatch.errors?.[0], "a framework version mismatch must fail the build");
+      assertStringIncludes(mismatch.errors[0].text, "react-dom@0.0.1");
+      // A CDN URL that names NO version still takes whatever the binary has.
+      const bare = await httpUrl(resolveArgs({
+        path: "https://esm.sh/react-dom/es2022/client.mjs",
+        importer,
+        namespace: "http-url",
+      })) as { path: string; external: boolean };
+      assertEquals(bare.external, true);
+      assert(
+        recorded!.includes(bare.path.slice("npm:react-dom@".length, -"/client".length)),
+        `expected a recorded react-dom constraint, got ${bare.path}`,
       );
     });
 

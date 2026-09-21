@@ -8,7 +8,10 @@ import {
   fetchProjectDependencySource,
   importModule as importModuleRaw,
 } from "#veryfront/discovery/transpiler.ts";
-import { EMBEDDED_NPM_PACKAGES } from "#veryfront/discovery/embedded-npm-packages.generated.ts";
+import {
+  EMBEDDED_NPM_CONSTRAINTS,
+  EMBEDDED_NPM_PACKAGES,
+} from "#veryfront/discovery/embedded-npm-packages.generated.ts";
 import { isFrameworkProvidedPackage } from "#veryfront/discovery/project-npm-imports.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -593,6 +596,10 @@ describe(
       // http-url namespace, past the bare-specifier resolver. Without the
       // namespace guard esbuild inlines a SECOND zod, and the schema registry
       // compares a discovered tool's schemas against the framework's instance.
+      const zodVersion = EMBEDDED_NPM_CONSTRAINTS["zod"]?.find((candidate) =>
+        /^\d+\.\d+\.\d+$/.test(candidate)
+      );
+      assert(zodVersion, "the framework's own lock records zod at an exact version");
       const context: FileDiscoveryContext = {
         platform: "node",
         fsAdapter: createMockAdapter({
@@ -616,7 +623,7 @@ describe(
             new Response(
               [
                 // Exactly what esm.sh emits for a transitive framework import.
-                `import { z } from "https://esm.sh/zod@3.25.76/es2022/zod.mjs";`,
+                `import { z } from "https://esm.sh/zod@${zodVersion}/es2022/zod.mjs";`,
                 `export const schemaKind = typeof z.object;`,
               ].join("\n"),
               { headers: { "content-type": "application/javascript" } },
@@ -635,6 +642,48 @@ describe(
         false,
         `zod must stay external, got ${JSON.stringify(requested)}`,
       );
+    });
+
+    it("refuses a framework version the runtime cannot serve the dependency", async () => {
+      // The full profile CARRIES zod 3.25.76 transitively but records no
+      // constraint that resolves it, so keeping the bare specifier emitted
+      // `npm:zod`, whose recorded `*` is the framework's own zod 4 -- a
+      // different major, handed to a dependency that asked for 3.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({
+            dependencies: { "@veryfront-fixture/pdf-text": "1.8.1" },
+          }),
+          [toolPath]: [
+            `import { schemaKind } from "@veryfront-fixture/pdf-text";`,
+            `export default { name: "extract", kind: schemaKind };`,
+          ].join("\n"),
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const error = await assertRejects(
+        () =>
+          withMockFetch(
+            () =>
+              Promise.resolve(
+                new Response(
+                  [
+                    `import { z } from "https://esm.sh/zod@3.25.76/es2022/zod.mjs";`,
+                    `export const schemaKind = typeof z.object;`,
+                  ].join("\n"),
+                  { headers: { "content-type": "application/javascript" } },
+                ),
+              ),
+            () => importModule(`file://${projectDir}/${toolPath}`, context),
+          ),
+        Error,
+      );
+      assertEquals((error as { slug?: string }).slug, "dependency-missing");
+      const detail = String((error as { detail?: string }).detail ?? "");
+      assertEquals(detail.includes("zod@3.25.76"), true, detail);
     });
 
     it("keeps the framework subpath when it externalizes a CDN framework import", async () => {
