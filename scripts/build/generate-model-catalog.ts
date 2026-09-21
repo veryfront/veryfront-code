@@ -76,7 +76,11 @@ export function buildCatalogUrl(baseUrl: string): string {
   return `${stripTrailingSlashes(baseUrl)}${CATALOG_PATH}`;
 }
 
-/** Fetch the served catalog. Errors name the status and the URL, nothing else. */
+/**
+ * Fetch the served catalog. Errors name the status and the catalog path,
+ * never the configured base: `VERYFRONT_CATALOG_API_BASE_URL` is an
+ * operator's value and may carry a private host or a signed query.
+ */
 async function fetchServedCatalog(
   baseUrl: string,
   token: string,
@@ -98,7 +102,8 @@ async function fetchServedCatalog(
     // apart. Neither message carries the token or the response body.
     if (response.status === 404) {
       throw new Error(
-        `Catalog endpoint not found at ${url} - check the API base`,
+        `Catalog endpoint ${CATALOG_PATH} not found at the configured API base ` +
+          `(${BASE_URL_ENV}) - check the base`,
       );
     }
     if (response.status === 401 || response.status === 403) {
@@ -108,7 +113,7 @@ async function fetchServedCatalog(
       );
     }
     throw new Error(
-      `Model catalog request to ${url} failed with status ${response.status}`,
+      `Model catalog request to ${CATALOG_PATH} failed with status ${response.status}`,
     );
   }
   return await readCatalogJson(response);
@@ -127,9 +132,7 @@ export async function readCatalogJson(response: Response): Promise<unknown> {
     return JSON.parse(text);
   } catch {
     throw new Error(
-      `Model catalog response from ${
-        response.url || "the catalog endpoint"
-      } was not valid JSON`,
+      `Model catalog response from ${CATALOG_PATH} was not valid JSON`,
     );
   }
 }
@@ -165,14 +168,19 @@ const MAX_FAILURE_LINE = 400;
  * This task runs with a catalog token in its environment and talks to a
  * service whose failures can carry a response body, so an unhandled error is
  * not printed raw. The stack is dropped, the message is flattened to a single
- * line so nothing multi-line can pose as one, absolute filesystem paths are
- * cut back to their last segment, and the result is bounded. URLs survive
- * intact: their slashes follow a word character or a scheme, and the endpoint
- * a request failed against is the actionable part of those messages.
+ * line so nothing multi-line can pose as one, URLs are replaced whole (the
+ * configured base may carry a private host or a signed query, and no message
+ * this task writes needs one — they name the catalog path instead), absolute
+ * filesystem paths are cut back to their last segment, and the result is
+ * bounded.
  */
 export function formatFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
-  const flattened = raw.replaceAll("file://", "").replace(/\s+/g, " ").trim();
+  const flattened = raw
+    .replaceAll("file://", "")
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'()]+/gi, "a URL")
+    .replace(/\s+/g, " ")
+    .trim();
   // POSIX and file-URL paths, then Windows drive-letter (`C:\...`) and UNC
   // (`\\server\share\...`) paths: each is cut back to its last segment.
   const withoutPaths = flattened

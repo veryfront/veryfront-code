@@ -50,9 +50,16 @@ describe("an unplanned failure", () => {
       "Catalog endpoint not found - check the API base",
     ],
     [
-      "keeps the endpoint a request failed against",
-      new Error("request to https://example.invalid/ai/models failed with 500"),
-      "request to https://example.invalid/ai/models failed with 500",
+      "replaces a URL whole, host, credentials and query included",
+      new Error(
+        "request to https://user:secret@internal.example.invalid/ai/models?sig=abc failed with 500",
+      ),
+      "request to a URL failed with 500",
+    ],
+    [
+      "replaces a URL of any scheme",
+      new Error("wss://internal.example.invalid/socket closed"),
+      "a URL closed",
     ],
     [
       "flattens a multi-line message so nothing can pose as its own line",
