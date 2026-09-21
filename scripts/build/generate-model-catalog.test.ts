@@ -57,6 +57,13 @@ describe("an unplanned failure", () => {
       "request to a URL failed with 500",
     ],
     [
+      "replaces a URL whole even when it carries parentheses",
+      new Error(
+        "fetch failed: https://internal.example.invalid/path(foo)/ai/models?sig=abc (network)",
+      ),
+      "fetch failed: a URL (network)",
+    ],
+    [
       "replaces a URL of any scheme",
       new Error("wss://internal.example.invalid/socket closed"),
       "a URL closed",

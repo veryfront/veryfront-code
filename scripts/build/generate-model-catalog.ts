@@ -207,7 +207,9 @@ export function formatFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const flattened = raw
     .replaceAll("file://", "")
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'()]+/gi, "a URL")
+    // Up to whitespace or a quote: a URL may legitimately carry parentheses,
+    // and stopping at one would print the rest of it, query included.
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"']+/gi, "a URL")
     .replace(/\s+/g, " ")
     .trim();
   // POSIX and file-URL paths, then Windows drive-letter (`C:\...`) and UNC
