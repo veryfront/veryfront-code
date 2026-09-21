@@ -57,9 +57,9 @@ describe("an unplanned failure", () => {
       "request to a URL failed with 500",
     ],
     [
-      "cuts an unquoted path with parentheses back to its last segment",
+      "replaces an unquoted path and the rest of the line, parentheses or not",
       new Error("failed /home/(alice-private)/build.ts"),
-      "failed build.ts",
+      "failed a path",
     ],
     [
       "consumes a quoted path whole, spaces and parentheses included",
@@ -91,24 +91,29 @@ describe("an unplanned failure", () => {
       "first line at somewhere at somewhere else",
     ],
     [
-      "cuts an absolute path back to its last segment",
+      "replaces an unquoted absolute path and whatever follows it",
       new Error("failed to open /home/someone/secret/place/catalog.data.ts"),
-      "failed to open catalog.data.ts",
+      "failed to open a path",
     ],
     [
-      "cuts an absolute path a file URL carries",
+      "replaces an unquoted path with a space in it, which has no boundary to stop at",
+      new Error("failed /home/alice private/build.ts (ENOENT)"),
+      "failed a path",
+    ],
+    [
+      "replaces the absolute path a file URL carries",
       new Error("failed at file:///home/someone/build/generate.ts"),
-      "failed at generate.ts",
+      "failed at a path",
     ],
     [
-      "cuts a Windows drive-letter path back to its last segment",
+      "replaces an unquoted Windows drive-letter path",
       new Error("failed to open C:\\Users\\someone\\secret\\catalog.data.ts"),
-      "failed to open catalog.data.ts",
+      "failed to open a path",
     ],
     [
-      "cuts a UNC path back to its last segment",
+      "replaces an unquoted UNC path",
       new Error("failed to open \\\\build-host\\share\\place\\generate.ts"),
-      "failed to open generate.ts",
+      "failed to open a path",
     ],
     [
       "describes a thrown value that is not an error",
