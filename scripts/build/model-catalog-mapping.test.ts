@@ -7,6 +7,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertCatalogInvariants,
   buildModelCatalogData,
+  compareCodePoints,
   findStaleOverlayKeys,
   findUnroutedProviders,
   type ModelCatalogData,
@@ -990,14 +991,17 @@ describe("scripts/build/model-catalog-mapping", () => {
       "providerLabels",
       "providerOrder",
     ]);
-    assertEquals([...collectKeys(data.chatModels, new Set())].sort(), [
-      "description",
-      "id",
-      "modelId",
-      "name",
-      "provider",
-      "thinking",
-      "thinkingBudgetTokens",
-    ]);
+    assertEquals(
+      [...collectKeys(data.chatModels, new Set())].sort(compareCodePoints),
+      [
+        "description",
+        "id",
+        "modelId",
+        "name",
+        "provider",
+        "thinking",
+        "thinkingBudgetTokens",
+      ],
+    );
   });
 });

@@ -337,6 +337,208 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
  * Nothing is ever dropped quietly: a model that vanishes from the output has
  * to have vanished from the catalog.
  */
+/** Orders strings by code point, so output never depends on a locale or ICU build. */
+export function compareCodePoints(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+/** What one pass over the served models yields. */
+type ServedFacts = {
+  readonly chatModels: ChatModelEntry[];
+  readonly transportCapabilities: (readonly [string, TransportCapabilities])[];
+  /** Display label per provider, taken from that provider's models. */
+  readonly labels: Map<string, string>;
+  /** Model-id prefixes that differ from the provider they name. */
+  readonly aliasPrefixes: Map<string, Set<string>>;
+};
+
+/** The chat entry for one served model. */
+function readChatModel(
+  served: ServedModel,
+  overlay: ModelCatalogOverlay,
+): ChatModelEntry {
+  const entryIds = new Map(overlay.entryIds);
+  const budgets = new Map(overlay.thinkingBudgetTokens);
+  // `reasoning` is the served name for this fact and the only one read: the
+  // payload also carries the older `thinking` spelling, but two sources for
+  // one fact can disagree. It is also the authority on WHETHER a model
+  // reasons, so an overlay budget, which says how much, is dropped for a model
+  // the catalog serves as non-reasoning.
+  const reasons = served.capabilities.reasoning === true;
+  const thinkingBudgetTokens = reasons
+    ? budgets.get(served.modelId)
+    : undefined;
+  return {
+    id: entryIds.get(served.modelId) ?? served.id,
+    modelId: served.modelId,
+    provider: served.provider,
+    name: served.name,
+    description: served.description ?? "",
+    // A declared budget already means the model reasons, so the flag is
+    // emitted only where no budget carries that fact.
+    ...(reasons && thinkingBudgetTokens === undefined
+      ? { thinking: true }
+      : {}),
+    ...(thinkingBudgetTokens === undefined ? {} : { thinkingBudgetTokens }),
+  };
+}
+
+/** Transport facts for one served model, or undefined when it declares none. */
+function readTransportCapabilities(
+  served: ServedModel,
+  overlay: ModelCatalogOverlay,
+): TransportCapabilities | undefined {
+  const functionToolReasoning = new Map(
+    overlay.openAIChatReasoningWithFunctionTools,
+  )
+    .get(served.modelId);
+  // A reasoning control on a model the catalog serves as non-reasoning is the
+  // catalog contradicting itself, and `reasoning` settles it.
+  const reasoningMode = served.capabilities.reasoning === true
+    ? served.capabilities.reasoning_mode
+    : undefined;
+  const transport = served.capabilities.transport;
+  const entry: TransportCapabilities = {
+    ...(reasoningMode !== undefined && KNOWN_REASONING_MODES.has(reasoningMode)
+      ? { anthropicThinkingMode: reasoningMode as "adaptive" }
+      : {}),
+    ...(transport !== undefined && KNOWN_OPENAI_TRANSPORTS.has(transport)
+      ? { openAITransport: transport as "chat-completions" | "responses" }
+      : {}),
+    ...(functionToolReasoning === undefined
+      ? {}
+      : { openAIChatReasoningWithFunctionTools: functionToolReasoning }),
+  };
+  return Object.keys(entry).length > 0 ? entry : undefined;
+}
+
+/** Record the provider's label and any alias its model id implies. */
+function recordProviderFacts(served: ServedModel, facts: ServedFacts): void {
+  // The label table is keyed by provider, so two models of one provider
+  // offering different labels leaves no honest answer to publish.
+  const known = facts.labels.get(served.provider);
+  if (known === undefined) {
+    facts.labels.set(served.provider, served.providerLabel);
+  } else if (known !== served.providerLabel) {
+    fail(
+      `provider "${served.provider}" is served with conflicting display labels: ` +
+        `"${known}" and "${served.providerLabel}"`,
+    );
+  }
+
+  // A model id whose provider segment differs from the canonical provider
+  // names an accepted provider alias.
+  const slashIndex = served.modelId.indexOf("/");
+  const prefix = slashIndex > 0
+    ? served.modelId.slice(0, slashIndex)
+    : served.provider;
+  if (prefix === served.provider) return;
+  const prefixes = facts.aliasPrefixes.get(served.provider) ??
+    new Set<string>();
+  prefixes.add(prefix);
+  facts.aliasPrefixes.set(served.provider, prefixes);
+}
+
+/** One pass over the served models, gathering everything the tables need. */
+function readServedModels(
+  catalog: ServedCatalog,
+  overlay: ModelCatalogOverlay,
+): ServedFacts {
+  const facts: ServedFacts = {
+    chatModels: [],
+    transportCapabilities: [],
+    labels: new Map(),
+    aliasPrefixes: new Map(),
+  };
+  for (const served of catalog.models) {
+    facts.chatModels.push(readChatModel(served, overlay));
+    const capabilities = readTransportCapabilities(served, overlay);
+    if (capabilities !== undefined) {
+      facts.transportCapabilities.push([served.modelId, capabilities]);
+    }
+    recordProviderFacts(served, facts);
+  }
+  return facts;
+}
+
+/** The alias and label tables, in provider order. */
+function buildProviderTables(
+  providerOrder: readonly string[],
+  facts: ServedFacts,
+): {
+  providerAliases: (readonly [string, string])[];
+  providerLabels: (readonly [string, string])[];
+} {
+  const providerAliases: (readonly [string, string])[] = [];
+  const providerLabels: (readonly [string, string])[] = [];
+  for (const provider of providerOrder) {
+    const label = facts.labels.get(provider) ??
+      fail(
+        `provider "${provider}" serves a model but carries no display label`,
+      );
+    providerLabels.push([provider, label]);
+    providerAliases.push([provider, provider]);
+    const prefixes = [...facts.aliasPrefixes.get(provider) ?? []].sort(
+      compareCodePoints,
+    );
+    for (const prefix of prefixes) providerAliases.push([prefix, provider]);
+  }
+  return { providerAliases, providerLabels };
+}
+
+/**
+ * The transport table: entries retained for models the catalog no longer
+ * serves come first and in overlay order, so the table stays stable as models
+ * enter and leave. A served model that declares no transport fact has none,
+ * and a retained entry must not outlive it as a stale override.
+ */
+function buildTransportTable(
+  facts: ServedFacts,
+  overlay: ModelCatalogOverlay,
+): (readonly [string, TransportCapabilities])[] {
+  const served = new Set(facts.chatModels.map((model) => model.modelId));
+  return [
+    ...overlay.retainedTransportCapabilities.filter(([modelId]) =>
+      !served.has(modelId)
+    ),
+    ...facts.transportCapabilities,
+  ];
+}
+
+/**
+ * Refuse to drop a provider the package's public type still names.
+ *
+ * The label table is keyed by `KnownVeryfrontCloudProviderId`, which is
+ * hand-written and public, so a provider leaving the catalog drops a key the
+ * type still requires. Writing that file would turn an upstream change into a
+ * typecheck failure somewhere else, long after the run that caused it.
+ */
+function assertKnownProvidersServed(
+  providerOrder: readonly string[],
+  overlay: ModelCatalogOverlay,
+): void {
+  const published = new Set(providerOrder);
+  const missing = overlay.knownProviders.filter((provider) =>
+    !published.has(provider)
+  );
+  if (missing.length > 0) {
+    fail(
+      `the catalog no longer serves ${missing.join(", ")}, which ` +
+        `KnownVeryfrontCloudProviderId still lists. Removing a provider is a ` +
+        `public type change: update that union and this overlay by hand.`,
+    );
+  }
+}
+
+/**
+ * Build the catalog data from a served catalog payload and the overlay.
+ *
+ * Every field of the result comes from a field named by
+ * {@link parseServedCatalog} or from the overlay. The payload is validated
+ * first, the tables are built from the validated value, and the result is
+ * checked against what the package's lookups require before it is returned.
+ */
 export function buildModelCatalogData(
   payload: unknown,
   overlay: ModelCatalogOverlay,
@@ -344,192 +546,54 @@ export function buildModelCatalogData(
   assertOverlayInvariants(overlay);
   const catalog = parseServedCatalog(payload);
   const providerOrder = [...catalog.providers];
+  const facts = readServedModels(catalog, overlay);
 
-  const entryIds = new Map(overlay.entryIds);
-  const thinkingBudgets = new Map(overlay.thinkingBudgetTokens);
-  const chatReasoningWithFunctionTools = new Map(
-    overlay.openAIChatReasoningWithFunctionTools,
-  );
-
-  const chatModels: ChatModelEntry[] = [];
-  const servedTransportCapabilities:
-    (readonly [string, TransportCapabilities])[] = [];
-  const labelByProvider = new Map<string, string>();
-  const aliasPrefixes = new Map<string, Set<string>>();
-
-  for (const served of catalog.models) {
-    const { id: servedId, modelId, provider, name, capabilities } = served;
-    // `reasoning` is the served name for this fact and the only one read: the
-    // payload also carries the older `thinking` spelling, but two sources for
-    // one fact can disagree, so only `reasoning` is allowed in. It is also the
-    // authority on WHETHER a model reasons. The overlay says how much, so a
-    // budget for a model the catalog serves as non-reasoning is dropped rather
-    // than left to assert reasoning the catalog no longer claims.
-    const reasons = capabilities.reasoning === true;
-    const thinkingBudgetTokens = reasons
-      ? thinkingBudgets.get(modelId)
-      : undefined;
-    chatModels.push({
-      id: entryIds.get(modelId) ?? servedId,
-      modelId,
-      provider,
-      name,
-      description: served.description ?? "",
-      // A declared budget already means the model reasons, so the flag is
-      // emitted only where no budget carries that fact.
-      ...(reasons && thinkingBudgetTokens === undefined
-        ? { thinking: true }
-        : {}),
-      ...(thinkingBudgetTokens === undefined ? {} : { thinkingBudgetTokens }),
-    });
-
-    // A reasoning control on a model the catalog serves as non-reasoning is
-    // the catalog contradicting itself. `reasoning` settles it, so the control
-    // is dropped rather than written out beside the flag that denies it.
-    const reasoningMode = reasons ? capabilities.reasoning_mode : undefined;
-    const transport = capabilities.transport;
-    const functionToolReasoning = chatReasoningWithFunctionTools.get(modelId);
-    const capabilityEntry: TransportCapabilities = {
-      ...(reasoningMode !== undefined &&
-          KNOWN_REASONING_MODES.has(reasoningMode)
-        ? { anthropicThinkingMode: reasoningMode as "adaptive" }
-        : {}),
-      ...(transport !== undefined && KNOWN_OPENAI_TRANSPORTS.has(transport)
-        ? { openAITransport: transport as "chat-completions" | "responses" }
-        : {}),
-      ...(functionToolReasoning === undefined
-        ? {}
-        : { openAIChatReasoningWithFunctionTools: functionToolReasoning }),
-    };
-    if (Object.keys(capabilityEntry).length > 0) {
-      servedTransportCapabilities.push([modelId, capabilityEntry]);
-    }
-
-    // The label table is keyed by provider, so two models of one provider
-    // offering different labels leaves no honest answer to publish.
-    const label = served.providerLabel;
-    const knownLabel = labelByProvider.get(provider);
-    if (knownLabel === undefined) {
-      labelByProvider.set(provider, label);
-    } else if (knownLabel !== label) {
-      fail(
-        `provider "${provider}" is served with conflicting display labels: ` +
-          `"${knownLabel}" and "${label}"`,
-      );
-    }
-
-    // A model ID whose provider segment differs from the canonical provider
-    // names an accepted provider alias.
-    const slashIndex = modelId.indexOf("/");
-    const prefix = slashIndex > 0 ? modelId.slice(0, slashIndex) : provider;
-    if (prefix !== provider) {
-      const prefixes = aliasPrefixes.get(provider) ?? new Set<string>();
-      prefixes.add(prefix);
-      aliasPrefixes.set(provider, prefixes);
-    }
-  }
-  if (chatModels.length === 0) {
-    fail("no served model carries the fields an entry needs");
-  }
-
-  // A listed provider that serves no model is legitimate: the platform may
-  // list one with nothing routable right now. It contributes no group, so it
-  // is left out of every table rather than failing the run.
-  //
-  // Whether a provider is served is decided by whether a model names it, never
-  // by whether a label was found for it. Those coincide, because the platform
-  // declares the label required and this generator enforces that, but reading
-  // the label would make an absent label look like an absent provider and drop
-  // models that are still listed.
-  const providersWithModels = new Set(
-    chatModels.map((model) => model.provider),
-  );
   // The platform derives its provider list from the models it serves, so a
   // listed provider with no model cannot come from a correct payload: it is an
-  // upstream defect, and saying so is this generator's job.
+  // upstream defect, and saying so is this generator's job. Served-ness is
+  // decided by a model naming the provider, never by a label being found.
+  const withModels = new Set(facts.chatModels.map((model) => model.provider));
   const unserved = providerOrder.filter((provider) =>
-    !providersWithModels.has(provider)
+    !withModels.has(provider)
   );
   if (unserved.length > 0) {
     fail(`listed provider serves no model: ${unserved.join(", ")}`);
   }
+  assertKnownProvidersServed(providerOrder, overlay);
 
-  const providerAliases: (readonly [string, string])[] = [];
-  const providerLabels: (readonly [string, string])[] = [];
-  for (const provider of providerOrder) {
-    const label = labelByProvider.get(provider) ??
-      fail(
-        `provider "${provider}" serves a model but carries no display label`,
-      );
-    providerLabels.push([provider, label]);
-    providerAliases.push([provider, provider]);
-    for (const prefix of [...aliasPrefixes.get(provider) ?? []].sort()) {
-      providerAliases.push([prefix, provider]);
-    }
-  }
-
-  const routingByProvider = new Map(overlay.providerRouting);
-  const providerRouting = providerOrder.map((provider) =>
-    // A provider the overlay does not route falls back to the surface the
-    // package already uses for an unlisted provider, so routing stays
-    // declared for every provider the catalog names.
-    [
-      provider,
-      routingByProvider.get(provider) ?? { surface: overlay.defaultSurface },
-    ] as const
+  const { providerAliases, providerLabels } = buildProviderTables(
+    providerOrder,
+    facts,
   );
-
-  // Retained entries come first and in overlay order, so the table stays
-  // stable as models enter and leave the served catalog. A model is served
-  // whenever the catalog lists it, whether or not it carries a transport fact:
-  // a served model that declares none has none, and a retained entry must not
-  // outlive it as a stale override.
-  const servedModelIds = new Set(chatModels.map((model) => model.modelId));
-  const modelTransportCapabilities = [
-    ...overlay.retainedTransportCapabilities.filter(([modelId]) =>
-      !servedModelIds.has(modelId)
-    ),
-    ...servedTransportCapabilities,
-  ];
-
-  const servedDefaultModelId = catalog.defaultModelId;
-  const defaultEntry =
-    chatModels.find((model) => model.modelId === servedDefaultModelId) ??
-      fail(
-        `the default model "${servedDefaultModelId}" is not one of the served models`,
-      );
+  const routingByProvider = new Map(overlay.providerRouting);
+  const defaultEntry = facts.chatModels.find(
+    (model) => model.modelId === catalog.defaultModelId,
+  ) ??
+    fail(
+      `the default model "${catalog.defaultModelId}" is not one of the served models`,
+    );
 
   const data: ModelCatalogData = {
     defaultModelId: defaultEntry.id,
     providerAliases,
-    providerRouting,
+    // A provider the overlay does not route falls back to the surface the
+    // package already uses for an unlisted provider, so routing stays declared
+    // for every provider the catalog names.
+    providerRouting: providerOrder.map((provider) =>
+      [
+        provider,
+        routingByProvider.get(provider) ?? { surface: overlay.defaultSurface },
+      ] as const
+    ),
     defaultSurface: overlay.defaultSurface,
     gatewayPathPrefix: overlay.gatewayPathPrefix,
     surfaceGatewayApiVersions: overlay.surfaceGatewayApiVersions,
     defaultGatewayApiVersion: overlay.defaultGatewayApiVersion,
-    modelTransportCapabilities,
-    chatModels,
+    modelTransportCapabilities: buildTransportTable(facts, overlay),
+    chatModels: facts.chatModels,
     providerLabels,
     providerOrder,
   };
-  // The label table is keyed by `KnownVeryfrontCloudProviderId`, which is
-  // hand-written and public, so a provider leaving the catalog drops a key the
-  // type still requires. Writing that file would turn an upstream change into
-  // a typecheck failure somewhere else, long after the run that caused it, so
-  // it is refused here and named instead. Removing a provider is a public type
-  // change, and a person makes it.
-  const publishedProviders = new Set(data.providerOrder);
-  const missingKnown = overlay.knownProviders.filter(
-    (provider) => !publishedProviders.has(provider),
-  );
-  if (missingKnown.length > 0) {
-    fail(
-      `the catalog no longer serves ${missingKnown.join(", ")}, which ` +
-        `KnownVeryfrontCloudProviderId still lists. Removing a provider is a ` +
-        `public type change: update that union and this overlay by hand.`,
-    );
-  }
-
   // The output has to be readable back by the package's lookups, so it is
   // checked here rather than left to whoever reviews the generated diff.
   assertCatalogInvariants(data);

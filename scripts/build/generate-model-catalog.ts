@@ -51,12 +51,26 @@ const DATA_FILE = "src/provider/veryfront-cloud/model-catalog.data.ts";
 /** How long the catalog request may stall before the run fails. */
 const CATALOG_REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * Drop trailing slashes from a base URL.
+ *
+ * Done by scanning rather than by a regular expression: the base comes from an
+ * environment variable, and an anchored `/+$` makes the engine retry from
+ * every position on a long run of slashes, which is quadratic on input this
+ * function does not control. A scan is linear whatever it is handed.
+ */
+export function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
+}
+
 /** Fetch the served catalog. Errors name the status, never the response body. */
 async function fetchServedCatalog(
   baseUrl: string,
   token: string,
 ): Promise<unknown> {
-  const url = `${baseUrl.replace(/\/+$/, "")}${CATALOG_PATH}`;
+  const url = `${stripTrailingSlashes(baseUrl)}${CATALOG_PATH}`;
   const response = await fetch(url, {
     // A stalled connection would otherwise hold the scheduled run, and its
     // concurrency slot, until the job timeout. A run that fails must fail.
