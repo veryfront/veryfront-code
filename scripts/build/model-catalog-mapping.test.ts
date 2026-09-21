@@ -769,6 +769,36 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
+  it("keeps a provider's routing when only a retained model of it remains", () => {
+    // The catalog stops serving every acme-labs model. The overlay still
+    // retains acme-labs/gone-0's transport row, so that model still resolves —
+    // and must keep resolving on its own surface, not the default one.
+    const payload = fakePayload();
+    const models = (payload.models as Record<string, unknown>[]).filter(
+      (model) => model.provider !== "acme-labs",
+    );
+    payload.models = models;
+    payload.providers = (payload.providers as string[]).filter(
+      (provider) => provider !== "acme-labs",
+    );
+    payload.defaultModelId = models[0]!.modelId;
+
+    const data = buildModelCatalogData(payload, OVERLAY);
+
+    assertEquals(data.providerOrder.includes("acme-labs"), false);
+    assertEquals(
+      data.modelTransportCapabilities.some(([id]) => id === "acme-labs/gone-0"),
+      true,
+    );
+    const routing = new Map(data.providerRouting);
+    assertEquals(routing.get("acme-labs"), { surface: "openai", native: true });
+    // Served providers keep their position; the retained one follows.
+    assertEquals(
+      data.providerRouting.map(([provider]) => provider),
+      [...data.providerOrder, "acme-labs"],
+    );
+  });
+
   it("keeps the function-tool reasoning flag even for a non-reasoning model", () => {
     // Unlike a thinking budget or a reasoning mode, this flag is not a claim
     // that the model reasons. It says that WHEN reasoning is applied on the

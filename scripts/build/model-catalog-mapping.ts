@@ -539,6 +539,29 @@ function buildProviderTables(
 }
 
 /**
+ * The providers that need a routing row: every provider in the served order,
+ * then any provider a retained transport row belongs to that the catalog no
+ * longer names, in overlay order — only where the overlay actually routes it.
+ */
+function routedProviders(
+  providerOrder: readonly string[],
+  transportCapabilities: readonly (readonly [string, TransportCapabilities])[],
+  routingByProvider: ReadonlyMap<string, unknown>,
+): string[] {
+  const providers = [...providerOrder];
+  for (const [modelId] of transportCapabilities) {
+    const slashIndex = modelId.indexOf("/");
+    if (slashIndex <= 0) continue;
+    const provider = modelId.slice(0, slashIndex);
+    if (providers.includes(provider) || !routingByProvider.has(provider)) {
+      continue;
+    }
+    providers.push(provider);
+  }
+  return providers;
+}
+
+/**
  * The transport table: entries retained for models the catalog no longer
  * serves come first and in overlay order, so the table stays stable as models
  * enter and leave. A served model that declares no transport fact has none,
@@ -592,6 +615,7 @@ export function buildModelCatalogData(
     facts,
   );
   const routingByProvider = new Map(overlay.providerRouting);
+  const transportCapabilities = buildTransportTable(facts, overlay);
   const defaultEntry = facts.chatModels.find(
     (model) => model.modelId === catalog.defaultModelId,
   ) ??
@@ -604,18 +628,27 @@ export function buildModelCatalogData(
     providerAliases,
     // A provider the overlay does not route falls back to the surface the
     // package already uses for an unlisted provider, so routing stays declared
-    // for every provider the catalog names.
-    providerRouting: providerOrder.map((provider) =>
-      [
-        provider,
-        routingByProvider.get(provider) ?? { surface: overlay.defaultSurface },
-      ] as const
+    // for every provider the catalog names. A provider the catalog no longer
+    // names but whose model the overlay RETAINS keeps its routing too: the
+    // retained model still resolves, and dropping the row would send it on the
+    // default surface, i.e. the wrong protocol.
+    providerRouting: routedProviders(
+      providerOrder,
+      transportCapabilities,
+      routingByProvider,
+    ).map(
+      (provider) =>
+        [
+          provider,
+          routingByProvider.get(provider) ??
+            { surface: overlay.defaultSurface },
+        ] as const,
     ),
     defaultSurface: overlay.defaultSurface,
     gatewayPathPrefix: overlay.gatewayPathPrefix,
     surfaceGatewayApiVersions: overlay.surfaceGatewayApiVersions,
     defaultGatewayApiVersion: overlay.defaultGatewayApiVersion,
-    modelTransportCapabilities: buildTransportTable(facts, overlay),
+    modelTransportCapabilities: transportCapabilities,
     chatModels: facts.chatModels,
     providerLabels,
     providerOrder,
