@@ -168,6 +168,57 @@ function fakePayload(): Record<string, unknown> {
         pricingSources: { directProvider: "https://example.invalid/pricing" },
         deployments: [fakeDeployment("host-b", "region-b")],
       },
+      {
+        // Carries `reasoning` and no `thinking` key at all.
+        id: "quiet-7",
+        modelId: "beta-works/quiet-7",
+        provider: "beta-works",
+        providerLabel: "Beta Works",
+        providerLogoKey: "beta-works",
+        name: "Quiet 7",
+        description: "A model served without the older flag",
+        aliases: ["beta-works/quiet-7"],
+        capabilities: {
+          reasoning: true,
+          tool_call: true,
+          temperature: true,
+          open_weights: true,
+          supported_parameters: ["max_tokens"],
+          modalities: { input: ["text"] },
+        },
+        temperature: { min: 0, max: 1 },
+        supportedProviderTools: [],
+        pricing: fakePricing(),
+        providerPricing: fakePricing(),
+        pricingSources: { directProvider: "https://example.invalid/pricing" },
+        deployments: [fakeDeployment("host-a", "region-a")],
+      },
+      {
+        // The two spellings disagree. `reasoning` is the one that counts.
+        id: "loud-8",
+        modelId: "beta-works/loud-8",
+        provider: "beta-works",
+        providerLabel: "Beta Works",
+        providerLogoKey: "beta-works",
+        name: "Loud 8",
+        description: "A model whose older flag contradicts the served one",
+        aliases: ["beta-works/loud-8"],
+        capabilities: {
+          thinking: true,
+          reasoning: false,
+          tool_call: true,
+          temperature: true,
+          open_weights: true,
+          supported_parameters: ["max_tokens"],
+          modalities: { input: ["text"] },
+        },
+        temperature: { min: 0, max: 1 },
+        supportedProviderTools: [],
+        pricing: fakePricing(),
+        providerPricing: fakePricing(),
+        pricingSources: { directProvider: "https://example.invalid/pricing" },
+        deployments: [fakeDeployment("host-b", "region-b")],
+      },
     ],
     providers: ["acme-labs", "beta-works"],
     defaultModelId: "beta-works/riddle-9",
@@ -219,6 +270,21 @@ describe("scripts/build/model-catalog-mapping", () => {
         name: "Plain 3",
         description: "A model with no reasoning",
       },
+      {
+        id: "quiet-7",
+        modelId: "beta-works/quiet-7",
+        provider: "beta-works",
+        name: "Quiet 7",
+        description: "A model served without the older flag",
+        thinking: true,
+      },
+      {
+        id: "loud-8",
+        modelId: "beta-works/loud-8",
+        provider: "beta-works",
+        name: "Loud 8",
+        description: "A model whose older flag contradicts the served one",
+      },
     ]);
     assertEquals(data.defaultModelId, "riddle-9");
     assertEquals(data.providerOrder, ["acme-labs", "beta-works"]);
@@ -232,6 +298,19 @@ describe("scripts/build/model-catalog-mapping", () => {
       ["acme-labs-api", "acme-labs"],
       ["beta-works", "beta-works"],
     ]);
+  });
+
+  it("takes the reasoning fact from the served name, not from the older spelling", () => {
+    const byId = new Map(
+      buildModelCatalogData(fakePayload(), OVERLAY).chatModels.map((
+        model,
+      ) => [model.id, model]),
+    );
+
+    // Served as `reasoning` with no `thinking` key anywhere on the model.
+    assertEquals(byId.get("quiet-7")?.thinking, true);
+    // `thinking: true` with `reasoning: false`: the served name decides.
+    assertEquals(byId.get("loud-8")?.thinking, undefined);
   });
 
   it("carries the served transport facts and the overlay facts, and drops unknown values", () => {
@@ -297,7 +376,7 @@ describe("scripts/build/model-catalog-mapping", () => {
     // declares capability keys nothing names, and one carries two deployments.
     const data = buildModelCatalogData(fakePayload(), OVERLAY);
 
-    assertEquals(data.chatModels.length, 3);
+    assertEquals(data.chatModels.length, 5);
     assertEquals(renderModelCatalogModule(data).length > 0, true);
   });
 

@@ -9,6 +9,11 @@
  * and nothing else, so a field the platform adds cannot reach this package by
  * default. A field belongs in the allowlist only when the package acts on it.
  *
+ * Where the payload carries two spellings of one fact, only the served de
+ * facto name is read (`reasoning`, `reasoning_mode`, `transport`). Reading
+ * both, or falling back from one to the other, would let two sources for the
+ * same fact disagree, so each fact has exactly one source here.
+ *
  * @module scripts/build/model-catalog-mapping
  */
 
@@ -149,10 +154,13 @@ export function buildModelCatalogData(
       provider,
       name,
       description: readString(served, "description") ?? "",
+      // `reasoning` is the served name for this fact and the only one read:
+      // the payload also carries the older `thinking` spelling, but two
+      // sources for one fact can disagree, so only `reasoning` is allowed in.
       // A declared budget already means the model reasons, so the flag is
       // emitted only where no budget carries that fact.
       ...(thinkingBudgetTokens === undefined &&
-          readBoolean(capabilities, "thinking") === true
+          readBoolean(capabilities, "reasoning") === true
         ? { thinking: true }
         : {}),
       ...(thinkingBudgetTokens === undefined ? {} : { thinkingBudgetTokens }),

@@ -44,6 +44,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Every checkout in this repository refuses the persisted token: the
+          # sync push must authenticate with the App token, not with the
+          # workflow's own read-only credential.
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
@@ -84,8 +89,11 @@ jobs:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
           owner: veryfront
+          # This repository. The release job in cicd.yml scopes the same App to
+          # `veryfront`, because it publishes releases there; the sync pull
+          # request is opened here instead.
           repositories: |
-            veryfront
+            veryfront-code
           permission-contents: write
           permission-pull-requests: write
 
@@ -101,10 +109,13 @@ jobs:
           git checkout -B "${SYNC_BRANCH}"
           git add -- "${DATA_FILE}"
           git commit -m "chore(provider): sync the Veryfront Cloud model catalog data"
-          # The branch is written by this workflow and by nothing else, and the
+          # The checkout persists no credentials, so this push authenticates
+          # itself with the App token, exactly as the release job does. The
+          # branch is written by this workflow and by nothing else, and the
           # concurrency group admits one run at a time, so the previous sync
           # commit is always the one being replaced.
-          git push --force origin "HEAD:refs/heads/${SYNC_BRANCH}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/${SYNC_BRANCH}"
 
           # The body carries model ids and nothing else.
           body_file="${RUNNER_TEMP}/model-catalog-pr-body.md"

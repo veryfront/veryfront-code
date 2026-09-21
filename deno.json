@@ -488,7 +488,7 @@
     "generate": "deno run -A scripts/build/run-generate.ts",
     "generate:force": "deno run -A scripts/build/run-generate.ts --force",
     "generate:model-catalog": "deno run --allow-env --allow-net --allow-read --allow-write --allow-run=deno scripts/build/generate-model-catalog.ts",
-    "generate:model-catalog:check": "deno run --allow-env --allow-net --allow-read --allow-write --allow-run=deno scripts/build/generate-model-catalog.ts --check",
+    "generate:model-catalog:check": "deno run --allow-env --allow-net --allow-read --allow-run=deno scripts/build/generate-model-catalog.ts --check",
     "generate:dev-ui": "deno run -A extensions/ext-dev-ui-react/scripts/generate-styles.ts && deno run -A extensions/ext-dev-ui-react/scripts/prebundle.ts",
     "generate:dev-ui:check": "deno run -A extensions/ext-dev-ui-react/scripts/generate-styles.ts --check && deno run -A extensions/ext-dev-ui-react/scripts/prebundle.ts --check",
     "generate:manifests:check": "deno run -A scripts/build/generate-templates-manifest.ts --check && deno task generate:dev-ui:check && deno run -A scripts/build/prebundle-hydration-runtime.ts --check && deno run -A scripts/build/prebundle-client-scripts.ts --check && deno run -A scripts/build/prebundle-bridge.ts --check && deno run -A scripts/build/prebundle-rsc-scripts.ts --check",
