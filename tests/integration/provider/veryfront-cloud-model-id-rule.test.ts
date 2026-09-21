@@ -87,28 +87,23 @@ describe("veryfront-cloud model id rule", () => {
  * real payload is not copied into this repository.
  */
 function representativePayload(): Record<string, unknown> {
-  // Every provider the package's public type lists, since the generator
-  // refuses to drop one, with obviously fake models. The real payload is not
-  // copied into this repository.
-  const providers: ReadonlyArray<readonly [string, string]> = [
-    ["anthropic", "Anthropic"],
-    ["openai", "OpenAI"],
-    ["google", "Google"],
-    ["mistral", "Mistral"],
-    ["moonshotai", "Kimi"],
-  ];
+  const model = (id: string, provider: string, label: string) => ({
+    id,
+    modelId: `${provider}/${id}`,
+    provider,
+    providerLabel: label,
+    name: id,
+    description: `${id} does not exist`,
+    capabilities: { reasoning: true },
+  });
   return {
-    models: providers.map(([provider, label]) => ({
-      id: `${provider}-model`,
-      modelId: `${provider}/${provider}-model`,
-      provider,
-      providerLabel: label,
-      name: `${provider} model`,
-      description: `a ${provider} model that does not exist`,
-      capabilities: { reasoning: true },
-    })),
-    providers: providers.map(([provider]) => provider),
-    defaultModelId: "openai/openai-model",
+    models: [
+      model("mystery-1", "acme-labs", "Acme Labs"),
+      model("riddle-9", "beta-works", "Beta Works"),
+      model("plain-3", "beta-works", "Beta Works"),
+    ],
+    providers: ["acme-labs", "beta-works"],
+    defaultModelId: "beta-works/riddle-9",
   };
 }
 

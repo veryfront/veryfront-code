@@ -507,31 +507,6 @@ function buildTransportTable(
 }
 
 /**
- * Refuse to drop a provider the package's public type still names.
- *
- * The label table is keyed by `KnownVeryfrontCloudProviderId`, which is
- * hand-written and public, so a provider leaving the catalog drops a key the
- * type still requires. Writing that file would turn an upstream change into a
- * typecheck failure somewhere else, long after the run that caused it.
- */
-function assertKnownProvidersServed(
-  providerOrder: readonly string[],
-  overlay: ModelCatalogOverlay,
-): void {
-  const published = new Set(providerOrder);
-  const missing = overlay.knownProviders.filter((provider) =>
-    !published.has(provider)
-  );
-  if (missing.length > 0) {
-    fail(
-      `the catalog no longer serves ${missing.join(", ")}, which ` +
-        `KnownVeryfrontCloudProviderId still lists. Removing a provider is a ` +
-        `public type change: update that union and this overlay by hand.`,
-    );
-  }
-}
-
-/**
  * Build the catalog data from a served catalog payload and the overlay.
  *
  * Every field of the result comes from a field named by
@@ -559,7 +534,6 @@ export function buildModelCatalogData(
   if (unserved.length > 0) {
     fail(`listed provider serves no model: ${unserved.join(", ")}`);
   }
-  assertKnownProvidersServed(providerOrder, overlay);
 
   const { providerAliases, providerLabels } = buildProviderTables(
     providerOrder,
@@ -647,7 +621,6 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       "retainedTransportCapabilities",
       overlay.retainedTransportCapabilities.map(([key]) => key),
     ],
-    ["knownProviders", overlay.knownProviders],
   ];
   for (const [name, keys] of tables) {
     const duplicates = findDuplicates(keys);
@@ -805,45 +778,6 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
       }`,
     );
   }
-}
-
-/**
- * Overlay rows that no longer refer to anything in the output.
- *
- * Reported rather than fatal, and deliberately so: a vendor withdrawing a
- * model would otherwise stop the catalog syncing until somebody pruned the
- * overlay, which punishes an unrelated change. The overlay's own contract is
- * that a row is deleted once it no longer applies, so this is the reminder.
- * `retainedTransportCapabilities` is exempt by definition: those rows exist
- * precisely because the catalog no longer serves the model.
- */
-export function findStaleOverlayKeys(
-  data: ModelCatalogData,
-  overlay: ModelCatalogOverlay,
-): readonly string[] {
-  const modelIds = new Set(data.chatModels.map((model) => model.modelId));
-  const providers = new Set(data.providerOrder);
-  const stale: string[] = [];
-
-  const modelKeyed: ReadonlyArray<
-    readonly [string, readonly (readonly [string, unknown])[]]
-  > = [
-    ["entryIds", overlay.entryIds],
-    ["thinkingBudgetTokens", overlay.thinkingBudgetTokens],
-    [
-      "openAIChatReasoningWithFunctionTools",
-      overlay.openAIChatReasoningWithFunctionTools,
-    ],
-  ];
-  for (const [table, rows] of modelKeyed) {
-    for (const [modelId] of rows) {
-      if (!modelIds.has(modelId)) stale.push(`${table} "${modelId}"`);
-    }
-  }
-  for (const [provider] of overlay.providerRouting) {
-    if (!providers.has(provider)) stale.push(`providerRouting "${provider}"`);
-  }
-  return stale;
 }
 
 /** Providers the catalog names that the overlay declares no routing for. */

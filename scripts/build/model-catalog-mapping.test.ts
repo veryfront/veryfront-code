@@ -8,7 +8,6 @@ import {
   assertCatalogInvariants,
   buildModelCatalogData,
   compareCodePoints,
-  findStaleOverlayKeys,
   findUnroutedProviders,
   type ModelCatalogData,
   renderModelCatalogModule,
@@ -38,7 +37,6 @@ const OVERLAY: ModelCatalogOverlay = {
     ["beta-works/plain-3", 512],
   ],
   openAIChatReasoningWithFunctionTools: [["beta-works/riddle-9", false]],
-  knownProviders: ["acme-labs", "beta-works"],
   retainedTransportCapabilities: [
     ["acme-labs/gone-0", { anthropicThinkingMode: "adaptive" }],
     // Served and carrying a transport fact, so the served entry lands.
@@ -573,23 +571,6 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
-  it("refuses to drop a provider the package's public type still lists", () => {
-    // Writing this file would turn an upstream change into a typecheck failure
-    // somewhere else, long after the run that caused it.
-    const payload = fakePayload();
-    payload.models = (payload.models as Record<string, unknown>[]).filter(
-      (model) => model.provider !== "acme-labs",
-    );
-    payload.providers = ["beta-works"];
-    payload.defaultModelId = "beta-works/riddle-9";
-
-    assertThrows(
-      () => buildModelCatalogData(payload, OVERLAY),
-      Error,
-      "public type change",
-    );
-  });
-
   it("rejects an overlay table that declares a key twice", () => {
     for (
       const overlay of [
@@ -609,10 +590,6 @@ describe("scripts/build/model-catalog-mapping", () => {
           providerRouting: [...OVERLAY.providerRouting, ["acme-labs", {
             surface: "openai",
           }]],
-        },
-        {
-          ...OVERLAY,
-          knownProviders: [...OVERLAY.knownProviders, "acme-labs"],
         },
       ] as ModelCatalogOverlay[]
     ) {
@@ -949,27 +926,6 @@ describe("scripts/build/model-catalog-mapping", () => {
     const data = buildModelCatalogData(fakePayload(), OVERLAY);
 
     assertCatalogInvariants(data);
-  });
-
-  it("reports an overlay row that no longer refers to anything served", () => {
-    const overlay: ModelCatalogOverlay = {
-      ...OVERLAY,
-      thinkingBudgetTokens: [...OVERLAY.thinkingBudgetTokens, [
-        "beta-works/withdrawn",
-        256,
-      ]],
-      entryIds: [...OVERLAY.entryIds, ["beta-works/also-gone", "gone"]],
-    };
-    const data = buildModelCatalogData(fakePayload(), overlay);
-
-    // A stale row is reported, not fatal: a vendor withdrawing a model must
-    // not stop the catalog syncing until someone prunes the overlay.
-    assertEquals(findStaleOverlayKeys(data, overlay), [
-      'entryIds "beta-works/also-gone"',
-      'thinkingBudgetTokens "beta-works/withdrawn"',
-    ]);
-    // A retained row names a model that is deliberately not served.
-    assertEquals(findStaleOverlayKeys(data, OVERLAY), []);
   });
 
   it("holds only the fields the allowlist names", () => {

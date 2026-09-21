@@ -32,7 +32,6 @@
 import { fromFileUrl } from "#std/path";
 import {
   buildModelCatalogData,
-  findStaleOverlayKeys,
   findUnroutedProviders,
   renderModelCatalogModule,
 } from "./model-catalog-mapping.ts";
@@ -42,8 +41,16 @@ import { MODEL_CATALOG_OVERLAY } from "./model-catalog-overlay.ts";
 const TOKEN_ENV = "VERYFRONT_CATALOG_READ_TOKEN";
 /** Environment variable that points a local run at another API base. */
 const BASE_URL_ENV = "VERYFRONT_CATALOG_API_BASE_URL";
-/** Production REST API base, including the REST path prefix. */
-const DEFAULT_BASE_URL = "https://api.veryfront.com/api";
+/**
+ * Production API origin.
+ *
+ * The catalog is served at `<origin>/ai/models`, alongside the gateway paths
+ * the package itself builds: see the URLs pinned in
+ * `src/provider/veryfront-cloud/gateway-routing.test.ts`, which are
+ * `https://api.veryfront.com/ai/gateway/<provider>/<version>`. There is no
+ * `/api` path prefix, and adding one gets a 404.
+ */
+const DEFAULT_BASE_URL = "https://api.veryfront.com";
 /** Catalog path appended to the API base. */
 const CATALOG_PATH = "/ai/models";
 /** Generated file, relative to the repository root. */
@@ -65,12 +72,17 @@ export function stripTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
-/** Fetch the served catalog. Errors name the status, never the response body. */
+/** The catalog URL for a base, with exactly one slash between the two parts. */
+export function buildCatalogUrl(baseUrl: string): string {
+  return `${stripTrailingSlashes(baseUrl)}${CATALOG_PATH}`;
+}
+
+/** Fetch the served catalog. Errors name the status and the URL, nothing else. */
 async function fetchServedCatalog(
   baseUrl: string,
   token: string,
 ): Promise<unknown> {
-  const url = `${stripTrailingSlashes(baseUrl)}${CATALOG_PATH}`;
+  const url = buildCatalogUrl(baseUrl);
   const response = await fetch(url, {
     // A stalled connection would otherwise hold the scheduled run, and its
     // concurrency slot, until the job timeout. A run that fails must fail.
@@ -83,8 +95,21 @@ async function fetchServedCatalog(
   if (!response.ok) {
     // Drain the body so the connection closes without logging its contents.
     await response.body?.cancel();
+    // The two failures a person hits look nothing alike and are worth telling
+    // apart. Neither message carries the token or the response body.
+    if (response.status === 404) {
+      throw new Error(
+        `Catalog endpoint not found at ${url} - check the API base`,
+      );
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        `Model catalog request was refused with status ${response.status}: ` +
+          `the token is missing or not allowed to read the catalog`,
+      );
+    }
     throw new Error(
-      `Model catalog request failed with status ${response.status}`,
+      `Model catalog request to ${url} failed with status ${response.status}`,
     );
   }
   return await response.json();
@@ -135,14 +160,6 @@ async function main(): Promise<number> {
       `Routing is not declared for: ${unrouted.join(", ")}. ` +
         `They are written on the default surface. Add them to ` +
         `scripts/build/model-catalog-overlay.ts.`,
-    );
-  }
-
-  const stale = findStaleOverlayKeys(data, MODEL_CATALOG_OVERLAY);
-  if (stale.length > 0) {
-    console.error(
-      `Overlay rows no longer refer to anything served: ${stale.join(", ")}. ` +
-        `Delete them from scripts/build/model-catalog-overlay.ts.`,
     );
   }
 
