@@ -31,9 +31,11 @@ const OVERLAY: ModelCatalogOverlay = {
   gatewayPathPrefix: "ai/gateway",
   surfaceGatewayApiVersions: [["openai", "v1"], ["anthropic", "v1"]],
   defaultGatewayApiVersion: "v1",
-  entryIds: [["acme-labs-api/mystery-1", "mystery"]],
+  // Keyed by the CANONICAL id: mystery-1 is served as `acme-labs-api/mystery-1`
+  // (an alias prefix), so these rows also prove the lookup normalizes the key.
+  entryIds: [["acme-labs/mystery-1", "mystery"]],
   thinkingBudgetTokens: [
-    ["acme-labs-api/mystery-1", 4096],
+    ["acme-labs/mystery-1", 4096],
     // Served with `reasoning: false`, so this budget must not be emitted.
     ["beta-works/plain-3", 512],
   ],
@@ -678,7 +680,7 @@ describe("scripts/build/model-catalog-mapping", () => {
         () =>
           assertOverlayInvariants({
             ...OVERLAY,
-            thinkingBudgetTokens: [["acme-labs-api/mystery-1", budget]],
+            thinkingBudgetTokens: [["acme-labs/mystery-1", budget]],
           }),
         Error,
         "which the runtime ignores",
@@ -689,7 +691,7 @@ describe("scripts/build/model-catalog-mapping", () => {
   it("accepts the overlay thinking budgets the runtime applies", () => {
     assertOverlayInvariants({
       ...OVERLAY,
-      thinkingBudgetTokens: [["acme-labs-api/mystery-1", 1]],
+      thinkingBudgetTokens: [["acme-labs/mystery-1", 1]],
     });
   });
 
@@ -768,8 +770,10 @@ describe("scripts/build/model-catalog-mapping", () => {
     }`;
     payload.models = [...models, twin];
 
+    // With the overlay's published id for this canonical model, the twin would
+    // trip the published-id invariant first; without it, the collision alone.
     assertThrows(
-      () => buildModelCatalogData(payload, OVERLAY),
+      () => buildModelCatalogData(payload, { ...OVERLAY, entryIds: [] }),
       Error,
       "collapse to one runtime model",
     );
@@ -780,7 +784,7 @@ describe("scripts/build/model-catalog-mapping", () => {
       const overlay of [
         {
           ...OVERLAY,
-          entryIds: [...OVERLAY.entryIds, ["acme-labs-api/mystery-1", "other"]],
+          entryIds: [...OVERLAY.entryIds, ["acme-labs/mystery-1", "other"]],
         },
         {
           ...OVERLAY,

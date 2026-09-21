@@ -378,6 +378,8 @@ type ServedFacts = {
   readonly labels: Map<string, string>;
   /** Model-id prefixes that differ from the provider they name. */
   readonly aliasPrefixes: Map<string, Set<string>>;
+  /** Position of the model each provider's label was first taken from. */
+  readonly labelPositions: Map<string, number>;
 };
 
 /** The chat entry for one served model. */
@@ -387,17 +389,20 @@ function readChatModel(
 ): ChatModelEntry {
   const entryIds = new Map(overlay.entryIds);
   const budgets = new Map(overlay.thinkingBudgetTokens);
+  // Both tables are keyed by the CANONICAL id (`<provider>/<upstream>`), as
+  // the overlay contract states and as the transport table already is. The
+  // served id may carry a provider alias instead (`google-ai-studio/foo` for
+  // provider `google`), and looking that up would miss every row.
+  const key = capabilityKey(served);
   // `reasoning` is the served name for this fact and the only one read: the
   // payload also carries the older `thinking` spelling, but two sources for
   // one fact can disagree. It is also the authority on WHETHER a model
   // reasons, so an overlay budget, which says how much, is dropped for a model
   // the catalog serves as non-reasoning.
   const reasons = served.capabilities.reasoning === true;
-  const thinkingBudgetTokens = reasons
-    ? budgets.get(served.modelId)
-    : undefined;
+  const thinkingBudgetTokens = reasons ? budgets.get(key) : undefined;
   return {
-    id: entryIds.get(served.modelId) ?? served.id,
+    id: entryIds.get(key) ?? served.id,
     modelId: served.modelId,
     provider: served.provider,
     name: served.name,
@@ -458,16 +463,24 @@ function readTransportCapabilities(
 }
 
 /** Record the provider's label and any alias its model id implies. */
-function recordProviderFacts(served: ServedModel, facts: ServedFacts): void {
+function recordProviderFacts(
+  served: ServedModel,
+  index: number,
+  facts: ServedFacts,
+): void {
   // The label table is keyed by provider, so two models of one provider
-  // offering different labels leaves no honest answer to publish.
+  // offering different labels leaves no honest answer to publish. Named by
+  // position: the labels and the provider are served values.
   const known = facts.labels.get(served.provider);
   if (known === undefined) {
     facts.labels.set(served.provider, served.providerLabel);
+    facts.labelPositions.set(served.provider, index);
   } else if (known !== served.providerLabel) {
     fail(
-      `provider "${served.provider}" is served with conflicting display labels: ` +
-        `"${known}" and "${served.providerLabel}"`,
+      `models[${
+        facts.labelPositions.get(served.provider)
+      }] and models[${index}] ` +
+        "are served with conflicting display labels for their provider",
     );
   }
 
@@ -495,15 +508,16 @@ function readServedModels(
     canonicalIds: [],
     labels: new Map(),
     aliasPrefixes: new Map(),
+    labelPositions: new Map(),
   };
-  for (const served of catalog.models) {
+  for (const [index, served] of catalog.models.entries()) {
     facts.chatModels.push(readChatModel(served, overlay));
     facts.canonicalIds.push(capabilityKey(served));
     const capabilities = readTransportCapabilities(served, overlay);
     if (capabilities !== undefined) {
       facts.transportCapabilities.push([capabilityKey(served), capabilities]);
     }
-    recordProviderFacts(served, facts);
+    recordProviderFacts(served, index, facts);
   }
   return facts;
 }
