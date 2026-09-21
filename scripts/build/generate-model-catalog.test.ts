@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildCatalogUrl,
   formatFailure,
+  readCatalogJson,
   stripTrailingSlashes,
 } from "./generate-model-catalog.ts";
 
@@ -69,6 +70,16 @@ describe("an unplanned failure", () => {
       "failed at generate.ts",
     ],
     [
+      "cuts a Windows drive-letter path back to its last segment",
+      new Error("failed to open C:\\Users\\someone\\secret\\catalog.data.ts"),
+      "failed to open catalog.data.ts",
+    ],
+    [
+      "cuts a UNC path back to its last segment",
+      new Error("failed to open \\\\build-host\\share\\place\\generate.ts"),
+      "failed to open generate.ts",
+    ],
+    [
       "describes a thrown value that is not an error",
       "plain thrown string",
       "plain thrown string",
@@ -129,5 +140,39 @@ describe("the catalog URL", () => {
     ) {
       assertEquals(buildCatalogUrl(base), "https://example.invalid/ai/models");
     }
+  });
+});
+
+describe("a catalog response that is not JSON", () => {
+  it("fails with one fixed sentence and echoes none of the body", async () => {
+    const body = '{"models": [ <html>secret-looking service output</html>';
+    const response = new Response(body, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+    let message = "";
+    try {
+      await readCatalogJson(response);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    assertEquals(message.includes("was not valid JSON"), true, message);
+    assertEquals(
+      message.includes("secret-looking"),
+      false,
+      "the failure echoed the body",
+    );
+    assertEquals(
+      message.includes("<html>"),
+      false,
+      "the failure echoed the body",
+    );
+  });
+
+  it("returns the parsed body when it is JSON", async () => {
+    const response = new Response('{"models": []}', { status: 200 });
+    assertEquals(await readCatalogJson(response), { models: [] });
   });
 });

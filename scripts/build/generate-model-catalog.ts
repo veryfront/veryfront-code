@@ -111,7 +111,27 @@ async function fetchServedCatalog(
       `Model catalog request to ${url} failed with status ${response.status}`,
     );
   }
-  return await response.json();
+  return await readCatalogJson(response);
+}
+
+/**
+ * The response body as JSON, or a failure that says only that it was not.
+ *
+ * A malformed body makes `Response.json()` reject with a message that quotes a
+ * fragment of the text, and that fragment is service output this task must
+ * not echo. So the parse failure is replaced with one fixed sentence.
+ */
+export async function readCatalogJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      `Model catalog response from ${
+        response.url || "the catalog endpoint"
+      } was not valid JSON`,
+    );
+  }
 }
 
 /** Run the repository formatter over the module source. */
@@ -153,10 +173,17 @@ const MAX_FAILURE_LINE = 400;
 export function formatFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const flattened = raw.replaceAll("file://", "").replace(/\s+/g, " ").trim();
-  const withoutPaths = flattened.replace(
-    /(?<![:\w/])\/[^\s"'()]*/g,
-    (path) => path.slice(path.lastIndexOf("/") + 1) || "a path",
-  );
+  // POSIX and file-URL paths, then Windows drive-letter (`C:\...`) and UNC
+  // (`\\server\share\...`) paths: each is cut back to its last segment.
+  const withoutPaths = flattened
+    .replace(
+      /(?<![:\w/])\/[^\s"'()]*/g,
+      (path) => path.slice(path.lastIndexOf("/") + 1) || "a path",
+    )
+    .replace(
+      /(?:\b[A-Za-z]:|\\)\\[^\s"'()]*/g,
+      (path) => path.slice(path.lastIndexOf("\\") + 1) || "a path",
+    );
   if (withoutPaths === "") return "no reason was given";
   return withoutPaths.length > MAX_FAILURE_LINE
     ? `${withoutPaths.slice(0, MAX_FAILURE_LINE)}...`
