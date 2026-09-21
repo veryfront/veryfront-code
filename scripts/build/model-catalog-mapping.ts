@@ -148,16 +148,50 @@ export const RESERVED_PROVIDER_SEGMENTS: ReadonlySet<string> = new Set([
 /** The gateway prefix the runtime strips before parsing a model id. */
 const GATEWAY_MODEL_PREFIX = "veryfront-cloud/";
 
-/** True when the runtime can take a provider segment from this model id. */
-function isRoutableModelId(modelId: string): boolean {
+/**
+ * Why the runtime could not use this model id, or undefined when it can.
+ *
+ * This is the conjunction of every step a generated id passes through on its
+ * way to a constructed model: `resolveVeryfrontCloudProviderFromModelId` and
+ * `resolveVeryfrontCloudProviderId` in `model-catalog.ts`, then
+ * `parseVeryfrontCloudModelId` in `shared.ts`, whose result feeds
+ * `resolveVeryfrontCloudGatewayPath`. An id that fails any of them is
+ * published and unusable, so the generator refuses it here instead.
+ *
+ * The upstream segment is checked for exactly what `parseVeryfrontCloudModelId`
+ * requires of it, which is that it is non-empty and carries no surrounding
+ * whitespace. Nothing constrains its characters, and nothing here may: an
+ * upstream id legitimately contains dots, colons, slashes and the like, and a
+ * character class invented here would reject models the platform can serve.
+ *
+ * The kind-specific rules in that function are deliberately NOT mirrored. That
+ * embeddings accept only some providers, and that a Mistral id must already be
+ * in the catalog, are conditions of a particular call, not properties of a
+ * catalog entry.
+ */
+function describeUnroutableModelId(modelId: string): string | undefined {
   // The runtime strips the gateway prefix first, so an id that carries it has
   // nothing left to cut.
-  if (modelId.startsWith(GATEWAY_MODEL_PREFIX)) return false;
+  if (modelId.startsWith(GATEWAY_MODEL_PREFIX)) {
+    return `carries the "${GATEWAY_MODEL_PREFIX}" prefix, which the runtime strips`;
+  }
   const slashIndex = modelId.indexOf("/");
-  if (slashIndex <= 0) return false;
+  if (slashIndex <= 0) return "has no provider segment before a forward slash";
+
   const segment = modelId.slice(0, slashIndex);
-  return PROVIDER_SEGMENT_PATTERN.test(segment) &&
-    !RESERVED_PROVIDER_SEGMENTS.has(segment);
+  if (!PROVIDER_SEGMENT_PATTERN.test(segment)) {
+    return `has a provider segment "${segment}" that is not lowercase words joined by hyphens or dots`;
+  }
+  if (RESERVED_PROVIDER_SEGMENTS.has(segment)) {
+    return `has a reserved provider segment "${segment}"`;
+  }
+
+  const upstream = modelId.slice(slashIndex + 1);
+  if (upstream === "") return "has no model segment after the provider segment";
+  if (upstream.trim() !== upstream) {
+    return "has whitespace around its model segment";
+  }
+  return undefined;
 }
 
 const CAPABILITY_FIELDS: readonly FieldSpec[] = [
@@ -252,11 +286,9 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
     const subject = `model "${model.id as string}"`;
     checkFields(model, MODEL_FIELDS, subject);
 
-    if (!isRoutableModelId(model.modelId as string)) {
-      fail(
-        `${subject} modelId "${model.modelId}" carries no provider segment the ` +
-          `runtime can route`,
-      );
+    const unroutable = describeUnroutableModelId(model.modelId as string);
+    if (unroutable !== undefined) {
+      fail(`${subject} modelId "${model.modelId}" ${unroutable}`);
     }
 
     const capabilities = model.capabilities === undefined

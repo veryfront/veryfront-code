@@ -586,6 +586,11 @@ describe("scripts/build/model-catalog-mapping", () => {
     // Reserved, so a provider segment can never collide with an object member.
     "prototype/x",
     "constructor/x",
+    // `parseVeryfrontCloudModelId` needs a non-empty, already-trimmed segment
+    // after the provider.
+    "openai/",
+    "openai/ model",
+    "openai/model ",
   ];
 
   for (const modelId of UNROUTABLE_MODEL_IDS) {
@@ -619,6 +624,20 @@ describe("scripts/build/model-catalog-mapping", () => {
       'const slashIndex = normalizedModelId.indexOf("/");',
     );
     assertStringIncludes(runtime, "if (slashIndex <= 0) return undefined;");
+
+    // The second half of the rule lives in `shared.ts`: the upstream segment
+    // must be non-empty and already trimmed, and nothing more.
+    const shared = await Deno.readTextFile(
+      new URL("../../src/provider/veryfront-cloud/shared.ts", import.meta.url),
+    );
+    assertStringIncludes(
+      shared,
+      "const upstreamModelId = modelId.slice(slashIndex + 1);",
+    );
+    assertStringIncludes(
+      shared,
+      "IntrinsicReflectApply(StringPrototypeTrim, upstreamModelId, []) !== upstreamModelId",
+    );
     for (const reserved of ["prototype", "constructor"]) {
       assertEquals(RESERVED_PROVIDER_SEGMENTS.has(reserved), true);
     }
@@ -630,6 +649,10 @@ describe("scripts/build/model-catalog-mapping", () => {
         "beta-works-api/other-1",
         "beta.works/riddle-9",
         "a1/b2",
+        // Nothing constrains the characters of an upstream id, and nothing
+        // here may: these are ordinary upstream shapes.
+        "beta-works/family/model:v1",
+        "beta-works/ns:model@2026-01-01",
       ]
     ) {
       const payload = fakePayload();
