@@ -10270,7 +10270,18 @@ export default config as const;
         const settled = Promise.allSettled(requests);
         try {
           // Every request is admitted before the single slow read completes.
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          // Waited for rather than slept for: under a loaded, coverage-
+          // instrumented run a fixed pause can end while requests are still
+          // being admitted, and the ones left out are then refused.
+          await waitFor(
+            // Every waiter is counted, the request that created the flight
+            // included, so the whole burst has joined at `burstSize`.
+            () => __getHostedConfigSourceReadStateForTests().waiters >= burstSize,
+            {
+              interval: 5,
+              message: `Expected all ${burstSize} requests to join the single read`,
+            },
+          );
           releaseRead.resolve();
           const results = await settled;
           const rejected = results.filter((result) => result.status === "rejected");
