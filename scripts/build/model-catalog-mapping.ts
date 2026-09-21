@@ -378,6 +378,8 @@ type ServedFacts = {
   readonly labels: Map<string, string>;
   /** Model-id prefixes that differ from the provider they name. */
   readonly aliasPrefixes: Map<string, Set<string>>;
+  /** Position of the first model that implied each `<provider>/<prefix>` alias. */
+  readonly aliasPositions: Map<string, number>;
   /** Position of the model each provider's label was first taken from. */
   readonly labelPositions: Map<string, number>;
 };
@@ -493,6 +495,9 @@ function recordProviderFacts(
   if (prefix === served.provider) return;
   const prefixes = facts.aliasPrefixes.get(served.provider) ??
     new Set<string>();
+  if (!prefixes.has(prefix)) {
+    facts.aliasPositions.set(`${served.provider}/${prefix}`, index);
+  }
   prefixes.add(prefix);
   facts.aliasPrefixes.set(served.provider, prefixes);
 }
@@ -508,6 +513,7 @@ function readServedModels(
     canonicalIds: [],
     labels: new Map(),
     aliasPrefixes: new Map(),
+    aliasPositions: new Map(),
     labelPositions: new Map(),
   };
   for (const [index, served] of catalog.models.entries()) {
@@ -566,12 +572,25 @@ function buildProviderTables(
     // Derived from the served ids and retained by the overlay, as one sorted
     // group per provider, so the table does not move when the catalog stops
     // (or starts) spelling an alias the overlay retains anyway.
+    const derived = [...facts.aliasPrefixes.get(provider) ?? []];
+    // A derived alias is held to the same rule as a retained one: a prefix
+    // that names another provider — served, or routed by the overlay — would
+    // send that provider's every id here, since the runtime reads the alias
+    // map before accepting a provider as written. Named by the position of
+    // the model that implied it: the prefix is a served value.
+    for (const prefix of derived) {
+      if (providers.has(prefix)) {
+        fail(
+          `models[${facts.aliasPositions.get(`${provider}/${prefix}`)}] ` +
+            "carries a provider segment that names another provider, so its " +
+            "alias would shadow that provider",
+        );
+      }
+    }
     const retained = overlay.retainedProviderAliases
       .filter(([, target]) => target === provider)
       .map(([alias]) => alias);
-    const prefixes = [
-      ...new Set([...facts.aliasPrefixes.get(provider) ?? [], ...retained]),
-    ]
+    const prefixes = [...new Set([...derived, ...retained])]
       .filter((alias) => alias !== provider)
       .sort(compareCodePoints);
     for (const prefix of prefixes) providerAliases.push([prefix, provider]);

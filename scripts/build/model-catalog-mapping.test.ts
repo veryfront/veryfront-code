@@ -1007,6 +1007,35 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
+  it("refuses a served model whose provider segment names another provider", () => {
+    // The same shadowing through the derived path: `beta-works/x` served with
+    // provider acme-labs would make every beta-works id resolve as acme-labs,
+    // and so would a prefix naming a provider only the overlay routes.
+    const sentinel = "served-value-must-not-print";
+    for (
+      const [prefix, overlay] of [
+        ["beta-works", OVERLAY],
+        ["gamma", {
+          ...OVERLAY,
+          providerRouting: [...OVERLAY.providerRouting, ["gamma", {
+            surface: "anthropic",
+          }]],
+        }],
+      ] as const
+    ) {
+      const payload = fakePayload();
+      const model = (payload.models as Record<string, unknown>[])[0]!;
+      model.modelId = `${prefix}/${sentinel}`;
+      const error = assertThrows(
+        () => buildModelCatalogData(payload, overlay),
+        Error,
+        "models[0] carries a provider segment that names another provider",
+      ) as Error;
+      assertEquals(error.message.includes(sentinel), false);
+      assertEquals(error.message.includes(prefix), false);
+    }
+  });
+
   it("refuses a retained alias that names another provider", () => {
     // The runtime reads the alias map before accepting a provider as written,
     // so `["beta-works", "acme-labs"]` would send every beta-works id to
