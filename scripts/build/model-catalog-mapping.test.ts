@@ -482,11 +482,20 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertThrows(
       () =>
         buildModelCatalogData(
-          { models: [], providers: ["acme-labs"] },
+          {
+            models: [],
+            providers: ["acme-labs"],
+            defaultModelId: "acme-labs/none",
+          },
           OVERLAY,
         ),
       Error,
       "lists no model",
+    );
+    assertThrows(
+      () => buildModelCatalogData({ models: [], providers: [] }, OVERLAY),
+      Error,
+      "is missing defaultModelId",
     );
 
     const missingDefault = {
@@ -510,12 +519,14 @@ describe("scripts/build/model-catalog-mapping", () => {
       'model "riddle-9" is missing',
     );
 
+    // A present value of the wrong type says so, rather than being reported
+    // as absent or quietly coerced.
     const untyped = fakePayload();
     (untyped.models as Record<string, unknown>[])[2].modelId = 42;
     assertThrows(
       () => buildModelCatalogData(untyped, OVERLAY),
       Error,
-      "is missing",
+      'model "plain-3" modelId must be a string, not a number',
     );
 
     const unlabelled = {
@@ -526,6 +537,117 @@ describe("scripts/build/model-catalog-mapping", () => {
       () => buildModelCatalogData(unlabelled, OVERLAY),
       Error,
       'provider "ghost-co" has no model',
+    );
+  });
+
+  it("rejects a present capabilities value that is not an object", () => {
+    for (const capabilities of ["a string", ["an array"], null, 7]) {
+      const payload = fakePayload();
+      (payload.models as Record<string, unknown>[])[1].capabilities =
+        capabilities;
+      assertThrows(
+        () => buildModelCatalogData(payload, OVERLAY),
+        Error,
+        'model "riddle-9" capabilities',
+      );
+    }
+  });
+
+  /**
+   * Every field the generator reads, with a value of the wrong type. A field
+   * the generator consumes must be absent where it is optional, or carry the
+   * type it is read as. Nothing consumed may be silently coerced, because a
+   * coerced value produces an ordinary-looking removal.
+   */
+  const WRONG_TYPED_READS: ReadonlyArray<
+    readonly [path: string, apply: (payload: Record<string, unknown>) => void]
+  > = [
+    ["models", (p) => p.models = "not an array"],
+    ["models[0]", (p) => (p.models as unknown[])[0] = "not an object"],
+    ["providers", (p) => p.providers = "not an array"],
+    ["providers[0]", (p) => (p.providers as unknown[])[0] = 7],
+    ["defaultModelId", (p) => p.defaultModelId = 7],
+    ["id", (p) => (p.models as Record<string, unknown>[])[1].id = 7],
+    ["modelId", (p) => (p.models as Record<string, unknown>[])[1].modelId = 7],
+    [
+      "provider",
+      (p) => (p.models as Record<string, unknown>[])[1].provider = 7,
+    ],
+    ["name", (p) => (p.models as Record<string, unknown>[])[1].name = 7],
+    [
+      "description",
+      (p) => (p.models as Record<string, unknown>[])[1].description = { a: 1 },
+    ],
+    [
+      "providerLabel",
+      (p) => (p.models as Record<string, unknown>[])[1].providerLabel = 7,
+    ],
+    [
+      "capabilities",
+      (p) => (p.models as Record<string, unknown>[])[1].capabilities = "x",
+    ],
+    [
+      "capabilities.reasoning",
+      (p) =>
+        ((p.models as Record<string, unknown>[])[1].capabilities as Record<
+          string,
+          unknown
+        >)
+          .reasoning = "yes",
+    ],
+    [
+      "capabilities.reasoning_mode",
+      (p) =>
+        ((p.models as Record<string, unknown>[])[1].capabilities as Record<
+          string,
+          unknown
+        >)
+          .reasoning_mode = 7,
+    ],
+    [
+      "capabilities.transport",
+      (p) =>
+        ((p.models as Record<string, unknown>[])[1].capabilities as Record<
+          string,
+          unknown
+        >)
+          .transport = ["responses"],
+    ],
+  ];
+
+  for (const [path, apply] of WRONG_TYPED_READS) {
+    it(`fails when ${path} carries the wrong type`, () => {
+      const payload = fakePayload();
+      apply(payload);
+      assertThrows(() => buildModelCatalogData(payload, OVERLAY), Error);
+    });
+  }
+
+  it("still generates for unknown keys, vendors, values and extra top-level fields", () => {
+    const payload = fakePayload();
+    payload.anotherSurpriseTopLevel = { nested: true };
+    const models = payload.models as Record<string, unknown>[];
+    const capabilities = models[1].capabilities as Record<string, unknown>;
+    // An unknown capability key, an unknown transport value, and a vendor this
+    // package does not list are all things the platform may legitimately add.
+    capabilities.somethingNew = { nested: ["values"] };
+    capabilities.transport = "a-transport-from-the-future";
+
+    const data = buildModelCatalogData(payload, OVERLAY);
+
+    assertEquals(data.chatModels.length, 5);
+    assertEquals(
+      data.modelTransportCapabilities.some(([id]) =>
+        id === "beta-works/riddle-9"
+      ),
+      true,
+    );
+    // The unknown transport value is dropped, the overlay fact for it remains.
+    assertEquals(
+      data.modelTransportCapabilities.find(([id]) =>
+        id === "beta-works/riddle-9"
+      )?.[1],
+      { openAIChatReasoningWithFunctionTools: false },
     );
   });
 

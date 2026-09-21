@@ -5,9 +5,17 @@
  * exercised by unit tests over hand-built payloads. The network fetch and the
  * file write live in `generate-model-catalog.ts`.
  *
- * The mapping is an ALLOWLIST: {@link buildModelCatalogData} reads named keys
- * and nothing else, so a field the platform adds cannot reach this package by
+ * The mapping is an ALLOWLIST: {@link parseServedCatalog} names every field
+ * the generator reads, and {@link buildModelCatalogData} reads only from what
+ * it returns, so a field the platform adds cannot reach this package by
  * default. A field belongs in the allowlist only when the package acts on it.
+ *
+ * A consumed field must be ABSENT, where it is optional, or carry the type it
+ * is read as. A present value of the wrong type fails generation and names the
+ * model and the field: coercing it would turn a broken payload into an
+ * ordinary-looking removal, and merging that would drop something the platform
+ * still serves. Unknown keys, unknown vendors and unknown string VALUES are
+ * tolerated, because those are things the platform may legitimately add.
  *
  * Where the payload carries two spellings of one fact, only the served de
  * facto name is read (`reasoning`, `reasoning_mode`, `transport`). Reading
@@ -69,32 +77,172 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function readString(
-  source: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = source[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function readBoolean(
-  source: Record<string, unknown>,
-  key: string,
-): boolean | undefined {
-  const value = source[key];
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readArray(
-  source: Record<string, unknown>,
-  key: string,
-): readonly unknown[] {
-  const value = source[key];
-  return Array.isArray(value) ? value : [];
-}
-
 function fail(detail: string): never {
   throw new Error(`Served model catalog is unusable: ${detail}`);
+}
+
+/** Type a consumed field must carry when it is present. */
+type FieldType =
+  | "a string"
+  | "a boolean"
+  | "an object"
+  | "an array of strings"
+  | "an array";
+
+/** One consumed field: what it is called, what it must be, whether it may be absent. */
+type FieldSpec = {
+  readonly key: string;
+  readonly type: FieldType;
+  readonly required: boolean;
+};
+
+/**
+ * Every field this generator reads, and nothing else. A field listed here must
+ * be absent (where optional) or carry this type; a present value of the wrong
+ * type fails generation rather than being coerced. Fields NOT listed here are
+ * never read, so their shape cannot matter.
+ */
+const CATALOG_FIELDS: readonly FieldSpec[] = [
+  { key: "models", type: "an array", required: true },
+  { key: "providers", type: "an array of strings", required: true },
+  { key: "defaultModelId", type: "a string", required: true },
+];
+
+/** Identity fields, validated first so later failures can name the model. */
+const MODEL_ID_FIELD: readonly FieldSpec[] = [{
+  key: "id",
+  type: "a string",
+  required: true,
+}];
+
+const MODEL_FIELDS: readonly FieldSpec[] = [
+  { key: "modelId", type: "a string", required: true },
+  { key: "provider", type: "a string", required: true },
+  { key: "name", type: "a string", required: true },
+  { key: "description", type: "a string", required: false },
+  { key: "providerLabel", type: "a string", required: false },
+  { key: "capabilities", type: "an object", required: false },
+];
+
+const CAPABILITY_FIELDS: readonly FieldSpec[] = [
+  { key: "reasoning", type: "a boolean", required: false },
+  { key: "reasoning_mode", type: "a string", required: false },
+  { key: "transport", type: "a string", required: false },
+];
+
+function describe(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return `a ${typeof value}`;
+}
+
+function hasType(value: unknown, type: FieldType): boolean {
+  switch (type) {
+    case "a string":
+      return typeof value === "string";
+    case "a boolean":
+      return typeof value === "boolean";
+    case "an object":
+      return asRecord(value) !== undefined;
+    case "an array":
+      return Array.isArray(value);
+    case "an array of strings":
+      return Array.isArray(value) &&
+        value.every((entry) => typeof entry === "string");
+  }
+}
+
+/** Check one group of consumed fields, naming the subject in any failure. */
+function checkFields(
+  source: Record<string, unknown>,
+  fields: readonly FieldSpec[],
+  subject: string,
+): void {
+  for (const { key, type, required } of fields) {
+    const value = source[key];
+    // A required field that is present but empty is as unusable as an absent
+    // one, and saying "is missing" describes both.
+    if (value === undefined || (required && value === "")) {
+      if (required) fail(`${subject} is missing ${key}`);
+      continue;
+    }
+    if (!hasType(value, type)) {
+      fail(`${subject} ${key} must be ${type}, not ${describe(value)}`);
+    }
+  }
+}
+
+/** Capability values this generator reads. */
+type ServedCapabilities = {
+  readonly reasoning?: boolean;
+  readonly reasoning_mode?: string;
+  readonly transport?: string;
+};
+
+/** One served model, reduced to the fields this generator reads. */
+type ServedModel = {
+  readonly id: string;
+  readonly modelId: string;
+  readonly provider: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly providerLabel?: string;
+  readonly capabilities: ServedCapabilities;
+};
+
+/** The served catalog, reduced to the fields this generator reads. */
+type ServedCatalog = {
+  readonly models: readonly ServedModel[];
+  readonly providers: readonly string[];
+  readonly defaultModelId: string;
+};
+
+/**
+ * Validate the consumed subset of a served catalog payload, once, up front.
+ *
+ * The mapping reads only from the result, so no consumed value can reach it
+ * with an unexpected shape, and no wrong-typed value can be coerced into a
+ * plausible-looking absence. Unknown keys are dropped here, which is the
+ * allowlist; unknown string values pass through and are judged later.
+ */
+export function parseServedCatalog(payload: unknown): ServedCatalog {
+  const root = asRecord(payload) ?? fail("the payload is not a JSON object");
+  checkFields(root, CATALOG_FIELDS, "the catalog");
+
+  const models = (root.models as readonly unknown[]).map((entry, index) => {
+    const model = asRecord(entry) ??
+      fail(`models[${index}] must be an object, not ${describe(entry)}`);
+    checkFields(model, MODEL_ID_FIELD, `models[${index}]`);
+    const subject = `model "${model.id as string}"`;
+    checkFields(model, MODEL_FIELDS, subject);
+
+    const capabilities = model.capabilities === undefined
+      ? {}
+      : model.capabilities as Record<string, unknown>;
+    checkFields(capabilities, CAPABILITY_FIELDS, `${subject} capabilities`);
+
+    // Every cast below is licensed by the checks just above.
+    return {
+      id: model.id as string,
+      modelId: model.modelId as string,
+      provider: model.provider as string,
+      name: model.name as string,
+      description: model.description as string | undefined,
+      providerLabel: model.providerLabel as string | undefined,
+      capabilities: capabilities as ServedCapabilities,
+    };
+  });
+  if (models.length === 0) fail("it lists no model");
+
+  const providers: string[] = [];
+  for (const provider of root.providers as readonly string[]) {
+    if (provider !== "" && !providers.includes(provider)) {
+      providers.push(provider);
+    }
+  }
+  if (providers.length === 0) fail("it lists no provider");
+
+  return { models, providers, defaultModelId: root.defaultModelId as string };
 }
 
 /**
@@ -115,21 +263,8 @@ export function buildModelCatalogData(
   payload: unknown,
   overlay: ModelCatalogOverlay,
 ): ModelCatalogData {
-  const root = asRecord(payload) ?? fail("the payload is not a JSON object");
-
-  // An entry that is not an object is malformed for the same reason one with
-  // no identity is, so it is not quietly dropped either.
-  const servedModels = readArray(root, "models").map((model, index) =>
-    asRecord(model) ?? fail(`entry ${index} is not an object`)
-  );
-  if (servedModels.length === 0) fail("it lists no model");
-
-  const providerOrder: string[] = [];
-  for (const provider of readArray(root, "providers")) {
-    if (typeof provider !== "string" || provider.length === 0) continue;
-    if (!providerOrder.includes(provider)) providerOrder.push(provider);
-  }
-  if (providerOrder.length === 0) fail("it lists no provider");
+  const catalog = parseServedCatalog(payload);
+  const providerOrder = [...catalog.providers];
 
   const entryIds = new Map(overlay.entryIds);
   const thinkingBudgets = new Map(overlay.thinkingBudgetTokens);
@@ -143,42 +278,15 @@ export function buildModelCatalogData(
   const labelByProvider = new Map<string, string>();
   const aliasPrefixes = new Map<string, Set<string>>();
 
-  for (const [index, served] of servedModels.entries()) {
-    const servedId = readString(served, "id");
-    const modelId = readString(served, "modelId");
-    const provider = readString(served, "provider");
-    const name = readString(served, "name");
-    // A listed entry that cannot be identified is a broken payload, not a
-    // model being withdrawn. Skipping it would generate an ordinary-looking
-    // removal, and merging that would drop a model, and its aliases, that the
-    // platform still serves. Fail instead, so the scheduled run is the alert.
-    if (
-      servedId === undefined || modelId === undefined ||
-      provider === undefined || name === undefined
-    ) {
-      const missing = ([
-        ["id", servedId],
-        ["modelId", modelId],
-        ["provider", provider],
-        ["name", name],
-      ] as const).filter(([, value]) => value === undefined).map(([field]) =>
-        field
-      );
-      fail(
-        `model "${servedId ?? modelId ?? `entry ${index}`}" is missing ${
-          missing.join(", ")
-        }`,
-      );
-    }
-
-    const capabilities = asRecord(served.capabilities) ?? {};
+  for (const served of catalog.models) {
+    const { id: servedId, modelId, provider, name, capabilities } = served;
     // `reasoning` is the served name for this fact and the only one read: the
     // payload also carries the older `thinking` spelling, but two sources for
     // one fact can disagree, so only `reasoning` is allowed in. It is also the
     // authority on WHETHER a model reasons. The overlay says how much, so a
     // budget for a model the catalog serves as non-reasoning is dropped rather
     // than left to assert reasoning the catalog no longer claims.
-    const reasons = readBoolean(capabilities, "reasoning") === true;
+    const reasons = capabilities.reasoning === true;
     const thinkingBudgetTokens = reasons
       ? thinkingBudgets.get(modelId)
       : undefined;
@@ -187,7 +295,7 @@ export function buildModelCatalogData(
       modelId,
       provider,
       name,
-      description: readString(served, "description") ?? "",
+      description: served.description ?? "",
       // A declared budget already means the model reasons, so the flag is
       // emitted only where no budget carries that fact.
       ...(reasons && thinkingBudgetTokens === undefined
@@ -199,10 +307,8 @@ export function buildModelCatalogData(
     // A reasoning control on a model the catalog serves as non-reasoning is
     // the catalog contradicting itself. `reasoning` settles it, so the control
     // is dropped rather than written out beside the flag that denies it.
-    const reasoningMode = reasons
-      ? readString(capabilities, "reasoning_mode")
-      : undefined;
-    const transport = readString(capabilities, "transport");
+    const reasoningMode = reasons ? capabilities.reasoning_mode : undefined;
+    const transport = capabilities.transport;
     const functionToolReasoning = chatReasoningWithFunctionTools.get(modelId);
     const capabilityEntry: TransportCapabilities = {
       ...(reasoningMode !== undefined &&
@@ -220,7 +326,7 @@ export function buildModelCatalogData(
       servedTransportCapabilities.push([modelId, capabilityEntry]);
     }
 
-    const label = readString(served, "providerLabel");
+    const label = served.providerLabel;
     if (label !== undefined && !labelByProvider.has(provider)) {
       labelByProvider.set(provider, label);
     }
@@ -275,8 +381,7 @@ export function buildModelCatalogData(
     ...servedTransportCapabilities,
   ];
 
-  const servedDefaultModelId = readString(root, "defaultModelId") ??
-    fail("it names no default model");
+  const servedDefaultModelId = catalog.defaultModelId;
   const defaultEntry =
     chatModels.find((model) => model.modelId === servedDefaultModelId) ??
       fail(
