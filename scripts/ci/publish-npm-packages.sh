@@ -133,6 +133,12 @@ NPM_PUBLISH_CONFLICT_DELAY_SECONDS="${NPM_PUBLISH_CONFLICT_DELAY_SECONDS:-15}"
 # by default so a publish that did land is not reported as a failed release.
 NPM_GIT_HEAD_WAIT_ATTEMPTS="${NPM_GIT_HEAD_WAIT_ATTEMPTS:-180}"
 NPM_GIT_HEAD_WAIT_DELAY_SECONDS="${NPM_GIT_HEAD_WAIT_DELAY_SECONDS:-10}"
+# One budget for the whole release, not per package: a registry incident that
+# delays metadata for many of the ~30 packages must not multiply the wait past
+# the job limit and strand a partial publish. The deadline starts at the first
+# wait and every later package shares it.
+NPM_GIT_HEAD_WAIT_TOTAL_SECONDS="${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS:-1800}"
+NPM_GIT_HEAD_WAIT_DEADLINE=""
 
 is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
@@ -317,6 +323,9 @@ wait_for_npm_git_head() {
   # npm can expose a published version before its gitHead metadata converges.
   # Allow NPM_GIT_HEAD_WAIT_ATTEMPTS empty reads while preserving hash
   # mismatches as immediate failures.
+  if [ -z "${NPM_GIT_HEAD_WAIT_DEADLINE}" ]; then
+    NPM_GIT_HEAD_WAIT_DEADLINE=$(( $(date +%s) + NPM_GIT_HEAD_WAIT_TOTAL_SECONDS ))
+  fi
   for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
     PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
@@ -324,6 +333,10 @@ wait_for_npm_git_head() {
     fi
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
+    fi
+    if [ "$(date +%s)" -ge "${NPM_GIT_HEAD_WAIT_DEADLINE}" ]; then
+      echo "Shared npm metadata wait of ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s is spent; checking ${PACKAGE_NAME}@${VERSION} once more." >&2
+      break
     fi
     echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/${NPM_GIT_HEAD_WAIT_ATTEMPTS})."
     sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"

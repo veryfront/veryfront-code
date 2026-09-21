@@ -576,6 +576,43 @@ describe("npm package publishing", () => {
     }
   });
 
+  it("shares one gitHead metadata deadline across every package in a release", async () => {
+    const stateDir = await Deno.makeTempDir();
+    const countFile = `${stateDir}/npm-view-count`;
+    await Deno.writeTextFile(countFile, "0");
+
+    try {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          "}",
+          "sleep() { :; }",
+          // The shared budget is already spent, so neither package polls again:
+          // each makes one read plus the final confirmation read.
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          'wait_for_npm_git_head "@veryfront/ext-auth-jwt" && exit 4',
+          "exit 0",
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "0",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(await Deno.readTextFile(countFile), "4");
+    } finally {
+      await Deno.remove(stateDir, { recursive: true });
+    }
+  });
+
   it("waits for an existing RC version's missing gitHead metadata", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;
