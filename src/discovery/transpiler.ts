@@ -286,6 +286,12 @@ interface LockedDependency {
    * like the registry-relative form npm writes for a registry source.
    */
   link: boolean;
+  /**
+   * The package this entry actually installs, when the lockfile says so. npm
+   * records it for an ALIAS -- `"shim": "npm:real@1"` puts `real` here under
+   * the path `node_modules/shim` -- so the install path is not the identity.
+   */
+  installed: string | null;
   /** The ranges this package itself declares, by name. */
   dependencies: Readonly<Record<string, string>>;
 }
@@ -331,6 +337,36 @@ function optionalMeta(entry: Record<string, unknown>): Record<string, boolean> {
   return optional;
 }
 
+/**
+ * The workspace members an npm lockfile lists, by their path from its own
+ * directory.
+ *
+ * npm writes one `packages` entry per member -- `"packages/app"` beside the
+ * `node_modules/@scope/app` link that points at it -- so the lockfile itself
+ * says which projects it installs. That is evidence about THIS project, not
+ * an emulation of npm's globs, and it is what the workspace patterns are
+ * checked against before an ancestor's lockfile speaks for a member.
+ */
+function lockfileWorkspaceMembers(lockText: string): ReadonlySet<string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lockText);
+  } catch (_) {
+    /* expected: a project may ship an unparseable or absent lockfile */
+    return new Set();
+  }
+  const packages = (parsed as { packages?: unknown })?.packages;
+  if (!packages || typeof packages !== "object") return new Set();
+  const members = new Set<string>();
+  for (const [path, entry] of Object.entries(packages as Record<string, unknown>)) {
+    // The root is `""`, an install is under `node_modules/`, and what is left
+    // is a directory this lockfile installs as a member of itself.
+    if (path.length === 0 || /(?:^|\/)node_modules\//.test(path)) continue;
+    if (entry && typeof entry === "object") members.add(path);
+  }
+  return members;
+}
+
 /** A path key and the entry it addresses, keyed the way v2/v3 locks are. */
 function addLockedEntry(
   locked: Record<string, LockedDependency>,
@@ -340,16 +376,18 @@ function addLockedEntry(
   // Keyed by the install path, so a workspace member's own copy
   // (`packages/app/node_modules/pkg`) stays distinct from the hoisted one.
   if (path === "__proto__" || !/(?:^|\/)node_modules\//.test(path)) return;
-  const { version, resolved, link } = entry as {
+  const { version, resolved, link, name } = entry as {
     version?: unknown;
     resolved?: unknown;
     link?: unknown;
+    name?: unknown;
   };
   if (typeof version !== "string") return;
   locked[path] = {
     version,
     resolved: typeof resolved === "string" ? resolved : null,
     link: link === true,
+    installed: typeof name === "string" ? name : null,
     dependencies: lockedEntryDependencies(entry),
   };
 }
@@ -638,6 +676,13 @@ function transitiveLockedDependencies(
       if (!resolvesFromPublicRegistry(sources, found.entry, dependency)) {
         return { refusal: privateTransitiveRefusal(rootName, dependency) };
       }
+      // An ALIAS installs one package under another's name, and the CDN's
+      // `deps` names a package -- so the pin would send esm.sh after the
+      // public package of the alias rather than the one the project
+      // installed under it.
+      if (found.entry.installed !== null && found.entry.installed !== dependency) {
+        return { refusal: aliasedDependencyRefusal(rootName, dependency) };
+      }
       const already = pinned.get(dependency);
       // esm.sh resolves one version per name for a build, so a name the
       // lockfile nests at two versions cannot be expressed as a pin at all.
@@ -662,6 +707,13 @@ function transitiveLockedDependencies(
 function unresolvedEdgeRefusal(rootName: string, name: string): string {
   return `the project's lockfile does not resolve ${name}, which ${rootName} depends on, so ` +
     `the CDN build of ${rootName} would resolve it against the public registry on its own`;
+}
+
+/** Why an aliased install cannot be pinned for the CDN. */
+function aliasedDependencyRefusal(rootName: string, name: string): string {
+  return `the project installs ${name}, which ${rootName} depends on, under another package's ` +
+    `name, and the CDN resolves a dependency by name, so this project's graph cannot be ` +
+    `pinned for it`;
 }
 
 /** Why a name installed twice cannot be pinned for the CDN. */
@@ -950,9 +1002,17 @@ function workspacePatterns(
       }
       // The cancellation is pattern against pattern, as npm does it: the
       // negation is the glob and the later positive is the path it covers.
-      const survives = (negated: string) =>
-        !matchesWorkspacePattern(negated.split("/"), expanded.split("/"));
-      excluded.splice(0, excluded.length, ...excluded.filter(survives));
+      // Written as npm's own splice loop rather than a filter, because the
+      // splice shifts the next negation into the index the loop has just
+      // finished with and the `++` then steps over it -- so of two ADJACENT
+      // matching negations npm removes only the first, and the second still
+      // excludes the member. Reproducing that is the point: this decides
+      // whether npm considers the project a member, not what it should.
+      for (let index = 0; index < excluded.length; ++index) {
+        if (matchesWorkspacePattern(excluded[index]!.split("/"), expanded.split("/"))) {
+          excluded.splice(index, 1);
+        }
+      }
       included.push(expanded);
     }
   }
@@ -960,7 +1020,11 @@ function workspacePatterns(
 }
 
 /** A workspace pattern without its `./` prefix or its trailing separators. */
-function normalizeWorkspacePattern(pattern: string): string {
+function normalizeWorkspacePattern(raw: string): string {
+  // npm's `getGlobPattern` rewrites every backslash to a separator before
+  // globbing, so `packages\\*` is `packages/*` and nothing in a workspace
+  // pattern escapes.
+  const pattern = raw.replace(/\\/g, "/");
   let start = pattern.startsWith("./") ? 1 : 0;
   while (pattern[start] === "/") start++;
   let end = pattern.length;
@@ -1030,7 +1094,9 @@ function expandBraces(pattern: string): string[] | null {
   const close = open < 0 ? -1 : matchingBrace(pattern, open);
   if (close < 0) return [pattern];
   const body = pattern.slice(open + 1, close);
-  const alternatives = braceSequence(body) ?? splitBraceBody(body);
+  const sequenced = braceSequence(body);
+  if (sequenced === "overflow") return null;
+  const alternatives = sequenced ?? splitBraceBody(body);
   if (alternatives.length < 2) return [pattern];
   const head = pattern.slice(0, open);
   const tail = pattern.slice(close + 1);
@@ -1076,7 +1142,7 @@ function matchingBrace(pattern: string, open: number): number {
  * the single-character alphabetic form, and a workspace may name its members
  * with either.
  */
-function braceSequence(body: string): string[] | null {
+function braceSequence(body: string): string[] | "overflow" | null {
   const numeric = /^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$/.exec(body);
   if (numeric) {
     const from = Number(numeric[1]);
@@ -1098,11 +1164,13 @@ function sequence(
   to: number,
   step: number,
   render: (value: number) => string,
-): string[] {
+): string[] | "overflow" {
   const values: string[] = [];
   const direction = from <= to ? step : -step;
   for (let value = from; direction > 0 ? value <= to : value >= to; value += direction) {
-    if (values.length >= MAX_WORKSPACE_PATTERN_ALTERNATIVES) break;
+    // Stopping at the cap would hand back a PREFIX of the sequence, and a
+    // prefix of an exclusion admits the members it left out.
+    if (values.length >= MAX_WORKSPACE_PATTERN_ALTERNATIVES) return "overflow";
     values.push(render(value));
   }
   return values;
@@ -1413,7 +1481,12 @@ function matchesExtglob(
 async function lockedInDirectory(
   context: FileDiscoveryContext,
   directory: string,
-): Promise<Pick<ProjectRegistrySources, "locked" | "unverifiableClient"> | null> {
+): Promise<
+  | (Pick<ProjectRegistrySources, "locked" | "unverifiableClient"> & {
+    members: ReadonlySet<string>;
+  })
+  | null
+> {
   const shrinkwrap = await readProjectFile(
     context,
     pathHelper.join(directory, "npm-shrinkwrap.json"),
@@ -1424,12 +1497,23 @@ async function lockedInDirectory(
   for (const [file, client] of LOCKFILE_CLIENTS) {
     const text = await readProjectFile(context, pathHelper.join(directory, file));
     if (text.length === 0) continue;
-    if (client !== "npm") return { locked: {}, unverifiableClient: client };
+    if (client !== "npm") {
+      return { locked: {}, unverifiableClient: client, members: new Set() };
+    }
     // npm ignores package-lock.json entirely when a shrinkwrap is present.
-    return { locked: readLockedDependencies(shrinkwrap || text), unverifiableClient: null };
+    const owned = shrinkwrap || text;
+    return {
+      locked: readLockedDependencies(owned),
+      unverifiableClient: null,
+      members: lockfileWorkspaceMembers(owned),
+    };
   }
   if (shrinkwrap.length === 0) return null;
-  return { locked: readLockedDependencies(shrinkwrap), unverifiableClient: null };
+  return {
+    locked: readLockedDependencies(shrinkwrap),
+    unverifiableClient: null,
+    members: lockfileWorkspaceMembers(shrinkwrap),
+  };
 }
 
 /**
@@ -1511,8 +1595,17 @@ export async function readProjectRegistrySources(
   for (const { directory, memberPath } of owners.toReversed()) {
     const found = await lockedInDirectory(context, directory);
     if (found === null) continue;
+    // An npm lockfile says for itself which members it installs, so a root
+    // whose lockfile does not list this project does not speak for it --
+    // whatever its workspace patterns appear to say. That check is evidence
+    // about this project rather than an emulation of npm's globs, so it is
+    // what decides; the patterns only narrow which roots to ask.
+    if (memberPath.length > 0 && found.unverifiableClient === null) {
+      if (!found.members.has(memberPath)) continue;
+    }
+    const { members: _members, ...sources } = found;
     return {
-      ...found,
+      ...sources,
       // npm reads the config beside the lockfile it is resolving; a member's
       // own file is reported as ignored, so it is carried separately.
       npmrc: await npmrcOf(directory),

@@ -929,6 +929,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         version: "1.8.1",
         resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.8.1.tgz",
         link: false,
+        installed: null,
         dependencies: { ms: "^2.1.3" },
       });
       assertEquals(locked["node_modules/unpdf/node_modules/ms"]?.version, "2.0.0");
@@ -974,6 +975,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         version: "1.8.1",
         resolved: null,
         link: false,
+        installed: null,
         dependencies: {},
       });
     });
@@ -1045,7 +1047,12 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       });
     }
 
-    const publicLock = (name: string, version: string) =>
+    /**
+     * The lockfile a project with this dependency holds. `members` are the
+     * workspace paths npm writes one entry each for, which is how a root's
+     * lockfile says which projects it installs.
+     */
+    const publicLock = (name: string, version: string, members: readonly string[] = []) =>
       JSON.stringify({
         lockfileVersion: 3,
         packages: {
@@ -1053,6 +1060,9 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
             version,
             resolved: `https://registry.npmjs.org/${name}/-/${name}-${version}.tgz`,
           },
+          ...Object.fromEntries(
+            members.map((member) => [member, { name: member, version: "1.0.0" }]),
+          ),
         },
       });
 
@@ -1089,12 +1099,26 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       const member = `${PROJECT}/packages/app`;
       const files = {
         "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
-        "package-lock.json": publicLock("unpdf", "1.8.1"),
+        "package-lock.json": publicLock("unpdf", "1.8.1", ["packages/app"]),
         "packages/app/package.json": "{}",
       };
       const sources = await sourcesFor(files, member);
       assertEquals(sources.memberPath, "packages/app");
       assertEquals(sources.locked["node_modules/unpdf"]?.version, "1.8.1");
+    });
+
+    it("needs the root's own lockfile to list the member", async () => {
+      // npm writes one `packages` entry per member it installs, so a root
+      // whose lockfile does not list this project does not speak for it --
+      // whatever its workspace patterns appear to say.
+      const member = `${PROJECT}/packages/app`;
+      const sources = await sourcesFor({
+        "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+        "package-lock.json": publicLock("unpdf", "1.8.1", ["packages/other"]),
+        "packages/app/package.json": "{}",
+      }, member);
+      assertEquals(sources.memberPath, "");
+      assertEquals(sources.locked, {});
     });
 
     it("stops at a project merely nested under another", async () => {
@@ -1127,7 +1151,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       const sources = await sourcesFor({
         "package.json": JSON.stringify({ workspaces: ["./packages/*/"] }),
         ".npmrc": "registry=https://npm.internal.example/\n",
-        "package-lock.json": publicLock("unpdf", "1.8.1"),
+        "package-lock.json": publicLock("unpdf", "1.8.1", ["packages/app"]),
         "packages/app/package.json": "{}",
         "packages/app/.npmrc": "registry=https://registry.npmjs.org/\n",
       }, member);
@@ -1140,7 +1164,12 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       const declaring = async (workspaces: unknown, at = member) =>
         (await sourcesFor({
           "package.json": JSON.stringify({ workspaces }),
-          "package-lock.json": publicLock("unpdf", "1.8.1"),
+          "package-lock.json": publicLock("unpdf", "1.8.1", [
+            "apps/store-web",
+            "apps/.hidden",
+            ".apps/web",
+            "node_modules/vendored",
+          ]),
           "apps/store-web/package.json": "{}",
           "apps/.hidden/package.json": "{}",
           ".apps/web/package.json": "{}",
@@ -1172,6 +1201,12 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/?ore-web"]), "");
       // An even number of leading `!` is a literal, not a negation.
       assertEquals(await declaring(["!!apps/store-web"]), "apps/store-web");
+      // Of two ADJACENT matching negations npm's own splice loop removes only
+      // the first, so the second still excludes the member. Reproducing that
+      // is the point: this decides what npm considers a member.
+      assertEquals(await declaring(["**", "!apps/**", "!apps/store-web", "apps/store-web"]), "");
+      // npm rewrites a backslash to a separator before globbing.
+      assertEquals(await declaring(["apps\\*"]), "apps/store-web");
       // A later positive pattern CANCELS an earlier negation that covers it,
       // which is how npm reads an override written after an exclusion.
       assertEquals(
@@ -1208,6 +1243,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       // an exclusion this could not expand may be the one covering the
       // member, so nothing in it is trusted.
       const wide = `{${Array.from({ length: 65 }, (_, index) => `x${index}`).join(",")}}`;
+      // A numeric or alphabetic SEQUENCE wider than the cap is the same
+      // overflow: stopping at 64 would leave an exclusion covering fewer
+      // members than npm's does.
+      assertEquals(await declaring(["apps/*", "!apps/{1..100}"]), "");
       assertEquals(await declaring(["apps/*"]), "apps/store-web");
       assertEquals(await declaring(["apps/*", `!apps/${wide}`]), "");
       assertEquals(await declaring([`apps/${wide}`, "apps/*"]), "");
@@ -1243,6 +1282,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         "package-lock.json": publicLock("unpdf", "1.8.1"),
         "node_modules/vendored/package.json": "{}",
       }, vendored);
+      // The lockfile lists no member under node_modules either.
       assertEquals(sources.memberPath, "");
       assertEquals(sources.locked, {});
     });
@@ -1276,12 +1316,18 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       dependencies: Record<string, string> = {},
       resolved: string | null = `${PUBLIC}/pkg/-/pkg-${version}.tgz`,
     ) {
-      return { version, resolved, link: false, dependencies };
+      return {
+        version,
+        resolved,
+        link: false,
+        installed: null as string | null,
+        dependencies,
+      };
     }
 
     /** The sources a project with this lockfile and .npmrc would be read as. */
     function sources(
-      locked: Record<string, ReturnType<typeof entry>>,
+      locked: ProjectRegistrySources["locked"],
       { npmrc = "", memberNpmrc = "", memberPath = "" } = {},
     ): ProjectRegistrySources {
       return { locked, npmrc, memberNpmrc, memberPath, unverifiableClient: null };
@@ -1394,6 +1440,34 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         version: "1.9.0",
         dependencyPins: ["ms@2.1.3"],
       });
+    });
+
+    it("refuses a dependency installed under another package's name", () => {
+      // npm records the real package for an alias (`"shim": "npm:real@1"`),
+      // and the CDN resolves a dependency by NAME, so a pin would send it
+      // after the public `shim` rather than what the project installed.
+      const locked = readLockedDependencies(JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/unpdf": {
+            version: "1.9.0",
+            resolved: `${PUBLIC}/unpdf/-/unpdf-1.9.0.tgz`,
+            dependencies: { shim: "npm:real@1" },
+          },
+          "node_modules/shim": {
+            name: "real",
+            version: "1.0.0",
+            resolved: `${PUBLIC}/real/-/real-1.0.0.tgz`,
+          },
+        },
+      }));
+      const decision = cdnSourceDecision(sources(locked), "^1.8.0", "unpdf", "1.8.0", null);
+      assert("refusal" in decision);
+      assertEquals(
+        decision.refusal.includes("under another package's name"),
+        true,
+        decision.refusal,
+      );
     });
 
     it("refuses a name the lockfile nests at two versions", () => {
@@ -1532,12 +1606,14 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           version: "1.9.0",
           resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.9.0.tgz",
           link: false,
+          installed: null,
           dependencies: {},
         },
         "node_modules/private": {
           version: "2.0.0",
           resolved: "https://npm.internal.example/private.tgz",
           link: false,
+          installed: null,
           dependencies: {},
         },
       },
@@ -1571,12 +1647,14 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
             version: "1.9.0",
             resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.9.0.tgz",
             link: false,
+            installed: null,
             dependencies: { glyphs: "^2.0.0" },
           },
           "node_modules/glyphs": {
             version: "2.3.4",
             resolved: "https://registry.npmjs.org/glyphs/-/glyphs-2.3.4.tgz",
             link: false,
+            installed: null,
             dependencies: {},
           },
         },
@@ -1620,12 +1698,14 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
             version: "1.9.0",
             resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.9.0.tgz",
             link: false,
+            installed: null,
             dependencies: { glyphs: "^2.0.0" },
           },
           "node_modules/glyphs": {
             version: "2.3.4",
             resolved: "https://npm.internal.example/glyphs.tgz",
             link: false,
+            installed: null,
             dependencies: {},
           },
         },

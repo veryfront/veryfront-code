@@ -69,9 +69,13 @@ function jsStringLiteral(value: string): string {
  * evidence, so every fixture that expects an inline carries one, exactly as a
  * real project does; a fixture that states its own overrides this.
  */
-function publicRegistryLock(dependencies: Record<string, string>, registry?: string): string {
+function publicRegistryLock(
+  dependencies: Record<string, string>,
+  registry?: string,
+  members: readonly string[] = [],
+): string {
   const host = registry ?? "https://registry.npmjs.org/";
-  const packages: Record<string, { version: string; resolved: string }> = {};
+  const packages: Record<string, Record<string, string>> = {};
   for (const [name, range] of Object.entries(dependencies)) {
     const version = range.replace(/^[\^~>=<v\s]+/, "");
     packages[`node_modules/${name}`] = {
@@ -79,6 +83,9 @@ function publicRegistryLock(dependencies: Record<string, string>, registry?: str
       resolved: `${host}${name}/-/${name.replace(/^@[^/]+\//, "")}-${version}.tgz`,
     };
   }
+  // npm writes one entry per workspace member it installs, which is how a
+  // root's lockfile says which projects it speaks for.
+  for (const member of members) packages[member] = { name: member, version: "1.0.0" };
   return JSON.stringify({ lockfileVersion: 3, packages });
 }
 
@@ -973,7 +980,7 @@ describe(
         fsAdapter: createMockAdapter({
           "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
           "packages/app/package.json": JSON.stringify({ dependencies: pin }),
-          "package-lock.json": publicRegistryLock(pin),
+          "package-lock.json": publicRegistryLock(pin, undefined, ["packages/app"]),
           "packages/app/tool.ts": [
             `import { extractText } from "@veryfront-fixture/pdf-text";`,
             `export default { name: "extract", text: extractText() };`,
@@ -1045,7 +1052,7 @@ describe(
         fsAdapter: createMockAdapter({
           "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
           ".npmrc": "@veryfront-fixture:registry=https://npm.internal.example/\n",
-          "package-lock.json": publicRegistryLock(pin),
+          "package-lock.json": publicRegistryLock(pin, undefined, ["packages/app"]),
           "packages/app/package.json": JSON.stringify({ dependencies: pin }),
           "packages/app/tool.ts": [
             `import { extractText } from "@veryfront-fixture/pdf-text";`,
@@ -1082,6 +1089,7 @@ describe(
             version: "1.8.1",
             resolved: "https://registry.npmjs.org/@veryfront-fixture/pdf-text/-/pdf-text-1.8.1.tgz",
           },
+          "packages/app": { name: "@fixture/app", version: "1.0.0" },
         },
       });
       const scoped: FileDiscoveryContext = {
@@ -1365,7 +1373,7 @@ describe(
       const member = `${projectDir}/packages/app`;
       const files = (workspaces: unknown) => ({
         "package.json": JSON.stringify({ name: "root", workspaces }),
-        "package-lock.json": publicRegistryLock(fixturePin),
+        "package-lock.json": publicRegistryLock(fixturePin, undefined, ["packages/app"]),
         "packages/app/package.json": JSON.stringify({ dependencies: fixturePin }),
         "packages/app/tool.ts": fixtureSource,
       });
@@ -1413,7 +1421,7 @@ describe(
       const detail = await refuseFixture({
         "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
         ".npmrc": "registry=https://npm.internal.example/\n",
-        "package-lock.json": publicRegistryLock(fixturePin),
+        "package-lock.json": publicRegistryLock(fixturePin, undefined, ["packages/app"]),
         "packages/app/package.json": JSON.stringify({ dependencies: fixturePin }),
         "packages/app/.npmrc": "@veryfront-fixture:registry=https://registry.npmjs.org/\n",
         "packages/app/tool.ts": fixtureSource,
