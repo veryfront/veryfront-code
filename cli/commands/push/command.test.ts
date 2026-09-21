@@ -1695,6 +1695,17 @@ describe("push receipt source snapshot", () => {
         );
         assertStringIncludes(rendered, ".veryfront/project.json");
         assertStringIncludes(rendered, "veryfront whoami");
+        // The registry suggestion is one static string, and this raise site is
+        // `push`. `veryfront up` creates the project *and* publishes a live
+        // Preview deployment, so a remedy that names it hands a push or CI
+        // user a deploy they never asked for. Unlinking is the whole remedy:
+        // push resolves the inferred slug and re-links on the next run.
+        assertStringIncludes(rendered, "veryfront push");
+        assertEquals(
+          rendered.includes("veryfront up"),
+          false,
+          "the remedy must not send a push user through a deployment",
+        );
       });
     } finally {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));

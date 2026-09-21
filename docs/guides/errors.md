@@ -772,7 +772,7 @@ Linked project not found.
 
 - **HTTP status:** 404
 - **CLI exit code:** 1
-- **What to do:** Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json and run veryfront up to create and link a project for this account
+- **What to do:** Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json to unlink this directory and let veryfront push create and link a project for the signed-in account
 
 ## Agents
 

@@ -734,8 +734,13 @@ describe("DeployProject", () => {
           source: "local-link",
           sourceName: ".veryfront/project.json",
         });
-        // Byte-identical to what push renders for the same condition: the two
+        // The same sentence push renders for the same condition: the two
         // commands used to name the same project by different identifiers.
+        // This is the adapter boundary, not the terminal -- `up` wraps this
+        // detail as `Preview publish failed: <sentence>` on its way out
+        // (describeUpFailure, cli/commands/up/command.ts), keeping the slug
+        // and suggestion. So the identifiers match everywhere; the rendered
+        // strings are equal up to that prefix, not byte for byte.
         assertEquals(
           error.detail,
           'Project "other-account-project" (11111111-2222-4333-8444-555555555555) was not found. ' +
@@ -780,6 +785,15 @@ describe("DeployProject", () => {
         assertStringIncludes(
           (error as Error).message,
           'Project "typo-slug" was not found.',
+        );
+        // Discriminating on its own: this is the generic message's own second
+        // sentence. The classified detail says "The reference came from
+        // --project; ..." instead, so removing the source gate fails here even
+        // if the instanceof assertion above were ever dropped. Without it the
+        // rest of this test passes against a fully classified error.
+        assertStringIncludes(
+          (error as Error).message,
+          "Check the project reference or remove it to let deploy create a project",
         );
         assertEquals(
           (error as Error).message.includes(".veryfront/project.json"),

@@ -152,8 +152,16 @@ export const PROJECT_LINK_STALE = defineError({
   category: "DEPLOY",
   status: 404,
   title: "Linked project not found",
+  // The remedy must not name `veryfront up`. Both `up` and `push` raise this,
+  // and `up` is not a re-link: it creates the project and then publishes a
+  // live Preview deployment (cli/commands/up/command.ts, publish:
+  // "live-source"), so prescribing it to a push or CI user performs a deploy
+  // they never asked for. `ErrorCreateOptions` carries no suggestion override,
+  // so one static string serves every raise site; unlinking is what is true at
+  // all of them, and `push` completes the remedy on its own
+  // (createMissingReference: true, then shouldPersistProjectLink re-links).
   suggestion:
-    "Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json and run veryfront up to create and link a project for this account",
+    "Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json to unlink this directory and let veryfront push create and link a project for the signed-in account",
   exitCode: 1,
 });
 
