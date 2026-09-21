@@ -477,8 +477,10 @@ describe("scripts/build/model-catalog-mapping", () => {
       "DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION",
       "VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES",
       "VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES",
-      "VERYFRONT_CLOUD_PROVIDER_LABELS",
+      // The order precedes the labels: the label table is typed by the
+      // providers the order lists.
       "VERYFRONT_CLOUD_PROVIDER_ORDER",
+      "VERYFRONT_CLOUD_PROVIDER_LABELS",
     ]);
   });
 
