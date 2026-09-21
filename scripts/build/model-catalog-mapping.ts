@@ -333,9 +333,9 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
  * Throws when the payload cannot describe a usable catalog: an empty model or
  * provider list, a listed model that cannot be identified, a default model
  * that no entry claims, or a provider with no model to take its display label
- * from. A scheduled run that throws fails loudly, which is the intended alert.
- * Nothing is ever dropped quietly: a model that vanishes from the output has
- * to have vanished from the catalog.
+ * from. Nothing is ever dropped quietly: a model that vanishes from the output
+ * has to have vanished from the catalog, so the diff a person reads says what
+ * actually changed.
  */
 /** Orders strings by code point, so output never depends on a locale or ICU build. */
 export function compareCodePoints(a: string, b: string): number {
@@ -879,9 +879,8 @@ export function renderModelCatalogModule(data: ModelCatalogData): string {
     " * Veryfront Cloud model catalog data.",
     " *",
     " * Generated file. Do not edit by hand: run `deno task generate:model-catalog`,",
-    " * or let the scheduled catalog sync open the pull request that updates it.",
-    " * Facts the served catalog does not carry live in",
-    " * `scripts/build/model-catalog-overlay.ts`.",
+    " * read the diff, and open a pull request with it. Facts the served catalog",
+    " * does not carry live in `scripts/build/model-catalog-overlay.ts`.",
     " *",
     " * Data only: this module holds the catalog tables and contains no logic. Every",
     " * export is a plain frozen value, and the only imports are types. Resolution",

@@ -12,19 +12,18 @@
  * ```
  *
  * `--check` exits non-zero when the file on disk differs from what this run
- * produces, and writes nothing. It is for local use only: no pull-request job
- * runs it, so a snapshot that has fallen behind never fails an unrelated
- * contributor's build, and a fork never needs the token. The scheduled sync
- * workflow failing is the signal instead.
+ * produces, and writes nothing. Both tasks are run by a person: no job runs
+ * either, so a snapshot that has fallen behind never fails an unrelated
+ * contributor's build, and nothing in CI needs the token.
  *
  * The token is read from the environment only, never from an argument, and is
  * never printed. Without it the run exits non-zero and writes nothing, so the
  * build, the tests and `deno task verify` all pass with it absent.
  *
  * A vendor the served catalog names that `KnownVeryfrontCloudProviderId` does
- * not list is written out as-is. The generated module then fails `deno task
- * typecheck`, which is deliberate: adding a vendor is a decision for a person,
- * and the failure says so on the sync pull request rather than silently.
+ * not list is written out as-is, and the generated module then fails
+ * `deno task typecheck`. That is deliberate: adding a vendor means extending
+ * that union and the routing overlay, which is a decision for a person.
  *
  * @module scripts/build/generate-model-catalog
  */
@@ -84,8 +83,8 @@ async function fetchServedCatalog(
 ): Promise<unknown> {
   const url = buildCatalogUrl(baseUrl);
   const response = await fetch(url, {
-    // A stalled connection would otherwise hold the scheduled run, and its
-    // concurrency slot, until the job timeout. A run that fails must fail.
+    // Without this a stalled connection leaves the command hanging with
+    // nothing to say. A run that fails should fail.
     signal: AbortSignal.timeout(CATALOG_REQUEST_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${token}`,
