@@ -343,6 +343,36 @@ In CI, set the API URL variable used by the command next to
 self-hosted API host, so a non-interactive run has a confirmed host. See
 [Deploy from CI](./deploy-from-ci.md) for the surrounding workflow.
 
+### Provider stream idle deadline
+
+Once a provider has sent its response headers, the body it streams back is
+bounded by an idle deadline. If no bytes arrive for the length of that window,
+Veryfront aborts the request, releases the connection, and fails the stream
+with a retryable error naming the deadline that fired. Without it, a model
+stream that went silent mid-response blocked its caller until the caller gave
+up.
+
+| Variable                                    | Default  | What it bounds                                           |
+| ------------------------------------------- | -------- | -------------------------------------------------------- |
+| `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` | `120000` | How long a stream request waits for the next body chunk. |
+
+The window is re-armed on every chunk, so it bounds how long the provider stays
+silent rather than how long the whole response takes. It counts bytes on the
+wire rather than parsed events, so a keepalive frame, an SSE comment line, or a
+progress event re-arms it even when nothing decodes that event. That is what
+keeps it from firing while a provider-executed tool such as web search or code
+execution runs with the response held open.
+
+Set it to `0` to disable the bound and restore an unbounded body, which only a
+deployment that runs its own idle watchdog should do. A value that is not an
+integer in range is ignored with a warning and the default applies; the warning
+names the variable and the accepted range but never the rejected value, because
+`.env` expansion can substitute a secret into it.
+
+Set this one in the host environment, not in a project `.env` file. It is an
+operator safety bound, so a value that came from a project `.env` file is
+ignored and the host's own setting stands.
+
 ## SSR transform cache
 
 Veryfront compiles every page and its local import tree before it can render on
