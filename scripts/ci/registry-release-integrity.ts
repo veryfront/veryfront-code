@@ -59,13 +59,22 @@ export interface PollRegistryPackageOptions {
    * spends its request timeout on top of the retry delay, so counting
    * attempts alone does not bound the wall clock the surrounding job is sized
    * for. The last lookup may begin at the deadline and still take its request
-   * timeout, so the poll ends within `budgetMs + requestTimeoutMs`: fifteen
+   * timeout, so the poll ends within `budgetMs + requestTimeoutMs`: thirty
    * minutes and a quarter by default, which the job's forty accommodate.
    */
   budgetMs?: number;
   /** The clock, for tests. */
   now?: () => number;
 }
+
+/**
+ * How long one registry lookup may take. The poll's last lookup may begin at
+ * the deadline and still spend all of this, so the job that runs it is sized
+ * for the budget plus one of these.
+ *
+ * @internal Exported for testing only.
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
 
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
 const DEFAULT_REGISTRY_URL = "https://registry.npmjs.org";
@@ -353,11 +362,18 @@ function formatFailureContext(
 /**
  * How long to wait for npm to make a just-published version visible.
  *
- * A publish is not atomic across npm's metadata: the version can take several
- * minutes to appear, and the previous 30x10s budget gave up on main three
- * times while the release itself was fine. Fifteen minutes covers what those
- * runs needed, and CI can narrow it (the smoke tests do) through the
- * environment.
+ * A publish is not atomic across npm's metadata. `npm publish` returns as soon
+ * as the tarball is accepted and says so itself -- "Your package is being
+ * processed and may take a few minutes to become available" -- and nothing
+ * calls back when it is. Polling is the only signal there is, so the budget
+ * has to cover npm's slowest processing rather than its typical one.
+ *
+ * The record on main: a 30x10s budget gave up three times, fifteen minutes
+ * gave up once more on 2026-09-21 (rc.19779 returned from `npm publish` at
+ * 01:43:10Z and the registry recorded it at 02:03:27Z, twenty minutes later,
+ * while the poll stopped at 02:01:49Z). Thirty minutes covers that with
+ * headroom and still lands inside the job's forty; CI can narrow it (the
+ * smoke tests do) through the environment.
  *
  * @internal Exported for testing only.
  */
@@ -372,9 +388,9 @@ export function readPropagationBudget(
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
   };
   return {
-    // The poll waits BETWEEN attempts, so 91 attempts spend 90 delays: the
-    // fifteen minutes this budget promises.
-    maxAttempts: positiveInteger(env.VF_REGISTRY_PROPAGATION_ATTEMPTS, 91),
+    // The poll waits BETWEEN attempts, so 181 attempts spend 180 delays: the
+    // thirty minutes this budget promises.
+    maxAttempts: positiveInteger(env.VF_REGISTRY_PROPAGATION_ATTEMPTS, 181),
     retryDelayMs: positiveInteger(env.VF_REGISTRY_PROPAGATION_DELAY_MS, 10_000),
   };
 }
@@ -398,7 +414,7 @@ async function main(args: string[]): Promise<void> {
       expectedGitHead: options.gitHead,
       registryUrl: options.registryUrl,
       ...budget,
-      requestTimeoutMs: 15_000,
+      requestTimeoutMs: REQUEST_TIMEOUT_MS,
       onRetry: console.log,
     })
   ));

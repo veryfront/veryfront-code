@@ -5,6 +5,7 @@ import {
   pollRegistryPackage,
   readPropagationBudget,
   RegistryReleaseError,
+  REQUEST_TIMEOUT_MS,
 } from "./registry-release-integrity.ts";
 
 const PACKAGE_NAME = "@veryfront/ext-auth-jwt";
@@ -43,20 +44,40 @@ async function captureError(
 
 describe("registry propagation budget", () => {
   it("waits long enough for npm to publish the version everywhere", () => {
-    // The 30x10s budget gave up on main three times while the release itself
-    // was fine: the version simply was not visible yet.
+    // `npm publish` returns before the version is readable and nothing calls
+    // back when it becomes one, so the budget has to cover npm's slowest
+    // processing. The 30x10s budget gave up on main three times and fifteen
+    // minutes once more: rc.19779 was published at 01:43:10Z and recorded at
+    // 02:03:27Z, twenty minutes later.
     // The poll waits BETWEEN attempts, so n attempts spend (n-1) delays.
     const { maxAttempts, retryDelayMs } = readPropagationBudget({});
     assertEquals(
-      (maxAttempts - 1) * retryDelayMs >= 900_000,
+      (maxAttempts - 1) * retryDelayMs >= 1_800_000,
       true,
       `${maxAttempts}x${retryDelayMs}ms`,
     );
   });
 
+  it("stays inside the job the workflow gives it", async () => {
+    // The last lookup may begin at the deadline and still spend its request
+    // timeout, so the poll ends within budget + one request. Outgrowing the
+    // job's timeout would trade a classified failure for a killed runner,
+    // which reports nothing about the release at all.
+    const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+    const job = workflow.slice(workflow.indexOf("  quality-gate-registry:"));
+    const timeoutMinutes = Number(/timeout-minutes:\s*(\d+)/.exec(job)?.[1]);
+    const { maxAttempts, retryDelayMs } = readPropagationBudget({});
+    const pollMs = (maxAttempts - 1) * retryDelayMs + REQUEST_TIMEOUT_MS;
+    assertEquals(
+      pollMs < timeoutMinutes * 60_000,
+      true,
+      `${pollMs}ms poll vs ${timeoutMinutes}m job`,
+    );
+  });
+
   it("spends every attempt the budget allows when lookups answer at once", async () => {
-    // Fast 404s: the budget must still buy all 91 lookups, so a version that
-    // appears in the final ten seconds of the window is still seen.
+    // Fast 404s: the budget must still buy every lookup it allows, so a
+    // version that appears in the final ten seconds of the window is seen.
     let attempts = 0;
     let now = 0;
     const { maxAttempts, retryDelayMs } = readPropagationBudget({});
