@@ -7,6 +7,11 @@
  * served field evidences the same fact, and must be deleted as soon as one
  * does. Never add an entry here to override a field the catalog does serve.
  *
+ * Served facts win. The overlay only adds what the platform does not serve, so
+ * an entry that presumes a served capability is dropped when the catalog says
+ * that capability is off: a thinking budget says how much a model thinks, not
+ * that it thinks, and is not emitted for a model served as non-reasoning.
+ *
  * The routing facts below are the clearest example: the catalog serves a list
  * of provider ids and no wire surface for any of them, so routing is kept here
  * for now. Move it into the generator's mapped set the moment the platform

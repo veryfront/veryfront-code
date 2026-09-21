@@ -29,7 +29,11 @@ const OVERLAY: ModelCatalogOverlay = {
   surfaceGatewayApiVersions: [["openai", "v1"], ["anthropic", "v1"]],
   defaultGatewayApiVersion: "v1",
   entryIds: [["acme-labs-api/mystery-1", "mystery"]],
-  thinkingBudgetTokens: [["acme-labs-api/mystery-1", 4096]],
+  thinkingBudgetTokens: [
+    ["acme-labs-api/mystery-1", 4096],
+    // Served with `reasoning: false`, so this budget must not be emitted.
+    ["beta-works/plain-3", 512],
+  ],
   openAIChatReasoningWithFunctionTools: [["beta-works/riddle-9", false]],
   retainedTransportCapabilities: [
     ["acme-labs/gone-0", { anthropicThinkingMode: "adaptive" }],
@@ -314,6 +318,31 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertEquals(byId.get("quiet-7")?.thinking, true);
     // `thinking: true` with `reasoning: false`: the served name decides.
     assertEquals(byId.get("loud-8")?.thinking, undefined);
+  });
+
+  it("emits a thinking budget only while the served catalog says the model reasons", () => {
+    // The overlay says how much a model may think, never whether it thinks.
+    const entryFor = (reasoning: boolean) => {
+      const payload = fakePayload();
+      const models = payload.models as Record<string, unknown>[];
+      const served = models.find((model) =>
+        model.modelId === "beta-works/plain-3"
+      );
+      served!.capabilities = {
+        ...served!.capabilities as Record<string, unknown>,
+        reasoning,
+      };
+      return buildModelCatalogData(payload, OVERLAY).chatModels.find((model) =>
+        model.id === "plain-3"
+      );
+    };
+
+    const off = entryFor(false);
+    assertEquals(off?.thinkingBudgetTokens, undefined);
+    assertEquals(off?.thinking, undefined);
+
+    const on = entryFor(true);
+    assertEquals(on?.thinkingBudgetTokens, 512);
   });
 
   it("carries the served transport facts and the overlay facts, and drops unknown values", () => {

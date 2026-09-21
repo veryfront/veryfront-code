@@ -147,26 +147,36 @@ export function buildModelCatalogData(
     if (!servedId || !modelId || !provider || !name) continue;
 
     const capabilities = asRecord(served.capabilities) ?? {};
-    const thinkingBudgetTokens = thinkingBudgets.get(modelId);
+    // `reasoning` is the served name for this fact and the only one read: the
+    // payload also carries the older `thinking` spelling, but two sources for
+    // one fact can disagree, so only `reasoning` is allowed in. It is also the
+    // authority on WHETHER a model reasons. The overlay says how much, so a
+    // budget for a model the catalog serves as non-reasoning is dropped rather
+    // than left to assert reasoning the catalog no longer claims.
+    const reasons = readBoolean(capabilities, "reasoning") === true;
+    const thinkingBudgetTokens = reasons
+      ? thinkingBudgets.get(modelId)
+      : undefined;
     chatModels.push({
       id: entryIds.get(modelId) ?? servedId,
       modelId,
       provider,
       name,
       description: readString(served, "description") ?? "",
-      // `reasoning` is the served name for this fact and the only one read:
-      // the payload also carries the older `thinking` spelling, but two
-      // sources for one fact can disagree, so only `reasoning` is allowed in.
       // A declared budget already means the model reasons, so the flag is
       // emitted only where no budget carries that fact.
-      ...(thinkingBudgetTokens === undefined &&
-          readBoolean(capabilities, "reasoning") === true
+      ...(reasons && thinkingBudgetTokens === undefined
         ? { thinking: true }
         : {}),
       ...(thinkingBudgetTokens === undefined ? {} : { thinkingBudgetTokens }),
     });
 
-    const reasoningMode = readString(capabilities, "reasoning_mode");
+    // A reasoning control on a model the catalog serves as non-reasoning is
+    // the catalog contradicting itself. `reasoning` settles it, so the control
+    // is dropped rather than written out beside the flag that denies it.
+    const reasoningMode = reasons
+      ? readString(capabilities, "reasoning_mode")
+      : undefined;
     const transport = readString(capabilities, "transport");
     const functionToolReasoning = chatReasoningWithFunctionTools.get(modelId);
     const capabilityEntry: TransportCapabilities = {
