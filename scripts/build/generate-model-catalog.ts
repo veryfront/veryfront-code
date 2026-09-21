@@ -47,6 +47,8 @@ const DEFAULT_BASE_URL = "https://api.veryfront.com/api";
 const CATALOG_PATH = "/ai/models";
 /** Generated file, relative to the repository root. */
 const DATA_FILE = "src/provider/veryfront-cloud/model-catalog.data.ts";
+/** How long the catalog request may stall before the run fails. */
+const CATALOG_REQUEST_TIMEOUT_MS = 30_000;
 
 /** Fetch the served catalog. Errors name the status, never the response body. */
 async function fetchServedCatalog(
@@ -55,6 +57,9 @@ async function fetchServedCatalog(
 ): Promise<unknown> {
   const url = `${baseUrl.replace(/\/+$/, "")}${CATALOG_PATH}`;
   const response = await fetch(url, {
+    // A stalled connection would otherwise hold the scheduled run, and its
+    // concurrency slot, until the job timeout. A run that fails must fail.
+    signal: AbortSignal.timeout(CATALOG_REQUEST_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",

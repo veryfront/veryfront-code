@@ -33,8 +33,11 @@ const OVERLAY: ModelCatalogOverlay = {
   openAIChatReasoningWithFunctionTools: [["beta-works/riddle-9", false]],
   retainedTransportCapabilities: [
     ["acme-labs/gone-0", { anthropicThinkingMode: "adaptive" }],
-    // Also served, so the served entry is the one that lands.
+    // Served and carrying a transport fact, so the served entry lands.
     ["beta-works/riddle-9", { openAITransport: "responses" }],
+    // Served but carrying no transport fact at all. Still served, so the
+    // retained entry is dropped rather than kept as a stale override.
+    ["beta-works/plain-3", { anthropicThinkingMode: "adaptive" }],
   ],
 };
 

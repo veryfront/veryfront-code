@@ -228,10 +228,11 @@ export function buildModelCatalogData(
   );
 
   // Retained entries come first and in overlay order, so the table stays
-  // stable as models enter and leave the served catalog.
-  const servedModelIds = new Set(
-    servedTransportCapabilities.map(([modelId]) => modelId),
-  );
+  // stable as models enter and leave the served catalog. A model is served
+  // whenever the catalog lists it, whether or not it carries a transport fact:
+  // a served model that declares none has none, and a retained entry must not
+  // outlive it as a stale override.
+  const servedModelIds = new Set(chatModels.map((model) => model.modelId));
   const modelTransportCapabilities = [
     ...overlay.retainedTransportCapabilities.filter(([modelId]) =>
       !servedModelIds.has(modelId)
