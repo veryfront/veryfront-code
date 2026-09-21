@@ -46,16 +46,68 @@ let sharedModuleFetches = new Singleflight<SharedModuleFetchResult>();
 /** Marks async work that already runs inside a shared resolution. */
 const sharedResolutionScope = new AsyncLocalStorage<true>();
 
-/** Modules the running shared resolution admitted to its module graph. */
-const admittedModuleScope = new AsyncLocalStorage<Set<string>>();
+/**
+ * Modules the running shared resolution admitted to its module graph.
+ *
+ * Scopes stack for the same reason recorders do: a fetch runs inside the
+ * admission scope of the shared resolution that started it and inside its own.
+ */
+const admittedModuleScope = new AsyncLocalStorage<readonly Set<string>[]>();
+
+/** Run `fn` while collecting every module the work it spawns admits. */
+function runWithAdmittedModules<T>(admitted: Set<string>, fn: () => T): T {
+  const active = admittedModuleScope.getStore();
+  return admittedModuleScope.run(active ? [...active, admitted] : [admitted], fn);
+}
 
 /**
  * Record a module the running shared resolution admitted to its module graph,
- * so every caller that joins the resolution admits it too. Outside a shared
- * resolution this does nothing.
+ * so every caller that joins the resolution admits it too. Outside any
+ * admission scope this does nothing.
  */
 export function recordSharedModuleAdmission(normalizedPath: string): void {
-  admittedModuleScope.getStore()?.add(normalizedPath);
+  for (const admitted of admittedModuleScope.getStore() ?? []) admitted.add(normalizedPath);
+}
+
+/**
+ * Modules one request-local module fetch recorded and admitted while it ran.
+ *
+ * Sibling entry fetches of one request resolve concurrently and share nested
+ * fetches through `context.inFlightModules`. The sibling that joins such a
+ * fetch never runs it, so without this record its own shared resolution omits
+ * the borrowed module's subtree and replays a partial route-module manifest -
+ * and an under-counted module graph - to the renders that join it.
+ */
+export interface BorrowedModules {
+  readonly recordedModules: Set<string>;
+  readonly admittedModules: Set<string>;
+}
+
+/**
+ * Run `startFetch` while collecting the modules it records and admits, so a
+ * sibling fetch that joins its in-flight promise can replay them.
+ */
+export function runCollectingBorrowedModules<T>(
+  startFetch: () => T,
+): { borrowed: BorrowedModules; result: T } {
+  const borrowed: BorrowedModules = {
+    recordedModules: new Set<string>(),
+    admittedModules: new Set<string>(),
+  };
+  const result = runWithModuleRecorder(
+    borrowed.recordedModules,
+    () => runWithAdmittedModules(borrowed.admittedModules, startFetch),
+  );
+  return { borrowed, result };
+}
+
+/**
+ * Replay the modules a joined fetch recorded and admitted into the scopes of
+ * the caller that borrowed it.
+ */
+export function replayBorrowedModules(borrowed: BorrowedModules): void {
+  for (const modulePath of borrowed.recordedModules) recordModuleToSession(modulePath);
+  for (const modulePath of borrowed.admittedModules) recordSharedModuleAdmission(modulePath);
 }
 
 /**
@@ -123,7 +175,7 @@ export async function runSharedModuleFetch(
         return sharedResolutionScope.run(
           true,
           () =>
-            admittedModuleScope.run(
+            runWithAdmittedModules(
               admittedModules,
               () =>
                 runWithModuleRecorder(recordedModules, async () => ({

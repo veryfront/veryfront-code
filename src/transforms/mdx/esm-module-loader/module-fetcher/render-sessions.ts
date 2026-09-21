@@ -36,12 +36,23 @@ const currentSessionIdStorage = new AsyncLocalStorage<string>();
 /**
  * Collects the modules recorded by a shared module resolution so every render
  * that joins it can record them into its own session.
+ *
+ * Recorders stack: one module fetch runs inside the recorder of the shared
+ * resolution that started it and inside its own, so a fetch a sibling later
+ * borrows is recorded by both.
  */
-const moduleRecorderStorage = new AsyncLocalStorage<Set<string>>();
+const moduleRecorderStorage = new AsyncLocalStorage<readonly Set<string>[]>();
 
-/** Run `fn` while collecting every module recorded by the work it spawns. */
+/**
+ * Run `fn` while collecting every module recorded by the work it spawns.
+ *
+ * `recorder` is added to the recorders already collecting on this async
+ * context rather than replacing them, so a nested fetch never hides its
+ * modules from the shared resolution that owns it.
+ */
 export function runWithModuleRecorder<T>(recorder: Set<string>, fn: () => T): T {
-  return moduleRecorderStorage.run(recorder, fn);
+  const active = moduleRecorderStorage.getStore();
+  return moduleRecorderStorage.run(active ? [...active, recorder] : [recorder], fn);
 }
 
 /**
@@ -129,7 +140,7 @@ function getCurrentSession(): RenderSession | null {
 }
 
 export function recordModuleToSession(normalizedPath: string): void {
-  moduleRecorderStorage.getStore()?.add(normalizedPath);
+  for (const recorder of moduleRecorderStorage.getStore() ?? []) recorder.add(normalizedPath);
   const session = getCurrentSession();
   if (!session) return;
 

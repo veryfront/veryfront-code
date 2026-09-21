@@ -1265,5 +1265,46 @@ describe("module-fetcher", () => {
       }
       clearAllManifests();
     });
+
+    it("records modules borrowed from a sibling entry into every joined session", async () => {
+      clearAllManifests();
+      const project = createProjectAdapter("borrowed");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-borrow-cache-"),
+        projectDir: await tempDir("vf-shared-borrow-proj-"),
+      };
+      // `a` and `b` are two entries of one render and both import `c`, so one
+      // of them resolves `c` and the other borrows its in-flight promise
+      // instead of walking into it.
+      const owner = await newRender(project.adapter, "p-borrow", dirs);
+      const joinedA = await newRender(project.adapter, "p-borrow", dirs);
+      const joinedB = await newRender(project.adapter, "p-borrow", dirs);
+      const routes = ["/owner", "/joined-a", "/joined-b"];
+      for (const route of routes) startRenderSession(route, "borrow-project", route);
+
+      await Promise.all([
+        runInRenderSession("/owner", () =>
+          Promise.all([
+            fetchAndCacheModule("/_vf_modules/a.js", owner),
+            fetchAndCacheModule("/_vf_modules/b.js", owner),
+          ])),
+        runInRenderSession("/joined-a", () => fetchAndCacheModule("/_vf_modules/a.js", joinedA)),
+        runInRenderSession("/joined-b", () => fetchAndCacheModule("/_vf_modules/b.js", joinedB)),
+      ]);
+      for (const route of routes) endRenderSession(route);
+
+      assertEquals(
+        getRouteModulePaths("borrow-project", "/owner").sort(),
+        ["a.js", "b.js", "c.js"],
+      );
+      // Whichever entry borrowed `c` from its sibling, the render that joined
+      // only that entry still replays the borrowed dependency.
+      assertEquals(getRouteModulePaths("borrow-project", "/joined-a").sort(), ["a.js", "c.js"]);
+      assertEquals(getRouteModulePaths("borrow-project", "/joined-b").sort(), ["b.js", "c.js"]);
+      // The borrowed dependency counts toward the joined render's graph too.
+      assertEquals(joinedA.moduleGraph!.has("_vf_modules/c.js"), true);
+      assertEquals(joinedB.moduleGraph!.has("_vf_modules/c.js"), true);
+      clearAllManifests();
+    });
   });
 });

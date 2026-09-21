@@ -38,8 +38,11 @@ import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
 import { captureResolvedModule } from "./captured-module.ts";
 import {
+  type BorrowedModules,
   getSharedModuleFetchKey,
   recordSharedModuleAdmission,
+  replayBorrowedModules,
+  runCollectingBorrowedModules,
   runSharedModuleFetch,
 } from "./shared-module-fetches.ts";
 import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
@@ -194,6 +197,14 @@ function isRefusedTenantFrameworkModuleFetch(
   return !isPublicFrameworkSourceKey(frameworkKey);
 }
 
+/**
+ * Modules each request-local in-flight fetch recorded and admitted, keyed by
+ * the promise siblings join through `context.inFlightModules`. Keeping it
+ * beside the map rather than inside it leaves the context type untouched, and
+ * a record is dropped as soon as its fetch promise is unreachable.
+ */
+const borrowedModulesByFetch = new WeakMap<Promise<string | null>, BorrowedModules>();
+
 /** Add modules resolved by a shared resolution to this request's graph. */
 function admitSharedModules(moduleGraph: Set<string>, modulePaths: ReadonlySet<string>): void {
   for (const modulePath of modulePaths) {
@@ -293,7 +304,14 @@ export async function fetchAndCacheModule(
       normalizedPath,
       parentModulePath,
     });
-    return existingPromise;
+    // A sibling entry fetch of this request started the module. Read its record
+    // before awaiting, so it survives the owner clearing the in-flight entry.
+    const borrowed = borrowedModulesByFetch.get(existingPromise);
+    const joined = await existingPromise;
+    // Modules resolved by the sibling still belong to this caller's shared
+    // resolution, which replays them to the renders that join it.
+    if (borrowed) replayBorrowedModules(borrowed);
+    return joined;
   }
 
   log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
@@ -318,34 +336,39 @@ export async function fetchAndCacheModule(
       projectSlug,
       parentModulePath,
     );
-  let fetchPromise: Promise<string | null>;
-  if (context.sourceCapture) {
-    fetchPromise = captureResolvedModule(
-      normalizedPath,
-      context,
-      fetchAndCacheModuleFn,
-      context.sourceCapture,
-      reference.suffix,
-    );
-  } else if (isEntryFetch) {
-    // Concurrent requests for the same entry share one resolution of its graph.
-    fetchPromise = runSharedModuleFetch(
-      getSharedModuleFetchKey(context, bindingKey),
-      resolveModule,
-      {
-        // Modules another request resolved still count toward this request's
-        // graph limit.
-        onResolved: (recordedModules) => admitSharedModules(moduleGraph, recordedModules),
-        // The leading request's deadline is not this request's deadline.
-        // A deadline or graph limit belongs to the leading request, not to this
-        // one, which resolves within its own budget instead.
-        retryAloneOn: (error) =>
-          error instanceof TransformTreeTimeoutError || error instanceof ModuleGraphLimitError,
-      },
-    );
-  } else {
-    fetchPromise = resolveModule();
-  }
+  const startFetch = (): Promise<string | null> => {
+    if (context.sourceCapture) {
+      return captureResolvedModule(
+        normalizedPath,
+        context,
+        fetchAndCacheModuleFn,
+        context.sourceCapture,
+        reference.suffix,
+      );
+    }
+    if (isEntryFetch) {
+      // Concurrent requests for the same entry share one resolution of its graph.
+      return runSharedModuleFetch(
+        getSharedModuleFetchKey(context, bindingKey),
+        resolveModule,
+        {
+          // Modules another request resolved still count toward this request's
+          // graph limit.
+          onResolved: (recordedModules) => admitSharedModules(moduleGraph, recordedModules),
+          // The leading request's deadline is not this request's deadline.
+          // A deadline or graph limit belongs to the leading request, not to this
+          // one, which resolves within its own budget instead.
+          retryAloneOn: (error) =>
+            error instanceof TransformTreeTimeoutError || error instanceof ModuleGraphLimitError,
+        },
+      );
+    }
+    return resolveModule();
+  };
+  // Collect what this fetch reaches so a sibling that joins it below replays
+  // the same modules into its own shared resolution.
+  const { borrowed, result: fetchPromise } = runCollectingBorrowedModules(startFetch);
+  borrowedModulesByFetch.set(fetchPromise, borrowed);
 
   inFlight?.set(bindingKey, fetchPromise);
 
