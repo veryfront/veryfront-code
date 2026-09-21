@@ -63,7 +63,9 @@ describe("registry propagation budget", () => {
     // timeout, so the poll ends within budget + one request. Outgrowing the
     // job's timeout would trade a classified failure for a killed runner,
     // which reports nothing about the release at all.
-    const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+    const workflow = await Deno.readTextFile(
+      new URL("../../.github/workflows/cicd.yml", import.meta.url),
+    );
     const job = workflow.slice(workflow.indexOf("  quality-gate-registry:"));
     const timeoutMinutes = Number(/timeout-minutes:\s*(\d+)/.exec(job)?.[1]);
     const { maxAttempts, retryDelayMs } = readPropagationBudget({});
