@@ -934,6 +934,20 @@ describe("observability/telemetry-error", () => {
       );
     });
 
+    it("logs only allowlisted error names and transient codes", () => {
+      const customName = Object.assign(new Error("x"), { name: "CustomerAcme123Error" });
+      const customCode = Object.assign(new Error("x"), { code: "account-123456" });
+      const transientCode = Object.assign(new Error("x"), { code: "ECONNRESET" });
+      const summarize = (cause: unknown) =>
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(cause));
+
+      assertEquals(summarize(customName), [{ name: "Error", messageRedacted: true }]);
+      assertEquals(summarize(customCode), [{ name: "Error", messageRedacted: true }]);
+      assertEquals(summarize(transientCode), [
+        { name: "Error", code: "ECONNRESET", messageRedacted: true },
+      ]);
+    });
+
     it("logs only allowlisted framework diagnostics, never untrusted cause text", () => {
       const summarize = (message: string) =>
         summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(new RangeError(message)));
@@ -955,6 +969,10 @@ describe("observability/telemetry-error", () => {
         [{ name: "RangeError", messageRedacted: true }],
       );
       assertEquals(summarize("Anthropic retained content exceeded 8192 items (customer secret)"), [
+        { name: "RangeError", messageRedacted: true },
+      ]);
+      // Only the exact messages the Anthropic extension emits, with its constants.
+      assertEquals(summarize("Anthropic partial_json exceeded 123456 deltas"), [
         { name: "RangeError", messageRedacted: true },
       ]);
       assertEquals(summarize("Tool input: my card number is <REDACTED> and my prompt says hello"), [

@@ -570,7 +570,6 @@ export function telemetryErrorType(error: unknown): string {
 
 const NO_CAUSE = Symbol("no-cause");
 const MAX_LOGGED_ERROR_CAUSES = 4;
-const MAX_LOGGED_ERROR_CODE_LENGTH = 64;
 
 /**
  * The failure an error wraps: the private cause of a provider stream failure,
@@ -606,7 +605,7 @@ export function telemetryErrorCauseType(error: unknown): string | undefined {
 /** One link of a wrapped error's cause chain, safe to put in a server log. */
 export interface LoggedErrorCause {
   name: string;
-  /** Present only for allowlisted framework diagnostics; see {@link LOGGABLE_CAUSE_MESSAGE_PATTERNS}. */
+  /** Present only for exact allowlisted diagnostics; see {@link LOGGABLE_CAUSE_MESSAGES}. */
   message?: string;
   /** True when the cause had a message that was withheld because it may carry untrusted content. */
   messageRedacted?: true;
@@ -614,27 +613,31 @@ export interface LoggedErrorCause {
 }
 
 /**
- * Cause messages matched exactly against fixed, fully enumerated templates that
- * cannot carry customer content, prompts, model output, or infrastructure names,
- * whichever component throws them. Shape-only patterns are not allowed.
- * Any other cause message may embed untrusted data, so only its fixed
- * classification (name, code) is logged.
+ * The complete set of cause messages safe to log verbatim: the exact texts the
+ * Anthropic stream parser emits with its fixed limits, and one fixed transport
+ * message. Matching is by equality, so no variable text (counts, identifiers,
+ * customer data) can pass, whichever component throws the error. Every other
+ * cause message may embed untrusted data and is withheld.
  */
-const LOGGABLE_CAUSE_MESSAGE_PATTERNS: readonly RegExp[] = [
-  // Provider stream parser bounds (extensions/ext-llm-anthropic). Fully
-  // enumerated: only fixed words, a count, and a fixed issue label, so no
-  // variable text can be carried even if another component throws the same
-  // shape.
-  /^Anthropic (?:partial_json|retained content) exceeded \d{1,12} (?:deltas|items|empty fragments|UTF-8 bytes)(?: \((?:content block|text delta|thinking delta|citation delta)\))?$/,
-  // Runtime transport failure with fixed wording.
-  /^error reading a body from connection$/,
-];
+const LOGGABLE_CAUSE_MESSAGES = new NativeSet<string>([
+  "Anthropic partial_json exceeded 4096 deltas",
+  "Anthropic partial_json exceeded 4096 empty fragments",
+  "Anthropic partial_json exceeded 1048576 UTF-8 bytes",
+  "Anthropic retained content exceeded 8192 items (content block)",
+  "Anthropic retained content exceeded 8192 items (citation delta)",
+  "Anthropic retained content exceeded 8192 items (text delta)",
+  "Anthropic retained content exceeded 8192 items (thinking delta)",
+  "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+  "Anthropic retained content exceeded 8192 empty fragments (thinking delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (content block)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (citation delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (text delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (thinking delta)",
+  "error reading a body from connection",
+]);
 
 function isLoggableCauseMessage(message: string): boolean {
-  for (const pattern of LOGGABLE_CAUSE_MESSAGE_PATTERNS) {
-    if (pattern.test(message)) return true;
-  }
-  return false;
+  return apply(setHas, LOGGABLE_CAUSE_MESSAGES, [message]) === true;
 }
 
 /**
@@ -653,19 +656,22 @@ export function summarizeErrorCausesForLog(error: unknown): LoggedErrorCause[] |
       if (apply(setHas, seen, [cause]) === true) break;
       apply(setAdd, seen, [cause]);
       const snapshot = sanitizeErrorForTelemetry(cause, "withoutStack");
-      const entry: LoggedErrorCause = {
-        name: sanitizeTelemetryText(snapshot.name, LOG_PREVIEW_MAX_LENGTH_CHARS),
-      };
+      // Name and code are logged only as fixed classifications: an allowlisted
+      // error name (else "Error"/"Unknown") and a known transient code token.
+      const entry: LoggedErrorCause = { name: "Unknown" };
+      if (isNativeErrorWithoutHooks(cause)) {
+        const rawName = readNativeErrorNameWithoutHooks(cause);
+        entry.name = apply(setHas, SAFE_TELEMETRY_ERROR_NAMES, [rawName]) === true
+          ? rawName
+          : "Error";
+        const code = readOwnErrorDataField(cause, "code");
+        const knownCode = typeof code === "string" ? matchTransientErrorCode(code) : undefined;
+        if (knownCode !== undefined) entry.code = knownCode;
+      }
       if (isLoggableCauseMessage(snapshot.message)) {
         entry.message = snapshot.message;
       } else if (snapshot.message.length > 0) {
         entry.messageRedacted = true;
-      }
-      if (isNativeErrorWithoutHooks(cause)) {
-        const code = readOwnErrorDataField(cause, "code");
-        if (typeof code === "string" || typeof code === "number") {
-          entry.code = sanitizeTelemetryText(NativeString(code), MAX_LOGGED_ERROR_CODE_LENGTH);
-        }
       }
       apply(arrayPush, causes, [entry]);
       cause = readErrorCause(cause);
