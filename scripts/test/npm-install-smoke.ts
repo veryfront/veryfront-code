@@ -236,6 +236,42 @@ interface RunResult {
 
 const decoder = new TextDecoder();
 
+/**
+ * The wall clock the whole smoke may spend once a budget is started.
+ *
+ * Its own step timeouts do not bound it: a registry-mode install retries
+ * propagation skew up to five times at ten minutes each, and the smoke runs
+ * two of them, so the permitted worst case is over an hour and a half -- far
+ * past the job that runs it. Without a budget the runner is simply killed
+ * mid-install, which reports nothing about the release at all; the release
+ * gate exists to say WHY it failed, so the smoke has to be the one that
+ * stops. `registry-release-workflow.test.ts` sizes the job against this.
+ *
+ * @internal Exported so the workflow test can size the job against it.
+ */
+export const DEFAULT_SMOKE_BUDGET_MS = 20 * 60_000;
+
+let smokeDeadline = Number.POSITIVE_INFINITY;
+
+/** Start the budget. Until this is called the smoke is bounded only by its steps. */
+function startSmokeBudget(): number {
+  const budgetMs = nonNegativeIntegerEnv(
+    "VF_NPM_SMOKE_BUDGET_MS",
+    DEFAULT_SMOKE_BUDGET_MS,
+  );
+  smokeDeadline = budgetMs > 0
+    ? Date.now() + budgetMs
+    : Number.POSITIVE_INFINITY;
+  return budgetMs;
+}
+
+/** What is left of it, or `Infinity` when none was started. */
+function remainingSmokeBudgetMs(): number {
+  return smokeDeadline === Number.POSITIVE_INFINITY
+    ? Number.POSITIVE_INFINITY
+    : smokeDeadline - Date.now();
+}
+
 async function run(
   command: string,
   args: string[],
@@ -246,8 +282,17 @@ async function run(
     timeoutMs: number;
   },
 ): Promise<RunResult> {
+  // A command may not outlive the budget: an install that starts with two
+  // minutes left is given two, not its own ten.
+  const remainingMs = remainingSmokeBudgetMs();
+  if (remainingMs <= 0) {
+    fail(`the smoke budget ran out before \`${command}\` could run`);
+  }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    Math.min(options.timeoutMs, remainingMs),
+  );
   try {
     const output = await new Deno.Command(command, {
       args,
@@ -585,6 +630,16 @@ async function npmInstall(
     }
 
     const delayMs = registryRetryDelayMs(attempt);
+    // A retry that cannot finish inside what is left is not a retry, it is
+    // the runner being killed with the failure unexplained.
+    if (remainingSmokeBudgetMs() <= delayMs) {
+      failRegistryInstall(
+        result.combined,
+        plan.npmEnv?.NPM_CONFIG_REGISTRY ?? "https://registry.npmjs.org",
+        specs.length,
+        attempt,
+      );
+    }
     console.error(
       `Registry install attempt ${attempt}/${maxAttempts} hit npm registry propagation skew (${skew}); retrying in ${
         Math.round(delayMs / 1000)
@@ -1502,7 +1557,13 @@ async function runSmoke(workDir: string): Promise<void> {
 
   try {
     const plan = await prepareArtifacts(workDir);
-    if (plan.registryMode) smokeFailureStatus = 21;
+    if (plan.registryMode) {
+      smokeFailureStatus = 21;
+      const budgetMs = startSmokeBudget();
+      console.log(
+        `npm install smoke: budget ${Math.round(budgetMs / 60_000)} minutes.`,
+      );
+    }
 
     await runChecked("npm init", "npm", ["init", "-y"], {
       cwd: workDir,

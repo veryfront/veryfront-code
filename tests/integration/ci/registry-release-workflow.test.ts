@@ -7,6 +7,7 @@ import {
   readPropagationBudget,
   REQUEST_TIMEOUT_MS,
 } from "../../../scripts/ci/registry-release-integrity.ts";
+import { DEFAULT_SMOKE_BUDGET_MS } from "../../../scripts/test/npm-install-smoke.ts";
 
 type YamlRecord = Record<string, unknown>;
 const MERGE_CORRECTNESS_DEPENDENCIES = [
@@ -31,13 +32,15 @@ const decoder = new TextDecoder();
 /**
  * What `scripts/test/npm-install-smoke.ts` may spend after the poll returns.
  *
- * Its own step timeouts are what this covers: two registry installs at ten
- * minutes each, and the API, page and workflow checks at two minutes apiece.
- * Observed runs finish in two to five, so this is the permitted worst case
- * rather than the expected one -- which is the number the job has to hold,
- * because the poll only spends its budget on the runs where npm is slowest.
+ * Its own step timeouts do not bound it -- a registry install retries
+ * propagation skew five times at ten minutes each, and it runs two of them --
+ * so the smoke enforces this budget on itself and caps every command at what
+ * is left of it. That makes the number here the smoke's real ceiling rather
+ * than a guess at its typical two to five minutes, which is what the job has
+ * to hold: the poll only spends its own budget on the runs where npm is
+ * slowest, and those are the runs where the smoke has least room.
  */
-const SMOKE_ALLOWANCE_MS = 25 * 60_000;
+const SMOKE_ALLOWANCE_MS = DEFAULT_SMOKE_BUDGET_MS;
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
