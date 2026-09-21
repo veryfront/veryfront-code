@@ -1,8 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as catalogData from "./model-catalog.data.ts";
-import { VERYFRONT_CLOUD_CHAT_MODELS } from "./model-catalog.ts";
+import { requireVeryfrontCloudWireSurface, VERYFRONT_CLOUD_CHAT_MODELS } from "./model-catalog.ts";
+
+/** Whether this package builds requests for a surface the catalog names. */
+function speaksSurface(surface: string): boolean {
+  try {
+    requireVeryfrontCloudWireSurface(surface);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Collects the path of every function value reachable from a data export. */
 function findFunctionPaths(value: unknown, path: string, seen: Set<unknown>): string[] {
@@ -50,7 +60,7 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
     );
   });
 
-  it("declares a routed surface for every provider, and a version for every surface", () => {
+  it("declares a routed surface for every provider, and a version for every surface it speaks", () => {
     const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
     const versionedSurfaces = new Set(
       catalogData.VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS.map(([surface]) => surface),
@@ -66,6 +76,10 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
       assertEquals(routed.has(provider), true, `no routing declared for "${provider}"`);
     }
     for (const [provider, routing] of catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING) {
+      // A surface this package builds no request for needs no version of its
+      // own: the path falls back to the default version and the request is
+      // refused before it is built. A surface it does speak must have one.
+      if (!speaksSurface(routing.surface)) continue;
       assertEquals(
         versionedSurfaces.has(routing.surface),
         true,
@@ -73,6 +87,22 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
       );
     }
     assertEquals(versionedSurfaces.has(catalogData.DEFAULT_VERYFRONT_CLOUD_SURFACE), true);
+  });
+
+  it("types a routing surface by the surface ID, so an unknown one is refused at call time", () => {
+    // The catalog serves the surface, so it can name one a later release
+    // builds requests for. Such a value has to type-check here and reach the
+    // runtime: refusing it would mean the module failed to import, or failed
+    // to generate, rather than the one request failing.
+    const routing: catalogData.VeryfrontCloudProviderRouting = {
+      surface: "a-later-wire-format",
+    };
+
+    assertThrows(
+      () => requireVeryfrontCloudWireSurface(routing.surface),
+      Error,
+      'Veryfront Cloud wire surface "a-later-wire-format" is not supported',
+    );
   });
 
   it("publishes the chat model entries unchanged and in the same order", () => {

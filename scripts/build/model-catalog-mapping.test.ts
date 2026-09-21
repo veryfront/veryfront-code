@@ -10,7 +10,7 @@ import {
   buildModelCatalogData,
   compareCodePoints,
   findListedProvidersWithoutModels,
-  findUnroutedProviders,
+  findProvidersWithoutSurface,
   listServedProviders,
   type ModelCatalogData,
   renderModelCatalogModule,
@@ -25,10 +25,7 @@ import type { ModelCatalogOverlay } from "./model-catalog-overlay.ts";
  */
 
 const OVERLAY: ModelCatalogOverlay = {
-  providerRouting: [
-    ["acme-labs", { surface: "openai", native: true }],
-    ["beta-works", { surface: "openai" }],
-  ],
+  nativeProviders: ["acme-labs"],
   defaultSurface: "openai",
   gatewayPathPrefix: "ai/gateway",
   surfaceGatewayApiVersions: [["openai", "v1"], ["anthropic", "v1"]],
@@ -107,6 +104,7 @@ function fakePayload(): Record<string, unknown> {
         provider: "acme-labs",
         providerLabel: "Acme Labs",
         providerLogoKey: "acme-labs",
+        surface: "openai",
         name: "Mystery 1",
         description: "A model that does not exist",
         aliases: ["mystery", "acme-labs-api/mystery-1"],
@@ -139,6 +137,7 @@ function fakePayload(): Record<string, unknown> {
         provider: "beta-works",
         providerLabel: "Beta Works",
         providerLogoKey: "beta-works",
+        surface: "openai",
         name: "Riddle 9",
         description: "Another model that does not exist",
         aliases: ["beta-works/riddle-9", "riddle-9"],
@@ -165,6 +164,7 @@ function fakePayload(): Record<string, unknown> {
         provider: "beta-works",
         providerLabel: "Beta Works",
         providerLogoKey: "beta-works",
+        surface: "openai",
         name: "Plain 3",
         description: "A model with no reasoning",
         aliases: ["beta-works/plain-3"],
@@ -193,6 +193,7 @@ function fakePayload(): Record<string, unknown> {
         provider: "beta-works",
         providerLabel: "Beta Works",
         providerLogoKey: "beta-works",
+        surface: "openai",
         name: "Quiet 7",
         description: "A model served without the older flag",
         aliases: ["beta-works/quiet-7"],
@@ -218,6 +219,7 @@ function fakePayload(): Record<string, unknown> {
         provider: "beta-works",
         providerLabel: "Beta Works",
         providerLogoKey: "beta-works",
+        surface: "openai",
         name: "Loud 8",
         description: "A model whose older flag contradicts the served one",
         aliases: ["beta-works/loud-8"],
@@ -242,6 +244,24 @@ function fakePayload(): Record<string, unknown> {
     defaultModelId: "beta-works/riddle-9",
     surpriseTopLevel: "surprise-field-a",
   };
+}
+
+/**
+ * The payload with one provider's models served on another surface, or on none
+ * at all. The surface is a per-model served field, so every model of the
+ * provider moves together: models of one provider that disagree are refused.
+ */
+function payloadWithSurface(
+  provider: string,
+  surface: string | undefined,
+): Record<string, unknown> {
+  const payload = fakePayload();
+  for (const model of payload.models as Record<string, unknown>[]) {
+    if (model.provider !== provider) continue;
+    if (surface === undefined) delete model.surface;
+    else model.surface = surface;
+  }
+  return payload;
 }
 
 /** Every key name reachable from a value, so a leaked field is caught by name too. */
@@ -360,14 +380,10 @@ describe("scripts/build/model-catalog-mapping", () => {
     // The runtime reads `anthropicThinkingMode` only when it builds Anthropic
     // provider options; on another surface the flag would suppress the
     // generic reasoning option and leave the model without thinking at all.
-    const overlay: ModelCatalogOverlay = {
-      ...OVERLAY,
-      providerRouting: [
-        ["acme-labs", { surface: "anthropic", native: true }],
-        ["beta-works", { surface: "openai" }],
-      ],
-    };
-    const onAnthropic = buildModelCatalogData(fakePayload(), overlay);
+    const onAnthropic = buildModelCatalogData(
+      payloadWithSurface("acme-labs", "anthropic"),
+      OVERLAY,
+    );
     // Keyed by the canonical provider, not by the alias the model is
     // published under: the package resolves the prefix to the canonical
     // provider before it looks the transport facts up.
@@ -415,11 +431,11 @@ describe("scripts/build/model-catalog-mapping", () => {
   it("refuses an overlay row keyed by a provider alias instead of the canonical provider", () => {
     // The runtime looks every model-keyed table up by the canonical id, so a
     // row keyed by an alias is never found. Both sources of aliases are
-    // checked: the ones the overlay retains (at the overlay's own invariants)
-    // and the ones the served ids imply (once the catalog has been read).
+    // checked, once the catalog has been read: the ones the overlay retains
+    // and the ones the served ids imply.
     assertThrows(
       () =>
-        assertOverlayInvariants({
+        buildModelCatalogData(fakePayload(), {
           ...OVERLAY,
           retainedProviderAliases: [["acme", "acme-labs"]],
           retainedTransportCapabilities: [
@@ -449,8 +465,8 @@ describe("scripts/build/model-catalog-mapping", () => {
         }],
       ] as const
     ) {
-      // `acme-labs-api` is implied by the served ids, not retained, so only the
-      // build can see it.
+      // The alias map is known only once the catalog has been read, so the
+      // overlay's own invariants pass and the build is what refuses.
       assertOverlayInvariants(overlay as ModelCatalogOverlay);
       assertThrows(
         () =>
@@ -464,29 +480,33 @@ describe("scripts/build/model-catalog-mapping", () => {
   it("refuses a retained adaptive thinking row for a provider off the Anthropic surface", () => {
     // Same rule as for a served reasoning mode, applied to the overlay's own
     // rows: off the Anthropic surface the flag only suppresses the generic
-    // reasoning option, so the row would silently drop thinking.
-    const retained = [
-      ...OVERLAY.retainedTransportCapabilities,
-      ["acme-labs/gone-1", { anthropicThinkingMode: "adaptive" }],
-    ] as const;
-    assertThrows(
-      () =>
-        assertOverlayInvariants({
-          ...OVERLAY,
-          retainedTransportCapabilities: retained,
-        }),
+    // reasoning option, so the row would silently drop thinking. The surface
+    // is a served fact now, so this is judged once the catalog has been read.
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      retainedTransportCapabilities: [
+        ...OVERLAY.retainedTransportCapabilities,
+        ["acme-labs/gone-1", { anthropicThinkingMode: "adaptive" }],
+      ],
+    };
+    // The overlay alone cannot tell: nothing in it names a surface.
+    assertOverlayInvariants(overlay);
+    const error = assertThrows(
+      () => buildModelCatalogData(fakePayload(), overlay),
       Error,
       'overlay retainedTransportCapabilities declares anthropicThinkingMode for "acme-labs/gone-1"',
+    ) as Error;
+    // The surface the provider IS served on is a served value, so the message
+    // does not print it back.
+    assertEquals(error.message.includes("openai"), false);
+    // Served on the Anthropic surface, the same row is fine.
+    buildModelCatalogData(
+      payloadWithSurface("acme-labs", "anthropic"),
+      overlay,
     );
-    // Routed over Anthropic, the same row is fine.
-    assertOverlayInvariants({
-      ...OVERLAY,
-      providerRouting: [
-        ["acme-labs", { surface: "anthropic", native: true }],
-        ["beta-works", { surface: "openai" }],
-      ],
-      retainedTransportCapabilities: retained,
-    });
+    // So is a provider the catalog names no surface for: nothing contradicts
+    // the row, and these rows exist for models the catalog has moved on from.
+    buildModelCatalogData(payloadWithSurface("acme-labs", undefined), overlay);
   });
 
   it("carries the served transport facts and the overlay facts, and drops unknown values", () => {
@@ -558,47 +578,88 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertEquals(renderModelCatalogModule(data).length > 0, true);
   });
 
-  it("routes a provider the overlay does not list on the default surface, and reports it", () => {
-    const overlay: ModelCatalogOverlay = { ...OVERLAY, providerRouting: [] };
-    const data = buildModelCatalogData(fakePayload(), overlay);
+  it("takes each provider's routing surface from its served models", () => {
+    const data = buildModelCatalogData(
+      payloadWithSurface("acme-labs", "anthropic"),
+      OVERLAY,
+    );
 
+    // The surface is the catalog's. The native flag is the overlay's, because
+    // it says how this package may speak the surface, not what the provider
+    // speaks.
     assertEquals(data.providerRouting, [
-      ["acme-labs", { surface: "openai" }],
+      ["acme-labs", { surface: "anthropic", native: true }],
       ["beta-works", { surface: "openai" }],
     ]);
-    assertEquals(
-      findUnroutedProviders(listServedProviders(fakePayload()), overlay),
-      [
-        "providers[0]",
-        "providers[1]",
-      ],
-    );
-    assertEquals(
-      findUnroutedProviders(listServedProviders(fakePayload()), OVERLAY),
-      [],
+    assertEquals(findProvidersWithoutSurface(fakePayload()), []);
+  });
+
+  it("refuses models of one provider served on conflicting surfaces", () => {
+    // The routing table is keyed by provider, so there is no honest row to
+    // publish for two surfaces. Named by position: both are served values.
+    const payload = fakePayload();
+    const models = payload.models as Record<string, unknown>[];
+    models[2]!.surface = "a-later-wire-format";
+
+    const error = assertThrows(
+      () => buildModelCatalogData(payload, OVERLAY),
+      Error,
+      "models[1] and models[2] are served on conflicting surfaces",
+    ) as Error;
+    assertEquals(error.message.includes("a-later-wire-format"), false);
+    assertEquals(error.message.includes("openai"), false);
+  });
+
+  it("routes a provider no served model names a surface for on the default surface, and reports it", () => {
+    // The default is the overlay's: which surface this package assumes when
+    // the platform says nothing is its own fact. The provider is reported so
+    // the generated diff is read knowing the row was not served.
+    const payload = payloadWithSurface("acme-labs", undefined);
+    const data = buildModelCatalogData(payload, {
+      ...OVERLAY,
+      defaultSurface: "anthropic",
+    });
+
+    assertEquals(data.providerRouting, [
+      ["acme-labs", { surface: "anthropic", native: true }],
+      ["beta-works", { surface: "openai" }],
+    ]);
+    assertEquals(findProvidersWithoutSurface(payload), ["providers[0]"]);
+  });
+
+  it("carries a surface this package builds no request for into the module", () => {
+    // Adding a vendor must stay data: the generator does not judge the value,
+    // and no overlay entry is needed for the module to be written. The runtime
+    // refuses an unsupported surface when it builds a request, not at import.
+    const payload = payloadWithSurface("acme-labs", "carrier-pigeon");
+
+    const data = buildModelCatalogData(payload, OVERLAY);
+
+    assertEquals(new Map(data.providerRouting).get("acme-labs"), {
+      surface: "carrier-pigeon",
+      native: true,
+    });
+    assertStringIncludes(
+      renderModelCatalogModule(data),
+      'surface: "carrier-pigeon" as const',
     );
   });
 
   it("keeps a routing row for a listed provider with no chat model", () => {
     // Such a provider has no display or label row, but its ids still route,
-    // so the generated table must say on which surface — and name it, so the
-    // operator can see what an overlay entry would change.
+    // so the generated table must say on which surface — and it is named, so
+    // the operator sees that nothing served the surface it was given.
     const payload = fakePayload();
     payload.providers = [...(payload.providers as string[]), "ghost"];
-    const overlay: ModelCatalogOverlay = { ...OVERLAY, providerRouting: [] };
-    const data = buildModelCatalogData(payload, overlay);
+    const data = buildModelCatalogData(payload, OVERLAY);
 
     assertEquals(data.providerOrder.includes("ghost"), false);
     assertEquals(data.providerRouting, [
-      ["acme-labs", { surface: "openai" }],
+      ["acme-labs", { surface: "openai", native: true }],
       ["beta-works", { surface: "openai" }],
       ["ghost", { surface: "openai" }],
     ]);
-    assertEquals(findUnroutedProviders(listServedProviders(payload), overlay), [
-      "providers[0]",
-      "providers[1]",
-      "providers[2]",
-    ]);
+    assertEquals(findProvidersWithoutSurface(payload), ["providers[2]"]);
   });
 
   it("produces the same module text on every run over the same payload", () => {
@@ -721,28 +782,22 @@ describe("scripts/build/model-catalog-mapping", () => {
   it("leaves a listed provider with no chat model out of the order and labels, and names it", () => {
     // A provider whose models this package lists no chat entry for (an
     // embedding model, say) is a legitimate state, not a defect: it gets no
-    // display or label row, keeps whatever routing the overlay gives it, and
-    // is reported by position for the operator.
+    // display or label row, keeps a routing row for the ids it still
+    // resolves, and is reported by position for the operator.
     const payload = {
       ...fakePayload(),
       providers: ["acme-labs", "ghost-co", "beta-works"],
     };
-    const overlay: ModelCatalogOverlay = {
-      ...OVERLAY,
-      providerRouting: [...OVERLAY.providerRouting, ["ghost-co", {
-        surface: "anthropic",
-      }]],
-    };
-
-    const data = buildModelCatalogData(payload, overlay);
+    const data = buildModelCatalogData(payload, OVERLAY);
 
     assertEquals(data.providerOrder, ["acme-labs", "beta-works"]);
     assertEquals(
       data.providerLabels.some(([provider]) => provider === "ghost-co"),
       false,
     );
+    // No served model names a surface for it, so it takes the default one.
     assertEquals(new Map(data.providerRouting).get("ghost-co"), {
-      surface: "anthropic",
+      surface: "openai",
     });
     assertEquals(
       findListedProvidersWithoutModels(listServedProviders(payload), data),
@@ -1008,9 +1063,7 @@ describe("scripts/build/model-catalog-mapping", () => {
         },
         {
           ...OVERLAY,
-          providerRouting: [...OVERLAY.providerRouting, ["acme-labs", {
-            surface: "openai",
-          }]],
+          nativeProviders: [...OVERLAY.nativeProviders, "acme-labs"],
         },
         {
           ...OVERLAY,
@@ -1114,10 +1167,13 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
-  it("keeps a provider's routing when only a retained model of it remains", () => {
-    // The catalog stops serving every acme-labs model. The overlay still
-    // retains acme-labs/gone-0's transport row, so that model still resolves —
-    // and must keep resolving on its own surface, not the default one.
+  it("drops the routing row of a provider the catalog stops listing", () => {
+    // The surface is a served fact. Once the catalog names neither the
+    // provider nor a model of it, nothing evidences a surface for it, and its
+    // ids take the default surface like any provider this package does not
+    // list. The overlay does not pin one: a hand-written surface per vendor is
+    // exactly what deriving the routing table removed. The retained transport
+    // row outlives the provider all the same, because it is keyed by model id.
     const payload = fakePayload();
     const models = (payload.models as Record<string, unknown>[]).filter(
       (model) => model.provider !== "acme-labs",
@@ -1135,12 +1191,10 @@ describe("scripts/build/model-catalog-mapping", () => {
       data.modelTransportCapabilities.some(([id]) => id === "acme-labs/gone-0"),
       true,
     );
-    const routing = new Map(data.providerRouting);
-    assertEquals(routing.get("acme-labs"), { surface: "openai", native: true });
-    // Served providers keep their position; the retained one follows.
+    assertEquals(new Map(data.providerRouting).get("acme-labs"), undefined);
     assertEquals(
       data.providerRouting.map(([provider]) => provider),
-      [...data.providerOrder, "acme-labs"],
+      [...data.providerOrder],
     );
   });
 
@@ -1207,21 +1261,19 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
-  it("refuses a routing key the runtime would never resolve", () => {
-    // The runtime resolves a provider before reading its routing row, and
-    // refuses one outside the provider shape or reserved; a row under such a
-    // key renders and type-checks but is never read.
+  it("refuses a native provider the runtime would never resolve", () => {
+    // The flag is read for the provider the runtime resolves, and the runtime
+    // refuses a name outside the provider shape or reserved; such an entry
+    // type-checks, matches nothing, and quietly drops the native transport.
     for (const key of ["", "Acme Labs", "veryfront-cloud", "constructor"]) {
       const overlay: ModelCatalogOverlay = {
         ...OVERLAY,
-        providerRouting: [...OVERLAY.providerRouting, [key, {
-          surface: "openai",
-        }]],
+        nativeProviders: [...OVERLAY.nativeProviders, key],
       };
       assertThrows(
         () => assertOverlayInvariants(overlay),
         Error,
-        `overlay providerRouting key "${key}"`,
+        `overlay nativeProviders entry "${key}"`,
       );
     }
   });
@@ -1229,16 +1281,14 @@ describe("scripts/build/model-catalog-mapping", () => {
   it("refuses a served model whose provider segment names another provider", () => {
     // The same shadowing through the derived path: `beta-works/x` served with
     // provider acme-labs would make every beta-works id resolve as acme-labs,
-    // and so would a prefix naming a provider only the overlay routes.
+    // and so would a prefix naming a provider only the overlay names.
     const sentinel = "served-value-must-not-print";
     for (
       const [prefix, overlay] of [
         ["beta-works", OVERLAY],
         ["gamma", {
           ...OVERLAY,
-          providerRouting: [...OVERLAY.providerRouting, ["gamma", {
-            surface: "anthropic",
-          }]],
+          nativeProviders: [...OVERLAY.nativeProviders, "gamma"],
         }],
       ] as const
     ) {
@@ -1275,15 +1325,13 @@ describe("scripts/build/model-catalog-mapping", () => {
   it("refuses a retained alias that names another provider", () => {
     // The runtime reads the alias map before accepting a provider as written,
     // so `["beta-works", "acme-labs"]` would send every beta-works id to
-    // acme-labs — and a provider only the overlay routes is a provider too.
+    // acme-labs — and a provider only the overlay names is a provider too.
     for (
       const overlay of [
         { ...OVERLAY, retainedProviderAliases: [["beta-works", "acme-labs"]] },
         {
           ...OVERLAY,
-          providerRouting: [...OVERLAY.providerRouting, ["gamma", {
-            surface: "anthropic",
-          }]],
+          nativeProviders: [...OVERLAY.nativeProviders, "gamma"],
           retainedProviderAliases: [["gamma", "acme-labs"]],
         },
       ] as ModelCatalogOverlay[]
@@ -1297,15 +1345,13 @@ describe("scripts/build/model-catalog-mapping", () => {
   });
 
   it("keeps a retained alias for a provider the catalog lists no chat model for", () => {
-    // Like a routing row, an alias is about the ids the runtime accepts, not
-    // about the chat list: ids of the provider the runtime resolves without a
-    // chat entry still go through it. Such rows follow the served groups, in
-    // overlay order; the provider itself gets no label or display-order row.
+    // An alias is about the ids the runtime accepts, not about the chat list:
+    // ids of the provider the runtime resolves without a chat entry still go
+    // through it. Such rows follow the served groups, in overlay order; the
+    // provider itself gets no label or display-order row.
     const overlay: ModelCatalogOverlay = {
       ...OVERLAY,
-      providerRouting: [...OVERLAY.providerRouting, ["gamma", {
-        surface: "anthropic",
-      }]],
+      nativeProviders: [...OVERLAY.nativeProviders, "gamma"],
       retainedProviderAliases: [["gamma-api", "gamma"], ["gamma", "gamma"], [
         "acme",
         "acme-labs",
@@ -1322,52 +1368,9 @@ describe("scripts/build/model-catalog-mapping", () => {
       data.providerLabels.some(([provider]) => provider === "gamma"),
       false,
     );
-    assertEquals(new Map(data.providerRouting).get("gamma"), {
-      surface: "anthropic",
-    });
-  });
-
-  it("keeps a provider's routing with no chat model and no transport row of it left", () => {
-    // Routing is a fact about the provider's gateway surface. A model id the
-    // runtime resolves without a chat entry or a transport row — an embedding
-    // model, say — still routes through the row, so the row cannot depend on
-    // either being present. The catalog drops acme-labs entirely and the
-    // overlay retains nothing of it: the routing row stays, in overlay order.
-    const payload = fakePayload();
-    const models = (payload.models as Record<string, unknown>[]).filter(
-      (model) => model.provider !== "acme-labs",
-    );
-    payload.models = models;
-    payload.providers = (payload.providers as string[]).filter(
-      (provider) => provider !== "acme-labs",
-    );
-    payload.defaultModelId = models[0]!.modelId;
-    const overlay: ModelCatalogOverlay = {
-      ...OVERLAY,
-      retainedTransportCapabilities: OVERLAY.retainedTransportCapabilities
-        .filter(([id]) => !id.startsWith("acme-labs/")),
-      providerRouting: [
-        ...OVERLAY.providerRouting,
-        ["embed-only", { surface: "anthropic" }],
-      ],
-    };
-
-    const data = buildModelCatalogData(payload, overlay);
-
-    assertEquals(data.providerOrder.includes("acme-labs"), false);
-    assertEquals(
-      data.modelTransportCapabilities.some(([id]) =>
-        id.startsWith("acme-labs/")
-      ),
-      false,
-    );
-    const routing = new Map(data.providerRouting);
-    assertEquals(routing.get("acme-labs"), { surface: "openai", native: true });
-    assertEquals(routing.get("embed-only"), { surface: "anthropic" });
-    assertEquals(
-      data.providerRouting.map(([provider]) => provider),
-      [...data.providerOrder, "acme-labs", "embed-only"],
-    );
+    // The catalog names neither gamma nor a model of it, so nothing evidences
+    // a surface for it and it gets no routing row.
+    assertEquals(new Map(data.providerRouting).get("gamma"), undefined);
   });
 
   it("keeps the function-tool reasoning flag even for a non-reasoning model", () => {
@@ -1444,6 +1447,10 @@ describe("scripts/build/model-catalog-mapping", () => {
     [
       "providerLabel",
       (p) => (p.models as Record<string, unknown>[])[1].providerLabel = 7,
+    ],
+    [
+      "surface",
+      (p) => (p.models as Record<string, unknown>[])[1].surface = 7,
     ],
     [
       "capabilities",
@@ -1625,21 +1632,9 @@ describe("scripts/build/model-catalog-mapping", () => {
       "gateway API version declared twice",
     ],
     [
-      "a routed surface with no gateway API version",
-      // Only the surface changes, so every provider keeps its place and this
-      // breaks the version rule and nothing else.
-      (data) => ({
-        ...data,
-        providerRouting: data.providerRouting.map(([provider]) =>
-          [provider, { surface: "a-new-surface" }] as const
-        ),
-      }),
-      "gateway API version",
-    ],
-    [
       "a default surface with no gateway API version",
       (data) => ({ ...data, defaultSurface: "a-new-surface" }),
-      "gateway API version",
+      "no gateway API version for the default surface",
     ],
   ];
 
@@ -1700,6 +1695,26 @@ describe("scripts/build/model-catalog-mapping", () => {
       assertThrows(() => assertCatalogInvariants(apply(data)), Error, message);
     });
   }
+
+  it("accepts a routed surface with no gateway API version of its own", () => {
+    // The default surface is this package's own value and must be versioned.
+    // A SERVED surface need not be: the path falls back to the default
+    // version, and a request on a surface this package cannot speak is
+    // refused before one is built. Requiring a version here would make a new
+    // surface a code change, which is what deriving routing removed.
+    const data = buildModelCatalogData(
+      payloadWithSurface("acme-labs", "carrier-pigeon"),
+      OVERLAY,
+    );
+
+    assertEquals(
+      data.surfaceGatewayApiVersions.some(([surface]) =>
+        surface === "carrier-pigeon"
+      ),
+      false,
+    );
+    assertCatalogInvariants(data);
+  });
 
   it("accepts the data generated from a well-formed payload", () => {
     const data = buildModelCatalogData(fakePayload(), OVERLAY);

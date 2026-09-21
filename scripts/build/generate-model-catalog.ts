@@ -23,7 +23,8 @@
  * A vendor the served catalog names that `KnownVeryfrontCloudProviderId` does
  * not list is written out as-is, and the generated module then fails
  * `deno task typecheck`. That is deliberate: adding a vendor means extending
- * that union and the routing overlay, which is a decision for a person.
+ * that union, which is a decision for a person. Its routing is not: the
+ * surface comes from the served catalog.
  *
  * @module scripts/build/generate-model-catalog
  */
@@ -32,7 +33,7 @@ import { fromFileUrl } from "#std/path";
 import {
   buildModelCatalogData,
   findListedProvidersWithoutModels,
-  findUnroutedProviders,
+  findProvidersWithoutSurface,
   listServedProviders,
   ModelCatalogError,
   renderModelCatalogModule,
@@ -289,16 +290,15 @@ async function main(): Promise<number> {
     );
   }
 
-  const unrouted = findUnroutedProviders(
-    listedProviders,
-    MODEL_CATALOG_OVERLAY,
-  );
-  if (unrouted.length > 0) {
+  const withoutSurface = findProvidersWithoutSurface(payload);
+  if (withoutSurface.length > 0) {
     console.error(
-      `Routing is not declared for ${unrouted.join(", ")} (positions in the ` +
-        `served provider list; the generated diff names them). They are ` +
-        `written on the default surface. Add them to ` +
-        `scripts/build/model-catalog-overlay.ts.`,
+      `No served model names a surface for ${
+        withoutSurface.join(", ")
+      } (positions ` +
+        `in the served provider list; the generated diff names them). They are ` +
+        `written on the default surface. Check that the platform serves a ` +
+        `surface for them before merging the diff.`,
     );
   }
 
