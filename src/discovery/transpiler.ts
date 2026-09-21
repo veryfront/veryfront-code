@@ -680,8 +680,10 @@ function pinList(pinned: ReadonlyMap<string, string>, nested: ReadonlySet<string
  * import's own range both admit it. Failing closed is the point: without that
  * evidence the CDN copy is a package of the same name, not this project's
  * dependency.
+ *
+ * @internal Exported for testing only.
  */
-function cdnSourceDecision(
+export function cdnSourceDecision(
   sources: ProjectRegistrySources,
   declared: string | undefined,
   name: string,
@@ -731,8 +733,12 @@ function cdnSourceDecision(
   return { version: locked.entry.version, dependencyPins: transitive.pins };
 }
 
-/** The version the lockfile resolved for each declared package, by name. */
-function lockedVersionsByName(
+/**
+ * The version the lockfile resolved for each declared package, by name.
+ *
+ * @internal Exported for testing only.
+ */
+export function lockedVersionsByName(
   sources: ProjectRegistrySources,
   pins: Readonly<Record<string, string>>,
 ): Record<string, string> {
@@ -748,8 +754,10 @@ function lockedVersionsByName(
  * The declared packages the project's own lockfile vouches for: resolved from
  * the public registry, with no `.npmrc` sending them elsewhere. Only these may
  * reuse the binary's embedded copy, which is the FRAMEWORK's artifact.
+ *
+ * @internal Exported for testing only.
  */
-function publiclySourcedPackages(
+export function publiclySourcedPackages(
   sources: ProjectRegistrySources,
   pins: Readonly<Record<string, string>>,
 ): ReadonlySet<string> {
@@ -764,8 +772,12 @@ function publiclySourcedPackages(
   return publicly;
 }
 
-/** A project's evidence for where its dependencies come from. */
-interface ProjectRegistrySources {
+/**
+ * A project's evidence for where its dependencies come from.
+ *
+ * @internal Exported for testing only.
+ */
+export interface ProjectRegistrySources {
   locked: Record<string, LockedDependency>;
   /**
    * The `.npmrc` npm actually reads for this project: the one beside the
@@ -981,7 +993,13 @@ function withoutLeadingSlashes(path: string): string {
   return path.slice(start);
 }
 
-async function readProjectRegistrySources(
+/**
+ * Read that evidence: the lockfile that owns the project and the `.npmrc` npm
+ * would apply to it.
+ *
+ * @internal Exported for testing only.
+ */
+export async function readProjectRegistrySources(
   context: FileDiscoveryContext,
 ): Promise<ProjectRegistrySources> {
   const directories = projectLockDirectories(context.baseDir);
@@ -1300,8 +1318,10 @@ function deferredDependencyThrow(detail: string): string {
 /**
  * The detail a deferred dependency failure carries, or `null` when the error
  * is not one. Both forms the generated module can throw are recognised.
+ *
+ * @internal Exported for testing only.
  */
-function deferredDependencyDetail(error: unknown): string | null {
+export function deferredDependencyDetail(error: unknown): string | null {
   if (
     error instanceof VeryfrontError && error.slug === DEPENDENCY_MISSING.slug &&
     (error.context as { veryfrontDeferredDependency?: unknown } | undefined)

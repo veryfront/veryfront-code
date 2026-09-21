@@ -4,22 +4,29 @@ import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   authorizeProjectDependencySourceUrl,
+  cdnSourceDecision,
   clearTranspileCache,
   createProjectDependencyCdnPlugin,
   createProjectDependencySourceFetcher,
+  deferredDependencyDetail,
   describeUnresolvableNpmImport,
   discoveryPathForDisplay,
   discoveryPathNames,
   esmCdnModuleSpecifier,
   esmCdnPackageName,
   importModule as importModuleRaw,
+  lockedVersionsByName,
   npmrcRedirectsPackage,
+  npmrcRegistryFor,
+  publiclySourcedPackages,
   readDependencyPins,
   readLockedDependencies,
+  readProjectRegistrySources,
   withDisplayPath,
 } from "./transpiler.ts";
+import type { ProjectRegistrySources } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
-import { VeryfrontError } from "#veryfront/errors";
+import { DEPENDENCY_MISSING, VeryfrontError } from "#veryfront/errors";
 import { EMBEDDED_NPM_CONSTRAINTS } from "./embedded-npm-packages.generated.ts";
 import { isFrameworkProvidedPackage } from "./project-npm-imports.ts";
 import { type PluginBuild, stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -921,6 +928,35 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(locked["node_modules/unpdf/node_modules/ms"]?.version, "2.0.0");
     });
 
+    it("ignores anything that is not a package install", () => {
+      // The root project and a workspace member's own path are declarations,
+      // not installs, and an entry with no version resolves nothing.
+      const locked = readLockedDependencies(JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "root", version: "1.0.0" },
+          "packages/app": { version: "1.0.0" },
+          "node_modules/unversioned": { resolved: "https://registry.npmjs.org/x/-/x-1.tgz" },
+          "node_modules/unpdf": { version: "1.8.1" },
+        },
+      }));
+      assertEquals(Object.keys(locked), ["node_modules/unpdf"]);
+
+      // A lockfile is project text: in the v1 tree the package NAME becomes
+      // the table's key, so `__proto__` there would replace its prototype
+      // instead of adding an entry.
+      const v1 = readLockedDependencies(JSON.stringify({
+        lockfileVersion: 1,
+        dependencies: { __proto__: { version: "9.9.9" }, unpdf: 3, ms: { version: "2.1.3" } },
+      }));
+      assertEquals(Object.keys(v1), ["node_modules/ms"]);
+      assertEquals(Object.getPrototypeOf(v1), Object.prototype);
+
+      // Neither format survives text that is not a lockfile.
+      assertEquals(readLockedDependencies("{ not json"), {});
+      assertEquals(readLockedDependencies(JSON.stringify({ lockfileVersion: 3 })), {});
+    });
+
     it("keeps an entry npm wrote without a resolved URL", () => {
       // `omit-lockfile-registry-resolved` drops the URL deliberately; whether
       // that entry is the public package is then the .npmrc's to say.
@@ -988,6 +1024,459 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         npmrcRedirectsPackage("@other:registry=https://npm.internal.example/", "@scope/p"),
         false,
       );
+    });
+  });
+
+  describe("readProjectRegistrySources", () => {
+    const PROJECT = "/tmp/project";
+
+    /** The sources a project with these files would be read as having. */
+    function sourcesFor(files: Record<string, string>, baseDir = PROJECT) {
+      return readProjectRegistrySources({
+        platform: "node",
+        fsAdapter: createMockAdapter(files, { projectDir: PROJECT }),
+        baseDir,
+      });
+    }
+
+    const publicLock = (name: string, version: string) =>
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          [`node_modules/${name}`]: {
+            version,
+            resolved: `https://registry.npmjs.org/${name}/-/${name}-${version}.tgz`,
+          },
+        },
+      });
+
+    it("reads the lockfile and .npmrc beside the project", async () => {
+      const sources = await sourcesFor({
+        "package-lock.json": publicLock("unpdf", "1.8.1"),
+        ".npmrc": "registry=https://registry.npmjs.org/\n",
+      });
+      assertEquals(sources.memberPath, "");
+      assertEquals(sources.memberNpmrc, "");
+      assertEquals(sources.unverifiableClient, null);
+      assertEquals(sources.locked["node_modules/unpdf"]?.version, "1.8.1");
+    });
+
+    it("names the client whose lockfile owns the project", async () => {
+      const sources = await sourcesFor({ "pnpm-lock.yaml": "lockfileVersion: '9.0'\n" });
+      assertEquals(sources.unverifiableClient, "pnpm");
+      assertEquals(sources.locked, {});
+    });
+
+    it("prefers a shrinkwrap, which npm reads instead of the package lock", async () => {
+      const sources = await sourcesFor({
+        "package-lock.json": publicLock("unpdf", "1.8.1"),
+        "npm-shrinkwrap.json": publicLock("unpdf", "2.0.0"),
+      });
+      assertEquals(sources.locked["node_modules/unpdf"]?.version, "2.0.0");
+
+      // And reads one that stands alone.
+      const alone = await sourcesFor({ "npm-shrinkwrap.json": publicLock("unpdf", "2.0.0") });
+      assertEquals(alone.locked["node_modules/unpdf"]?.version, "2.0.0");
+    });
+
+    it("climbs to the workspace root that declares the project a member", async () => {
+      const member = `${PROJECT}/packages/app`;
+      const files = {
+        "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+        "package-lock.json": publicLock("unpdf", "1.8.1"),
+        "packages/app/package.json": "{}",
+      };
+      const sources = await sourcesFor(files, member);
+      assertEquals(sources.memberPath, "packages/app");
+      assertEquals(sources.locked["node_modules/unpdf"]?.version, "1.8.1");
+    });
+
+    it("stops at a project merely nested under another", async () => {
+      const nested = `${PROJECT}/vendor/nested`;
+      const sources = await sourcesFor({
+        "package.json": JSON.stringify({ name: "outer" }),
+        "package-lock.json": publicLock("unpdf", "1.8.1"),
+        "vendor/nested/package.json": "{}",
+      }, nested);
+      assertEquals(sources.locked, {});
+      assertEquals(sources.memberPath, "");
+    });
+
+    it("lets the workspace root's lockfile outrank a leftover in the member", async () => {
+      // Every client keeps one lockfile at the root, so a lock beside a member
+      // is a leftover from before it joined and may not decide provenance.
+      const member = `${PROJECT}/packages/app`;
+      const sources = await sourcesFor({
+        "package.json": JSON.stringify({ workspaces: ["packages/**"] }),
+        "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+        "packages/app/package.json": "{}",
+        "packages/app/package-lock.json": publicLock("unpdf", "1.8.1"),
+      }, member);
+      assertEquals(sources.unverifiableClient, "pnpm");
+      assertEquals(sources.locked, {});
+    });
+
+    it("keeps a member's own .npmrc apart from the one npm applies", async () => {
+      const member = `${PROJECT}/packages/app`;
+      const sources = await sourcesFor({
+        "package.json": JSON.stringify({ workspaces: ["./packages/*/"] }),
+        ".npmrc": "registry=https://npm.internal.example/\n",
+        "package-lock.json": publicLock("unpdf", "1.8.1"),
+        "packages/app/package.json": "{}",
+        "packages/app/.npmrc": "registry=https://registry.npmjs.org/\n",
+      }, member);
+      assertEquals(sources.npmrc.includes("npm.internal.example"), true);
+      assertEquals(sources.memberNpmrc.includes("registry.npmjs.org"), true);
+    });
+
+    it("matches the workspace patterns npm's own globs accept", async () => {
+      const member = `${PROJECT}/apps/store-web`;
+      const declaring = async (workspaces: unknown) =>
+        (await sourcesFor({
+          "package.json": JSON.stringify({ workspaces }),
+          "package-lock.json": publicLock("unpdf", "1.8.1"),
+          "apps/store-web/package.json": "{}",
+        }, member)).memberPath;
+
+      // A `*` stands for part of ONE segment; `**` spans any number of them,
+      // backtracking when a later segment has to line up.
+      assertEquals(await declaring(["apps/*-web"]), "apps/store-web");
+      assertEquals(await declaring(["**/store-web"]), "apps/store-web");
+      assertEquals(await declaring(["**"]), "apps/store-web");
+      assertEquals(await declaring(["apps/store-web"]), "apps/store-web");
+      // A negation removes what the positive patterns matched, and a pattern
+      // that is not a string, or is empty once normalized, names nothing.
+      assertEquals(await declaring(["apps/*", "!apps/store-web"]), "");
+      assertEquals(await declaring([42, "./", "apps/*"]), "apps/store-web");
+      assertEquals(await declaring([42, "./"]), "");
+      // A pattern with more segments than the member, or fewer, matches none.
+      assertEquals(await declaring(["apps/*/pkg"]), "");
+      assertEquals(await declaring(["apps"]), "");
+      assertEquals(await declaring(["apps/store-x*"]), "");
+      // A trailing `**` spans zero segments, and a trailing `*` inside one
+      // may match nothing left of the name.
+      assertEquals(await declaring(["apps/store-web/**"]), "apps/store-web");
+      assertEquals(await declaring(["apps/store-web*"]), "apps/store-web");
+      // `workspaces` that is neither a list nor `{ packages }` declares none.
+      assertEquals(await declaring({ nope: ["apps/*"] }), "");
+    });
+
+    it("reads no evidence at all from a project that ships none", async () => {
+      const sources = await sourcesFor({ "package.json": "{}" });
+      assertEquals(sources.locked, {});
+      assertEquals(sources.npmrc, "");
+      assertEquals(sources.unverifiableClient, null);
+    });
+
+    it("searches no ancestors when the project root is the base itself", async () => {
+      // A hosted run addresses its VFS with a relative base, which IS the
+      // project root and has no ancestors to climb.
+      const sources = await readProjectRegistrySources({
+        platform: "node",
+        fsAdapter: createMockAdapter({ "package-lock.json": publicLock("unpdf", "1.8.1") }),
+        baseDir: "",
+      });
+      assertEquals(sources.memberPath, "");
+      assertEquals(sources.locked["node_modules/unpdf"]?.version, "1.8.1");
+    });
+  });
+
+  describe("cdnSourceDecision", () => {
+    const PUBLIC = "https://registry.npmjs.org";
+
+    /** A lockfile entry resolved from the public registry. */
+    function entry(
+      version: string,
+      dependencies: Record<string, string> = {},
+      resolved: string | null = `${PUBLIC}/pkg/-/pkg-${version}.tgz`,
+    ) {
+      return { version, resolved, link: false, dependencies };
+    }
+
+    /** The sources a project with this lockfile and .npmrc would be read as. */
+    function sources(
+      locked: Record<string, ReturnType<typeof entry>>,
+      { npmrc = "", memberNpmrc = "", memberPath = "" } = {},
+    ): ProjectRegistrySources {
+      return { locked, npmrc, memberNpmrc, memberPath, unverifiableClient: null };
+    }
+
+    it("serves the version the lockfile resolved", () => {
+      const decision = cdnSourceDecision(
+        sources({ "node_modules/unpdf": entry("1.9.0") }),
+        "^1.8.0",
+        "unpdf",
+        "1.8.0",
+        null,
+      );
+      assertEquals(decision, { version: "1.9.0", dependencyPins: [] });
+    });
+
+    it("refuses what the project's own sources do not vouch for", () => {
+      const cases: [string, ProjectRegistrySources, string][] = [
+        [
+          "another client owns the lockfile",
+          { ...sources({}), unverifiableClient: "pnpm" },
+          "pnpm lockfile owns its dependencies",
+        ],
+        [
+          "the .npmrc redirects the package",
+          sources({ "node_modules/unpdf": entry("1.9.0") }, {
+            npmrc: "registry=https://npm.internal.example/",
+          }),
+          ".npmrc installs unpdf from another registry",
+        ],
+        [
+          "a member .npmrc redirects it, which may veto but never vouch",
+          sources({ "node_modules/unpdf": entry("1.9.0") }, {
+            memberNpmrc: "registry=https://npm.internal.example/",
+          }),
+          ".npmrc installs unpdf from another registry",
+        ],
+        ["the lockfile does not carry it", sources({}), "does not resolve unpdf"],
+        [
+          "the lockfile resolves it elsewhere",
+          sources({
+            "node_modules/unpdf": entry("1.9.0", {}, "https://npm.internal.example/unpdf.tgz"),
+          }),
+          "resolves unpdf from another registry",
+        ],
+        [
+          "the entry is a link to a workspace package",
+          sources({
+            "node_modules/unpdf": { ...entry("1.9.0", {}, "packages/unpdf"), link: true },
+          }),
+          "resolves unpdf from another registry",
+        ],
+        [
+          "the locked version is one the declaration excludes",
+          sources({ "node_modules/unpdf": entry("2.0.0") }),
+          "a version of unpdf that the project",
+        ],
+      ];
+      for (const [name, given, reason] of cases) {
+        const decision = cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null);
+        assert("refusal" in decision, `${name}: expected a refusal`);
+        assertEquals(decision.refusal.includes(reason), true, `${name}: ${decision.refusal}`);
+      }
+    });
+
+    it("reads provenance from the .npmrc when the entry carries no URL", () => {
+      const omitted = sources({ "node_modules/unpdf": entry("1.9.0", {}, null) }, {
+        npmrc: "omit-lockfile-registry-resolved=true\nregistry=https://registry.npmjs.org/",
+      });
+      assertEquals(cdnSourceDecision(omitted, "^1.8.0", "unpdf", "1.8.0", null), {
+        version: "1.9.0",
+        dependencyPins: [],
+      });
+
+      // Without the setting the absence is not deliberate, so it vouches for
+      // nothing; a registry-relative value needs the same explicit registry.
+      const bare = sources({ "node_modules/unpdf": entry("1.9.0", {}, null) }, {
+        npmrc: "registry=https://registry.npmjs.org/",
+      });
+      assert("refusal" in cdnSourceDecision(bare, "^1.8.0", "unpdf", "1.8.0", null));
+      const relative = sources({
+        "node_modules/unpdf": entry("1.9.0", {}, "registry.npmjs.org/unpdf/-/unpdf-1.9.0.tgz"),
+      }, { npmrc: 'registry="https://registry.npmjs.org/"' });
+      assertEquals(cdnSourceDecision(relative, "^1.8.0", "unpdf", "1.8.0", null), {
+        version: "1.9.0",
+        dependencyPins: [],
+      });
+    });
+
+    it("pins the transitive graph the project locked", () => {
+      const given = sources({
+        "node_modules/unpdf": entry("1.9.0", { glyphs: "^2.0.0", ms: "^2.1.0" }),
+        "node_modules/glyphs": entry("2.3.4", { ms: "^2.1.0" }),
+        "node_modules/ms": entry("2.1.3"),
+      });
+      assertEquals(cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null), {
+        version: "1.9.0",
+        dependencyPins: ["glyphs@2.3.4", "ms@2.1.3"],
+      });
+    });
+
+    it("resolves each edge from the installer's own node_modules outward", () => {
+      const given = sources({
+        "node_modules/unpdf": entry("1.9.0", { ms: "^2.1.0" }),
+        // The nested copy is the one unpdf reaches; the hoisted one is not.
+        "node_modules/unpdf/node_modules/ms": entry("2.1.3"),
+        "node_modules/ms": entry("1.0.0"),
+      });
+      assertEquals(cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null), {
+        version: "1.9.0",
+        dependencyPins: ["ms@2.1.3"],
+      });
+    });
+
+    it("leaves a name the lockfile nests at two versions unpinned", () => {
+      // esm.sh resolves one version per name for a build, so such a name
+      // cannot be expressed as a pin -- and is never guessed at.
+      const given = sources({
+        "node_modules/unpdf": entry("1.9.0", { glyphs: "^2.0.0", ms: "^2.1.0" }),
+        "node_modules/glyphs": entry("2.3.4", { ms: "^1.0.0" }),
+        "node_modules/glyphs/node_modules/ms": entry("1.0.0"),
+        "node_modules/ms": entry("2.1.3"),
+      });
+      assertEquals(cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null), {
+        version: "1.9.0",
+        dependencyPins: ["glyphs@2.3.4"],
+      });
+    });
+
+    it("leaves a name the lockfile does not carry to the CDN", () => {
+      // An optional dependency skipped on this platform, or a peer the host
+      // supplies: the project holds no copy for a public one to stand in for.
+      const given = sources({
+        "node_modules/unpdf": entry("1.9.0", { fsevents: "^2.3.0" }),
+      });
+      assertEquals(cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null), {
+        version: "1.9.0",
+        dependencyPins: [],
+      });
+    });
+
+    it("refuses when a transitive dependency is resolved privately", () => {
+      const given = sources({
+        "node_modules/unpdf": entry("1.9.0", { glyphs: "^2.0.0" }),
+        "node_modules/glyphs": entry("2.3.4", {}, "https://npm.internal.example/glyphs.tgz"),
+      });
+      const decision = cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null);
+      assert("refusal" in decision);
+      assertEquals(
+        decision.refusal.includes("the project resolves glyphs, which unpdf depends on"),
+        true,
+        decision.refusal,
+      );
+    });
+
+    it("reads a member's own copy before the one hoisted to the root", () => {
+      const given = sources({
+        "node_modules/unpdf": entry("1.0.0"),
+        "packages/app/node_modules/unpdf": entry("1.9.0"),
+      }, { memberPath: "packages/app" });
+      assertEquals(cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null), {
+        version: "1.9.0",
+        dependencyPins: [],
+      });
+
+      // With no member-specific copy, the hoisted one answers.
+      const hoisted = sources({ "node_modules/unpdf": entry("1.9.0") }, {
+        memberPath: "packages/app",
+      });
+      assertEquals(cdnSourceDecision(hoisted, "^1.8.0", "unpdf", "1.8.0", null), {
+        version: "1.9.0",
+        dependencyPins: [],
+      });
+    });
+
+    it("refuses a source that is no registry install at all", () => {
+      const given = sources({
+        "node_modules/unpdf": entry("1.9.0", {}, "git+ssh://git@github.test/o/unpdf.git#abc"),
+      });
+      const decision = cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", null);
+      assert("refusal" in decision);
+    });
+
+    it("refuses a dependency graph too large to pin", () => {
+      const dependencies: Record<string, string> = {};
+      const locked: Record<string, ReturnType<typeof entry>> = {};
+      for (let index = 0; index < 520; index++) {
+        dependencies[`dep${index}`] = "^1.0.0";
+        locked[`node_modules/dep${index}`] = entry("1.0.0");
+      }
+      locked["node_modules/unpdf"] = entry("1.9.0", dependencies);
+      const decision = cdnSourceDecision(sources(locked), "^1.8.0", "unpdf", "1.8.0", null);
+      assert("refusal" in decision);
+      assertEquals(decision.refusal.includes("too many to pin"), true, decision.refusal);
+    });
+
+    it("refuses an import range the lockfile's version does not satisfy", () => {
+      const given = sources({ "node_modules/unpdf": entry("1.9.0") });
+      const decision = cdnSourceDecision(given, "^1.8.0", "unpdf", "1.8.0", "~1.8.0");
+      assert("refusal" in decision);
+    });
+  });
+
+  describe("publiclySourcedPackages and lockedVersionsByName", () => {
+    const sources: ProjectRegistrySources = {
+      locked: {
+        "node_modules/unpdf": {
+          version: "1.9.0",
+          resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.9.0.tgz",
+          link: false,
+          dependencies: {},
+        },
+        "node_modules/private": {
+          version: "2.0.0",
+          resolved: "https://npm.internal.example/private.tgz",
+          link: false,
+          dependencies: {},
+        },
+      },
+      npmrc: "",
+      memberNpmrc: "",
+      memberPath: "",
+      unverifiableClient: null,
+    };
+
+    it("vouches only for the declarations the lockfile resolves publicly", () => {
+      const pins = { unpdf: "^1.8.0", private: "^2.0.0", absent: "1.0.0" };
+      assertEquals([...publiclySourcedPackages(sources, pins)], ["unpdf"]);
+      assertEquals(lockedVersionsByName(sources, pins), { unpdf: "1.9.0", private: "2.0.0" });
+    });
+
+    it("withholds a package the .npmrc sends elsewhere", () => {
+      const redirected = { ...sources, npmrc: "registry=https://npm.internal.example/" };
+      assertEquals([...publiclySourcedPackages(redirected, { unpdf: "^1.8.0" })], []);
+    });
+
+    it("vouches for nothing when another client owns the lockfile", () => {
+      assertEquals(
+        [...publiclySourcedPackages({ ...sources, unverifiableClient: "pnpm" }, {
+          unpdf: "^1.8.0",
+        })],
+        [],
+      );
+    });
+  });
+
+  describe("npmrcRegistryFor", () => {
+    it("names the registry npm would install a package from", () => {
+      assertEquals(npmrcRegistryFor("", "pkg"), undefined);
+      assertEquals(
+        npmrcRegistryFor("registry=https://registry.npmjs.org", "pkg"),
+        "https://registry.npmjs.org/",
+      );
+      // A key written on its own is INI's `true`; a section header, and a
+      // line that assigns to nothing, name no key this reads.
+      assertEquals(npmrcRegistryFor("[scope]\nprefer-offline\n=orphan\n", "pkg"), undefined);
+      // A backslash escapes the comment character that follows it.
+      assertEquals(
+        npmrcRegistryFor(String.raw`registry=https://example.test/a\#b`, "pkg"),
+        String.raw`https://example.test/a\#b/`,
+      );
+    });
+  });
+
+  describe("deferredDependencyDetail", () => {
+    it("recognises both forms the bundled module can throw", () => {
+      const typed = DEPENDENCY_MISSING.create({
+        detail: 'Cannot load "pkg": nothing serves it',
+        context: { veryfrontDeferredDependency: true },
+      });
+      assertEquals(deferredDependencyDetail(typed), 'Cannot load "pkg": nothing serves it');
+      assertEquals(
+        deferredDependencyDetail(
+          new Error('[veryfront:missing-npm-dependency] Cannot load "pkg": nothing serves it'),
+        ),
+        'Cannot load "pkg": nothing serves it',
+      );
+      // An unrelated failure, and an unrelated typed error, are not this one.
+      assertEquals(deferredDependencyDetail(new Error("boom")), null);
+      assertEquals(deferredDependencyDetail(DEPENDENCY_MISSING.create({ detail: "other" })), null);
+      assertEquals(deferredDependencyDetail("not an error"), null);
     });
   });
 
