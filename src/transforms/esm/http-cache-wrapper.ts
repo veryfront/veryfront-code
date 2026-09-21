@@ -155,6 +155,108 @@ function parseIdentityMetadata(
   }
 }
 
+/** Rewrite identity and original URL used to recover a bundle by hash. */
+export interface BundleRecoveryIdentity {
+  metadata: HttpCacheIdentityMetadata | null;
+  originalUrl: string | null;
+}
+
+/** Parse a shared import map and accept it only when it matches its fingerprint. */
+async function parseVerifiedImportMap(
+  raw: string | null,
+  fingerprint: string,
+): Promise<ImportMapConfig | null> {
+  if (!raw) return null;
+  let importMapValue: unknown;
+  try {
+    importMapValue = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const importMap = parseImportMap(importMapValue);
+  if (!importMap) return null;
+  if (await fingerprintImportMap(importMap) !== fingerprint) return null;
+  return importMap;
+}
+
+type ParsedIdentity = HttpCacheIdentityMetadata | HttpCacheIdentityReference | null;
+
+/** Read and parse the identity record of every hash in batches. */
+async function readIdentityReferences(
+  distributed: CacheBackend,
+  hashes: readonly string[],
+): Promise<Map<string, ParsedIdentity>> {
+  const raw = await readBatch(distributed, hashes.map((hash) => distributedKey("identity", hash)));
+  return new Map(
+    hashes.map((hash) => {
+      const value = raw.get(distributedKey("identity", hash));
+      return [hash, value ? parseIdentityMetadata(value) : null] as const;
+    }),
+  );
+}
+
+/** Read each shared import map referenced by `identities` once. */
+async function readVerifiedImportMaps(
+  distributed: CacheBackend,
+  identities: Iterable<ParsedIdentity>,
+): Promise<Map<string, ImportMapConfig>> {
+  const fingerprints = new Set<string>();
+  for (const parsed of identities) {
+    if (parsed && !("importMap" in parsed)) fingerprints.add(parsed.importMapFingerprint);
+  }
+  const raw = await readBatch(
+    distributed,
+    Array.from(fingerprints, (fingerprint) => distributedKey("import-map", fingerprint)),
+  );
+  const importMaps = new Map<string, ImportMapConfig>();
+  for (const fingerprint of fingerprints) {
+    const importMap = await parseVerifiedImportMap(
+      raw.get(distributedKey("import-map", fingerprint)) ?? null,
+      fingerprint,
+    );
+    if (importMap) importMaps.set(fingerprint, importMap);
+  }
+  return importMaps;
+}
+
+/** Complete an identity reference with its shared import map, when available. */
+function resolveIdentityReference(
+  parsed: ParsedIdentity,
+  importMaps: ReadonlyMap<string, ImportMapConfig>,
+): HttpCacheIdentityMetadata | null {
+  if (!parsed) return null;
+  if ("importMap" in parsed) return parsed;
+  const importMap = importMaps.get(parsed.importMapFingerprint);
+  return importMap ? { ...parsed, importMap } : null;
+}
+
+/**
+ * Read many keys in chunks, using the backend batch read when it has one.
+ * A failed read leaves its keys out, like a missing entry.
+ */
+async function readBatch(
+  distributed: CacheBackend,
+  keys: readonly string[],
+): Promise<Map<string, string>> {
+  const values = new Map<string, string>();
+  for (let i = 0; i < keys.length; i += BATCH_FETCH_CHUNK_SIZE) {
+    const chunk = keys.slice(i, i + BATCH_FETCH_CHUNK_SIZE);
+    try {
+      const chunkValues = distributed.getBatch ? await distributed.getBatch(chunk) : new Map(
+        await Promise.all(
+          chunk.map(async (key) => [key, await distributed.get(key)] as const),
+        ),
+      );
+      for (const [key, value] of chunkValues) {
+        if (value) values.set(key, value);
+      }
+    } catch (error) {
+      logger.debug("Batch recovery identity read failed", { error });
+    }
+  }
+  return values;
+}
+
 export function __setDistributedCacheAccessorForTests(
   accessor: (() => Promise<CacheBackend | null>) | null,
 ): void {
@@ -551,21 +653,54 @@ class HttpBundleCache {
       const rawImportMap = await distributed.get(
         distributedKey("import-map", parsed.importMapFingerprint),
       );
-      if (!rawImportMap) return null;
-      let importMapValue: unknown;
-      try {
-        importMapValue = JSON.parse(rawImportMap);
-      } catch {
-        return null;
-      }
-      const importMap = parseImportMap(importMapValue);
+      const importMap = await parseVerifiedImportMap(rawImportMap, parsed.importMapFingerprint);
       if (!importMap) return null;
-      if (await fingerprintImportMap(importMap) !== parsed.importMapFingerprint) return null;
 
       return { ...parsed, importMap };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Look up the rewrite identity and original URL of many bundles at once.
+   *
+   * Equivalent to calling {@link getIdentityMetadata} and, when it finds
+   * nothing, {@link getOriginalUrl} for every hash, but it reads each key kind
+   * in batches and fetches each shared import map once.
+   */
+  async getBatchRecoveryIdentities(
+    hashes: ReadonlyArray<BundleHash | string>,
+  ): Promise<Map<string, BundleRecoveryIdentity>> {
+    const hashStrs = [...new Set(hashes.map((h) => (typeof h === "string" ? h : unbrand(h))))];
+    const results = new Map<string, BundleRecoveryIdentity>(
+      hashStrs.map((hash) => [hash, { metadata: null, originalUrl: null }]),
+    );
+    const distributed = await resolveDistributedCache();
+    if (!distributed || hashStrs.length === 0) return results;
+
+    const parsedIdentities = await readIdentityReferences(distributed, hashStrs);
+    const importMaps = await readVerifiedImportMaps(distributed, parsedIdentities.values());
+
+    const withoutMetadata: string[] = [];
+    for (const [hash, parsed] of parsedIdentities) {
+      const metadata = resolveIdentityReference(parsed, importMaps);
+      if (metadata) results.set(hash, { metadata, originalUrl: metadata.url });
+      else withoutMetadata.push(hash);
+    }
+
+    const rawUrls = await readBatch(
+      distributed,
+      withoutMetadata.map((hash) => distributedKey("hash", hash)),
+    );
+    for (const hash of withoutMetadata) {
+      results.set(hash, {
+        metadata: null,
+        originalUrl: rawUrls.get(distributedKey("hash", hash)) ?? null,
+      });
+    }
+
+    return results;
   }
 
   /**

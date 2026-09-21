@@ -54,7 +54,30 @@ export interface PollRegistryPackageOptions {
   fetcher?: typeof fetch;
   delay?: (milliseconds: number) => Promise<void>;
   onRetry?: (message: string) => void;
+  /**
+   * How long the poll may keep STARTING lookups. A lookup that answers slowly
+   * spends its request timeout on top of the retry delay, so counting
+   * attempts alone does not bound the wall clock the surrounding job is sized
+   * for. The last lookup may begin at the deadline and still take its request
+   * timeout, so the poll ends within `budgetMs + requestTimeoutMs`: thirty
+   * minutes and a quarter by default. The job holds that PLUS the setup
+   * before it and the install smoke after it, which
+   * tests/integration/ci/registry-release-workflow.test.ts checks against the
+   * workflow itself.
+   */
+  budgetMs?: number;
+  /** The clock, for tests. */
+  now?: () => number;
 }
+
+/**
+ * How long one registry lookup may take. The poll's last lookup may begin at
+ * the deadline and still spend all of this, so the job that runs it is sized
+ * for the budget plus one of these.
+ *
+ * @internal Exported for testing only.
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
 
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
 const DEFAULT_REGISTRY_URL = "https://registry.npmjs.org";
@@ -254,16 +277,29 @@ export async function pollRegistryPackage(
     registryErrorContext(options, "version is not available yet"),
   );
 
+  const now = options.now ?? Date.now;
+  const budgetMs = options.budgetMs ?? (options.maxAttempts - 1) * options.retryDelayMs;
+  const deadline = now() + budgetMs;
+
   for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
     const result = await attemptRegistryLookup(options, fetcher, spec);
     if (result.kind === "metadata") return result.metadata;
     lastFailure = result.failure;
 
+    // The budget is spent, so this was the last lookup. A caller that sets no
+    // delay (the unit tests) states its bound in attempts alone.
+    const remainingMs = deadline - now();
+    if (budgetMs > 0 && remainingMs <= 0) break;
+
     if (attempt < options.maxAttempts) {
       options.onRetry?.(
         `Waiting for ${spec} registry propagation (attempt ${attempt}/${options.maxAttempts}).`,
       );
-      await delay(options.retryDelayMs);
+      // The last wait is shortened to what is left, so a lookup still begins
+      // at the deadline however long each one takes.
+      await delay(
+        budgetMs > 0 ? Math.min(options.retryDelayMs, remainingMs) : options.retryDelayMs,
+      );
     }
   }
 
@@ -326,17 +362,61 @@ function formatFailureContext(
   }`;
 }
 
+/**
+ * How long to wait for npm to make a just-published version visible.
+ *
+ * A publish is not atomic across npm's metadata. `npm publish` returns as soon
+ * as the tarball is accepted and says so itself -- "Your package is being
+ * processed and may take a few minutes to become available" -- and nothing
+ * calls back when it is. Polling is the only signal there is, so the budget
+ * has to cover npm's slowest processing rather than its typical one.
+ *
+ * The record on main: a 30x10s budget gave up three times, fifteen minutes
+ * gave up once more on 2026-09-21 (rc.19779 returned from `npm publish` at
+ * 01:43:10Z and the registry recorded it at 02:03:27Z, twenty minutes later,
+ * while the poll stopped at 02:01:49Z). Thirty minutes covers that with
+ * headroom; CI can narrow it (the smoke tests do) through the environment.
+ *
+ * @internal Exported for testing only.
+ */
+export function readPropagationBudget(
+  env: Readonly<Record<string, string | undefined>>,
+): { maxAttempts: number; retryDelayMs: number } {
+  const positiveInteger = (value: string | undefined, fallback: number) => {
+    if (value === undefined || !/^\d+$/.test(value)) return fallback;
+    const parsed = Number(value);
+    // A digit-only value can still be unusable: `Infinity` never exhausts the
+    // loop, and an unsafe integer stops the attempt counter advancing.
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+  };
+  return {
+    // The poll waits BETWEEN attempts, so 181 attempts spend 180 delays: the
+    // thirty minutes this budget promises.
+    maxAttempts: positiveInteger(env.VF_REGISTRY_PROPAGATION_ATTEMPTS, 181),
+    retryDelayMs: positiveInteger(env.VF_REGISTRY_PROPAGATION_DELAY_MS, 10_000),
+  };
+}
+
 async function main(args: string[]): Promise<void> {
   const options = readCliOptions(args);
+  // Read individually: enumerating the environment needs unrestricted access,
+  // and the smoke script grants only these two variables.
+  const budget = readPropagationBudget({
+    VF_REGISTRY_PROPAGATION_ATTEMPTS: Deno.env.get(
+      "VF_REGISTRY_PROPAGATION_ATTEMPTS",
+    ),
+    VF_REGISTRY_PROPAGATION_DELAY_MS: Deno.env.get(
+      "VF_REGISTRY_PROPAGATION_DELAY_MS",
+    ),
+  });
   await Promise.all(options.packages.map((packageName) =>
     pollRegistryPackage({
       packageName,
       version: options.version,
       expectedGitHead: options.gitHead,
       registryUrl: options.registryUrl,
-      maxAttempts: 30,
-      retryDelayMs: 10_000,
-      requestTimeoutMs: 15_000,
+      ...budget,
+      requestTimeoutMs: REQUEST_TIMEOUT_MS,
       onRetry: console.log,
     })
   ));

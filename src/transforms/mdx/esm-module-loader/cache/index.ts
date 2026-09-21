@@ -36,6 +36,7 @@ import {
   parseCycleManifestGeneration,
 } from "../cycle-manifest-lifecycle.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
+import { resetSharedModuleFetches } from "../module-fetcher/shared-module-fetches.ts";
 import { findStaticImportFromSpans } from "../utils/source-spans.ts";
 import {
   formatCacheVersionSegment,
@@ -400,6 +401,7 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
 }
 
 export function clearModulePathCache(): void {
+  resetSharedModuleFetches();
   modulePathCaches.clear();
   modulePathCacheLoaded.clear();
   cycleManifestSources.clear();
@@ -482,6 +484,8 @@ function cycleManifestSourceMatches(
 }
 
 export function invalidateModulePaths(changedPaths: string[]): void {
+  // A resolution started before this change may have read the old source.
+  resetSharedModuleFetches();
   if (modulePathCaches.size === 0) return;
 
   let invalidatedCount = 0;

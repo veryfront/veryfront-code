@@ -1343,7 +1343,7 @@ jobs:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
     needs: [prerelease, release, version-check]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 65
     steps:
       - name: Report selected release result
         env:

@@ -1,0 +1,212 @@
+/**
+ * Process-wide single-flight for entry module fetches.
+ *
+ * Concurrent renders of the same page each start module resolution at the same
+ * `/_vf_modules/*` entry imports. Without sharing, every request walks the
+ * whole dependency graph on its own and repeats every distributed cache read,
+ * which multiplies the load on a cold instance by the number of concurrent
+ * requests. Entry fetches with the same identity share one in-flight
+ * resolution instead.
+ *
+ * Only entry fetches (no parent module) are shared. Nested fetches stay scoped
+ * to the request that owns the resolution, so a shared resolution never waits
+ * on another shared resolution and two requests cannot deadlock on a cycle.
+ *
+ * Entries are removed as soon as the resolution settles: resolved paths are
+ * served from the module path cache afterwards, and a rejected resolution is
+ * retried by the next request instead of being cached.
+ *
+ * @module transforms/mdx/esm-module-loader/module-fetcher/shared-module-fetches
+ */
+
+import { AsyncLocalStorage } from "node:async_hooks";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import type { ModuleFetcherContext } from "../types.ts";
+import { recordModuleToSession, runWithModuleRecorder } from "./render-sessions.ts";
+
+/**
+ * Last-resort age after which a never-settling shared resolution stops
+ * accepting new callers. The transform tree deadline normally settles a
+ * resolution well before this.
+ */
+const SHARED_MODULE_FETCH_STALE_AFTER_MS = 60_000;
+
+interface SharedModuleFetchResult {
+  path: string | null;
+  /** Modules the resolution recorded, replayed into each caller's render session. */
+  recordedModules: ReadonlySet<string>;
+  /** Modules the resolution admitted to its module graph. */
+  admittedModules: ReadonlySet<string>;
+}
+
+let sharedModuleFetches = new Singleflight<SharedModuleFetchResult>();
+
+/** Marks async work that already runs inside a shared resolution. */
+const sharedResolutionScope = new AsyncLocalStorage<true>();
+
+/**
+ * Modules the running shared resolution admitted to its module graph.
+ *
+ * Scopes stack for the same reason recorders do: a fetch runs inside the
+ * admission scope of the shared resolution that started it and inside its own.
+ */
+const admittedModuleScope = new AsyncLocalStorage<readonly Set<string>[]>();
+
+/** Run `fn` while collecting every module the work it spawns admits. */
+function runWithAdmittedModules<T>(admitted: Set<string>, fn: () => T): T {
+  const active = admittedModuleScope.getStore();
+  return admittedModuleScope.run(active ? [...active, admitted] : [admitted], fn);
+}
+
+/**
+ * Record a module the running shared resolution admitted to its module graph,
+ * so every caller that joins the resolution admits it too. Outside any
+ * admission scope this does nothing.
+ */
+export function recordSharedModuleAdmission(normalizedPath: string): void {
+  for (const admitted of admittedModuleScope.getStore() ?? []) admitted.add(normalizedPath);
+}
+
+/**
+ * Modules one request-local module fetch recorded and admitted while it ran.
+ *
+ * Sibling entry fetches of one request resolve concurrently and share nested
+ * fetches through `context.inFlightModules`. The sibling that joins such a
+ * fetch never runs it, so without this record its own shared resolution omits
+ * the borrowed module's subtree and replays a partial route-module manifest -
+ * and an under-counted module graph - to the renders that join it.
+ */
+export interface BorrowedModules {
+  readonly recordedModules: Set<string>;
+  readonly admittedModules: Set<string>;
+}
+
+/**
+ * Run `startFetch` while collecting the modules it records and admits, so a
+ * sibling fetch that joins its in-flight promise can replay them.
+ */
+export function runCollectingBorrowedModules<T>(
+  startFetch: () => T,
+): { borrowed: BorrowedModules; result: T } {
+  const borrowed: BorrowedModules = {
+    recordedModules: new Set<string>(),
+    admittedModules: new Set<string>(),
+  };
+  const result = runWithModuleRecorder(
+    borrowed.recordedModules,
+    () => runWithAdmittedModules(borrowed.admittedModules, startFetch),
+  );
+  return { borrowed, result };
+}
+
+/**
+ * Replay the modules a joined fetch recorded and admitted into the scopes of
+ * the caller that borrowed it.
+ */
+export function replayBorrowedModules(borrowed: BorrowedModules): void {
+  for (const modulePath of borrowed.recordedModules) recordModuleToSession(modulePath);
+  for (const modulePath of borrowed.admittedModules) recordSharedModuleAdmission(modulePath);
+}
+
+/**
+ * Build the identity of an entry fetch. Every input that changes the resolved
+ * module is part of the key, so results never cross projects, content
+ * sources, compile modes, or dependency snapshots.
+ */
+export function getSharedModuleFetchKey(
+  context: ModuleFetcherContext,
+  bindingKey: string,
+): string {
+  return JSON.stringify([
+    context.projectId,
+    context.contentSourceId ?? "",
+    context.esmCacheDir,
+    context.projectDir,
+    context.isLocalProject === true,
+    context.dev === true,
+    context.reactVersion ?? REACT_DEFAULT_VERSION,
+    context.dependencyPinningCacheKey ?? "off",
+    context.moduleServerOrigin ?? "",
+    [...(context.serverExternalPackages ?? [])].sort(compareStrings),
+    context.strictMissingModules ?? true,
+    bindingKey,
+  ]);
+}
+
+/** Per-caller hooks for a shared entry fetch. */
+export interface SharedModuleFetchOptions {
+  /**
+   * Called with every module the resolution admitted to its module graph,
+   * before the caller gets the result. A throw rejects only this caller.
+   */
+  onResolved?: (admittedModules: ReadonlySet<string>) => void;
+  /**
+   * Whether a caller that joined another caller's resolution runs `resolve`
+   * itself after that resolution failed with `error`. Use it for failures that
+   * belong to the leading caller, such as its own deadline.
+   */
+  retryAloneOn?: (error: unknown) => boolean;
+}
+
+/**
+ * Run `resolve` once per key across concurrent callers in this process.
+ *
+ * A call made from inside a shared resolution runs `resolve` directly, so a
+ * shared resolution never waits on another one.
+ */
+export async function runSharedModuleFetch(
+  key: string,
+  resolve: () => Promise<string | null>,
+  options: SharedModuleFetchOptions = {},
+): Promise<string | null> {
+  if (sharedResolutionScope.getStore()) return await resolve();
+
+  let leading = false;
+  let result: SharedModuleFetchResult;
+  try {
+    result = await sharedModuleFetches.do(
+      key,
+      () => {
+        leading = true;
+        const recordedModules = new Set<string>();
+        const admittedModules = new Set<string>();
+        return sharedResolutionScope.run(
+          true,
+          () =>
+            runWithAdmittedModules(
+              admittedModules,
+              () =>
+                runWithModuleRecorder(recordedModules, async () => ({
+                  path: await resolve(),
+                  recordedModules,
+                  admittedModules,
+                })),
+            ),
+        );
+      },
+      { staleAfterMs: SHARED_MODULE_FETCH_STALE_AFTER_MS },
+    );
+  } catch (error) {
+    if (leading || !options.retryAloneOn?.(error)) throw error;
+    return await resolve();
+  }
+
+  options.onResolved?.(result.admittedModules);
+  for (const modulePath of result.recordedModules) recordModuleToSession(modulePath);
+  return result.path;
+}
+
+/**
+ * Stop new callers from joining resolutions that started before a content
+ * invalidation. Running resolutions finish for the callers already waiting.
+ */
+export function resetSharedModuleFetches(): void {
+  sharedModuleFetches = new Singleflight<SharedModuleFetchResult>();
+}
+
+/** Number of shared resolutions currently in flight. */
+export function getSharedModuleFetchCount(): number {
+  return sharedModuleFetches.size;
+}
