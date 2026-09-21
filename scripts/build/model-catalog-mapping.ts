@@ -526,10 +526,25 @@ function readServedModels(
 function buildProviderTables(
   providerOrder: readonly string[],
   facts: ServedFacts,
+  overlay: ModelCatalogOverlay,
 ): {
   providerAliases: (readonly [string, string])[];
   providerLabels: (readonly [string, string])[];
 } {
+  // An alias the catalog no longer implies is kept only for a provider the
+  // catalog still serves: the alias table maps onto the provider table, and a
+  // row for an unserved provider would be a provider the runtime cannot
+  // label, order or route. The overlay names a repository value, so it is
+  // printed.
+  const served = new Set(providerOrder);
+  for (const [alias, provider] of overlay.retainedProviderAliases) {
+    if (!served.has(provider)) {
+      fail(
+        `overlay retainedProviderAliases keeps "${alias}" for provider "${provider}", which the catalog does not serve`,
+      );
+    }
+  }
+
   const providerAliases: (readonly [string, string])[] = [];
   const providerLabels: (readonly [string, string])[] = [];
   for (const provider of providerOrder) {
@@ -539,9 +554,17 @@ function buildProviderTables(
       );
     providerLabels.push([provider, label]);
     providerAliases.push([provider, provider]);
-    const prefixes = [...facts.aliasPrefixes.get(provider) ?? []].sort(
-      compareCodePoints,
-    );
+    // Derived from the served ids and retained by the overlay, as one sorted
+    // group per provider, so the table does not move when the catalog stops
+    // (or starts) spelling an alias the overlay retains anyway.
+    const retained = overlay.retainedProviderAliases
+      .filter(([, target]) => target === provider)
+      .map(([alias]) => alias);
+    const prefixes = [
+      ...new Set([...facts.aliasPrefixes.get(provider) ?? [], ...retained]),
+    ]
+      .filter((alias) => alias !== provider)
+      .sort(compareCodePoints);
     for (const prefix of prefixes) providerAliases.push([prefix, provider]);
   }
   return { providerAliases, providerLabels };
@@ -621,6 +644,7 @@ export function buildModelCatalogData(
   const { providerAliases, providerLabels } = buildProviderTables(
     providerOrder,
     facts,
+    overlay,
   );
   const routingByProvider = new Map(overlay.providerRouting);
   const transportCapabilities = buildTransportTable(facts, overlay);
@@ -712,6 +736,10 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       "retainedTransportCapabilities",
       overlay.retainedTransportCapabilities.map(([key]) => key),
     ],
+    [
+      "retainedProviderAliases",
+      overlay.retainedProviderAliases.map(([key]) => key),
+    ],
   ];
   for (const [name, keys] of tables) {
     const duplicates = findDuplicates(keys);
@@ -779,6 +807,11 @@ function describeUnusablePathComponent(
   // `URL.pathname` normalizes a backslash to a slash, so `v1\beta` would reach
   // the gateway as two segments while passing the single-segment rule below.
   if (value.includes("\\")) return `contains a backslash: ${quote(value)}`;
+  // `URL.pathname` also decodes `%2e` / `%2e%2e` into dot segments before it
+  // normalizes them away, so an encoded spelling would pass the check below
+  // and then remove segments from the assembled path. Nothing here needs
+  // percent-encoding, so any percent sign is refused.
+  if (value.includes("%")) return `contains a percent sign: ${quote(value)}`;
   if (value.startsWith("/") || value.endsWith("/")) {
     return `starts or ends with a slash: ${quote(value)}`;
   }

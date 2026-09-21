@@ -79,6 +79,17 @@ export type ModelCatalogOverlay = {
    */
   readonly retainedTransportCapabilities:
     readonly (readonly [string, OverlayTransportCapabilities])[];
+  /**
+   * Provider aliases the runtime keeps accepting whether or not the served
+   * catalog still implies them. The generator derives an alias from every
+   * served model id whose provider segment differs from its provider
+   * (`google-ai-studio/foo` for `google`), but that derivation lasts only as
+   * long as a served model spells it. An alias here is a contract with
+   * existing callers, so it stays in the table after the catalog moves on.
+   * Keyed by alias; the value is the canonical provider, which the catalog
+   * must still serve.
+   */
+  readonly retainedProviderAliases: readonly (readonly [string, string])[];
 };
 
 /** The overlay the generator merges. Edit this by hand; edit nothing generated. */
@@ -118,5 +129,11 @@ export const MODEL_CATALOG_OVERLAY: ModelCatalogOverlay = {
     // the catalog and hosted-runtime tests, so the package keeps resolving
     // adaptive thinking for it after the catalog stopped listing it.
     ["anthropic/claude-opus-4-7", { anthropicThinkingMode: "adaptive" }],
+  ],
+  retainedProviderAliases: [
+    // Pinned by `src/provider/veryfront-cloud/gateway-routing.test.ts`: a
+    // `google-ai-studio/...` id routes through Google whatever the catalog
+    // currently spells its Gemini ids as.
+    ["google-ai-studio", "google"],
   ],
 };

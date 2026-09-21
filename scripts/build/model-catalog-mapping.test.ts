@@ -48,6 +48,7 @@ const OVERLAY: ModelCatalogOverlay = {
     // retained entry is dropped rather than kept as a stale override.
     ["beta-works/plain-3", { anthropicThinkingMode: "adaptive" }],
   ],
+  retainedProviderAliases: [],
 };
 
 /** Marker values that must never reach the generated module, whatever key carries them. */
@@ -718,6 +719,8 @@ describe("scripts/build/model-catalog-mapping", () => {
         "ai gateway",
         // `URL.pathname` turns the backslash into a slash: two segments.
         "ai\\gateway",
+        // `URL.pathname` decodes and then removes the dot segment.
+        "ai/%2e%2e/gateway",
       ]
     ) {
       assertThrows(
@@ -727,7 +730,17 @@ describe("scripts/build/model-catalog-mapping", () => {
         "overlay gatewayPathPrefix",
       );
     }
-    for (const version of ["", "v1/", "v1/beta", " v1", "v1\\beta"]) {
+    for (
+      const version of [
+        "",
+        "v1/",
+        "v1/beta",
+        " v1",
+        "v1\\beta",
+        "%2E%2e",
+        "v%31",
+      ]
+    ) {
       assertThrows(
         () =>
           assertOverlayInvariants({
@@ -798,6 +811,13 @@ describe("scripts/build/model-catalog-mapping", () => {
           providerRouting: [...OVERLAY.providerRouting, ["acme-labs", {
             surface: "openai",
           }]],
+        },
+        {
+          ...OVERLAY,
+          retainedProviderAliases: [["acme", "acme-labs"], [
+            "acme",
+            "acme-labs",
+          ]],
         },
       ] as ModelCatalogOverlay[]
     ) {
@@ -921,6 +941,64 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertEquals(
       data.providerRouting.map(([provider]) => provider),
       [...data.providerOrder, "acme-labs"],
+    );
+  });
+
+  it("keeps an alias the overlay retains after the catalog stops spelling it", () => {
+    // Today the catalog serves mystery-1 as `acme-labs-api/mystery-1`, which
+    // implies the alias. Once every acme-labs model is served under the
+    // canonical prefix, the derivation has nothing to read — but callers who
+    // send `acme-labs-api/...` are a contract, so the overlay keeps the row.
+    const payload = fakePayload();
+    for (const model of payload.models as Record<string, unknown>[]) {
+      if (model.provider !== "acme-labs") continue;
+      model.modelId = (model.modelId as string).replace(
+        /^acme-labs-api\//,
+        "acme-labs/",
+      );
+    }
+    const withoutRetention = buildModelCatalogData(payload, OVERLAY);
+    assertEquals(
+      withoutRetention.providerAliases.some(([alias]) =>
+        alias === "acme-labs-api"
+      ),
+      false,
+    );
+
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      retainedProviderAliases: [["acme-labs-api", "acme-labs"], [
+        "acme",
+        "acme-labs",
+      ]],
+    };
+    const data = buildModelCatalogData(payload, overlay);
+    // One sorted group per provider, the provider's own row first.
+    assertEquals(
+      data.providerAliases.filter(([, provider]) => provider === "acme-labs"),
+      [["acme-labs", "acme-labs"], ["acme", "acme-labs"], [
+        "acme-labs-api",
+        "acme-labs",
+      ]],
+    );
+    // A retained alias the catalog still spells is not listed twice.
+    const same = buildModelCatalogData(fakePayload(), overlay);
+    assertEquals(
+      same.providerAliases.filter(([alias]) => alias === "acme-labs-api")
+        .length,
+      1,
+    );
+  });
+
+  it("refuses to retain an alias for a provider the catalog does not serve", () => {
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      retainedProviderAliases: [["gamma-api", "gamma"]],
+    };
+    assertThrows(
+      () => buildModelCatalogData(fakePayload(), overlay),
+      Error,
+      'overlay retainedProviderAliases keeps "gamma-api" for provider "gamma"',
     );
   });
 
