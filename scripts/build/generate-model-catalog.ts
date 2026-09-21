@@ -212,16 +212,28 @@ export function formatFailure(error: unknown): string {
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"']+/gi, "a URL")
     .replace(/\s+/g, " ")
     .trim();
-  // POSIX and file-URL paths, then Windows drive-letter (`C:\...`) and UNC
-  // (`\\server\share\...`) paths: each is cut back to its last segment.
+  // Filesystem paths are cut back to their last segment. A QUOTED path is
+  // consumed whole up to its closing quote, so a space or a parenthesis inside
+  // it cannot leave the rest of the path standing; an unquoted one runs to the
+  // next whitespace or quote, parentheses included. POSIX and file-URL paths
+  // first, then Windows drive-letter (`C:\...`) and UNC (`\\server\share\...`).
+  const lastSegment = (path: string, separator: string) =>
+    path.slice(path.lastIndexOf(separator) + 1) || "a path";
   const withoutPaths = flattened
     .replace(
-      /(?<![:\w/])\/[^\s"'()]*/g,
-      (path) => path.slice(path.lastIndexOf("/") + 1) || "a path",
+      /(["'])(\/[^"']*)\1/g,
+      (_match, quote: string, path: string) =>
+        `${quote}${lastSegment(path, "/")}${quote}`,
     )
     .replace(
-      /(?:\b[A-Za-z]:|\\)\\[^\s"'()]*/g,
-      (path) => path.slice(path.lastIndexOf("\\") + 1) || "a path",
+      /(["'])((?:[A-Za-z]:|\\)\\[^"']*)\1/g,
+      (_match, quote: string, path: string) =>
+        `${quote}${lastSegment(path, "\\")}${quote}`,
+    )
+    .replace(/(?<![:\w/])\/[^\s"']*/g, (path) => lastSegment(path, "/"))
+    .replace(
+      /(?:\b[A-Za-z]:|\\)\\[^\s"']*/g,
+      (path) => lastSegment(path, "\\"),
     );
   if (withoutPaths === "") return "no reason was given";
   return withoutPaths.length > MAX_FAILURE_LINE

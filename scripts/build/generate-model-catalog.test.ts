@@ -57,6 +57,23 @@ describe("an unplanned failure", () => {
       "request to a URL failed with 500",
     ],
     [
+      "cuts an unquoted path with parentheses back to its last segment",
+      new Error("failed /home/(alice-private)/build.ts"),
+      "failed build.ts",
+    ],
+    [
+      "consumes a quoted path whole, spaces and parentheses included",
+      new Error(
+        "cannot read '/Users/alice private/(work)/catalog.ts' for reading",
+      ),
+      "cannot read 'catalog.ts' for reading",
+    ],
+    [
+      "consumes a quoted Windows path whole, spaces included",
+      new Error('cannot read "C:\\Users\\alice private\\catalog.ts"'),
+      'cannot read "catalog.ts"',
+    ],
+    [
       "replaces a URL whole even when it carries parentheses",
       new Error(
         "fetch failed: https://internal.example.invalid/path(foo)/ai/models?sig=abc (network)",
