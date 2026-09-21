@@ -327,17 +327,17 @@ wait_for_npm_git_head() {
   for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
     LOOKUP_STARTED_AT="$(date +%s)"
     PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+    # Every lookup is charged, including ones that succeed: a stalled registry
+    # read (npm's default fetch timeout is minutes, with retries) is waiting too.
+    LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
+    if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
+      NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
+    fi
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
     fi
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
-    fi
-    # A stalled registry lookup (npm's default fetch timeout is minutes, with
-    # retries) is waiting too, so it is charged to the shared budget.
-    LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
-    if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
-      NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
     fi
     if [ "${NPM_GIT_HEAD_WAIT_SPENT_SECONDS}" -ge "${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}" ]; then
       echo "Shared npm metadata wait of ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s is spent; checking ${PACKAGE_NAME}@${VERSION} once more." >&2
