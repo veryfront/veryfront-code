@@ -829,6 +829,17 @@ describe("scripts/build/model-catalog-mapping", () => {
       "default model",
     ],
     [
+      "a gateway API version declared twice for one surface",
+      (data) => ({
+        ...data,
+        surfaceGatewayApiVersions: [
+          ...data.surfaceGatewayApiVersions,
+          ["openai", "v2"],
+        ],
+      }),
+      "gateway API version declared twice",
+    ],
+    [
       "a routed surface with no gateway API version",
       // Only the surface changes, so every provider keeps its place and this
       // breaks the version rule and nothing else.

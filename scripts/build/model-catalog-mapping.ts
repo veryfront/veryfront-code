@@ -606,6 +606,17 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     );
   }
 
+  // This table is read through a Map too, so a surface declared twice keeps
+  // one version and discards the other without saying which.
+  const duplicateVersions = findDuplicates(
+    data.surfaceGatewayApiVersions.map(([surface]) => surface),
+  );
+  if (duplicateVersions.length > 0) {
+    fail(
+      `gateway API version declared twice for: ${duplicateVersions.join(", ")}`,
+    );
+  }
+
   // `resolveVeryfrontCloudGatewayPath` reads the version for the surface a
   // provider routes on, so every routed surface needs one, as does the
   // surface used for a provider the table does not list.
