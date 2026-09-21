@@ -271,17 +271,20 @@ export async function pollRegistryPackage(
     if (result.kind === "metadata") return result.metadata;
     lastFailure = result.failure;
 
-    // The next attempt would START past the budget, so this was the last: a
-    // lookup beginning exactly at the deadline is the one the budget buys. A
-    // caller that sets no delay (the unit tests) states its bound in attempts
-    // alone and is left to them.
-    if (budgetMs > 0 && now() + options.retryDelayMs > deadline) break;
+    // The budget is spent, so this was the last lookup. A caller that sets no
+    // delay (the unit tests) states its bound in attempts alone.
+    const remainingMs = deadline - now();
+    if (budgetMs > 0 && remainingMs <= 0) break;
 
     if (attempt < options.maxAttempts) {
       options.onRetry?.(
         `Waiting for ${spec} registry propagation (attempt ${attempt}/${options.maxAttempts}).`,
       );
-      await delay(options.retryDelayMs);
+      // The last wait is shortened to what is left, so a lookup still begins
+      // at the deadline however long each one takes.
+      await delay(
+        budgetMs > 0 ? Math.min(options.retryDelayMs, remainingMs) : options.retryDelayMs,
+      );
     }
   }
 

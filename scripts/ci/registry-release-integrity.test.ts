@@ -82,6 +82,39 @@ describe("registry propagation budget", () => {
     assertEquals(attempts, maxAttempts);
   });
 
+  it("uses the rest of the budget when a lookup's latency eats into it", async () => {
+    // 60s budget, 10s delay, 12s lookups: without shortening the last wait the
+    // poll would stop at 56s and miss a version that appears at 58s.
+    let now = 0;
+    const seenAt: number[] = [];
+    const metadata = await pollRegistryPackage({
+      packageName: PACKAGE_NAME,
+      version: VERSION,
+      expectedGitHead: GIT_HEAD,
+      maxAttempts: 1_000,
+      retryDelayMs: 10_000,
+      requestTimeoutMs: 15_000,
+      budgetMs: 60_000,
+      now: () => now,
+      delay: (ms) => {
+        now += ms;
+        return Promise.resolve();
+      },
+      fetcher: () => {
+        seenAt.push(now);
+        now += 12_000;
+        return Promise.resolve(
+          now >= 58_000
+            ? Response.json(publishedPackage())
+            : new Response("not found", { status: 404 }),
+        );
+      },
+    });
+
+    assertEquals(metadata.version, VERSION);
+    assertEquals(seenAt.at(-1)! <= 60_000, true, seenAt.join(", "));
+  });
+
   it("stops polling at the budget however slow each lookup is", async () => {
     // A lookup that takes its full request timeout must not stretch the poll
     // past the budget: the job around it is sized for that budget.
