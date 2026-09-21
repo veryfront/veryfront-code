@@ -308,10 +308,18 @@ export function resolveVeryfrontCloudOpenAICallTransport(
   return usesHostedTool ? "responses" : "chat-completions";
 }
 
-/** Returns true if the given model ID is a Mistral model in the catalog. */
+/**
+ * Returns true if the given model ID is a Mistral model in the catalog.
+ *
+ * Compared by canonical key on both sides, so a catalog entry served under a
+ * provider alias and a request spelling the canonical provider (or carrying
+ * the gateway prefix) still meet.
+ */
 export function isSupportedMistralModelId(modelId: string): boolean {
+  const key = canonicalVeryfrontCloudModelKey(modelId);
   return VERYFRONT_CLOUD_CHAT_MODELS.some(
-    (model) => model.provider === "mistral" && model.modelId === modelId,
+    (model) =>
+      model.provider === "mistral" && canonicalVeryfrontCloudModelKey(model.modelId) === key,
   );
 }
 

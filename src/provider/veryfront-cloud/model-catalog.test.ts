@@ -11,6 +11,7 @@ import {
   findVeryfrontCloudModelByModelId,
   getVeryfrontCloudProviderFromModelId,
   groupVeryfrontCloudModelsByProvider,
+  isSupportedMistralModelId,
   resolveHostedVeryfrontCloudModelId,
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
@@ -25,6 +26,14 @@ import {
 import { VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES } from "./model-catalog.data.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
+  it("recognizes a supported Mistral model through any spelling of its id", () => {
+    const [mistral] = VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === "mistral");
+    assertExists(mistral);
+    assertEquals(isSupportedMistralModelId(mistral.modelId), true);
+    assertEquals(isSupportedMistralModelId(`veryfront-cloud/${mistral.modelId}`), true);
+    assertEquals(isSupportedMistralModelId("mistral/not-a-listed-model"), false);
+  });
+
   it("looks capability rows up by the canonical provider, whatever the id spells", () => {
     // Rows are keyed `<canonical provider>/<upstream id>`. A listed alias and
     // the gateway prefix both normalize to that key; an unlisted provider is
