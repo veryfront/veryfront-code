@@ -107,7 +107,10 @@ const ANTHROPIC_TOOL_INPUT_LIMITS: StreamRetentionLimits = {
 const MAX_ANTHROPIC_SSE_EVENT_BYTES = 8_388_608;
 const MAX_ANTHROPIC_SSE_REMAINDER_BYTES = 8_388_608;
 export const MAX_ANTHROPIC_RETAINED_CONTENT_BYTES = 16_777_216;
-/** Zero-byte retained items (for example empty text deltas) accepted per stream. */
+/**
+ * Structural values (content blocks, citations) and empty text or thinking
+ * deltas accepted per stream. Non-empty deltas are bounded by bytes only.
+ */
 export const MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS = 8_192;
 
 function invalidAnthropicStream(
@@ -178,8 +181,32 @@ function joinAnthropicToolInput(toolCall: AnthropicStreamToolCallState): string 
 
 class AnthropicRetainedContentBudget {
   readonly #budget = createStreamRetentionBudget();
+  #items = 0;
 
-  retain(value: string, issue: string): void {
+  /**
+   * Retain a structural value (content block, citation). Each one creates
+   * state, so structural values are capped by count as well as by bytes.
+   */
+  retainItem(value: string, issue: string): void {
+    if (this.#items >= MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS) {
+      throw new RangeError(
+        `Anthropic retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} items (${issue})`,
+      );
+    }
+    this.#reserve(value, issue);
+    this.#items++;
+  }
+
+  /**
+   * Retain a streamed text or thinking delta. Deltas are bounded by bytes; only
+   * empty deltas count toward the item limit, because the provider chooses how
+   * finely it chunks a stream.
+   */
+  retainDelta(value: string, issue: string): void {
+    this.#reserve(value, issue);
+  }
+
+  #reserve(value: string, issue: string): void {
     const overflow = reserveStreamRetention(this.#budget, value, {
       maxBytes: MAX_ANTHROPIC_RETAINED_CONTENT_BYTES,
       maxEmptyFragments: MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS,
@@ -1073,7 +1100,7 @@ export async function* streamAnthropicCompatibleParts(
           clientToolUseIdleDeadlineMs = null;
           clientToolUseTerminalDeadlineMs = null;
           try {
-            retainedContentBudget.retain(
+            retainedContentBudget.retainItem(
               stringifyJsonValue(contentBlock),
               "content block",
             );
@@ -1315,7 +1342,7 @@ export async function* streamAnthropicCompatibleParts(
               );
             }
             try {
-              retainedContentBudget.retain(delta.text, "text delta");
+              retainedContentBudget.retainDelta(delta.text, "text delta");
             } catch (error) {
               throw invalidAnthropicStream(
                 providerLabel,
@@ -1350,7 +1377,7 @@ export async function* streamAnthropicCompatibleParts(
               );
             }
             try {
-              retainedContentBudget.retain(delta.thinking, "thinking delta");
+              retainedContentBudget.retainDelta(delta.thinking, "thinking delta");
             } catch (error) {
               throw invalidAnthropicStream(
                 providerLabel,
@@ -1399,7 +1426,7 @@ export async function* streamAnthropicCompatibleParts(
             }
             const citations = Array.isArray(rawBlock.citations) ? rawBlock.citations : [];
             try {
-              retainedContentBudget.retain(
+              retainedContentBudget.retainItem(
                 stringifyJsonValue(citation),
                 "citation delta",
               );

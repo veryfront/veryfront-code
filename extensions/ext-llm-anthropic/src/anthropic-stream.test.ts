@@ -510,6 +510,24 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     );
   });
 
+  it("still caps structural content blocks by count", async () => {
+    const events = [
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      ...Array.from({ length: MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS + 1 }, (_, index) =>
+        data({
+          type: "content_block_start",
+          index,
+          content_block: { type: "text", text: "" },
+        })),
+    ];
+
+    await assertRejects(
+      () => collectParts(streamFromText(events.join(""))),
+      ProviderRequestError,
+      `retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} items (content block)`,
+    );
+  });
+
   it("bounds retained content across a flood of empty text deltas", async () => {
     const events = [
       data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
