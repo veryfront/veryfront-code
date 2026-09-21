@@ -136,6 +136,33 @@ async function formatModule(repoRoot: string, source: string): Promise<string> {
   return new TextDecoder().decode(output.stdout);
 }
 
+/** Longest failure line this prints, so a message cannot flood the terminal. */
+const MAX_FAILURE_LINE = 400;
+
+/**
+ * One line saying what went wrong, and nothing the reader did not ask for.
+ *
+ * This task runs with a catalog token in its environment and talks to a
+ * service whose failures can carry a response body, so an unhandled error is
+ * not printed raw. The stack is dropped, the message is flattened to a single
+ * line so nothing multi-line can pose as one, absolute filesystem paths are
+ * cut back to their last segment, and the result is bounded. URLs survive
+ * intact: their slashes follow a word character or a scheme, and the endpoint
+ * a request failed against is the actionable part of those messages.
+ */
+export function formatFailure(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const flattened = raw.replaceAll("file://", "").replace(/\s+/g, " ").trim();
+  const withoutPaths = flattened.replace(
+    /(?<![:\w/])\/[^\s"'()]*/g,
+    (path) => path.slice(path.lastIndexOf("/") + 1) || "a path",
+  );
+  if (withoutPaths === "") return "no reason was given";
+  return withoutPaths.length > MAX_FAILURE_LINE
+    ? `${withoutPaths.slice(0, MAX_FAILURE_LINE)}...`
+    : withoutPaths;
+}
+
 async function main(): Promise<number> {
   const check = Deno.args.includes("--check");
   const repoRoot = fromFileUrl(new URL("../../", import.meta.url));
@@ -189,5 +216,16 @@ async function main(): Promise<number> {
 }
 
 if (import.meta.main) {
-  Deno.exit(await main());
+  let code = 1;
+  try {
+    code = await main();
+  } catch (error) {
+    // `main` reports the failures it expects and returns a code. Anything that
+    // reaches here is unplanned, so it is reported the same way: one line, no
+    // stack, and nothing the process was holding.
+    console.error(
+      `Generating ${DATA_FILE} failed: ${formatFailure(error)}`,
+    );
+  }
+  Deno.exit(code);
 }

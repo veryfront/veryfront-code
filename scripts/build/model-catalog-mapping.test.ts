@@ -6,6 +6,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertCatalogInvariants,
+  assertOverlayInvariants,
   buildModelCatalogData,
   compareCodePoints,
   findUnroutedProviders,
@@ -354,7 +355,10 @@ describe("scripts/build/model-catalog-mapping", () => {
       // Retained first: the catalog stopped serving it, the package still
       // resolves it. A retained entry for a served model is ignored.
       ["acme-labs/gone-0", { anthropicThinkingMode: "adaptive" }],
-      ["acme-labs-api/mystery-1", { anthropicThinkingMode: "adaptive" }],
+      // Keyed by the canonical provider, not by the alias the model is
+      // published under: the package resolves the prefix to the canonical
+      // provider before it looks the transport facts up.
+      ["acme-labs/mystery-1", { anthropicThinkingMode: "adaptive" }],
       ["beta-works/riddle-9", {
         openAITransport: "chat-completions",
         openAIChatReasoningWithFunctionTools: false,
@@ -559,6 +563,85 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  // The served provider is not only routed through: it is rendered as a key of
+  // the generated provider tables. `__proto__` is the sharp case -- as a key of
+  // an object literal it sets the prototype instead of adding an entry, so the
+  // row would vanish from the built table rather than fail.
+  const UNUSABLE_PROVIDERS = [
+    "__proto__",
+    "constructor",
+    "toString",
+    "prototype",
+    "veryfront-cloud",
+    "Acme-Labs",
+    "acme labs",
+    "acme_labs",
+  ];
+
+  for (const provider of UNUSABLE_PROVIDERS) {
+    it(`rejects a served provider the generated tables cannot carry: "${provider}"`, () => {
+      const payload = fakePayload();
+      (payload.models as Record<string, unknown>[])[1].provider = provider;
+
+      assertThrows(
+        () => buildModelCatalogData(payload, OVERLAY),
+        Error,
+        `model "riddle-9" provider "${provider}"`,
+      );
+    });
+
+    it(`rejects a listed provider the generated tables cannot carry: "${provider}"`, () => {
+      const payload = {
+        ...fakePayload(),
+        providers: ["acme-labs", "beta-works", provider],
+      };
+
+      assertThrows(
+        () => buildModelCatalogData(payload, OVERLAY),
+        Error,
+        `listed provider "${provider}"`,
+      );
+    });
+  }
+
+  it("rejects a served provider that is empty before it reaches the shape rule", () => {
+    // The allowlist requires the field, so an empty name is named as missing
+    // rather than reported as the wrong shape.
+    const payload = fakePayload();
+    (payload.models as Record<string, unknown>[])[1].provider = "";
+
+    assertThrows(
+      () => buildModelCatalogData(payload, OVERLAY),
+      Error,
+      'model "riddle-9" is missing provider',
+    );
+  });
+
+  it("rejects an overlay thinking budget the runtime would ignore", () => {
+    // The runtime reads a budget only when it is a positive safe integer, so
+    // anything else is generated, published and then never applied.
+    for (
+      const budget of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 2]
+    ) {
+      assertThrows(
+        () =>
+          assertOverlayInvariants({
+            ...OVERLAY,
+            thinkingBudgetTokens: [["acme-labs-api/mystery-1", budget]],
+          }),
+        Error,
+        "which the runtime ignores",
+      );
+    }
+  });
+
+  it("accepts the overlay thinking budgets the runtime applies", () => {
+    assertOverlayInvariants({
+      ...OVERLAY,
+      thinkingBudgetTokens: [["acme-labs-api/mystery-1", 1]],
+    });
+  });
+
   it("rejects models of one provider that disagree about its display label", () => {
     const payload = fakePayload();
     (payload.models as Record<string, unknown>[])[2].providerLabel =
@@ -684,6 +767,39 @@ describe("scripts/build/model-catalog-mapping", () => {
         true,
       );
     }
+  });
+
+  it("keeps the function-tool reasoning flag even for a non-reasoning model", () => {
+    // Unlike a thinking budget or a reasoning mode, this flag is not a claim
+    // that the model reasons. It says that WHEN reasoning is applied on the
+    // Chat transport, function tools must suppress it, and the consumers of
+    // that fact resolve reasoning from the caller's request and a model-id
+    // default, never from this catalog's reasoning flag. Dropping it for a
+    // model served as non-reasoning would therefore stop suppressing reasoning
+    // in exactly the case the overlay exists to cover, and would also let the
+    // recorded call context disagree with the request that was built.
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      // `plain-3` is served with `reasoning: false`.
+      openAIChatReasoningWithFunctionTools: [
+        ...OVERLAY.openAIChatReasoningWithFunctionTools,
+        ["beta-works/plain-3", false],
+      ],
+    };
+
+    const data = buildModelCatalogData(fakePayload(), overlay);
+    const entry = data.modelTransportCapabilities.find(([id]) =>
+      id === "beta-works/plain-3"
+    )?.[1];
+
+    assertEquals(entry, { openAIChatReasoningWithFunctionTools: false });
+    // The facts that DO claim the model reasons are still dropped for it.
+    assertEquals(entry?.anthropicThinkingMode, undefined);
+    assertEquals(
+      data.chatModels.find((model) => model.id === "plain-3")
+        ?.thinkingBudgetTokens,
+      undefined,
+    );
   });
 
   it("rejects a present capabilities value that is not an object", () => {

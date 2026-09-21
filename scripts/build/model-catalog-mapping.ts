@@ -139,12 +139,36 @@ const PROVIDER_SEGMENT_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 /**
  * Segments the runtime refuses, so a provider can never be confused with a
  * member every object carries, nor with the gateway prefix itself.
+ *
+ * `__proto__` is named rather than derived: it is an accessor on the object
+ * prototype but not an own property of it, so it is absent from the list
+ * below. It is also the one name that does not merely shadow a member -- as a
+ * key of a generated object literal it sets the prototype and the entry itself
+ * disappears -- so it is not left to the shape rule alone to catch.
  */
 const RESERVED_PROVIDER_SEGMENTS: ReadonlySet<string> = new Set([
   ...Object.getOwnPropertyNames(Object.prototype),
+  "__proto__",
   "prototype",
   "veryfront-cloud",
 ]);
+
+/**
+ * Why this provider name cannot be used, or undefined when it can.
+ *
+ * The served `provider` field is not only routed through: it is rendered as a
+ * key of the generated provider tables. A name outside this shape would either
+ * be unroutable or, for a name every object already carries, land in a table
+ * as something other than an ordinary entry. Both are refused here rather than
+ * generated.
+ */
+function describeUnusableProvider(provider: string): string | undefined {
+  if (!PROVIDER_SEGMENT_PATTERN.test(provider)) {
+    return `is not lowercase words joined by hyphens or dots`;
+  }
+  if (RESERVED_PROVIDER_SEGMENTS.has(provider)) return `is reserved`;
+  return undefined;
+}
 
 /** The gateway prefix the runtime strips before parsing a model id. */
 const GATEWAY_MODEL_PREFIX = "veryfront-cloud/";
@@ -182,11 +206,9 @@ export function describeUnroutableModelId(
   if (slashIndex <= 0) return "has no provider segment before a forward slash";
 
   const segment = modelId.slice(0, slashIndex);
-  if (!PROVIDER_SEGMENT_PATTERN.test(segment)) {
-    return `has a provider segment "${segment}" that is not lowercase words joined by hyphens or dots`;
-  }
-  if (RESERVED_PROVIDER_SEGMENTS.has(segment)) {
-    return `has a reserved provider segment "${segment}"`;
+  const unusableSegment = describeUnusableProvider(segment);
+  if (unusableSegment !== undefined) {
+    return `has a provider segment "${segment}" that ${unusableSegment}`;
   }
 
   const upstream = modelId.slice(slashIndex + 1);
@@ -294,6 +316,11 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
       fail(`${subject} modelId "${model.modelId}" ${unroutable}`);
     }
 
+    const unusableProvider = describeUnusableProvider(model.provider as string);
+    if (unusableProvider !== undefined) {
+      fail(`${subject} provider "${model.provider}" ${unusableProvider}`);
+    }
+
     const capabilities = model.capabilities === undefined
       ? {}
       : model.capabilities as Record<string, unknown>;
@@ -314,9 +341,12 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
 
   const providers: string[] = [];
   for (const provider of root.providers as readonly string[]) {
-    if (provider !== "" && !providers.includes(provider)) {
-      providers.push(provider);
+    if (provider === "" || providers.includes(provider)) continue;
+    const unusable = describeUnusableProvider(provider);
+    if (unusable !== undefined) {
+      fail(`listed provider "${provider}" ${unusable}`);
     }
+    providers.push(provider);
   }
   if (providers.length === 0) fail("it lists no provider");
 
@@ -347,6 +377,8 @@ export function compareCodePoints(a: string, b: string): number {
 type ServedFacts = {
   readonly chatModels: ChatModelEntry[];
   readonly transportCapabilities: (readonly [string, TransportCapabilities])[];
+  /** Every served model under the id the runtime looks capabilities up by. */
+  readonly canonicalIds: string[];
   /** Display label per provider, taken from that provider's models. */
   readonly labels: Map<string, string>;
   /** Model-id prefixes that differ from the provider they name. */
@@ -384,6 +416,23 @@ function readChatModel(
   };
 }
 
+/**
+ * The id the runtime looks capability rows up by.
+ *
+ * `createVeryfrontCloudModelRuntime` parses a request id, which resolves any
+ * provider alias to its canonical provider, and then rebuilds the lookup key as
+ * `<canonical provider>/<upstream id>`. A row keyed by the served id would
+ * therefore never be found for a model whose id carries an alias, such as one
+ * published under `google-ai-studio/` while its provider is `google`.
+ */
+function capabilityKey(served: ServedModel): string {
+  const slashIndex = served.modelId.indexOf("/");
+  const upstream = slashIndex > 0
+    ? served.modelId.slice(slashIndex + 1)
+    : served.modelId;
+  return `${served.provider}/${upstream}`;
+}
+
 /** Transport facts for one served model, or undefined when it declares none. */
 function readTransportCapabilities(
   served: ServedModel,
@@ -392,7 +441,7 @@ function readTransportCapabilities(
   const functionToolReasoning = new Map(
     overlay.openAIChatReasoningWithFunctionTools,
   )
-    .get(served.modelId);
+    .get(capabilityKey(served));
   // A reasoning control on a model the catalog serves as non-reasoning is the
   // catalog contradicting itself, and `reasoning` settles it.
   const reasoningMode = served.capabilities.reasoning === true
@@ -448,14 +497,16 @@ function readServedModels(
   const facts: ServedFacts = {
     chatModels: [],
     transportCapabilities: [],
+    canonicalIds: [],
     labels: new Map(),
     aliasPrefixes: new Map(),
   };
   for (const served of catalog.models) {
     facts.chatModels.push(readChatModel(served, overlay));
+    facts.canonicalIds.push(capabilityKey(served));
     const capabilities = readTransportCapabilities(served, overlay);
     if (capabilities !== undefined) {
-      facts.transportCapabilities.push([served.modelId, capabilities]);
+      facts.transportCapabilities.push([capabilityKey(served), capabilities]);
     }
     recordProviderFacts(served, facts);
   }
@@ -497,7 +548,8 @@ function buildTransportTable(
   facts: ServedFacts,
   overlay: ModelCatalogOverlay,
 ): (readonly [string, TransportCapabilities])[] {
-  const served = new Set(facts.chatModels.map((model) => model.modelId));
+  // Same key space as the rows themselves: canonical provider, upstream id.
+  const served = new Set(facts.canonicalIds);
   return [
     ...overlay.retainedTransportCapabilities.filter(([modelId]) =>
       !served.has(modelId)
@@ -626,6 +678,18 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
     const duplicates = findDuplicates(keys);
     if (duplicates.length > 0) {
       fail(`overlay ${name} declares a key twice: ${duplicates.join(", ")}`);
+    }
+  }
+  // The runtime refuses a budget that is not a positive safe integer while it
+  // initialises its chat models, so a budget outside that range would be
+  // generated, published, and then make the package throw at import. The
+  // predicate mirrors `isPositiveSafeInteger` in
+  // `src/provider/veryfront-cloud/model-catalog.ts`.
+  for (const [modelId, budget] of overlay.thinkingBudgetTokens) {
+    if (!Number.isSafeInteger(budget) || budget <= 0) {
+      fail(
+        `overlay thinkingBudgetTokens for "${modelId}" is ${budget}, which the runtime ignores: it must be a positive safe integer`,
+      );
     }
   }
   // Two entry ids pointing at one published id would collide in the catalog.
