@@ -52,6 +52,8 @@ interface CountingBatchBackend extends CacheBackend {
   singleReads: string[];
   /** Suffix keys read through batch requests. */
   batchReads: string[];
+  /** Resolves once the backend has been asked for its first read. */
+  fetchStarted: Promise<void>;
 }
 
 /** Suffix-keyed backend with a slow batch read that records every key read. */
@@ -79,18 +81,25 @@ function createCountingBatchBackend(
     return count > hiddenReads ? values.get(suffix) ?? null : null;
   };
   const delay = () => new Promise((resolve) => setTimeout(resolve, options.latencyMs ?? 0));
+  let signalFetchStarted = (): void => {};
+  const fetchStarted = new Promise<void>((resolve) => {
+    signalFetchStarted = () => resolve();
+  });
 
   const backend: CountingBatchBackend = {
     type: "redis",
     singleReads: [],
     batchReads: [],
+    fetchStarted,
     get: async (key) => {
       backend.singleReads.push(suffixKey(key));
+      signalFetchStarted();
       await delay();
       return options.missSingleReads ? null : values.get(suffixKey(key)) ?? null;
     },
     getBatch: async (keys) => {
       backend.batchReads.push(...keys.map(suffixKey));
+      signalFetchStarted();
       await delay();
       return new Map(keys.map((key) => [key, read(key)]));
     },
@@ -587,10 +596,39 @@ describe("transforms/esm/bundle-recovery", () => {
       try {
         const bundles = [{ path: join(cacheDir, `http-${hash}.mjs`), hash }];
         const pending = ensureHttpBundlesExist(bundles, cacheDir, () => Promise.resolve(null));
-        // Another caller writes the bundle while this call is fetching.
+        // Another caller writes the bundle while this call is fetching. Waiting
+        // for the backend read keeps the post-fetch recheck the path under test
+        // instead of the trivial initial local hit.
+        await backend.fetchStarted;
         await writeTextFile(join(cacheDir, `http-${hash}.mjs`), code);
 
         assertEquals(await pending, [], "a bundle present at the end is not reported as failed");
+      } finally {
+        await remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("reports a dep missing from a bundle another caller materialized", async () => {
+      const cacheDir = await makeTempDir();
+      const hashA = "905";
+      const hashB = "906";
+      const codeA = `import "./http-${hashB}.mjs";\nexport const written = true;\n`;
+      const backend = createCountingBatchBackend({}, { latencyMs: 20 });
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+      try {
+        const bundles = [{ path: join(cacheDir, `http-${hashA}.mjs`), hash: hashA }];
+        const pending = ensureHttpBundlesExist(bundles, cacheDir, () => Promise.resolve(null));
+        // Another caller materializes the bundle while this call is fetching,
+        // but the dep that bundle imports stays unavailable.
+        await backend.fetchStarted;
+        await writeTextFile(join(cacheDir, `http-${hashA}.mjs`), codeA);
+
+        assertEquals(
+          await pending,
+          [hashB],
+          "a dep of the materialized bundle is still reported as failed",
+        );
       } finally {
         await remove(cacheDir, { recursive: true });
       }

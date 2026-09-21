@@ -687,6 +687,10 @@ export async function ensureHttpBundlesExist(
           false,
         ),
       );
+      // Dependency hashes the recursive pass could not recover are genuine
+      // failures of the materialized bundles, so keep them before dropping the
+      // roots that are now fully satisfied.
+      for (const hash of stillFailed) failed.add(hash);
       for (const { hash } of materialized) {
         if (!stillFailed.has(hash)) failed.delete(hash);
       }
