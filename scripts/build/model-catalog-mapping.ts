@@ -908,12 +908,13 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
  *
  * `anthropicThinkingMode` has a reading only on the Anthropic surface (see
  * `readTransportCapabilities`); a retained row that declares it for a provider
- * the catalog serves on another surface would suppress the generic reasoning
- * option and leave the model without thinking. Only a served surface can
- * contradict the row: a provider no served model names a surface for says
- * nothing about it, and these rows exist precisely for models the catalog has
- * moved on from. The key is the overlay's own value, so it is named; the
- * surface is served data, so it is not.
+ * routed anywhere else would suppress the generic reasoning option and leave
+ * the model without thinking. Judged against the EFFECTIVE surface, the one
+ * the generated row will carry: the served surface where the catalog names
+ * one, the default otherwise. A provider the catalog says nothing about is
+ * routed on the default surface all the same, so skipping it would ship
+ * exactly the contradiction this refuses. The key is the overlay's own value,
+ * so it is named; the surface is served data, so it is not.
  */
 function assertRetainedThinkingModes(
   facts: ServedFacts,
@@ -923,10 +924,9 @@ function assertRetainedThinkingModes(
     if (capabilities.anthropicThinkingMode === undefined) continue;
     const slashIndex = modelId.indexOf("/");
     const provider = slashIndex > 0 ? modelId.slice(0, slashIndex) : modelId;
-    const surface = facts.surfaces.get(provider);
-    if (surface !== undefined && surface !== "anthropic") {
+    if (surfaceOf(facts, overlay, provider) !== "anthropic") {
       fail(
-        `overlay retainedTransportCapabilities declares anthropicThinkingMode for "${modelId}", whose provider is served on another surface`,
+        `overlay retainedTransportCapabilities declares anthropicThinkingMode for "${modelId}", whose provider does not route on the Anthropic surface`,
       );
     }
   }

@@ -504,9 +504,17 @@ describe("scripts/build/model-catalog-mapping", () => {
       payloadWithSurface("acme-labs", "anthropic"),
       overlay,
     );
-    // So is a provider the catalog names no surface for: nothing contradicts
-    // the row, and these rows exist for models the catalog has moved on from.
-    buildModelCatalogData(payloadWithSurface("acme-labs", undefined), overlay);
+    // A provider the catalog names no surface for is refused too: it is
+    // routed on the default surface, which is the same contradiction.
+    assertThrows(
+      () =>
+        buildModelCatalogData(
+          payloadWithSurface("acme-labs", undefined),
+          overlay,
+        ),
+      Error,
+      'overlay retainedTransportCapabilities declares anthropicThinkingMode for "acme-labs/gone-1"',
+    );
   });
 
   it("carries the served transport facts and the overlay facts, and drops unknown values", () => {

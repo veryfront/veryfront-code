@@ -83,26 +83,40 @@ describe("veryfront-cloud model id rule", () => {
 });
 
 /**
- * A payload shaped like the served catalog, with obviously fake values. The
- * real payload is not copied into this repository.
+ * A payload shaped like the served catalog, with obviously fake model values.
+ * The real payload is not copied into this repository.
+ *
+ * The surface is a served field, so every model carries one. One vendor is
+ * named for real: the overlay retains an Anthropic thinking row for a model
+ * the catalog no longer lists, and that row is only coherent while its
+ * provider routes on the Anthropic surface. A payload that left the provider
+ * out would route it on the default surface instead and say this overlay is
+ * broken, which is a statement about the fixture, not about the overlay.
  */
 function representativePayload(): Record<string, unknown> {
-  const model = (id: string, provider: string, label: string) => ({
+  const model = (
+    id: string,
+    provider: string,
+    label: string,
+    surface: string,
+  ) => ({
     id,
     modelId: `${provider}/${id}`,
     provider,
     providerLabel: label,
+    surface,
     name: id,
     description: `${id} does not exist`,
     capabilities: { reasoning: true },
   });
   return {
     models: [
-      model("mystery-1", "acme-labs", "Acme Labs"),
-      model("riddle-9", "beta-works", "Beta Works"),
-      model("plain-3", "beta-works", "Beta Works"),
+      model("mystery-1", "acme-labs", "Acme Labs", "openai"),
+      model("riddle-9", "beta-works", "Beta Works", "openai"),
+      model("plain-3", "beta-works", "Beta Works", "openai"),
+      model("quiet-0", "anthropic", "Anthropic", "anthropic"),
     ],
-    providers: ["acme-labs", "beta-works"],
+    providers: ["acme-labs", "beta-works", "anthropic"],
     defaultModelId: "beta-works/riddle-9",
   };
 }
