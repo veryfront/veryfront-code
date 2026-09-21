@@ -52,10 +52,15 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
       catalogData.VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS.map(([surface]) => surface),
     );
 
-    assertEquals(
-      catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING.map(([provider]) => provider).sort(),
-      [...providers].sort(),
+    // Coverage, not equality: the routing table may also carry a provider the
+    // catalog no longer lists a chat model for, whose other model ids still
+    // route through it.
+    const routed = new Set(
+      catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING.map(([provider]) => provider),
     );
+    for (const provider of providers) {
+      assertEquals(routed.has(provider), true, `no routing declared for "${provider}"`);
+    }
     for (const [provider, routing] of catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING) {
       assertEquals(
         versionedSurfaces.has(routing.surface),

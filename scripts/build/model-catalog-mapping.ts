@@ -762,6 +762,9 @@ function describeUnusablePathComponent(
 ): string | undefined {
   if (value === "") return "is empty";
   if (/\s/.test(value)) return `contains whitespace: ${quote(value)}`;
+  // `URL.pathname` normalizes a backslash to a slash, so `v1\beta` would reach
+  // the gateway as two segments while passing the single-segment rule below.
+  if (value.includes("\\")) return `contains a backslash: ${quote(value)}`;
   if (value.startsWith("/") || value.endsWith("/")) {
     return `starts or ends with a slash: ${quote(value)}`;
   }
@@ -779,15 +782,51 @@ function describeUnusablePathComponent(
   return undefined;
 }
 
+/**
+ * Where one key appears more than once in `table`, as positions
+ * (`chatModels[0] and chatModels[3]`). The keys themselves are served values
+ * and these failures reach the terminal, so the positions stand in for them.
+ */
+function describeDuplicatePositions(
+  table: string,
+  keys: readonly string[],
+): readonly string[] {
+  const positions = new Map<string, number[]>();
+  keys.forEach((key, index) => {
+    positions.set(key, [...positions.get(key) ?? [], index]);
+  });
+  return [...positions.values()]
+    .filter((at) => at.length > 1)
+    .map((at) => at.map((index) => `${table}[${index}]`).join(" and "));
+}
+
+/** Positions in `data.chatModels` of the entries `select` picks out. */
+function chatModelPositions(
+  data: ModelCatalogData,
+  select: (model: ModelCatalogData["chatModels"][number]) => boolean,
+): readonly string[] {
+  return data.chatModels.flatMap((model, index) =>
+    select(model) ? [`chatModels[${index}]`] : []
+  );
+}
+
+/**
+ * Every failure below names positions in the generated tables, never a served
+ * value: the values are the platform's data and the message is terminal output.
+ */
 export function assertCatalogInvariants(data: ModelCatalogData): void {
-  const duplicateIds = findDuplicates(data.chatModels.map((model) => model.id));
+  const duplicateIds = describeDuplicatePositions(
+    "chatModels",
+    data.chatModels.map((model) => model.id),
+  );
   if (duplicateIds.length > 0) {
     fail(
       `published id claimed by more than one model: ${duplicateIds.join(", ")}`,
     );
   }
 
-  const duplicateModelIds = findDuplicates(
+  const duplicateModelIds = describeDuplicatePositions(
+    "chatModels",
     data.chatModels.map((model) => model.modelId),
   );
   if (duplicateModelIds.length > 0) {
@@ -803,7 +842,8 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
   // as <canonical provider>/<upstream id> — the same key the capability rows
   // use. Publishing both would offer one model twice, with whichever thinking
   // default happened to be listed first.
-  const duplicateRuntimeIds = findDuplicates(
+  const duplicateRuntimeIds = describeDuplicatePositions(
+    "chatModels",
     data.chatModels.map((model) => {
       const slashIndex = model.modelId.indexOf("/");
       const upstream = slashIndex > 0
@@ -820,7 +860,8 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     );
   }
 
-  const duplicateAliases = findDuplicates(
+  const duplicateAliases = describeDuplicatePositions(
+    "providerAliases",
     data.providerAliases.map(([alias]) => alias),
   );
   if (duplicateAliases.length > 0) {
@@ -829,7 +870,8 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     );
   }
 
-  const duplicateCapabilities = findDuplicates(
+  const duplicateCapabilities = describeDuplicatePositions(
+    "modelTransportCapabilities",
     data.modelTransportCapabilities.map(([modelId]) => modelId),
   );
   if (duplicateCapabilities.length > 0) {
@@ -840,14 +882,18 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     );
   }
 
-  const duplicateLabels = findDuplicates(
+  const duplicateLabels = describeDuplicatePositions(
+    "providerLabels",
     data.providerLabels.map(([provider]) => provider),
   );
   if (duplicateLabels.length > 0) {
     fail(`display label declared twice for: ${duplicateLabels.join(", ")}`);
   }
 
-  const duplicateOrder = findDuplicates([...data.providerOrder]);
+  const duplicateOrder = describeDuplicatePositions(
+    "providerOrder",
+    data.providerOrder,
+  );
   if (duplicateOrder.length > 0) {
     fail(
       `provider listed twice in the display order: ${
@@ -856,7 +902,8 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     );
   }
 
-  const duplicateRouting = findDuplicates(
+  const duplicateRouting = describeDuplicatePositions(
+    "providerRouting",
     data.providerRouting.map(([provider]) => provider),
   );
   if (duplicateRouting.length > 0) {
@@ -869,9 +916,7 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
   // Checking the published id covers both the served id and an `entryIds` row
   // the overlay left empty, which would otherwise pass every other invariant
   // while shipping a model nobody can select.
-  const unselectable = data.chatModels
-    .filter((model) => model.id === "")
-    .map((model) => model.modelId);
+  const unselectable = chatModelPositions(data, (model) => model.id === "");
   if (unselectable.length > 0) {
     fail(
       `published id is empty, so the model resolves as the default instead: ${
@@ -884,9 +929,10 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
   // first, and returns any remaining request that contains a slash as already
   // canonical, so it never reaches the lookup by published id. A published id
   // carrying a slash is therefore reachable only when it IS its own model id.
-  const unreachable = data.chatModels
-    .filter((model) => model.id !== model.modelId && model.id.includes("/"))
-    .map((model) => `${model.id} (${model.modelId})`);
+  const unreachable = chatModelPositions(
+    data,
+    (model) => model.id !== model.modelId && model.id.includes("/"),
+  );
   if (unreachable.length > 0) {
     fail(
       `published id contains a slash without being the model id, so it never resolves: ${
@@ -901,13 +947,10 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
   // statement, so a model outside it is a contradiction to report, not a
   // position for this generator to invent.
   const ordered = new Set(data.providerOrder);
-  const ungrouped = [
-    ...new Set(
-      data.chatModels.filter((model) => !ordered.has(model.provider)).map((
-        model,
-      ) => `${model.id} (${model.provider})`),
-    ),
-  ];
+  const ungrouped = chatModelPositions(
+    data,
+    (model) => !ordered.has(model.provider),
+  );
   if (ungrouped.length > 0) {
     fail(
       `provider not in the provider order, so these models are never listed: ${
@@ -923,13 +966,14 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
   );
   if (defaults.length !== 1) {
     fail(
-      `the default model "${data.defaultModelId}" names ${defaults.length} entries, not exactly one`,
+      `the default model names ${defaults.length} entries, not exactly one`,
     );
   }
 
   // This table is read through a Map too, so a surface declared twice keeps
   // one version and discards the other without saying which.
-  const duplicateVersions = findDuplicates(
+  const duplicateVersions = describeDuplicatePositions(
+    "surfaceGatewayApiVersions",
     data.surfaceGatewayApiVersions.map(([surface]) => surface),
   );
   if (duplicateVersions.length > 0) {

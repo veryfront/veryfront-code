@@ -714,6 +714,8 @@ describe("scripts/build/model-catalog-mapping", () => {
         "ai//gateway",
         "ai/../gateway",
         "ai gateway",
+        // `URL.pathname` turns the backslash into a slash: two segments.
+        "ai\\gateway",
       ]
     ) {
       assertThrows(
@@ -723,7 +725,7 @@ describe("scripts/build/model-catalog-mapping", () => {
         "overlay gatewayPathPrefix",
       );
     }
-    for (const version of ["", "v1/", "v1/beta", " v1"]) {
+    for (const version of ["", "v1/", "v1/beta", " v1", "v1\\beta"]) {
       assertThrows(
         () =>
           assertOverlayInvariants({
@@ -1233,6 +1235,57 @@ describe("scripts/build/model-catalog-mapping", () => {
       "gateway API version",
     ],
   ];
+
+  it("names broken invariants by position, never by a served value", () => {
+    // These run after parsing succeeded, on well-typed data whose values are
+    // the platform's own. A duplicate must be reported as where it is, not as
+    // what it says.
+    const sentinel = "served-value-must-not-print";
+    const data = buildModelCatalogData(fakePayload(), OVERLAY);
+    const twice = {
+      ...data,
+      chatModels: [
+        ...data.chatModels,
+        {
+          ...data.chatModels[1]!,
+          id: sentinel,
+          modelId: data.chatModels[1]!.modelId,
+        },
+      ],
+    };
+    const error = assertThrows(
+      () => assertCatalogInvariants(twice),
+      Error,
+      `chatModels[1] and chatModels[${data.chatModels.length}]`,
+    ) as Error;
+    assertEquals(error.message.includes(sentinel), false);
+
+    const unlisted = {
+      ...data,
+      chatModels: [
+        { ...data.chatModels[0]!, provider: sentinel },
+        ...data.chatModels.slice(1),
+      ],
+      providerRouting: [
+        ...data.providerRouting,
+        [sentinel, { surface: "openai" }] as const,
+      ],
+    };
+    const orderError = assertThrows(
+      () => assertCatalogInvariants(unlisted),
+      Error,
+      "not in the provider order, so these models are never listed: chatModels[0]",
+    ) as Error;
+    assertEquals(orderError.message.includes(sentinel), false);
+
+    const noDefault = { ...data, defaultModelId: sentinel };
+    const defaultError = assertThrows(
+      () => assertCatalogInvariants(noDefault),
+      Error,
+      "the default model names 0 entries",
+    ) as Error;
+    assertEquals(defaultError.message.includes(sentinel), false);
+  });
 
   for (const [name, apply, message] of BROKEN_INVARIANTS) {
     it(`rejects generated data with ${name}`, () => {
