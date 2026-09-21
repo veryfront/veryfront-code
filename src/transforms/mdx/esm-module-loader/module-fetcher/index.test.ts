@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/module-fetcher/index.test */
 
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
@@ -14,7 +14,9 @@ import {
   fetchAndCacheModule,
   hasRenderSession,
   rewriteDntImports,
+  runInRenderSession,
   startRenderSession,
+  TransformTreeTimeoutError,
 } from "./index.ts";
 import {
   MAX_MDX_MODULE_GRAPH_ENTRIES,
@@ -29,6 +31,14 @@ import { hashString } from "../utils/hash.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 import { normalizePath } from "./module-cache.ts";
 import { hashString as hashCacheString } from "#veryfront/cache/hash.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
+import { clearModulePathCache } from "../cache/index.ts";
+import { getSharedModuleFetchCount } from "./shared-module-fetches.ts";
+import {
+  clearAllManifests,
+  getRouteModulePaths,
+} from "#veryfront/modules/manifest/route-module-manifest.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -51,6 +61,88 @@ function getTransformCacheKey(
 
 function getVersionedPathCacheKey(normalizedPath: string, reactVersion: string): string {
   return `${MDX_ESM_CACHE_NAMESPACE}:${reactVersion}:${normalizedPath}`;
+}
+
+const REMOTE_LATENCY_MS = 200;
+const CONCURRENT_RENDERS = 10;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Distributed cache stub that counts reads and answers each one slowly. */
+class SlowCountingCache implements CacheBackend {
+  readonly type = "redis" as const;
+  readonly values = new Map<string, string>();
+  getCalls = 0;
+
+  async get(key: string): Promise<string | null> {
+    this.getCalls++;
+    await delay(REMOTE_LATENCY_MS);
+    return this.values.get(key) ?? null;
+  }
+
+  set(key: string, value: string): Promise<void> {
+    this.values.set(key, value);
+    return Promise.resolve();
+  }
+
+  del(key: string): Promise<void> {
+    this.values.delete(key);
+    return Promise.resolve();
+  }
+}
+
+interface CountingAdapter {
+  adapter: RuntimeAdapter;
+  reads: string[];
+}
+
+/**
+ * Project source with a small shared graph: the page imports `a` and `b`,
+ * and both import `c`. Every read is slow, like a remote project source.
+ */
+function createProjectAdapter(
+  marker: string,
+  options: { failFirstReadOf?: string; missingPaths?: readonly string[] } = {},
+): CountingAdapter {
+  const sourceByPath = new Map<string, string>([
+    [
+      "/virtual/page.ts",
+      `import { a } from "./a.js"; import { b } from "./b.js"; export const page = [a, b, "${marker}"];`,
+    ],
+    ["/virtual/a.ts", `import { c } from "./c.js"; export const a = "a-${marker}" + c;`],
+    ["/virtual/b.ts", `import { c } from "./c.js"; export const b = "b-${marker}" + c;`],
+    ["/virtual/c.ts", `export const c = "c-${marker}";`],
+  ]);
+  const reads: string[] = [];
+  let failed = false;
+
+  const adapter = {
+    env: { get: (_key: string) => undefined },
+    fs: {
+      resolveFile: (path: string) => {
+        const candidate = `/virtual/${path}.ts`;
+        const resolvable = sourceByPath.has(candidate) &&
+          !(options.missingPaths ?? []).includes(candidate);
+        return Promise.resolve(resolvable ? candidate : null);
+      },
+      readFile: async (path: string) => {
+        // Only project module sources count; config lookups also use this adapter.
+        if (path.startsWith("/virtual/")) reads.push(path);
+        await delay(REMOTE_LATENCY_MS);
+        if (options.failFirstReadOf === path && !failed) {
+          failed = true;
+          throw new Error(`Project source unavailable: ${path}`);
+        }
+        const source = sourceByPath.get(path);
+        if (source === undefined) throw new Error(`File not found: ${path}`);
+        return source;
+      },
+    },
+  } as unknown as RuntimeAdapter;
+
+  return { adapter, reads };
 }
 
 describe("module-fetcher", () => {
@@ -889,6 +981,330 @@ describe("module-fetcher", () => {
       );
       endRenderSession(id2);
       assertEquals(hasRenderSession(id2), false, "the second session is torn down in turn");
+    });
+  });
+
+  describe("process-wide module fetch single-flight", () => {
+    let cache: SlowCountingCache;
+    const tempDirs: string[] = [];
+
+    async function tempDir(prefix: string): Promise<string> {
+      const dir = await makeTempDir({ prefix });
+      tempDirs.push(dir);
+      return dir;
+    }
+
+    async function newRender(
+      adapter: RuntimeAdapter,
+      projectId: string,
+      dirs: { esmCacheDir: string; projectDir: string },
+    ) {
+      return createModuleFetcherContext(dirs.esmCacheDir, adapter, dirs.projectDir, projectId, {
+        contentSourceId: "release-1",
+        strictMissingModules: true,
+      });
+    }
+
+    beforeEach(() => {
+      clearModulePathCache();
+      cache = new SlowCountingCache();
+      __injectCachesForTests({ cacheBackend: cache });
+    });
+
+    afterEach(async () => {
+      __injectCachesForTests(null);
+      clearModulePathCache();
+      for (const dir of tempDirs.splice(0)) await remove(dir, { recursive: true });
+    });
+
+    it("resolves one graph for concurrent cold renders of the same entry", async () => {
+      // Baseline: one cold render of the same graph in another project.
+      const solo = createProjectAdapter("solo");
+      const soloDirs = {
+        esmCacheDir: await tempDir("vf-shared-solo-cache-"),
+        projectDir: await tempDir("vf-shared-solo-proj-"),
+      };
+      await fetchAndCacheModule(
+        "/_vf_modules/page.js",
+        await newRender(solo.adapter, "p-solo", soloDirs),
+      );
+      const oneGraphGets = cache.getCalls;
+      assertEquals(solo.reads.length, 4);
+      assert(oneGraphGets > 0, "the graph must read the distributed cache");
+
+      cache.getCalls = 0;
+      const project = createProjectAdapter("shared");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-cache-"),
+        projectDir: await tempDir("vf-shared-proj-"),
+      };
+      const renders = await Promise.all(
+        Array.from(
+          { length: CONCURRENT_RENDERS },
+          () => newRender(project.adapter, "p-shared", dirs),
+        ),
+      );
+
+      const results = await Promise.all(
+        renders.map((render) => fetchAndCacheModule("/_vf_modules/page.js", render)),
+      );
+
+      assertEquals(new Set(results).size, 1);
+      assertEquals(typeof results[0], "string");
+      assertEquals(project.reads.length, 4, "each project source is read once");
+      assert(
+        cache.getCalls <= oneGraphGets,
+        `expected at most ${oneGraphGets} cache reads, got ${cache.getCalls}`,
+      );
+      assertEquals(getSharedModuleFetchCount(), 0, "settled resolutions are released");
+    });
+
+    it("retries alone when the leading render hits its own deadline", async () => {
+      const project = createProjectAdapter("deadline");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-deadline-cache-"),
+        projectDir: await tempDir("vf-shared-deadline-proj-"),
+      };
+      const leader = await newRender(project.adapter, "p-deadline", dirs);
+      // The leading render is almost out of time; nested fetches start after it.
+      leader.transformDeadline = Date.now() + REMOTE_LATENCY_MS / 2;
+      const follower = await newRender(project.adapter, "p-deadline", dirs);
+
+      const [leaderResult, followerResult] = await Promise.allSettled([
+        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        fetchAndCacheModule("/_vf_modules/page.js", follower),
+      ]);
+
+      assertEquals(leaderResult.status, "rejected");
+      assert(
+        leaderResult.status === "rejected" &&
+          leaderResult.reason instanceof TransformTreeTimeoutError,
+      );
+      assertEquals(followerResult.status, "fulfilled");
+    });
+
+    it("counts shared modules toward each joined render's graph limit", async () => {
+      const project = createProjectAdapter("graph-limit");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-limit-cache-"),
+        projectDir: await tempDir("vf-shared-limit-proj-"),
+      };
+      const leader = await newRender(project.adapter, "p-graph-limit", dirs);
+      const follower = await newRender(project.adapter, "p-graph-limit", dirs);
+      // Room for the entry only, not for the three modules it imports.
+      for (let index = 0; index < MAX_MDX_MODULE_GRAPH_ENTRIES - 1; index++) {
+        follower.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
+      }
+
+      const [leaderResult, followerResult] = await Promise.allSettled([
+        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        fetchAndCacheModule("/_vf_modules/page.js", follower),
+      ]);
+
+      assertEquals(leaderResult.status, "fulfilled");
+      assert(
+        followerResult.status === "rejected" &&
+          followerResult.reason instanceof ModuleGraphLimitError,
+      );
+      assertEquals(project.reads.length, 4);
+    });
+
+    it("retries alone when the leading render has no room in its graph", async () => {
+      const project = createProjectAdapter("leader-full");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-leaderfull-cache-"),
+        projectDir: await tempDir("vf-shared-leaderfull-proj-"),
+      };
+      const leader = await newRender(project.adapter, "p-leader-full", dirs);
+      for (let index = 0; index < MAX_MDX_MODULE_GRAPH_ENTRIES - 1; index++) {
+        leader.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
+      }
+      const follower = await newRender(project.adapter, "p-leader-full", dirs);
+
+      const [leaderResult, followerResult] = await Promise.allSettled([
+        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        fetchAndCacheModule("/_vf_modules/page.js", follower),
+      ]);
+
+      assert(
+        leaderResult.status === "rejected" && leaderResult.reason instanceof ModuleGraphLimitError,
+      );
+      assertEquals(followerResult.status, "fulfilled");
+    });
+
+    it("admits modules a shared resolution could not resolve into joined graphs", async () => {
+      const project = createProjectAdapter("stubbed", { missingPaths: ["/virtual/c.ts"] });
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-stub-cache-"),
+        projectDir: await tempDir("vf-shared-stub-proj-"),
+      };
+      const renders = await Promise.all(
+        Array.from({ length: 2 }, async () => {
+          const render = await newRender(project.adapter, "p-stubbed", dirs);
+          render.strictMissingModules = false;
+          return render;
+        }),
+      );
+
+      await Promise.all(
+        renders.map((render) => fetchAndCacheModule("/_vf_modules/page.js", render)),
+      );
+
+      for (const render of renders) {
+        // The dependency was attempted and stubbed, so it still occupies a
+        // slot in every render's graph.
+        assertEquals(render.moduleGraph!.has("_vf_modules/c.js"), true);
+      }
+    });
+
+    it("keeps concurrent resolutions of the same path separate across projects", async () => {
+      const first = createProjectAdapter("project-one");
+      const second = createProjectAdapter("project-two");
+      const firstDirs = {
+        esmCacheDir: await tempDir("vf-shared-one-cache-"),
+        projectDir: await tempDir("vf-shared-one-proj-"),
+      };
+      const secondDirs = {
+        esmCacheDir: await tempDir("vf-shared-two-cache-"),
+        projectDir: await tempDir("vf-shared-two-proj-"),
+      };
+
+      const [firstPath, secondPath] = await Promise.all([
+        fetchAndCacheModule(
+          "/_vf_modules/c.js",
+          await newRender(first.adapter, "p-one", firstDirs),
+        ),
+        fetchAndCacheModule(
+          "/_vf_modules/c.js",
+          await newRender(second.adapter, "p-two", secondDirs),
+        ),
+      ]);
+
+      assertEquals(first.reads, ["/virtual/c.ts"]);
+      assertEquals(second.reads, ["/virtual/c.ts"]);
+      const firstModule = await import(`file://${firstPath}`);
+      const secondModule = await import(`file://${secondPath}`);
+      assertEquals(firstModule.c, "c-project-one");
+      assertEquals(secondModule.c, "c-project-two");
+    });
+
+    it("shares a rejection with concurrent callers and retries on the next request", async () => {
+      const project = createProjectAdapter("flaky", { failFirstReadOf: "/virtual/c.ts" });
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-flaky-cache-"),
+        projectDir: await tempDir("vf-shared-flaky-proj-"),
+      };
+      const renders = await Promise.all(
+        Array.from({ length: 3 }, () => newRender(project.adapter, "p-flaky", dirs)),
+      );
+
+      const settled = await Promise.allSettled(
+        renders.map((render) => fetchAndCacheModule("/_vf_modules/c.js", render)),
+      );
+
+      assertEquals(settled.map((result) => result.status), ["rejected", "rejected", "rejected"]);
+      assertEquals(project.reads.length, 1, "concurrent callers share one failed read");
+      assertEquals(getSharedModuleFetchCount(), 0, "a failed resolution is not retained");
+
+      const retried = await fetchAndCacheModule(
+        "/_vf_modules/c.js",
+        await newRender(project.adapter, "p-flaky", dirs),
+      );
+      assertEquals(typeof retried, "string");
+      assertEquals(project.reads.length, 2);
+    });
+
+    it("does not join a resolution that started before an invalidation", async () => {
+      const project = createProjectAdapter("invalidated");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-inval-cache-"),
+        projectDir: await tempDir("vf-shared-inval-proj-"),
+      };
+
+      const before = fetchAndCacheModule(
+        "/_vf_modules/c.js",
+        await newRender(project.adapter, "p-inval", dirs),
+      );
+      clearModulePathCache();
+      const after = fetchAndCacheModule(
+        "/_vf_modules/c.js",
+        await newRender(project.adapter, "p-inval", dirs),
+      );
+
+      await Promise.all([before, after]);
+      assertEquals(project.reads.length, 2);
+    });
+
+    it("records the shared graph into every joined render session", async () => {
+      clearAllManifests();
+      const project = createProjectAdapter("sessions");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-session-cache-"),
+        projectDir: await tempDir("vf-shared-session-proj-"),
+      };
+      const routes = ["/first", "/second"];
+      for (const route of routes) startRenderSession(route, "sessions-project", route);
+
+      await Promise.all(
+        routes.map(async (route) => {
+          const render = await newRender(project.adapter, "p-sessions", dirs);
+          return runInRenderSession(
+            route,
+            () => fetchAndCacheModule("/_vf_modules/page.js", render),
+          );
+        }),
+      );
+      for (const route of routes) endRenderSession(route);
+
+      assertEquals(project.reads.length, 4);
+      for (const route of routes) {
+        assertEquals(
+          getRouteModulePaths("sessions-project", route).sort(),
+          ["a.js", "b.js", "c.js", "page.js"],
+        );
+      }
+      clearAllManifests();
+    });
+
+    it("records modules borrowed from a sibling entry into every joined session", async () => {
+      clearAllManifests();
+      const project = createProjectAdapter("borrowed");
+      const dirs = {
+        esmCacheDir: await tempDir("vf-shared-borrow-cache-"),
+        projectDir: await tempDir("vf-shared-borrow-proj-"),
+      };
+      // `a` and `b` are two entries of one render and both import `c`, so one
+      // of them resolves `c` and the other borrows its in-flight promise
+      // instead of walking into it.
+      const owner = await newRender(project.adapter, "p-borrow", dirs);
+      const joinedA = await newRender(project.adapter, "p-borrow", dirs);
+      const joinedB = await newRender(project.adapter, "p-borrow", dirs);
+      const routes = ["/owner", "/joined-a", "/joined-b"];
+      for (const route of routes) startRenderSession(route, "borrow-project", route);
+
+      await Promise.all([
+        runInRenderSession("/owner", () =>
+          Promise.all([
+            fetchAndCacheModule("/_vf_modules/a.js", owner),
+            fetchAndCacheModule("/_vf_modules/b.js", owner),
+          ])),
+        runInRenderSession("/joined-a", () => fetchAndCacheModule("/_vf_modules/a.js", joinedA)),
+        runInRenderSession("/joined-b", () => fetchAndCacheModule("/_vf_modules/b.js", joinedB)),
+      ]);
+      for (const route of routes) endRenderSession(route);
+
+      assertEquals(
+        getRouteModulePaths("borrow-project", "/owner").sort(),
+        ["a.js", "b.js", "c.js"],
+      );
+      // Whichever entry borrowed `c` from its sibling, the render that joined
+      // only that entry still replays the borrowed dependency.
+      assertEquals(getRouteModulePaths("borrow-project", "/joined-a").sort(), ["a.js", "c.js"]);
+      assertEquals(getRouteModulePaths("borrow-project", "/joined-b").sort(), ["b.js", "c.js"]);
+      // The borrowed dependency counts toward the joined render's graph too.
+      assertEquals(joinedA.moduleGraph!.has("_vf_modules/c.js"), true);
+      assertEquals(joinedB.moduleGraph!.has("_vf_modules/c.js"), true);
+      clearAllManifests();
     });
   });
 });
