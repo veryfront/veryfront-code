@@ -736,6 +736,55 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       }`,
     );
   }
+  // The runtime builds the gateway URL as
+  // `${gatewayPathPrefix}/${provider}/${apiVersion}` by plain interpolation, so
+  // an empty or malformed component yields a URL that points somewhere else.
+  const badPrefix = describeUnusablePathComponent(
+    overlay.gatewayPathPrefix,
+    true,
+  );
+  if (badPrefix !== undefined) {
+    fail(`overlay gatewayPathPrefix ${badPrefix}`);
+  }
+  for (
+    const [surface, version] of [
+      ...overlay.surfaceGatewayApiVersions,
+      ["(default)", overlay.defaultGatewayApiVersion] as const,
+    ]
+  ) {
+    const badVersion = describeUnusablePathComponent(version, false);
+    if (badVersion !== undefined) {
+      fail(`overlay gateway API version for ${surface} ${badVersion}`);
+    }
+  }
+}
+
+/**
+ * Why a value cannot be a component of the gateway path, or undefined when it
+ * can: non-empty, no whitespace, no leading or trailing slash, no empty, `.`
+ * or `..` segment; a single segment unless `allowSegments`.
+ */
+function describeUnusablePathComponent(
+  value: string,
+  allowSegments: boolean,
+): string | undefined {
+  if (value === "") return "is empty";
+  if (/\s/.test(value)) return `contains whitespace: ${quote(value)}`;
+  if (value.startsWith("/") || value.endsWith("/")) {
+    return `starts or ends with a slash: ${quote(value)}`;
+  }
+  const segments = value.split("/");
+  if (!allowSegments && segments.length > 1) {
+    return `must be a single path segment: ${quote(value)}`;
+  }
+  if (
+    segments.some((segment) =>
+      segment === "" || segment === "." || segment === ".."
+    )
+  ) {
+    return `has an empty or relative segment: ${quote(value)}`;
+  }
+  return undefined;
 }
 
 export function assertCatalogInvariants(data: ModelCatalogData): void {
@@ -753,6 +802,28 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     fail(
       `model id claimed by more than one entry: ${
         duplicateModelIds.join(", ")
+      }`,
+    );
+  }
+
+  // Two entries may differ in their raw ids and still be ONE model to the
+  // runtime, which resolves a provider alias before it rebuilds the lookup key
+  // as <canonical provider>/<upstream id> — the same key the capability rows
+  // use. Publishing both would offer one model twice, with whichever thinking
+  // default happened to be listed first.
+  const duplicateRuntimeIds = findDuplicates(
+    data.chatModels.map((model) => {
+      const slashIndex = model.modelId.indexOf("/");
+      const upstream = slashIndex > 0
+        ? model.modelId.slice(slashIndex + 1)
+        : model.modelId;
+      return `${model.provider}/${upstream}`;
+    }),
+  );
+  if (duplicateRuntimeIds.length > 0) {
+    fail(
+      `entries collapse to one runtime model: ${
+        duplicateRuntimeIds.join(", ")
       }`,
     );
   }

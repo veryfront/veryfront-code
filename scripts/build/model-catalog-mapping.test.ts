@@ -654,6 +654,74 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  it("rejects gateway path components the runtime would interpolate into a wrong URL", () => {
+    for (
+      const prefix of [
+        "",
+        "/ai/gateway",
+        "ai/gateway/",
+        "ai//gateway",
+        "ai/../gateway",
+        "ai gateway",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          assertOverlayInvariants({ ...OVERLAY, gatewayPathPrefix: prefix }),
+        Error,
+        "overlay gatewayPathPrefix",
+      );
+    }
+    for (const version of ["", "v1/", "v1/beta", " v1"]) {
+      assertThrows(
+        () =>
+          assertOverlayInvariants({
+            ...OVERLAY,
+            surfaceGatewayApiVersions: [["openai", version], [
+              "anthropic",
+              "v1",
+            ]],
+          }),
+        Error,
+        "overlay gateway API version for openai",
+      );
+      assertThrows(
+        () =>
+          assertOverlayInvariants({
+            ...OVERLAY,
+            defaultGatewayApiVersion: version,
+          }),
+        Error,
+        "overlay gateway API version for (default)",
+      );
+    }
+    // The real overlay and the fixture pass.
+    assertOverlayInvariants(OVERLAY);
+  });
+
+  it("rejects two entries that the runtime would resolve to one model", () => {
+    // `google/foo` and `google-ai-studio/foo` with provider `google` differ as
+    // raw ids but the runtime normalises the alias and sends both to the same
+    // model; publishing both offers one model twice.
+    const payload = fakePayload();
+    const models = payload.models as Record<string, unknown>[];
+    const twin = JSON.parse(JSON.stringify(models[0])) as Record<
+      string,
+      unknown
+    >;
+    twin.id = `${models[0]!.id as string}-twin`;
+    twin.modelId = `${models[0]!.provider as string}/${
+      (models[0]!.modelId as string).split("/")[1]
+    }`;
+    payload.models = [...models, twin];
+
+    assertThrows(
+      () => buildModelCatalogData(payload, OVERLAY),
+      Error,
+      "collapse to one runtime model",
+    );
+  });
+
   it("rejects an overlay table that declares a key twice", () => {
     for (
       const overlay of [
