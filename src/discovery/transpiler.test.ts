@@ -1168,11 +1168,15 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
             "apps/store-web",
             "apps/.hidden",
             ".apps/web",
+            "apps/02",
+            "apps/2",
             "node_modules/vendored",
           ]),
           "apps/store-web/package.json": "{}",
           "apps/.hidden/package.json": "{}",
           ".apps/web/package.json": "{}",
+          "apps/02/package.json": "{}",
+          "apps/2/package.json": "{}",
         }, at)).memberPath;
 
       // A `*` stands for part of ONE segment; `**` spans any number of them,
@@ -1253,6 +1257,19 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/{store-web,a}"]), "apps/store-web");
       assertEquals(await declaring(["{a..z}pps/store-web"]), "apps/store-web");
       assertEquals(await declaring(["apps{1..3}/store-web"]), "");
+      // A zero-padded endpoint keeps its width on every value, and a
+      // sequence expands even when it names a single one.
+      assertEquals(
+        await declaring(["apps/{01..03}"], `${PROJECT}/apps/02`),
+        "apps/02",
+      );
+      assertEquals(await declaring(["apps/{01..03}"], `${PROJECT}/apps/2`), "");
+      assertEquals(
+        await declaring(["apps/{2..2}"], `${PROJECT}/apps/2`),
+        "apps/2",
+      );
+      // A comma list still needs a comma: `{a}` is the literal text.
+      assertEquals(await declaring(["apps/{2}"], `${PROJECT}/apps/2`), "");
       // A declaration with a pattern too large to expand is unreadable, and
       // an exclusion this could not expand may be the one covering the
       // member, so nothing in it is trusted.

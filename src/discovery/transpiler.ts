@@ -1096,8 +1096,11 @@ function expandBraces(pattern: string): string[] | null {
   const body = pattern.slice(open + 1, close);
   const sequenced = braceSequence(body);
   if (sequenced === "overflow") return null;
+  // A recognized SEQUENCE expands even when it names one value -- `{1..1}` is
+  // `1` -- while a comma list needs a comma to be one at all: `{a}` is the
+  // literal text `{a}`, as `brace-expansion` leaves it.
   const alternatives = sequenced ?? splitBraceBody(body);
-  if (alternatives.length < 2) return [pattern];
+  if (sequenced === null && alternatives.length < 2) return [pattern];
   const head = pattern.slice(0, open);
   const tail = pattern.slice(close + 1);
   const expanded: string[] = [];
@@ -1145,10 +1148,19 @@ function matchingBrace(pattern: string, open: number): number {
 function braceSequence(body: string): string[] | "overflow" | null {
   const numeric = /^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$/.exec(body);
   if (numeric) {
-    const from = Number(numeric[1]);
-    const to = Number(numeric[2]);
+    const rawFrom = numeric[1]!;
+    const rawTo = numeric[2]!;
     const step = Math.abs(Number(numeric[3] ?? 1)) || 1;
-    return sequence(from, to, step, (value) => String(value));
+    // `brace-expansion` keeps the width of a zero-padded endpoint on every
+    // value it writes, so `{01..03}` names `01` and not `1`.
+    const zeroPadded = /^-?0\d/.test(rawFrom) || /^-?0\d/.test(rawTo);
+    const width = Math.max(rawFrom.length, rawTo.length);
+    return sequence(
+      Number(rawFrom),
+      Number(rawTo),
+      step,
+      (value) => zeroPadded ? paddedNumber(value, width) : String(value),
+    );
   }
   const alphabetic = /^([A-Za-z])\.\.([A-Za-z])(?:\.\.(-?\d+))?$/.exec(body);
   if (!alphabetic) return null;
@@ -1156,6 +1168,13 @@ function braceSequence(body: string): string[] | "overflow" | null {
   const to = alphabetic[2]!.codePointAt(0)!;
   const step = Math.abs(Number(alphabetic[3] ?? 1)) || 1;
   return sequence(from, to, step, (value) => String.fromCodePoint(value));
+}
+
+/** A number in a fixed width, with its sign kept outside the padding. */
+function paddedNumber(value: number, width: number): string {
+  const sign = value < 0 ? "-" : "";
+  const digits = String(Math.abs(value));
+  return `${sign}${"0".repeat(Math.max(0, width - digits.length - sign.length))}${digits}`;
 }
 
 /** The values from `from` to `to` inclusive, in whichever direction that is. */
