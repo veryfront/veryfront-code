@@ -5,7 +5,9 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  assertCatalogInvariants,
   buildModelCatalogData,
+  findStaleOverlayKeys,
   findUnroutedProviders,
   type ModelCatalogData,
   renderModelCatalogModule,
@@ -649,6 +651,128 @@ describe("scripts/build/model-catalog-mapping", () => {
       )?.[1],
       { openAIChatReasoningWithFunctionTools: false },
     );
+  });
+
+  /**
+   * Each row breaks exactly one precondition of a lookup in
+   * `src/provider/veryfront-cloud/model-catalog.ts`. The generated data has to
+   * satisfy them all, because every one of those lookups resolves by first
+   * match or through a Map, so a duplicate makes an entry unreachable rather
+   * than reporting itself.
+   */
+  const BROKEN_INVARIANTS: ReadonlyArray<
+    readonly [
+      name: string,
+      apply: (data: ModelCatalogData) => ModelCatalogData,
+      message: string,
+    ]
+  > = [
+    [
+      "a published id claimed twice",
+      (data) => ({
+        ...data,
+        chatModels: [...data.chatModels, {
+          ...data.chatModels[0],
+          modelId: "beta-works/other",
+        }],
+      }),
+      "published id",
+    ],
+    [
+      "a model id claimed twice",
+      (data) => ({
+        ...data,
+        chatModels: [...data.chatModels, {
+          ...data.chatModels[0],
+          id: "another-id",
+        }],
+      }),
+      "model id",
+    ],
+    [
+      "a provider alias claimed twice",
+      (data) => ({
+        ...data,
+        providerAliases: [...data.providerAliases, ["acme-labs", "beta-works"]],
+      }),
+      "provider alias",
+    ],
+    [
+      "a transport capability keyed twice",
+      (data) => ({
+        ...data,
+        modelTransportCapabilities: [
+          ...data.modelTransportCapabilities,
+          ["beta-works/riddle-9", { openAITransport: "responses" }],
+        ],
+      }),
+      "transport capabilities",
+    ],
+    [
+      "a routing entry keyed twice",
+      (data) => ({
+        ...data,
+        providerRouting: [...data.providerRouting, ["acme-labs", {
+          surface: "openai",
+        }]],
+      }),
+      "provider routing",
+    ],
+    [
+      "a default that names no entry",
+      (data) => ({ ...data, defaultModelId: "not-a-published-id" }),
+      "default model",
+    ],
+    [
+      "a routed surface with no gateway API version",
+      (data) => ({
+        ...data,
+        providerRouting: [["acme-labs", { surface: "a-new-surface" }]],
+        providerOrder: ["acme-labs"],
+        providerLabels: [["acme-labs", "Acme Labs"]],
+        providerAliases: [["acme-labs", "acme-labs"]],
+      }),
+      "gateway API version",
+    ],
+    [
+      "a default surface with no gateway API version",
+      (data) => ({ ...data, defaultSurface: "a-new-surface" }),
+      "gateway API version",
+    ],
+  ];
+
+  for (const [name, apply, message] of BROKEN_INVARIANTS) {
+    it(`rejects generated data with ${name}`, () => {
+      const data = buildModelCatalogData(fakePayload(), OVERLAY);
+      assertThrows(() => assertCatalogInvariants(apply(data)), Error, message);
+    });
+  }
+
+  it("accepts the data generated from a well-formed payload", () => {
+    const data = buildModelCatalogData(fakePayload(), OVERLAY);
+
+    assertCatalogInvariants(data);
+  });
+
+  it("reports an overlay row that no longer refers to anything served", () => {
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      thinkingBudgetTokens: [...OVERLAY.thinkingBudgetTokens, [
+        "beta-works/withdrawn",
+        256,
+      ]],
+      entryIds: [...OVERLAY.entryIds, ["beta-works/also-gone", "gone"]],
+    };
+    const data = buildModelCatalogData(fakePayload(), overlay);
+
+    // A stale row is reported, not fatal: a vendor withdrawing a model must
+    // not stop the catalog syncing until someone prunes the overlay.
+    assertEquals(findStaleOverlayKeys(data, overlay), [
+      'entryIds "beta-works/also-gone"',
+      'thinkingBudgetTokens "beta-works/withdrawn"',
+    ]);
+    // A retained row names a model that is deliberately not served.
+    assertEquals(findStaleOverlayKeys(data, OVERLAY), []);
   });
 
   it("holds only the fields the allowlist names", () => {

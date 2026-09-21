@@ -388,7 +388,7 @@ export function buildModelCatalogData(
         `the default model "${servedDefaultModelId}" is not one of the served models`,
       );
 
-  return {
+  const data: ModelCatalogData = {
     defaultModelId: defaultEntry.id,
     providerAliases,
     providerRouting,
@@ -401,6 +401,148 @@ export function buildModelCatalogData(
     providerLabels,
     providerOrder,
   };
+  // The output has to be readable back by the package's lookups, so it is
+  // checked here rather than left to whoever reviews the generated diff.
+  assertCatalogInvariants(data);
+  return data;
+}
+
+/** Keys that appear more than once, in the order they first appear. */
+function findDuplicates(keys: readonly string[]): readonly string[] {
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const key of keys) {
+    if (seen.has(key)) duplicated.add(key);
+    seen.add(key);
+  }
+  return [...duplicated];
+}
+
+/**
+ * Check the generated data against what the package's lookups require.
+ *
+ * Every lookup in `model-catalog.ts` resolves either by first match
+ * (`findVeryfrontCloudModel`, `findVeryfrontCloudModelByModelId`,
+ * `resolveVeryfrontCloudModelId`) or through a `Map` built from a table
+ * (provider aliases, transport capabilities, provider routing, gateway API
+ * versions). Both silently prefer one entry and discard the rest, so a
+ * duplicate does not announce itself: it makes a model or a provider
+ * unreachable. These are the preconditions of those lookups, not house style,
+ * so generation fails rather than shipping data that cannot be read back.
+ */
+export function assertCatalogInvariants(data: ModelCatalogData): void {
+  const duplicateIds = findDuplicates(data.chatModels.map((model) => model.id));
+  if (duplicateIds.length > 0) {
+    fail(
+      `published id claimed by more than one model: ${duplicateIds.join(", ")}`,
+    );
+  }
+
+  const duplicateModelIds = findDuplicates(
+    data.chatModels.map((model) => model.modelId),
+  );
+  if (duplicateModelIds.length > 0) {
+    fail(
+      `model id claimed by more than one entry: ${
+        duplicateModelIds.join(", ")
+      }`,
+    );
+  }
+
+  const duplicateAliases = findDuplicates(
+    data.providerAliases.map(([alias]) => alias),
+  );
+  if (duplicateAliases.length > 0) {
+    fail(
+      `provider alias mapped more than once: ${duplicateAliases.join(", ")}`,
+    );
+  }
+
+  const duplicateCapabilities = findDuplicates(
+    data.modelTransportCapabilities.map(([modelId]) => modelId),
+  );
+  if (duplicateCapabilities.length > 0) {
+    fail(
+      `transport capabilities declared twice for: ${
+        duplicateCapabilities.join(", ")
+      }`,
+    );
+  }
+
+  const duplicateRouting = findDuplicates(
+    data.providerRouting.map(([provider]) => provider),
+  );
+  if (duplicateRouting.length > 0) {
+    fail(`provider routing declared twice for: ${duplicateRouting.join(", ")}`);
+  }
+
+  // `model-catalog.ts` throws at module load when the default names no entry,
+  // so a generated file that breaks this cannot even be imported.
+  const defaults = data.chatModels.filter((model) =>
+    model.id === data.defaultModelId
+  );
+  if (defaults.length !== 1) {
+    fail(
+      `the default model "${data.defaultModelId}" names ${defaults.length} entries, not exactly one`,
+    );
+  }
+
+  // `resolveVeryfrontCloudGatewayPath` reads the version for the surface a
+  // provider routes on, so every routed surface needs one, as does the
+  // surface used for a provider the table does not list.
+  const versioned = new Set(
+    data.surfaceGatewayApiVersions.map(([surface]) => surface),
+  );
+  const unversioned = [
+    ...new Set(data.providerRouting.map(([, routing]) => routing.surface)),
+    data.defaultSurface,
+  ].filter((surface) => !versioned.has(surface));
+  if (unversioned.length > 0) {
+    fail(
+      `no gateway API version for surface: ${
+        [...new Set(unversioned)].join(", ")
+      }`,
+    );
+  }
+}
+
+/**
+ * Overlay rows that no longer refer to anything in the output.
+ *
+ * Reported rather than fatal, and deliberately so: a vendor withdrawing a
+ * model would otherwise stop the catalog syncing until somebody pruned the
+ * overlay, which punishes an unrelated change. The overlay's own contract is
+ * that a row is deleted once it no longer applies, so this is the reminder.
+ * `retainedTransportCapabilities` is exempt by definition: those rows exist
+ * precisely because the catalog no longer serves the model.
+ */
+export function findStaleOverlayKeys(
+  data: ModelCatalogData,
+  overlay: ModelCatalogOverlay,
+): readonly string[] {
+  const modelIds = new Set(data.chatModels.map((model) => model.modelId));
+  const providers = new Set(data.providerOrder);
+  const stale: string[] = [];
+
+  const modelKeyed: ReadonlyArray<
+    readonly [string, readonly (readonly [string, unknown])[]]
+  > = [
+    ["entryIds", overlay.entryIds],
+    ["thinkingBudgetTokens", overlay.thinkingBudgetTokens],
+    [
+      "openAIChatReasoningWithFunctionTools",
+      overlay.openAIChatReasoningWithFunctionTools,
+    ],
+  ];
+  for (const [table, rows] of modelKeyed) {
+    for (const [modelId] of rows) {
+      if (!modelIds.has(modelId)) stale.push(`${table} "${modelId}"`);
+    }
+  }
+  for (const [provider] of overlay.providerRouting) {
+    if (!providers.has(provider)) stale.push(`providerRouting "${provider}"`);
+  }
+  return stale;
 }
 
 /** Providers the catalog names that the overlay declares no routing for. */

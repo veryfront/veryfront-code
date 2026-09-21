@@ -32,6 +32,7 @@
 import { fromFileUrl } from "#std/path";
 import {
   buildModelCatalogData,
+  findStaleOverlayKeys,
   findUnroutedProviders,
   renderModelCatalogModule,
 } from "./model-catalog-mapping.ts";
@@ -120,6 +121,14 @@ async function main(): Promise<number> {
       `Routing is not declared for: ${unrouted.join(", ")}. ` +
         `They are written on the default surface. Add them to ` +
         `scripts/build/model-catalog-overlay.ts.`,
+    );
+  }
+
+  const stale = findStaleOverlayKeys(data, MODEL_CATALOG_OVERLAY);
+  if (stale.length > 0) {
+    console.error(
+      `Overlay rows no longer refer to anything served: ${stale.join(", ")}. ` +
+        `Delete them from scripts/build/model-catalog-overlay.ts.`,
     );
   }
 
