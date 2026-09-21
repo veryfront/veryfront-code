@@ -773,8 +773,9 @@ describe("classifyProjectNpmImport", () => {
       version: "1.9.0",
       subpath: ".",
     });
-    // The runtime's own copy still wins when it is the admitted version.
-    assertEquals(classify("npm:sharp@0.35.4", { sharp: "^0.35.0" }), {
+    // The runtime's own copy still wins when it is the version the project
+    // locked -- which is the version an import naming it would have.
+    assertEquals(classify("npm:sharp@0.35.4", { sharp: "^0.35.0" }, { sharp: "0.35.4" }), {
       kind: "runtime",
       specifier: "npm:sharp@0.35.4",
     });
@@ -1084,9 +1085,18 @@ describe("classifyProjectNpmImport", () => {
       kind: "runtime",
       specifier: "npm:yaml@2.9.0",
     });
-    assertEquals(classify("npm:sharp@0.35.4/lib/utility", { sharp: "^0.35.0" }), {
-      kind: "runtime",
-      specifier: "npm:sharp@0.35.4/lib/utility",
+    assertEquals(
+      classify("npm:sharp@0.35.4/lib/utility", { sharp: "^0.35.0" }, { sharp: "0.35.4" }),
+      { kind: "runtime", specifier: "npm:sharp@0.35.4/lib/utility" },
+    );
+    // An import naming another exact version asks for a coordinate the
+    // lockfile never vouched for, so the embedded copy is withheld and the
+    // fetch is left to the CDN path -- which refuses the same mismatch.
+    assertEquals(classify("npm:sharp@0.34.5", { sharp: "^0.34.0" }, { sharp: "0.34.9" }), {
+      kind: "cdn",
+      name: "sharp",
+      version: "0.34.5",
+      subpath: ".",
     });
   });
 

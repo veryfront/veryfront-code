@@ -1204,6 +1204,13 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/{store-web,a}"]), "apps/store-web");
       assertEquals(await declaring(["{a..z}pps/store-web"]), "apps/store-web");
       assertEquals(await declaring(["apps{1..3}/store-web"]), "");
+      // A declaration with a pattern too large to expand is unreadable, and
+      // an exclusion this could not expand may be the one covering the
+      // member, so nothing in it is trusted.
+      const wide = `{${Array.from({ length: 65 }, (_, index) => `x${index}`).join(",")}}`;
+      assertEquals(await declaring(["apps/*"]), "apps/store-web");
+      assertEquals(await declaring(["apps/*", `!apps/${wide}`]), "");
+      assertEquals(await declaring([`apps/${wide}`, "apps/*"]), "");
       // `..` walks back, and a pattern that walks out of the root names none.
       assertEquals(await declaring(["libs/../apps/*"]), "apps/store-web");
       assertEquals(await declaring(["../apps/*"]), "");

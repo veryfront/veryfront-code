@@ -909,7 +909,9 @@ function declaresWorkspaceMember(rootPackageJson: string, member: string): boole
   if (!Array.isArray(patterns)) return false;
   // npm never crawls into node_modules for members, whatever the patterns say.
   if (member.split("/").includes("node_modules")) return false;
-  const { included, excluded } = workspacePatterns(patterns);
+  const declaration = workspacePatterns(patterns);
+  if (declaration === null) return false;
+  const { included, excluded } = declaration;
   const segments = member.split("/");
   const matches = (pattern: string) => matchesWorkspacePattern(pattern.split("/"), segments);
   return included.some(matches) && !excluded.some(matches);
@@ -927,7 +929,7 @@ function declaresWorkspaceMember(rootPackageJson: string, member: string): boole
  */
 function workspacePatterns(
   patterns: readonly unknown[],
-): { included: string[]; excluded: string[] } {
+): { included: string[]; excluded: string[] } | null {
   const included: string[] = [];
   const excluded: string[] = [];
   for (const pattern of patterns) {
@@ -935,7 +937,11 @@ function workspacePatterns(
     const marks = /^!*/.exec(pattern)![0].length;
     const normalized = normalizeWorkspacePattern(pattern.slice(marks));
     if (normalized.length === 0) continue;
-    for (const alternative of expandBraces(normalized)) {
+    const alternatives = expandBraces(normalized);
+    // One unreadable pattern makes the whole declaration unreadable: an
+    // exclusion this could not expand may be the one covering the project.
+    if (alternatives === null) return null;
+    for (const alternative of alternatives) {
       const expanded = walkedPattern(alternative);
       if (expanded === null || expanded.length === 0) continue;
       if (marks % 2 === 1) {
@@ -1019,7 +1025,7 @@ const MAX_WORKSPACE_PATTERN_ALTERNATIVES = 64;
  * `["packages/app", "packages/web"]`, which is how npm's minimatch reads it.
  * An unbalanced or empty `{` stays literal, as minimatch leaves it.
  */
-function expandBraces(pattern: string): string[] {
+function expandBraces(pattern: string): string[] | null {
   const open = unescapedIndexOf(pattern, "{");
   const close = open < 0 ? -1 : matchingBrace(pattern, open);
   if (close < 0) return [pattern];
@@ -1030,10 +1036,15 @@ function expandBraces(pattern: string): string[] {
   const tail = pattern.slice(close + 1);
   const expanded: string[] = [];
   for (const alternative of alternatives) {
-    for (const rest of expandBraces(`${head}${alternative}${tail}`)) {
-      if (expanded.length >= MAX_WORKSPACE_PATTERN_ALTERNATIVES) return expanded;
-      expanded.push(rest);
+    const rest = expandBraces(`${head}${alternative}${tail}`);
+    // Past the cap the expansion is INCOMPLETE, and a partial one is not a
+    // safe reading in either direction: dropping an alternative of an
+    // exclusion would admit a member npm excludes. The declaration is
+    // unverifiable instead.
+    if (rest === null || expanded.length + rest.length > MAX_WORKSPACE_PATTERN_ALTERNATIVES) {
+      return null;
     }
+    expanded.push(...rest);
   }
   return expanded;
 }

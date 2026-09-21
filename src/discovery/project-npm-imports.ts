@@ -859,13 +859,18 @@ export function classifyProjectNpmImport(
     ...parsed,
     declared,
     pin,
-    // A DECLARED package may reuse the binary's embedded copy only when the
-    // lockfile both vouches for its public source and resolves a version the
-    // declaration admits. The name alone is not enough: a stale public lock at
-    // `2.8.0` under an exact `yaml@2.9.0` declaration would otherwise hand the
-    // project the embedded 2.9.0 -- a version it never installed -- where the
-    // CDN path refuses the same mismatch outright.
-    embedded: declared !== undefined && !(publiclySourced.has(parsed.name) && admittedLock !== null)
+    // A DECLARED package may reuse the binary's embedded copy only for the
+    // version the lockfile vouched for. The name alone is not enough: a stale
+    // public lock at `2.8.0` under an exact `yaml@2.9.0` declaration would
+    // otherwise hand the project the embedded 2.9.0 -- a version it never
+    // installed -- where the CDN path refuses the same mismatch outright. Nor
+    // is the lock entry alone: an import naming another exact version asks for
+    // a coordinate whose provenance and transitive graph were never walked,
+    // so `npm:pkg@1.5.0` under a lock at 1.6.0 gets no embedded copy either.
+    embedded: declared !== undefined && !vouchedForVersion(
+        publiclySourced.has(parsed.name) ? admittedLock : null,
+        parsed.version,
+      )
       ? { packages: {}, constraints: {} }
       : embedded,
   };
@@ -919,6 +924,20 @@ function classifyRuntimeProvidedImport(
   // The binary records nothing for it at all, which is every uncompiled run:
   // the specifier is left as written, for the runtime to resolve as before.
   return { kind: "runtime" };
+}
+
+/**
+ * Is the binary's embedded copy the version the lockfile vouched for?
+ *
+ * `vouched` is the locked version when the project's own sources stand behind
+ * it, and `null` when nothing does. An import that names no exact version
+ * takes that answer as it is; one that names a different exact version is
+ * asking for a coordinate the walk never covered.
+ */
+function vouchedForVersion(vouched: string | null, requested: string | null): boolean {
+  if (vouched === null) return false;
+  if (requested === null || !EXACT_VERSION.test(requested)) return true;
+  return requested === vouched;
 }
 
 /**
