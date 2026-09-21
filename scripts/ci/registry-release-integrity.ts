@@ -55,9 +55,12 @@ export interface PollRegistryPackageOptions {
   delay?: (milliseconds: number) => Promise<void>;
   onRetry?: (message: string) => void;
   /**
-   * How long the whole poll may take. A lookup that answers slowly spends its
-   * request timeout on top of the retry delay, so counting attempts alone
-   * does not bound the wall clock the surrounding job is sized for.
+   * How long the poll may keep STARTING lookups. A lookup that answers slowly
+   * spends its request timeout on top of the retry delay, so counting
+   * attempts alone does not bound the wall clock the surrounding job is sized
+   * for. The last lookup may begin at the deadline and still take its request
+   * timeout, so the poll ends within `budgetMs + requestTimeoutMs`: fifteen
+   * minutes and a quarter by default, which the job's forty accommodate.
    */
   budgetMs?: number;
   /** The clock, for tests. */
