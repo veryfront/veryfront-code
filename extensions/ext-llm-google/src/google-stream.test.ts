@@ -10,7 +10,10 @@ import {
   streamGoogleCompatibleParts,
 } from "./google-stream.ts";
 import { buildGoogleGenerateContentRequest } from "./google-request-builder.ts";
-import { MAX_GOOGLE_PROVIDER_METADATA_BYTES } from "./google-thought-signatures.ts";
+import {
+  MAX_GOOGLE_PROVIDER_METADATA_BYTES,
+  readGoogleRawAssistantReplay,
+} from "./google-thought-signatures.ts";
 
 function streamFromText(text: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -1194,10 +1197,146 @@ describe("ext-llm-google/google-stream", () => {
     );
   });
 
-  it("bounds retained raw parts across many small candidate events", async () => {
+  // Gemini chooses how finely it chunks a stream, so a per-chunk count limit is
+  // a wall-clock limit for long generations. Adjacent plain text chunks are
+  // retained as one raw part and bounded by bytes.
+  it("accepts 20,000 small text chunks and retains them as one raw part", async () => {
+    const LONG_STREAM_CHUNKS = 20_000;
+    const parts = await collectParts(streamFromText([
+      data({
+        candidates: [{
+          content: { parts: [{ text: "", thought: true, thoughtSignature: "c2ln" }] },
+        }],
+      }),
+      ...Array.from(
+        { length: LONG_STREAM_CHUNKS },
+        () => data({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
+      ),
+      data({ candidates: [{ finishReason: "STOP" }] }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(
+      parts.filter((part) => (part as { type?: string }).type === "text-delta").length,
+      LONG_STREAM_CHUNKS,
+    );
+    const finish = parts.at(-1) as {
+      type: string;
+      providerMetadata?: { google?: { rawAssistantParts?: unknown[] } };
+    };
+    assertEquals(finish.type, "finish");
+    assertEquals(finish.providerMetadata?.google?.rawAssistantParts, [
+      { text: "", thought: true, thoughtSignature: "c2ln" },
+      { text: "x".repeat(LONG_STREAM_CHUNKS) },
+    ]);
+  });
+
+  it("bounds merged text chunks by retained UTF-8 bytes", async () => {
+    const half = Math.ceil(MAX_GOOGLE_RETAINED_STATE_BYTES / 2);
+    const events = [
+      data({ candidates: [{ content: { parts: [{ text: "a".repeat(half) }] } }] }),
+      data({ candidates: [{ content: { parts: [{ text: "b".repeat(half) }] } }] }),
+    ];
+
+    const encoder = new TextEncoder();
+    await assertRejects(
+      () => collectParts(streamFromBytes(...events.map((event) => encoder.encode(event)))),
+      ProviderRequestError,
+      `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_BYTES} UTF-8 bytes`,
+    );
+  });
+
+  it("keeps fallback tool-call ids stable when text chunks merge", async () => {
+    const parts = await collectParts(streamFromText([
+      data({ candidates: [{ content: { parts: [{ text: "a" }] } }] }),
+      data({ candidates: [{ content: { parts: [{ text: "b" }] } }] }),
+      data({
+        candidates: [{ content: { parts: [{ functionCall: { name: "lookup", args: {} } }] } }],
+      }),
+      data({
+        candidates: [{
+          content: { parts: [{ functionCall: { id: "tool-1", name: "lookup", args: {} } }] },
+        }],
+      }),
+      data({ candidates: [{ finishReason: "STOP" }] }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(
+      parts
+        .filter((part) => (part as { type?: string }).type === "tool-call")
+        .map((part) => (part as { toolCallId: string }).toolCallId),
+      ["tool-2", "tool-1"],
+    );
+  });
+
+  it("replays original part positions after a long merged text run", async () => {
+    const LONG_STREAM_CHUNKS = 20_000;
+    const parts = await collectParts(streamFromText([
+      data({
+        candidates: [{
+          content: { parts: [{ text: "", thought: true, thoughtSignature: "c2ln" }] },
+        }],
+      }),
+      ...Array.from(
+        { length: LONG_STREAM_CHUNKS },
+        () => data({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
+      ),
+      data({
+        candidates: [{ content: { parts: [{ functionCall: { name: "lookup", args: {} } }] } }],
+      }),
+      data({ candidates: [{ finishReason: "STOP" }] }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    const toolCall = parts.find((part) => (part as { type?: string }).type === "tool-call") as {
+      toolCallId: string;
+    };
+    assertEquals(toolCall.toolCallId, `tool-${LONG_STREAM_CHUNKS + 1}`);
+    const finish = parts.at(-1) as { providerMetadata?: Record<string, unknown> };
+    const replay = readGoogleRawAssistantReplay(finish.providerMetadata);
+    assertEquals(replay?.partIndexes, [0, 1, LONG_STREAM_CHUNKS + 1]);
+    assertEquals(replay?.parts.length, 3);
+  });
+
+  it("charges merged text by its escaped JSON size", async () => {
+    // Each control character is one UTF-8 byte but six bytes once escaped.
+    const chunkChars = Math.ceil(MAX_GOOGLE_RETAINED_STATE_BYTES / 6 / 2) + 1;
+    const encoder = new TextEncoder();
+    const events = [
+      data({ candidates: [{ content: { parts: [{ text: "\u0001".repeat(chunkChars) }] } }] }),
+      data({ candidates: [{ content: { parts: [{ text: "\u0001".repeat(chunkChars) }] } }] }),
+    ];
+
+    await assertRejects(
+      () => collectParts(streamFromBytes(...events.map((event) => encoder.encode(event)))),
+      ProviderRequestError,
+      `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_BYTES} UTF-8 bytes`,
+    );
+  });
+
+  it("bounds a flood of empty text chunks", async () => {
     const events = Array.from(
       { length: MAX_GOOGLE_RETAINED_STATE_ITEMS + 1 },
-      () => data({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
+      () => data({ candidates: [{ content: { parts: [{ text: "" }] } }] }),
+    );
+
+    await assertRejects(
+      () => collectParts(streamFromText(events.join(""))),
+      ProviderRequestError,
+      `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_ITEMS} items`,
+    );
+  });
+
+  it("bounds retained raw parts that cannot be merged", async () => {
+    const events = Array.from(
+      { length: MAX_GOOGLE_RETAINED_STATE_ITEMS + 1 },
+      (_, index) =>
+        data({
+          candidates: [{
+            content: { parts: [index % 2 === 0 ? { text: "x", thought: true } : { text: "y" }] },
+          }],
+        }),
     );
 
     await assertRejects(
@@ -1230,7 +1369,12 @@ describe("ext-llm-google/google-stream", () => {
   });
 
   it("accepts the exact aggregate UTF-8 byte limit and rejects limit plus one", async () => {
-    const emptyPartBytes = new TextEncoder().encode(JSON.stringify({ text: "" })).byteLength;
+    // Alternate the thought flag so each chunk stays its own retained part;
+    // adjacent plain text chunks would otherwise merge into one part.
+    const partShape = (index: number) =>
+      index % 2 === 0 ? { text: "" } : { text: "", thought: true };
+    const emptyPartBytes = (index: number) =>
+      new TextEncoder().encode(JSON.stringify(partShape(index))).byteLength;
     const quarter = Math.floor(MAX_GOOGLE_RETAINED_STATE_BYTES / 4);
     const serializedPartBytes = [
       quarter,
@@ -1246,8 +1390,9 @@ describe("ext-llm-google/google-stream", () => {
             candidates: [{
               content: {
                 parts: [{
+                  ...partShape(index),
                   text: utf8StringWithByteLength(
-                    byteLength - emptyPartBytes +
+                    byteLength - emptyPartBytes(index) +
                       (index === serializedPartBytes.length - 1 ? lastPartExtraBytes : 0),
                   ),
                 }],

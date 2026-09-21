@@ -9,7 +9,7 @@ import {
 } from "./openai-tool-input.ts";
 
 function emptyBudget(): OpenAIStreamToolArgumentBudget {
-  return { bytes: 0, fragments: 0 };
+  return { bytes: 0, emptyFragments: 0 };
 }
 
 describe("ext-llm-openai/openai-tool-input", () => {

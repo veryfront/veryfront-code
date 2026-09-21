@@ -1,4 +1,5 @@
 import {
+  createStreamRetentionBudget,
   mergeUsage,
   parseSseChunk,
   ProviderOutputTruncatedError,
@@ -7,9 +8,15 @@ import {
   ProviderRequestError,
   readGatewayBillingMode,
   readRecord,
+  reserveStreamRetention,
+  StreamFragmentBuffer,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
-import type { RuntimeUsage } from "veryfront/provider/shared";
+import type {
+  RuntimeUsage,
+  StreamRetentionBudget,
+  StreamRetentionLimits,
+} from "veryfront/provider/shared";
 import {
   type AnthropicProviderToolNameRegistry,
   isAnthropicProviderToolResultBlockType,
@@ -49,9 +56,8 @@ function normalizeAnthropicTimerDurationMs(
 type AnthropicStreamToolCallState = {
   id: string;
   name: string;
-  inputChunks: string[];
-  inputBytes: number;
-  partialJsonDeltaCount: number;
+  input: StreamFragmentBuffer;
+  inputBudget: StreamRetentionBudget;
   providerExecuted?: boolean;
 };
 
@@ -87,12 +93,25 @@ const CLIENT_TOOL_USE_FINISH_REASON = { unified: "tool-calls", raw: "tool_use" }
 const DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_GRACE_MS = 100;
 const DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_DRAIN_TIMEOUT_MS = 15_000;
 const MAX_ANTHROPIC_PARTIAL_JSON_BYTES = 1_048_576;
-const MAX_ANTHROPIC_PARTIAL_JSON_DELTAS = 4_096;
+/**
+ * Zero-byte partial_json deltas accepted per tool call. Non-empty deltas are
+ * bounded only by {@link MAX_ANTHROPIC_PARTIAL_JSON_BYTES}: fine-grained tool
+ * streaming sends dozens of deltas per second, so counting them would fail any
+ * tool input that streams for longer than a couple of minutes.
+ */
+const MAX_ANTHROPIC_EMPTY_PARTIAL_JSON_DELTAS = 4_096;
+const ANTHROPIC_TOOL_INPUT_LIMITS: StreamRetentionLimits = {
+  maxBytes: MAX_ANTHROPIC_PARTIAL_JSON_BYTES,
+  maxEmptyFragments: MAX_ANTHROPIC_EMPTY_PARTIAL_JSON_DELTAS,
+};
 const MAX_ANTHROPIC_SSE_EVENT_BYTES = 8_388_608;
 const MAX_ANTHROPIC_SSE_REMAINDER_BYTES = 8_388_608;
 export const MAX_ANTHROPIC_RETAINED_CONTENT_BYTES = 16_777_216;
+/**
+ * Structural values (content blocks, citations) and empty text or thinking
+ * deltas accepted per stream. Non-empty deltas are bounded by bytes only.
+ */
 export const MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS = 8_192;
-const ANTHROPIC_TOOL_INPUT_ENCODER = new TextEncoder();
 
 function invalidAnthropicStream(
   providerLabel: string,
@@ -138,51 +157,70 @@ function readAnthropicStreamIndex(
 function appendAnthropicToolInput(
   toolCall: AnthropicStreamToolCallState,
   delta: string,
-  countPartialJsonDelta = false,
+  isPartialJsonDelta = false,
 ): void {
-  if (
-    countPartialJsonDelta &&
-    toolCall.partialJsonDeltaCount >= MAX_ANTHROPIC_PARTIAL_JSON_DELTAS
-  ) {
+  // An absent initial input serializes to "" and is not a streamed fragment.
+  if (!isPartialJsonDelta && delta.length === 0) return;
+  const overflow = reserveStreamRetention(toolCall.inputBudget, delta, ANTHROPIC_TOOL_INPUT_LIMITS);
+  if (overflow === "empty-fragments") {
     throw new RangeError(
-      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_PARTIAL_JSON_DELTAS} deltas`,
+      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_EMPTY_PARTIAL_JSON_DELTAS} empty fragments`,
     );
   }
-  const deltaBytes = ANTHROPIC_TOOL_INPUT_ENCODER.encode(delta).byteLength;
-  if (deltaBytes > MAX_ANTHROPIC_PARTIAL_JSON_BYTES - toolCall.inputBytes) {
+  if (overflow === "bytes") {
     throw new RangeError(
       `Anthropic partial_json exceeded ${MAX_ANTHROPIC_PARTIAL_JSON_BYTES} UTF-8 bytes`,
     );
   }
-  if (countPartialJsonDelta) {
-    toolCall.partialJsonDeltaCount++;
-  }
-  toolCall.inputBytes += deltaBytes;
-  toolCall.inputChunks.push(delta);
+  toolCall.input.append(delta);
 }
 
 function joinAnthropicToolInput(toolCall: AnthropicStreamToolCallState): string {
-  return toolCall.inputChunks.join("");
+  return toolCall.input.toString();
 }
 
 class AnthropicRetainedContentBudget {
-  #bytes = 0;
+  readonly #budget = createStreamRetentionBudget();
   #items = 0;
 
-  retain(value: string, issue: string): void {
+  /**
+   * Retain a structural value (content block, citation). Each one creates
+   * state, so structural values are capped by count as well as by bytes.
+   */
+  retainItem(value: string, issue: string): void {
     if (this.#items >= MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS) {
       throw new RangeError(
         `Anthropic retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} items (${issue})`,
       );
     }
-    const bytes = ANTHROPIC_TOOL_INPUT_ENCODER.encode(value).byteLength;
-    if (bytes > MAX_ANTHROPIC_RETAINED_CONTENT_BYTES - this.#bytes) {
+    this.#reserve(value, issue);
+    this.#items++;
+  }
+
+  /**
+   * Retain a streamed text or thinking delta. Deltas are bounded by bytes; only
+   * empty deltas count toward the item limit, because the provider chooses how
+   * finely it chunks a stream.
+   */
+  retainDelta(value: string, issue: string): void {
+    this.#reserve(value, issue);
+  }
+
+  #reserve(value: string, issue: string): void {
+    const overflow = reserveStreamRetention(this.#budget, value, {
+      maxBytes: MAX_ANTHROPIC_RETAINED_CONTENT_BYTES,
+      maxEmptyFragments: MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS,
+    });
+    if (overflow === "empty-fragments") {
+      throw new RangeError(
+        `Anthropic retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} empty fragments (${issue})`,
+      );
+    }
+    if (overflow === "bytes") {
       throw new RangeError(
         `Anthropic retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_BYTES} UTF-8 bytes (${issue})`,
       );
     }
-    this.#items++;
-    this.#bytes += bytes;
   }
 }
 
@@ -770,8 +808,8 @@ export async function* streamAnthropicCompatibleParts(
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
   const rawContentBlocks = new Map<number, Record<string, unknown>>();
-  const rawTextChunks = new Map<number, string[]>();
-  const rawThinkingChunks = new Map<number, string[]>();
+  const rawTextChunks = new Map<number, StreamFragmentBuffer>();
+  const rawThinkingChunks = new Map<number, StreamFragmentBuffer>();
   const retainedContentBudget = new AnthropicRetainedContentBudget();
   const openContentBlocks = new Set<number>();
   const seenContentBlocks = new Set<number>();
@@ -1062,7 +1100,7 @@ export async function* streamAnthropicCompatibleParts(
           clientToolUseIdleDeadlineMs = null;
           clientToolUseTerminalDeadlineMs = null;
           try {
-            retainedContentBudget.retain(
+            retainedContentBudget.retainItem(
               stringifyJsonValue(contentBlock),
               "content block",
             );
@@ -1082,7 +1120,7 @@ export async function* streamAnthropicCompatibleParts(
               throw invalidAnthropicStream(providerLabel, "text content block was malformed");
             }
             supportedContentBlocks.add(index);
-            rawTextChunks.set(index, [contentBlock.text]);
+            rawTextChunks.set(index, new StreamFragmentBuffer(contentBlock.text));
             if (contentBlock.text.length > 0) {
               yield { type: "text-delta", delta: contentBlock.text };
             }
@@ -1106,7 +1144,7 @@ export async function* streamAnthropicCompatibleParts(
                 ? { signature: contentBlock.signature }
                 : {}),
             });
-            rawThinkingChunks.set(index, [contentBlock.thinking ?? ""]);
+            rawThinkingChunks.set(index, new StreamFragmentBuffer(contentBlock.thinking ?? ""));
             yield {
               type: "reasoning-start",
               id: reasoningId,
@@ -1160,9 +1198,8 @@ export async function* streamAnthropicCompatibleParts(
             const current: AnthropicStreamToolCallState = {
               id: contentBlock.id,
               name: contentBlock.name,
-              inputChunks: [],
-              inputBytes: 0,
-              partialJsonDeltaCount: 0,
+              input: new StreamFragmentBuffer(),
+              inputBudget: createStreamRetentionBudget(),
             };
 
             toolCalls.set(index, current);
@@ -1206,9 +1243,8 @@ export async function* streamAnthropicCompatibleParts(
             const current: AnthropicStreamToolCallState = {
               id: providerToolUse.toolCallId,
               name: providerToolUse.toolName,
-              inputChunks: [],
-              inputBytes: 0,
-              partialJsonDeltaCount: 0,
+              input: new StreamFragmentBuffer(),
+              inputBudget: createStreamRetentionBudget(),
               providerExecuted: true,
             };
             toolCalls.set(index, current);
@@ -1306,14 +1342,14 @@ export async function* streamAnthropicCompatibleParts(
               );
             }
             try {
-              retainedContentBudget.retain(delta.text, "text delta");
+              retainedContentBudget.retainDelta(delta.text, "text delta");
             } catch (error) {
               throw invalidAnthropicStream(
                 providerLabel,
                 error instanceof Error ? error.message : "text retention budget was exceeded",
               );
             }
-            chunks.push(delta.text);
+            chunks.append(delta.text);
             if (delta.text.length > 0) {
               yield { type: "text-delta", delta: delta.text };
             }
@@ -1341,14 +1377,14 @@ export async function* streamAnthropicCompatibleParts(
               );
             }
             try {
-              retainedContentBudget.retain(delta.thinking, "thinking delta");
+              retainedContentBudget.retainDelta(delta.thinking, "thinking delta");
             } catch (error) {
               throw invalidAnthropicStream(
                 providerLabel,
                 error instanceof Error ? error.message : "thinking retention budget was exceeded",
               );
             }
-            chunks.push(delta.thinking);
+            chunks.append(delta.thinking);
             if (delta.thinking.length > 0) {
               yield {
                 type: "reasoning-delta",
@@ -1390,7 +1426,7 @@ export async function* streamAnthropicCompatibleParts(
             }
             const citations = Array.isArray(rawBlock.citations) ? rawBlock.citations : [];
             try {
-              retainedContentBudget.retain(
+              retainedContentBudget.retainItem(
                 stringifyJsonValue(citation),
                 "citation delta",
               );
@@ -1446,12 +1482,12 @@ export async function* streamAnthropicCompatibleParts(
           const rawBlock = rawContentBlocks.get(index);
           const textChunks = rawTextChunks.get(index);
           if (rawBlock && textChunks) {
-            rawBlock.text = textChunks.join("");
+            rawBlock.text = textChunks.toString();
             rawTextChunks.delete(index);
           }
           const thinkingChunks = rawThinkingChunks.get(index);
           if (rawBlock && thinkingChunks) {
-            rawBlock.thinking = thinkingChunks.join("");
+            rawBlock.thinking = thinkingChunks.toString();
             rawThinkingChunks.delete(index);
           }
           const reasoning = reasoningBlocks.get(index);

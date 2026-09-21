@@ -15,6 +15,11 @@ const GOOGLE_METADATA_KEY = "google";
 const RAW_ASSISTANT_PARTS_KEY = "rawAssistantParts";
 const RAW_ASSISTANT_PART_INDEXES_KEY = "rawAssistantPartIndexes";
 const GROUNDING_METADATA_KEY = "groundingMetadata";
+/**
+ * Maximum raw assistant parts retained for replay. Part indexes record each
+ * part's original stream position and are only required to increase: adjacent
+ * text chunks are merged into one part, so a position can exceed this count.
+ */
 const MAX_GOOGLE_RAW_ASSISTANT_PARTS = 4_096;
 export const MAX_GOOGLE_PROVIDER_METADATA_BYTES = 8 * 1024 * 1024;
 const GOOGLE_PROVIDER_METADATA_SNAPSHOT_OPTIONS = {
@@ -406,8 +411,7 @@ function validateGoogleRawAssistantPartIndexes(
       typeof index !== "number" ||
       !Number.isSafeInteger(index) ||
       index <= previous ||
-      index < 0 ||
-      index >= MAX_GOOGLE_RAW_ASSISTANT_PARTS
+      index < 0
     ) {
       throw new TypeError("Google raw assistant part indexes must be increasing safe integers");
     }

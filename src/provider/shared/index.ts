@@ -39,6 +39,17 @@ export {
   parseSseChunk,
 } from "../runtime-loader/provider-sse.ts";
 
+// Byte-bounded retention for streamed fragments (tool arguments, replay text).
+export {
+  createStreamRetentionBudget,
+  reserveStreamRetention,
+  STREAM_FRAGMENT_COMPACTION_SIZE,
+  StreamFragmentBuffer,
+  type StreamRetentionBudget,
+  type StreamRetentionLimits,
+  type StreamRetentionOverflow,
+} from "../runtime-loader/stream-retention.ts";
+
 // Retry, error, HTTP, usage, and JSON boundary plumbing.
 export {
   buildProviderError,

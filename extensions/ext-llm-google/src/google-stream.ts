@@ -5,6 +5,7 @@ import {
   ProviderRequestError,
   readRecord,
   type RuntimeUsage,
+  StreamFragmentBuffer,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
 import {
@@ -196,6 +197,17 @@ export async function* streamGoogleCompatibleParts(
   const pendingAnonymousCodeExecutions: AnonymousCodeExecutionReplay[] = [];
   const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
   const rawAssistantParts: Array<Record<string, unknown>> = [];
+  // Original stream position of each retained part. Fallback tool-call IDs and
+  // replay derive from these, so merging text chunks never changes an ID.
+  const rawAssistantPartPositions: number[] = [];
+  let nextRawPartPosition = 0;
+  // Adjacent unsigned text chunks share one raw part, so replay state grows
+  // with content rather than with how finely Gemini chunked the stream.
+  const rawTextRuns: Array<{
+    index: number;
+    part: Record<string, unknown>;
+    text: StreamFragmentBuffer;
+  }> = [];
   let retainedStateBytes = 0;
   let retainedStateItems = 0;
   let reasoningId: string | null = null;
@@ -239,7 +251,34 @@ export async function* streamGoogleCompatibleParts(
     }
     reserveRetainedItem("raw candidate part");
     reserveRetainedBytes(serialized, "raw candidate part");
+    rawAssistantPartPositions.push(nextRawPartPosition++);
     return rawAssistantParts.push(part) - 1;
+  };
+
+  const isMergeableTextPart = (part: Record<string, unknown>): boolean =>
+    typeof part.text === "string" &&
+    Object.keys(part).every((key) => key === "text" || key === "thought");
+
+  const retainRawTextPart = (part: Record<string, unknown>, text: string): void => {
+    const run = rawTextRuns.at(-1);
+    if (
+      run !== undefined &&
+      run.index === rawAssistantParts.length - 1 &&
+      run.part.thought === part.thought &&
+      isMergeableTextPart(part)
+    ) {
+      // Empty chunks advance no byte budget, so they count as items.
+      if (text.length === 0) reserveRetainedItem("empty candidate text part");
+      // Charge the escaped form, as retainRawAssistantPart does for a whole part.
+      reserveRetainedBytes(JSON.stringify(text).slice(1, -1), "raw candidate part");
+      run.text.append(text);
+      nextRawPartPosition++;
+      return;
+    }
+    const index = retainRawAssistantPart(part);
+    if (isMergeableTextPart(part)) {
+      rawTextRuns.push({ index, part, text: new StreamFragmentBuffer(text) });
+    }
   };
 
   const reserveCorrelation = (issue: string, ...values: string[]): void => {
@@ -402,8 +441,8 @@ export async function* streamGoogleCompatibleParts(
       if (dataField === "text" && partText === undefined) {
         throw invalidGoogleStream(context, "candidate text part was malformed");
       }
-      if (dataField === "text") {
-        retainRawAssistantPart(part);
+      if (partText !== undefined) {
+        retainRawTextPart(part, partText);
       }
 
       if (partText !== undefined && part.thought === true) {
@@ -513,7 +552,7 @@ export async function* streamGoogleCompatibleParts(
 
         let toolCallId: string;
         try {
-          toolCallId = toolCallRegistry.registerFunctionCall(rawPartIndex, providerId);
+          toolCallId = toolCallRegistry.registerFunctionCall(nextRawPartPosition, providerId);
         } catch {
           throw invalidGoogleStream(context, "candidate tool call id was duplicated");
         }
@@ -862,11 +901,19 @@ export async function* streamGoogleCompatibleParts(
     };
   }
 
+  for (const run of rawTextRuns) {
+    rawAssistantParts[run.index] = { ...run.part, text: run.text.toString() };
+  }
+
   let providerMetadata: Record<string, unknown> | undefined;
   try {
+    const mergedTextChunks = rawAssistantPartPositions.some((position, index) =>
+      position !== index
+    );
     providerMetadata = createGoogleProviderMetadata(
       rawAssistantParts,
       groundingMetadata,
+      mergedTextChunks ? rawAssistantPartPositions : undefined,
     );
   } catch {
     // The stream accounts for retained raw parts and correlation state under
