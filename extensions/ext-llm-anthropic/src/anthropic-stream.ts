@@ -116,12 +116,14 @@ export const MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS = 8_192;
 function invalidAnthropicStream(
   providerLabel: string,
   issue: string,
+  cause?: unknown,
 ): ProviderRequestError {
   return new ProviderRequestError({
     provider: "anthropic",
     status: 200,
     message: `${providerLabel} request failed: invalid successful stream (${issue})`,
     retryable: false,
+    ...(cause === undefined ? {} : { cause }),
   });
 }
 
@@ -1106,7 +1108,7 @@ export async function* streamAnthropicCompatibleParts(
             );
           } catch (error) {
             if (error instanceof RangeError) {
-              throw invalidAnthropicStream(providerLabel, error.message);
+              throw invalidAnthropicStream(providerLabel, error.message, error);
             }
             throw invalidAnthropicStream(
               providerLabel,
@@ -1347,6 +1349,7 @@ export async function* streamAnthropicCompatibleParts(
               throw invalidAnthropicStream(
                 providerLabel,
                 error instanceof Error ? error.message : "text retention budget was exceeded",
+                error,
               );
             }
             chunks.append(delta.text);
@@ -1382,6 +1385,7 @@ export async function* streamAnthropicCompatibleParts(
               throw invalidAnthropicStream(
                 providerLabel,
                 error instanceof Error ? error.message : "thinking retention budget was exceeded",
+                error,
               );
             }
             chunks.append(delta.thinking);
@@ -1434,6 +1438,7 @@ export async function* streamAnthropicCompatibleParts(
               throw invalidAnthropicStream(
                 providerLabel,
                 error instanceof Error ? error.message : "citation retention budget was exceeded",
+                error,
               );
             }
             citations.push(citation);

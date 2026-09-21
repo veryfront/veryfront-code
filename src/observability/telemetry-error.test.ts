@@ -934,6 +934,23 @@ describe("observability/telemetry-error", () => {
       );
     });
 
+    it("reaches an exact diagnostic through a provider error wrapper", () => {
+      const limit = new RangeError(
+        "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+      );
+      const wrapper = new Error(
+        "anthropic request failed: invalid successful stream (Anthropic retained content exceeded 8192 empty fragments (text delta))",
+        { cause: limit },
+      );
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(wrapper)), [
+        { name: "Error", messageRedacted: true },
+        {
+          name: "RangeError",
+          message: "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+        },
+      ]);
+    });
+
     it("logs only allowlisted error names and transient codes", () => {
       const customName = Object.assign(new Error("x"), { name: "CustomerAcme123Error" });
       const customCode = Object.assign(new Error("x"), { code: "account-123456" });
