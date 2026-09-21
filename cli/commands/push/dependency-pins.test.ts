@@ -3,7 +3,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  addedDeclarationPins,
   adoptedPackageJsonPins,
   classifyPackageJsonDrift,
   type DependencyPreimage,
@@ -82,7 +81,7 @@ describe("classifyPackageJsonDrift", () => {
     ]);
     // The move is not an addition, but it is just as unbounded by anything the
     // user wrote, so it has to reach the same consent gate.
-    assertEquals(addedDeclarationPins(pins), []);
+    assertEquals(pins.filter((pin) => pin.added), []);
     assertEquals(pinsRequiringConsent(pins), pins);
     assertEquals(
       formatAdoptedPins(pins),
@@ -277,7 +276,8 @@ describe("classifyPackageJsonDrift", () => {
       { name: "zod", version: "3.25.7", added: false, sectionMove: null },
     ]);
     assertEquals(
-      addedDeclarationPins(adoptedPackageJsonPins(BASELINE_CONTENT, PINNED_CONTENT, PREIMAGES)),
+      adoptedPackageJsonPins(BASELINE_CONTENT, PINNED_CONTENT, PREIMAGES)
+        .filter((pin) => pin.added),
       [],
     );
     assertEquals(
@@ -300,7 +300,7 @@ describe("classifyPackageJsonDrift", () => {
     ];
     assertEquals(classifyPackageJsonDrift(BASELINE_CONTENT, remote, preimages), "server-pins");
     assertEquals(
-      addedDeclarationPins(adoptedPackageJsonPins(BASELINE_CONTENT, remote, preimages)),
+      adoptedPackageJsonPins(BASELINE_CONTENT, remote, preimages).filter((pin) => pin.added),
       [{ name: "clsx", version: "2.1.1", added: true, sectionMove: null }],
     );
     assertEquals(

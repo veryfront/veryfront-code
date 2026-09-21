@@ -435,26 +435,19 @@ export function formatAdoptedPins(pins: readonly AdoptedPin[]): string {
 }
 
 /**
- * The pins that introduce a declaration the local manifest never had.
- *
- * Tightening `"react": "^19.2.4"` to `19.3.0` stays inside a range the user
- * already chose, so the preimage proof is enough to adopt it. An addition is
- * not bounded by anything the user wrote: the package name and the version are
- * both chosen remotely, and the next `veryfront dev` installs them. Anyone with
- * `project.files.write` can seed both halves of the preimage proof by writing
- * the manifest and triggering a resolve, so additions need consent from the
- * person whose checkout is about to receive them.
- */
-export function addedDeclarationPins(pins: readonly AdoptedPin[]): AdoptedPin[] {
-  return pins.filter((pin) => pin.added);
-}
-
-/**
  * The pins that change more than a version, so that adopting them without
  * asking would make a decision on the user's behalf.
  *
- * Besides {@link addedDeclarationPins} this covers a declaration the write
- * moved between `dependencies` and `devDependencies`. The move is not a
+ * An addition is not bounded by anything the user wrote: tightening
+ * `"react": "^19.2.4"` to `19.3.0` stays inside a range they chose, but the
+ * name and the version of an addition are both the server's, and the next
+ * `veryfront dev` installs them. Anyone with `project.files.write` can seed
+ * both halves of the preimage proof by writing the remote manifest and
+ * triggering a resolve, so the proof shows the API's writer produced the
+ * bytes, not that the user wanted them.
+ *
+ * The second kind is a declaration the write moved between `dependencies` and
+ * `devDependencies`. The move is not a
  * reporting detail: `applyResolvedPins` promotes every non-exact declaration it
  * resolves into `dependencies`, so a dev-only package silently becomes a
  * production dependency in the user's tracked manifest, changing what
