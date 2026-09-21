@@ -197,6 +197,10 @@ export async function* streamGoogleCompatibleParts(
   const pendingAnonymousCodeExecutions: AnonymousCodeExecutionReplay[] = [];
   const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
   const rawAssistantParts: Array<Record<string, unknown>> = [];
+  // Original stream position of each retained part. Fallback tool-call IDs and
+  // replay derive from these, so merging text chunks never changes an ID.
+  const rawAssistantPartPositions: number[] = [];
+  let nextRawPartPosition = 0;
   // Adjacent unsigned text chunks share one raw part, so replay state grows
   // with content rather than with how finely Gemini chunked the stream.
   const rawTextRuns: Array<{
@@ -247,6 +251,7 @@ export async function* streamGoogleCompatibleParts(
     }
     reserveRetainedItem("raw candidate part");
     reserveRetainedBytes(serialized, "raw candidate part");
+    rawAssistantPartPositions.push(nextRawPartPosition++);
     return rawAssistantParts.push(part) - 1;
   };
 
@@ -262,8 +267,12 @@ export async function* streamGoogleCompatibleParts(
       run.part.thought === part.thought &&
       isMergeableTextPart(part)
     ) {
-      reserveRetainedBytes(text, "raw candidate part");
+      // Empty chunks advance no byte budget, so they count as items.
+      if (text.length === 0) reserveRetainedItem("empty candidate text part");
+      // Charge the escaped form, as retainRawAssistantPart does for a whole part.
+      reserveRetainedBytes(JSON.stringify(text).slice(1, -1), "raw candidate part");
       run.text.append(text);
+      nextRawPartPosition++;
       return;
     }
     const index = retainRawAssistantPart(part);
@@ -543,7 +552,7 @@ export async function* streamGoogleCompatibleParts(
 
         let toolCallId: string;
         try {
-          toolCallId = toolCallRegistry.registerFunctionCall(rawPartIndex, providerId);
+          toolCallId = toolCallRegistry.registerFunctionCall(nextRawPartPosition, providerId);
         } catch {
           throw invalidGoogleStream(context, "candidate tool call id was duplicated");
         }
@@ -898,9 +907,13 @@ export async function* streamGoogleCompatibleParts(
 
   let providerMetadata: Record<string, unknown> | undefined;
   try {
+    const mergedTextChunks = rawAssistantPartPositions.some((position, index) =>
+      position !== index
+    );
     providerMetadata = createGoogleProviderMetadata(
       rawAssistantParts,
       groundingMetadata,
+      mergedTextChunks ? rawAssistantPartPositions : undefined,
     );
   } catch {
     // The stream accounts for retained raw parts and correlation state under
