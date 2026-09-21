@@ -606,8 +606,33 @@ export function telemetryErrorCauseType(error: unknown): string | undefined {
 /** One link of a wrapped error's cause chain, safe to put in a server log. */
 export interface LoggedErrorCause {
   name: string;
-  message: string;
+  /** Present only for allowlisted framework diagnostics; see {@link LOGGABLE_CAUSE_MESSAGE_PATTERNS}. */
+  message?: string;
+  /** True when the cause had a message that was withheld because it may carry untrusted content. */
+  messageRedacted?: true;
   code?: string;
+}
+
+/**
+ * Cause messages that Veryfront itself authors from fixed templates and that
+ * carry no customer content, prompts, model output, or infrastructure names.
+ * Any other cause message may embed untrusted data, so only its fixed
+ * classification (name, code) is logged.
+ */
+const LOGGABLE_CAUSE_MESSAGE_PATTERNS: readonly RegExp[] = [
+  // Provider stream parser bounds (extensions/ext-llm-*).
+  /^Anthropic (?:partial_json|retained content) exceeded \d+ (?:deltas|items|empty fragments|UTF-8 bytes)(?: \([a-z ]{1,40}\))?$/,
+  // Provider adapters' fixed stream-validation issues.
+  /^[a-z0-9-]{1,40} request failed: invalid successful stream \([a-z0-9_ .,-]{1,160}\)$/,
+  // Runtime transport failures with fixed wording.
+  /^error reading a body from connection$/,
+];
+
+function isLoggableCauseMessage(message: string): boolean {
+  for (const pattern of LOGGABLE_CAUSE_MESSAGE_PATTERNS) {
+    if (pattern.test(message)) return true;
+  }
+  return false;
 }
 
 /**
@@ -628,8 +653,12 @@ export function summarizeErrorCausesForLog(error: unknown): LoggedErrorCause[] |
       const snapshot = sanitizeErrorForTelemetry(cause, "withoutStack");
       const entry: LoggedErrorCause = {
         name: sanitizeTelemetryText(snapshot.name, LOG_PREVIEW_MAX_LENGTH_CHARS),
-        message: sanitizeTelemetryText(snapshot.message, LOG_PREVIEW_MAX_LENGTH_CHARS),
       };
+      if (isLoggableCauseMessage(snapshot.message)) {
+        entry.message = snapshot.message;
+      } else if (snapshot.message.length > 0) {
+        entry.messageRedacted = true;
+      }
       if (isNativeErrorWithoutHooks(cause)) {
         const code = readOwnErrorDataField(cause, "code");
         if (typeof code === "string" || typeof code === "number") {

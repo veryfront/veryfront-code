@@ -112,7 +112,7 @@ describe("provider stream failure diagnostics", () => {
     }
   });
 
-  it("logs nested causes with their code, bounded and credential-redacted", async () => {
+  it("logs nested causes with their code and never untrusted cause text", async () => {
     const logs = captureStreamErrorLogs();
     try {
       const socketError = Object.assign(
@@ -130,11 +130,10 @@ describe("provider stream failure diagnostics", () => {
         name: "TypeError",
         message: "error reading a body from connection",
       });
-      assertEquals(causes[1]?.name, "Error");
-      assertEquals(causes[1]?.code, "ECONNRESET");
-      const message = String(causes[1]?.message);
-      assertEquals(message.includes("<TOKEN>"), false, "credentials must be redacted");
-      assert(message.length <= 500, `message must be bounded, got ${message.length}`);
+      // The socket error's text is untrusted (it carries a URL), so only its
+      // fixed classification is logged.
+      assertEquals(causes[1], { name: "Error", code: "ECONNRESET", messageRedacted: true });
+      assertEquals(JSON.stringify(causes).includes("<TOKEN>"), false);
     } finally {
       logs.stop();
     }

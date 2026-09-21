@@ -926,12 +926,44 @@ describe("observability/telemetry-error", () => {
         name: "TypeError",
         message: "error reading a body from connection",
       });
-      assertEquals(summary[1]?.code, "ECONNRESET");
-      assertEquals(summary[1]?.message.length, LOG_PREVIEW_MAX_LENGTH_CHARS);
+      // Arbitrary cause text is never logged; only fixed classifications are.
+      assertEquals(summary[1], { name: "Error", code: "ECONNRESET", messageRedacted: true });
       assertEquals(
         summarizeErrorCausesForLog(createRuntimeProviderStreamFailure("bare string")),
-        [{ name: "Unknown", message: "bare string" }],
+        [{ name: "Unknown", messageRedacted: true }],
       );
+    });
+
+    it("logs only allowlisted framework diagnostics, never untrusted cause text", () => {
+      const summarize = (message: string) =>
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(new RangeError(message)));
+
+      assertEquals(summarize("Anthropic partial_json exceeded 4096 deltas"), [
+        { name: "RangeError", message: "Anthropic partial_json exceeded 4096 deltas" },
+      ]);
+      assertEquals(
+        summarize("Anthropic retained content exceeded 8192 empty fragments (text delta)"),
+        [{
+          name: "RangeError",
+          message: "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+        }],
+      );
+      assertEquals(
+        summarize(
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+        ),
+        [{
+          name: "RangeError",
+          message:
+            "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+        }],
+      );
+      assertEquals(summarize("Tool input: my card number is <REDACTED> and my prompt says hello"), [
+        { name: "RangeError", messageRedacted: true },
+      ]);
+      assertEquals(summarize("connect ECONNREFUSED internal-db.cluster.local:5432"), [
+        { name: "RangeError", messageRedacted: true },
+      ]);
     });
   });
 });
