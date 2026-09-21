@@ -33,6 +33,7 @@ import {
   buildModelCatalogData,
   findListedProvidersWithoutModels,
   findUnroutedProviders,
+  listServedProviders,
   ModelCatalogError,
   renderModelCatalogModule,
 } from "./model-catalog-mapping.ts";
@@ -73,18 +74,17 @@ export function stripTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
-/** The catalog URL for a base, with exactly one slash between the two parts. */
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" ||
+    hostname === "[::1]" || hostname === "::1";
+}
+
 /**
  * The catalog URL: the base's path plus the catalog path, with the base's
  * query kept as it is (a signed query has to travel untouched). The base is
  * an operator's value, so a base that is not an absolute URL is refused
  * without echoing it.
  */
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" ||
-    hostname === "[::1]" || hostname === "::1";
-}
-
 export function buildCatalogUrl(baseUrl: string): string {
   let url: URL;
   try {
@@ -194,18 +194,6 @@ async function formatModule(repoRoot: string, source: string): Promise<string> {
 const MAX_FAILURE_LINE = 400;
 
 /**
- * One line saying what went wrong, and nothing the reader did not ask for.
- *
- * This task runs with a catalog token in its environment and talks to a
- * service whose failures can carry a response body, so an unhandled error is
- * not printed raw. The stack is dropped, the message is flattened to a single
- * line so nothing multi-line can pose as one, URLs are replaced whole (the
- * configured base may carry a private host or a signed query, and no message
- * this task writes needs one — they name the catalog path instead), absolute
- * filesystem paths are cut back to their last segment, and the result is
- * bounded.
- */
-/**
  * What the command prints for a failure. A {@link ModelCatalogError} is a
  * message this generator wrote itself — positions, field names, the catalog
  * path, an environment variable's name — and is printed as it is. Anything
@@ -218,6 +206,18 @@ export function describeFailure(error: unknown): string {
     : formatFailure(error);
 }
 
+/**
+ * One line saying what went wrong, and nothing the reader did not ask for.
+ *
+ * This task runs with a catalog token in its environment and talks to a
+ * service whose failures can carry a response body, so an unhandled error is
+ * not printed raw. The stack is dropped, the message is flattened to a single
+ * line so nothing multi-line can pose as one, URLs are replaced whole (the
+ * configured base may carry a private host or a signed query, and no message
+ * this task writes needs one — they name the catalog path instead; see
+ * `describeFailure` for why those messages skip this), filesystem paths are
+ * redacted, and the result is bounded.
+ */
 export function formatFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const flattened = raw
@@ -271,9 +271,10 @@ async function main(): Promise<number> {
   const baseUrl = Deno.env.get(BASE_URL_ENV) || DEFAULT_BASE_URL;
   const payload = await fetchServedCatalog(baseUrl, token);
   const data = buildModelCatalogData(payload, MODEL_CATALOG_OVERLAY);
+  const listedProviders = listServedProviders(payload);
 
   const withoutModels = findListedProvidersWithoutModels(
-    payload,
+    listedProviders,
     data,
   );
   if (withoutModels.length > 0) {
@@ -286,7 +287,10 @@ async function main(): Promise<number> {
     );
   }
 
-  const unrouted = findUnroutedProviders(data, MODEL_CATALOG_OVERLAY);
+  const unrouted = findUnroutedProviders(
+    listedProviders,
+    MODEL_CATALOG_OVERLAY,
+  );
   if (unrouted.length > 0) {
     console.error(
       `Routing is not declared for ${unrouted.join(", ")} (positions in the ` +

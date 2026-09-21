@@ -11,6 +11,7 @@ import {
   compareCodePoints,
   findListedProvidersWithoutModels,
   findUnroutedProviders,
+  listServedProviders,
   type ModelCatalogData,
   renderModelCatalogModule,
 } from "./model-catalog-mapping.ts";
@@ -537,11 +538,17 @@ describe("scripts/build/model-catalog-mapping", () => {
       ["acme-labs", { surface: "openai" }],
       ["beta-works", { surface: "openai" }],
     ]);
-    assertEquals(findUnroutedProviders(data, overlay), [
-      "providers[0]",
-      "providers[1]",
-    ]);
-    assertEquals(findUnroutedProviders(data, OVERLAY), []);
+    assertEquals(
+      findUnroutedProviders(listServedProviders(fakePayload()), overlay),
+      [
+        "providers[0]",
+        "providers[1]",
+      ],
+    );
+    assertEquals(
+      findUnroutedProviders(listServedProviders(fakePayload()), OVERLAY),
+      [],
+    );
   });
 
   it("produces the same module text on every run over the same payload", () => {
@@ -687,10 +694,19 @@ describe("scripts/build/model-catalog-mapping", () => {
     assertEquals(new Map(data.providerRouting).get("ghost-co"), {
       surface: "anthropic",
     });
-    assertEquals(findListedProvidersWithoutModels(payload, data), [
-      "providers[1]",
-    ]);
-    assertEquals(findListedProvidersWithoutModels(fakePayload(), data), []);
+    assertEquals(
+      findListedProvidersWithoutModels(listServedProviders(payload), data),
+      [
+        "providers[1]",
+      ],
+    );
+    assertEquals(
+      findListedProvidersWithoutModels(
+        listServedProviders(fakePayload()),
+        data,
+      ),
+      [],
+    );
   });
 
   // The served provider is not only routed through: it is rendered as a key of

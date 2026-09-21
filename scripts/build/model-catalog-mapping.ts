@@ -362,20 +362,6 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
   return { models, providers, defaultModelId: root.defaultModelId as string };
 }
 
-/**
- * Build the catalog data from a served catalog payload and the overlay.
- *
- * Every field of the result comes from a key named here or from the overlay.
- * The payload is read as `unknown`, so an unknown field, an unknown vendor and
- * an unknown capability key are all dropped rather than carried.
- *
- * Throws when the payload cannot describe a usable catalog: an empty model or
- * provider list, a listed model that cannot be identified, a default model
- * that no entry claims, or a provider with no model to take its display label
- * from. Nothing is ever dropped quietly: a model that vanishes from the output
- * has to have vanished from the catalog, so the diff a person reads says what
- * actually changed.
- */
 /** Orders strings by code point, so output never depends on a locale or ICU build. */
 export function compareCodePoints(a: string, b: string): number {
   if (a < b) return -1;
@@ -776,18 +762,6 @@ function findDuplicates(keys: readonly string[]): readonly string[] {
 }
 
 /**
- * Check the generated data against what the package's lookups require.
- *
- * Every lookup in `model-catalog.ts` resolves either by first match
- * (`findVeryfrontCloudModel`, `findVeryfrontCloudModelByModelId`,
- * `resolveVeryfrontCloudModelId`) or through a `Map` built from a table
- * (provider aliases, transport capabilities, provider routing, gateway API
- * versions). Both silently prefer one entry and discard the rest, so a
- * duplicate does not announce itself: it makes a model or a provider
- * unreachable. These are the preconditions of those lookups, not house style,
- * so generation fails rather than shipping data that cannot be read back.
- */
-/**
  * Every keyed table the generator consumes from the overlay.
  *
  * Each is turned into a `Map`, here or in the package, so a key written twice
@@ -1014,6 +988,18 @@ function chatModelPositions(
  * Every failure below names positions in the generated tables, never a served
  * value: the values are the platform's data and the message is terminal output.
  */
+/**
+ * Check the generated data against what the package's lookups require.
+ *
+ * Every lookup in `model-catalog.ts` resolves either by first match
+ * (`findVeryfrontCloudModel`, `findVeryfrontCloudModelByModelId`,
+ * `resolveVeryfrontCloudModelId`) or through a `Map` built from a table
+ * (provider aliases, transport capabilities, provider routing, gateway API
+ * versions). Both silently prefer one entry and discard the rest, so a
+ * duplicate does not announce itself: it makes a model or a provider
+ * unreachable. These are the preconditions of those lookups, not house style,
+ * so generation fails rather than shipping data that cannot be read back.
+ */
 export function assertCatalogInvariants(data: ModelCatalogData): void {
   // Every table the runtime reads by first match or through a Map: a key that
   // appears twice makes an entry unreachable rather than reporting itself.
@@ -1165,6 +1151,15 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
 }
 
 /**
+ * The providers the served catalog lists, parsed once for the reports below:
+ * `buildModelCatalogData` validates the same payload, and the reports read
+ * the list rather than parsing again.
+ */
+export function listServedProviders(payload: unknown): readonly string[] {
+  return parseServedCatalog(payload).providers;
+}
+
+/**
  * Listed providers with no chat model, as positions in the served `providers`
  * list (`providers[2]`; the values are served data). They get no display or
  * label row — see `buildModelCatalogData` — and are reported so a provider
@@ -1172,27 +1167,29 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
  * shows the name.
  */
 export function findListedProvidersWithoutModels(
-  payload: unknown,
+  listedProviders: readonly string[],
   data: ModelCatalogData,
 ): readonly string[] {
-  const listed = parseServedCatalog(payload).providers;
   const ordered = new Set(data.providerOrder);
-  return listed.flatMap((provider, index) =>
+  return listedProviders.flatMap((provider, index) =>
     ordered.has(provider) ? [] : [`providers[${index}]`]
   );
 }
 
 /**
- * Providers the catalog names that the overlay declares no routing for, as
- * positions in the provider order (`providers[2]`): the names are served
- * values and this list is printed. The generated diff shows the name.
+ * Listed providers the overlay declares no routing for, as positions in the
+ * served `providers` list (`providers[2]`; the names are served values and
+ * this list is printed). Walks the LISTED providers, not the display order: a
+ * provider with no chat model has no display row but still routes its other
+ * ids, on the default surface unless the overlay says otherwise, and that is
+ * exactly where a wrong wire format would go unnoticed.
  */
 export function findUnroutedProviders(
-  data: ModelCatalogData,
+  listedProviders: readonly string[],
   overlay: ModelCatalogOverlay,
 ): readonly string[] {
   const routed = new Set(overlay.providerRouting.map(([provider]) => provider));
-  return data.providerOrder.flatMap((provider, index) =>
+  return listedProviders.flatMap((provider, index) =>
     routed.has(provider) ? [] : [`providers[${index}]`]
   );
 }
