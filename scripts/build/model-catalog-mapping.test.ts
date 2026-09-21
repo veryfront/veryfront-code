@@ -9,7 +9,6 @@ import {
   assertOverlayInvariants,
   buildModelCatalogData,
   compareCodePoints,
-  findDroppedRetainedAliases,
   findUnroutedProviders,
   type ModelCatalogData,
   renderModelCatalogModule,
@@ -431,8 +430,8 @@ describe("scripts/build/model-catalog-mapping", () => {
       ["beta-works", { surface: "openai" }],
     ]);
     assertEquals(findUnroutedProviders(data, overlay), [
-      "acme-labs",
-      "beta-works",
+      "providers[0]",
+      "providers[1]",
     ]);
     assertEquals(findUnroutedProviders(data, OVERLAY), []);
   });
@@ -1008,28 +1007,35 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
-  it("drops a retained alias for a provider the catalog does not serve, and names it", () => {
-    // The alias table maps onto the provider table, so an alias for a provider
-    // with no row could reach nothing. It is left out rather than refused —
-    // the real overlay must apply to any catalog, including one that has
-    // moved on from a provider — and reported for the operator to retire.
+  it("keeps a retained alias for a provider the catalog lists no chat model for", () => {
+    // Like a routing row, an alias is about the ids the runtime accepts, not
+    // about the chat list: ids of the provider the runtime resolves without a
+    // chat entry still go through it. Such rows follow the served groups, in
+    // overlay order; the provider itself gets no label or display-order row.
     const overlay: ModelCatalogOverlay = {
       ...OVERLAY,
-      retainedProviderAliases: [["gamma-api", "gamma"], ["acme", "acme-labs"]],
+      providerRouting: [...OVERLAY.providerRouting, ["gamma", {
+        surface: "anthropic",
+      }]],
+      retainedProviderAliases: [["gamma-api", "gamma"], ["gamma", "gamma"], [
+        "acme",
+        "acme-labs",
+      ]],
     };
     const data = buildModelCatalogData(fakePayload(), overlay);
+    const aliases = data.providerAliases.map(([alias]) => alias);
+    assertEquals(aliases.indexOf("acme") < aliases.indexOf("gamma-api"), true);
+    assertEquals(new Map(data.providerAliases).get("gamma-api"), "gamma");
+    // The provider's own name is not an alias row for an unserved provider.
+    assertEquals(aliases.includes("gamma"), false);
+    assertEquals(data.providerOrder.includes("gamma"), false);
     assertEquals(
-      data.providerAliases.some(([alias]) => alias === "gamma-api"),
+      data.providerLabels.some(([provider]) => provider === "gamma"),
       false,
     );
-    assertEquals(
-      data.providerAliases.some(([alias]) => alias === "acme"),
-      true,
-    );
-    assertEquals(findDroppedRetainedAliases(data, overlay), [
-      "gamma-api -> gamma",
-    ]);
-    assertEquals(findDroppedRetainedAliases(data, OVERLAY), []);
+    assertEquals(new Map(data.providerRouting).get("gamma"), {
+      surface: "anthropic",
+    });
   });
 
   it("keeps a provider's routing with no chat model and no transport row of it left", () => {

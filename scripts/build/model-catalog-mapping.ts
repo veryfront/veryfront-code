@@ -554,11 +554,7 @@ function buildProviderTables(
     providerAliases.push([provider, provider]);
     // Derived from the served ids and retained by the overlay, as one sorted
     // group per provider, so the table does not move when the catalog stops
-    // (or starts) spelling an alias the overlay retains anyway. A retained
-    // alias for a provider the catalog does not serve lands nowhere: the alias
-    // table maps onto the provider table, and the runtime has no row to reach
-    // for that provider. `findDroppedRetainedAliases` names those for the
-    // operator.
+    // (or starts) spelling an alias the overlay retains anyway.
     const retained = overlay.retainedProviderAliases
       .filter(([, target]) => target === provider)
       .map(([alias]) => alias);
@@ -568,6 +564,19 @@ function buildProviderTables(
       .filter((alias) => alias !== provider)
       .sort(compareCodePoints);
     for (const prefix of prefixes) providerAliases.push([prefix, provider]);
+  }
+  // A retained alias for a provider the catalog lists no chat model for
+  // follows the served groups, in overlay order. Like a routing row, an alias
+  // is a fact about ids the runtime accepts, not about the chat list: model
+  // ids of that provider the runtime resolves without a chat entry still go
+  // through it, and its routing row is kept by `routedProviders` on the same
+  // reasoning. Its provider has no label or display-order row, which only the
+  // chat list needs.
+  const served = new Set(providerOrder);
+  for (const [alias, provider] of overlay.retainedProviderAliases) {
+    if (!served.has(provider) && alias !== provider) {
+      providerAliases.push([alias, provider]);
+    }
   }
   return { providerAliases, providerLabels };
 }
@@ -1053,28 +1062,18 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
 }
 
 /**
- * Retained aliases the generated table does not carry, because the catalog
- * serves no model of their provider. Not a failure: the runtime has no row
- * for the provider, so the alias could reach nothing. Reported so the overlay
- * entry can be retired when the provider is really gone.
+ * Providers the catalog names that the overlay declares no routing for, as
+ * positions in the provider order (`providers[2]`): the names are served
+ * values and this list is printed. The generated diff shows the name.
  */
-export function findDroppedRetainedAliases(
-  data: ModelCatalogData,
-  overlay: ModelCatalogOverlay,
-): readonly string[] {
-  const served = new Set(data.providerOrder);
-  return overlay.retainedProviderAliases
-    .filter(([, provider]) => !served.has(provider))
-    .map(([alias, provider]) => `${alias} -> ${provider}`);
-}
-
-/** Providers the catalog names that the overlay declares no routing for. */
 export function findUnroutedProviders(
   data: ModelCatalogData,
   overlay: ModelCatalogOverlay,
 ): readonly string[] {
   const routed = new Set(overlay.providerRouting.map(([provider]) => provider));
-  return data.providerOrder.filter((provider) => !routed.has(provider));
+  return data.providerOrder.flatMap((provider, index) =>
+    routed.has(provider) ? [] : [`providers[${index}]`]
+  );
 }
 
 function quote(value: string): string {

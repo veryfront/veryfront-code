@@ -33,16 +33,20 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
     assertEquals(functionPaths, []);
   });
 
-  it("lists every provider exactly once in the labels and the display order", () => {
-    const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
+  it("lists every provider with a chat model exactly once in the labels and the display order", () => {
+    // An alias may also target a provider the catalog lists no chat model for
+    // (its ids still resolve through the alias and its routing row); such a
+    // provider has no label or display-order row, which only the chat list needs.
+    const aliased = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
+    const ordered = [...catalogData.VERYFRONT_CLOUD_PROVIDER_ORDER];
 
-    assertEquals(
-      [...catalogData.VERYFRONT_CLOUD_PROVIDER_ORDER].sort(),
-      [...providers].sort(),
-    );
+    assertEquals(new Set(ordered).size, ordered.length);
+    for (const provider of ordered) {
+      assertEquals(aliased.has(provider), true, `no alias row for "${provider}"`);
+    }
     assertEquals(
       Object.keys(catalogData.VERYFRONT_CLOUD_PROVIDER_LABELS).sort(),
-      [...providers].sort(),
+      [...ordered].sort(),
     );
   });
 

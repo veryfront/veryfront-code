@@ -31,7 +31,6 @@
 import { fromFileUrl } from "#std/path";
 import {
   buildModelCatalogData,
-  findDroppedRetainedAliases,
   findUnroutedProviders,
   renderModelCatalogModule,
 } from "./model-catalog-mapping.ts";
@@ -211,18 +210,10 @@ async function main(): Promise<number> {
   const unrouted = findUnroutedProviders(data, MODEL_CATALOG_OVERLAY);
   if (unrouted.length > 0) {
     console.error(
-      `Routing is not declared for: ${unrouted.join(", ")}. ` +
-        `They are written on the default surface. Add them to ` +
+      `Routing is not declared for ${unrouted.join(", ")} (positions in the ` +
+        `served provider list; the generated diff names them). They are ` +
+        `written on the default surface. Add them to ` +
         `scripts/build/model-catalog-overlay.ts.`,
-    );
-  }
-
-  const dropped = findDroppedRetainedAliases(data, MODEL_CATALOG_OVERLAY);
-  if (dropped.length > 0) {
-    console.error(
-      `Retained provider aliases not written, their provider serves no model: ${
-        dropped.join(", ")
-      }. Retire them from scripts/build/model-catalog-overlay.ts once the provider is gone for good.`,
     );
   }
 
