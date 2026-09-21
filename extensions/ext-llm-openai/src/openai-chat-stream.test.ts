@@ -35,6 +35,45 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-chat-stream", () => {
+  // Retention is bounded by bytes, not by how finely the provider chunks the
+  // stream: a per-delta count is a wall-clock limit for long generations.
+  it("accepts tool arguments and text streamed as 20,000 small deltas each", async () => {
+    const LONG_STREAM_DELTAS = 20_000;
+    const argumentFragments = Array.from(
+      { length: LONG_STREAM_DELTAS },
+      (_, index) => index === 0 ? '{"content":"' : index === LONG_STREAM_DELTAS - 1 ? '"}' : "x",
+    );
+    const parts = await collectParts(streamFromText([
+      ...Array.from(
+        { length: LONG_STREAM_DELTAS },
+        () => data({ choices: [{ delta: { content: "x" } }] }),
+      ),
+      data({
+        choices: [{
+          delta: { tool_calls: [{ index: 0, id: "call_long", function: { name: "save" } }] },
+        }],
+      }),
+      ...argumentFragments.map((fragment) =>
+        data({
+          choices: [{
+            delta: { tool_calls: [{ index: 0, function: { arguments: fragment } }] },
+          }],
+        })
+      ),
+      data({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    const ofType = (type: string) =>
+      parts.filter((part) => (part as { type?: string }).type === type);
+    assertEquals(ofType("text-delta").length, LONG_STREAM_DELTAS);
+    assertEquals(
+      (ofType("tool-call")[0] as { input?: string }).input,
+      argumentFragments.join(""),
+    );
+    assertEquals(ofType("finish").length, 1);
+  });
+
   it("preserves reasoning, text, tool-call assembly, usage, and finish events", async () => {
     const parts = await collectParts(streamFromText([
       data({

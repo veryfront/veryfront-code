@@ -5,6 +5,7 @@ import {
   ProviderRequestError,
   readRecord,
   type RuntimeUsage,
+  StreamFragmentBuffer,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
 import {
@@ -196,6 +197,13 @@ export async function* streamGoogleCompatibleParts(
   const pendingAnonymousCodeExecutions: AnonymousCodeExecutionReplay[] = [];
   const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
   const rawAssistantParts: Array<Record<string, unknown>> = [];
+  // Adjacent unsigned text chunks share one raw part, so replay state grows
+  // with content rather than with how finely Gemini chunked the stream.
+  const rawTextRuns: Array<{
+    index: number;
+    part: Record<string, unknown>;
+    text: StreamFragmentBuffer;
+  }> = [];
   let retainedStateBytes = 0;
   let retainedStateItems = 0;
   let reasoningId: string | null = null;
@@ -240,6 +248,28 @@ export async function* streamGoogleCompatibleParts(
     reserveRetainedItem("raw candidate part");
     reserveRetainedBytes(serialized, "raw candidate part");
     return rawAssistantParts.push(part) - 1;
+  };
+
+  const isMergeableTextPart = (part: Record<string, unknown>): boolean =>
+    typeof part.text === "string" &&
+    Object.keys(part).every((key) => key === "text" || key === "thought");
+
+  const retainRawTextPart = (part: Record<string, unknown>, text: string): void => {
+    const run = rawTextRuns.at(-1);
+    if (
+      run !== undefined &&
+      run.index === rawAssistantParts.length - 1 &&
+      run.part.thought === part.thought &&
+      isMergeableTextPart(part)
+    ) {
+      reserveRetainedBytes(text, "raw candidate part");
+      run.text.append(text);
+      return;
+    }
+    const index = retainRawAssistantPart(part);
+    if (isMergeableTextPart(part)) {
+      rawTextRuns.push({ index, part, text: new StreamFragmentBuffer(text) });
+    }
   };
 
   const reserveCorrelation = (issue: string, ...values: string[]): void => {
@@ -402,8 +432,8 @@ export async function* streamGoogleCompatibleParts(
       if (dataField === "text" && partText === undefined) {
         throw invalidGoogleStream(context, "candidate text part was malformed");
       }
-      if (dataField === "text") {
-        retainRawAssistantPart(part);
+      if (partText !== undefined) {
+        retainRawTextPart(part, partText);
       }
 
       if (partText !== undefined && part.thought === true) {
@@ -860,6 +890,10 @@ export async function* streamGoogleCompatibleParts(
       id: reasoningId,
       ...(reasoningSignature !== undefined ? { signature: reasoningSignature } : {}),
     };
+  }
+
+  for (const run of rawTextRuns) {
+    rawAssistantParts[run.index] = { ...run.part, text: run.text.toString() };
   }
 
   let providerMetadata: Record<string, unknown> | undefined;

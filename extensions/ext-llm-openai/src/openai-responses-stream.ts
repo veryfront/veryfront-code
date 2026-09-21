@@ -263,7 +263,7 @@ export async function* streamOpenAIResponsesParts(
     context.webSearchToolName !== undefined;
   const toolArgumentBudget: OpenAIStreamToolArgumentBudget = {
     bytes: 0,
-    fragments: 0,
+    emptyFragments: 0,
   };
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: RuntimeUsage | undefined;

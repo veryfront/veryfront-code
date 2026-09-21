@@ -228,7 +228,7 @@ export async function* streamOpenAICompatibleParts(
   let sawDone = false;
   const toolArgumentBudget: OpenAIStreamToolArgumentBudget = {
     bytes: 0,
-    fragments: 0,
+    emptyFragments: 0,
   };
 
   function* processEvent(event: unknown | "[DONE]"): Generator<unknown> {

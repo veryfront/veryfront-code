@@ -63,6 +63,83 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-responses-stream", () => {
+  // Retention is bounded by bytes, not by how finely the provider chunks the
+  // stream: a per-delta count is a wall-clock limit for long generations.
+  it("accepts reasoning, tool arguments, and text streamed as 20,000 small deltas each", async () => {
+    const LONG_STREAM_DELTAS = 20_000;
+    const argumentFragments = Array.from(
+      { length: LONG_STREAM_DELTAS },
+      (_, index) => index === 0 ? '{"content":"' : index === LONG_STREAM_DELTAS - 1 ? '"}' : "x",
+    );
+    const argumentsText = argumentFragments.join("");
+    const repeated = (delta: string) => Array.from({ length: LONG_STREAM_DELTAS }, () => delta);
+    const parts = await collectParts(
+      streamFromText([
+        data({ type: "response.output_item.added", item: { id: "rs_1", type: "reasoning" } }),
+        ...repeated("t").map((delta) =>
+          data({ type: "response.reasoning_summary_text.delta", item_id: "rs_1", delta })
+        ),
+        data({
+          type: "response.output_item.done",
+          item: {
+            id: "rs_1",
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "t".repeat(LONG_STREAM_DELTAS) }],
+          },
+        }),
+        data({
+          type: "response.output_item.added",
+          item: { id: "fc_1", type: "function_call", call_id: "call_1", name: "save" },
+        }),
+        ...argumentFragments.map((delta) =>
+          data({ type: "response.function_call_arguments.delta", item_id: "fc_1", delta })
+        ),
+        data({
+          type: "response.function_call_arguments.done",
+          item_id: "fc_1",
+          arguments: argumentsText,
+        }),
+        data({
+          type: "response.output_item.done",
+          item: {
+            id: "fc_1",
+            type: "function_call",
+            call_id: "call_1",
+            name: "save",
+            arguments: argumentsText,
+          },
+        }),
+        data({
+          type: "response.output_item.added",
+          item: { id: "msg_1", type: "message", role: "assistant", content: [] },
+        }),
+        ...repeated("x").map((delta) =>
+          data({ type: "response.output_text.delta", item_id: "msg_1", delta })
+        ),
+        data({
+          type: "response.output_item.done",
+          item: {
+            id: "msg_1",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "x".repeat(LONG_STREAM_DELTAS) }],
+          },
+        }),
+        data({ type: "response.completed", response: { status: "completed" } }),
+        "data: [DONE]\r\n\r\n",
+      ].join("")),
+      { preserveRawOutputItems: true },
+    );
+
+    const ofType = (type: string) =>
+      parts.filter((part) => (part as { type?: string }).type === type);
+    assertEquals(ofType("reasoning-delta").length, LONG_STREAM_DELTAS);
+    assertEquals(ofType("tool-input-delta").length, LONG_STREAM_DELTAS);
+    assertEquals(ofType("text-delta").length, LONG_STREAM_DELTAS);
+    assertEquals((ofType("tool-call")[0] as { input?: string }).input, argumentsText);
+    assertEquals(ofType("finish").length, 1);
+  });
+
   it("preserves reasoning, text, tool-call assembly, usage, and finish events", async () => {
     const parts = await collectParts(
       streamFromText([
