@@ -26,6 +26,21 @@ import {
 import { VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES } from "./model-catalog.data.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
+  it("finds a catalog model by model id through either spelling of its provider", () => {
+    // The catalog publishes Gemini under the `google-ai-studio` alias; a caller
+    // spelling the canonical provider (or carrying the gateway prefix) must
+    // reach the same entry, thinking defaults included.
+    const aliased = findVeryfrontCloudModelByModelId("google-ai-studio/gemini-2.5-pro");
+    assertExists(aliased);
+    assertEquals(findVeryfrontCloudModelByModelId("google/gemini-2.5-pro"), aliased);
+    assertEquals(
+      findVeryfrontCloudModelByModelId("veryfront-cloud/google/gemini-2.5-pro"),
+      aliased,
+    );
+    assertEquals(resolveVeryfrontCloudModelThinking("google/gemini-2.5-pro")?.enabled, true);
+    assertEquals(findVeryfrontCloudModelByModelId("google/not-a-listed-model"), undefined);
+  });
+
   it("recognizes a supported Mistral model through any spelling of its id", () => {
     const [mistral] = VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === "mistral");
     assertExists(mistral);

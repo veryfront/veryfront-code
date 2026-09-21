@@ -371,8 +371,13 @@ export function normalizeVeryfrontCloudModelId(modelId: string): string {
 export function findVeryfrontCloudModelByModelId(
   modelId: string,
 ): VeryfrontCloudChatModel | undefined {
-  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
-  return VERYFRONT_CLOUD_CHAT_MODELS.find((model) => model.modelId === normalizedModelId);
+  // Compared by canonical key on both sides: the catalog may publish a model
+  // under a provider alias while a caller spells the canonical provider, or
+  // the other way round once the catalog moves on and the alias is retained.
+  const key = canonicalVeryfrontCloudModelKey(modelId);
+  return VERYFRONT_CLOUD_CHAT_MODELS.find(
+    (model) => canonicalVeryfrontCloudModelKey(model.modelId) === key,
+  );
 }
 
 /**
