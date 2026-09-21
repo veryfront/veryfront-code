@@ -504,6 +504,303 @@ describe("npm package publishing", () => {
     });
   });
 
+  // A stable publish on 2026-09-21 landed 58 minutes after `npm publish` started
+  // and its gitHead metadata appeared 43 seconds after a five-minute wait gave
+  // up, so the release failed after npm had already published the version.
+  it("tolerates npm gitHead metadata appearing after the former five-minute window", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      await Deno.writeTextFile(countFile, "0");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          '  if [ "$count" -ge 100 ]; then',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "  fi",
+          "}",
+          "sleep() { :; }",
+          'wait_for_npm_git_head "veryfront"',
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1260",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(await Deno.readTextFile(countFile), "100");
+    });
+  });
+
+  it("bounds the gitHead metadata wait by NPM_GIT_HEAD_WAIT_ATTEMPTS", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      await Deno.writeTextFile(countFile, "0");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          "}",
+          "sleep() { :; }",
+          'if wait_for_npm_git_head "veryfront"; then exit 0; else exit 7; fi',
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1260",
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "3",
+        },
+      );
+
+      assertEquals(output.code, 7);
+      // Three polling reads plus the final confirmation read.
+      assertEquals(await Deno.readTextFile(countFile), "4");
+    });
+  });
+
+  it("shares one gitHead metadata deadline across every package in a release", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      await Deno.writeTextFile(countFile, "0");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          "}",
+          "sleep() { :; }",
+          // The shared budget is already spent, so neither package polls again:
+          // each makes one read plus the final confirmation read.
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          'wait_for_npm_git_head "@veryfront/ext-auth-jwt" && exit 4',
+          "exit 0",
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "0",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(await Deno.readTextFile(countFile), "4");
+    });
+  });
+
+  it("counts only time spent waiting against the shared metadata budget", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      await Deno.writeTextFile(countFile, "0");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          "}",
+          "sleep() { :; }",
+          // Wall-clock time (for example spent publishing other packages) must
+          // not consume the budget: a clock that jumps far ahead changes nothing.
+          "date() { echo 9999999999; }",
+          // 20s budget at 10s per wait: the first package polls twice, then
+          // the second package gets only its initial read and a confirmation.
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          'wait_for_npm_git_head "@veryfront/ext-auth-jwt" && exit 4',
+          "exit 0",
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "20",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      // Package 1: 3 polling reads + 1 confirmation; package 2: 1 read + 1 confirmation.
+      assertEquals(await Deno.readTextFile(countFile), "6");
+    });
+  });
+
+  it("charges slow registry lookups to the shared metadata budget", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      const clockFile = `${stateDir}/clock`;
+      await Deno.writeTextFile(countFile, "0");
+      await Deno.writeTextFile(clockFile, "1000");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          // Each registry lookup takes 50 seconds on the stubbed clock.
+          '  clock="$(cat "$CLOCK_FILE")"',
+          '  printf "%s" "$((clock + 50))" > "$CLOCK_FILE"',
+          "}",
+          "sleep() { :; }",
+          'date() { cat "$CLOCK_FILE"; }',
+          // 120s budget, 10s per wait: lookups 50+10, 50+10, then 50 spends it.
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          'wait_for_npm_git_head "@veryfront/ext-auth-jwt" && exit 4',
+          "exit 0",
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          CLOCK_FILE: clockFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "120",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      // Package 1: 3 polling reads + 1 confirmation; package 2: 1 read + 1 confirmation.
+      assertEquals(await Deno.readTextFile(countFile), "6");
+    });
+  });
+
+  it("charges successful slow lookups to the shared metadata budget", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      const clockFile = `${stateDir}/clock`;
+      await Deno.writeTextFile(countFile, "0");
+      await Deno.writeTextFile(clockFile, "1000");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          '  clock="$(cat "$CLOCK_FILE")"',
+          '  printf "%s" "$((clock + 50))" > "$CLOCK_FILE"',
+          // The first package resolves (slowly); the second stays empty.
+          '  if [ "$2" = "veryfront@${VERSION}" ]; then printf "%s\\n" "$GITHUB_SHA"; fi',
+          "}",
+          "sleep() { :; }",
+          'date() { cat "$CLOCK_FILE"; }',
+          'wait_for_npm_git_head "veryfront" || exit 3',
+          'wait_for_npm_git_head "@veryfront/ext-auth-jwt" && exit 4',
+          "exit 0",
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          CLOCK_FILE: clockFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "60",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      // Package 1's successful 50s lookup is charged, so package 2's first 50s
+      // lookup spends the 60s budget: one read plus the confirmation.
+      assertEquals(await Deno.readTextFile(countFile), "3");
+    });
+  });
+
+  it("bounds every metadata lookup with a fetch timeout and a single retry", async () => {
+    await withTempDir(async (stateDir) => {
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { printf "%s\\n" "$*" >> "$NPM_LOG"; }',
+          "sleep() { :; }",
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          "exit 0",
+        ].join("\n"),
+        {
+          NPM_LOG: npmLog,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "1",
+          NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS: "45000",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals((await Deno.readTextFile(npmLog)).trim().split("\n"), [
+        "view veryfront@0.1.1261 gitHead --fetch-timeout=45000 --fetch-retries=1",
+        "view veryfront@0.1.1261 gitHead --fetch-timeout=45000 --fetch-retries=1",
+      ]);
+    });
+  });
+
+  it("charges the final confirmation lookup to the shared metadata budget", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      const clockFile = `${stateDir}/clock`;
+      await Deno.writeTextFile(countFile, "0");
+      await Deno.writeTextFile(clockFile, "1000");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          '  clock="$(cat "$CLOCK_FILE")"',
+          '  printf "%s" "$((clock + 50))" > "$CLOCK_FILE"',
+          "}",
+          "sleep() { :; }",
+          'date() { cat "$CLOCK_FILE"; }',
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          'wait_for_npm_git_head "@veryfront/ext-auth-jwt" && exit 4',
+          "exit 0",
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          CLOCK_FILE: clockFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_ATTEMPTS: "2",
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "200",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      // Package 1: 2 polling reads + a charged 50s confirmation (170s spent);
+      // package 2: its first read spends the budget, then one confirmation.
+      assertEquals(await Deno.readTextFile(countFile), "5");
+    });
+  });
+
   it("waits for an existing RC version's missing gitHead metadata", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;
@@ -553,7 +850,7 @@ describe("npm package publishing", () => {
         calls.filter((line) => line.startsWith("publish")).length,
         0,
       );
-      assertEquals(calls.filter((line) => line.endsWith("gitHead")).length, 4);
+      assertEquals(calls.filter((line) => / gitHead( |$)/.test(line)).length, 4);
     });
   });
 

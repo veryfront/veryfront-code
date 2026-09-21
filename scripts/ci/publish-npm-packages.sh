@@ -128,6 +128,22 @@ verify_npm_compatibility_artifact() {
 # the publish is retried as if it were a fresh attempt.
 NPM_PUBLISH_CONFLICT_ATTEMPTS="${NPM_PUBLISH_CONFLICT_ATTEMPTS:-5}"
 NPM_PUBLISH_CONFLICT_DELAY_SECONDS="${NPM_PUBLISH_CONFLICT_DELAY_SECONDS:-15}"
+# Stable publishes have landed close to an hour after `npm publish` started, and
+# the gitHead metadata can trail the version further. Poll for up to 30 minutes
+# by default so a publish that did land is not reported as a failed release.
+NPM_GIT_HEAD_WAIT_ATTEMPTS="${NPM_GIT_HEAD_WAIT_ATTEMPTS:-180}"
+NPM_GIT_HEAD_WAIT_DELAY_SECONDS="${NPM_GIT_HEAD_WAIT_DELAY_SECONDS:-10}"
+# One budget for the whole release, not per package: a registry incident that
+# delays metadata for many of the ~30 packages must not multiply the wait past
+# the job limit and strand a partial publish. Only time spent in metadata
+# lookups and waits counts, so slow publishes of later packages do not eat into
+# their metadata checks.
+NPM_GIT_HEAD_WAIT_TOTAL_SECONDS="${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS:-1800}"
+NPM_GIT_HEAD_WAIT_SPENT_SECONDS=0
+# Bound each metadata lookup: npm's defaults (5-minute fetch timeout, 2
+# retries) would let a single `npm view` run ~15 minutes, and every package
+# needs at least one confirming lookup.
+NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS:-60000}"
 
 is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
@@ -304,27 +320,44 @@ publish_npm_package_with_retry() {
   return 1
 }
 
+# One bounded gitHead lookup, charged to the shared budget whatever it returns:
+# a stalled registry read (npm's default fetch timeout is minutes, with
+# retries) is waiting too. Sets PUBLISHED_GIT_HEAD.
+lookup_npm_git_head() {
+  LOOKUP_STARTED_AT="$(date +%s)"
+  PUBLISHED_GIT_HEAD="$(npm view "$1@${VERSION}" gitHead --fetch-timeout="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS}" --fetch-retries=1 2>/dev/null || true)"
+  LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
+  if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
+  fi
+}
+
 # Poll the npm registry until PACKAGE_NAME@VERSION reports a gitHead. Succeeds
 # only when that gitHead matches GITHUB_SHA. Leaves the last observed value in
 # the global PUBLISHED_GIT_HEAD for callers' error messages.
 wait_for_npm_git_head() {
   PACKAGE_NAME="$1"
   # npm can expose a published version before its gitHead metadata converges.
-  # Allow up to five minutes of empty reads while preserving hash mismatches as
-  # immediate failures.
-  for attempt in $(seq 1 60); do
-    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+  # Allow NPM_GIT_HEAD_WAIT_ATTEMPTS empty reads while preserving hash
+  # mismatches as immediate failures.
+  for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
+    lookup_npm_git_head "${PACKAGE_NAME}"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
     fi
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
     fi
-    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/60)."
-    sleep 5
+    if [ "${NPM_GIT_HEAD_WAIT_SPENT_SECONDS}" -ge "${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}" ]; then
+      echo "Shared npm metadata wait of ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s is spent; checking ${PACKAGE_NAME}@${VERSION} once more." >&2
+      break
+    fi
+    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/${NPM_GIT_HEAD_WAIT_ATTEMPTS})."
+    sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS ))
   done
 
-  PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+  lookup_npm_git_head "${PACKAGE_NAME}"
   [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
 }
 
