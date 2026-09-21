@@ -382,6 +382,55 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  it("refuses an overlay row keyed by a provider alias instead of the canonical provider", () => {
+    // The runtime looks every model-keyed table up by the canonical id, so a
+    // row keyed by an alias is never found. Both sources of aliases are
+    // checked: the ones the overlay retains (at the overlay's own invariants)
+    // and the ones the served ids imply (once the catalog has been read).
+    assertThrows(
+      () =>
+        assertOverlayInvariants({
+          ...OVERLAY,
+          retainedProviderAliases: [["acme", "acme-labs"]],
+          retainedTransportCapabilities: [
+            ...OVERLAY.retainedTransportCapabilities,
+            ["acme/gone-2", { openAITransport: "responses" }],
+          ],
+        }),
+      Error,
+      'overlay retainedTransportCapabilities key "acme/gone-2" names the provider alias "acme"',
+    );
+    for (
+      const [table, overlay] of [
+        ["entryIds", {
+          ...OVERLAY,
+          entryIds: [["acme-labs-api/mystery-1", "mystery"]],
+        }],
+        ["thinkingBudgetTokens", {
+          ...OVERLAY,
+          thinkingBudgetTokens: [["acme-labs-api/mystery-1", 4096]],
+        }],
+        ["retainedTransportCapabilities", {
+          ...OVERLAY,
+          retainedTransportCapabilities: [
+            ...OVERLAY.retainedTransportCapabilities,
+            ["acme-labs-api/gone-2", { openAITransport: "responses" }],
+          ],
+        }],
+      ] as const
+    ) {
+      // `acme-labs-api` is implied by the served ids, not retained, so only the
+      // build can see it.
+      assertOverlayInvariants(overlay as ModelCatalogOverlay);
+      assertThrows(
+        () =>
+          buildModelCatalogData(fakePayload(), overlay as ModelCatalogOverlay),
+        Error,
+        `overlay ${table} key "acme-labs-api/`,
+      );
+    }
+  });
+
   it("refuses a retained adaptive thinking row for a provider off the Anthropic surface", () => {
     // Same rule as for a served reasoning mode, applied to the overlay's own
     // rows: off the Anthropic surface the flag only suppresses the generic

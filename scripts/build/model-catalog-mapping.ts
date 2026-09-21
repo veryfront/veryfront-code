@@ -738,6 +738,18 @@ export function buildModelCatalogData(
   // The output has to be readable back by the package's lookups, so it is
   // checked here rather than left to whoever reviews the generated diff.
   assertCatalogInvariants(data);
+  // Last, so a contradiction in the catalog itself is reported before a
+  // spelling in the overlay: an overlay key spelled with an alias the served
+  // ids imply is refused too (the retained aliases were checked with the
+  // overlay's own invariants).
+  refuseAliasKeyedOverlayRows(
+    overlay,
+    new Map(
+      [...facts.aliasPrefixes].flatMap(([provider, prefixes]) =>
+        [...prefixes].map((prefix) => [prefix, provider] as const)
+      ),
+    ),
+  );
   return data;
 }
 
@@ -778,21 +790,27 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       "surfaceGatewayApiVersions",
       overlay.surfaceGatewayApiVersions.map(([key]) => key),
     ],
-    ["entryIds", overlay.entryIds.map(([key]) => key)],
-    ["thinkingBudgetTokens", overlay.thinkingBudgetTokens.map(([key]) => key)],
-    [
-      "openAIChatReasoningWithFunctionTools",
-      overlay.openAIChatReasoningWithFunctionTools.map(([key]) => key),
-    ],
-    [
-      "retainedTransportCapabilities",
-      overlay.retainedTransportCapabilities.map(([key]) => key),
-    ],
+    ...overlayModelKeyTables(overlay),
     [
       "retainedProviderAliases",
       overlay.retainedProviderAliases.map(([key]) => key),
     ],
   ];
+  // The aliases the overlay itself declares are known here; the ones the
+  // served catalog implies are checked once the catalog has been read. A
+  // retained "alias" that is itself a routed provider is not an alias but a
+  // shadowing, which the alias table's own check names for what it is.
+  const routedProviders = new Set(
+    overlay.providerRouting.map(([provider]) => provider),
+  );
+  refuseAliasKeyedOverlayRows(
+    overlay,
+    new Map(
+      overlay.retainedProviderAliases.filter(([alias]) =>
+        !routedProviders.has(alias)
+      ),
+    ),
+  );
   for (const [name, keys] of tables) {
     const duplicates = findDuplicates(keys);
     if (duplicates.length > 0) {
@@ -902,6 +920,55 @@ function describeUnusablePathComponent(
     }`;
   }
   return undefined;
+}
+
+/**
+ * The overlay tables keyed by canonical model id, with their keys. Used by
+ * both key checks: no duplicate key, and no key naming a provider alias.
+ */
+function overlayModelKeyTables(
+  overlay: ModelCatalogOverlay,
+): ReadonlyArray<readonly [string, readonly string[]]> {
+  return [
+    ["entryIds", overlay.entryIds.map(([key]) => key)],
+    ["thinkingBudgetTokens", overlay.thinkingBudgetTokens.map(([key]) => key)],
+    [
+      "openAIChatReasoningWithFunctionTools",
+      overlay.openAIChatReasoningWithFunctionTools.map(([key]) => key),
+    ],
+    [
+      "retainedTransportCapabilities",
+      overlay.retainedTransportCapabilities.map(([key]) => key),
+    ],
+  ];
+}
+
+/**
+ * Refuse an overlay key whose provider segment is one of `aliases` (alias →
+ * canonical provider). The runtime looks every model-keyed table up by the
+ * CANONICAL id, so a row keyed by an alias is never found: the fact it carries
+ * silently disappears the moment the catalog stops serving the model under
+ * that spelling. The overlay is the repository's own, so the key is named.
+ */
+function refuseAliasKeyedOverlayRows(
+  overlay: ModelCatalogOverlay,
+  aliases: ReadonlyMap<string, string>,
+): void {
+  for (const [table, keys] of overlayModelKeyTables(overlay)) {
+    for (const key of keys) {
+      const slashIndex = key.indexOf("/");
+      if (slashIndex <= 0) continue;
+      const provider = key.slice(0, slashIndex);
+      const canonical = aliases.get(provider);
+      if (canonical !== undefined && canonical !== provider) {
+        fail(
+          `overlay ${table} key "${key}" names the provider alias "${provider}"; keys are canonical, so it must be "${canonical}/${
+            key.slice(slashIndex + 1)
+          }"`,
+        );
+      }
+    }
+  }
 }
 
 /**
