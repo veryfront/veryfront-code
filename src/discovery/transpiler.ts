@@ -278,9 +278,22 @@ interface LockedDependency {
    * it moves the question to the effective registry the `.npmrc` names.
    */
   resolved: string | null;
+  /**
+   * Is this entry a LINK to a workspace package rather than an install from a
+   * registry? Its `resolved` is then a path inside the project, which reads
+   * like the registry-relative form npm writes for a registry source.
+   */
+  link: boolean;
   /** The ranges this package itself declares, by name. */
   dependencies: Readonly<Record<string, string>>;
 }
+
+/**
+ * An exact version, as a lockfile records one for a registry install. A v1
+ * lock writes `file:../pkg` in the same field for a linked dependency, which
+ * is not a version and not a registry source.
+ */
+const LOCKED_REGISTRY_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 /** The dependency ranges one lockfile entry declares, whatever its format. */
 function lockedEntryDependencies(entry: Record<string, unknown>): Record<string, string> {
@@ -307,11 +320,16 @@ function addLockedEntry(
   // Keyed by the install path, so a workspace member's own copy
   // (`packages/app/node_modules/pkg`) stays distinct from the hoisted one.
   if (path === "__proto__" || !/(?:^|\/)node_modules\//.test(path)) return;
-  const { version, resolved } = entry as { version?: unknown; resolved?: unknown };
+  const { version, resolved, link } = entry as {
+    version?: unknown;
+    resolved?: unknown;
+    link?: unknown;
+  };
   if (typeof version !== "string") return;
   locked[path] = {
     version,
     resolved: typeof resolved === "string" ? resolved : null,
+    link: link === true,
     dependencies: lockedEntryDependencies(entry),
   };
 }
@@ -517,6 +535,10 @@ function resolvesFromPublicRegistry(
   name: string,
 ): boolean {
   if (npmrcRedirects(sources, name)) return false;
+  // A link to a workspace package, or a `file:`/`git:` version, is not a
+  // registry install at all -- and its `resolved` is a path inside the
+  // project, which would otherwise read as npm's registry-relative form.
+  if (entry.link || !LOCKED_REGISTRY_VERSION.test(entry.version)) return false;
   const configured = npmrcRegistryFor(sources.npmrc, name) === PUBLIC_NPM_REGISTRY;
   if (entry.resolved === null) return npmrcOmitsResolved(sources.npmrc) && configured;
   let url: URL;

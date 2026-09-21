@@ -365,7 +365,7 @@ function compareCores(left: readonly string[], right: readonly string[]): number
  * any set that holds another. `>=0.0.0 >=0.0.0-alpha` is therefore just
  * `>=0.0.0-alpha`, which admits `0.0.0-beta`.
  */
-const ANY_RELEASE_COMPARATOR = /^>=\s*0\.0\.0$/;
+const ANY_RELEASE_COMPARATOR = /^>=\s*v?0\.0\.0$/;
 
 /**
  * Does a single-comparator range admit an exact version? `null` when the range

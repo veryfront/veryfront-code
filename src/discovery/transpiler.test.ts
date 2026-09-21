@@ -915,6 +915,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(locked["node_modules/unpdf"], {
         version: "1.8.1",
         resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.8.1.tgz",
+        link: false,
         dependencies: { ms: "^2.1.3" },
       });
       assertEquals(locked["node_modules/unpdf/node_modules/ms"]?.version, "2.0.0");
@@ -930,6 +931,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(locked["node_modules/unpdf"], {
         version: "1.8.1",
         resolved: null,
+        link: false,
         dependencies: {},
       });
     });

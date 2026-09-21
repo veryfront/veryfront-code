@@ -1404,6 +1404,32 @@ describe(
       );
     });
 
+    it("refuses a lockfile entry that links a workspace package", async () => {
+      // npm writes a link's target path in the same `resolved` field it uses
+      // for the registry-relative form, so a project whose .npmrc names the
+      // public registry would otherwise read that path as public provenance.
+      const detail = await refuseFixture({
+        "package.json": JSON.stringify({ dependencies: fixturePin }),
+        ".npmrc": "registry=https://registry.npmjs.org/\n",
+        "package-lock.json": JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/@veryfront-fixture/pdf-text": {
+              resolved: "packages/pdf-text",
+              link: true,
+              version: "1.8.1",
+            },
+          },
+        }),
+        "tool.ts": fixtureSource,
+      });
+      assertEquals(
+        detail.includes("resolves @veryfront-fixture/pdf-text from another registry"),
+        true,
+        detail,
+      );
+    });
+
     it("keeps the transitive pins out of an unreachable CDN URL", async () => {
       // The query the pins go in is project text too: a transitive version's
       // pre-release part is free-form and must not reach the classified
