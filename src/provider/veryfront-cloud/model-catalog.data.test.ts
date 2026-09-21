@@ -33,16 +33,20 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
     assertEquals(functionPaths, []);
   });
 
-  it("lists every provider exactly once in the labels and the display order", () => {
-    const providers = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
+  it("lists every provider with a chat model exactly once in the labels and the display order", () => {
+    // An alias may also target a provider the catalog lists no chat model for
+    // (its ids still resolve through the alias and its routing row); such a
+    // provider has no label or display-order row, which only the chat list needs.
+    const aliased = new Set(catalogData.VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([, id]) => id));
+    const ordered = [...catalogData.VERYFRONT_CLOUD_PROVIDER_ORDER];
 
-    assertEquals(
-      [...catalogData.VERYFRONT_CLOUD_PROVIDER_ORDER].sort(),
-      [...providers].sort(),
-    );
+    assertEquals(new Set(ordered).size, ordered.length);
+    for (const provider of ordered) {
+      assertEquals(aliased.has(provider), true, `no alias row for "${provider}"`);
+    }
     assertEquals(
       Object.keys(catalogData.VERYFRONT_CLOUD_PROVIDER_LABELS).sort(),
-      [...providers].sort(),
+      [...ordered].sort(),
     );
   });
 
@@ -52,10 +56,15 @@ describe("provider/veryfront-cloud/model-catalog.data", () => {
       catalogData.VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS.map(([surface]) => surface),
     );
 
-    assertEquals(
-      catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING.map(([provider]) => provider).sort(),
-      [...providers].sort(),
+    // Coverage, not equality: the routing table may also carry a provider the
+    // catalog no longer lists a chat model for, whose other model ids still
+    // route through it.
+    const routed = new Set(
+      catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING.map(([provider]) => provider),
     );
+    for (const provider of providers) {
+      assertEquals(routed.has(provider), true, `no routing declared for "${provider}"`);
+    }
     for (const [provider, routing] of catalogData.VERYFRONT_CLOUD_PROVIDER_ROUTING) {
       assertEquals(
         versionedSurfaces.has(routing.surface),

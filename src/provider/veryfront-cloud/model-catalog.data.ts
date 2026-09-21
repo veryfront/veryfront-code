@@ -1,12 +1,13 @@
 /**
  * Veryfront Cloud model catalog data.
  *
+ * Generated file. Do not edit by hand: run `deno task generate:model-catalog`,
+ * read the diff, and open a pull request with it. Facts the served catalog
+ * does not carry live in `scripts/build/model-catalog-overlay.ts`.
+ *
  * Data only: this module holds the catalog tables and contains no logic. Every
  * export is a plain frozen value, and the only imports are types. Resolution
  * logic lives in `model-catalog.ts`, which is the module to import from.
- *
- * The tables are kept in one place so that they can be produced by a generator.
- * Do not add functions, computed values, or side effects here.
  */
 import type {
   KnownVeryfrontCloudProviderId,
@@ -276,9 +277,28 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
   ],
 );
 
-/** Display label for each provider. */
+/**
+ * Provider display order. The order is user-visible. Literal, so the label
+ * table below can be typed by exactly these providers.
+ */
+export const VERYFRONT_CLOUD_PROVIDER_ORDER = Object.freeze(
+  [
+    "anthropic",
+    "openai",
+    "google",
+    "mistral",
+    "moonshotai",
+  ] as const,
+) satisfies readonly KnownVeryfrontCloudProviderId[];
+
+/**
+ * Display label for each DISPLAYED provider: the providers in the display
+ * order, not every known one. A known provider the catalog lists no chat
+ * model for keeps its alias and routing rows but has no label row, and the
+ * type says so rather than requiring one.
+ */
 export const VERYFRONT_CLOUD_PROVIDER_LABELS: Readonly<
-  Record<KnownVeryfrontCloudProviderId, string>
+  Record<(typeof VERYFRONT_CLOUD_PROVIDER_ORDER)[number], string>
 > = Object.freeze({
   anthropic: "Anthropic",
   openai: "OpenAI",
@@ -286,13 +306,3 @@ export const VERYFRONT_CLOUD_PROVIDER_LABELS: Readonly<
   moonshotai: "Kimi",
   mistral: "Mistral",
 });
-
-/** Provider display order. The order is user-visible. */
-export const VERYFRONT_CLOUD_PROVIDER_ORDER: readonly KnownVeryfrontCloudProviderId[] = Object
-  .freeze([
-    "anthropic",
-    "openai",
-    "google",
-    "mistral",
-    "moonshotai",
-  ]);

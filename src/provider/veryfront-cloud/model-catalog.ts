@@ -50,7 +50,9 @@ export type VeryfrontCloudWireSurface = "openai" | "anthropic" | "google";
  * value is carried through, so data can name a surface a later release builds
  * requests for.
  */
-export type VeryfrontCloudSurfaceId = VeryfrontCloudWireSurface | (string & Record<never, never>);
+export type VeryfrontCloudSurfaceId =
+  | VeryfrontCloudWireSurface
+  | (string & Record<never, never>);
 
 /** Configuration used by Veryfront Cloud model thinking. */
 export type VeryfrontCloudModelThinkingConfig = {
@@ -96,11 +98,15 @@ export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 /** Private runtime Map for alias lookups, built from the frozen data entries. */
 const _providerAliasMap = new Map(VERYFRONT_CLOUD_PROVIDER_ALIASES);
 /** Private runtime Map for transport-capability lookups, built from the frozen data entries. */
-const _transportCapabilitiesMap = new Map(VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES);
+const _transportCapabilitiesMap = new Map(
+  VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES,
+);
 /** Private runtime Map for provider routing lookups, built from the frozen data entries. */
 const _providerRoutingMap = new Map(VERYFRONT_CLOUD_PROVIDER_ROUTING);
 /** Private runtime Map for gateway API version lookups, built from the frozen data entries. */
-const _surfaceGatewayApiVersionMap = new Map(VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS);
+const _surfaceGatewayApiVersionMap = new Map(
+  VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS,
+);
 
 /** Resolve a supported gateway provider alias without consulting object prototypes. */
 export function normalizeVeryfrontCloudProviderAlias(
@@ -134,15 +140,17 @@ export function resolveVeryfrontCloudProviderId(
 ): VeryfrontCloudProviderId | undefined {
   const alias = normalizeVeryfrontCloudProviderAlias(provider);
   if (alias) return alias;
-  return PROVIDER_ID_PATTERN.test(provider) && !RESERVED_PROVIDER_IDS.has(provider)
+  return PROVIDER_ID_PATTERN.test(provider) &&
+      !RESERVED_PROVIDER_IDS.has(provider)
     ? provider
     : undefined;
 }
 
 /** Routing used for a provider the catalog data does not list. */
-const DEFAULT_PROVIDER_ROUTING: Readonly<VeryfrontCloudProviderRouting> = Object.freeze({
-  surface: DEFAULT_VERYFRONT_CLOUD_SURFACE,
-});
+const DEFAULT_PROVIDER_ROUTING: Readonly<VeryfrontCloudProviderRouting> = Object
+  .freeze({
+    surface: DEFAULT_VERYFRONT_CLOUD_SURFACE,
+  });
 
 /** Gateway routing declared for a provider, or the default for an unlisted one. */
 export function resolveVeryfrontCloudProviderRouting(
@@ -153,12 +161,18 @@ export function resolveVeryfrontCloudProviderRouting(
 }
 
 /** Wire format the given provider's gateway endpoint speaks. */
-export function resolveVeryfrontCloudSurface(provider: string): VeryfrontCloudSurfaceId {
+export function resolveVeryfrontCloudSurface(
+  provider: string,
+): VeryfrontCloudSurfaceId {
   return resolveVeryfrontCloudProviderRouting(provider).surface;
 }
 
 /** Wire surfaces this package builds requests for. */
-const WIRE_SURFACES: ReadonlySet<string> = new Set(["openai", "anthropic", "google"]);
+const WIRE_SURFACES: ReadonlySet<string> = new Set([
+  "openai",
+  "anthropic",
+  "google",
+]);
 
 /**
  * Narrow a declared surface to one this package builds requests for.
@@ -180,7 +194,9 @@ export function requireVeryfrontCloudWireSurface(
  * path segment. The surface decides the API version, so a provider the catalog
  * does not list resolves to a path of the same shape.
  */
-export function resolveVeryfrontCloudGatewayPath(provider: string): string | undefined {
+export function resolveVeryfrontCloudGatewayPath(
+  provider: string,
+): string | undefined {
   const providerId = resolveVeryfrontCloudProviderId(provider);
   if (!providerId) return undefined;
   const apiVersion = _surfaceGatewayApiVersionMap.get(
@@ -199,14 +215,36 @@ export function resolveVeryfrontCloudProviderFromModelId(
   const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
   const slashIndex = normalizedModelId.indexOf("/");
   if (slashIndex <= 0) return undefined;
-  return resolveVeryfrontCloudProviderId(normalizedModelId.slice(0, slashIndex));
+  return resolveVeryfrontCloudProviderId(
+    normalizedModelId.slice(0, slashIndex),
+  );
+}
+
+/**
+ * The key the capability rows are stored under: `<canonical provider>/<upstream id>`.
+ *
+ * A gateway model ID may carry the `veryfront-cloud/` prefix and may name its
+ * provider by a listed alias (`google-ai-studio/...` for `google`); the rows are
+ * keyed by the canonical provider, so both are normalized away here. An ID
+ * with no provider segment is returned as normalized.
+ */
+export function canonicalVeryfrontCloudModelKey(modelId: string): string {
+  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
+  const slashIndex = normalizedModelId.indexOf("/");
+  if (slashIndex <= 0) return normalizedModelId;
+  const provider = resolveVeryfrontCloudProviderId(
+    normalizedModelId.slice(0, slashIndex),
+  );
+  return provider === undefined
+    ? normalizedModelId
+    : `${provider}/${normalizedModelId.slice(slashIndex + 1)}`;
 }
 
 function getVeryfrontCloudModelTransportCapabilities(
   modelId: string,
 ): Readonly<VeryfrontCloudModelTransportCapabilities> | undefined {
   return _transportCapabilitiesMap.get(
-    normalizeVeryfrontCloudModelId(modelId),
+    canonicalVeryfrontCloudModelKey(modelId),
   );
 }
 
@@ -240,18 +278,20 @@ export type VeryfrontCloudOpenAITransportPlan = {
   readonly pinned: boolean;
 };
 
-const CHAT_COMPLETIONS_PINNED: VeryfrontCloudOpenAITransportPlan = Object.freeze({
-  transport: "chat-completions" as const,
-  pinned: true,
-});
+const CHAT_COMPLETIONS_PINNED: VeryfrontCloudOpenAITransportPlan = Object
+  .freeze({
+    transport: "chat-completions" as const,
+    pinned: true,
+  });
 const RESPONSES_PINNED: VeryfrontCloudOpenAITransportPlan = Object.freeze({
   transport: "responses" as const,
   pinned: true,
 });
-const CHAT_COMPLETIONS_ADAPTIVE: VeryfrontCloudOpenAITransportPlan = Object.freeze({
-  transport: "chat-completions" as const,
-  pinned: false,
-});
+const CHAT_COMPLETIONS_ADAPTIVE: VeryfrontCloudOpenAITransportPlan = Object
+  .freeze({
+    transport: "chat-completions" as const,
+    pinned: false,
+  });
 
 /**
  * Transport plan for a provider and upstream model ID on the OpenAI surface.
@@ -267,15 +307,21 @@ export function resolveVeryfrontCloudOpenAITransportPlan(
   const routing = resolveVeryfrontCloudProviderRouting(provider);
   // A provider that only speaks the OpenAI wire format has no Responses
   // surface, so nothing can move it off chat completions.
-  if (routing.surface !== "openai" || routing.native !== true) return CHAT_COMPLETIONS_PINNED;
+  if (routing.surface !== "openai" || routing.native !== true) {
+    return CHAT_COMPLETIONS_PINNED;
+  }
 
   const catalogModelId = `${provider}/${upstreamModelId}`;
   const declared = resolveVeryfrontCloudOpenAITransport(catalogModelId);
   if (declared !== undefined) {
     return declared === "responses" ? RESPONSES_PINNED : CHAT_COMPLETIONS_PINNED;
   }
-  if (resolveVeryfrontCloudModelThinking(catalogModelId)?.enabled === true) return RESPONSES_PINNED;
-  if (isOpenAIReasoningModel(upstreamModelId, VERYFRONT_CLOUD_OPENAI_RUNTIME_NAME)) {
+  if (resolveVeryfrontCloudModelThinking(catalogModelId)?.enabled === true) {
+    return RESPONSES_PINNED;
+  }
+  if (
+    isOpenAIReasoningModel(upstreamModelId, VERYFRONT_CLOUD_OPENAI_RUNTIME_NAME)
+  ) {
     return RESPONSES_PINNED;
   }
   return CHAT_COMPLETIONS_ADAPTIVE;
@@ -287,15 +333,36 @@ export function resolveVeryfrontCloudOpenAICallTransport(
   upstreamModelId: string,
   usesHostedTool: boolean,
 ): "chat-completions" | "responses" {
-  const plan = resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId);
+  const plan = resolveVeryfrontCloudOpenAITransportPlan(
+    provider,
+    upstreamModelId,
+  );
   if (plan.pinned) return plan.transport;
   return usesHostedTool ? "responses" : "chat-completions";
 }
 
-/** Returns true if the given model ID is a Mistral model in the catalog. */
+/**
+ * Returns true if the given model ID is a Mistral model in the catalog.
+ *
+ * Compared by canonical key on both sides, so a catalog entry served under a
+ * provider alias and a request spelling the canonical provider (or carrying
+ * the gateway prefix) still meet.
+ */
+/**
+ * Whether an id is a Mistral id under any spelling the runtime accepts: the
+ * gateway prefix stripped and the provider segment resolved through the alias
+ * table, so an alias of the provider is gated exactly as the canonical one.
+ */
+function isMistralModelId(modelId: string): boolean {
+  return canonicalVeryfrontCloudModelKey(modelId).startsWith("mistral/");
+}
+
 export function isSupportedMistralModelId(modelId: string): boolean {
+  const key = canonicalVeryfrontCloudModelKey(modelId);
   return VERYFRONT_CLOUD_CHAT_MODELS.some(
-    (model) => model.provider === "mistral" && model.modelId === modelId,
+    (model) =>
+      model.provider === "mistral" &&
+      canonicalVeryfrontCloudModelKey(model.modelId) === key,
   );
 }
 
@@ -332,7 +399,9 @@ export const DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID =
   `${VERYFRONT_CLOUD_MODEL_PREFIX}${DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID}`;
 
 /** Find Veryfront Cloud model. */
-export function findVeryfrontCloudModel(id: string): VeryfrontCloudChatModel | undefined {
+export function findVeryfrontCloudModel(
+  id: string,
+): VeryfrontCloudChatModel | undefined {
   return VERYFRONT_CLOUD_CHAT_MODELS.find((model) => model.id === id);
 }
 
@@ -347,8 +416,13 @@ export function normalizeVeryfrontCloudModelId(modelId: string): string {
 export function findVeryfrontCloudModelByModelId(
   modelId: string,
 ): VeryfrontCloudChatModel | undefined {
-  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
-  return VERYFRONT_CLOUD_CHAT_MODELS.find((model) => model.modelId === normalizedModelId);
+  // Compared by canonical key on both sides: the catalog may publish a model
+  // under a provider alias while a caller spells the canonical provider, or
+  // the other way round once the catalog moves on and the alias is retained.
+  const key = canonicalVeryfrontCloudModelKey(modelId);
+  return VERYFRONT_CLOUD_CHAT_MODELS.find(
+    (model) => canonicalVeryfrontCloudModelKey(model.modelId) === key,
+  );
 }
 
 /**
@@ -396,15 +470,22 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
   if (requestedModel.includes("/")) {
     // Mistral models are gated by the catalog whitelist; reject ids we don't
     // list so callers get a clear error rather than a gateway-side failure.
-    if (requestedModel.startsWith("mistral/") && !isSupportedMistralModelId(requestedModel)) {
-      throw NOT_SUPPORTED.create({ detail: `Unsupported Mistral model "${requestedModel}"` });
+    if (
+      isMistralModelId(requestedModel) &&
+      !isSupportedMistralModelId(requestedModel)
+    ) {
+      throw NOT_SUPPORTED.create({
+        detail: `Unsupported Mistral model "${requestedModel}"`,
+      });
     }
     return requestedModel;
   }
 
   const model = findVeryfrontCloudModel(requestedModel);
   if (!model) {
-    throw INVALID_ARGUMENT.create({ detail: `Unknown model alias "${requestedModel}"` });
+    throw INVALID_ARGUMENT.create({
+      detail: `Unknown model alias "${requestedModel}"`,
+    });
   }
   return model.modelId;
 }
@@ -443,7 +524,7 @@ export function resolveVeryfrontCloudGatewayModelId(
 
   // Unsupported Mistral ids are passed through unprefixed (not routed through
   // the Veryfront Cloud gateway prefix).
-  if (modelId.startsWith("mistral/") && !isSupportedMistralModelId(modelId)) {
+  if (isMistralModelId(modelId) && !isSupportedMistralModelId(modelId)) {
     return modelId;
   }
 
@@ -463,7 +544,8 @@ export function resolveVeryfrontCloudModelThinking(
     return undefined;
   }
 
-  const model = findVeryfrontCloudModelByModelId(modelId) ?? findVeryfrontCloudModel(modelId);
+  const model = findVeryfrontCloudModelByModelId(modelId) ??
+    findVeryfrontCloudModel(modelId);
   const budgetTokens = requireThinkingBudgetTokens(model?.thinkingBudgetTokens);
   if (model?.thinking !== true && budgetTokens === undefined) {
     return undefined;
