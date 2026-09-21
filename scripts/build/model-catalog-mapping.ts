@@ -622,16 +622,19 @@ function buildProviderTables(
   providerLabels: (readonly [string, string])[];
 } {
   // The runtime consults the alias map BEFORE it accepts a provider as
-  // written, so a retained alias is checked for the two ways it could hijack
-  // ids: a key outside the served-alias shape would make ids the runtime
-  // deliberately refuses resolve, and a key that names another provider —
-  // listed, or named by the overlay — would send that provider's every id
-  // to the alias's target. The overlay names repository values, so they are
-  // printed.
+  // written, so a retained alias is checked for the three ways it could send
+  // a request somewhere it does not belong: a key outside the served-alias
+  // shape would make ids the runtime deliberately refuses resolve; a key that
+  // names another provider — listed, or named by the overlay — would send
+  // that provider's every id to the alias's target; and a target the catalog
+  // no longer lists has no routing row, so the alias would resolve and then
+  // take the default surface. The overlay names repository values, so they
+  // are printed.
   const providers = new Set([
     ...listedProviders,
     ...overlay.nativeProviders,
   ]);
+  const listed = new Set(listedProviders);
   for (const [alias, provider] of overlay.retainedProviderAliases) {
     const unusable = describeUnusableProvider(alias);
     if (unusable !== undefined) {
@@ -640,6 +643,17 @@ function buildProviderTables(
     if (alias !== provider && providers.has(alias)) {
       fail(
         `overlay retainedProviderAliases alias "${alias}" names a provider of its own, so it cannot stand for "${provider}"`,
+      );
+    }
+    // The overlay already states this ("the value is the canonical provider,
+    // which the catalog must still serve"); until now nothing checked it.
+    // Generation fails rather than publishing the alias, because there is no
+    // honest surface to route it on: nothing served names one, and writing one
+    // here by hand is the per-vendor table this generator removed. A self
+    // alias publishes no row at all, so it misroutes nothing.
+    if (alias !== provider && !listed.has(provider)) {
+      fail(
+        `overlay retainedProviderAliases keeps "${alias}" for "${provider}", which the served catalog no longer lists, so the alias would resolve and then route on the default surface: drop the alias, or serve the provider again`,
       );
     }
   }
@@ -684,7 +698,8 @@ function buildProviderTables(
   // the runtime accepts, not about the chat list: model ids of that provider
   // the runtime resolves without a chat entry still go through it. Its
   // provider has no label or display-order row, which only the chat list
-  // needs, and no routing row unless the catalog still lists it.
+  // needs, but it does have a routing row, because the catalog still lists
+  // it — the check above refused the alias otherwise.
   const served = new Set(providerOrder);
   for (const [alias, provider] of overlay.retainedProviderAliases) {
     if (!served.has(provider) && alias !== provider) {

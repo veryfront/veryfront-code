@@ -1385,7 +1385,10 @@ describe("scripts/build/model-catalog-mapping", () => {
     // An alias is about the ids the runtime accepts, not about the chat list:
     // ids of the provider the runtime resolves without a chat entry still go
     // through it. Such rows follow the served groups, in overlay order; the
-    // provider itself gets no label or display-order row.
+    // provider itself gets no label or display-order row. The catalog still
+    // LISTS the provider, so the alias resolves onto a routing row.
+    const payload = fakePayload();
+    payload.providers = [...(payload.providers as string[]), "gamma"];
     const overlay: ModelCatalogOverlay = {
       ...OVERLAY,
       nativeProviders: [...OVERLAY.nativeProviders, "gamma"],
@@ -1394,7 +1397,7 @@ describe("scripts/build/model-catalog-mapping", () => {
         "acme-labs",
       ]],
     };
-    const data = buildModelCatalogData(fakePayload(), overlay);
+    const data = buildModelCatalogData(payload, overlay);
     const aliases = data.providerAliases.map(([alias]) => alias);
     assertEquals(aliases.indexOf("acme") < aliases.indexOf("gamma-api"), true);
     assertEquals(new Map(data.providerAliases).get("gamma-api"), "gamma");
@@ -1405,9 +1408,41 @@ describe("scripts/build/model-catalog-mapping", () => {
       data.providerLabels.some(([provider]) => provider === "gamma"),
       false,
     );
-    // The catalog names neither gamma nor a model of it, so nothing evidences
-    // a surface for it and it gets no routing row.
-    assertEquals(new Map(data.providerRouting).get("gamma"), undefined);
+    // Listed but serving no model, so it routes on the default surface and is
+    // reported, exactly as any other listed provider with no served surface.
+    // The overlay names it native, and that flag is the overlay's to give.
+    assertEquals(new Map(data.providerRouting).get("gamma"), {
+      surface: "openai",
+      native: true,
+    });
+    assertEquals(findProvidersWithoutSurface(payload), ["providers[2]"]);
+  });
+
+  it("refuses a retained alias whose provider the catalog no longer lists", () => {
+    // The runtime resolves the alias to its canonical provider and then reads
+    // that provider's routing. With the provider gone from the catalog there
+    // is no row, so the alias would resolve and then take the default surface:
+    // a published alias generated to speak the wrong protocol. Nothing served
+    // names a surface for a provider the catalog dropped, and writing one by
+    // hand is the per-vendor table this generator removed, so generation
+    // fails instead. Both names are the overlay's own, so both are printed.
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      retainedProviderAliases: [["gamma-api", "gamma"]],
+    };
+
+    const error = assertThrows(
+      () => buildModelCatalogData(fakePayload(), overlay),
+      Error,
+      'overlay retainedProviderAliases keeps "gamma-api" for "gamma", which the served catalog no longer lists',
+    ) as Error;
+    assertStringIncludes(error.message, "drop the alias");
+
+    // A self alias publishes no row, so it routes nothing and is left alone.
+    buildModelCatalogData(fakePayload(), {
+      ...OVERLAY,
+      retainedProviderAliases: [["gamma", "gamma"]],
+    });
   });
 
   it("keeps the function-tool reasoning flag even for a non-reasoning model", () => {
