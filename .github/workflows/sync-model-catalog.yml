@@ -2,13 +2,19 @@
 # or updates one pull request with the result, so the snapshot that ships in the
 # package is no longer maintained by hand.
 #
-# Required repository Actions secret:
+# Required secret of the `production` environment, which is where this
+# repository keeps its credentials:
 #
 #   VERYFRONT_CATALOG_READ_TOKEN
 #     A platform API token whose only permission is to read the model catalog
 #     (GET /ai/models). It must grant nothing else: no write scope, no gateway
 #     access, no project access. It is passed to exactly one step, through
 #     `env`, never as a command argument, and is never printed.
+#
+# The environment restricts which branches may run a job that uses it, so a
+# manual dispatch from a branch it does not allow is refused before this job
+# starts. That is the intended behaviour: every run regenerates from the base
+# branch anyway.
 #
 # What a run does with the generated data, once it differs from main:
 #
@@ -73,6 +79,10 @@ jobs:
     # requires every job that runs repository code to carry it.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
+    # Both credentials below are secrets of this environment, so the job has to
+    # declare it or they arrive empty. Every other consumer of the release App
+    # in this repository declares it the same way.
+    environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
