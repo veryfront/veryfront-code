@@ -1007,6 +1007,30 @@ describe("scripts/build/model-catalog-mapping", () => {
     }
   });
 
+  it("refuses a retained alias that names another provider", () => {
+    // The runtime reads the alias map before accepting a provider as written,
+    // so `["beta-works", "acme-labs"]` would send every beta-works id to
+    // acme-labs — and a provider only the overlay routes is a provider too.
+    for (
+      const overlay of [
+        { ...OVERLAY, retainedProviderAliases: [["beta-works", "acme-labs"]] },
+        {
+          ...OVERLAY,
+          providerRouting: [...OVERLAY.providerRouting, ["gamma", {
+            surface: "anthropic",
+          }]],
+          retainedProviderAliases: [["gamma", "acme-labs"]],
+        },
+      ] as ModelCatalogOverlay[]
+    ) {
+      assertThrows(
+        () => buildModelCatalogData(fakePayload(), overlay),
+        Error,
+        "names a provider of its own",
+      );
+    }
+  });
+
   it("keeps a retained alias for a provider the catalog lists no chat model for", () => {
     // Like a routing row, an alias is about the ids the runtime accepts, not
     // about the chat list: ids of the provider the runtime resolves without a

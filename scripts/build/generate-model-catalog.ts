@@ -72,8 +72,25 @@ export function stripTrailingSlashes(value: string): string {
 }
 
 /** The catalog URL for a base, with exactly one slash between the two parts. */
+/**
+ * The catalog URL: the base's path plus the catalog path, with the base's
+ * query kept as it is (a signed query has to travel untouched). The base is
+ * an operator's value, so a base that is not an absolute URL is refused
+ * without echoing it.
+ */
 export function buildCatalogUrl(baseUrl: string): string {
-  return `${stripTrailingSlashes(baseUrl)}${CATALOG_PATH}`;
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error(`${BASE_URL_ENV} is not an absolute URL`);
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error(`${BASE_URL_ENV} must be an http(s) URL`);
+  }
+  url.pathname = `${stripTrailingSlashes(url.pathname)}${CATALOG_PATH}`;
+  url.hash = "";
+  return url.toString();
 }
 
 /**

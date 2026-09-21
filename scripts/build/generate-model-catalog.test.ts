@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildCatalogUrl,
@@ -135,6 +135,39 @@ describe("the catalog URL", () => {
       buildCatalogUrl("https://api.veryfront.com"),
       "https://api.veryfront.com/ai/models",
     );
+  });
+
+  it("keeps the base's path and query, so a signed query travels untouched", () => {
+    assertEquals(
+      buildCatalogUrl("https://example.invalid/base?sig=abc&v=1"),
+      "https://example.invalid/base/ai/models?sig=abc&v=1",
+    );
+    assertEquals(
+      buildCatalogUrl("https://example.invalid/base/?sig=abc"),
+      "https://example.invalid/base/ai/models?sig=abc",
+    );
+    assertEquals(
+      buildCatalogUrl("https://example.invalid?sig=abc"),
+      "https://example.invalid/ai/models?sig=abc",
+    );
+  });
+
+  it("refuses a base that is not an absolute http(s) URL, without echoing it", () => {
+    for (
+      const base of [
+        "",
+        "api.example.invalid",
+        "ftp://example.invalid",
+        "not a url",
+      ]
+    ) {
+      const error = assertThrows(() => buildCatalogUrl(base), Error) as Error;
+      assertEquals(
+        error.message.includes("VERYFRONT_CATALOG_API_BASE_URL"),
+        true,
+      );
+      assertEquals(base !== "" && error.message.includes(base), false);
+    }
   });
 
   it("joins a base with or without a trailing slash with exactly one slash", () => {

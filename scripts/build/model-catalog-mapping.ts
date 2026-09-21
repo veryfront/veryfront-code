@@ -531,15 +531,26 @@ function buildProviderTables(
   providerAliases: (readonly [string, string])[];
   providerLabels: (readonly [string, string])[];
 } {
-  for (const [alias] of overlay.retainedProviderAliases) {
-    // The runtime consults the alias map BEFORE its own provider-shape and
-    // reserved-name checks, so an alias outside the served-alias shape would
-    // make ids the runtime deliberately refuses resolve. Same rule as for a
-    // served provider segment. The overlay names a repository value, so it
-    // is printed.
+  // The runtime consults the alias map BEFORE it accepts a provider as
+  // written, so a retained alias is checked for the two ways it could hijack
+  // ids: a key outside the served-alias shape would make ids the runtime
+  // deliberately refuses resolve, and a key that names another provider —
+  // served, or routed by the overlay — would send that provider's every id
+  // to the alias's target. The overlay names repository values, so they are
+  // printed.
+  const providers = new Set([
+    ...providerOrder,
+    ...overlay.providerRouting.map(([provider]) => provider),
+  ]);
+  for (const [alias, provider] of overlay.retainedProviderAliases) {
     const unusable = describeUnusableProvider(alias);
     if (unusable !== undefined) {
       fail(`overlay retainedProviderAliases alias "${alias}" ${unusable}`);
+    }
+    if (alias !== provider && providers.has(alias)) {
+      fail(
+        `overlay retainedProviderAliases alias "${alias}" names a provider of its own, so it cannot stand for "${provider}"`,
+      );
     }
   }
 
