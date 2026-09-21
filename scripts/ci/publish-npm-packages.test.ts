@@ -604,6 +604,45 @@ describe("npm package publishing", () => {
     });
   });
 
+  it("counts only time spent waiting against the shared metadata budget", async () => {
+    await withTempDir(async (stateDir) => {
+      const countFile = `${stateDir}/npm-view-count`;
+      await Deno.writeTextFile(countFile, "0");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  count="$(cat "$COUNT_FILE")"',
+          "  count=$((count + 1))",
+          '  printf "%s" "$count" > "$COUNT_FILE"',
+          "}",
+          "sleep() { :; }",
+          // Wall-clock time (for example spent publishing other packages) must
+          // not consume the budget: a clock that jumps far ahead changes nothing.
+          "date() { echo 9999999999; }",
+          // 20s budget at 10s per wait: the first package polls twice, then
+          // the second package gets only its initial read and a confirmation.
+          'wait_for_npm_git_head "veryfront" && exit 3',
+          'wait_for_npm_git_head "@veryfront/ext-auth-jwt" && exit 4',
+          "exit 0",
+        ].join("\n"),
+        {
+          COUNT_FILE: countFile,
+          GITHUB_SHA: "expected-commit",
+          VERSION: "0.1.1261",
+          NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "20",
+          NPM_GIT_HEAD_WAIT_DELAY_SECONDS: "10",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      // Package 1: 3 polling reads + 1 confirmation; package 2: 1 read + 1 confirmation.
+      assertEquals(await Deno.readTextFile(countFile), "6");
+    });
+  });
+
   it("waits for an existing RC version's missing gitHead metadata", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;
