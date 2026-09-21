@@ -1,8 +1,4 @@
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   formatRegistryReleaseFailure,
@@ -178,8 +174,7 @@ describe("registry release integrity polling", () => {
         maxAttempts: 2,
         retryDelayMs: 0,
         requestTimeoutMs: 100,
-        fetcher: () =>
-          Promise.resolve(new Response("not found", { status: 404 })),
+        fetcher: () => Promise.resolve(new Response("not found", { status: 404 })),
         delay: () => Promise.resolve(),
       })
     );
@@ -318,8 +313,7 @@ describe("registry release integrity polling", () => {
         maxAttempts: 1,
         retryDelayMs: 0,
         requestTimeoutMs: 100,
-        fetcher: () =>
-          Promise.reject(new Error("registry says\n::error::injected")),
+        fetcher: () => Promise.reject(new Error("registry says\n::error::injected")),
         delay: () => Promise.resolve(),
       })
     );
@@ -342,8 +336,7 @@ describe("registry release integrity polling", () => {
         maxAttempts: 1,
         retryDelayMs: 0,
         requestTimeoutMs: 100,
-        fetcher: () =>
-          Promise.resolve(Response.json(publishedPackage({ dist: {} }))),
+        fetcher: () => Promise.resolve(Response.json(publishedPackage({ dist: {} }))),
         delay: () => Promise.resolve(),
       })
     );
