@@ -120,7 +120,7 @@ const MODEL_FIELDS: readonly FieldSpec[] = [
   { key: "provider", type: "a string", required: true },
   { key: "name", type: "a string", required: true },
   { key: "description", type: "a string", required: false },
-  { key: "providerLabel", type: "a string", required: false },
+  { key: "providerLabel", type: "a string", required: true },
   { key: "capabilities", type: "an object", required: false },
 ];
 
@@ -259,7 +259,7 @@ type ServedModel = {
   readonly provider: string;
   readonly name: string;
   readonly description?: string;
-  readonly providerLabel?: string;
+  readonly providerLabel: string;
   readonly capabilities: ServedCapabilities;
 };
 
@@ -306,7 +306,7 @@ export function parseServedCatalog(payload: unknown): ServedCatalog {
       provider: model.provider as string,
       name: model.name as string,
       description: model.description as string | undefined,
-      providerLabel: model.providerLabel as string | undefined,
+      providerLabel: model.providerLabel as string,
       capabilities: capabilities as ServedCapabilities,
     };
   });
@@ -426,13 +426,25 @@ export function buildModelCatalogData(
   // A listed provider that serves no model is legitimate: the platform may
   // list one with nothing routable right now. It contributes no group, so it
   // is left out of every table rather than failing the run.
+  //
+  // Whether a provider is served is decided by whether a model names it, never
+  // by whether a label was found for it. Those coincide, because the platform
+  // declares the label required and this generator enforces that, but reading
+  // the label would make an absent label look like an absent provider and drop
+  // models that are still listed.
+  const providersWithModels = new Set(
+    chatModels.map((model) => model.provider),
+  );
   const servedProviders = providerOrder.filter((provider) =>
-    labelByProvider.has(provider)
+    providersWithModels.has(provider)
   );
   const providerAliases: (readonly [string, string])[] = [];
   const providerLabels: (readonly [string, string])[] = [];
   for (const provider of servedProviders) {
-    const label = labelByProvider.get(provider) as string;
+    const label = labelByProvider.get(provider) ??
+      fail(
+        `provider "${provider}" serves a model but carries no display label`,
+      );
     providerLabels.push([provider, label]);
     providerAliases.push([provider, provider]);
     for (const prefix of [...aliasPrefixes.get(provider) ?? []].sort()) {

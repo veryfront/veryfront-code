@@ -523,6 +523,18 @@ describe("scripts/build/model-catalog-mapping", () => {
 
     // A present value of the wrong type says so, rather than being reported
     // as absent or quietly coerced.
+    // The platform declares the display label required, so an absent one is a
+    // broken payload. Treating it as optional would let a missing label look
+    // like a missing provider and drop models that are still listed.
+    const unlabelledModel = fakePayload();
+    delete (unlabelledModel.models as Record<string, unknown>[])[1]
+      .providerLabel;
+    assertThrows(
+      () => buildModelCatalogData(unlabelledModel, OVERLAY),
+      Error,
+      'model "riddle-9" is missing providerLabel',
+    );
+
     const untyped = fakePayload();
     (untyped.models as Record<string, unknown>[])[2].modelId = 42;
     assertThrows(
