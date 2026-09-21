@@ -29,7 +29,8 @@ const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
 const BASE_HEAD = "e724246c0e05c8dcf0db41f024f4592128222937";
 const NEW_HEAD = "b8459394dd5bac3a6736ee4c7723d7f291abb382";
-const LIVE_CODEX_SUMMARY_HEAD = "60c61968ce726689e6ab9e5438d08e8bf8a11ced";
+const LIVE_CODEX_SUMMARY_HEAD =
+  "60c61968ce726689e6ab9e5438d08e8bf8a11ced";
 const BASE_REPOSITORY_ID = 1_101_259_327;
 const BASE_REF = "main";
 const OTHER_BASE_REF = "release";
@@ -146,9 +147,7 @@ function codexReviewSummary(
       "",
       "| Review | Status | Commit | Review trigger |",
       "| --- | --- | --- | --- |",
-      `| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-09-06T14:32:42.547857Z">2026-09-06T14:32:42.547857Z</relative-time> | \`${
-        HEAD.slice(0, 7)
-      }\` | Manual request |`,
+      `| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="2026-09-06T14:32:42.547857Z">2026-09-06T14:32:42.547857Z</relative-time> | \`${HEAD.slice(0, 7)}\` | Manual request |`,
       "",
       "",
       "",
@@ -346,11 +345,7 @@ describe("automated review evidence", () => {
     ];
     for (const evidence of rejectedEvidence) {
       assertEquals(
-        await findAutomatedReview(
-          { reviews: [], ...evidence },
-          HEAD,
-          resolveHead,
-        ),
+        await findAutomatedReview({ reviews: [], ...evidence }, HEAD, resolveHead),
         undefined,
       );
     }
@@ -380,34 +375,22 @@ describe("automated review evidence", () => {
     const body = codexReviewSummary().body as string;
     const row = body.split("\n")[8];
     const rejected = [
-      [
-        codexReviewSummary({
-          body: body.replace(`\`${HEAD.slice(0, 7)}\``, "`d258d50`"),
-        }),
-        OTHER_HEAD,
-      ],
+      [codexReviewSummary({
+        body: body.replace(`\`${HEAD.slice(0, 7)}\``, "`d258d50`"),
+      }), OTHER_HEAD],
       [codexReviewSummary(), undefined],
-      [
-        codexReviewSummary({
-          body: body.replace("✅ **Completed**", "🟡 **In progress**"),
-        }),
-        HEAD,
-      ],
-      [
-        codexReviewSummary({
-          body: body.replace(`${row}\n\n`, `${row}\n\n  ${row}\n`),
-        }),
-        HEAD,
-      ],
-      [
-        codexReviewSummary({
-          body: body.replace(
-            "| Review | Status | Commit | Review trigger |",
-            "| Status | Review | Commit | Review trigger |",
-          ),
-        }),
-        HEAD,
-      ],
+      [codexReviewSummary({
+        body: body.replace("✅ **Completed**", "🟡 **In progress**"),
+      }), HEAD],
+      [codexReviewSummary({
+        body: body.replace(`${row}\n\n`, `${row}\n\n  ${row}\n`),
+      }), HEAD],
+      [codexReviewSummary({
+        body: body.replace(
+          "| Review | Status | Commit | Review trigger |",
+          "| Status | Review | Commit | Review trigger |",
+        ),
+      }), HEAD],
       [codexReviewSummary({ updated_at: "2026-09-06T14:32:41Z" }), HEAD],
       [codexReviewSummary({ created_at: "not-a-date" }), HEAD],
     ] as const;
@@ -439,17 +422,11 @@ describe("automated review evidence", () => {
       "codex-summary",
     );
     evidence.reactions = [];
-    assertEquals(
-      await findAutomatedReview(evidence, HEAD, resolveHead),
-      undefined,
-    );
+    assertEquals(await findAutomatedReview(evidence, HEAD, resolveHead), undefined);
     for (const createdAt of ["2026-09-06T14:32:43Z", "not-a-date"]) {
       assertEquals(
         await findAutomatedReview(
-          {
-            ...evidence,
-            reactions: [codexCompletionReaction({ created_at: createdAt })],
-          },
+          { ...evidence, reactions: [codexCompletionReaction({ created_at: createdAt })] },
           HEAD,
           resolveHead,
         ),
@@ -1668,9 +1645,7 @@ describe("automated review publication", () => {
         pages: { comments: [[codexReviewSummary()]] },
         pullResponses: [
           associatedPull(),
-          associatedPull({
-            base: { ref: OTHER_BASE_REF, repo: { id: BASE_REPOSITORY_ID } },
-          }),
+          associatedPull({ base: { ref: OTHER_BASE_REF, repo: { id: BASE_REPOSITORY_ID } } }),
         ],
         commit: HEAD,
       }),
@@ -3057,7 +3032,8 @@ describe("automated review publication", () => {
     const lateRateMarker = automatedReviewStatus({
       id: 109,
       state: "failure",
-      description: "PR#1 automated review rate limited; queue retry pending",
+      description:
+        "PR#1 automated review rate limited; queue retry pending",
       target_url: oldLimitComment.html_url,
       created_at: "2026-08-25T10:00:00Z",
     });
@@ -3787,14 +3763,10 @@ describe("automated review publication", () => {
         }),
         githubFixture({
           pages: {
-            timeline: Array.from(
-              { length: 51 },
-              (_, page) =>
-                Array.from({ length: page === 50 ? 1 : 100 }, (_, index) => ({
-                  event: "commented",
-                  id: 1000 + page * 100 + index,
-                })),
-            ),
+            timeline: Array.from({ length: 51 }, (_, page) =>
+              Array.from({ length: page === 50 ? 1 : 100 }, (_, index) => ({
+                event: "commented", id: 1000 + page * 100 + index,
+              }))),
           },
         }),
       ]
@@ -4139,12 +4111,10 @@ describe("automated review publication", () => {
       created_at: "2026-08-25T08:00:00Z",
     };
     const fixture = githubFixture({
-      pages: {
-        comments: [[codexComment(HEAD.slice(0, 10), {
-          created_at: "2026-08-25T08:30:00Z",
-          updated_at: "2026-08-25T08:30:00Z",
-        })]],
-      },
+      pages: { comments: [[codexComment(HEAD.slice(0, 10), {
+        created_at: "2026-08-25T08:30:00Z",
+        updated_at: "2026-08-25T08:30:00Z",
+      })]] },
       pageResponses: {
         events: [
           [[oldEpoch]],
@@ -4218,13 +4188,15 @@ describe("automated review timeout watchdog", () => {
       nodes: [{
         commit: {
           status: {
-            contexts: createdAt === undefined ? [] : [{
-              context: "Automated review",
-              state: statusState,
-              description: statusDescription,
-              createdAt,
-              creator: statusCreator,
-            }],
+            contexts: createdAt === undefined
+              ? []
+              : [{
+                context: "Automated review",
+                state: statusState,
+                description: statusDescription,
+                createdAt,
+                creator: statusCreator,
+              }],
           },
         },
       }],
@@ -4325,9 +4297,8 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("bounds scheduled fan-out when many reviews time out together", async () => {
-    const pulls = Array.from(
-      { length: 26 },
-      (_, index) => timeoutPull(index + 1, "2026-08-25T08:00:00Z"),
+    const pulls = Array.from({ length: 26 }, (_, index) =>
+      timeoutPull(index + 1, "2026-08-25T08:00:00Z")
     );
     const github = timeoutDiscoveryFixture([pulls]);
 
@@ -4342,9 +4313,8 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("rotates bounded discovery across eligible pull requests", async () => {
-    const pulls = Array.from(
-      { length: 30 },
-      (_, index) => timeoutPull(index + 1, "2026-08-25T08:00:00Z"),
+    const pulls = Array.from({ length: 30 }, (_, index) =>
+      timeoutPull(index + 1, "2026-08-25T08:00:00Z")
     );
     const discover = (now: string) =>
       findTimedOutAutomatedReviews({
@@ -4415,16 +4385,14 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("continues bounded discovery beyond 500 open pull requests", async () => {
-    const pages = Array.from(
-      { length: 11 },
-      (_, pageIndex) =>
-        Array.from({ length: 50 }, (_, itemIndex) => {
-          const pullNumber = pageIndex * 50 + itemIndex + 1;
-          return timeoutPull(
-            pullNumber,
-            pullNumber === 550 ? "2026-08-25T08:00:00Z" : undefined,
-          );
-        }),
+    const pages = Array.from({ length: 11 }, (_, pageIndex) =>
+      Array.from({ length: 50 }, (_, itemIndex) => {
+        const pullNumber = pageIndex * 50 + itemIndex + 1;
+        return timeoutPull(
+          pullNumber,
+          pullNumber === 550 ? "2026-08-25T08:00:00Z" : undefined,
+        );
+      })
     );
     const github = timeoutDiscoveryFixture(pages);
 
@@ -4441,14 +4409,10 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("fails visibly instead of silently truncating beyond 1,000 pulls", async () => {
-    const pages = Array.from(
-      { length: 21 },
-      (_, pageIndex) =>
-        Array.from(
-          { length: 50 },
-          (_, itemIndex) =>
-            timeoutPull(pageIndex * 50 + itemIndex + 1, undefined),
-        ),
+    const pages = Array.from({ length: 21 }, (_, pageIndex) =>
+      Array.from({ length: 50 }, (_, itemIndex) =>
+        timeoutPull(pageIndex * 50 + itemIndex + 1, undefined)
+      )
     );
     const github = timeoutDiscoveryFixture(pages);
 
@@ -4827,8 +4791,7 @@ describe("automated review timeout watchdog", () => {
       pages: {
         comments: [[{
           user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
-          body:
-            `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
+          body: `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
         }]],
         events: [[{
           event: "base_ref_changed",
@@ -7194,10 +7157,7 @@ describe("automated review workflow", () => {
 
     const timeoutJob = record(jobs.timeout, "timeout publisher job");
     assertEquals(timeoutJob.needs, "timeout_targets");
-    assertEquals(
-      timeoutJob.if,
-      "needs.timeout_targets.outputs.targets != '[]'",
-    );
+    assertEquals(timeoutJob.if, "needs.timeout_targets.outputs.targets != '[]'");
     assertEquals(
       record(
         record(timeoutJob.strategy, "timeout publisher strategy").matrix,
@@ -7521,7 +7481,7 @@ describe("automated review workflow", () => {
     assert(script.includes("result.baseRef"));
     assert(
       script.includes('entry?.state === "failure"') &&
-        !script.includes("entry?.published !== true") &&
+        !script.includes('entry?.published !== true') &&
         script.includes("active merge queue review failed"),
       "every merge queue failure must keep the source retryable",
     );

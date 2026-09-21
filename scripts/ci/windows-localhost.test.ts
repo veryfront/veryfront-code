@@ -17,18 +17,12 @@ const REPO_ROOT = new URL("../../", import.meta.url);
 function repoFile(path: string): URL {
   return new URL(path, REPO_ROOT);
 }
-const HOSTNAMES = [
-  "veryfront-probe.localhost",
-  "veryfront-probe.preview.localhost",
-];
+const HOSTNAMES = ["veryfront-probe.localhost", "veryfront-probe.preview.localhost"];
 
 type JsonRecord = Record<string, unknown>;
 
 function record(value: unknown, label: string): JsonRecord {
-  assert(
-    value !== null && typeof value === "object" && !Array.isArray(value),
-    label,
-  );
+  assert(value !== null && typeof value === "object" && !Array.isArray(value), label);
   return value as JsonRecord;
 }
 
@@ -51,10 +45,7 @@ describe("wildcard localhost Windows contract", () => {
       for (const result of results) {
         assertStringIncludes(String(result.runtime), runtime);
         assertEquals(typeof result.resolved, "boolean");
-        assert(
-          Array.isArray(result.addressFamilies),
-          "address families must be an array",
-        );
+        assert(Array.isArray(result.addressFamilies), "address families must be an array");
         assertEquals(
           "message" in result || "addresses" in result,
           false,
@@ -72,20 +63,11 @@ describe("wildcard localhost Windows contract", () => {
   }
 
   it("runs resolver, native routing, and browser routing coverage on Windows", async () => {
-    const workflow = record(
-      parse(await Deno.readTextFile(repoFile(WORKFLOW_PATH))),
-      "workflow",
-    );
+    const workflow = record(parse(await Deno.readTextFile(repoFile(WORKFLOW_PATH))), "workflow");
     const jobs = record(workflow.jobs, "workflow jobs");
-    const job = record(
-      jobs["tests-windows-localhost"],
-      "Windows localhost job",
-    );
+    const job = record(jobs["tests-windows-localhost"], "Windows localhost job");
     const steps = job.steps;
-    assert(
-      Array.isArray(steps),
-      "Windows localhost job steps must be an array",
-    );
+    assert(Array.isArray(steps), "Windows localhost job steps must be an array");
 
     assertEquals(job["runs-on"], "windows-2022");
     assertEquals(job["continue-on-error"], undefined);
@@ -95,24 +77,12 @@ describe("wildcard localhost Windows contract", () => {
         return [step.name, step];
       }),
     );
-    const probe = record(
-      namedSteps.get("Record wildcard localhost resolution"),
-      "resolver step",
-    );
+    const probe = record(namedSteps.get("Record wildcard localhost resolution"), "resolver step");
     assertStringIncludes(String(probe.run), `node ${PROBE_PATH}`);
-    assertStringIncludes(
-      String(probe.run),
-      `deno run --allow-net ${PROBE_PATH}`,
-    );
+    assertStringIncludes(String(probe.run), `deno run --allow-net ${PROBE_PATH}`);
 
-    const routing = record(
-      namedSteps.get("Exercise local virtual-host routing"),
-      "routing step",
-    );
-    assertStringIncludes(
-      String(routing.run),
-      "scripts/ci/run-windows-localhost-e2e.ts",
-    );
+    const routing = record(namedSteps.get("Exercise local virtual-host routing"), "routing step");
+    assertStringIncludes(String(routing.run), "scripts/ci/run-windows-localhost-e2e.ts");
     assertEquals(
       record(routing.env ?? {}, "routing environment").PW_DISABLE_TS_ESM,
       undefined,
@@ -137,10 +107,7 @@ describe("wildcard localhost Windows contract", () => {
 
     for (const releaseJobName of ["prerelease", "release"]) {
       const releaseJob = record(jobs[releaseJobName], `${releaseJobName} job`);
-      assert(
-        Array.isArray(releaseJob.needs),
-        `${releaseJobName} needs must be an array`,
-      );
+      assert(Array.isArray(releaseJob.needs), `${releaseJobName} needs must be an array`);
       assert(
         releaseJob.needs.includes("tests-windows-localhost"),
         `${releaseJobName} must wait for Windows localhost coverage`,

@@ -10,15 +10,11 @@ async function createVersionFixture(
   await Deno.mkdir(`${rootDir}/src/utils`, { recursive: true });
   await Deno.writeTextFile(
     `${rootDir}/deno.json`,
-    JSON.stringify(
-      {
-        name: "veryfront",
-        version: manifestVersion,
-        tasks: { "build:npm": "fixture" },
-      },
-      null,
-      2,
-    ) + "\n",
+    JSON.stringify({
+      name: "veryfront",
+      version: manifestVersion,
+      tasks: { "build:npm": "fixture" },
+    }, null, 2) + "\n",
   );
   await Deno.writeTextFile(
     `${rootDir}/src/utils/version-constant.ts`,
@@ -37,9 +33,7 @@ describe("RC build version preparation", () => {
         version: "0.1.1230-rc.456",
       });
 
-      const manifest = JSON.parse(
-        await Deno.readTextFile(`${rootDir}/deno.json`),
-      );
+      const manifest = JSON.parse(await Deno.readTextFile(`${rootDir}/deno.json`));
       assertEquals(manifest.version, "0.1.1230-rc.456");
       assertEquals(manifest.tasks["build:npm"], "fixture");
       assertEquals(

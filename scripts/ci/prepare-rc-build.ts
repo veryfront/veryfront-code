@@ -5,7 +5,8 @@ type PrepareRcBuildVersionOptions = {
   version: string;
 };
 
-const VERSION_CONSTANT_PATTERN = /^export const VERSION = "([^"]+)";$/gm;
+const VERSION_CONSTANT_PATTERN =
+  /^export const VERSION = "([^"]+)";$/gm;
 
 /** Inject the CI-generated RC version before npm build artifacts are created. */
 export async function prepareRcBuildVersion(
@@ -25,9 +26,7 @@ export async function prepareRcBuildVersion(
     throw new Error("deno.json must define a non-empty string version");
   }
   if (!/^\d+\.\d+\.\d+-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$/.test(baseVersion)) {
-    throw new Error(
-      `deno.json version ${baseVersion} is not a prerelease version`,
-    );
+    throw new Error(`deno.json version ${baseVersion} is not a prerelease version`);
   }
 
   const versionPrefix = `${baseVersion}.`;
@@ -51,13 +50,12 @@ export async function prepareRcBuildVersion(
   }
   if (versionConstantMatches[0][1] !== baseVersion) {
     throw new Error(
-      `src/utils/version-constant.ts version ${
-        versionConstantMatches[0][1]
-      } does not match deno.json version ${baseVersion}`,
+      `src/utils/version-constant.ts version ${versionConstantMatches[0][1]} does not match deno.json version ${baseVersion}`,
     );
   }
 
-  const manifestVersionPattern = /^(\s*"version"\s*:\s*)"([^"]+)"(,?\s*)$/gm;
+  const manifestVersionPattern =
+    /^(\s*"version"\s*:\s*)"([^"]+)"(,?\s*)$/gm;
   const manifestVersionMatches = [...manifestSource.matchAll(
     manifestVersionPattern,
   )];
@@ -65,9 +63,7 @@ export async function prepareRcBuildVersion(
     manifestVersionMatches.length !== 1 ||
     manifestVersionMatches[0][2] !== baseVersion
   ) {
-    throw new Error(
-      "deno.json must contain exactly one matching version field",
-    );
+    throw new Error("deno.json must contain exactly one matching version field");
   }
 
   const nextManifestSource = manifestSource.replace(

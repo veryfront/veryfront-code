@@ -10,9 +10,7 @@ try {
   }).spawn();
   const status = await child.status;
   if (!status.success) {
-    throw new Error(
-      `Windows localhost routing verifier exited with code ${status.code}`,
-    );
+    throw new Error(`Windows localhost routing verifier exited with code ${status.code}`);
   }
 } finally {
   await stopServer();
