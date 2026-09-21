@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  canonicalVeryfrontCloudModelKey,
   DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL,
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
   DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
@@ -21,8 +22,30 @@ import {
   tryGetVeryfrontCloudProviderFromModelId,
   VERYFRONT_CLOUD_CHAT_MODELS,
 } from "./model-catalog.ts";
+import { VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES } from "./model-catalog.data.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
+  it("looks capability rows up by the canonical provider, whatever the id spells", () => {
+    // Rows are keyed `<canonical provider>/<upstream id>`. A listed alias and
+    // the gateway prefix both normalize to that key; an unlisted provider is
+    // kept as written; an id with no provider segment is left alone.
+    assertEquals(
+      canonicalVeryfrontCloudModelKey("google-ai-studio/gemini-2.5-pro"),
+      "google/gemini-2.5-pro",
+    );
+    assertEquals(
+      canonicalVeryfrontCloudModelKey("veryfront-cloud/google-ai-studio/gemini-2.5-pro"),
+      "google/gemini-2.5-pro",
+    );
+    assertEquals(canonicalVeryfrontCloudModelKey("openai/gpt-5.5"), "openai/gpt-5.5");
+    assertEquals(canonicalVeryfrontCloudModelKey("acme-labs/model-x"), "acme-labs/model-x");
+    assertEquals(canonicalVeryfrontCloudModelKey("no-slash"), "no-slash");
+    // The rows the runtime ships resolve the same through either spelling.
+    for (const [key] of VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES) {
+      assertEquals(canonicalVeryfrontCloudModelKey(`veryfront-cloud/${key}`), key);
+    }
+  });
+
   it("finds catalog models by alias", () => {
     const opus = findVeryfrontCloudModel("opus");
     assertExists(opus);

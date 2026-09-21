@@ -202,12 +202,28 @@ export function resolveVeryfrontCloudProviderFromModelId(
   return resolveVeryfrontCloudProviderId(normalizedModelId.slice(0, slashIndex));
 }
 
+/**
+ * The key the capability rows are stored under: `<canonical provider>/<upstream id>`.
+ *
+ * A gateway model ID may carry the `veryfront-cloud/` prefix and may name its
+ * provider by a listed alias (`google-ai-studio/…` for `google`); the rows are
+ * keyed by the canonical provider, so both are normalized away here. An ID
+ * with no provider segment is returned as normalized.
+ */
+export function canonicalVeryfrontCloudModelKey(modelId: string): string {
+  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
+  const slashIndex = normalizedModelId.indexOf("/");
+  if (slashIndex <= 0) return normalizedModelId;
+  const provider = resolveVeryfrontCloudProviderId(normalizedModelId.slice(0, slashIndex));
+  return provider === undefined
+    ? normalizedModelId
+    : `${provider}/${normalizedModelId.slice(slashIndex + 1)}`;
+}
+
 function getVeryfrontCloudModelTransportCapabilities(
   modelId: string,
 ): Readonly<VeryfrontCloudModelTransportCapabilities> | undefined {
-  return _transportCapabilitiesMap.get(
-    normalizeVeryfrontCloudModelId(modelId),
-  );
+  return _transportCapabilitiesMap.get(canonicalVeryfrontCloudModelKey(modelId));
 }
 
 /** Resolves a model-specific OpenAI transport override for Veryfront Cloud. */
