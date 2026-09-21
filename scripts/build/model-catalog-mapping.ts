@@ -695,6 +695,25 @@ function buildProviderTables(
 }
 
 /**
+ * The retained transport rows that reach the generated module.
+ *
+ * A retained row is ignored once the catalog serves the model again: the
+ * served entry carries the transport facts, and the stale row must not outlive
+ * it as an override. Such a row reaches nothing, so it is neither emitted nor
+ * judged, and both callers ask this one predicate rather than restating it.
+ */
+function retainedTransportRows(
+  facts: ServedFacts,
+  overlay: ModelCatalogOverlay,
+): readonly (readonly [string, TransportCapabilities])[] {
+  // Same key space as the rows themselves: canonical provider, upstream id.
+  const served = new Set(facts.canonicalIds);
+  return overlay.retainedTransportCapabilities.filter(([modelId]) =>
+    !served.has(modelId)
+  );
+}
+
+/**
  * The transport table: entries retained for models the catalog no longer
  * serves come first and in overlay order, so the table stays stable as models
  * enter and leave. A served model that declares no transport fact has none,
@@ -704,12 +723,8 @@ function buildTransportTable(
   facts: ServedFacts,
   overlay: ModelCatalogOverlay,
 ): (readonly [string, TransportCapabilities])[] {
-  // Same key space as the rows themselves: canonical provider, upstream id.
-  const served = new Set(facts.canonicalIds);
   return [
-    ...overlay.retainedTransportCapabilities.filter(([modelId]) =>
-      !served.has(modelId)
-    ),
+    ...retainedTransportRows(facts, overlay),
     ...facts.transportCapabilities,
   ];
 }
@@ -915,12 +930,16 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
  * routed on the default surface all the same, so skipping it would ship
  * exactly the contradiction this refuses. The key is the overlay's own value,
  * so it is named; the surface is served data, so it is not.
+ *
+ * Only the rows that reach the module are judged. A row for a model the
+ * catalog serves again is dropped by {@link retainedTransportRows} and carries
+ * nothing, so failing generation over it would refuse a value no one can read.
  */
 function assertRetainedThinkingModes(
   facts: ServedFacts,
   overlay: ModelCatalogOverlay,
 ): void {
-  for (const [modelId, capabilities] of overlay.retainedTransportCapabilities) {
+  for (const [modelId, capabilities] of retainedTransportRows(facts, overlay)) {
     if (capabilities.anthropicThinkingMode === undefined) continue;
     const slashIndex = modelId.indexOf("/");
     const provider = slashIndex > 0 ? modelId.slice(0, slashIndex) : modelId;

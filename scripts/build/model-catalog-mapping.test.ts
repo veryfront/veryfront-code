@@ -517,6 +517,35 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  it("ignores a retained thinking row for a model the catalog serves again", () => {
+    // A retained row is dropped once the catalog serves its model, so the row
+    // reaches nothing: the served entry carries the transport facts instead.
+    // Judging its surface would refuse generation over a value that cannot
+    // appear in the module. `riddle-9` is served, on the OpenAI surface, where
+    // an Anthropic thinking mode has no reading at all.
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      retainedTransportCapabilities: OVERLAY.retainedTransportCapabilities.map(
+        ([modelId, capabilities]) =>
+          modelId === "beta-works/riddle-9"
+            ? [modelId, { anthropicThinkingMode: "adaptive" }] as const
+            : [modelId, capabilities] as const,
+      ),
+    };
+
+    const data = buildModelCatalogData(fakePayload(), overlay);
+
+    // The served entry wins whole: its own transport facts, and no thinking
+    // mode from the row the catalog made stale.
+    assertEquals(
+      new Map(data.modelTransportCapabilities).get("beta-works/riddle-9"),
+      {
+        openAITransport: "chat-completions",
+        openAIChatReasoningWithFunctionTools: false,
+      },
+    );
+  });
+
   it("carries the served transport facts and the overlay facts, and drops unknown values", () => {
     const data = buildModelCatalogData(fakePayload(), OVERLAY);
 
