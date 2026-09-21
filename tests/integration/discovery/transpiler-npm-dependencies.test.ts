@@ -1157,6 +1157,333 @@ describe(
       }
     });
 
+    /**
+     * Run the fixture and report what the bundler fetched. Every case below
+     * imports the same package from the same tool, and differs only in the
+     * provenance the project's own files carry.
+     */
+    async function runFixture(
+      files: Record<string, string>,
+      { at = projectDir, entry = "tool.ts" }: { at?: string; entry?: string } = {},
+    ): Promise<{ text: unknown; requested: string[] }> {
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files, { projectDir }),
+        baseDir: at,
+        compiledRuntime: true,
+      };
+      const requested: string[] = [];
+      const mod = await withMockFetch(
+        (input) => {
+          requested.push(String(input));
+          return Promise.resolve(
+            new Response(`export function extractText() { return "pdf text"; }`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        },
+        () =>
+          importModule(`file://${at}/${entry}`, context) as Promise<
+            { default: Record<string, unknown> }
+          >,
+      );
+      return { text: mod.default.text, requested };
+    }
+
+    /** The same run, for a fixture whose provenance must refuse the inline. */
+    async function refuseFixture(
+      files: Record<string, string>,
+      { at = projectDir, entry = "tool.ts" }: { at?: string; entry?: string } = {},
+    ): Promise<string> {
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files, { projectDir }),
+        baseDir: at,
+        compiledRuntime: true,
+      };
+      const requested: string[] = [];
+      const error = await assertRejects(
+        () =>
+          withMockFetch(
+            (input) => {
+              requested.push(String(input));
+              return Promise.resolve(new Response("export function extractText() {}"));
+            },
+            () => importModule(`file://${at}/${entry}`, context),
+          ),
+        Error,
+      );
+      assertEquals(requested, [], "nothing may be fetched");
+      assertEquals((error as { slug?: string }).slug, "dependency-missing");
+      return String((error as { detail?: string }).detail ?? "");
+    }
+
+    const fixturePin = { "@veryfront-fixture/pdf-text": "1.8.1" };
+    const fixtureSource = [
+      `import { extractText } from "@veryfront-fixture/pdf-text";`,
+      `export default { name: "extract", text: extractText() };`,
+    ].join("\n");
+
+    it("inlines from the hierarchical lockfile npm 5 and 6 wrote", async () => {
+      // A `lockfileVersion: 1` file keys its entries under `dependencies`.
+      // Reading only `packages` left the table empty, so a project that still
+      // carries one had every dependency refused as unresolved.
+      const { text, requested } = await runFixture({
+        "package.json": JSON.stringify({ dependencies: fixturePin }),
+        "package-lock.json": JSON.stringify({
+          lockfileVersion: 1,
+          dependencies: {
+            "@veryfront-fixture/pdf-text": {
+              version: "1.8.1",
+              resolved:
+                "https://registry.npmjs.org/@veryfront-fixture/pdf-text/-/pdf-text-1.8.1.tgz",
+            },
+          },
+        }),
+        "tool.ts": fixtureSource,
+      });
+      assertEquals(text, "pdf text");
+      assertEquals(requested.length, 1);
+    });
+
+    it("reads provenance from the .npmrc when the lockfile omits resolved URLs", async () => {
+      // npm's `omit-lockfile-registry-resolved` writes registry entries with
+      // no `resolved` at all, so the effective registry is the only record of
+      // where they came from -- and it has to name the public one outright.
+      const lock = JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/@veryfront-fixture/pdf-text": { version: "1.8.1", integrity: "sha512-x" },
+        },
+      });
+      const files = (npmrc: string) => ({
+        "package.json": JSON.stringify({ dependencies: fixturePin }),
+        "package-lock.json": lock,
+        ".npmrc": npmrc,
+        "tool.ts": fixtureSource,
+      });
+
+      const { text } = await runFixture(
+        files("omit-lockfile-registry-resolved=true\nregistry=https://registry.npmjs.org/\n"),
+      );
+      assertEquals(text, "pdf text");
+
+      // The setting alone says nothing about which registry that was.
+      assertEquals(
+        (await refuseFixture(files("omit-lockfile-registry-resolved=true\n")))
+          .includes("resolves @veryfront-fixture/pdf-text from another registry"),
+        true,
+      );
+      // Nor does a public registry without the setting: an entry that simply
+      // lost its URL is not one npm deliberately wrote without one.
+      assertEquals(
+        (await refuseFixture(files("registry=https://registry.npmjs.org/\n")))
+          .includes("resolves @veryfront-fixture/pdf-text from another registry"),
+        true,
+      );
+    });
+
+    it("reads a resolved value written relative to the registry", async () => {
+      // npm documents `resolved` as a path relative to the configured
+      // registry, so the .npmrc is what says which registry that is.
+      const lock = JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/@veryfront-fixture/pdf-text": {
+            version: "1.8.1",
+            resolved: "registry.npmjs.org/@veryfront-fixture/pdf-text/-/pdf-text-1.8.1.tgz",
+          },
+        },
+      });
+      const files = (npmrc?: string) => ({
+        "package.json": JSON.stringify({ dependencies: fixturePin }),
+        "package-lock.json": lock,
+        ...(npmrc === undefined ? {} : { ".npmrc": npmrc }),
+        "tool.ts": fixtureSource,
+      });
+
+      const { text } = await runFixture(files('registry="https://registry.npmjs.org/"\n'));
+      assertEquals(text, "pdf text");
+      assertEquals(
+        (await refuseFixture(files())).includes(
+          "resolves @veryfront-fixture/pdf-text from another registry",
+        ),
+        true,
+      );
+    });
+
+    it("matches every workspace pattern npm accepts", async () => {
+      const member = `${projectDir}/packages/app`;
+      const files = (workspaces: unknown) => ({
+        "package.json": JSON.stringify({ name: "root", workspaces }),
+        "package-lock.json": publicRegistryLock(fixturePin),
+        "packages/app/package.json": JSON.stringify({ dependencies: fixturePin }),
+        "packages/app/tool.ts": fixtureSource,
+      });
+
+      for (
+        const workspaces of [
+          ["./packages/*"],
+          ["packages/**"],
+          ["**"],
+          ["packages/*/"],
+          { packages: ["packages/*", "!packages/other"] },
+        ]
+      ) {
+        const { text } = await runFixture(files(workspaces), { at: member });
+        assertEquals(text, "pdf text", JSON.stringify(workspaces));
+      }
+
+      // A negated pattern removes the member again, and the root's lockfile
+      // then says nothing about it.
+      await refuseFixture(files(["packages/*", "!packages/app"]), { at: member });
+      // So does a pattern that matches one segment where the member has two.
+      await refuseFixture(files(["*"]), { at: member });
+    });
+
+    it("prefers the workspace root's lockfile over a stale one in the member", async () => {
+      // A member that kept its package-lock.json from before it joined a pnpm
+      // workspace must not outrank the root's authoritative lockfile: the
+      // public entry in the leftover is not what pnpm installed.
+      const member = `${projectDir}/packages/app`;
+      const detail = await refuseFixture({
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+        "packages/app/package.json": JSON.stringify({ dependencies: fixturePin }),
+        "packages/app/package-lock.json": publicRegistryLock(fixturePin),
+        "packages/app/tool.ts": fixtureSource,
+      }, { at: member });
+      assertEquals(detail.includes("pnpm"), true, detail);
+    });
+
+    it("never lets a member's .npmrc vouch over the workspace root's", async () => {
+      // npm reports that it ignores a member's own workspace config, so a
+      // scoped public registry there may not override the root's private one
+      // -- doing so authorized the public package of a private dependency.
+      const member = `${projectDir}/packages/app`;
+      const detail = await refuseFixture({
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        ".npmrc": "registry=https://npm.internal.example/\n",
+        "package-lock.json": publicRegistryLock(fixturePin),
+        "packages/app/package.json": JSON.stringify({ dependencies: fixturePin }),
+        "packages/app/.npmrc": "@veryfront-fixture:registry=https://registry.npmjs.org/\n",
+        "packages/app/tool.ts": fixtureSource,
+      }, { at: member });
+      assertEquals(detail.includes("another registry"), true, detail);
+    });
+
+    it("pins the CDN build to the transitive versions the project locked", async () => {
+      // esm.sh resolves the package's own dependency ranges itself. Left to
+      // it, the build carries whatever the public registry answers with at
+      // that moment rather than what the project installed.
+      const { text, requested } = await runFixture({
+        "package.json": JSON.stringify({ dependencies: fixturePin }),
+        "package-lock.json": JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/@veryfront-fixture/pdf-text": {
+              version: "1.8.1",
+              resolved:
+                "https://registry.npmjs.org/@veryfront-fixture/pdf-text/-/pdf-text-1.8.1.tgz",
+              dependencies: { "@veryfront-fixture/glyphs": "^2.0.0" },
+            },
+            "node_modules/@veryfront-fixture/glyphs": {
+              version: "2.3.4",
+              resolved: "https://registry.npmjs.org/@veryfront-fixture/glyphs/-/glyphs-2.3.4.tgz",
+            },
+          },
+        }),
+        "tool.ts": fixtureSource,
+      });
+      assertEquals(text, "pdf text");
+      const pinnedDeps = requested.map((url) => new URL(url).searchParams.get("deps"));
+      assertEquals(
+        pinnedDeps.includes("@veryfront-fixture/glyphs@2.3.4"),
+        true,
+        requested.join(", "),
+      );
+    });
+
+    it("keeps the transitive pins out of an unreachable CDN URL", async () => {
+      // The query the pins go in is project text too: a transitive version's
+      // pre-release part is free-form and must not reach the classified
+      // detail or the logs through the failing URL.
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          "package.json": JSON.stringify({ dependencies: fixturePin }),
+          "package-lock.json": JSON.stringify({
+            lockfileVersion: 3,
+            packages: {
+              "node_modules/@veryfront-fixture/pdf-text": {
+                version: "1.8.1",
+                resolved:
+                  "https://registry.npmjs.org/@veryfront-fixture/pdf-text/-/pdf-text-1.8.1.tgz",
+                dependencies: { "@veryfront-fixture/glyphs": "^2.0.0" },
+              },
+              "node_modules/@veryfront-fixture/glyphs": {
+                version: "2.3.4-ghpEXAMPLETOKEN0123",
+                resolved: "https://registry.npmjs.org/@veryfront-fixture/glyphs/-/glyphs-2.3.4.tgz",
+              },
+            },
+          }),
+          "tool.ts": fixtureSource,
+        }, { projectDir }),
+        baseDir: projectDir,
+        compiledRuntime: true,
+      };
+
+      const requested: string[] = [];
+      const error = await assertRejects(
+        () =>
+          withMockFetch(
+            (input) => {
+              requested.push(String(input));
+              return Promise.resolve(new Response("Not Found", { status: 404 }));
+            },
+            () => importModule(`file://${projectDir}/tool.ts`, context),
+          ),
+        Error,
+      );
+      assertEquals(
+        requested.some((url) => url.includes("ghpEXAMPLETOKEN0123")),
+        true,
+        requested.join(", "),
+      );
+      const detail = String((error as { detail?: string }).detail ?? "");
+      assertEquals(detail.includes("ghpEXAMPLETOKEN0123"), false, detail);
+      assertEquals(detail.includes("@veryfront-fixture/pdf-text@1.8.1?..."), true, detail);
+    });
+
+    it("refuses a package whose transitive dependency the project resolves privately", async () => {
+      // The CDN would serve the PUBLIC package of that transitive name, which
+      // is not the one this project installed.
+      const detail = await refuseFixture({
+        "package.json": JSON.stringify({ dependencies: fixturePin }),
+        "package-lock.json": JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/@veryfront-fixture/pdf-text": {
+              version: "1.8.1",
+              resolved:
+                "https://registry.npmjs.org/@veryfront-fixture/pdf-text/-/pdf-text-1.8.1.tgz",
+              dependencies: { "@veryfront-fixture/glyphs": "^2.0.0" },
+            },
+            "node_modules/@veryfront-fixture/glyphs": {
+              version: "2.3.4",
+              resolved: "https://npm.internal.example/@veryfront-fixture/glyphs/-/glyphs-2.3.4.tgz",
+            },
+          },
+        }),
+        "tool.ts": fixtureSource,
+      });
+      assertEquals(
+        detail.includes("resolves @veryfront-fixture/glyphs, which @veryfront-fixture/pdf-text"),
+        true,
+        detail,
+      );
+    });
+
     it("inlines when an .npmrc names the public registry explicitly", async () => {
       const pin = { "@veryfront-fixture/pdf-text": "1.8.1" };
       const context: FileDiscoveryContext = {

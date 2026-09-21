@@ -15,9 +15,11 @@ import {
   importModule as importModuleRaw,
   npmrcRedirectsPackage,
   readDependencyPins,
+  readLockedDependencies,
   withDisplayPath,
 } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { EMBEDDED_NPM_CONSTRAINTS } from "./embedded-npm-packages.generated.ts";
 import { isFrameworkProvidedPackage } from "./project-npm-imports.ts";
 import { type PluginBuild, stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -483,6 +485,21 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
     });
 
+    it("resolves a dev declaration over an optional one, as npm does", () => {
+      // @npmcli/arborist loads peers, then production, then optional, and the
+      // root project's dev dependencies LAST, each edge replacing the one
+      // before it. Reading optional last instead checked the lockfile's dev
+      // version against the optional range and reported the installed
+      // dependency as missing.
+      assertEquals(
+        readDependencyPins(JSON.stringify({
+          optionalDependencies: { sharp: "^0.34.0" },
+          devDependencies: { sharp: "0.35.4" },
+        })),
+        { sharp: "0.35.4" },
+      );
+    });
+
     it("reads peer dependencies, below every installed declaration", () => {
       assertEquals(
         readDependencyPins(JSON.stringify({
@@ -518,6 +535,29 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         "@scope/pkg",
       );
       assertEquals(esmCdnPackageName(new URL("https://esm.sh/unpdf")), "unpdf");
+    });
+
+    it("names the base package of a peer-qualified build", () => {
+      // esm.sh appends the peers it built against. Reading the LAST `@` made
+      // the name `react-dom@18.3.1_react`, which this guard did not recognise
+      // as the framework's -- so the bundle carried a second ReactDOM and
+      // every Hook call in the inlined dependency ran against the wrong copy.
+      assertEquals(
+        esmCdnPackageName(
+          new URL("https://esm.sh/react-dom@18.3.1_react@18.3.1/es2022/client.mjs"),
+        ),
+        "react-dom",
+      );
+      assertEquals(
+        esmCdnModuleSpecifier(
+          new URL("https://esm.sh/react-dom@18.3.1_react@18.3.1/es2022/client.mjs"),
+        ),
+        "react-dom/client",
+      );
+      assertEquals(
+        esmCdnPackageName(new URL("https://esm.sh/@scope/pkg@1.0.0_react@18.3.1/mod.js")),
+        "@scope/pkg",
+      );
     });
 
     it("ignores anything that is not on the CDN", () => {
@@ -850,6 +890,51 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
     });
   });
 
+  describe("readLockedDependencies", () => {
+    it("reads an npm 5 or 6 lockfile's hierarchical dependency tree", () => {
+      // A `lockfileVersion: 1` file keys its entries under `dependencies`, not
+      // `packages`. Reading only the latter returned an empty table, so every
+      // declared dependency of such a project was refused as unresolved while
+      // usable provenance sat in the file.
+      const locked = readLockedDependencies(JSON.stringify({
+        lockfileVersion: 1,
+        dependencies: {
+          unpdf: {
+            version: "1.8.1",
+            resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.8.1.tgz",
+            requires: { ms: "^2.1.3" },
+            dependencies: {
+              ms: {
+                version: "2.0.0",
+                resolved: "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
+              },
+            },
+          },
+        },
+      }));
+      assertEquals(locked["node_modules/unpdf"], {
+        version: "1.8.1",
+        resolved: "https://registry.npmjs.org/unpdf/-/unpdf-1.8.1.tgz",
+        dependencies: { ms: "^2.1.3" },
+      });
+      assertEquals(locked["node_modules/unpdf/node_modules/ms"]?.version, "2.0.0");
+    });
+
+    it("keeps an entry npm wrote without a resolved URL", () => {
+      // `omit-lockfile-registry-resolved` drops the URL deliberately; whether
+      // that entry is the public package is then the .npmrc's to say.
+      const locked = readLockedDependencies(JSON.stringify({
+        lockfileVersion: 3,
+        packages: { "node_modules/unpdf": { version: "1.8.1", integrity: "sha512-x" } },
+      }));
+      assertEquals(locked["node_modules/unpdf"], {
+        version: "1.8.1",
+        resolved: null,
+        dependencies: {},
+      });
+    });
+  });
+
   describe("npmrcRedirectsPackage", () => {
     it("reads a registry setting with an inline comment, as npm does", () => {
       assertEquals(
@@ -884,6 +969,15 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           "@scope:registry=https://registry.npmjs.org/\n@scope:registry=https://npm.internal.example/",
           "@scope/p",
         ),
+        true,
+      );
+      // npm's INI parser strips a matching pair of quotes.
+      assertEquals(
+        npmrcRedirectsPackage('registry="https://registry.npmjs.org/"', "pkg"),
+        false,
+      );
+      assertEquals(
+        npmrcRedirectsPackage("registry='https://npm.internal.example/'", "pkg"),
         true,
       );
       // A comment line, and a scope that is not this package's, say nothing.
@@ -1050,7 +1144,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           { [name]: version },
           () => {},
           undefined,
-          {},
+          { [name]: version },
           new Set([name]),
         ),
       );
@@ -1172,8 +1266,18 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         pluginData: deferred.pluginData,
       });
       const contents = String(loaded && "contents" in loaded ? loaded.contents : "");
-      assert(contents.startsWith("throw new Error("), `got ${contents}`);
       assert(contents.includes(reason), "the thrown error must carry the classified reason");
+      // Reached at call time, the bundled module fails with the repository's
+      // typed error rather than a bare Error carrying an internal marker, so a
+      // handler awaiting the lazy import can match it like any other.
+      const thrown = assertThrows(() => {
+        new Function(contents)();
+      });
+      assert(
+        thrown instanceof VeryfrontError && thrown.slug === "dependency-missing",
+        `got ${thrown}`,
+      );
+      assert(String((thrown as Error).message).includes(reason));
 
       // A lazy `require()`, and a `require.resolve()` probe, are deferred the
       // same way.

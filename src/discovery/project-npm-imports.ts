@@ -11,10 +11,12 @@
  * THE PRECEDENCE, in order. Every branch below is one of these:
  *
  * 1. A framework-identity specifier is ALWAYS external. That is the framework
- *    itself, React, the schema library, `@opentelemetry/*`, and every Node
- *    builtin in both its bare and `node:` form. A second copy would break the
- *    identity comparisons the schema and element registries make against the
- *    framework's own objects, and a Node builtin has no npm coordinate at all.
+ *    itself, React, the schema library, OpenTelemetry's global API packages,
+ *    and every Node builtin in both its bare and `node:` form. A second copy
+ *    would break the identity comparisons the schema and element registries
+ *    make against the framework's own objects, and a Node builtin has no npm
+ *    coordinate at all. The rest of `@opentelemetry/*` is ordinary npm: it is
+ *    the runtime's only where the binary recorded a constraint for it.
  * 2. An import whose version the project's declaration does not admit, or
  *    whose range excludes the declared version, is refused outright: serving
  *    the declared version would run code the import did not ask for.
@@ -88,14 +90,42 @@ export function nodeBuiltinSpecifier(name: string): string | null {
  * framework hands its own instance to discovered modules, or because it is a
  * Node builtin with no npm coordinate at all?
  */
-export function isFrameworkProvidedPackage(name: string): boolean {
-  return isFrameworkPackage(name) || nodeBuiltinSpecifier(name) !== null;
+export function isFrameworkProvidedPackage(
+  name: string,
+  embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
+): boolean {
+  return isFrameworkPackage(name, embedded) || nodeBuiltinSpecifier(name) !== null;
+}
+
+/**
+ * The OpenTelemetry packages that are identity-critical. Each registers a
+ * process-wide global that every other OTel package resolves through, so a
+ * second copy silently drops the spans and logs the project's own calls make.
+ */
+const OTEL_GLOBAL_API_PACKAGES: ReadonlySet<string> = new Set([
+  "@opentelemetry/api",
+  "@opentelemetry/api-logs",
+]);
+
+/** The package a specifier names: `@scope/pkg/sub` is `@scope/pkg`. */
+function packageNameOf(specifier: string): string {
+  const segments = specifier.split("/");
+  return specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0]!;
 }
 
 /** A package the framework hands its own instance of, subpaths included. */
-function isFrameworkPackage(name: string): boolean {
-  return FRAMEWORK_PROVIDED_PACKAGES.has(name) || name.startsWith("veryfront/") ||
-    name.startsWith("@opentelemetry/");
+function isFrameworkPackage(name: string, embedded: EmbeddedNpmSet): boolean {
+  if (FRAMEWORK_PROVIDED_PACKAGES.has(name) || name.startsWith("veryfront/")) return true;
+  if (!name.startsWith("@opentelemetry/")) return false;
+  const packageName = packageNameOf(name);
+  if (OTEL_GLOBAL_API_PACKAGES.has(packageName)) return true;
+  // The rest of the scope is ordinary npm. `@opentelemetry/instrumentation-*`
+  // alone holds dozens of packages a given binary never froze, and calling one
+  // of those the runtime's left a bare `npm:` specifier no compiled binary can
+  // resolve -- the exact failure this module exists to stop. Only a constraint
+  // the binary actually recorded makes the shortcut true; without one the
+  // package is the project's to declare, lock and inline like any other.
+  return ownEntry(embedded.constraints, packageName) !== undefined;
 }
 
 /**
@@ -228,24 +258,28 @@ function incrementDigits(digits: string): string {
   return `1${value.join("")}`;
 }
 
-/**
- * A range bound's numeric parts, as written: `2` is `[2]`, `2.3.x` is `[2, 3]`,
- * `2.3.4` is `[2, 3, 4]`. `null` for anything else, including a wildcard
- * followed by a number (`1.x.3`).
- */
-const PARTIAL_VERSION = /^(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$/;
+/** A version core as a range may abbreviate it: `2`, `2.3.x`, `2.3.4`, `*`. */
+const PARTIAL_VERSION = /^(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$/;
 
+/**
+ * A range bound's numeric parts, truncated at its first wildcard: `2` is
+ * `["2"]`, `2.3.x` is `["2", "3"]`, `*` and `x.2.3` are both `[]`. `null` for
+ * anything that is not a version core at all.
+ *
+ * Everything after a wildcard is dropped rather than rejected, because npm
+ * drops it too: its bundled semver reads `1.x.3` as `1.x` and normalizes both
+ * to `>=1.0.0 <2.0.0-0`. Rejecting the declaration instead made a package the
+ * project had installed and locked unevaluable, so discovery reported it
+ * missing.
+ */
 function boundParts(bound: string): string[] | null {
   const core = EXACT_VERSION.test(bound) ? bound.split(/[-+]/, 1)[0]! : bound;
   const match = PARTIAL_VERSION.exec(core);
   if (!match) return null;
-  const isNumber = (part: string | undefined) => part !== undefined && /^\d+$/.test(part);
   const groups = match.slice(1);
-  const gap = groups.findIndex((part) => !isNumber(part));
-  if (gap < 0) return groups.map((part) => normalizeDigits(part!));
-  // A number after a wildcard names no range npm would read the same way.
-  if (groups.slice(gap).some(isNumber)) return null;
-  return groups.slice(0, gap).map((part) => normalizeDigits(part!));
+  const gap = groups.findIndex((part) => part === undefined || !/^\d+$/.test(part));
+  const numeric = gap < 0 ? groups : groups.slice(0, gap);
+  return numeric.map((part) => normalizeDigits(part!));
 }
 
 function padded(parts: readonly string[]): VersionCore {
@@ -326,6 +360,14 @@ function compareCores(left: readonly string[], right: readonly string[]): number
 }
 
 /**
+ * npm's any-release comparator spelled as a bound: its bundled semver rewrites
+ * `>=0.0.0` to the same empty comparator `*` becomes, and then drops it from
+ * any set that holds another. `>=0.0.0 >=0.0.0-alpha` is therefore just
+ * `>=0.0.0-alpha`, which admits `0.0.0-beta`.
+ */
+const ANY_RELEASE_COMPARATOR = /^>=\s*0\.0\.0$/;
+
+/**
  * Does a single-comparator range admit an exact version? `null` when the range
  * is not one this module evaluates -- `>=1 <2`, `a || b`, a dist-tag, a scheme
  * -- so the caller decides what an unchecked range means for it.
@@ -350,15 +392,20 @@ function comparatorAdmitsVersion(
   const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
   const bound = boundAfterOperator(trimmed, operator);
   const wanted = { core: coreOf(version), pre: prereleaseOf(version) };
-  // `*`, `x`, and their repeated forms (`*.*`, `x.x.x`) are all "any release",
-  // and npm reads a non-strict operator in front of one (`^*`, `>=*`) the same
-  // way. A strict one is npm's EMPTY range: no version is above every version.
-  if (/^[xX*](?:\.[xX*])*$/.test(bound)) {
-    if (operator === ">" || operator === "<") return false;
+  const anyRelease = ANY_RELEASE_COMPARATOR.test(trimmed);
+  const parts = anyRelease ? [] : boundParts(bound);
+  if (parts === null) return null;
+  if (parts.length === 0) {
+    // `*`, `x`, their repeated forms (`*.*`, `x.x.x`) and anything npm
+    // truncates to one (`x.2.3`) are all "any release", and npm reads a
+    // non-strict operator in front of one (`^*`, `>=*`) the same way. A strict
+    // one is npm's EMPTY range: no version is above every version.
+    if (!anyRelease && (operator === ">" || operator === "<")) return false;
+    // An any-release comparator admits no pre-release of its own, and vetoes
+    // none another comparator in the set has admitted -- npm skips it entirely
+    // when deciding whether the set names a pre-release.
     return wanted.pre === null || prereleaseAdmitted;
   }
-  const parts = boundParts(bound);
-  if (parts === null) return null;
   const full = parts.length === 3;
   const lower = { core: padded(parts), pre: full ? prereleaseOf(bound) : null };
   // npm's pre-release rule: a pre-release is admitted only by a range that
@@ -371,12 +418,13 @@ function comparatorAdmitsVersion(
   }
 
   const order = compareVersions(wanted, lower);
-  // An UPPER bound is a core boundary: a pre-release below that core is under
-  // it, which is how `<2` admits `1.5.0-beta`.
+  // A DERIVED upper bound carries npm's `-0` sentinel: `^1.2.3` expands to
+  // `<2.0.0-0` and `<=1.1` to `<1.2.0-0`, both of which every pre-release of
+  // the ceiling outranks. So the test is on the core alone -- under the
+  // ceiling's core, pre-release or not; never on it. Comparing against the
+  // ceiling RELEASE instead admitted `1.2.0-alpha` under `<=1.1`, a version
+  // the declaration excludes.
   const below = (ceiling: VersionCore) => compareCores(wanted.core, ceiling) < 0;
-  // A partial UPPER bound is npm's next release (`<=1.1` is `<1.2.0`), which a
-  // pre-release of that release precedes, so it is compared as a version.
-  const under = (ceiling: VersionCore) => compareVersions(wanted, { core: ceiling, pre: null }) < 0;
   // A LOWER bound derived from a partial version is npm's release boundary:
   // `>1.1` expands to `>=1.2.0`, and `1.2.0-beta` precedes that release.
   const atLeast = (boundary: VersionCore) =>
@@ -392,13 +440,38 @@ function comparatorAdmitsVersion(
     case ">":
       return full ? order > 0 : atLeast(nextAfter(parts));
     case "<=":
-      return full ? order <= 0 : under(nextAfter(parts));
+      return full ? order <= 0 : below(nextAfter(parts));
     case "<":
-      return order < 0;
+      // Written in full, `<` is the bound as written, pre-release included:
+      // `<2.0.0` admits `2.0.0-alpha`. Abbreviated, it is npm's `-0` sentinel:
+      // `<1.x` expands to `<1.0.0-0`, which admits no pre-release of 1.0.0.
+      return full ? order < 0 : below(padded(parts));
     default:
       // `=`, `v` and no operator cover exactly the versions the bound names.
-      return full ? order === 0 : atLeast(padded(parts)) && under(nextAfter(parts));
+      return full ? order === 0 : atLeast(padded(parts)) && below(nextAfter(parts));
   }
+}
+
+/**
+ * Is this comparator npm's any-release one, the one it rewrites to the empty
+ * comparator? `*`, `x`, `x.2.3`, `>=0.0.0` and every non-strict operator in
+ * front of a wildcard (`^*`, `>=*`) are; `>*` and `<*` are its EMPTY range.
+ */
+function isAnyReleaseComparator(comparator: string): boolean {
+  const trimmed = comparator.trim();
+  if (ANY_RELEASE_COMPARATOR.test(trimmed)) return true;
+  const operator = RANGE_OPERATORS.find((candidate) => trimmed.startsWith(candidate));
+  if (operator === ">" || operator === "<") return false;
+  return boundParts(boundAfterOperator(trimmed, operator))?.length === 0;
+}
+
+/** The comparators one `||` alternative is made of; `["*"]` when it is empty. */
+function comparatorsOf(alternative: string): string[] {
+  // npm allows whitespace between an operator and its version.
+  const set = alternative.trim().replace(/(<=|>=|~>|[<>=^~])\s+/g, "$1");
+  if (set.length === 0) return ["*"];
+  const hyphen = /^(\S+)\s+-\s+(\S+)$/.exec(set);
+  return hyphen ? [`>=${hyphen[1]}`, `<=${hyphen[2]}`] : set.split(/\s+/);
 }
 
 /** Does this comparator name a pre-release on the same core as `version`? */
@@ -423,13 +496,10 @@ function namesPrereleaseOnCore(comparator: string, version: string): boolean {
 export function rangeAdmitsVersion(range: string, version: string): boolean | null {
   const trimmed = range.trim();
   if (URL_SCHEME.test(trimmed)) return null;
+  const alternatives = trimmed.split("||").map(comparatorsOf);
   let admitted = false;
-  for (const alternative of trimmed.split("||")) {
-    // npm allows whitespace between an operator and its version.
-    const set = alternative.trim().replace(/(<=|>=|~>|[<>=^~])\s+/g, "$1");
-    if (set.length === 0) return comparatorAdmitsVersion("*", version);
-    const hyphen = /^(\S+)\s+-\s+(\S+)$/.exec(set);
-    const comparators = hyphen ? [`>=${hyphen[1]}`, `<=${hyphen[2]}`] : set.split(/\s+/);
+  let universal = false;
+  for (const comparators of alternatives) {
     // npm's pre-release rule applies to the SET: a pre-release is admitted
     // when one comparator names a pre-release on the same core, and the other
     // comparators are then read without that veto of their own.
@@ -444,9 +514,14 @@ export function rangeAdmitsVersion(range: string, version: string): boolean | nu
       if (verdict === null) return null;
       if (!verdict) holds = false;
     }
+    if (comparators.every(isAnyReleaseComparator)) universal = true;
     if (holds) admitted = true;
   }
-  return admitted;
+  // One any-release alternative collapses the WHOLE range: npm keeps only that
+  // set, so `* || ^1.2.3-alpha` is `*` and excludes `1.2.3-alpha` even though
+  // the second alternative names it. Accumulating that alternative's admission
+  // instead fetched a pre-release the declaration does not admit.
+  return universal ? comparatorAdmitsVersion("*", version) : admitted;
 }
 
 export interface ParsedNpmSpecifier {
@@ -649,6 +724,26 @@ function recordedWildcard(embedded: EmbeddedNpmSet, name: string): string | null
   return (ownEntry(embedded.constraints, name) ?? []).includes("*") ? "*" : null;
 }
 
+/**
+ * The runtime decision for a pin the binary records only under the
+ * framework's own `*`, or `null` when it records no such thing.
+ *
+ * A recorded `*` resolves to the versions the binary froze for that name, so
+ * when it froze exactly one and that one IS the pin, the import is already in
+ * the binary and a CDN copy would be a second one. Two frozen versions leave
+ * `*` ambiguous from here, so neither is claimed.
+ */
+function wildcardImportForVersion(
+  embedded: EmbeddedNpmSet,
+  name: string,
+  version: string,
+  subpath: string,
+): ProjectNpmImport | null {
+  if (recordedWildcard(embedded, name) === null) return null;
+  const carried = ownEntry(embedded.packages, name) ?? [];
+  return carried.length === 1 && carried[0] === version ? runtimeImport(name, "*", subpath) : null;
+}
+
 export function embeddedConstraintForBareImport(
   name: string,
   embedded: EmbeddedNpmSet = embeddedNpmPackagesForRuntime(),
@@ -706,7 +801,7 @@ export function classifyProjectNpmImport(
 ): ProjectNpmImport {
   const parsed = parseNpmSpecifier(specifier);
   if (!parsed) return { kind: "runtime" };
-  if (isRuntimeProvidedImport(specifier, parsed.name)) {
+  if (isRuntimeProvidedImport(specifier, parsed.name, embedded)) {
     // A framework package still has to be emitted under a constraint the
     // binary records: `npm:zod` is the constraint `zod@*`, which a profile
     // that froze only `zod@4.3.6` cannot answer. The framework's own
@@ -760,7 +855,13 @@ export function classifyProjectNpmImport(
     ...parsed,
     declared,
     pin,
-    embedded: declared !== undefined && !publiclySourced.has(parsed.name)
+    // A DECLARED package may reuse the binary's embedded copy only when the
+    // lockfile both vouches for its public source and resolves a version the
+    // declaration admits. The name alone is not enough: a stale public lock at
+    // `2.8.0` under an exact `yaml@2.9.0` declaration would otherwise hand the
+    // project the embedded 2.9.0 -- a version it never installed -- where the
+    // CDN path refuses the same mismatch outright.
+    embedded: declared !== undefined && !(publiclySourced.has(parsed.name) && admittedLock !== null)
       ? { packages: {}, constraints: {} }
       : embedded,
   };
@@ -775,9 +876,13 @@ export function classifyProjectNpmImport(
  * `npm:buffer@6.0.3` is the npm `buffer` package, not `node:buffer` -- so only
  * the framework's own packages keep that form on the runtime.
  */
-function isRuntimeProvidedImport(specifier: string, name: string): boolean {
+function isRuntimeProvidedImport(
+  specifier: string,
+  name: string,
+  embedded: EmbeddedNpmSet,
+): boolean {
   // The framework hands out its own instance of these, subpaths included.
-  if (isFrameworkPackage(name)) return true;
+  if (isFrameworkPackage(name, embedded)) return true;
   // A builtin is one only as a whole: `buffer/` is the npm package (the
   // documented way to bypass the builtin) and `fs/custom` is no builtin at
   // all, so neither is the runtime's. An explicit `npm:` coordinate names the
@@ -991,7 +1096,8 @@ function classifyUnversionedImport(
     }
     // The runtime already carries exactly what the project declared: keep the
     // single in-binary copy rather than fetch a second one.
-    const inBinary = embeddedImport(embedded, name, pin, subpath);
+    const inBinary = embeddedImport(embedded, name, pin, subpath) ??
+      wildcardImportForVersion(embedded, name, pin, subpath);
     if (inBinary !== null) return inBinary;
     return { kind: "cdn", name, version: pin, subpath };
   }

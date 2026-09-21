@@ -34,16 +34,29 @@ const EMBEDDED = {
   },
 } as const;
 
+/** The lockfile `npm install` writes for these declarations. */
+function lockedFromPins(pins: Record<string, string>): Record<string, string> {
+  const locked: Record<string, string> = {};
+  for (const [name, range] of Object.entries(pins)) {
+    const version = exactVersionNamedByRange(range);
+    if (version !== null) locked[name] = version;
+  }
+  return locked;
+}
+
 /**
  * Classify against the frozen snapshot, with every declaration vouched for by
- * a public lockfile entry. Provenance itself is exercised by the tests that
- * pass that set explicitly, and by the integration tests.
+ * a public lockfile entry at `locked` -- by default the version the
+ * declaration itself names, which is what `npm install` resolves it to.
+ * Provenance itself is exercised by the tests that pass those sets explicitly,
+ * and by the integration tests.
  */
 function classify(
   specifier: string,
   pins: Record<string, string> = {},
+  locked: Record<string, string> = lockedFromPins(pins),
 ): ProjectNpmImport {
-  return classifyProjectNpmImport(specifier, pins, EMBEDDED, {}, new Set(Object.keys(pins)));
+  return classifyProjectNpmImport(specifier, pins, EMBEDDED, locked, new Set(Object.keys(pins)));
 }
 
 describe("parseNpmSpecifier", () => {
@@ -296,8 +309,40 @@ describe("rangeAdmitsVersion", () => {
     assertEquals(rangeAdmitsVersion(">=1 <2 SECRET", "1.9.0"), null);
   });
 
+  it("ignores the components npm drops after a wildcard", () => {
+    // npm's bundled semver reads `1.x.3` as `1.x`, normalizing both to
+    // `>=1.0.0 <2.0.0-0`. Refusing to evaluate it reported a package the
+    // project had installed and locked as missing.
+    assertEquals(rangeAdmitsVersion("1.x.3", "1.8.1"), true);
+    assertEquals(rangeAdmitsVersion("1.*.3", "1.0.0"), true);
+    assertEquals(rangeAdmitsVersion("1.x.3", "2.0.0"), false);
+    // A leading wildcard makes the whole bound "any release", `x.2.3` included.
+    assertEquals(rangeAdmitsVersion("x.2.3", "5.0.0"), true);
+    assertEquals(rangeAdmitsVersion("x.2.3", "5.0.0-rc.1"), false);
+  });
+
+  it("collapses a range npm reduces to a bare wildcard", () => {
+    // One any-release alternative makes the WHOLE range `*`, which excludes
+    // every pre-release -- even one a second alternative names outright.
+    assertEquals(rangeAdmitsVersion("* || ^1.2.3-alpha", "1.2.3-alpha"), false);
+    assertEquals(rangeAdmitsVersion("x || ^1.2.3-alpha", "1.2.3-alpha"), false);
+    assertEquals(rangeAdmitsVersion(">=0.0.0 || ^1.2.3-alpha", "1.2.3-alpha"), false);
+    assertEquals(rangeAdmitsVersion("* || ^1.2.3-alpha", "1.2.3"), true);
+    // An EMPTY alternative is not an any-release one, so it collapses nothing.
+    assertEquals(rangeAdmitsVersion("<0.0.0-0 || ^1.2.3-alpha", "1.2.3-alpha"), true);
+  });
+
+  it("reads `>=0.0.0` as npm's any-release comparator", () => {
+    // npm rewrites it to the same empty comparator `*` becomes and drops it
+    // from any set that holds another, so the set's own pre-release rule
+    // decides -- `>=0.0.0` no longer vetoes what `>=0.0.0-alpha` admits.
+    assertEquals(rangeAdmitsVersion(">=0.0.0 >=0.0.0-alpha", "0.0.0-beta"), true);
+    assertEquals(rangeAdmitsVersion(">=0.0.0", "1.0.0-alpha"), false);
+    assertEquals(rangeAdmitsVersion(">=0.0.0", "1.0.0"), true);
+  });
+
   it("declines to evaluate a range it cannot read", () => {
-    for (const range of ["latest", "workspace:*", "1.x.3"]) {
+    for (const range of ["latest", "workspace:*", "1.2.3.4"]) {
       assertEquals(rangeAdmitsVersion(range, "1.8.1"), null, range);
     }
     assertEquals(rangeAdmitsVersion("^1.8.1", "^1.8.1"), null);
@@ -313,6 +358,43 @@ describe("isFrameworkProvidedPackage", () => {
     assertEquals(isFrameworkProvidedPackage("veryfront/agents"), true);
     assertEquals(isFrameworkProvidedPackage("@opentelemetry/api"), true);
     assertEquals(isFrameworkProvidedPackage("node:fs"), true);
+  });
+
+  it("claims an OpenTelemetry package only where identity or the binary says so", () => {
+    const embedded = {
+      packages: { "@opentelemetry/instrumentation-http": ["0.209.0"] },
+      constraints: { "@opentelemetry/instrumentation-http": ["0.209.0"] },
+    };
+    // The global API packages are identity-critical whatever the binary froze.
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api", embedded), true);
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api-logs", embedded), true);
+    assertEquals(isFrameworkProvidedPackage("@opentelemetry/api/experimental", embedded), true);
+    // One the binary recorded a constraint for is the runtime's to answer.
+    assertEquals(
+      isFrameworkProvidedPackage("@opentelemetry/instrumentation-http", embedded),
+      true,
+    );
+    // One it never froze is an ordinary project dependency: claiming it left a
+    // bare `npm:` specifier no compiled binary can resolve.
+    assertEquals(
+      isFrameworkProvidedPackage("@opentelemetry/instrumentation-langchain", embedded),
+      false,
+    );
+  });
+
+  it("inlines an OpenTelemetry package the runtime does not embed", () => {
+    const embedded = { packages: {}, constraints: {} };
+    const name = "@opentelemetry/instrumentation-langchain";
+    assertEquals(
+      classifyProjectNpmImport(
+        name,
+        { [name]: "0.1.0" },
+        embedded,
+        { [name]: "0.1.0" },
+        new Set([name]),
+      ),
+      { kind: "cdn", name, version: "0.1.0", subpath: "." },
+    );
   });
 
   it("claims bare Node builtins, which have no npm coordinate at all", () => {
@@ -543,7 +625,10 @@ describe("classifyProjectNpmImport", () => {
     // coordinate without a registry, so they fall back to a recorded runtime
     // constraint the declaration admits and are reported, never guessed at,
     // when there is none.
-    assertEquals(classify("yaml", { yaml: "*" }), { kind: "runtime", specifier: "npm:yaml@2.9.0" });
+    assertEquals(
+      classify("yaml", { yaml: "*" }, { yaml: "2.9.0" }),
+      { kind: "runtime", specifier: "npm:yaml@2.9.0" },
+    );
     const decision = classify("unpdf", { unpdf: "^1.0.0 || ^2.0.0" });
     assertEquals(decision.kind, "missing");
     assertEquals(
@@ -673,7 +758,7 @@ describe("classifyProjectNpmImport", () => {
       name: "lodash",
       reason: "the import asks for lodash@3.10.1 but package.json declares lodash@<3.0.0",
     });
-    assertEquals(classify("npm:lodash@3.10.1", { lodash: "<4.0.0" }), {
+    assertEquals(classify("npm:lodash@3.10.1", { lodash: "<4.0.0" }, { lodash: "3.10.1" }), {
       kind: "runtime",
       specifier: "npm:lodash@3.10.1",
     });
@@ -811,19 +896,49 @@ describe("classifyProjectNpmImport", () => {
       "cdn",
     );
     assertEquals(
-      classifyProjectNpmImport("npm:yaml@2.9.0", { yaml: "2.9.0" }, EMBEDDED, {}, new Set(["yaml"]))
-        .kind,
+      classifyProjectNpmImport(
+        "npm:yaml@2.9.0",
+        { yaml: "2.9.0" },
+        EMBEDDED,
+        { yaml: "2.9.0" },
+        new Set(["yaml"]),
+      ).kind,
       "runtime",
+    );
+    // The name alone is not the evidence: a public lock entry the declaration
+    // does not admit means the project installed something else, so the
+    // embedded copy is withheld exactly as the CDN path withholds its fetch.
+    assertEquals(
+      classifyProjectNpmImport(
+        "npm:yaml@2.9.0",
+        { yaml: "2.9.0" },
+        EMBEDDED,
+        { yaml: "2.8.0" },
+        new Set(["yaml"]),
+      ).kind,
+      "cdn",
     );
     // An undeclared import makes no claim about its source, so the runtime's
     // copy answers it exactly as before.
     assertEquals(classifyProjectNpmImport("npm:yaml@2.9.0", {}, EMBEDDED).kind, "runtime");
   });
 
-  it("reads a partial upper bound as the next release", () => {
-    // npm expands `<=1.1` to `<1.2.0`, which a pre-release of 1.2.0 precedes.
-    assertEquals(rangeAdmitsVersion(">=1.2.0-alpha <=1.1", "1.2.0-alpha"), true);
+  it("reads a partial upper bound as npm's pre-release sentinel", () => {
+    // npm expands `<=1.1` to `<1.2.0-0`, which every pre-release of 1.2.0
+    // outranks. Comparing against the 1.2.0 RELEASE instead admitted
+    // `1.2.0-alpha`, a version the declaration excludes.
+    assertEquals(rangeAdmitsVersion(">=1.2.0-alpha <=1.1", "1.2.0-alpha"), false);
     assertEquals(rangeAdmitsVersion(">=1.2.0-alpha <=1.1", "1.2.0"), false);
+    assertEquals(rangeAdmitsVersion(">=1.1.0-alpha <=1.1", "1.1.9"), true);
+    // A partial equality range ends at the same sentinel: `=1.1` is
+    // `>=1.1.0 <1.2.0-0`, and a partial `<` is `<1.0.0-0` for `<1.x`.
+    assertEquals(rangeAdmitsVersion("=1.1 ^1.2.0-alpha", "1.2.0-alpha"), false);
+    assertEquals(rangeAdmitsVersion("1.1", "1.1.5"), true);
+    assertEquals(rangeAdmitsVersion("<1.x ^1.0.0-a", "1.0.0-a"), false);
+    assertEquals(rangeAdmitsVersion("<1.x", "0.9.9"), true);
+    // Written in FULL, `<` is the bound as written: `<2.0.0` admits its own
+    // pre-releases, exactly as npm does.
+    assertEquals(rangeAdmitsVersion("<2.0.0 ^2.0.0-a", "2.0.0-a"), true);
   });
 
   it("reads a partial strict bound as npm's release boundary", () => {
@@ -1053,17 +1168,31 @@ describe("classifyProjectNpmImport without a usable pin", () => {
   });
 
   it("never reuses an embedded version the declaration or import excludes", () => {
-    assertEquals(classify("yaml", { yaml: "*" }), {
+    assertEquals(classify("yaml", { yaml: "*" }, { yaml: "2.9.0" }), {
       kind: "runtime",
       specifier: "npm:yaml@2.9.0",
     });
+    // Neither declaration names a version to fetch and neither lock entry
+    // exists, so the embedded copy is the only candidate -- and both exclude it.
     assertEquals(classify("yaml", { yaml: ">2.9.0" }).kind, "missing");
     assertEquals(classify("lodash", { lodash: "<3.0.0" }).kind, "missing");
     assertEquals(classify("npm:yaml@^3").kind, "missing");
-    // A range constraint serves only the range it records, never a different one.
-    assertEquals(classify("chalk", { chalk: "^5" }).kind, "missing");
+    // A recorded `*` is the framework's own constraint, so a declaration whose
+    // locked version IS the single one the binary froze stays in the binary
+    // rather than fetching a second copy of it.
+    assertEquals(classify("chalk", { chalk: "^5" }, { chalk: "5.6.2" }), {
+      kind: "runtime",
+      specifier: "npm:chalk@*",
+    });
+    // A locked version the binary does NOT carry is fetched instead.
+    assertEquals(classify("chalk", { chalk: "^5" }, { chalk: "5.7.0" }), {
+      kind: "cdn",
+      name: "chalk",
+      version: "5.7.0",
+      subpath: ".",
+    });
     assertEquals(classify("npm:chalk@^5").kind, "missing");
-    assertEquals(classify("chalk", { chalk: "*" }), {
+    assertEquals(classify("chalk", { chalk: "*" }, { chalk: "5.6.2" }), {
       kind: "runtime",
       specifier: "npm:chalk@*",
     });

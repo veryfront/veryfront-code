@@ -30,7 +30,12 @@ import { readHttpModuleText } from "#veryfront/transforms/shared/http-module-res
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { ESM_CDN_BASE } from "#veryfront/utils/constants/cdn.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
-import { COMPILATION_ERROR, DEPENDENCY_MISSING, FILE_NOT_FOUND } from "#veryfront/errors";
+import {
+  COMPILATION_ERROR,
+  DEPENDENCY_MISSING,
+  FILE_NOT_FOUND,
+  VeryfrontError,
+} from "#veryfront/errors";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
@@ -222,15 +227,17 @@ export function readDependencyPins(packageJsonText: string): Record<string, stri
     optionalDependencies?: unknown;
   };
   const pins: Record<string, string> = {};
-  // Later groups override earlier ones. A peer dependency is installed and
-  // importable, but its range is the widest statement of what the project
-  // accepts, so any installed declaration of the same name wins over it. npm
-  // lets an `optionalDependencies` entry override a `dependencies` entry.
+  // Later groups override earlier ones, in the order npm's own resolver loads
+  // them (`Node#loadDeps` in @npmcli/arborist): peers first, then production,
+  // then optional, and the root project's dev dependencies last. Each later
+  // edge replaces the one before it, so a package declared twice resolves to
+  // its LAST group -- which is why `devDependencies` has to follow
+  // `optionalDependencies` here and not precede it.
   const groups = [
     pkg?.peerDependencies,
     pkg?.dependencies,
-    pkg?.devDependencies,
     pkg?.optionalDependencies,
+    pkg?.devDependencies,
   ];
   for (const group of groups) {
     if (!group || typeof group !== "object") continue;
@@ -258,16 +265,92 @@ export function readDependencyPins(packageJsonText: string): Record<string, stri
  */
 const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org/";
 
+/** The host that serves it, for a `resolved` value written another way. */
+const PUBLIC_NPM_REGISTRY_HOST = new URL(PUBLIC_NPM_REGISTRY).hostname;
+
 /** What a project's lockfile resolved for one package. */
 interface LockedDependency {
   version: string;
-  resolved: string;
+  /**
+   * The entry's `resolved` value, or `null` when it has none. npm's
+   * `omit-lockfile-registry-resolved` deliberately writes registry entries
+   * without one, so absence is not by itself evidence of a private source --
+   * it moves the question to the effective registry the `.npmrc` names.
+   */
+  resolved: string | null;
+  /** The ranges this package itself declares, by name. */
+  dependencies: Readonly<Record<string, string>>;
+}
+
+/** The dependency ranges one lockfile entry declares, whatever its format. */
+function lockedEntryDependencies(entry: Record<string, unknown>): Record<string, string> {
+  const ranges: Record<string, string> = {};
+  // v2/v3 entries carry the package's own manifest fields; a v1 entry records
+  // the same edges under `requires`.
+  for (const field of ["dependencies", "optionalDependencies", "peerDependencies", "requires"]) {
+    const group = entry[field];
+    if (!group || typeof group !== "object") continue;
+    for (const [name, range] of Object.entries(group as Record<string, unknown>)) {
+      if (name === "__proto__" || typeof range !== "string") continue;
+      ranges[name] = range;
+    }
+  }
+  return ranges;
+}
+
+/** A path key and the entry it addresses, keyed the way v2/v3 locks are. */
+function addLockedEntry(
+  locked: Record<string, LockedDependency>,
+  path: string,
+  entry: Record<string, unknown>,
+): void {
+  // Keyed by the install path, so a workspace member's own copy
+  // (`packages/app/node_modules/pkg`) stays distinct from the hoisted one.
+  if (path === "__proto__" || !/(?:^|\/)node_modules\//.test(path)) return;
+  const { version, resolved } = entry as { version?: unknown; resolved?: unknown };
+  if (typeof version !== "string") return;
+  locked[path] = {
+    version,
+    resolved: typeof resolved === "string" ? resolved : null,
+    dependencies: lockedEntryDependencies(entry),
+  };
 }
 
 /**
- * `name -> {version, resolved}` from a project's npm lockfile, for entries
- * that name a registry source. Only v2/v3 lockfiles (`packages`) carry a
- * `resolved` URL per package, which is the field this check is about.
+ * The v1 (`npm` 5 and 6) lockfile's hierarchical `dependencies` tree, read
+ * into the same install-path keys a v2/v3 `packages` table uses: a nested
+ * entry lives under its parent's own `node_modules`.
+ */
+function readV1LockedDependencies(
+  tree: Record<string, unknown>,
+  prefix: string,
+  locked: Record<string, LockedDependency>,
+): void {
+  for (const [name, entry] of Object.entries(tree)) {
+    if (name === "__proto__" || !entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const path = `${prefix}node_modules/${name}`;
+    addLockedEntry(locked, path, record);
+    const nested = record.dependencies;
+    // A v1 entry's `dependencies` is its nested install tree, not its ranges;
+    // `requires` holds those, which is why both are read for the edges.
+    if (nested && typeof nested === "object") {
+      readV1LockedDependencies(nested as Record<string, unknown>, `${path}/`, locked);
+    }
+  }
+}
+
+/**
+ * `install path -> {version, resolved, dependencies}` from a project's npm
+ * lockfile.
+ *
+ * Both formats npm has written are read. A v2/v3 lock keys every install path
+ * under `packages`; a v1 lock -- still what an npm 5 or 6 project carries, and
+ * still what `npm install --lockfile-version=1` writes -- nests its entries
+ * under `dependencies` instead. Reading only `packages` left every declared
+ * dependency of such a project unvouched for, so discovery refused all of
+ * them with "the lockfile does not resolve <pkg>" while usable provenance sat
+ * in the file.
  *
  * @internal Exported for testing only.
  */
@@ -279,16 +362,21 @@ export function readLockedDependencies(lockText: string): Record<string, LockedD
     /* expected: a project may ship an unparseable or absent lockfile */
     return {};
   }
-  const packages = (parsed as { packages?: Record<string, unknown> })?.packages;
-  if (!packages || typeof packages !== "object") return {};
   const locked: Record<string, LockedDependency> = {};
-  for (const [path, entry] of Object.entries(packages)) {
-    // Keyed by the install path, so a workspace member's own copy
-    // (`packages/app/node_modules/pkg`) stays distinct from the hoisted one.
-    if (path === "__proto__" || !/(?:^|\/)node_modules\//.test(path)) continue;
-    const { version, resolved } = (entry ?? {}) as { version?: unknown; resolved?: unknown };
-    if (typeof version !== "string" || typeof resolved !== "string") continue;
-    locked[path] = { version, resolved };
+  const { packages, dependencies } = (parsed ?? {}) as {
+    packages?: unknown;
+    dependencies?: unknown;
+  };
+  if (packages && typeof packages === "object") {
+    for (const [path, entry] of Object.entries(packages as Record<string, unknown>)) {
+      if (entry && typeof entry === "object") {
+        addLockedEntry(locked, path, entry as Record<string, unknown>);
+      }
+    }
+    return locked;
+  }
+  if (dependencies && typeof dependencies === "object") {
+    readV1LockedDependencies(dependencies as Record<string, unknown>, "", locked);
   }
   return locked;
 }
@@ -301,14 +389,76 @@ export function readLockedDependencies(lockText: string): Record<string, LockedD
 function lockedDependency(
   sources: ProjectRegistrySources,
   name: string,
-): LockedDependency | undefined {
+): { path: string; entry: LockedDependency } | undefined {
   const paths = sources.memberPath.length > 0
     ? [`${sources.memberPath}/node_modules/${name}`, `node_modules/${name}`]
     : [`node_modules/${name}`];
   for (const path of paths) {
-    if (Object.hasOwn(sources.locked, path)) return sources.locked[path];
+    if (Object.hasOwn(sources.locked, path)) return { path, entry: sources.locked[path]! };
   }
   return undefined;
+}
+
+/**
+ * The lock entry a package installed at `fromPath` reaches for `name`, found
+ * the way Node resolution finds it: the installer's own `node_modules` first,
+ * then each enclosing one out to the lockfile's root.
+ */
+function lockedDependencyFrom(
+  locked: Readonly<Record<string, LockedDependency>>,
+  fromPath: string,
+  name: string,
+): { path: string; entry: LockedDependency } | undefined {
+  let prefix = fromPath;
+  for (;;) {
+    const candidate = prefix.length === 0
+      ? `node_modules/${name}`
+      : `${prefix}/node_modules/${name}`;
+    if (Object.hasOwn(locked, candidate)) return { path: candidate, entry: locked[candidate]! };
+    if (prefix.length === 0) return undefined;
+    const enclosing = prefix.lastIndexOf("/node_modules/");
+    prefix = enclosing < 0 ? "" : prefix.slice(0, enclosing);
+  }
+}
+
+/**
+ * One `.npmrc` read the way npm's INI parser reads it: the LAST value of each
+ * key, comments stripped, and surrounding quotes removed. A key written on its
+ * own is INI's `true`.
+ */
+function readNpmrc(npmrcText: string): Map<string, string> {
+  const values = new Map<string, string>();
+  for (const line of npmrcText.split("\n")) {
+    // An unescaped `#` or `;` starts a comment wherever it appears, so a
+    // mirror with a trailing note still applies.
+    const statement = line.replace(/(?<!\\)[#;].*$/, "").trim();
+    // A section header addresses no key this reads.
+    if (statement.length === 0 || statement.startsWith("[")) continue;
+    const separator = statement.indexOf("=");
+    const key = (separator < 0 ? statement : statement.slice(0, separator)).trim();
+    if (key.length === 0) continue;
+    const raw = separator < 0 ? "true" : statement.slice(separator + 1).trim();
+    // npm's INI parser strips a matching pair of quotes, so
+    // `registry="https://registry.npmjs.org/"` names the public registry;
+    // keeping the quotes read it as a redirect and refused every dependency.
+    const unquoted = /^"(.*)"$/.exec(raw)?.[1] ?? /^'(.*)'$/.exec(raw)?.[1] ?? raw;
+    values.set(key, unquoted);
+  }
+  return values;
+}
+
+/**
+ * The registry one `.npmrc` installs `name` from, or `undefined` when it names
+ * none. A package's `@scope:registry` takes precedence over the default one.
+ *
+ * @internal Exported for testing only.
+ */
+export function npmrcRegistryFor(npmrcText: string, name: string): string | undefined {
+  const values = readNpmrc(npmrcText);
+  const scope = name.startsWith("@") ? name.slice(0, name.indexOf("/")) : null;
+  const effective = (scope === null ? undefined : values.get(`${scope}:registry`)) ??
+    values.get("registry");
+  return effective === undefined ? undefined : effective.replace(/\/*$/, "/");
 }
 
 /**
@@ -319,28 +469,140 @@ function lockedDependency(
  * @internal Exported for testing only.
  */
 export function npmrcRedirectsPackage(npmrcText: string, name: string): boolean {
-  const scope = name.startsWith("@") ? name.slice(0, name.indexOf("/")) : null;
-  // npm takes the LAST value of each key, and a package's scoped registry
-  // takes precedence over the default one.
-  let globalRegistry: string | undefined;
-  let scopedRegistry: string | undefined;
-  for (const line of npmrcText.split("\n")) {
-    // npm reads this file as INI: an unescaped `#` or `;` starts a comment,
-    // wherever it appears, so a mirror with a trailing note still applies.
-    const statement = line.replace(/(?<!\\)[#;].*$/, "").trim();
-    if (statement.length === 0) continue;
-    const match = /^(?:(@[^:\s]+):)?registry\s*=\s*(\S+)$/.exec(statement);
-    if (!match) continue;
-    const value = match[2]!.replace(/\/*$/, "/");
-    if (match[1] === undefined) globalRegistry = value;
-    else if (match[1] === scope) scopedRegistry = value;
-  }
-  const effective = scopedRegistry ?? globalRegistry;
+  const effective = npmrcRegistryFor(npmrcText, name);
   return effective !== undefined && effective !== PUBLIC_NPM_REGISTRY;
 }
 
+/**
+ * Does `.npmrc` turn on npm's `omit-lockfile-registry-resolved`? Registry
+ * entries then keep their version and integrity but carry no `resolved` URL,
+ * and this setting is the only record that their absence was deliberate.
+ */
+function npmrcOmitsResolved(npmrcText: string): boolean {
+  return readNpmrc(npmrcText).get("omit-lockfile-registry-resolved") === "true";
+}
+
 /** The coordinate to fetch, or why nothing may be fetched for this import. */
-type CdnSourceDecision = { version: string } | { refusal: string };
+type CdnSourceDecision =
+  | {
+    version: string;
+    /** `name@version` for every package the CDN build must also resolve. */
+    dependencyPins?: readonly string[];
+  }
+  | { refusal: string };
+
+/** Does any `.npmrc` that applies to this project redirect `name`? */
+function npmrcRedirects(sources: ProjectRegistrySources, name: string): boolean {
+  // npm ignores a workspace member's own file when the root owns the install,
+  // so the member's may not VOUCH for the public registry -- but a member
+  // naming a private one is still evidence against the public copy, and this
+  // decision only ever fails closed on it.
+  return npmrcRedirectsPackage(sources.npmrc, name) ||
+    npmrcRedirectsPackage(sources.memberNpmrc, name);
+}
+
+/**
+ * Is this lock entry's package the one the public registry serves?
+ *
+ * npm writes the tarball URL for a registry source, but two supported
+ * configurations write something else: the documented registry-RELATIVE form
+ * (`registry.npmjs.org/yaml/-/yaml-2.9.0.tgz`, or a bare path), and
+ * `omit-lockfile-registry-resolved`, which writes no `resolved` at all. In
+ * both the project's own `.npmrc` is what names the registry, so it has to
+ * select the public one explicitly; silence is not evidence.
+ */
+function resolvesFromPublicRegistry(
+  sources: ProjectRegistrySources,
+  entry: LockedDependency,
+  name: string,
+): boolean {
+  if (npmrcRedirects(sources, name)) return false;
+  const configured = npmrcRegistryFor(sources.npmrc, name) === PUBLIC_NPM_REGISTRY;
+  if (entry.resolved === null) return npmrcOmitsResolved(sources.npmrc) && configured;
+  let url: URL;
+  try {
+    url = new URL(entry.resolved);
+  } catch (_) {
+    /* expected: npm documents `resolved` as a path relative to the registry */
+    return configured;
+  }
+  // A `git+ssh:`, `file:` or `link:` source is not a registry package at all.
+  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+  return url.hostname.toLowerCase() === PUBLIC_NPM_REGISTRY_HOST;
+}
+
+/**
+ * How far the transitive walk goes before the graph is called unverifiable.
+ * A bound is needed because the walk is over project-supplied data; the deepest
+ * real closure this has to serve is far below it.
+ */
+const MAX_TRANSITIVE_LOCKED_DEPENDENCIES = 512;
+
+/**
+ * Every package the CDN has to resolve underneath `name`, pinned to the
+ * version the project's lockfile installed -- or why the project's own
+ * evidence does not cover them.
+ *
+ * The CDN is handed one coordinate and resolves that package's dependency
+ * RANGES itself, against the public registry, at build time. Left alone it
+ * therefore picks versions the project never installed, and -- the reason this
+ * fails closed -- it serves the PUBLIC package for a transitive name the
+ * project resolves from a private registry. Walking the lockfile turns the
+ * project's own install into an exact, verified pin list for the build.
+ */
+function transitiveLockedDependencies(
+  sources: ProjectRegistrySources,
+  rootPath: string,
+  rootName: string,
+): { pins: string[] } | { refusal: string } {
+  const pinned = new Map<string, string>();
+  // A name the lockfile installs at two versions at once. esm.sh resolves one
+  // version per name for a build, so such a name cannot be pinned; it is only
+  // ever dropped, never guessed at.
+  const nested = new Set<string>();
+  const visited = new Set<string>([rootPath]);
+  const queue: string[] = [rootPath];
+  while (queue.length > 0) {
+    const path = queue.shift()!;
+    for (const dependency of Object.keys(sources.locked[path]!.dependencies)) {
+      const found = lockedDependencyFrom(sources.locked, path, dependency);
+      // A name the lockfile does not carry at all is one the project never
+      // installed -- an optional dependency skipped on this platform, or a
+      // peer the host supplies -- so the project holds no copy for a public
+      // one to stand in for. It is left to the CDN, as `npm install` would
+      // have left it to the registry.
+      if (found === undefined) continue;
+      // Present and private is the substitution this refuses: the project's
+      // own copy of that name is not the one esm.sh would serve.
+      if (!resolvesFromPublicRegistry(sources, found.entry, dependency)) {
+        return {
+          refusal: `the project resolves ${dependency}, which ${rootName} depends on, from ` +
+            `another registry, so the CDN build of ${rootName} would carry the public package ` +
+            `of that name instead of this project's`,
+        };
+      }
+      if (pinned.get(dependency) !== found.entry.version) {
+        if (pinned.has(dependency)) nested.add(dependency);
+        pinned.set(dependency, found.entry.version);
+      }
+      if (pinned.size > MAX_TRANSITIVE_LOCKED_DEPENDENCIES) {
+        return {
+          refusal: `the project's lockfile puts more than ` +
+            `${MAX_TRANSITIVE_LOCKED_DEPENDENCIES} packages under ${rootName}, too many to ` +
+            `pin the CDN build to`,
+        };
+      }
+      if (!visited.has(found.path)) {
+        visited.add(found.path);
+        queue.push(found.path);
+      }
+    }
+  }
+  const pins = [...pinned]
+    .filter(([name]) => !nested.has(name))
+    .map(([name, version]) => `${name}@${version}`);
+  return { pins: pins.sort() };
+}
 
 /**
  * Which version of `name` the CDN may serve, or why none may be.
@@ -367,7 +629,7 @@ function cdnSourceDecision(
         `cannot be shown to be this project's dependency`,
     };
   }
-  if (npmrcRedirectsPackage(sources.npmrc, name)) {
+  if (npmrcRedirects(sources, name)) {
     return {
       refusal: `the project's .npmrc installs ${name} from another registry, so the public ` +
         `package of that name is not this project's dependency`,
@@ -381,20 +643,26 @@ function cdnSourceDecision(
         `package-lock.json`,
     };
   }
-  if (!locked.resolved.startsWith(PUBLIC_NPM_REGISTRY)) {
+  if (!resolvesFromPublicRegistry(sources, locked.entry, name)) {
     return {
       refusal: `the project's lockfile resolves ${name} from another registry, so the public ` +
         `package of that name is not this project's dependency`,
     };
   }
-  if (locked.version === named) return { version: named };
   const admits = (range: string | null | undefined) =>
-    range === null || range === undefined || rangeAdmitsVersion(range, locked.version) === true;
-  if (admits(declared) && admits(importRange)) return { version: locked.version };
-  return {
-    refusal: `the project's lockfile resolves a version of ${name} that the project's own ` +
-      `declaration or this import does not admit`,
-  };
+    range === null || range === undefined ||
+    rangeAdmitsVersion(range, locked.entry.version) === true;
+  if (locked.entry.version !== named && !(admits(declared) && admits(importRange))) {
+    return {
+      refusal: `the project's lockfile resolves a version of ${name} that the project's own ` +
+        `declaration or this import does not admit`,
+    };
+  }
+  // The direct package is vouched for; everything it pulls in has to be too,
+  // because the CDN resolves those ranges itself.
+  const transitive = transitiveLockedDependencies(sources, locked.path, name);
+  if ("refusal" in transitive) return transitive;
+  return { version: locked.entry.version, dependencyPins: transitive.pins };
 }
 
 /** The version the lockfile resolved for each declared package, by name. */
@@ -405,7 +673,7 @@ function lockedVersionsByName(
   const versions: Record<string, string> = {};
   for (const name of Object.keys(pins)) {
     const locked = lockedDependency(sources, name);
-    if (locked !== undefined) versions[name] = locked.version;
+    if (locked !== undefined) versions[name] = locked.entry.version;
   }
   return versions;
 }
@@ -423,10 +691,7 @@ function publiclySourcedPackages(
   if (sources.unverifiableClient !== null) return publicly;
   for (const name of Object.keys(pins)) {
     const locked = lockedDependency(sources, name);
-    if (
-      locked !== undefined && locked.resolved.startsWith(PUBLIC_NPM_REGISTRY) &&
-      !npmrcRedirectsPackage(sources.npmrc, name)
-    ) {
+    if (locked !== undefined && resolvesFromPublicRegistry(sources, locked.entry, name)) {
       publicly.add(name);
     }
   }
@@ -436,7 +701,19 @@ function publiclySourcedPackages(
 /** A project's evidence for where its dependencies come from. */
 interface ProjectRegistrySources {
   locked: Record<string, LockedDependency>;
+  /**
+   * The `.npmrc` npm actually reads for this project: the one beside the
+   * lockfile that owns it. For a workspace member that is the ROOT's file --
+   * npm reports that it ignores a member's own workspace config, so merging
+   * the two let a member's `@scope:registry` override the root's `registry`
+   * and vouch for the public copy of a privately resolved package.
+   */
   npmrc: string;
+  /**
+   * A workspace member's own `.npmrc`, kept apart because it may only ever
+   * veto: see {@link npmrcRedirects}. Empty when the project owns its lock.
+   */
+  memberNpmrc: string;
   /** The project's path inside the lockfile's directory; empty when it owns it. */
   memberPath: string;
   /**
@@ -499,18 +776,86 @@ function declaresWorkspaceMember(rootPackageJson: string, member: string): boole
     ? declared
     : (declared as { packages?: unknown })?.packages;
   if (!Array.isArray(patterns)) return false;
-  return patterns.some((pattern) => {
-    if (typeof pattern !== "string") return false;
-    const trimmed = pattern.replace(/\/+$/, "");
-    // npm's workspace patterns are paths, optionally ending in a `*` segment.
-    if (trimmed.endsWith("/*")) {
-      const prefix = trimmed.slice(0, -2);
-      const rest = member.startsWith(`${prefix}/`) ? member.slice(prefix.length + 1) : null;
-      return rest !== null && rest.length > 0 && !rest.includes("/");
+  const segments = member.split("/");
+  let matched = false;
+  for (const pattern of patterns) {
+    if (typeof pattern !== "string") continue;
+    const negated = pattern.startsWith("!");
+    const normalized = normalizeWorkspacePattern(negated ? pattern.slice(1) : pattern);
+    if (normalized.length === 0) continue;
+    if (!matchesWorkspacePattern(normalized.split("/"), segments)) continue;
+    // A negated pattern removes what the positive ones matched, wherever it
+    // is written, which is how `["packages/*", "!packages/private"]` reads.
+    if (negated) return false;
+    matched = true;
+  }
+  return matched;
+}
+
+/** A workspace pattern without its `./` prefix or its trailing separators. */
+function normalizeWorkspacePattern(pattern: string): string {
+  return pattern.replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+/**
+ * Does a workspace glob match a member path, segment by segment? npm matches
+ * these with minimatch, so `*` stands for part of one segment and `**` for any
+ * number of them: `packages/*`, `./packages/*`, `packages/**` and `apps/*-web`
+ * are all patterns npm accepts and all name real members.
+ *
+ * Written as two pointer walks rather than a generated RegExp: the pattern is
+ * project text, and a `**`-heavy one compiled to a regular expression is the
+ * shape that backtracks exponentially.
+ */
+function matchesWorkspacePattern(
+  pattern: readonly string[],
+  member: readonly string[],
+): boolean {
+  let p = 0;
+  let m = 0;
+  let star = -1;
+  let matchedTo = 0;
+  while (m < member.length) {
+    if (p < pattern.length && pattern[p] === "**") {
+      star = p++;
+      matchedTo = m;
+    } else if (p < pattern.length && matchesSegment(pattern[p]!, member[m]!)) {
+      p++;
+      m++;
+    } else if (star < 0) {
+      return false;
+    } else {
+      // Give the last `**` one more segment and retry from just after it.
+      p = star + 1;
+      m = ++matchedTo;
     }
-    if (trimmed === "*") return !member.includes("/");
-    return trimmed === member;
-  });
+  }
+  while (p < pattern.length && pattern[p] === "**") p++;
+  return p === pattern.length;
+}
+
+/** Does one pattern segment, with `*` standing for any run of characters, match? */
+function matchesSegment(pattern: string, name: string): boolean {
+  let p = 0;
+  let n = 0;
+  let star = -1;
+  let matchedTo = 0;
+  while (n < name.length) {
+    if (p < pattern.length && pattern[p] === "*") {
+      star = p++;
+      matchedTo = n;
+    } else if (p < pattern.length && pattern[p] === name[n]) {
+      p++;
+      n++;
+    } else if (star < 0) {
+      return false;
+    } else {
+      p = star + 1;
+      n = ++matchedTo;
+    }
+  }
+  while (p < pattern.length && pattern[p] === "*") p++;
+  return p === pattern.length;
 }
 
 async function readProjectRegistrySources(
@@ -520,11 +865,10 @@ async function readProjectRegistrySources(
   const project = directories[0]!;
   const npmrcOf = (directory: string) =>
     readProjectFile(context, pathHelper.join(directory, ".npmrc"));
-  // The repo's own precedence: the lockfile a client wrote owns the project,
-  // and an npm lock inherited from a migration must not outrank it. A member
-  // of a workspace keeps its lockfile at the root, so ancestors are searched
-  // in turn, nearest first -- but only a root that declares this project as a
-  // member speaks for it.
+  // Every directory that speaks for this project: its own, and each ancestor
+  // that declares it a workspace member. A project merely nested under another
+  // is not a member, and that project's lockfile says nothing about it.
+  const owners: { directory: string; memberPath: string }[] = [];
   for (const directory of directories) {
     const memberPath = directory === project
       ? ""
@@ -538,41 +882,57 @@ async function readProjectRegistrySources(
     ) {
       continue;
     }
-    // npm applies the root's config to a member, and either file naming a
-    // private registry is enough to refuse the public copy.
-    const npmrc = memberPath.length === 0
-      ? await npmrcOf(project)
-      : `${await npmrcOf(project)}\n${await npmrcOf(directory)}`;
+    owners.push({ directory, memberPath });
+  }
+  // The OUTERMOST of them owns the install: every workspace client keeps one
+  // lockfile at the root and none in the members, so a lock beside a member is
+  // a leftover from before it joined. Taking the nearest one instead let a
+  // stale `package-lock.json` in a pnpm or Yarn member outrank the root's
+  // authoritative lockfile, and with it decide provenance.
+  for (const { directory, memberPath } of owners.reverse()) {
+    // npm reads the config beside the lockfile it is resolving; a member's own
+    // file is reported as ignored, so it is carried separately.
+    const npmrc = await npmrcOf(directory);
+    const memberNpmrc = memberPath.length === 0 ? "" : await npmrcOf(project);
+    const shrinkwrapOf = (at: string) =>
+      readProjectFile(context, pathHelper.join(at, "npm-shrinkwrap.json"));
+    // Within one directory the repo's own precedence decides: the lockfile a
+    // client wrote owns the project, and an npm lock inherited from a
+    // migration must not outrank it.
     for (const [file, client] of LOCKFILE_CLIENTS) {
       const text = await readProjectFile(context, pathHelper.join(directory, file));
       if (text.length === 0) continue;
-      if (client !== "npm") return { locked: {}, npmrc, memberPath, unverifiableClient: client };
+      if (client !== "npm") {
+        return { locked: {}, npmrc, memberNpmrc, memberPath, unverifiableClient: client };
+      }
       // npm ignores package-lock.json entirely when a shrinkwrap is present.
-      const shrinkwrap = await readProjectFile(
-        context,
-        pathHelper.join(directory, "npm-shrinkwrap.json"),
-      );
+      const shrinkwrap = await shrinkwrapOf(directory);
       return {
         locked: readLockedDependencies(shrinkwrap || text),
         npmrc,
+        memberNpmrc,
         memberPath,
         unverifiableClient: null,
       };
     }
-    const shrinkwrap = await readProjectFile(
-      context,
-      pathHelper.join(directory, "npm-shrinkwrap.json"),
-    );
+    const shrinkwrap = await shrinkwrapOf(directory);
     if (shrinkwrap.length > 0) {
       return {
         locked: readLockedDependencies(shrinkwrap),
         npmrc,
+        memberNpmrc,
         memberPath,
         unverifiableClient: null,
       };
     }
   }
-  return { locked: {}, npmrc: await npmrcOf(project), memberPath: "", unverifiableClient: null };
+  return {
+    locked: {},
+    npmrc: await npmrcOf(project),
+    memberNpmrc: "",
+    memberPath: "",
+    unverifiableClient: null,
+  };
 }
 
 async function readProjectDependencyPins(
@@ -653,9 +1013,17 @@ function parseEsmCdnModule(url: URL): { name: string; version: string; subpath: 
   if (segments.length === 0) return null;
   const scoped = segments[0]!.startsWith("@") && segments.length > 1;
   const pinned = scoped ? `${segments[0]}/${segments[1]}` : segments[0]!;
-  const name = pinned.replace(/@[^@/]+$/, "");
+  // The package's own `@` is the first one after any scope: an npm name holds
+  // no other. Reading the LAST one instead mis-parsed esm.sh's peer-qualified
+  // builds -- `react-dom@18.3.1_react@18.3.1` became the package
+  // `react-dom@18.3.1_react`, which the framework-identity guard then missed,
+  // bundling a second React alongside the framework's own.
+  const separator = pinned.indexOf("@", scoped ? pinned.indexOf("/") + 1 : 0);
+  const name = separator < 0 ? pinned : pinned.slice(0, separator);
   if (name.length === 0) return null;
-  const version = pinned.slice(name.length + 1);
+  // esm.sh appends the peers it built against after an underscore, a character
+  // no semver version may contain, so that is where the version ends.
+  const version = separator < 0 ? "" : pinned.slice(separator + 1).split("_", 1)[0]!;
 
   let rest = segments.slice(scoped ? 2 : 1);
   if (rest.length > 0 && ESM_CDN_BUILD_OPTIONS.test(rest[0]!)) rest = rest.slice(1);
@@ -808,6 +1176,63 @@ export const fetchProjectDependencySource: DependencySourceTransport =
     guardedOutboundFetch(input, init, { authorizeUrl: authorizeProjectDependencySourceUrl })
   );
 
+/** Where a deferred import nothing may serve is bundled as a throwing module. */
+const MISSING_DEPENDENCY_NAMESPACE = "veryfront-missing-npm-dependency";
+
+/**
+ * The prefix the deferred module's error carries when it could not reach the
+ * registry below, so a `require()` at module scope -- which esbuild reports
+ * with the same kind as a lazy one, and which therefore runs as soon as the
+ * module is imported -- is still classified rather than escaping unrecognised.
+ */
+const MISSING_DEPENDENCY_MARKER = "[veryfront:missing-npm-dependency]";
+
+/**
+ * The global the bundled module reaches for to build its error.
+ *
+ * The bundle is standalone JavaScript: it holds no import of the error
+ * registry, and the specifier that would reach one is the project's to
+ * resolve, not the framework's. Reaching through a global is what keeps the
+ * failure TYPED at the moment it is reached -- a handler awaiting a lazy
+ * `import()` catches a `dependency-missing` VeryfrontError like any other,
+ * instead of a bare Error carrying an internal marker. The module is
+ * `import()`ed from this file and so runs in this realm, where the global is
+ * always installed; the fallback in the generated source is for a bundle
+ * executed anywhere else.
+ */
+const DEFERRED_DEPENDENCY_ERROR_GLOBAL = "__veryfrontDeferredDependencyError";
+
+/** Marks the errors that factory builds, so a module-scope throw is recognised. */
+const DEFERRED_DEPENDENCY_CONTEXT = { veryfrontDeferredDependency: true } as const;
+
+(globalThis as Record<string, unknown>)[DEFERRED_DEPENDENCY_ERROR_GLOBAL] = (detail: string) =>
+  DEPENDENCY_MISSING.create({ detail, context: DEFERRED_DEPENDENCY_CONTEXT });
+
+/** The statements a bundled module runs to fail with `detail` when reached. */
+function deferredDependencyThrow(detail: string): string {
+  const create = JSON.stringify(DEFERRED_DEPENDENCY_ERROR_GLOBAL);
+  return `const create = globalThis[${create}]; ` +
+    `throw typeof create === "function" ? create(${JSON.stringify(detail)}) : ` +
+    `new Error(${JSON.stringify(`${MISSING_DEPENDENCY_MARKER} ${detail}`)});`;
+}
+
+/**
+ * The detail a deferred dependency failure carries, or `null` when the error
+ * is not one. Both forms the generated module can throw are recognised.
+ */
+function deferredDependencyDetail(error: unknown): string | null {
+  if (
+    error instanceof VeryfrontError && error.slug === DEPENDENCY_MISSING.slug &&
+    (error.context as { veryfrontDeferredDependency?: unknown } | undefined)
+        ?.veryfrontDeferredDependency === true
+  ) {
+    return error.detail ?? error.message;
+  }
+  return error instanceof Error && error.message.startsWith(MISSING_DEPENDENCY_MARKER)
+    ? error.message.slice(MISSING_DEPENDENCY_MARKER.length).trim()
+    : null;
+}
+
 /** The name the emitted module gives the `require.resolve` stand-in. */
 const REQUIRE_RESOLVE_HELPER = "__veryfrontRequireResolve";
 
@@ -816,23 +1241,11 @@ const REQUIRE_RESOLVE_HELPER = "__veryfrontRequireResolve";
  * that can carry anything, and the reason is the same for every probe.
  */
 function requireResolveHelperSource(): string {
-  const message = `${MISSING_DEPENDENCY_MARKER} Cannot serve a require.resolve() probe: ` +
-    `discovery bundles a project's dependencies at build time, so there is no module path ` +
-    `to return. Import the package instead, or move the work to an extension or a sandbox ` +
-    `session.`;
-  return `function ${REQUIRE_RESOLVE_HELPER}() { throw new Error(${JSON.stringify(message)}); }`;
+  const detail = `Cannot serve a require.resolve() probe: discovery bundles a project's ` +
+    `dependencies at build time, so there is no module path to return. Import the package ` +
+    `instead, or move the work to an extension or a sandbox session.`;
+  return `function ${REQUIRE_RESOLVE_HELPER}() { ${deferredDependencyThrow(detail)} }`;
 }
-
-/** Where a deferred import nothing may serve is bundled as a throwing module. */
-const MISSING_DEPENDENCY_NAMESPACE = "veryfront-missing-npm-dependency";
-
-/**
- * The prefix the deferred module's error carries, so a `require()` at module
- * scope -- which esbuild reports with the same kind as a lazy one, and which
- * therefore runs as soon as the module is imported -- is still classified
- * rather than escaping as a plain Error.
- */
-const MISSING_DEPENDENCY_MARKER = "[veryfront:missing-npm-dependency]";
 
 /**
  * Resolve a project's npm imports the way a compiled runtime can serve them.
@@ -882,9 +1295,9 @@ export function createProjectDependencyCdnPlugin(
       // A deferred import nothing may serve is bundled as a module that throws
       // when the import is reached, carrying the classified reason.
       build.onLoad({ filter: /.*/, namespace: MISSING_DEPENDENCY_NAMESPACE }, (args) => ({
-        contents: `throw new Error(${
-          JSON.stringify(typeof args.pluginData === "string" ? args.pluginData : "")
-        });`,
+        contents: deferredDependencyThrow(
+          typeof args.pluginData === "string" ? args.pluginData : "",
+        ),
         loader: "js",
       }));
 
@@ -960,7 +1373,7 @@ export function createProjectDependencyCdnPlugin(
           return {
             path: shown,
             namespace: MISSING_DEPENDENCY_NAMESPACE,
-            pluginData: `${MISSING_DEPENDENCY_MARKER} Cannot load "${shown}": ${reason}`,
+            pluginData: `Cannot load "${shown}": ${reason}`,
           };
         }
         onMissing(shown, reason);
@@ -1012,10 +1425,20 @@ export function createProjectDependencyCdnPlugin(
         if ("refusal" in source) {
           return reportMissing(args, describeNpmImport(args.path), source.refusal);
         }
+        // esm.sh resolves the package's own dependency ranges when it builds,
+        // so the versions the project installed are handed to it as `deps`.
+        // Without them the build carries whatever the public registry answers
+        // with at that moment, which is not what the project locked.
+        const pinned = source.dependencyPins ?? [];
+        // Percent-encoded, because a version's build metadata carries a `+`
+        // that a query parser would otherwise read as a space. The HTTP
+        // plugin re-encodes the whole query when it adds its build target, so
+        // the CDN sees one normalized form either way.
+        const deps = pinned.length === 0 ? "" : `?deps=${pinned.map(encodeURIComponent).join(",")}`;
         return {
           path: `${ESM_CDN_BASE}/${name}@${source.version}${
             subpath === "." ? "" : subpath.slice(1)
-          }`,
+          }${deps}`,
           namespace: "http-url",
         };
       });
@@ -1215,21 +1638,26 @@ function projectRootMention(root: string): RegExp {
 
 /**
  * A CDN URL in bundler text, with everything the project wrote replaced: the
- * pre-release and build parts of the version, and the package subpath. The
- * request uses all of it verbatim, but each part is free-form -- semver says
- * nothing about a pre-release's content, and a subpath segment is whatever
- * the import named -- so a token in any of them would otherwise reach the
- * classified detail and the bundler's logs through the failing URL.
+ * pre-release and build parts of the version, the package subpath, and the
+ * query that pins the build's transitive dependencies. The request uses all of
+ * it verbatim, but each part is free-form -- semver says nothing about a
+ * pre-release's content, a subpath segment is whatever the import named, and
+ * the query carries the project's own lockfile coordinates -- so a token in
+ * any of them would otherwise reach the classified detail and the bundler's
+ * logs through the failing URL.
  */
 function withoutCdnProjectText(text: string): string {
   const cdn = ESM_CDN_BASE.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   return text.replace(
     new RegExp(
-      String.raw`(${cdn}/\S*?@\d+(?:\.\d+){0,2})(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?([^\s?]*)`,
+      String
+        .raw`(${cdn}/\S*?@\d+(?:\.\d+){0,2})(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?([^\s?]*)(\?\S*)?`,
       "g",
     ),
-    (_match, pinned: string, pre?: string, build?: string, subpath?: string) =>
-      `${pinned}${pre ? "-<redacted>" : ""}${build ? "+<redacted>" : ""}${subpath ? "/..." : ""}`,
+    (_match, pinned: string, pre?: string, build?: string, subpath?: string, query?: string) =>
+      `${pinned}${pre ? "-<redacted>" : ""}${build ? "+<redacted>" : ""}${subpath ? "/..." : ""}${
+        query ? "?..." : ""
+      }`,
   );
 }
 
@@ -1315,7 +1743,7 @@ export async function importModule(
   // copy of a name is its dependency at all.
   const registrySources = compiled && Object.keys(dependencyPins).length > 0
     ? await readProjectRegistrySources(context)
-    : { locked: {}, npmrc: "", memberPath: "", unverifiableClient: null };
+    : { locked: {}, npmrc: "", memberNpmrc: "", memberPath: "", unverifiableClient: null };
 
   // A shared hosted runtime serves many projects and source generations, so
   // namespace identical relative paths before considering entry contents.
@@ -1474,9 +1902,7 @@ export async function importModule(
     } catch (error) {
       // A deferred import reached at module scope: the reason is already
       // classified, so it is reported rather than rethrown unrecognised.
-      const deferred = error instanceof Error && error.message.startsWith(MISSING_DEPENDENCY_MARKER)
-        ? error.message.slice(MISSING_DEPENDENCY_MARKER.length).trim()
-        : null;
+      const deferred = deferredDependencyDetail(error);
       if (deferred !== null) {
         throw DEPENDENCY_MISSING.create({
           detail: `${paths.display}: ${deferred}. Declare the package in the project's ` +
