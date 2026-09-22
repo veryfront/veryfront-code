@@ -1312,6 +1312,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         "",
       );
       assertEquals(
+        await declaring(["apps/@(a|b)*?(a|b)a"], `${PROJECT}/apps/aa`),
+        "",
+      );
+      assertEquals(
         await declaring(["apps/!(a|b)!(a|*)"], `${PROJECT}/apps/x`),
         "apps/x",
       );

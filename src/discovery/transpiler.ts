@@ -1539,7 +1539,9 @@ function matchesTokenHere(
       ((index === 0 && next?.kind === "extglob") ||
         (index + 1 === tokens.length && previous?.kind === "extglob") ||
         (previous?.kind === "extglob" && next?.kind === "extglob" &&
-          (next.mark === "@" || next.mark === "+")));
+          (next.mark === "@" || next.mark === "+")) ||
+        (previous?.kind === "extglob" && (previous.mark === "@" || previous.mark === "+") &&
+          next?.kind === "extglob" && (next.mark === "?" || next.mark === "*")));
     const mustConsume = token.required || mustConsumeAdjacentToExtglob ||
       (!token.synthetic && !token.consecutive && suffixMayBeEmpty &&
         previous?.kind === "extglob" && previous.mark !== "!");
