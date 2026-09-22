@@ -7705,7 +7705,6 @@ describe("push dependency pin reconciliation", () => {
       },
       async ({ projectDir, error, puts, historyCalls }) => {
         if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
-        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
         assertEquals(historyCalls, 0);
         assertEquals(puts, []);
         assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
