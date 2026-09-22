@@ -603,6 +603,8 @@ function createAgent<TOutput = never>(
 
   const runtimeConfig = {
     ...publicConfig,
+    // Preserve omission so request-scoped hosted defaults resolve at execution.
+    model: config.model,
     tools: mergedToolsConfig,
     system: augmentedSystem,
     middleware: resolvedMiddleware,

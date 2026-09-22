@@ -10,6 +10,7 @@ import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getModelRuntimeProvider } from "#veryfront/provider/runtime-inspection.ts";
 
@@ -73,6 +74,9 @@ export function normalizeAgentModelConfig(model?: string): string {
 }
 
 export function resolveConfiguredAgentModel(model?: string): string {
+  if (model === undefined && isVeryfrontCloudEnabled()) {
+    return getDefaultVeryfrontCloudModel();
+  }
   const normalized = normalizeAgentModelConfig(model);
   if (normalized === AUTO_AGENT_MODEL) {
     return getDefaultVeryfrontCloudModel();
@@ -162,7 +166,9 @@ function resolveDirectRuntimeModelForDefault(modelId: string): string | undefine
 }
 
 function resolveDirectAutoRuntimeModel(): string | undefined {
-  const configuredDefault = resolveDirectRuntimeModelForDefault(getDefaultVeryfrontCloudModel());
+  const configuredDefault = resolveDirectRuntimeModelForDefault(
+    getHostEnv("VERYFRONT_DEFAULT_MODEL")?.trim() || DEFAULT_AGENT_MODEL,
+  );
   if (configuredDefault) {
     return configuredDefault;
   }
@@ -197,7 +203,10 @@ function resolveAutoRuntimeModel(): string {
  *   request-scoped Veryfront bootstrap but no direct provider API key
  */
 export function resolveRuntimeModel(model?: string): string {
-  if (normalizeAgentModelConfig(model) === AUTO_AGENT_MODEL) {
+  if (
+    (model === undefined && isVeryfrontCloudEnabled()) ||
+    normalizeAgentModelConfig(model) === AUTO_AGENT_MODEL
+  ) {
     return resolveAutoRuntimeModel();
   }
 

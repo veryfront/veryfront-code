@@ -1,3 +1,4 @@
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -565,6 +566,39 @@ description: Excluded skill
       throw new Error("Expected an agent tool map");
     }
     assertEquals(assistant.config.tools.agent_writer, false);
+  });
+
+  it("resolves an omitted model from hosted context attached after construction", async () => {
+    let resolvedModel = "";
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "mistral",
+      modelId: "mistral-small-2503",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = agent({
+      id: "hosted-default-at-execution",
+      system: "Reply briefly.",
+      skills: [],
+      tools: {},
+      resolveModelTransport: async (input) => {
+        resolvedModel = input.resolvedModel;
+        return { model };
+      },
+    });
+    await runWithVeryfrontCloudContext(
+      { apiToken: "vf_test", projectSlug: "test-project" },
+      () => assistant.generate({ input: "Hello" }),
+    );
+    assertEquals(resolvedModel, "veryfront-cloud/mistral/mistral-small-2503");
   });
 
   it("removes explicitly denied provider-native tools", async () => {

@@ -92,7 +92,7 @@ function resolveHostCredentialApiBaseUrl(): string {
     DEFAULT_API_BASE_URL;
 }
 
-export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/openai/gpt-5.4-nano";
+export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/mistral/mistral-small-2503";
 export const DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL =
   "veryfront-cloud/openai/text-embedding-3-small";
 

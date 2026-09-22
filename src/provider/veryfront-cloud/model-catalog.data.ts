@@ -50,7 +50,7 @@ export type VeryfrontCloudModelTransportCapabilities = {
  * Update this when the current default is deprecated. Otherwise the default
  * path silently breaks for users who have not set an explicit model.
  */
-export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
+export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "mistral-small-2503";
 
 /**
  * Accepted provider aliases mapped to their canonical provider ID.

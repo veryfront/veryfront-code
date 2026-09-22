@@ -303,7 +303,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       resolveVeryfrontCloudModelId("opus"),
       "anthropic/claude-opus-4-8",
     );
-    assertEquals(resolveVeryfrontCloudModelId(), "openai/gpt-5.4-nano");
+    assertEquals(resolveVeryfrontCloudModelId(), "mistral/mistral-small-2503");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.5"), "openai/gpt-5.5");
     assertEquals(
       resolveVeryfrontCloudModelId("gpt-5.4-mini"),

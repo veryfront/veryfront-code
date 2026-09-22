@@ -172,7 +172,8 @@ export interface AgentConfig<TOutput = any> {
   /**
    * Optional model string in "provider/model" format.
    *
-   * When omitted, Veryfront uses `openai/gpt-5.4-nano`. Set `"auto"` to choose
+   * When omitted, Veryfront uses the Cloud default with hosted context, or
+   * `openai/gpt-5.4-nano` with direct credentials. Set `"auto"` to choose
    * Veryfront Cloud when bootstrap credentials are present, otherwise a
    * configured direct provider key when one exists.
    */
