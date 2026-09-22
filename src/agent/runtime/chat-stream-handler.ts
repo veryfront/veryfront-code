@@ -743,6 +743,14 @@ function createDeferredTextBuffer(
   return { deferredText, emitBufferedText, releaseDeferredText };
 }
 
+function releaseTextAtBoundary(
+  callbacks: ChatStreamCallbacks | undefined,
+  releaseDeferredText: () => void,
+): void {
+  if (callbacks?.onTextBoundary) callbacks.onTextBoundary(releaseDeferredText);
+  else releaseDeferredText();
+}
+
 async function processActiveStream(
   source: RuntimeStreamSource,
   state: ChatStreamState,
@@ -834,7 +842,7 @@ async function processActiveStream(
           }
         }
         if (hasNonTextEvent && deferredText.length > 0) {
-          callbacks.onTextBoundary?.(releaseDeferredText);
+          releaseTextAtBoundary(callbacks, releaseDeferredText);
         }
       }
       for (let index = 0; index < events.length; index++) {
@@ -1358,7 +1366,7 @@ export function processStreamInternal(
 
         if (typedPart.type.startsWith("data-")) {
           if (deferTextDelivery && deferredText.length > 0) {
-            callbacks.onTextBoundary?.(releaseDeferredText);
+            releaseTextAtBoundary(callbacks, releaseDeferredText);
           }
           sendSSE(controller, encoder, {
             type: typedPart.type,
@@ -1371,7 +1379,7 @@ export function processStreamInternal(
           deferTextDelivery && deferredText.length > 0 && typedPart.type !== "text-delta" &&
           typedPart.type !== "finish" && (typedPart.type as string) !== "text-end"
         ) {
-          callbacks.onTextBoundary?.(releaseDeferredText);
+          releaseTextAtBoundary(callbacks, releaseDeferredText);
         }
 
         switch (typedPart.type) {

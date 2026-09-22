@@ -46,6 +46,8 @@ const IntrinsicMapHas = Map.prototype.has;
 const IntrinsicMapSet = Map.prototype.set;
 const IntrinsicSetAdd = Set.prototype.add;
 const IntrinsicSetHas = Set.prototype.has;
+const IntrinsicStringSplit = String.prototype.split;
+const IntrinsicArrayFilter = Array.prototype.filter;
 const PERMISSIVE_TOOL_INPUT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {},
@@ -87,9 +89,14 @@ function normalizeModel(model?: string): string {
  */
 export function splitModelId(model?: string): { provider: string; modelName: string } {
   const normalized = normalizeModel(model);
-  const parts = normalized.split("/").filter(Boolean);
+  const splitParts = IntrinsicReflectApply(IntrinsicStringSplit, normalized, ["/"]) as string[];
+  const parts = IntrinsicReflectApply(
+    IntrinsicArrayFilter,
+    splitParts,
+    [(part: string) => part.length > 0],
+  ) as string[];
   const provider = (parts[0] === "veryfront-cloud" ? parts[1] : parts[0]) ?? "";
-  return { provider, modelName: parts.at(-1) ?? "" };
+  return { provider, modelName: parts.length > 0 ? parts[parts.length - 1]! : "" };
 }
 
 /** Return provider tool profile. */

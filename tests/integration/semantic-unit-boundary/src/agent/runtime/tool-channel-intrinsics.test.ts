@@ -23,4 +23,31 @@ describe("tool-channel provider policy intrinsic boundary", () => {
       });
     }
   });
+
+  it("uses captured string and array intrinsics for provider parsing", () => {
+    const originalSplit = String.prototype.split;
+    const originalFilter = Array.prototype.filter;
+    Object.defineProperty(String.prototype, "split", {
+      configurable: true,
+      value: () => ["mistral", "spoofed"],
+    });
+    Object.defineProperty(Array.prototype, "filter", {
+      configurable: true,
+      value: () => ["mistral", "spoofed"],
+    });
+    try {
+      const profile = getToolChannelProfile("deepseek/deepseek-v3");
+      assertEquals(profile.forceByDefault, false);
+      assertEquals(profile.recoverTextToolCalls, false);
+    } finally {
+      Object.defineProperty(String.prototype, "split", {
+        configurable: true,
+        value: originalSplit,
+      });
+      Object.defineProperty(Array.prototype, "filter", {
+        configurable: true,
+        value: originalFilter,
+      });
+    }
+  });
 });

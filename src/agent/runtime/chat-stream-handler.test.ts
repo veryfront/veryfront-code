@@ -2968,6 +2968,43 @@ describe("deferred text delivery", () => {
         ],
       );
     });
+
+    it(`releases text at boundaries without an onTextBoundary callback in ${mode} mode`, async () => {
+      const { controller, encoder } = createSSECollector();
+      const chunks: string[] = [];
+      const completed: string[] = [];
+      const parts = [
+        { type: "text-delta", text: "before" },
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking" },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "text-delta", text: "after" },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ];
+      const result = mode === "active"
+        ? createRuntimeStreamSource(() => createMockResult(parts))
+        : createMockResult(parts);
+
+      await processStream(
+        result,
+        createStreamState(),
+        controller,
+        encoder,
+        "text-1",
+        {
+          ...(mode === "active" ? { streamLifecycleMode: "active" as const } : {}),
+          onChunk: (chunk) => chunks.push(chunk),
+          onTextComplete: (text, emit) => {
+            completed.push(text);
+            emit();
+          },
+        },
+        undefined,
+      );
+
+      assertEquals(chunks, ["before", "after"]);
+      assertEquals(completed, ["after"]);
+    });
   }
 });
 
