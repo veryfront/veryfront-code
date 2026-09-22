@@ -218,6 +218,22 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, outOfRange, history), "user-edit");
   });
 
+  it("keeps strict full-version comparators exclusive", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: ">1.2.3" } });
+    const exactBase = apiWrite({ name: "demo", dependencies: { react: "1.2.3" } });
+    const history = [{ react: ">1.2.3" }, { react: "1.2.3" }];
+
+    assertEquals(classifyPackageJsonDrift(baseline, exactBase, history), "user-edit");
+  });
+
+  it("rejects repeated range operators", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: "^^1.2.3" } });
+    const remote = apiWrite({ name: "demo", dependencies: { react: "1.3.0" } });
+    const history = [{ react: "^^1.2.3" }, { react: "1.3.0" }];
+
+    assertEquals(classifyPackageJsonDrift(baseline, remote, history), "user-edit");
+  });
+
   it("compares large numeric prerelease identifiers without rounding", () => {
     const baseline = apiWrite({
       name: "demo",

@@ -418,7 +418,9 @@ function compareCodeUnits(left: string, right: string): number {
  * overwrite the user chose and one they discover later in `git diff`.
  *
  * A path that does not exist locally is a creation, not a discarded edit, so it
- * is not reported. An unreadable path is left out rather than guessed at.
+ * is not reported. An existing path that cannot be read is conservatively
+ * reported as an overwrite: the subsequent write may still succeed and destroy
+ * content that could not be compared.
  */
 async function findOverwrittenLocalEdits(ops: readonly WriteOp[]): Promise<string[]> {
   const fs = createFileSystem();
@@ -428,8 +430,8 @@ async function findOverwrittenLocalEdits(ops: readonly WriteOp[]): Promise<strin
     const results = await Promise.all(batch.map(async (op) => {
       try {
         return await fs.readTextFile(op.path) === op.content ? null : op.relativePath;
-      } catch {
-        return null;
+      } catch (error) {
+        return isNotFoundError(error) ? null : op.relativePath;
       }
     }));
     for (const path of results) {

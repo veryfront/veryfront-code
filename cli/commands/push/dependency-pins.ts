@@ -199,7 +199,7 @@ interface VersionParts {
  * the versions that resolver would have selected for a declared range.
  */
 function parseVersionParts(value: string): VersionParts | null {
-  const stripped = value.trim().replace(/^[~^>=<]+\s*/, "");
+  const stripped = value.trim();
   const match =
     /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
       .exec(
@@ -338,7 +338,8 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
   if (trimmed.startsWith(">")) {
     const base = parseVersionParts(trimmed.slice(1));
     if (base === null || !allowsPrerelease(parsed, base)) return false;
-    const lower = base.precision === 3 ? base : nextPartialBoundary(base);
+    if (base.precision === 3) return compareVersionParts(parsed, base) > 0;
+    const lower = nextPartialBoundary(base);
     return lower !== null && compareVersionParts(parsed, lower) >= 0;
   }
   if (trimmed.startsWith("<=")) {
