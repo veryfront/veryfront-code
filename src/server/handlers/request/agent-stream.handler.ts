@@ -419,12 +419,9 @@ function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContex
 /**
  * Load the project environment this agent source may read.
  *
- * Branch and bare-release sources do not carry an authoritative environment
- * identity, so they receive no project environment variables. Named sources
- * must carry an exact signed environment target, which is revalidated against
- * project metadata before any secrets are fetched.
- * Main-branch runs may omit a target environment pin and use the request-scoped
- * production fallback path.
+ * Branch sources use the authorized project's preview environment. Bare releases
+ * receive no project variables because they have no environment identity. Named
+ * sources carry an exact signed target, revalidated before secrets are fetched.
  */
 async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
@@ -433,10 +430,26 @@ async function resolveAgentSourceEnvironment(
   apiAuthToken: string,
   signal?: AbortSignal,
 ): Promise<Record<string, string>> {
-  if (sourceContext.type !== "environment") return {};
+  if (sourceContext.type === "release") return {};
   if (!ctx.projectSlug) {
     throw INVALID_ARGUMENT.create({
       detail: "Agent source environment requires a canonical project identity",
+    });
+  }
+  if (sourceContext.type === "branch") {
+    const environmentId = await _environmentIdentityResolver.resolveNamed({
+      apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      token: apiAuthToken,
+      environmentName: "preview",
+      expectedEnvironmentId: targetIdentity.runtimeTargetEnvironmentId ?? undefined,
+    }, signal);
+    return await _agentEnvVarCache.get({
+      environmentId,
+      token: apiAuthToken,
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
     });
   }
   if (
