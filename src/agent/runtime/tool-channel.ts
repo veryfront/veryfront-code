@@ -19,7 +19,13 @@
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { pushPrivateArray } from "#veryfront/security/private-array.ts";
-import { privateTextSlice, privateTextTrim } from "#veryfront/security/private-text.ts";
+import {
+  privateTextEndsWith,
+  privateTextIndexOf,
+  privateTextSlice,
+  privateTextStartsWith,
+  privateTextTrim,
+} from "#veryfront/security/private-text.ts";
 import { splitModelId } from "./provider-tool-compat.ts";
 import type { RuntimeGenerateToolCall } from "./runtime-tool-types.ts";
 
@@ -183,15 +189,15 @@ export function resolveStepToolChoice(
 const MAX_RECOVERABLE_TOOL_CALL_TEXT_LENGTH = 16_384;
 
 function readJsonFenceBody(text: string): string | undefined {
-  if (!text.startsWith("```")) return undefined;
-  const firstLineEnd = text.indexOf("\n", 3);
+  if (!privateTextStartsWith(text, "```")) return undefined;
+  const firstLineEnd = privateTextIndexOf(text, "\n", 3);
   if (firstLineEnd < 0) return undefined;
   const language = privateTextSlice(text, 3, firstLineEnd);
   if (language !== "" && language !== "json" && language !== "JSON") return undefined;
-  if (!text.endsWith("```")) return undefined;
+  if (!privateTextEndsWith(text, "```")) return undefined;
   const bodyEnd = text.length - 3;
   const body = privateTextSlice(text, firstLineEnd + 1, bodyEnd);
-  return body.endsWith("\n") ? privateTextSlice(body, 0, body.length - 1) : body;
+  return privateTextEndsWith(body, "\n") ? privateTextSlice(body, 0, body.length - 1) : body;
 }
 
 /** Keys a recovered payload may carry beside its name and arguments. */

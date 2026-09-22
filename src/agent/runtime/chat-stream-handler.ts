@@ -865,6 +865,8 @@ async function processActiveStream(
           emitBufferedText(completedText ?? "");
         });
       }
+    } else if (deferTextDelivery) {
+      releaseDeferredText();
     }
   }
   if (streamOutcome.status === "failed") {
@@ -963,6 +965,7 @@ export function processStreamInternal(
       callbacks?.onChunk,
     );
     let eventCount = 0;
+    let streamCompleted = false;
     let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
       ? internals.createShadow({
         availableToolNames: callbacks?.availableToolNames ?? null,
@@ -1362,7 +1365,7 @@ export function processStreamInternal(
 
         if (
           deferTextDelivery && deferredText.length > 0 && typedPart.type !== "text-delta" &&
-          typedPart.type !== "finish"
+          typedPart.type !== "finish" && (typedPart.type as string) !== "text-end"
         ) {
           callbacks.onTextBoundary?.(releaseDeferredText);
         }
@@ -1875,7 +1878,9 @@ export function processStreamInternal(
           "stream.lifecycle_shadow.divergence_categories": [...report.categories],
         });
       }
+      streamCompleted = true;
     } finally {
+      if (deferTextDelivery && !streamCompleted) releaseDeferredText();
       finalizeUnresolvedProviderToolCalls();
       // `throwIfAborted` and `streamIterator.next()` can both throw past the
       // loop, so the upstream iterator is released here rather than only on the

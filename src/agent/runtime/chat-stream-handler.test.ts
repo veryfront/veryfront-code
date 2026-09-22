@@ -2920,6 +2920,7 @@ describe("deferred text delivery", () => {
       let boundaries = 0;
       const parts = [
         { type: "text-delta", text: "before" },
+        { type: "text-end" },
         { type: "reasoning-start", id: "reasoning-1" },
         { type: "reasoning-delta", id: "reasoning-1", delta: "thinking" },
         { type: "reasoning-end", id: "reasoning-1" },
@@ -3012,6 +3013,40 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       textStream: { async *[Symbol.asyncIterator]() {} },
     };
   }
+
+  it("flushes deferred text when the legacy stream errors", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const chunks: string[] = [];
+    const result = createGeneratorResult(async function* () {
+      yield { type: "text-delta", text: "partial" };
+      throw new Error("provider stream failed");
+    });
+
+    await assertRejects(
+      () =>
+        processStream(
+          result,
+          createStreamState(),
+          controller,
+          encoder,
+          "text-1",
+          {
+            onChunk: (chunk) => chunks.push(chunk),
+            onTextComplete: () => {},
+          },
+          undefined,
+        ),
+      Error,
+      "provider stream failed",
+    );
+
+    assertEquals(chunks, ["partial"]);
+    assertEquals(events.filter((event) => typeof event.type === "string" && event.type.startsWith("text-")), [
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "partial" },
+      { type: "text-end", id: "text-1" },
+    ]);
+  });
 
   /** Replay collected SSE events back as the data stream the UI assembler reads. */
   function createSseStream(events: Array<Record<string, unknown>>): ReadableStream<Uint8Array> {
