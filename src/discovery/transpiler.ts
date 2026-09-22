@@ -1609,6 +1609,7 @@ function matchesExtglob(
     );
     if (index > 0 && isUniversalStar) return false;
     const tail = tokens.slice(index + 1);
+    const hasEmptyAlternative = token.alternatives.some((alternative) => alternative.length === 0);
     // With an empty alternative, minimatch's negative group excludes only an
     // empty segment when it is the final token: `!(a|)` admits `a` and every
     // other non-empty name. Treating `a` as a forbidden alternative here
@@ -1640,7 +1641,7 @@ function matchesExtglob(
         canMatchEmpty(tail, 1)
       ? [{ kind: "any" } as SegmentToken, ...tail]
       : tail;
-    for (const alternative of token.alternatives) {
+    for (const alternative of hasEmptyAlternative ? [] : token.alternatives) {
       // A `*` alternative has to consume something too, for the same reason:
       // minimatch compiles it as `[^/]+?` inside the lookahead, so `!(*)a`
       // refuses `aba` and not merely `a`.
@@ -1654,6 +1655,7 @@ function matchesExtglob(
       kind: "star",
       synthetic: true,
       required: (index > 0 && tail[0]?.kind === "star") ||
+        (index > 0 && hasEmptyAlternative) ||
         (index === 0 && tail[0]?.kind === "star" &&
           (tail[1]?.kind === "extglob" && (tail[1].mark === "@" || tail[1].mark === "+"))),
       negativePrefix: index === 0 && tail[0]?.kind === "extglob" && tail[0].mark === "!",
