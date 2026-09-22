@@ -278,6 +278,15 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, resolved, history), "server-pins");
   });
 
+  it("keeps a prerelease suffix on an x-range within npm's partial boundary", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: "1.2.x-beta" } });
+    const inRange = apiWrite({ name: "demo", dependencies: { react: "1.2.3" } });
+    const outOfRange = apiWrite({ name: "demo", dependencies: { react: "2.0.0" } });
+    const inRangeHistory = [{ react: "1.2.x-beta" }, { react: "1.2.3" }];
+    assertEquals(classifyPackageJsonDrift(baseline, inRange, inRangeHistory), "server-pins");
+    assertEquals(classifyPackageJsonDrift(baseline, outOfRange, inRangeHistory), "user-edit");
+  });
+
   it("accepts whitespace between an npm operator and its version", () => {
     const baseline = apiWrite({
       name: "demo",
