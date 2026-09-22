@@ -241,15 +241,55 @@ describe("classifyPackageJsonDrift", () => {
   it("accepts npm x-ranges and optional equality ranges", () => {
     const baseline = apiWrite({
       name: "demo",
-      dependencies: { major: "19.x", minor: "1.2.x", equality: "=1.2" },
+      dependencies: {
+        major: "19.x",
+        minor: "1.2.x",
+        equality: "=1.2",
+        wildcard: "x",
+        wildcardUpper: "X.X",
+      },
     });
     const resolved = apiWrite({
       name: "demo",
-      dependencies: { major: "19.4.0", minor: "1.2.5", equality: "1.2.7" },
+      dependencies: {
+        major: "19.4.0",
+        minor: "1.2.5",
+        equality: "1.2.7",
+        wildcard: "4.0.0",
+        wildcardUpper: "5.0.0",
+      },
     });
     const history = [
-      { major: "19.x", minor: "1.2.x", equality: "=1.2" },
-      { major: "19.4.0", minor: "1.2.5", equality: "1.2.7" },
+      {
+        major: "19.x",
+        minor: "1.2.x",
+        equality: "=1.2",
+        wildcard: "x",
+        wildcardUpper: "X.X",
+      },
+      {
+        major: "19.4.0",
+        minor: "1.2.5",
+        equality: "1.2.7",
+        wildcard: "4.0.0",
+        wildcardUpper: "5.0.0",
+      },
+    ];
+    assertEquals(classifyPackageJsonDrift(baseline, resolved, history), "server-pins");
+  });
+
+  it("accepts whitespace between an npm operator and its version", () => {
+    const baseline = apiWrite({
+      name: "demo",
+      dependencies: { caret: "^ 1.2.3", lower: ">= 1.0" },
+    });
+    const resolved = apiWrite({
+      name: "demo",
+      dependencies: { caret: "1.4.0", lower: "2.0.0" },
+    });
+    const history = [
+      { caret: "^ 1.2.3", lower: ">= 1.0" },
+      { caret: "1.4.0", lower: "2.0.0" },
     ];
     assertEquals(classifyPackageJsonDrift(baseline, resolved, history), "server-pins");
   });
