@@ -182,36 +182,78 @@ function isApiSerialization(pkg: JsonObject, content: string): boolean {
   return `${JSON.stringify(pkg, null, 2)}\n` === content;
 }
 
-type VersionParts = [number, number, number];
+interface VersionParts {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: readonly string[];
+}
 
 /**
- * Parse a version-like string into a `[major, minor, patch]` tuple, dropping a
- * leading range operator and any pre-release or build suffix.
+ * Parse a version-like string while retaining prerelease identifiers for npm's
+ * ordering and prerelease admission rules. Build metadata does not affect
+ * precedence.
  *
  * This mirrors the platform resolver's own parser so the CLI accepts exactly
  * the versions that resolver would have selected for a declared range.
  */
-function parseVersionParts(value: string): VersionParts {
-  const stripped = value.replace(/^\s*[~^>=<]+\s*/, "").split("-")[0] ?? "";
-  const parts = stripped.split(".").map((part) => {
-    const parsed = Number.parseInt(part, 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-  });
-  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+function parseVersionParts(value: string): VersionParts | null {
+  const stripped = value.trim().replace(/^[~^>=<]+\s*/, "");
+  const match =
+    /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+      .exec(
+        stripped,
+      );
+  if (!match || (match[4] !== undefined && match[3] === undefined)) return null;
+  const parts = [match[1], match[2] ?? "0", match[3] ?? "0"].map(Number);
+  if (parts.some((part) => !Number.isSafeInteger(part))) return null;
+  return {
+    major: parts[0]!,
+    minor: parts[1]!,
+    patch: parts[2]!,
+    prerelease: match[4]?.split(".") ?? [],
+  };
 }
 
 function compareVersionParts(left: VersionParts, right: VersionParts): number {
   for (
     const [leftPart, rightPart] of [
-      [left[0], right[0]],
-      [left[1], right[1]],
-      [left[2], right[2]],
+      [left.major, right.major],
+      [left.minor, right.minor],
+      [left.patch, right.patch],
     ] as const
   ) {
     if (leftPart < rightPart) return -1;
     if (leftPart > rightPart) return 1;
   }
+  if (left.prerelease.length === 0 && right.prerelease.length > 0) return 1;
+  if (left.prerelease.length > 0 && right.prerelease.length === 0) return -1;
+  for (let index = 0; index < Math.max(left.prerelease.length, right.prerelease.length); index++) {
+    const leftPart = left.prerelease[index];
+    const rightPart = right.prerelease[index];
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) {
+      const comparison = Number(leftPart) - Number(rightPart);
+      if (comparison !== 0) return comparison < 0 ? -1 : 1;
+    } else if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    } else if (leftPart < rightPart) {
+      return -1;
+    } else if (leftPart > rightPart) {
+      return 1;
+    }
+  }
   return 0;
+}
+
+/** npm does not admit a prerelease unless the range names that same base version. */
+function allowsPrerelease(version: VersionParts, range: VersionParts): boolean {
+  if (version.prerelease.length === 0) return true;
+  return range.prerelease.length > 0 && version.major === range.major &&
+    version.minor === range.minor && version.patch === range.patch;
 }
 
 /**
@@ -226,48 +268,63 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
   const trimmed = range.trim();
   if (trimmed === "") return false;
   if (/\s/.test(trimmed) || trimmed.includes("||")) return false;
-  if (trimmed === "*" || trimmed === "latest") return true;
 
   const parsed = parseVersionParts(version);
+  if (parsed === null) return false;
+  if (trimmed === "*" || trimmed === "latest") return parsed.prerelease.length === 0;
 
   if (trimmed.startsWith("^")) {
     const inner = trimmed.slice(1);
     const dotCount = (inner.match(/\./g) ?? []).length;
     const base = parseVersionParts(inner);
-    if (base[0] > 0) return parsed[0] === base[0] && compareVersionParts(parsed, base) >= 0;
-    if (dotCount >= 1 && base[1] > 0) {
-      return parsed[0] === 0 && parsed[1] === base[1] && compareVersionParts(parsed, base) >= 0;
+    if (base === null || !allowsPrerelease(parsed, base)) return false;
+    if (base.major > 0) {
+      return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
+    }
+    if (dotCount >= 1 && base.minor > 0) {
+      return parsed.major === 0 && parsed.minor === base.minor &&
+        compareVersionParts(parsed, base) >= 0;
     }
     if (dotCount >= 2) {
-      return parsed[0] === base[0] && parsed[1] === base[1] && parsed[2] === base[2];
+      return parsed.major === base.major && parsed.minor === base.minor &&
+        parsed.patch === base.patch && compareVersionParts(parsed, base) >= 0;
     }
-    return parsed[0] === base[0] && compareVersionParts(parsed, base) >= 0;
+    return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
   }
 
   if (trimmed.startsWith("~")) {
     const inner = trimmed.slice(1);
     const dotCount = (inner.match(/\./g) ?? []).length;
     const base = parseVersionParts(inner);
+    if (base === null || !allowsPrerelease(parsed, base)) return false;
     if (dotCount >= 1) {
-      return parsed[0] === base[0] && parsed[1] === base[1] && parsed[2] >= base[2];
+      return parsed.major === base.major && parsed.minor === base.minor &&
+        compareVersionParts(parsed, base) >= 0;
     }
-    return parsed[0] === base[0] && compareVersionParts(parsed, base) >= 0;
+    return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
   }
 
   if (trimmed.startsWith(">=")) {
-    return compareVersionParts(parsed, parseVersionParts(trimmed.slice(2))) >= 0;
+    const base = parseVersionParts(trimmed.slice(2));
+    return base !== null && allowsPrerelease(parsed, base) &&
+      compareVersionParts(parsed, base) >= 0;
   }
   if (trimmed.startsWith(">")) {
-    return compareVersionParts(parsed, parseVersionParts(trimmed.slice(1))) > 0;
+    const base = parseVersionParts(trimmed.slice(1));
+    return base !== null && allowsPrerelease(parsed, base) && compareVersionParts(parsed, base) > 0;
   }
   if (trimmed.startsWith("<=")) {
-    return compareVersionParts(parsed, parseVersionParts(trimmed.slice(2))) <= 0;
+    const base = parseVersionParts(trimmed.slice(2));
+    return base !== null && allowsPrerelease(parsed, base) &&
+      compareVersionParts(parsed, base) <= 0;
   }
   if (trimmed.startsWith("<")) {
-    return compareVersionParts(parsed, parseVersionParts(trimmed.slice(1))) < 0;
+    const base = parseVersionParts(trimmed.slice(1));
+    return base !== null && allowsPrerelease(parsed, base) && compareVersionParts(parsed, base) < 0;
   }
 
-  return compareVersionParts(parsed, parseVersionParts(trimmed)) === 0;
+  const base = parseVersionParts(trimmed);
+  return base !== null && allowsPrerelease(parsed, base) && compareVersionParts(parsed, base) === 0;
 }
 
 /**

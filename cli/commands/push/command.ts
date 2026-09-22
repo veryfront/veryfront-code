@@ -325,6 +325,19 @@ function samePathSet(
   return right.every((file) => paths.has(file.path));
 }
 
+/** Whether recapture changed any file other than an intentionally rewritten path. */
+function sameFileContentsExcept(
+  left: readonly UploadOp[],
+  right: readonly UploadOp[],
+  excludedPath: string,
+): boolean {
+  if (!samePathSet(left, right)) return false;
+  const contents = new Map(left.map((file) => [file.path, file.content]));
+  return right.every((file) =>
+    file.path === excludedPath || contents.get(file.path) === file.content
+  );
+}
+
 function gitProvenanceError(): Error {
   return new Error(
     "Git provenance could not be verified. Ensure Git can inspect the project checkout. " +
@@ -1156,7 +1169,9 @@ async function readDependencyPreimages(params: {
     );
     // The parsed maps are frozen and null-prototyped; copy each into an
     // ordinary object so the comparison helpers see a plain record.
-    return history.entries.map((entry) => ({ ...entry.dependencies }));
+    return history.entries
+      .filter((entry) => entry.expiresAt > Date.now())
+      .map((entry) => ({ ...entry.dependencies }));
   } catch (error) {
     // A control plane that predates the history endpoint answers 404 here, and
     // the push falls back to the conflict it raises today. Say so under
@@ -1872,7 +1887,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             // so the second capture may only differ in file contents. A tree
             // that gained or lost a path between the two captures would make
             // the plan mix them.
-            if (!samePathSet(sourceSnapshot.files, recaptured.files)) throw sourceChangedError();
+            if (
+              !sameFileContentsExcept(sourceSnapshot.files, recaptured.files, PACKAGE_JSON_PATH)
+            ) throw sourceChangedError();
             sourceSnapshot = recaptured;
             ops = sourceSnapshot.files;
           }

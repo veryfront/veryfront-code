@@ -164,6 +164,30 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(BASELINE_CONTENT, PINNED_CONTENT, []), "user-edit");
   });
 
+  it("does not admit prereleases through a stable range or malformed range", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: "^1.2.3" } });
+    const prerelease = apiWrite({
+      name: "demo",
+      dependencies: { react: "1.3.0-beta.1" },
+    });
+    assertEquals(
+      classifyPackageJsonDrift(baseline, prerelease, [{ react: "^1.2.3" }, {
+        react: "1.3.0-beta.1",
+      }]),
+      "user-edit",
+    );
+
+    const malformed = apiWrite({ name: "demo", dependencies: { react: "1.2.3" } });
+    assertEquals(
+      classifyPackageJsonDrift(
+        apiWrite({ name: "demo", dependencies: { react: "^1.bad.3" } }),
+        malformed,
+        [{ react: "^1.bad.3" }, { react: "1.2.3" }],
+      ),
+      "user-edit",
+    );
+  });
+
   it("rejects a pin tightening whose written state was never published", () => {
     assertEquals(
       classifyPackageJsonDrift(BASELINE_CONTENT, PINNED_CONTENT, [

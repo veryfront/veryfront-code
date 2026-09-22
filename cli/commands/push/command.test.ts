@@ -7019,7 +7019,19 @@ describe("push dependency pin reconciliation", () => {
           ) {
             historyCalls++;
             await scenario.onHistoryRequest?.({ projectDir, runGit });
-            return Response.json(scenario.history);
+            // Existing fixtures use `1` as an unexpired sentinel. Keep that
+            // shorthand live while allowing expiry-specific cases to use a
+            // real timestamp.
+            const history = scenario.history as {
+              entries?: readonly Record<string, unknown>[];
+              [key: string]: unknown;
+            };
+            return Response.json({
+              ...history,
+              entries: history.entries?.map((entry) =>
+                entry.expires_at === 1 ? { ...entry, expires_at: Date.now() + 60_000 } : entry
+              ),
+            });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
             remoteFileListCalls++;
@@ -7629,6 +7641,27 @@ describe("push dependency pin reconciliation", () => {
         assertStringIncludes(error.message, '"package.json"');
         assertEquals(puts, []);
         assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("does not adopt an expired dependency-history preimage", async () => {
+    await runPinPush(
+      {
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: Date.now() - 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: Date.now() - 1 },
+          ],
+        },
+      },
+      async ({ error, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertStringIncludes(error.message, "remote files changed");
+        assertEquals(puts, []);
       },
     );
   });
