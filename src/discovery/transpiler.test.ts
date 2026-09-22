@@ -1308,8 +1308,16 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         "",
       );
       assertEquals(
+        await declaring(["apps/@(a|b)*@(a|b)"], `${PROJECT}/apps/aa`),
+        "",
+      );
+      assertEquals(
         await declaring(["apps/!(a|b)!(a|*)"], `${PROJECT}/apps/x`),
         "apps/x",
+      );
+      assertEquals(
+        await declaring(["apps/!(a|b)*a"], `${PROJECT}/apps/aa`),
+        "",
       );
       // A mark with no group after it is the wildcard it has always been.
       assertEquals(await declaring(["apps/*"]), "apps/store-web");

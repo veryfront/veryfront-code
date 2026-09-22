@@ -1526,13 +1526,16 @@ function matchesTokenHere(
     // `*` after an extglob does the same. A nonterminal star can stay empty so
     // a later literal or group can consume the remaining name.
     const next = tokens[index + 1];
+    const previous = tokens[index - 1];
     const suffixMayBeEmpty = canMatchEmpty(tokens, index + 1);
     const mustConsumeAdjacentToExtglob = !token.synthetic && !token.consecutive &&
       ((index === 0 && next?.kind === "extglob") ||
-        (index + 1 === tokens.length && tokens[index - 1]?.kind === "extglob"));
+        (index + 1 === tokens.length && previous?.kind === "extglob") ||
+        (previous?.kind === "extglob" && next?.kind === "extglob" &&
+          (next.mark === "@" || next.mark === "+")));
     const mustConsume = token.required || mustConsumeAdjacentToExtglob ||
       (!token.synthetic && !token.consecutive && suffixMayBeEmpty &&
-        tokens[index - 1]?.kind === "extglob");
+        previous?.kind === "extglob" && previous.mark !== "!");
     const firstEnd = offset + (mustConsume ? 1 : 0);
     for (let end = firstEnd; end <= name.length; end++) {
       if (matchesTokens(tokens, index + 1, name, end, memo)) return true;
@@ -1607,7 +1610,8 @@ function matchesExtglob(
     // WHOLE tail of a group opening the segment has to consume something, so
     // `!(a)*` still names `a` itself while `!(a)b*` refuses `ab`. minimatch
     // compiles the first as `a[^/]+?` and the second as `ab[^/]*?`.
-    const forbidden = index === 0 && tail[0]?.kind === "star" && !tail[0].consecutive
+    const forbidden = index === 0 && tail[0]?.kind === "star" && !tail[0].consecutive &&
+        canMatchEmpty(tail, 1)
       ? [{ kind: "any" } as SegmentToken, ...tail]
       : tail;
     for (const alternative of token.alternatives) {
