@@ -795,7 +795,9 @@ async function processActiveStream(
         for (let index = 0; index < events.length; index++) {
           if (!hasOwn(events, index)) continue;
           const eventType = (events[index] as { type?: unknown }).type;
-          if (eventType !== "text-start" && eventType !== "text-delta" && eventType !== "text-end") {
+          if (
+            eventType !== "text-start" && eventType !== "text-delta" && eventType !== "text-end"
+          ) {
             hasNonTextEvent = true;
             break;
           }
