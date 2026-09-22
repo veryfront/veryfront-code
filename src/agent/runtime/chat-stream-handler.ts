@@ -377,6 +377,8 @@ export interface ChatStreamCallbacks {
   onChunk?: (chunk: string) => void;
   /** Hold text until the caller classifies the complete assistant turn. */
   onTextComplete?: (text: string, emit: () => void) => void;
+  /** Release held text before a later non-text event is delivered. */
+  onTextBoundary?: (release: () => void) => void;
   onUsage?: (usage: {
     promptTokens?: number;
     completionTokens?: number;
@@ -722,6 +724,11 @@ async function processActiveStream(
 ): Promise<void> {
   const deferTextDelivery = callbacks?.onTextComplete !== undefined;
   const deferredText: string[] = [];
+  const releaseDeferredText = () => {
+    const text = deferredText.join("");
+    deferredText.length = 0;
+    emitDeferredText(controller, encoder, textPartId, text, callbacks?.onChunk);
+  };
   const baseAdapter = createRuntimeStreamProviderAdapter({
     open: (signal) => source.open(signal).fullStream,
     options: {
@@ -772,6 +779,7 @@ async function processActiveStream(
   const live = createStreamLifecycleLiveAdapter({ textPartId });
   let deliveryError: unknown;
   let streamOutcome!: StreamOutcome;
+  let completedText: string | undefined;
   try {
     for await (const frame of getPrivateAsyncIterator(run.frames)) {
       if (frame.class === "semantic" && frame.event.type === "text_content") {
@@ -782,6 +790,18 @@ async function processActiveStream(
         callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
       }
       const events = live.encode(frame);
+      if (deferTextDelivery) {
+        let hasNonTextEvent = false;
+        for (let index = 0; index < events.length; index++) {
+          if (!hasOwn(events, index)) continue;
+          const eventType = (events[index] as { type?: unknown }).type;
+          if (eventType !== "text-start" && eventType !== "text-delta" && eventType !== "text-end") {
+            hasNonTextEvent = true;
+            break;
+          }
+        }
+        if (hasNonTextEvent) callbacks.onTextBoundary?.(releaseDeferredText);
+      }
       for (let index = 0; index < events.length; index++) {
         if (!hasOwn(events, index)) continue;
         const eventType = (events[index] as { type?: unknown }).type;
@@ -792,12 +812,7 @@ async function processActiveStream(
         sendSSE(controller, encoder, events[index]!);
       }
     }
-    if (deferTextDelivery) {
-      const text = deferredText.join("");
-      callbacks.onTextComplete!(text, () => {
-        emitDeferredText(controller, encoder, textPartId, text, callbacks.onChunk);
-      });
-    }
+    if (deferTextDelivery) completedText = deferredText.join("");
   } catch (error) {
     // A delivery failure is the primary run-finalization error. The
     // consumer_stopped Stream Outcome recorded below is secondary cleanup
@@ -810,6 +825,11 @@ async function processActiveStream(
     if (deliveryError === undefined) {
       applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
       finalizeActiveUnresolvedProviderToolCalls(state, controller, encoder);
+      if (deferTextDelivery) {
+        callbacks.onTextComplete!(completedText ?? "", () => {
+          emitDeferredText(controller, encoder, textPartId, completedText ?? "", callbacks.onChunk);
+        });
+      }
     }
   }
   if (streamOutcome.status === "failed") {
@@ -902,6 +922,11 @@ export function processStreamInternal(
   const process = async () => {
     const deferTextDelivery = callbacks?.onTextComplete !== undefined;
     const deferredText: string[] = [];
+    const releaseDeferredText = () => {
+      const text = deferredText.join("");
+      deferredText.length = 0;
+      emitDeferredText(controller, encoder, textPartId, text, callbacks?.onChunk);
+    };
     let eventCount = 0;
     let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
       ? internals.createShadow({
@@ -1290,11 +1315,16 @@ export function processStreamInternal(
         const typedPart = part as RuntimeStreamPart;
 
         if (typedPart.type.startsWith("data-")) {
+          if (deferTextDelivery) callbacks.onTextBoundary?.(releaseDeferredText);
           sendSSE(controller, encoder, {
             type: typedPart.type,
             data: "data" in typedPart ? typedPart.data : undefined,
           });
           continue;
+        }
+
+        if (deferTextDelivery && typedPart.type !== "text-delta") {
+          callbacks.onTextBoundary?.(releaseDeferredText);
         }
 
         switch (typedPart.type) {

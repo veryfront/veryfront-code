@@ -3779,6 +3779,7 @@ export class AgentRuntime {
 
       const state = createStreamState();
       let recoveredStreamingToolCalls: RuntimeGenerateToolCall[] | undefined;
+      let streamingTextCommitted = false;
       const deferStreamingText = outputSchema === undefined &&
         shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode) &&
         runtimeToolNames.length > 0;
@@ -3981,10 +3982,16 @@ export class AgentRuntime {
         },
         onTextComplete: deferStreamingText
           ? (text, emit) => {
-            recoveredStreamingToolCalls = state.toolCalls.size === 0
+            recoveredStreamingToolCalls = !streamingTextCommitted && state.toolCalls.size === 0
               ? recoverTextEmittedToolCalls(text, new Set(runtimeToolNames))
               : undefined;
             if (recoveredStreamingToolCalls === undefined) emit();
+          }
+          : undefined,
+        onTextBoundary: deferStreamingText
+          ? (release) => {
+            streamingTextCommitted = true;
+            release();
           }
           : undefined,
         onUsage: (usage) => {
@@ -4011,7 +4018,8 @@ export class AgentRuntime {
         state.accumulatedText = "";
         state.finishReason = "tool-calls";
         for (const recovered of recoveredStreamingToolCalls) {
-          const argumentsText = JSON.stringify(recovered.input);
+          const argumentsText = privateJsonStringify(recovered.input);
+          const dynamic = isDynamicTool(recovered.toolName);
           state.toolCalls.set(recovered.toolCallId, {
             id: recovered.toolCallId,
             name: recovered.toolName,
@@ -4019,23 +4027,33 @@ export class AgentRuntime {
             inputDeltas: [argumentsText],
             inputAnnounced: true,
             inputAvailable: true,
+            dynamic,
           });
           sendSSE(controller, encoder, {
             type: "tool-input-start",
             toolCallId: recovered.toolCallId,
             toolName: recovered.toolName,
+            ...(dynamic ? { dynamic: true } : {}),
           });
           sendSSE(controller, encoder, {
             type: "tool-input-available",
             toolCallId: recovered.toolCallId,
             toolName: recovered.toolName,
             input: recovered.input,
+            ...(dynamic ? { dynamic: true } : {}),
           });
         }
         logger.warn(
           `Agent "${this.id}": a streaming model emitted ${recoveredStreamingToolCalls.length} ` +
             "tool call(s) as assistant text; Veryfront recovered them into the tool channel.",
         );
+      }
+      if (stepToolChoice !== undefined && state.toolCalls.size === 0) {
+        warnToolChannelNeverEntered({
+          agentId: this.id,
+          modelId: effectiveModel,
+          toolCount: runtimeToolNames.length,
+        });
       }
       const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
         ? 0

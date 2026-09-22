@@ -17,6 +17,7 @@
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { pushPrivateArray } from "#veryfront/security/private-array.ts";
 import { privateTextSlice, privateTextTrim } from "#veryfront/security/private-text.ts";
 import { splitModelId } from "./provider-tool-compat.ts";
@@ -207,7 +208,7 @@ function readArgumentsMember(
     if (typeof member === "string") {
       let parsed: unknown;
       try {
-        parsed = JSON.parse(member);
+        parsed = privateJsonParse(member);
       } catch {
         return { found: false };
       }
@@ -279,7 +280,7 @@ function parseWholeMessageJson(text: string): unknown | undefined {
   const first = privateTextSlice(body, 0, 1);
   if (first !== "{" && first !== "[") return undefined;
   try {
-    return JSON.parse(body);
+    return privateJsonParse(body);
   } catch {
     return undefined;
   }
