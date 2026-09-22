@@ -283,6 +283,37 @@ describe("eval/model-access", () => {
     assertEquals(await classifyStatus(403), "forbidden");
   });
 
+  it("keeps a gateway EU inference policy refusal out of the credential denials", async () => {
+    // The gateway refuses a model its EU-only policy cannot route with a 403
+    // (older gateways: 503). That is not a credential or project access problem.
+    for (const status of [403, 503]) {
+      let error: unknown;
+      try {
+        await requestJson({
+          url: `${veryfrontApiOrigin()}/ai/gateway/openai/v1/chat/completions`,
+          fetchImpl: () =>
+            Promise.resolve(
+              markVeryfrontGatewayResponse(
+                jsonResponse(status, {
+                  error: "No route",
+                  code: "eu_inference_policy",
+                  model: "gpt-5",
+                }),
+              ),
+            ),
+          init: { method: "POST", body: "{}" },
+          providerLabel: "veryfront-cloud",
+          providerKind: "openai",
+        });
+      } catch (caught) {
+        error = caught;
+      }
+
+      assertEquals(error === undefined, false, `status ${status}`);
+      assertEquals(classifyEvalModelAccessDenial(error), undefined, `status ${status}`);
+    }
+  });
+
   it("keeps other 400 responses as record failures", async () => {
     const otherCode = await buildProviderError(
       "anthropic",

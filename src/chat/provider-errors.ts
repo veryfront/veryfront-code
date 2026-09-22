@@ -9,6 +9,7 @@ import {
   AI_PROVIDER_SPEND_LIMIT_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   GATEWAY_PROJECT_REQUIRED_ERROR,
+  INFERENCE_POLICY_DENIED_ERROR,
   MODEL_NOT_PERMITTED_ERROR,
   MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR,
   OUTPUT_SCHEMA_NOT_CLOSED_ERROR,
@@ -165,7 +166,10 @@ function formatCreditProblemMessage(
 /** Model ids the policy refusal may echo; anything else gets the fixed wording. */
 const SAFE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
 
-function modelNotPermittedError(model: unknown): ParsedProviderError {
+function inferencePolicyError(model: unknown): ParsedProviderError {
+  // Without a model the refusal is about something else in the request (the
+  // gateway also refuses provider-executed tools under this code).
+  if (model === undefined) return { ...INFERENCE_POLICY_DENIED_ERROR };
   if (typeof model !== "string" || !SAFE_MODEL_ID.test(model)) {
     return { ...MODEL_NOT_PERMITTED_ERROR };
   }
@@ -188,10 +192,11 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
     return { ...GATEWAY_PROJECT_REQUIRED_ERROR };
   }
 
-  // The gateway refuses a model its EU-only inference policy cannot route.
-  // Retrying cannot succeed, whatever status an older gateway sent (503).
+  // The gateway refuses a request its EU-only inference policy cannot serve,
+  // naming the model when the model is the reason. Retrying cannot succeed,
+  // whatever status an older gateway sent (503).
   if (getOwnDataProperty(body, "code") === "eu_inference_policy") {
-    return modelNotPermittedError(getOwnDataProperty(body, "model"));
+    return inferencePolicyError(getOwnDataProperty(body, "model"));
   }
 
   const slugValue = getOwnDataProperty(body, "slug");

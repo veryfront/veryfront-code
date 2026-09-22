@@ -26,6 +26,7 @@ import {
   buildProviderError,
   DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
+  markVeryfrontGatewayResponse,
   parseRetryAfterMs,
   ProviderOverloadedError,
   ProviderQuotaError,
@@ -618,7 +619,10 @@ describe("provider-http", () => {
           code: "eu_inference_policy",
           model: "gpt-5",
         });
-        const err = await buildProviderError("openai", jsonResponse(status, body));
+        const err = await buildProviderError(
+          "openai",
+          markVeryfrontGatewayResponse(jsonResponse(status, body)),
+        );
 
         assertEquals(err instanceof ProviderRequestError, true, `status ${status}`);
         assertEquals(err.status, status);
@@ -626,6 +630,18 @@ describe("provider-http", () => {
         assertEquals(err.responseBody, body);
         assertEquals(err.message, `Provider request failed with status ${status}`);
       }
+    });
+
+    it("classifies an EU inference policy code only on a gateway response", async () => {
+      // A direct, BYOK, or custom endpoint can send the same code; its 503
+      // stays a retryable overload and its body is not kept.
+      const body = { code: "eu_inference_policy", model: "foo" };
+      const overload = await buildProviderError("openai", jsonResponse(503, body));
+      const refusal = await buildProviderError("openai", jsonResponse(403, body));
+
+      assertEquals(overload instanceof ProviderOverloadedError, true);
+      assertEquals(overload.retryable, true);
+      assertEquals(refusal.responseBody, undefined);
     });
 
     it("treats a JSON null error body as an unstructured request error", async () => {
@@ -1024,11 +1040,11 @@ describe("provider-http", () => {
               attempts++;
               return Promise.resolve(
                 attempts === 1
-                  ? jsonResponse(status, {
+                  ? markVeryfrontGatewayResponse(jsonResponse(status, {
                     error: "No verified EU-member-state inference route is available",
                     code: "eu_inference_policy",
                     model: "gpt-5",
-                  })
+                  }))
                   : new Response("chunk"),
               );
             },

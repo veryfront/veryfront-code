@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseKnownProblemBody, parseProviderError } from "./provider-errors.ts";
-import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  buildProviderError,
+  markVeryfrontGatewayResponse,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 describe("chat/provider-errors", () => {
   it("maps the gateway project-required body to a curated code with fixed wording", () => {
@@ -27,13 +30,15 @@ describe("chat/provider-errors", () => {
     for (const status of [403, 503]) {
       const providerError = await buildProviderError(
         "openai",
-        new Response(
-          JSON.stringify({
-            error: "echoed secret text",
-            code: "eu_inference_policy",
-            model: "gpt-5",
-          }),
-          { status },
+        markVeryfrontGatewayResponse(
+          new Response(
+            JSON.stringify({
+              error: "echoed secret text",
+              code: "eu_inference_policy",
+              model: "gpt-5",
+            }),
+            { status },
+          ),
         ),
       );
 
@@ -53,7 +58,6 @@ describe("chat/provider-errors", () => {
         "The selected model is not available under this project's inference policy (EU-only inference).",
       status: 403,
     };
-    assertEquals(parseProviderError({ code: "eu_inference_policy", error: "text" }), expected);
     for (const model of ["", 42, "a\nb", "<script>", "x".repeat(300)]) {
       assertEquals(
         parseProviderError({ code: "eu_inference_policy", model }),
@@ -61,6 +65,40 @@ describe("chat/provider-errors", () => {
         `model ${JSON.stringify(model)}`,
       );
     }
+  });
+
+  it("does not blame the model for an EU inference policy refusal that names none", async () => {
+    // The gateway also refuses provider-executed tools under this code, with
+    // no model field; switching models would not help.
+    const expected = {
+      code: "INFERENCE_POLICY_DENIED",
+      message:
+        "This request is not permitted under this project's inference policy (EU-only inference).",
+      status: 403,
+    };
+    assertEquals(parseProviderError({ code: "eu_inference_policy", error: "text" }), expected);
+    const providerError = await buildProviderError(
+      "openai",
+      markVeryfrontGatewayResponse(
+        new Response(
+          JSON.stringify({
+            error: "Provider-executed tools are disabled while EU-only inference is enabled",
+            code: "eu_inference_policy",
+          }),
+          { status: 503 },
+        ),
+      ),
+    );
+    assertEquals(parseProviderError(providerError), expected);
+  });
+
+  it("ignores an EU inference policy code from an endpoint other than the gateway", async () => {
+    const body = JSON.stringify({ code: "eu_inference_policy", model: "foo" });
+    const overload = await buildProviderError("openai", new Response(body, { status: 503 }));
+    const refusal = await buildProviderError("openai", new Response(body, { status: 403 }));
+
+    assertEquals(parseProviderError(overload).code, "OVERLOADED_ERROR");
+    assertEquals(parseProviderError(refusal).code, "EXTERNAL_SERVICE_ERROR");
   });
 
   it("keeps a real gateway overload as OVERLOADED_ERROR", async () => {

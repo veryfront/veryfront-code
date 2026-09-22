@@ -198,11 +198,21 @@ function classifyOutboundRequestBlocked(
   return EGRESS_BLOCKED_DENIAL;
 }
 
+const EU_INFERENCE_POLICY_CODE = "eu_inference_policy";
+
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
   // The gateway fetch marks its own responses, which covers a gateway built
   // with an explicit per-model base URL; the configured route is the fallback.
   const fromGateway = error.viaVeryfrontGateway === true ||
     isVeryfrontGatewayRoute(error.requestUrl);
+  // An EU-only inference policy refusal (403) is not a credential or project
+  // access denial; the record fails with the runtime's own policy error.
+  if (
+    typeof error.responseBody === "string" &&
+    readProperty(parseJsonBody(error.responseBody), "code") === EU_INFERENCE_POLICY_CODE
+  ) {
+    return undefined;
+  }
   if (error.status === 401 || error.status === 403) {
     return fromGateway ? statusDenial(error.status) : undefined;
   }
