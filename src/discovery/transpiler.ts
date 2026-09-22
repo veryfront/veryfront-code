@@ -1546,8 +1546,9 @@ function matchesExtglob(
     // A negative star is universal only at the beginning of a segment. With
     // a literal prefix, `a!(*)` matches nothing: the empty suffix is not a
     // valid negative-extglob match and every non-empty suffix matches `*`.
-    const isUniversalStar = token.alternatives.length === 1 &&
-      token.alternatives[0]?.length === 1 && token.alternatives[0][0]?.kind === "star";
+    const isUniversalStar = token.alternatives.some((alternative) =>
+      alternative.length === 1 && alternative[0]?.kind === "star"
+    );
     if (index > 0 && isUniversalStar) return false;
     // minimatch folds the tokens AFTER the group into the negative lookahead,
     // so the refusal is over the whole remainder rather than the group's own
