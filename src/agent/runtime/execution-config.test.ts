@@ -10,11 +10,11 @@ describe("agent execution config", () => {
     assertEquals(config.model, "openai/gpt-5.4-nano");
   });
   it("preserves an explicit selection of the former default", () => {
-    const config = { model: "openai/gpt-5.4-nano" };
+    const config = { model: "openai/gpt-5.4-nano", system: "Reply briefly." };
     assertStrictEquals(getAgentExecutionConfig(config), config);
   });
   it("preserves a model explicitly changed after construction", () => {
-    const config = { model: "openai/gpt-5.4-nano" };
+    const config = { model: "openai/gpt-5.4-nano", system: "Reply briefly." };
     registerOmittedModelConfig(config);
     config.model = "openai/gpt-5.4-mini";
     assertStrictEquals(getAgentExecutionConfig(config), config);

@@ -29,7 +29,8 @@ export type KnownVeryfrontCloudProviderId =
   | "openai"
   | "google"
   | "mistral"
-  | "moonshotai";
+  | "moonshotai"
+  | "deepseek";
 
 /**
  * A Veryfront Cloud provider ID: a listed provider, or any other well-formed provider string.
