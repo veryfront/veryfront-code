@@ -1127,7 +1127,8 @@ function expandBraces(pattern: string): string[] | null {
         nestedOpen === 0 && nestedClose === body.length - 1 &&
         braceSequence(body.slice(1, -1)) !== null
       ) {
-        return [pattern];
+        const tail = expandBraces(pattern.slice(close + 1));
+        return tail === null ? null : tail.map((rest) => `${pattern.slice(0, close + 1)}${rest}`);
       }
       const nested = expandBraces(body);
       if (nested === null) return null;
@@ -1137,7 +1138,8 @@ function expandBraces(pattern: string): string[] | null {
         return [pattern];
       }
     } else {
-      return [pattern];
+      const tail = expandBraces(pattern.slice(close + 1));
+      return tail === null ? null : tail.map((rest) => `${pattern.slice(0, close + 1)}${rest}`);
     }
   }
   const head = pattern.slice(0, open);
@@ -1258,7 +1260,7 @@ type ExtglobMark = "@" | "?" | "*" | "+" | "!";
 
 /** One unit of a pattern segment, as minimatch reads it. */
 type SegmentToken =
-  | { kind: "star"; synthetic?: boolean; consecutive?: boolean }
+  | { kind: "star"; synthetic?: boolean; consecutive?: boolean; required?: boolean }
   | { kind: "any" }
   | { kind: "class"; matches: (char: string) => boolean; dotExplicit: boolean }
   | { kind: "extglob"; mark: ExtglobMark; alternatives: SegmentToken[][] }
@@ -1500,15 +1502,14 @@ function matchesTokenHere(
 ): boolean {
   const token = tokens[index]!;
   if (token.kind === "star") {
-    // minimatch's leading `*` before an extglob, and a `*` after a positive
-    // extglob, consumes input; otherwise the group alone incorrectly accepts a
-    // name the following star should require more characters for.
+    // A single leading `*` before an extglob consumes input, while a trailing
+    // `*` after an extglob does the same. A nonterminal star can stay empty so
+    // a later literal or group can consume the remaining name.
     const next = tokens[index + 1];
-    const mustConsumeAdjacentToExtglob = !token.synthetic && (
-      (index === 0 && next?.kind === "extglob") ||
-      tokens[index - 1]?.kind === "extglob" && !token.consecutive
-    );
-    const firstEnd = offset + (mustConsumeAdjacentToExtglob ? 1 : 0);
+    const mustConsumeAdjacentToExtglob = !token.synthetic && !token.consecutive &&
+      ((index === 0 && next?.kind === "extglob") ||
+        (index + 1 === tokens.length && tokens[index - 1]?.kind === "extglob"));
+    const firstEnd = offset + ((token.required || mustConsumeAdjacentToExtglob) ? 1 : 0);
     for (let end = firstEnd; end <= name.length; end++) {
       if (matchesTokens(tokens, index + 1, name, end, memo)) return true;
     }
@@ -1574,7 +1575,12 @@ function matchesExtglob(
       if (matchesTokens([...refuses, ...forbidden], 0, remainder, 0, new Map())) return false;
     }
     // Refused nothing, so the group is an ordinary run with the tail after it.
-    return matchesTokens([{ kind: "star", synthetic: true }, ...tail], 0, remainder, 0, new Map());
+    const fallbackStar = {
+      kind: "star",
+      synthetic: true,
+      required: index > 0 && tail[0]?.kind === "star",
+    } as const;
+    return matchesTokens([fallbackStar, ...tail], 0, remainder, 0, new Map());
   }
   // `?` and `*` let the group stand for nothing at all; `@` and `+` do not.
   if ((token.mark === "?" || token.mark === "*") && rest(offset)) return true;
