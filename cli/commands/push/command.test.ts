@@ -7234,6 +7234,41 @@ describe("push dependency pin reconciliation", () => {
     );
   });
 
+  it("previews a newly added dependency without prompting in a dry run", async () => {
+    const withAddition = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { clsx: "2.1.1", react: "19.3.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        push: { dryRun: true },
+        packageJsonRemote: withAddition,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { clsx: "2.1.1", react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        assertEquals(error, undefined);
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Would adopt 2 server-resolved dependency pins into package.json " +
+            "(clsx 2.1.1 (added), react 19.3.0)",
+        );
+      },
+    );
+  });
+
   it("does not write a dependency the resolver added without explicit consent", async () => {
     // The preimage proof shows the API's writer produced the bytes, not that
     // the user wanted them: anyone with project.files.write can set the remote

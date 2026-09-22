@@ -172,7 +172,7 @@ export interface PushOptions {
    * asking: a declaration package.json never declared, and a declaration the
    * resolver moved between `dependencies` and `devDependencies`. Without this
    * they need an interactive confirmation, because neither is bounded by a
-   * range the user wrote — the package name and version of an addition are
+   * range the user wrote; the package name and version of an addition are
    * both chosen remotely, and a move turns a dev-only package into a
    * production dependency.
    */
@@ -1827,7 +1827,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         // remote manifest, and `veryfront dev` installs it. A section move
         // turns a dev-only declaration into a production dependency. Neither is
         // covered by "a push happened", so both need consent.
-        const changesAllowed = needsConsent.length === 0 || adoptNewDependencies ||
+        const changesAllowed = needsConsent.length === 0 || adoptNewDependencies || dryRun ||
           await confirmAdoptedDependencyChanges(
             needsConsent,
             isInteractive() && isTTY() && !quiet && !jsonOutput,
