@@ -2438,6 +2438,47 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(mod.default.ok, true);
     });
 
+    it("reads project dependency metadata once per discovery context", async () => {
+      const files = {
+        "package.json": JSON.stringify({ dependencies: { "fixture-package": "1.0.0" } }),
+        "package-lock.json": JSON.stringify({ lockfileVersion: 3, packages: {} }),
+        "src/discovery/__fixtures__/compiled-runtime-tool-a.ts":
+          `export default { name: "metadata-a" };`,
+        "src/discovery/__fixtures__/compiled-runtime-tool-b.ts":
+          `export default { name: "metadata-b" };`,
+      };
+      const reads: string[] = [];
+      const adapter = createMockAdapter(files, { projectDir });
+      const countingAdapter: FileSystemAdapter = {
+        ...adapter,
+        async readFile(path: string) {
+          reads.push(path);
+          return adapter.readFile(path);
+        },
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: countingAdapter,
+        baseDir: projectDir,
+        compiledRuntime: true,
+        allowHostProjectCodeExecution: true,
+      };
+
+      await importModuleRaw(
+        `file://${projectDir}/src/discovery/__fixtures__/compiled-runtime-tool-a.ts`,
+        context,
+      );
+      await importModuleRaw(
+        `file://${projectDir}/src/discovery/__fixtures__/compiled-runtime-tool-b.ts`,
+        context,
+      );
+
+      // The first metadata load reads each project-level file once. The second
+      // module must not add another read of either file.
+      assertEquals(reads.filter((path) => path === `${projectDir}/package.json`).length, 1);
+      assertEquals(reads.filter((path) => path === `${projectDir}/package-lock.json`).length, 1);
+    });
+
     it("classifies a static import nothing can serve without the machine path", async () => {
       const error = await assertRejects(
         () =>

@@ -1833,6 +1833,47 @@ async function readProjectDependencyPins(
   }
 }
 
+type ProjectDependencyMetadata = {
+  dependencyPins: Record<string, string>;
+  registrySources: ProjectRegistrySources;
+};
+
+// One discovery run shares its context across every discovered module. Keep
+// the project manifest, lockfile, and npmrc reads at that scope: these files
+// describe the project, not the entry file being transpiled. A WeakMap keeps
+// the cache lifetime tied to the discovery run, so a later run gets fresh
+// dependency metadata after an install or edit.
+const projectDependencyMetadataCache = new WeakMap<
+  FileDiscoveryContext,
+  Promise<ProjectDependencyMetadata>
+>();
+
+async function readProjectDependencyMetadata(
+  context: FileDiscoveryContext,
+): Promise<ProjectDependencyMetadata> {
+  const cached = projectDependencyMetadataCache.get(context);
+  if (cached) return cached;
+
+  const pending = (async (): Promise<ProjectDependencyMetadata> => {
+    const dependencyPins = await readProjectDependencyPins(context);
+    const registrySources = Object.keys(dependencyPins).length > 0
+      ? await readProjectRegistrySources(context)
+      : { locked: {}, npmrc: "", memberNpmrc: "", memberPath: "", unverifiableClient: null };
+    return { dependencyPins, registrySources };
+  })();
+  projectDependencyMetadataCache.set(context, pending);
+
+  try {
+    return await pending;
+  } catch (error) {
+    // Do not retain a failed read if an adapter recovers during this run.
+    if (projectDependencyMetadataCache.get(context) === pending) {
+      projectDependencyMetadataCache.delete(context);
+    }
+    throw error;
+  }
+}
+
 /**
  * The package a compiled binary refused to resolve, or `null` when
  * the failure is unrelated. Deno answers an `npm:` specifier that is not in a
@@ -2645,12 +2686,22 @@ export async function importModule(
   // A compiled binary cannot resolve `npm:` specifiers for project code, so its
   // declared dependency pins decide what the bundler inlines below.
   const compiled = context.compiledRuntime ?? isDenoCompiled;
-  const dependencyPins = compiled ? await readProjectDependencyPins(context) : {};
   // Which registry the project itself installs from decides whether the CDN's
-  // copy of a name is its dependency at all.
-  const registrySources = compiled && Object.keys(dependencyPins).length > 0
-    ? await readProjectRegistrySources(context)
-    : { locked: {}, npmrc: "", memberNpmrc: "", memberPath: "", unverifiableClient: null };
+  // copy of a name is its dependency at all. Both are project-level metadata,
+  // so read them once for the shared discovery context rather than once per
+  // entry file.
+  const { dependencyPins, registrySources } = compiled
+    ? await readProjectDependencyMetadata(context)
+    : {
+      dependencyPins: {},
+      registrySources: {
+        locked: {},
+        npmrc: "",
+        memberNpmrc: "",
+        memberPath: "",
+        unverifiableClient: null,
+      },
+    };
 
   // A shared hosted runtime serves many projects and source generations, so
   // namespace identical relative paths before considering entry contents.
