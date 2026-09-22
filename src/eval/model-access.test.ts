@@ -283,6 +283,98 @@ describe("eval/model-access", () => {
     assertEquals(await classifyStatus(403), "forbidden");
   });
 
+  it("classifies a gateway EU inference policy refusal as a policy denial", async () => {
+    // The gateway refuses a model its EU-only policy cannot route with a 403
+    // (older gateways: 503). Every later record uses the same model, and this
+    // is not a credential or project access problem.
+    const refuse = async (status: number, body: Record<string, unknown>) => {
+      try {
+        await requestJson({
+          url: `${veryfrontApiOrigin()}/ai/gateway/openai/v1/chat/completions`,
+          fetchImpl: () =>
+            Promise.resolve(markVeryfrontGatewayResponse(jsonResponse(status, body))),
+          init: { method: "POST", body: "{}" },
+          providerLabel: "veryfront-cloud",
+          providerKind: "openai",
+        });
+      } catch (error) {
+        return error;
+      }
+      throw new Error("expected the request to reject");
+    };
+
+    for (const status of [403, 503]) {
+      assertEquals(
+        classifyEvalModelAccessDenial(
+          await refuse(status, { error: "No route", code: "eu_inference_policy", model: "gpt-5" }),
+        ),
+        {
+          kind: "inference-policy",
+          code: "MODEL_NOT_PERMITTED",
+          message:
+            'Model "gpt-5" is not available under this project\'s inference policy (EU-only inference).',
+        },
+        `status ${status}`,
+      );
+    }
+    const tools = classifyEvalModelAccessDenial(
+      await refuse(503, { error: "Tools disabled", code: "eu_inference_policy" }),
+    );
+    assertEquals(tools?.kind, "inference-policy");
+    assertEquals(tools?.code, "INFERENCE_POLICY_DENIED");
+
+    const error = createEvalModelAccessDeniedError("eval:a", tools!, undefined);
+    assertEquals(error.slug, "eval-inference-policy-denied");
+    assertEquals(error.suggestion?.includes("Remove provider-executed tools"), true);
+    assertEquals(getEvalModelAccessDenialKind(error), "inference-policy");
+
+    const model = {
+      kind: "inference-policy" as const,
+      code: "MODEL_NOT_PERMITTED",
+      message: 'Model "gpt-5" is not available under this project\'s inference policy',
+    };
+    const modelError = createEvalModelAccessDeniedError("eval:a", model, undefined);
+    assertEquals(modelError.slug, "eval-model-inference-policy-denied");
+    assertEquals(modelError.suggestion?.includes("Choose a model"), true);
+  });
+
+  it("classifies EU inference policy codes that crossed a runtime boundary", () => {
+    for (
+      const [slug, code] of [
+        ["model-not-permitted", "MODEL_NOT_PERMITTED"],
+        ["inference-policy-denied", "INFERENCE_POLICY_DENIED"],
+      ] as const
+    ) {
+      const curated = new VeryfrontError("untrusted text", {
+        slug,
+        category: "AGENT",
+        status: 403,
+        title: "Synthetic",
+      });
+      const denial = classifyEvalModelAccessDenial(curated);
+      assertEquals(denial?.kind, "inference-policy", slug);
+      assertEquals(denial?.code, code, slug);
+
+      const runError = classifyAgentServiceModelAccessDenial({
+        status: 200,
+        body: null,
+        runErrorCode: code,
+        runErrorMessage: "untrusted endpoint text",
+      });
+      assertEquals(runError?.kind, "inference-policy", code);
+      assertEquals(runError?.message.includes("untrusted"), false, code);
+    }
+  });
+
+  it("keeps a direct-provider policy-shaped response as a record failure", async () => {
+    const directProvider = await buildProviderError(
+      "openai",
+      jsonResponse(403, { code: "eu_inference_policy", model: "gpt-5" }),
+    );
+
+    assertEquals(classifyEvalModelAccessDenial(directProvider), undefined);
+  });
+
   it("keeps other 400 responses as record failures", async () => {
     const otherCode = await buildProviderError(
       "anthropic",

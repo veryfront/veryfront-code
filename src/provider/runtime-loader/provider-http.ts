@@ -588,6 +588,30 @@ function createProviderErrorBodyContext(
 }
 
 /**
+ * Classify a Veryfront Cloud gateway refusal under the EU-only inference
+ * policy. Older gateways sent it as a 503, which the status rules below would
+ * retry as an overload; the same request is refused every time. Only a
+ * response the gateway fetch marked counts: another endpoint's code is not a
+ * Veryfront policy refusal.
+ */
+function classifyInferencePolicyRefusal(
+  context: ProviderErrorBodyContext,
+  response: Response,
+): ProviderError | undefined {
+  if (context.truncated || context.parsedBody?.code !== "eu_inference_policy") return undefined;
+  if (!isVeryfrontGatewayResponse(response)) return undefined;
+  return preserveStructuredResponseBody(
+    new ProviderRequestError({
+      provider: context.provider,
+      status: context.status,
+      message: context.message,
+      retryable: false,
+    }),
+    context.rawBody,
+  );
+}
+
+/**
  * Classify Anthropic statuses whose retry behavior is fixed by HTTP status.
  */
 function classifyAnthropicStatus(
@@ -754,9 +778,31 @@ export async function buildProviderError(
     ));
   } catch (error) {
     if (abortSignal?.aborted === true) throw error;
-    return buildProviderErrorFromUnreadableBody(provider, response);
+    return markProviderErrorGatewayProvenance(
+      buildProviderErrorFromUnreadableBody(provider, response),
+      response,
+    );
   }
-  return buildProviderErrorFromBody(provider, response, rawBody, truncated);
+  return markProviderErrorGatewayProvenance(
+    buildProviderErrorFromBody(provider, response, rawBody, truncated),
+    response,
+  );
+}
+
+/** Preserve gateway provenance for callers that invoke buildProviderError directly. */
+function markProviderErrorGatewayProvenance<T extends ProviderError>(
+  error: T,
+  response: Response,
+): T {
+  if (isVeryfrontGatewayResponse(response) && error.viaVeryfrontGateway !== true) {
+    ObjectDefineProperty(error, "viaVeryfrontGateway", {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: false,
+    });
+  }
+  return error;
 }
 
 /**
@@ -771,6 +817,9 @@ function buildProviderErrorFromBody(
   truncated: boolean,
 ): ProviderError {
   const context = createProviderErrorBodyContext(provider, response, rawBody, truncated);
+
+  const policyRefusal = classifyInferencePolicyRefusal(context, response);
+  if (policyRefusal !== undefined) return policyRefusal;
 
   // Anthropic 529 = overloaded. Anthropic surfaces this with
   // { error: { type: "overloaded_error" } } in the body.

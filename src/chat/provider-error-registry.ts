@@ -54,6 +54,26 @@ export const GATEWAY_PROJECT_REQUIRED_ERROR = {
   status: 400,
 } as const;
 
+/**
+ * The gateway named a model its EU-only inference policy cannot route. Across
+ * a runtime boundary only the code travels, so this fixed wording replaces the
+ * model-named message there.
+ */
+export const MODEL_NOT_PERMITTED_ERROR = {
+  code: "MODEL_NOT_PERMITTED",
+  message:
+    "The selected model is not available under this project's inference policy (EU-only inference).",
+  status: 403,
+} as const;
+
+/** An EU-only inference policy refusal that names no model, such as provider-executed tools. */
+export const INFERENCE_POLICY_DENIED_ERROR = {
+  code: "INFERENCE_POLICY_DENIED",
+  message:
+    "This request is not permitted under this project's inference policy (EU-only inference).",
+  status: 403,
+} as const;
+
 /** Codes transported across model boundaries; diagnostics are reconstructed locally. */
 export const CURATED_PROVIDER_FAILURE_CODES = [
   "OVERLOADED_ERROR",
@@ -69,6 +89,8 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
   "AI_PROVIDER_BILLING_ERROR",
   "GATEWAY_PROJECT_REQUIRED",
   "PROVIDER_OUTPUT_TRUNCATED",
+  "MODEL_NOT_PERMITTED",
+  "INFERENCE_POLICY_DENIED",
 ] as const;
 export type CuratedProviderFailureCode = typeof CURATED_PROVIDER_FAILURE_CODES[number];
 
@@ -109,6 +131,8 @@ const failures = {
   AI_PROVIDER_BILLING_ERROR: AI_PROVIDER_BILLING_ERROR,
   GATEWAY_PROJECT_REQUIRED: GATEWAY_PROJECT_REQUIRED_ERROR,
   PROVIDER_OUTPUT_TRUNCATED: PROVIDER_OUTPUT_TRUNCATED_ERROR,
+  MODEL_NOT_PERMITTED: MODEL_NOT_PERMITTED_ERROR,
+  INFERENCE_POLICY_DENIED: INFERENCE_POLICY_DENIED_ERROR,
 } as const;
 
 /** Return fixed local diagnostics; provider payload/status values are never forwarded. */

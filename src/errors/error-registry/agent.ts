@@ -176,6 +176,33 @@ export const EVAL_MODEL_EGRESS_BLOCKED = defineError({
 });
 
 /**
+ * An eval stopped because the Veryfront Cloud gateway refused its model request
+ * under the project's EU-only inference policy (`eu_inference_policy`). Every
+ * later record sends the same model and tools, so it is refused the same way.
+ */
+export const EVAL_MODEL_INFERENCE_POLICY_DENIED = defineError({
+  slug: "eval-model-inference-policy-denied",
+  category: "AGENT",
+  status: 403,
+  title: "Eval model request refused by inference policy",
+  suggestion:
+    "The project allows EU-only inference. Choose a model with an EU inference route, then run the eval again",
+});
+
+/**
+ * An eval stopped because a provider-executed tool is not available under the
+ * project's EU-only inference policy.
+ */
+export const EVAL_INFERENCE_POLICY_DENIED = defineError({
+  slug: "eval-inference-policy-denied",
+  category: "AGENT",
+  status: 403,
+  title: "Eval request refused by inference policy",
+  suggestion:
+    "The project allows EU-only inference. Remove provider-executed tools, such as provider web search, from the eval target, then run the eval again",
+});
+
+/**
  * An eval record ran past its time limit. The limit covers the whole record:
  * target execution, tools, model requests, metrics, and checks. A model stream
  * that stops sending data after its response headers has no deadline of its
@@ -208,5 +235,7 @@ export const AGENT_REGISTRY = {
   "eval-model-egress-blocked": EVAL_MODEL_EGRESS_BLOCKED,
   "eval-model-unauthorized": EVAL_MODEL_UNAUTHORIZED,
   "eval-model-project-access-denied": EVAL_MODEL_PROJECT_ACCESS_DENIED,
+  "eval-model-inference-policy-denied": EVAL_MODEL_INFERENCE_POLICY_DENIED,
+  "eval-inference-policy-denied": EVAL_INFERENCE_POLICY_DENIED,
   "eval-record-timeout": EVAL_RECORD_TIMEOUT,
 } as const;

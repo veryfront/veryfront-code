@@ -20,6 +20,8 @@ const cases: Array<{ code: ConstructorParameters<typeof ExecutorAgentError>[0]; 
     { code: "AI_PROVIDER_WORKSPACE_LIMIT_EXCEEDED", status: 502 },
     { code: "AI_PROVIDER_BILLING_ERROR", status: 502 },
     { code: "GATEWAY_PROJECT_REQUIRED", status: 400 },
+    { code: "MODEL_NOT_PERMITTED", status: 403 },
+    { code: "INFERENCE_POLICY_DENIED", status: 403 },
     { code: "EXECUTOR_AGENT_INVALID_INPUT", status: 400 },
     { code: "EXECUTOR_AGENT_INPUT_TOO_LARGE", status: 413 },
     { code: "EXECUTOR_AGENT_ALREADY_STARTED", status: 409 },

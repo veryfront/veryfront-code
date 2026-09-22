@@ -1,8 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseKnownProblemBody, parseProviderError } from "./provider-errors.ts";
-import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  parseGatewayProblemBody,
+  parseKnownProblemBody,
+  parseProviderError,
+} from "./provider-errors.ts";
+import {
+  buildProviderError,
+  markVeryfrontGatewayResponse,
+} from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 describe("chat/provider-errors", () => {
   it("maps the gateway project-required body to a curated code with fixed wording", () => {
@@ -14,6 +21,107 @@ describe("chat/provider-errors", () => {
         status: 400,
       },
     );
+  });
+
+  it("maps a gateway EU inference policy refusal to MODEL_NOT_PERMITTED naming the model", async () => {
+    const expected = {
+      code: "MODEL_NOT_PERMITTED",
+      message:
+        'Model "gpt-5" is not available under this project\'s inference policy (EU-only inference).',
+      status: 403,
+    };
+    // 403 is the gateway contract; 503 is what older gateways still send.
+    for (const status of [403, 503]) {
+      const providerError = await buildProviderError(
+        "openai",
+        markVeryfrontGatewayResponse(
+          new Response(
+            JSON.stringify({
+              error: "echoed secret text",
+              code: "eu_inference_policy",
+              model: "gpt-5",
+            }),
+            { status },
+          ),
+        ),
+      );
+
+      assertEquals(parseProviderError(providerError), expected, `status ${status}`);
+      assertEquals(
+        parseProviderError({ lastError: providerError }),
+        expected,
+        `status ${status} through lastError`,
+      );
+    }
+  });
+
+  it("ignores an unmarked EU inference policy refusal without a usable model id", () => {
+    const expected = {
+      code: "MODEL_NOT_PERMITTED",
+      message:
+        "The selected model is not available under this project's inference policy (EU-only inference).",
+      status: 403,
+    };
+    for (const model of ["", 42, "a\nb", "<script>", "x".repeat(300)]) {
+      assertEquals(
+        parseProviderError({ code: "eu_inference_policy", model }).code,
+        "EXTERNAL_SERVICE_ERROR",
+      );
+      assertEquals(parseKnownProblemBody({ code: "eu_inference_policy", model }), null);
+      assertEquals(parseGatewayProblemBody({ code: "eu_inference_policy", model }), expected);
+    }
+  });
+
+  it("does not blame the model for an EU inference policy refusal that names none", async () => {
+    // The gateway also refuses provider-executed tools under this code, with
+    // no model field; switching models would not help.
+    const expected = {
+      code: "INFERENCE_POLICY_DENIED",
+      message:
+        "This request is not permitted under this project's inference policy (EU-only inference).",
+      status: 403,
+    };
+    assertEquals(
+      parseProviderError({ code: "eu_inference_policy", error: "text" }).code,
+      "EXTERNAL_SERVICE_ERROR",
+    );
+    const providerError = await buildProviderError(
+      "openai",
+      markVeryfrontGatewayResponse(
+        new Response(
+          JSON.stringify({
+            error: "Provider-executed tools are disabled while EU-only inference is enabled",
+            code: "eu_inference_policy",
+          }),
+          { status: 503 },
+        ),
+      ),
+    );
+    assertEquals(parseProviderError(providerError), expected);
+  });
+
+  it("ignores an EU inference policy code from an endpoint other than the gateway", async () => {
+    const body = JSON.stringify({ code: "eu_inference_policy", model: "foo" });
+    const overload = await buildProviderError("openai", new Response(body, { status: 503 }));
+    const refusal = await buildProviderError("openai", new Response(body, { status: 403 }));
+
+    assertEquals(parseProviderError(overload).code, "OVERLOADED_ERROR");
+    assertEquals(parseProviderError(refusal).code, "EXTERNAL_SERVICE_ERROR");
+  });
+
+  it("keeps a real gateway overload as OVERLOADED_ERROR", async () => {
+    for (
+      const [provider, status] of [["openai", 503], ["anthropic", 529], ["anthropic", 503]] as const
+    ) {
+      const providerError = await buildProviderError(
+        provider,
+        new Response(JSON.stringify({ error: "Service unavailable" }), { status }),
+      );
+      assertEquals(parseProviderError(providerError), {
+        code: "OVERLOADED_ERROR",
+        message: "The LLM provider is currently overloaded",
+      });
+    }
   });
 
   it("does not expose provider text from recognized problem bodies", async () => {
