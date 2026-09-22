@@ -1294,6 +1294,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         "",
       );
       assertEquals(
+        await declaring(["apps/!(a|b)**"], `${PROJECT}/apps/a`),
+        "",
+      );
+      assertEquals(
         await declaring(["apps/!(a|b)*?(a|b)"], `${PROJECT}/apps/a`),
         "apps/a",
       );
@@ -1609,6 +1613,29 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         },
       }));
       assert("refusal" in cdnSourceDecision(sources(required), "^1.8.0", "unpdf", "1.8.0", null));
+    });
+
+    it("keeps a required dependency that also has an optional peer declaration", () => {
+      const locked = readLockedDependencies(JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/unpdf": {
+            version: "1.9.0",
+            resolved: `${PUBLIC}/unpdf/-/unpdf-1.9.0.tgz`,
+            dependencies: { fsevents: "^2.3.0" },
+            peerDependencies: { fsevents: "^2.3.0" },
+            peerDependenciesMeta: { fsevents: { optional: true } },
+          },
+          "node_modules/fsevents": {
+            version: "2.3.0",
+            resolved: `${PUBLIC}/fsevents/-/fsevents-2.3.0.tgz`,
+          },
+        },
+      }));
+      assertEquals(
+        cdnSourceDecision(sources(locked), "^1.8.0", "unpdf", "1.8.0", null),
+        { version: "1.9.0", dependencyPins: ["fsevents@2.3.0"] },
+      );
     });
 
     it("refuses an edge the lockfile does not resolve", () => {

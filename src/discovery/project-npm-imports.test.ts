@@ -345,10 +345,8 @@ describe("rangeAdmitsVersion", () => {
       rangeAdmitsVersion(">=0.0.0+build >=0.0.0-alpha", "0.0.0-beta"),
       false,
     );
-    // A `v` prefix does not: npm applies the rewrite to the comparator as
-    // written, which still carries the `v` at that point, so `>=v0.0.0` stays
-    // an ordinary lower bound that no pre-release satisfies.
-    assertEquals(rangeAdmitsVersion(">=v0.0.0 >=0.0.0-alpha", "0.0.0-beta"), false);
+    // npm normalizes a `v` prefix before applying the same rewrite.
+    assertEquals(rangeAdmitsVersion(">=v0.0.0 >=0.0.0-alpha", "0.0.0-beta"), true);
     // The same drop applies to every DERIVED lower bound at zero: `^0`,
     // `~0.0` and `0.x` all expand to a set whose `>=0.0.0` npm rewrites away,
     // so each admits `0.0.0-0` once the set names a pre-release on that core.

@@ -366,11 +366,9 @@ function compareCores(left: readonly string[], right: readonly string[]): number
  * Every spelling that expands to `0.0.0` counts -- `>=0`, `>=0.0`, `>=0.x`,
  * `>=0.0.x` -- because the expansion runs before the rewrite. Build metadata
  * prevents the rewrite, though: `>=0.0.0+build` remains an ordinary lower
- * bound. A `v` prefix does NOT trigger it either: npm applies the rewrite to
- * the comparator as written, and `>=v0.0.0` still carries its `v` at that
- * point, so it stays an ordinary lower bound that no pre-release satisfies.
+ * bound. A `v` prefix is normalized before the same zero-bound rewrite.
  */
-const ANY_RELEASE_COMPARATOR = /^>=\s*(?:0|[xX*])(?:\.(?:0|[xX*])){0,2}$/;
+const ANY_RELEASE_COMPARATOR = /^>=\s*v?(?:0|[xX*])(?:\.(?:0|[xX*])){0,2}$/;
 
 /**
  * Does a single-comparator range admit an exact version? `null` when the range

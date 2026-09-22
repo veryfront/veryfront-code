@@ -306,6 +306,15 @@ const LOCKED_REGISTRY_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za
 /** The dependency ranges one lockfile entry declares, whatever its format. */
 function lockedEntryDependencies(entry: Record<string, unknown>): Record<string, string> {
   const ranges: Record<string, string> = {};
+  const requiredNames = new Set<string>();
+  for (const field of ["dependencies", "optionalDependencies", "requires"]) {
+    const group = entry[field];
+    if (group && typeof group === "object") {
+      for (const name of Object.keys(group as Record<string, unknown>)) {
+        if (name !== "__proto__") requiredNames.add(name);
+      }
+    }
+  }
   // A peer the package itself marks optional may legitimately be absent, so
   // it is not an edge the install has to account for.
   const optionalPeers = new Set(
@@ -318,7 +327,7 @@ function lockedEntryDependencies(entry: Record<string, unknown>): Record<string,
     if (!group || typeof group !== "object") continue;
     for (const [name, range] of Object.entries(group as Record<string, unknown>)) {
       if (name === "__proto__" || typeof range !== "string") continue;
-      if (optionalPeers.has(name)) continue;
+      if (optionalPeers.has(name) && !requiredNames.has(name)) continue;
       ranges[name] = range;
     }
   }
@@ -1562,7 +1571,7 @@ function matchesExtglob(
     // WHOLE tail of a group opening the segment has to consume something, so
     // `!(a)*` still names `a` itself while `!(a)b*` refuses `ab`. minimatch
     // compiles the first as `a[^/]+?` and the second as `ab[^/]*?`.
-    const forbidden = index === 0 && tail[0]?.kind === "star"
+    const forbidden = index === 0 && tail[0]?.kind === "star" && !tail[0].consecutive
       ? [{ kind: "any" } as SegmentToken, ...tail]
       : tail;
     for (const alternative of token.alternatives) {
