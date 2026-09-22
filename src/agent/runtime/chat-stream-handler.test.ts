@@ -3051,6 +3051,48 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     );
   });
 
+  it("flushes deferred text when the active stream outcome fails", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const chunks: string[] = [];
+    const result = createRuntimeStreamSource(() => ({
+      fullStream: {
+        async *[Symbol.asyncIterator]() {
+          yield { type: "text-delta", text: "partial" };
+          throw new Error("provider stream failed");
+        },
+      },
+      textStream: { async *[Symbol.asyncIterator]() {} },
+    }));
+
+    await assertRejects(
+      () =>
+        processStream(
+          result,
+          createStreamState(),
+          controller,
+          encoder,
+          "text-1",
+          {
+            streamLifecycleMode: "active",
+            onChunk: (chunk) => chunks.push(chunk),
+            onTextComplete: () => {},
+          },
+          undefined,
+        ),
+      StreamLifecycleFailure,
+    );
+
+    assertEquals(chunks, ["partial"]);
+    assertEquals(
+      events.filter((event) => typeof event.type === "string" && event.type.startsWith("text-")),
+      [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "partial" },
+        { type: "text-end", id: "text-1" },
+      ],
+    );
+  });
+
   /** Replay collected SSE events back as the data stream the UI assembler reads. */
   function createSseStream(events: Array<Record<string, unknown>>): ReadableStream<Uint8Array> {
     const sseEncoder = new TextEncoder();

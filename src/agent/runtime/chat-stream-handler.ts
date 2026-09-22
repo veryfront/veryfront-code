@@ -861,9 +861,13 @@ async function processActiveStream(
       applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
       finalizeActiveUnresolvedProviderToolCalls(state, controller, encoder);
       if (deferTextDelivery) {
-        callbacks.onTextComplete!(completedText ?? "", () => {
-          emitBufferedText(completedText ?? "");
-        });
+        if (streamOutcome.status === "completed" || streamOutcome.status === "tool_handoff") {
+          callbacks.onTextComplete!(completedText ?? "", () => {
+            emitBufferedText(completedText ?? "");
+          });
+        } else {
+          releaseDeferredText();
+        }
       }
     } else if (deferTextDelivery) {
       releaseDeferredText();
