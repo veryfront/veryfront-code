@@ -6944,6 +6944,8 @@ describe("push dependency pin reconciliation", () => {
     push?: Partial<Parameters<typeof pushCommand>[0]>;
     /** The bytes the sync baseline records, which default to the local ones. */
     baselinePackageJson?: string;
+    /** Return a changed remote manifest after the initial remote listing. */
+    remotePackageJsonAfterInitialList?: string;
     /**
      * Runs while the push is reading the preimage history: after it captured
      * its source snapshot, before the adoption writes the manifest.
@@ -7004,6 +7006,7 @@ describe("push dependency pin reconciliation", () => {
 
         const puts: string[] = [];
         let historyCalls = 0;
+        let remoteFileListCalls = 0;
         const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
@@ -7019,6 +7022,11 @@ describe("push dependency pin reconciliation", () => {
             return Response.json(scenario.history);
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            remoteFileListCalls++;
+            const packageJson = remoteFileListCalls > 1 &&
+                scenario.remotePackageJsonAfterInitialList !== undefined
+              ? scenario.remotePackageJsonAfterInitialList
+              : scenario.packageJsonRemote ?? PINNED_PACKAGE_JSON;
             return Response.json({
               data: [
                 {
@@ -7028,7 +7036,7 @@ describe("push dependency pin reconciliation", () => {
                 },
                 {
                   path: "package.json",
-                  content: scenario.packageJsonRemote ?? PINNED_PACKAGE_JSON,
+                  content: packageJson,
                   version_id: "00000000-0000-4000-8000-000000000012",
                 },
               ],
@@ -7133,6 +7141,32 @@ describe("push dependency pin reconciliation", () => {
           output.map(stripAnsi).join("\n"),
           "Adopted 1 server-resolved dependency pin into package.json (react 19.3.0)",
         );
+      },
+    );
+  });
+
+  it("checks the remote manifest again before replacing the local copy", async () => {
+    const changedRemote = `${
+      JSON.stringify({ name: "demo", private: true, dependencies: { react: "19.3.0" } }, null, 2)
+    }\n`;
+    await runPinPush(
+      {
+        packageJsonRemote: PINNED_PACKAGE_JSON,
+        remotePackageJsonAfterInitialList: changedRemote,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
       },
     );
   });

@@ -1366,8 +1366,8 @@ async function confirmAdoptedDependencyChanges(
       logWarning(
         `Veryfront's dependency resolver changed ${subject}. Those changes were not written ` +
           `to this checkout, so this push is still reported as a conflict. Run ` +
-          `"veryfront push --adopt-new-deps" to accept them and then retry — ` +
-          `veryfront up and veryfront deploy do not take that flag — or run ` +
+          `"veryfront push --adopt-new-deps" to accept them and then retry; ` +
+          `veryfront up and veryfront deploy do not take that flag; or run ` +
           `"veryfront pull" to take the platform's ${PACKAGE_JSON_PATH}.`,
       );
     }
@@ -1818,6 +1818,20 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             isInteractive() && isTTY() && !quiet && !jsonOutput,
           );
         if (changesAllowed) {
+          if (!dryRun) {
+            const latestRemoteFiles = await listRemoteFiles(
+              client,
+              projectApiReference(config),
+              target.source,
+            );
+            const conflicts = findRemoteSnapshotChanges(
+              await buildVerificationSnapshot(managedRemoteFiles),
+              await buildVerificationSnapshot(latestRemoteFiles),
+            );
+            if (conflicts.length > 0) {
+              throw pushConflictError(conflicts, protectedDeleteContext());
+            }
+          }
           const adopted = dryRun ||
             await writeAdoptedManifest(
               projectDir,

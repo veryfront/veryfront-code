@@ -198,6 +198,22 @@ describe("classifyPackageJsonDrift", () => {
     );
   });
 
+  it("compares own __proto__ fields outside dependency sections", () => {
+    const baseline = apiWrite(JSON.parse(
+      '{"name":"demo","__proto__":{"managed":true},"dependencies":{"react":"^19.2.4"}}',
+    ));
+    const remote = apiWrite(JSON.parse(
+      '{"name":"demo","__proto__":{"managed":false},"dependencies":{"react":"19.3.0"}}',
+    ));
+    assertEquals(
+      classifyPackageJsonDrift(baseline, remote, [
+        { react: "^19.2.4" },
+        { react: "19.3.0" },
+      ]),
+      "user-edit",
+    );
+  });
+
   it("rejects a removed declaration", () => {
     const remote = apiWrite({ ...PINNED_PKG, dependencies: { react: "19.3.0" } });
     assertEquals(

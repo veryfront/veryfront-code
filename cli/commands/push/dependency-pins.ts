@@ -165,12 +165,12 @@ function jsonEquals(left: unknown, right: unknown): boolean {
 
 /** Everything outside the two dependency sections, which a pin write leaves alone. */
 function nonDependencyFields(pkg: JsonObject): JsonObject {
-  const rest: JsonObject = {};
+  const entries: Array<[string, unknown]> = [];
   for (const [key, value] of Object.entries(pkg)) {
     if ((DEPENDENCY_SECTIONS as readonly string[]).includes(key)) continue;
-    rest[key] = value;
+    entries.push([key, value]);
   }
-  return rest;
+  return Object.fromEntries(entries);
 }
 
 /**
