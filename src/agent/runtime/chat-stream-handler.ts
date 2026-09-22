@@ -375,6 +375,8 @@ export interface ChatStreamState {
 
 export interface ChatStreamCallbacks {
   onChunk?: (chunk: string) => void;
+  /** Hold text until the caller classifies the complete assistant turn. */
+  onTextComplete?: (text: string, emit: () => void) => void;
   onUsage?: (usage: {
     promptTokens?: number;
     completionTokens?: number;
@@ -695,6 +697,20 @@ function finalizeActiveUnresolvedProviderToolCalls(
   }
 }
 
+function emitDeferredText(
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  textPartId: string | undefined,
+  text: string,
+  onChunk?: (chunk: string) => void,
+): void {
+  if (text.length === 0) return;
+  sendSSE(controller, encoder, { type: "text-start", id: textPartId });
+  sendSSE(controller, encoder, { type: "text-delta", id: textPartId, delta: text });
+  onChunk?.(text);
+  sendSSE(controller, encoder, { type: "text-end", id: textPartId });
+}
+
 async function processActiveStream(
   source: RuntimeStreamSource,
   state: ChatStreamState,
@@ -704,6 +720,8 @@ async function processActiveStream(
   callbacks: ChatStreamCallbacks | undefined,
   abortSignal: AbortSignal | undefined,
 ): Promise<void> {
+  const deferTextDelivery = callbacks?.onTextComplete !== undefined;
+  const deferredText: string[] = [];
   const baseAdapter = createRuntimeStreamProviderAdapter({
     open: (signal) => source.open(signal).fullStream,
     options: {
@@ -757,15 +775,28 @@ async function processActiveStream(
   try {
     for await (const frame of getPrivateAsyncIterator(run.frames)) {
       if (frame.class === "semantic" && frame.event.type === "text_content") {
-        callbacks?.onChunk?.(frame.event.delta);
+        if (deferTextDelivery) deferredText.push(frame.event.delta);
+        else callbacks?.onChunk?.(frame.event.delta);
       }
       if (frame.class === "semantic" && frame.event.type === "usage") {
         callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
       }
       const events = live.encode(frame);
       for (let index = 0; index < events.length; index++) {
-        if (hasOwn(events, index)) sendSSE(controller, encoder, events[index]!);
+        if (!hasOwn(events, index)) continue;
+        const eventType = (events[index] as { type?: unknown }).type;
+        if (
+          deferTextDelivery &&
+          (eventType === "text-start" || eventType === "text-delta" || eventType === "text-end")
+        ) continue;
+        sendSSE(controller, encoder, events[index]!);
       }
+    }
+    if (deferTextDelivery) {
+      const text = deferredText.join("");
+      callbacks.onTextComplete!(text, () => {
+        emitDeferredText(controller, encoder, textPartId, text, callbacks.onChunk);
+      });
     }
   } catch (error) {
     // A delivery failure is the primary run-finalization error. The
@@ -869,6 +900,8 @@ export function processStreamInternal(
     : resultOrSource;
 
   const process = async () => {
+    const deferTextDelivery = callbacks?.onTextComplete !== undefined;
+    const deferredText: string[] = [];
     let eventCount = 0;
     let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
       ? internals.createShadow({
@@ -987,6 +1020,7 @@ export function processStreamInternal(
         ? textPartId
         : `${textPartId}:${nextTextSegmentIndex}`;
       nextTextSegmentIndex += 1;
+      if (deferTextDelivery) return;
       sendSSE(controller, encoder, {
         type: "text-start",
         id: activeTextPartId,
@@ -999,6 +1033,10 @@ export function processStreamInternal(
       }
 
       textOpen = false;
+      if (deferTextDelivery) {
+        activeTextPartId = undefined;
+        return;
+      }
       sendSSE(controller, encoder, {
         type: "text-end",
         id: activeTextPartId,
@@ -1264,6 +1302,10 @@ export function processStreamInternal(
             closeReasoningSegment();
             openTextSegment();
             state.accumulatedText += typedPart.text;
+            if (deferTextDelivery) {
+              deferredText.push(typedPart.text);
+              break;
+            }
             sendSSE(controller, encoder, {
               type: "text-delta",
               id: activeTextPartId,
@@ -1776,6 +1818,12 @@ export function processStreamInternal(
       "stream.tool_calls": state.toolCalls.size,
       "stream.text_length": state.accumulatedText.length,
     });
+    if (deferTextDelivery) {
+      const text = deferredText.join("");
+      callbacks.onTextComplete!(text, () => {
+        emitDeferredText(controller, encoder, textPartId, text, callbacks.onChunk);
+      });
+    }
   };
 
   return withSpan(traceSpanName, process, traceAttributes, { kind: SpanKind.CLIENT });

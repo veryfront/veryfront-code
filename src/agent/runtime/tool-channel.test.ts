@@ -49,10 +49,10 @@ describe("getToolChannelProfile", () => {
     }
   });
 
-  it("recovers text tool calls for an unlisted provider without forcing one", () => {
+  it("does not recover text tool calls for an unlisted provider", () => {
     const profile = getToolChannelProfile("deepseek/deepseek-v3");
     assertEquals(profile.forceByDefault, false);
-    assertEquals(profile.recoverTextToolCalls, true);
+    assertEquals(profile.recoverTextToolCalls, false);
   });
 });
 

@@ -73,7 +73,7 @@ function createProfile(
 
 const HOLDS_CHANNEL = createProfile(false, false, "any");
 const HOLDS_CHANNEL_OPENAI = createProfile(false, false, "required");
-const DRIFTS_FROM_CHANNEL = createProfile(false, true, "any");
+const DRIFTS_FROM_CHANNEL = createProfile(false, false, "any");
 const NEEDS_FORCED_CHANNEL = createProfile(true, true, "any");
 
 /**

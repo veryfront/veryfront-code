@@ -357,7 +357,11 @@ import {
   resolveValidatedTurnInput,
 } from "./input-utils.ts";
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
-import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
+import type {
+  RuntimeGenerateTextResult,
+  RuntimeGenerateToolCall,
+  RuntimeGenerateToolResult,
+} from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import {
   summarizeErrorCausesForLog,
@@ -3774,6 +3778,10 @@ export class AgentRuntime {
       );
 
       const state = createStreamState();
+      let recoveredStreamingToolCalls: RuntimeGenerateToolCall[] | undefined;
+      const deferStreamingText = outputSchema === undefined &&
+        shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode) &&
+        runtimeToolNames.length > 0;
       // Hold a possible replay only while it remains a prefix of the text the
       // client already received. Once it diverges, resume live delivery.
       const deferInterruptedRecoveryOutput = step === interruptedLocalToolBatchRecoveryStep &&
@@ -3971,6 +3979,14 @@ export class AgentRuntime {
           }
           releaseDeferredRecoveryOutputAfterDivergence();
         },
+        onTextComplete: deferStreamingText
+          ? (text, emit) => {
+            recoveredStreamingToolCalls = state.toolCalls.size === 0
+              ? recoverTextEmittedToolCalls(text, new Set(runtimeToolNames))
+              : undefined;
+            if (recoveredStreamingToolCalls === undefined) emit();
+          }
+          : undefined,
         onUsage: (usage) => {
           accumulateUsage(totalUsage, usage);
           // Snapshot, not the live object: a later step must not mutate a total
@@ -3991,11 +4007,6 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
-      const recoveredStreamingToolCalls = outputSchema === undefined &&
-        shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode) &&
-        state.toolCalls.size === 0
-        ? recoverTextEmittedToolCalls(state.accumulatedText, new Set(runtimeToolNames))
-        : undefined;
       if (recoveredStreamingToolCalls !== undefined) {
         state.accumulatedText = "";
         state.finishReason = "tool-calls";
