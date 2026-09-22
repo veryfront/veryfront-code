@@ -608,6 +608,26 @@ describe("provider-http", () => {
       assertEquals(parseProviderError({ lastError: err }), expected);
     });
 
+    it("keeps a gateway EU inference policy refusal non-retryable at any status", async () => {
+      // The gateway answered this refusal with a 503 before it moved to 403.
+      // Either way the same request is refused again, so it must not read as
+      // an overload that a retry could clear.
+      for (const status of [403, 503]) {
+        const body = JSON.stringify({
+          error: 'Model "gpt-5" has no EU-member-state inference route',
+          code: "eu_inference_policy",
+          model: "gpt-5",
+        });
+        const err = await buildProviderError("openai", jsonResponse(status, body));
+
+        assertEquals(err instanceof ProviderRequestError, true, `status ${status}`);
+        assertEquals(err.status, status);
+        assertEquals(err.retryable, false, `status ${status}`);
+        assertEquals(err.responseBody, body);
+        assertEquals(err.message, `Provider request failed with status ${status}`);
+      }
+    });
+
     it("treats a JSON null error body as an unstructured request error", async () => {
       const err = await buildProviderError("openai", jsonResponse(400, "null"));
 
@@ -992,6 +1012,35 @@ describe("provider-http", () => {
 
       assertEquals(attempts, 2);
       assertEquals(await new Response(stream).text(), "chunk");
+    });
+
+    it("does not retry a gateway EU inference policy refusal", async () => {
+      for (const status of [403, 503]) {
+        let attempts = 0;
+        const error = await assertRejects(() =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                attempts === 1
+                  ? jsonResponse(status, {
+                    error: "No verified EU-member-state inference route is available",
+                    code: "eu_inference_policy",
+                    model: "gpt-5",
+                  })
+                  : new Response("chunk"),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+          })
+        );
+
+        assertEquals(attempts, 1, `status ${status}`);
+        assertEquals(parseProviderError(error).code, "MODEL_NOT_PERMITTED");
+      }
     });
 
     it("reports each stream retry to the active request observer", async () => {

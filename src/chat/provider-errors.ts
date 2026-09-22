@@ -9,6 +9,7 @@ import {
   AI_PROVIDER_SPEND_LIMIT_ERROR,
   AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   GATEWAY_PROJECT_REQUIRED_ERROR,
+  MODEL_NOT_PERMITTED_ERROR,
   MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR,
   OUTPUT_SCHEMA_NOT_CLOSED_ERROR,
   PROJECT_SCHEMA_ERROR,
@@ -161,6 +162,20 @@ function formatCreditProblemMessage(
   }`;
 }
 
+/** Model ids the policy refusal may echo; anything else gets the fixed wording. */
+const SAFE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;
+
+function modelNotPermittedError(model: unknown): ParsedProviderError {
+  if (typeof model !== "string" || !SAFE_MODEL_ID.test(model)) {
+    return { ...MODEL_NOT_PERMITTED_ERROR };
+  }
+  return {
+    ...MODEL_NOT_PERMITTED_ERROR,
+    message:
+      `Model "${model}" is not available under this project's inference policy (EU-only inference).`,
+  };
+}
+
 /** Parses known problem bodies without exposing provider-controlled text. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
@@ -171,6 +186,12 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   // this structured code. Its wording is fixed locally, never copied.
   if (getOwnDataProperty(body, "code") === "gateway_project_required") {
     return { ...GATEWAY_PROJECT_REQUIRED_ERROR };
+  }
+
+  // The gateway refuses a model its EU-only inference policy cannot route.
+  // Retrying cannot succeed, whatever status an older gateway sent (503).
+  if (getOwnDataProperty(body, "code") === "eu_inference_policy") {
+    return modelNotPermittedError(getOwnDataProperty(body, "model"));
   }
 
   const slugValue = getOwnDataProperty(body, "slug");

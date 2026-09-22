@@ -558,6 +558,7 @@ it("agent service routes preserve curated model setup error codes", async () => 
       ["overloaded-error", "OVERLOADED_ERROR", 503],
       ["context-length-exceeded", "CONTEXT_LENGTH_EXCEEDED", 413],
       ["ai-provider-billing-error", "AI_PROVIDER_BILLING_ERROR", 502],
+      ["model-not-permitted", "MODEL_NOT_PERMITTED", 403],
     ] as const
   ) {
     const error = new VeryfrontError("Synthetic model failure", {

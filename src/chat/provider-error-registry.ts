@@ -54,6 +54,13 @@ export const GATEWAY_PROJECT_REQUIRED_ERROR = {
   status: 400,
 } as const;
 
+export const MODEL_NOT_PERMITTED_ERROR = {
+  code: "MODEL_NOT_PERMITTED",
+  message:
+    "The selected model is not available under this project's inference policy (EU-only inference).",
+  status: 403,
+} as const;
+
 /** Codes transported across model boundaries; diagnostics are reconstructed locally. */
 export const CURATED_PROVIDER_FAILURE_CODES = [
   "OVERLOADED_ERROR",
@@ -69,6 +76,7 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
   "AI_PROVIDER_BILLING_ERROR",
   "GATEWAY_PROJECT_REQUIRED",
   "PROVIDER_OUTPUT_TRUNCATED",
+  "MODEL_NOT_PERMITTED",
 ] as const;
 export type CuratedProviderFailureCode = typeof CURATED_PROVIDER_FAILURE_CODES[number];
 
@@ -109,6 +117,7 @@ const failures = {
   AI_PROVIDER_BILLING_ERROR: AI_PROVIDER_BILLING_ERROR,
   GATEWAY_PROJECT_REQUIRED: GATEWAY_PROJECT_REQUIRED_ERROR,
   PROVIDER_OUTPUT_TRUNCATED: PROVIDER_OUTPUT_TRUNCATED_ERROR,
+  MODEL_NOT_PERMITTED: MODEL_NOT_PERMITTED_ERROR,
 } as const;
 
 /** Return fixed local diagnostics; provider payload/status values are never forwarded. */

@@ -588,6 +588,26 @@ function createProviderErrorBodyContext(
 }
 
 /**
+ * Classify a Veryfront Cloud gateway refusal under the EU-only inference
+ * policy. Older gateways sent it as a 503, which the status rules below would
+ * retry as an overload; the same request is refused every time.
+ */
+function classifyInferencePolicyRefusal(
+  context: ProviderErrorBodyContext,
+): ProviderError | undefined {
+  if (context.truncated || context.parsedBody?.code !== "eu_inference_policy") return undefined;
+  return preserveStructuredResponseBody(
+    new ProviderRequestError({
+      provider: context.provider,
+      status: context.status,
+      message: context.message,
+      retryable: false,
+    }),
+    context.rawBody,
+  );
+}
+
+/**
  * Classify Anthropic statuses whose retry behavior is fixed by HTTP status.
  */
 function classifyAnthropicStatus(
@@ -771,6 +791,9 @@ function buildProviderErrorFromBody(
   truncated: boolean,
 ): ProviderError {
   const context = createProviderErrorBodyContext(provider, response, rawBody, truncated);
+
+  const policyRefusal = classifyInferencePolicyRefusal(context);
+  if (policyRefusal !== undefined) return policyRefusal;
 
   // Anthropic 529 = overloaded. Anthropic surfaces this with
   // { error: { type: "overloaded_error" } } in the body.

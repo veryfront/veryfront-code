@@ -16,6 +16,68 @@ describe("chat/provider-errors", () => {
     );
   });
 
+  it("maps a gateway EU inference policy refusal to MODEL_NOT_PERMITTED naming the model", async () => {
+    const expected = {
+      code: "MODEL_NOT_PERMITTED",
+      message:
+        'Model "gpt-5" is not available under this project\'s inference policy (EU-only inference).',
+      status: 403,
+    };
+    // 403 is the gateway contract; 503 is what older gateways still send.
+    for (const status of [403, 503]) {
+      const providerError = await buildProviderError(
+        "openai",
+        new Response(
+          JSON.stringify({
+            error: "echoed secret text",
+            code: "eu_inference_policy",
+            model: "gpt-5",
+          }),
+          { status },
+        ),
+      );
+
+      assertEquals(parseProviderError(providerError), expected, `status ${status}`);
+      assertEquals(
+        parseProviderError({ lastError: providerError }),
+        expected,
+        `status ${status} through lastError`,
+      );
+    }
+  });
+
+  it("uses fixed wording for an EU inference policy refusal without a usable model id", () => {
+    const expected = {
+      code: "MODEL_NOT_PERMITTED",
+      message:
+        "The selected model is not available under this project's inference policy (EU-only inference).",
+      status: 403,
+    };
+    assertEquals(parseProviderError({ code: "eu_inference_policy", error: "text" }), expected);
+    for (const model of ["", 42, "a\nb", "<script>", "x".repeat(300)]) {
+      assertEquals(
+        parseProviderError({ code: "eu_inference_policy", model }),
+        expected,
+        `model ${JSON.stringify(model)}`,
+      );
+    }
+  });
+
+  it("keeps a real gateway overload as OVERLOADED_ERROR", async () => {
+    for (
+      const [provider, status] of [["openai", 503], ["anthropic", 529], ["anthropic", 503]] as const
+    ) {
+      const providerError = await buildProviderError(
+        provider,
+        new Response(JSON.stringify({ error: "Service unavailable" }), { status }),
+      );
+      assertEquals(parseProviderError(providerError), {
+        code: "OVERLOADED_ERROR",
+        message: "The LLM provider is currently overloaded",
+      });
+    }
+  });
+
   it("does not expose provider text from recognized problem bodies", async () => {
     for (const slug of ["insufficient-credits", "resource-limit-exceeded"]) {
       const problem = {
