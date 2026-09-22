@@ -33,6 +33,7 @@ import {
   getErrorBySlug,
   INVALID_ARGUMENT,
   RESOURCE_NOT_FOUND,
+  sanitizeTerminalDiagnosticText,
   VeryfrontError,
 } from "veryfront/errors";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -437,7 +438,10 @@ async function findOverwrittenLocalEdits(ops: readonly WriteOp[]): Promise<strin
 
 /** `a, b, c and 4 more`, so a large overwrite set stays readable. */
 function formatOverwrittenPaths(paths: readonly string[]): string {
-  const shown = paths.slice(0, OVERWRITE_LIST_LIMIT).join(", ");
+  const shown = paths
+    .slice(0, OVERWRITE_LIST_LIMIT)
+    .map(sanitizeTerminalDiagnosticText)
+    .join(", ");
   const remaining = paths.length - OVERWRITE_LIST_LIMIT;
   return remaining > 0 ? `${shown} and ${remaining} more` : shown;
 }
@@ -665,6 +669,7 @@ async function confirmPullWrite(
   deleteCount: number,
   bootstrapWriteCount: number,
   overwrittenLocalEdits: readonly string[] = [],
+  quiet = false,
 ): Promise<boolean> {
   if (isInteractive() && !isTTY()) {
     throw INVALID_ARGUMENT.create({
@@ -683,7 +688,9 @@ async function confirmPullWrite(
   const action = actions.join(" and ");
   // The overwrite list goes above the prompt rather than inside it: the answer
   // to "continue?" depends on which of the user's own edits are in it.
-  if (overwrittenLocalEdits.length > 0) warnOverwrittenLocalEdits(overwrittenLocalEdits);
+  if (!quiet && overwrittenLocalEdits.length > 0) {
+    warnOverwrittenLocalEdits(overwrittenLocalEdits);
+  }
   return await confirmPrompt(`This will ${action} in ${projectDir}. Continue?`, false);
 }
 
@@ -864,6 +871,7 @@ async function pullSingleProject(
       deleteOps.length,
       bootstrapPlan.writeCount,
       overwrittenLocalEdits,
+      quiet,
     );
     if (!confirmed) {
       cliLogger.info("Pull cancelled.");
