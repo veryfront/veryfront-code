@@ -206,6 +206,16 @@ function parseVersionParts(value: string): VersionParts | null {
         stripped,
       );
   if (!match || (match[4] !== undefined && match[3] === undefined)) return null;
+  const coreParts = [match[1], match[2], match[3]].filter((part): part is string =>
+    part !== undefined
+  );
+  if (coreParts.some((part) => part.length > 1 && part.startsWith("0"))) return null;
+  const prereleaseParts = match[4]?.split(".") ?? [];
+  if (
+    prereleaseParts.some((part) => /^\d+$/.test(part) && part.length > 1 && part.startsWith("0"))
+  ) {
+    return null;
+  }
   const parts = [match[1], match[2] ?? "0", match[3] ?? "0"].map(Number);
   if (parts.some((part) => !Number.isSafeInteger(part))) return null;
   return {
@@ -213,8 +223,15 @@ function parseVersionParts(value: string): VersionParts | null {
     minor: parts[1]!,
     patch: parts[2]!,
     precision: match[3] === undefined ? (match[2] === undefined ? 1 : 2) : 3,
-    prerelease: match[4]?.split(".") ?? [],
+    prerelease: prereleaseParts,
   };
+}
+
+function declaredValue(
+  section: Readonly<Record<string, string>>,
+  name: string,
+): string | undefined {
+  return Object.hasOwn(section, name) ? section[name] : undefined;
 }
 
 function normalizeNpmPartialRange(value: string): string {
@@ -408,10 +425,10 @@ function tightenedPins(
   ]);
 
   for (const name of names) {
-    const beforeDep = baseline.dependencies[name];
-    const beforeDev = baseline.devDependencies[name];
-    const afterDep = remote.dependencies[name];
-    const afterDev = remote.devDependencies[name];
+    const beforeDep = declaredValue(baseline.dependencies, name);
+    const beforeDev = declaredValue(baseline.devDependencies, name);
+    const afterDep = declaredValue(remote.dependencies, name);
+    const afterDev = declaredValue(remote.devDependencies, name);
     // Untouched in both sections, including a name declared in both and left
     // alone by the write.
     if (beforeDep === afterDep && beforeDev === afterDev) continue;

@@ -188,6 +188,26 @@ describe("classifyPackageJsonDrift", () => {
     );
   });
 
+  it("rejects SemVer identifiers with leading zeroes", () => {
+    const resolved = apiWrite({ name: "demo", dependencies: { react: "1.3.0" } });
+    assertEquals(
+      classifyPackageJsonDrift(
+        apiWrite({ name: "demo", dependencies: { react: "^01.2.3" } }),
+        resolved,
+        [{ react: "^01.2.3" }, { react: "1.3.0" }],
+      ),
+      "user-edit",
+    );
+    assertEquals(
+      classifyPackageJsonDrift(
+        apiWrite({ name: "demo", dependencies: { react: "^1.2.3-01" } }),
+        apiWrite({ name: "demo", dependencies: { react: "1.2.3-1" } }),
+        [{ react: "^1.2.3-01" }, { react: "1.2.3-1" }],
+      ),
+      "user-edit",
+    );
+  });
+
   it("keeps ^0.0 ranges below the next minor", () => {
     const baseline = apiWrite({ name: "demo", dependencies: { react: "^0.0" } });
     const inRange = apiWrite({ name: "demo", dependencies: { react: "0.0.9" } });
@@ -314,6 +334,18 @@ describe("classifyPackageJsonDrift", () => {
         { react: "19.3.0" },
       ]),
       "user-edit",
+    );
+  });
+
+  it("treats dependency names inherited from Object.prototype as absent", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { constructor: "^1.2.3" } });
+    const remote = apiWrite({ name: "demo", dependencies: { constructor: "1.3.0" } });
+    assertEquals(
+      classifyPackageJsonDrift(baseline, remote, [
+        { constructor: "^1.2.3" },
+        { constructor: "1.3.0" },
+      ]),
+      "server-pins",
     );
   });
 
