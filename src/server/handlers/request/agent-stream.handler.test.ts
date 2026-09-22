@@ -3967,6 +3967,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       token: "request-scoped-user-token",
     });
     assertEquals(observedEnvironmentTargetKeys, [
+      "executionEnvironmentId",
       "runtimeTargetBranchId",
       "runtimeTargetEnvironmentId",
       "runtimeTargetKind",
@@ -4790,29 +4791,63 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
-  it("loads preview variables for a main-branch agent without exposing production secrets", async () => {
+  it("does not discover or inject production secrets for a branch source", async () => {
+    let fetchCalls = 0;
+    installMockFetch(
+      (() => {
+        fetchCalls += 1;
+        return Promise.reject(new Error("branch source must not fetch an environment"));
+      }) as typeof fetch,
+    );
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "branch-project-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 404);
+      assertEquals(fetchCalls, 0);
+    } finally {
+      restoreMockFetch();
+    }
+  });
+
+  it("loads only the explicitly bound environment for a branch agent", async () => {
     const calls: string[] = [];
     let capturedKey: string | undefined;
     let capturedProductionKey: string | undefined;
     installMockFetch(
       ((url) => {
         calls.push(String(url));
-        if (String(url).endsWith("/projects/preview-env-regression/environments")) {
-          return Promise.resolve(Response.json({
-            data: [
-              { id: "env-preview-regression", name: "preview" },
-              { id: "env-production-regression", name: "production" },
-            ],
-          }));
-        }
         if (
           String(url).includes(
-            "/projects/preview-env-regression/environment-variables?environment_id=env-preview-regression&",
+            "/projects/preview-env-regression/environment-variables?environment_id=10000000-1000-4000-8000-100000000071&",
           )
         ) {
           return Promise.resolve(Response.json({
             data: [
-              { key: "TYPESAFE_API_KEY", value: "preview-jev-key" },
+              { key: "CUSTOM_SERVICE_KEY", value: "configured-service-key" },
             ],
           }));
         }
@@ -4826,7 +4861,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       sessionManager: new AgentRunSessionManager(),
       createRuntime: () => ({
         stream: async (_messages, _context, callbacks) => {
-          capturedKey = getEnv("TYPESAFE_API_KEY");
+          capturedKey = getEnv("CUSTOM_SERVICE_KEY");
           capturedProductionKey = getEnv("PRODUCTION_ONLY_KEY");
           callbacks?.onFinish?.({
             text: "ok",
@@ -4845,6 +4880,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     const body = createAgentStreamRequestBody({
       credentials: { authToken: "branch-project-token" },
+      project: { executionEnvironmentId: "10000000-1000-4000-8000-100000000071" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
       audience: "preview-env-regression",
@@ -4862,9 +4898,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       await result.response.text();
-      assertEquals(capturedKey, "preview-jev-key");
+      assertEquals(capturedKey, "configured-service-key");
       assertEquals(capturedProductionKey, undefined);
-      assertEquals(calls.length, 2);
+      assertEquals(calls.length, 1);
       assertEquals(calls.some((url) => url.includes("env-production-regression")), false);
     } finally {
       restoreMockFetch();
@@ -4877,11 +4913,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
     installMockFetch(
       ((url) => {
         calls.push(String(url));
-        if (String(url).endsWith("/projects/denied-preview-env/environments")) {
-          return Promise.resolve(
-            Response.json({ data: [{ id: "denied-preview-id", name: "preview" }] }),
-          );
-        }
         return Promise.resolve(new Response("Forbidden", { status: 403 }));
       }) as typeof fetch,
     );
@@ -4896,6 +4927,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     const body = createAgentStreamRequestBody({
       credentials: { authToken: "denied-project-token" },
+      project: { executionEnvironmentId: "10000000-1000-4000-8000-100000000072" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
       audience: "denied-preview-env",
@@ -4913,7 +4945,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 403);
       assertEquals(discoveryCalls, 0);
-      assertEquals(calls.length, 2);
+      assertEquals(calls.length, 1);
     } finally {
       restoreMockFetch();
     }
