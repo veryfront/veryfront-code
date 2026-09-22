@@ -344,6 +344,11 @@ describe("agent/data-stream", () => {
     );
   });
 
+  it("replaces a malformed double-closed stream with the final canonical object", () => {
+    assertEquals(mergeToolCallInput('{}""', "{}"), "{}");
+    assertEquals(mergeToolCallInput('{"path":"report.md"}""', "{}"), "{}");
+  });
+
   // ============================================================================
   // Regression tests for the false-overlap drop bug observed in staging on
   // 2026-04-15. The streamed-tool-call classifier from PR #1082 surfaced

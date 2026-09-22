@@ -6,6 +6,7 @@ import {
   MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
   MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS,
   type OpenAIStreamToolArgumentBudget,
+  stripDoubleClosedToolArguments,
 } from "./openai-tool-input.ts";
 
 function emptyBudget(): OpenAIStreamToolArgumentBudget {
@@ -13,6 +14,29 @@ function emptyBudget(): OpenAIStreamToolArgumentBudget {
 }
 
 describe("ext-llm-openai/openai-tool-input", () => {
+  // DeepSeek on Azure AI Foundry closes a no-argument tool call twice: it writes
+  // `{}` and then the JSON encoding of an empty string. Every agent that offered
+  // a tool with an empty parameter schema failed the whole request on this.
+  it("drops the empty JSON string DeepSeek appends after complete tool arguments", () => {
+    assertEquals(stripDoubleClosedToolArguments('{}""'), "{}");
+    assertEquals(stripDoubleClosedToolArguments('{"a":1}""'), '{"a":1}');
+    assertEquals(stripDoubleClosedToolArguments('{} ""'), "{}");
+  });
+
+  it("leaves tool arguments that already parse untouched", () => {
+    for (const text of ["{}", '{"path":""}', '{"a":"x\\"\\""}', '{"a":["",""]}']) {
+      assertEquals(stripDoubleClosedToolArguments(text), text);
+    }
+  });
+
+  it("leaves arguments that stay invalid after the suffix untouched", () => {
+    // Nothing is salvaged when the text in front of the suffix is not a
+    // complete JSON object, so a genuinely truncated stream still fails.
+    for (const text of ['""', '{"a":""', '[]""', 'null""', '{"a":1}{"b":2}']) {
+      assertEquals(stripDoubleClosedToolArguments(text), text);
+    }
+  });
+
   it("accepts far more non-empty fragments than the fragment cap while under the byte budget", () => {
     // The provider's tokenizer decides how finely arguments are chunked, so a
     // caller cannot control fragment count. Counting non-empty fragments against

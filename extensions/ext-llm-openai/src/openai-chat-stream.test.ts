@@ -35,6 +35,135 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-chat-stream", () => {
+  // Verbatim frame shape from DeepSeek v4 Flash on Azure AI Foundry for a tool
+  // whose parameter schema is empty: the opening fragment carries the id and
+  // name with empty arguments, the next carries the object `{}`, and a third
+  // carries the JSON encoding of an empty string. Joined naively the arguments
+  // read `{}""`, which fails the JSON object check and kills the whole request
+  // at zero tool calls.
+  it("accepts the doubly closed empty arguments DeepSeek streams for a no-argument tool", async () => {
+    const parts = await collectParts(streamFromText([
+      data({
+        choices: [{
+          index: 0,
+          delta: { reasoning_content: null, role: "assistant", content: "" },
+          finish_reason: null,
+        }],
+      }),
+      data({
+        choices: [{
+          index: 0,
+          delta: {
+            role: null,
+            content: null,
+            reasoning_content: null,
+            tool_calls: [{
+              id: "call_recovery_fixture",
+              index: 0,
+              type: "function",
+              function: { name: "test__list_items", arguments: "" },
+            }],
+          },
+          finish_reason: null,
+        }],
+        usage: null,
+      }),
+      data({
+        choices: [{
+          index: 0,
+          delta: {
+            role: null,
+            content: null,
+            reasoning_content: null,
+            tool_calls: [{
+              id: null,
+              index: 0,
+              type: "function",
+              function: { name: null, arguments: "{}" },
+            }],
+          },
+          finish_reason: null,
+        }],
+        usage: null,
+      }),
+      data({
+        choices: [{
+          index: 0,
+          delta: {
+            role: null,
+            content: null,
+            reasoning_content: null,
+            tool_calls: [{
+              id: null,
+              index: 0,
+              type: "function",
+              function: { name: null, arguments: '""' },
+            }],
+          },
+          finish_reason: null,
+        }],
+        usage: null,
+      }),
+      data({
+        choices: [{ index: 0, delta: { reasoning_content: null }, finish_reason: "tool_calls" }],
+      }),
+      data({
+        choices: [],
+        usage: { prompt_tokens: 333, completion_tokens: 33, total_tokens: 366 },
+      }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(
+      parts.filter((part) => (part as { type?: string }).type === "tool-call"),
+      [{
+        type: "tool-call",
+        toolCallId: "call_recovery_fixture",
+        toolName: "test__list_items",
+        input: "{}",
+      }],
+    );
+    // The failure also dropped usage, because the throw happened before the
+    // finish part that carries it.
+    assertEquals(
+      parts.filter((part) => (part as { type?: string }).type === "finish"),
+      [{
+        type: "finish",
+        finishReason: { unified: "tool-calls", raw: "tool_calls" },
+        usage: { inputTokens: 333, outputTokens: 33, totalTokens: 366 },
+      }],
+    );
+  });
+
+  it("still rejects tool arguments that stay invalid after the DeepSeek suffix", async () => {
+    await assertRejects(
+      async () =>
+        await collectParts(streamFromText([
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "call_truncated",
+                  type: "function",
+                  function: { name: "save", arguments: '{"path":' },
+                }],
+              },
+            }],
+          }),
+          data({
+            choices: [{
+              delta: { tool_calls: [{ index: 0, function: { arguments: '""' } }] },
+            }],
+          }),
+          data({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+          "data: [DONE]\r\n\r\n",
+        ].join(""))),
+      ProviderRequestError,
+      "tool call arguments were not valid JSON object text",
+    );
+  });
+
   // Retention is bounded by bytes, not by how finely the provider chunks the
   // stream: a per-delta count is a wall-clock limit for long generations.
   it("accepts tool arguments and text streamed as 20,000 small deltas each", async () => {
