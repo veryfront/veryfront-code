@@ -724,10 +724,19 @@ async function processActiveStream(
 ): Promise<void> {
   const deferTextDelivery = callbacks?.onTextComplete !== undefined;
   const deferredText: string[] = [];
+  let deferredTextSegmentIndex = 0;
+  const emitBufferedText = (text: string) => {
+    if (text.length === 0) return;
+    const segmentId = textPartId === undefined || deferredTextSegmentIndex === 0
+      ? textPartId
+      : `${textPartId}:${deferredTextSegmentIndex}`;
+    deferredTextSegmentIndex += 1;
+    emitDeferredText(controller, encoder, segmentId, text, callbacks?.onChunk);
+  };
   const releaseDeferredText = () => {
     const text = deferredText.join("");
     deferredText.length = 0;
-    emitDeferredText(controller, encoder, textPartId, text, callbacks?.onChunk);
+    emitBufferedText(text);
   };
   const baseAdapter = createRuntimeStreamProviderAdapter({
     open: (signal) => source.open(signal).fullStream,
@@ -803,7 +812,9 @@ async function processActiveStream(
             break;
           }
         }
-        if (hasNonTextEvent) callbacks.onTextBoundary?.(releaseDeferredText);
+        if (hasNonTextEvent && deferredText.length > 0) {
+          callbacks.onTextBoundary?.(releaseDeferredText);
+        }
       }
       for (let index = 0; index < events.length; index++) {
         if (!hasOwn(events, index)) continue;
@@ -830,7 +841,7 @@ async function processActiveStream(
       finalizeActiveUnresolvedProviderToolCalls(state, controller, encoder);
       if (deferTextDelivery) {
         callbacks.onTextComplete!(completedText ?? "", () => {
-          emitDeferredText(controller, encoder, textPartId, completedText ?? "", callbacks.onChunk);
+          emitBufferedText(completedText ?? "");
         });
       }
     }
@@ -925,10 +936,19 @@ export function processStreamInternal(
   const process = async () => {
     const deferTextDelivery = callbacks?.onTextComplete !== undefined;
     const deferredText: string[] = [];
+    let deferredTextSegmentIndex = 0;
+    const emitBufferedText = (text: string) => {
+      if (text.length === 0) return;
+      const segmentId = textPartId === undefined || deferredTextSegmentIndex === 0
+        ? textPartId
+        : `${textPartId}:${deferredTextSegmentIndex}`;
+      deferredTextSegmentIndex += 1;
+      emitDeferredText(controller, encoder, segmentId, text, callbacks?.onChunk);
+    };
     const releaseDeferredText = () => {
       const text = deferredText.join("");
       deferredText.length = 0;
-      emitDeferredText(controller, encoder, textPartId, text, callbacks?.onChunk);
+      emitBufferedText(text);
     };
     let eventCount = 0;
     let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
@@ -1318,7 +1338,9 @@ export function processStreamInternal(
         const typedPart = part as RuntimeStreamPart;
 
         if (typedPart.type.startsWith("data-")) {
-          if (deferTextDelivery) callbacks.onTextBoundary?.(releaseDeferredText);
+          if (deferTextDelivery && deferredText.length > 0) {
+            callbacks.onTextBoundary?.(releaseDeferredText);
+          }
           sendSSE(controller, encoder, {
             type: typedPart.type,
             data: "data" in typedPart ? typedPart.data : undefined,
@@ -1327,7 +1349,8 @@ export function processStreamInternal(
         }
 
         if (
-          deferTextDelivery && typedPart.type !== "text-delta" && typedPart.type !== "finish"
+          deferTextDelivery && deferredText.length > 0 && typedPart.type !== "text-delta" &&
+          typedPart.type !== "finish"
         ) {
           callbacks.onTextBoundary?.(releaseDeferredText);
         }
@@ -1856,7 +1879,7 @@ export function processStreamInternal(
     if (deferTextDelivery) {
       const text = deferredText.join("");
       callbacks.onTextComplete!(text, () => {
-        emitDeferredText(controller, encoder, textPartId, text, callbacks.onChunk);
+        emitBufferedText(text);
       });
     }
   };
