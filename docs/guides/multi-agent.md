@@ -11,7 +11,9 @@ Veryfront supports two agent composition patterns:
 
 Use delegation when the parent should choose the order at runtime. Use a workflow when the order is known in advance.
 
-Each agent can omit `model` and use `openai/gpt-5.4-nano`, set `"auto"` for runtime selection, or set an explicit `provider/model` override when you need one.
+Each agent can omit `model` to use the Cloud default (`mistral/mistral-small-2503`)
+with hosted context, or `openai/gpt-5.4-nano` with direct credentials. Set `"auto"`
+for runtime selection, or set an explicit `provider/model` override.
 
 ## Prerequisites
 

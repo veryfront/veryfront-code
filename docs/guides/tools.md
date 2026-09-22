@@ -163,7 +163,8 @@ private loaded-tool checkpoint. It fails the continuation if required
 persistence is unavailable, and it excludes the checkpoint from public
 messages and replay.
 
-In most projects, you can omit `model` and use `openai/gpt-5.4-nano`. Set
+Omit `model` to use the Cloud default (`mistral/mistral-small-2503`) with hosted
+context, or `openai/gpt-5.4-nano` with direct credentials. Set
 `model: "auto"` when you want runtime defaults to choose local or Veryfront
 Cloud inference automatically.
 

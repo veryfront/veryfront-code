@@ -1,3 +1,4 @@
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -221,6 +222,49 @@ describe("internal-agents/run-stream", () => {
     _resetShimForTests();
     skillRegistryInternal.clearAll();
     toolRegistryInternal.clearAll();
+  });
+
+  it("preserves an omitted hosted model through the durable runtime clone", async () => {
+    const source = createAgent({
+      id: "durable-hosted-default",
+      system: "Reply briefly.",
+      skills: false,
+      tools: {},
+    });
+    let clonedModel = "";
+    await runWithVeryfrontCloudContext(
+      { apiToken: "vf_test", projectSlug: "test-project" },
+      async () => {
+        const response = await createRuntimeAgentStreamResponse(
+          {
+            threadId: crypto.randomUUID(),
+            runId: "run_default_clone",
+            messages: [],
+            tools: [],
+            context: [],
+          },
+          source,
+          {
+            sessionManager: new AgentRunSessionManager(),
+            createRuntime: (runtimeAgent) => {
+              clonedModel = runtimeAgent.config.model;
+              return {
+                stream: () =>
+                  Promise.resolve(
+                    new ReadableStream<Uint8Array>({
+                      start(controller) {
+                        controller.close();
+                      },
+                    }),
+                  ),
+              };
+            },
+          },
+        );
+        await response.text();
+      },
+    );
+    assertEquals(clonedModel, "veryfront-cloud/mistral/mistral-small-2503");
   });
 
   it("dispatches canonical control-plane wrappers under an integration deny-all policy", async () => {

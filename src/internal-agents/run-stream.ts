@@ -1,3 +1,5 @@
+import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
+import { resolveConfiguredAgentModel } from "#veryfront/agent/runtime/model-resolution.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import {
   markTrustedHostToolProvenance,
@@ -1043,6 +1045,8 @@ export async function createRuntimeAgentStreamResponse(
   const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
   let shouldEmitProviderReplayCheckpoints = false;
   try {
+    const executionModel = getAgentExecutionConfig(agent.config).model ??
+      resolveConfiguredAgentModel();
     const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
     const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
     const sourceRemoteFilterBase = Object.hasOwn(agent.config, "__vfAllowedRemoteTools")
@@ -1134,7 +1138,7 @@ export async function createRuntimeAgentStreamResponse(
         )
         : []);
     const modelSupportedProviderToolNames = new Set(
-      getProviderNativeToolNames({ model: agent.config.model }),
+      getProviderNativeToolNames({ model: executionModel }),
     );
     const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
       modelSupportedProviderToolNames.has(toolName) &&
@@ -1159,7 +1163,7 @@ export async function createRuntimeAgentStreamResponse(
         ]),
       ].sort(compareStrings),
       {
-        model: agent.config.model,
+        model: executionModel,
         requiredToolNames: localToolNames,
       },
     );
@@ -1187,7 +1191,7 @@ export async function createRuntimeAgentStreamResponse(
         { preserveRuntimeContextMarker: true },
       );
       return composeInternalAgentRunSystemPrompt({
-        agent,
+        agent: { ...agent, config: { ...agent.config, model: executionModel } },
         resolvedBaseSystem,
         runInput: input,
         projectId: deps.projectAgentSandbox?.projectId ?? null,
@@ -1218,6 +1222,7 @@ export async function createRuntimeAgentStreamResponse(
       ...agent,
       config: {
         ...agent.config,
+        model: executionModel,
         system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
         ...(Array.isArray(agent.config.providerTools) ? { providerTools: providerToolNames } : {}),
