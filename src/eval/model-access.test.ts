@@ -283,34 +283,76 @@ describe("eval/model-access", () => {
     assertEquals(await classifyStatus(403), "forbidden");
   });
 
-  it("keeps a gateway EU inference policy refusal out of the credential denials", async () => {
+  it("classifies a gateway EU inference policy refusal as a policy denial", async () => {
     // The gateway refuses a model its EU-only policy cannot route with a 403
-    // (older gateways: 503). That is not a credential or project access problem.
-    for (const status of [403, 503]) {
-      let error: unknown;
+    // (older gateways: 503). Every later record uses the same model, and this
+    // is not a credential or project access problem.
+    const refuse = async (status: number, body: Record<string, unknown>) => {
       try {
         await requestJson({
           url: `${veryfrontApiOrigin()}/ai/gateway/openai/v1/chat/completions`,
           fetchImpl: () =>
-            Promise.resolve(
-              markVeryfrontGatewayResponse(
-                jsonResponse(status, {
-                  error: "No route",
-                  code: "eu_inference_policy",
-                  model: "gpt-5",
-                }),
-              ),
-            ),
+            Promise.resolve(markVeryfrontGatewayResponse(jsonResponse(status, body))),
           init: { method: "POST", body: "{}" },
           providerLabel: "veryfront-cloud",
           providerKind: "openai",
         });
-      } catch (caught) {
-        error = caught;
+      } catch (error) {
+        return error;
       }
+      throw new Error("expected the request to reject");
+    };
 
-      assertEquals(error === undefined, false, `status ${status}`);
-      assertEquals(classifyEvalModelAccessDenial(error), undefined, `status ${status}`);
+    for (const status of [403, 503]) {
+      assertEquals(
+        classifyEvalModelAccessDenial(
+          await refuse(status, { error: "No route", code: "eu_inference_policy", model: "gpt-5" }),
+        ),
+        {
+          kind: "inference-policy",
+          code: "MODEL_NOT_PERMITTED",
+          message:
+            'Model "gpt-5" is not available under this project\'s inference policy (EU-only inference).',
+        },
+        `status ${status}`,
+      );
+    }
+    const tools = classifyEvalModelAccessDenial(
+      await refuse(503, { error: "Tools disabled", code: "eu_inference_policy" }),
+    );
+    assertEquals(tools?.kind, "inference-policy");
+    assertEquals(tools?.code, "INFERENCE_POLICY_DENIED");
+
+    const error = createEvalModelAccessDeniedError("eval:a", tools!, undefined);
+    assertEquals(error.slug, "eval-model-inference-policy-denied");
+    assertEquals(getEvalModelAccessDenialKind(error), "inference-policy");
+  });
+
+  it("classifies EU inference policy codes that crossed a runtime boundary", () => {
+    for (
+      const [slug, code] of [
+        ["model-not-permitted", "MODEL_NOT_PERMITTED"],
+        ["inference-policy-denied", "INFERENCE_POLICY_DENIED"],
+      ] as const
+    ) {
+      const curated = new VeryfrontError("untrusted text", {
+        slug,
+        category: "AGENT",
+        status: 403,
+        title: "Synthetic",
+      });
+      const denial = classifyEvalModelAccessDenial(curated);
+      assertEquals(denial?.kind, "inference-policy", slug);
+      assertEquals(denial?.code, code, slug);
+
+      const runError = classifyAgentServiceModelAccessDenial({
+        status: 200,
+        body: null,
+        runErrorCode: code,
+        runErrorMessage: "untrusted endpoint text",
+      });
+      assertEquals(runError?.kind, "inference-policy", code);
+      assertEquals(runError?.message.includes("untrusted"), false, code);
     }
   });
 

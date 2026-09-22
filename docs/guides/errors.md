@@ -890,6 +890,13 @@ No access to the linked project for eval run.
 - **HTTP status:** 403
 - **What to do:** Ensure your account can access the linked project. Check the project slug in veryfront.json, the project link, or VERYFRONT_PROJECT_SLUG, then run the eval again
 
+### eval-model-inference-policy-denied
+
+Eval model request refused by inference policy.
+
+- **HTTP status:** 403
+- **What to do:** The project allows EU-only inference. Choose a model with an EU inference route and remove provider-executed tools, such as provider web search, from the eval target, then run the eval again
+
 ### eval-record-timeout
 
 Eval record timed out.

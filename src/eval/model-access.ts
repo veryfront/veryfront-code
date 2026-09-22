@@ -1,6 +1,7 @@
 import {
   EVAL_MODEL_ACCESS_DENIED,
   EVAL_MODEL_EGRESS_BLOCKED,
+  EVAL_MODEL_INFERENCE_POLICY_DENIED,
   EVAL_MODEL_PROJECT_ACCESS_DENIED,
   EVAL_MODEL_SPEND_LIMIT_EXCEEDED,
   EVAL_MODEL_UNAUTHORIZED,
@@ -8,7 +9,11 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
-import { registeredProviderFailure } from "#veryfront/chat/provider-error-registry.ts";
+import {
+  curatedProviderFailure,
+  type CuratedProviderFailureCode,
+  registeredProviderFailure,
+} from "#veryfront/chat/provider-error-registry.ts";
 import {
   getModelRequestTransportFailureUrl,
   isVeryfrontGatewayTransportFailure,
@@ -28,7 +33,8 @@ export type EvalModelAccessDenialKind =
   | "project-required"
   | "unauthorized"
   | "forbidden"
-  | "egress-blocked";
+  | "egress-blocked"
+  | "inference-policy";
 
 /** Refusal that every later eval record would hit the same way. */
 export interface EvalModelAccessDenial {
@@ -44,6 +50,7 @@ const DENIAL_ERRORS = {
   unauthorized: EVAL_MODEL_UNAUTHORIZED,
   forbidden: EVAL_MODEL_PROJECT_ACCESS_DENIED,
   "egress-blocked": EVAL_MODEL_EGRESS_BLOCKED,
+  "inference-policy": EVAL_MODEL_INFERENCE_POLICY_DENIED,
 } as const;
 
 const UNAUTHORIZED_DENIAL: EvalModelAccessDenial = {
@@ -198,20 +205,32 @@ function classifyOutboundRequestBlocked(
   return EGRESS_BLOCKED_DENIAL;
 }
 
-const EU_INFERENCE_POLICY_CODE = "eu_inference_policy";
+/** Curated codes for the gateway's EU-only inference policy refusals. */
+const INFERENCE_POLICY_CODES: ReadonlySet<string> = new Set([
+  "MODEL_NOT_PERMITTED",
+  "INFERENCE_POLICY_DENIED",
+]);
+
+function toInferencePolicyDenial(
+  failure: { code: string; message: string } | null | undefined,
+): EvalModelAccessDenial | undefined {
+  if (!failure || !INFERENCE_POLICY_CODES.has(failure.code)) return undefined;
+  return { kind: "inference-policy", code: failure.code, message: failure.message };
+}
 
 function classifyProviderError(error: ProviderError): EvalModelAccessDenial | undefined {
   // The gateway fetch marks its own responses, which covers a gateway built
   // with an explicit per-model base URL; the configured route is the fallback.
   const fromGateway = error.viaVeryfrontGateway === true ||
     isVeryfrontGatewayRoute(error.requestUrl);
-  // An EU-only inference policy refusal (403) is not a credential or project
-  // access denial; the record fails with the runtime's own policy error.
-  if (
-    typeof error.responseBody === "string" &&
-    readProperty(parseJsonBody(error.responseBody), "code") === EU_INFERENCE_POLICY_CODE
-  ) {
-    return undefined;
+  // The provider runtime keeps an `eu_inference_policy` body only from the
+  // gateway. The refusal (403, or 503 from older gateways) is not a credential
+  // or project access denial.
+  if (typeof error.responseBody === "string") {
+    const policy = toInferencePolicyDenial(
+      parseKnownProblemBody(parseJsonBody(error.responseBody)),
+    );
+    if (policy) return policy;
   }
   if (error.status === 401 || error.status === 403) {
     return fromGateway ? statusDenial(error.status) : undefined;
@@ -247,6 +266,10 @@ function findDenial(
   // not prove a Veryfront gateway source for billing codes. Only the
   // project-required code is gateway-specific.
   if (registered?.code === GATEWAY_PROJECT_REQUIRED_CURATED_CODE) return PROJECT_REQUIRED_DENIAL;
+  // The EU inference policy codes are gateway-specific too; only the fixed
+  // wording crosses the boundary.
+  const policy = toInferencePolicyDenial(registered);
+  if (policy) return policy;
   if (registered) return undefined;
 
   for (const key of ["lastError", "cause"]) {
@@ -302,6 +325,12 @@ export function classifyAgentServiceModelAccessDenial(input: {
     if (input.runErrorCode === GATEWAY_PROJECT_REQUIRED_CURATED_CODE) {
       // Streaming agent services report the gateway refusal as a RUN_ERROR.
       return PROJECT_REQUIRED_DENIAL;
+    }
+    if (typeof input.runErrorCode === "string" && INFERENCE_POLICY_CODES.has(input.runErrorCode)) {
+      // Fixed local wording; the endpoint's RUN_ERROR text is not trusted.
+      return toInferencePolicyDenial(
+        curatedProviderFailure(input.runErrorCode as CuratedProviderFailureCode),
+      );
     }
     // A curated billing code on RUN_ERROR (INSUFFICIENT_CREDITS, spend limit)
     // is not classified: the stream can derive it from any provider's failure,
