@@ -294,6 +294,13 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, resolved, history), "server-pins");
   });
 
+  it("accepts resolver-supported dist-tags", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { zod: "next" } });
+    const resolved = apiWrite({ name: "demo", dependencies: { zod: "4.0.0-beta.1" } });
+    const history = [{ zod: "next" }, { zod: "4.0.0-beta.1" }];
+    assertEquals(classifyPackageJsonDrift(baseline, resolved, history), "server-pins");
+  });
+
   it("keeps strict full-version comparators exclusive", () => {
     const baseline = apiWrite({ name: "demo", dependencies: { react: ">1.2.3" } });
     const exactBase = apiWrite({ name: "demo", dependencies: { react: "1.2.3" } });

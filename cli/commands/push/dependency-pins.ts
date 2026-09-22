@@ -322,6 +322,10 @@ function allowsPrerelease(version: VersionParts, range: VersionParts): boolean {
     version.minor === range.minor && version.patch === range.patch;
 }
 
+function isNpmDistTag(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && parseVersionParts(value) === null;
+}
+
 /**
  * Whether `version` satisfies the single npm range token `range`, using the
  * platform resolver's semantics.
@@ -337,7 +341,8 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
 
   const parsed = parseVersionParts(version);
   if (parsed === null) return false;
-  if (trimmed === "*" || trimmed === "latest") return parsed.prerelease.length === 0;
+  if (trimmed === "*") return parsed.prerelease.length === 0;
+  if (isNpmDistTag(trimmed)) return true;
 
   if (trimmed.startsWith("^")) {
     const inner = trimmed.slice(1);
