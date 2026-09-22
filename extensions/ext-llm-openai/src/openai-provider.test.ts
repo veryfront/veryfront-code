@@ -517,9 +517,9 @@ describe("openai-provider", () => {
                   role: "assistant",
                   content: null,
                   tool_calls: [{
-                    id: "call_0ab27bf831704baf9daaccef",
+                    id: "call_recovery_fixture",
                     type: "function",
-                    function: { name: "outlook__list_folders", arguments: '{}""' },
+                    function: { name: "test__list_items", arguments: '{}""' },
                   }],
                 },
               }],

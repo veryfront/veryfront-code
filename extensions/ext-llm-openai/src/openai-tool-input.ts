@@ -47,7 +47,9 @@ export function isJsonObjectText(value: string): boolean {
   }
 }
 
-const EMPTY_JSON_STRING_SUFFIX = /\s*""\s*$/;
+function isWhitespaceCharacter(value: string | undefined): boolean {
+  return value !== undefined && /\s/.test(value);
+}
 
 /**
  * Drop the empty JSON string some providers append after a complete tool call.
@@ -67,10 +69,15 @@ export function stripDoubleClosedToolArguments(text: string): string {
   if (isJsonObjectText(text)) {
     return text;
   }
-  const match = EMPTY_JSON_STRING_SUFFIX.exec(text);
-  if (!match) {
+
+  let suffixEnd = text.length;
+  while (suffixEnd > 0 && isWhitespaceCharacter(text[suffixEnd - 1])) suffixEnd--;
+  if (suffixEnd < 2 || text[suffixEnd - 1] !== '"' || text[suffixEnd - 2] !== '"') {
     return text;
   }
-  const head = text.slice(0, match.index);
+
+  let headEnd = suffixEnd - 2;
+  while (headEnd > 0 && isWhitespaceCharacter(text[headEnd - 1])) headEnd--;
+  const head = text.slice(0, headEnd);
   return isJsonObjectText(head) ? head : text;
 }

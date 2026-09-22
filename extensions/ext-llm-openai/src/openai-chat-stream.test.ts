@@ -58,10 +58,10 @@ describe("ext-llm-openai/openai-chat-stream", () => {
             content: null,
             reasoning_content: null,
             tool_calls: [{
-              id: "call_0ab27bf831704baf9daaccef",
+              id: "call_recovery_fixture",
               index: 0,
               type: "function",
-              function: { name: "outlook__list_folders", arguments: "" },
+              function: { name: "test__list_items", arguments: "" },
             }],
           },
           finish_reason: null,
@@ -118,8 +118,8 @@ describe("ext-llm-openai/openai-chat-stream", () => {
       parts.filter((part) => (part as { type?: string }).type === "tool-call"),
       [{
         type: "tool-call",
-        toolCallId: "call_0ab27bf831704baf9daaccef",
-        toolName: "outlook__list_folders",
+        toolCallId: "call_recovery_fixture",
+        toolName: "test__list_items",
         input: "{}",
       }],
     );
