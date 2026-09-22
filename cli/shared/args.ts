@@ -276,6 +276,7 @@ function getDocumentedFlagKind(
  * `cli/shared/args.test.ts` asserts that invariant.
  */
 export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
+  "adopt-new-deps",
   "all",
   "auto",
   "binary",
@@ -299,6 +300,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "json",
   "list",
   "microsoft",
+  "no-adopt-pins",
   "no-animation",
   "no-color",
   "no-compress",

@@ -76,6 +76,7 @@ export const pullHelp: CommandHelp = {
     "Pull preserves remote bytes exactly, including line endings and a missing final newline",
     "A successful pull stores the canonical project link and creates missing package.json and tsconfig.json files",
     "Pull confirms before writing managed files, pruning files, or creating bootstrap files; use --yes to skip",
+    "Local files whose content differs from the remote copy are named before pull overwrites them, --yes included; --quiet suppresses that listing",
     "Pull never overwrites downloaded or existing bootstrap files; --dry-run reports planned bootstrap writes",
     "Invalid, duplicate, reserved, or symlink-traversing remote paths fail before local writes",
     "A fetch failure causes no writes or pruning; a local write or delete failure exits with an error",

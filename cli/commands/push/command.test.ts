@@ -7064,3 +7064,865 @@ describe("push deletion ownership", () => {
     }
   });
 });
+
+describe("push dependency pin reconciliation", () => {
+  // The platform's typed history reader binds the response to the project id
+  // the push resolved, and only accepts a UUID there, so the fixtures use the
+  // shape the API actually returns.
+  const PIN_PROJECT_ID = "00000000-0000-4000-8000-000000000123";
+  const OTHER_PROJECT_ID = "00000000-0000-4000-8000-000000000999";
+  const BASELINE_PACKAGE_JSON = `${
+    JSON.stringify({ name: "demo", dependencies: { react: "^19.2.4" } }, null, 2)
+  }\n`;
+  const PINNED_PACKAGE_JSON = `${
+    JSON.stringify({ name: "demo", dependencies: { react: "19.3.0" } }, null, 2)
+  }\n`;
+
+  interface PinScenario {
+    history: unknown;
+    packageJsonRemote?: string;
+    localPackageJson?: string;
+    push?: Partial<Parameters<typeof pushCommand>[0]>;
+    /** The bytes the sync baseline records, which default to the local ones. */
+    baselinePackageJson?: string;
+    /** Return a changed remote manifest after the initial remote listing. */
+    remotePackageJsonAfterInitialList?: string;
+    /** Return two remote entries for package.json to exercise duplicate rejection. */
+    duplicatePackageJsonRemote?: boolean;
+    /**
+     * Runs while the push is reading the preimage history: after it captured
+     * its source snapshot, before the adoption writes the manifest.
+     */
+    onHistoryRequest?: (project: { projectDir: string; runGit: GitProject["runGit"] }) => Promise<
+      void
+    >;
+    /** Pin the push to the commit HEAD is on when it starts. */
+    pinExpectedCommitSha?: boolean;
+    /** Run the push in JSON mode, as an agent or CI consumer would. */
+    jsonMode?: boolean;
+  }
+
+  async function runPinPush(
+    scenario: PinScenario,
+    assertOutcome: (result: {
+      projectDir: string;
+      error: unknown;
+      output: string[];
+      puts: string[];
+      historyCalls: number;
+    }) => Promise<void>,
+  ): Promise<void> {
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const baselinePackageJson = scenario.baselinePackageJson ?? BASELINE_PACKAGE_JSON;
+        const localPackageJson = scenario.localPackageJson ?? baselinePackageJson;
+        await Deno.writeTextFile(`${projectDir}/package.json`, localPackageJson);
+        await runGit("add", ".");
+        await runGit("commit", "--quiet", "-m", "add manifest");
+
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: PIN_PROJECT_ID,
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": {
+              digest: await computeContentDigest("export const value = 1;\n"),
+              versionId: "00000000-0000-4000-8000-000000000010",
+            },
+            "package.json": {
+              digest: await computeContentDigest(baselinePackageJson),
+              versionId: "00000000-0000-4000-8000-000000000011",
+            },
+          },
+        });
+
+        const puts: string[] = [];
+        let historyCalls = 0;
+        let remoteFileListCalls = 0;
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: PIN_PROJECT_ID, slug: "my-project" });
+          }
+          if (
+            request.method === "GET" &&
+            url.pathname === "/projects/my-project/dependencies/history"
+          ) {
+            historyCalls++;
+            await scenario.onHistoryRequest?.({ projectDir, runGit });
+            // Existing fixtures use `1` as an unexpired sentinel. Keep that
+            // shorthand live while allowing expiry-specific cases to use a
+            // real timestamp.
+            const history = scenario.history as {
+              entries?: readonly Record<string, unknown>[];
+              [key: string]: unknown;
+            };
+            return Response.json({
+              ...history,
+              entries: history.entries?.map((entry) =>
+                entry.expires_at === 1 ? { ...entry, expires_at: Date.now() + 60_000 } : entry
+              ),
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            remoteFileListCalls++;
+            const packageJson = remoteFileListCalls > 1 &&
+                scenario.remotePackageJsonAfterInitialList !== undefined
+              ? scenario.remotePackageJsonAfterInitialList
+              : scenario.packageJsonRemote ?? PINNED_PACKAGE_JSON;
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: "export const value = 1;\n",
+                  version_id: "00000000-0000-4000-8000-000000000010",
+                },
+                {
+                  path: "package.json",
+                  content: packageJson,
+                  version_id: "00000000-0000-4000-8000-000000000012",
+                },
+                ...(scenario.duplicatePackageJsonRemote
+                  ? [{
+                    path: "package.json",
+                    content: packageJson,
+                    version_id: "00000000-0000-4000-8000-000000000013",
+                  }]
+                  : []),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            puts.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        const output: string[] = [];
+        let error: unknown;
+        // The adoption notice is a warning: it reports a change to a tracked
+        // file the user did not make, and it must survive `quiet`.
+        console.log = captureConsoleLog(output);
+        console.warn = captureConsoleLog(output);
+        try {
+          const expectedCommitSha = scenario.pinExpectedCommitSha
+            ? await runGit("rev-parse", "HEAD")
+            : undefined;
+          if (scenario.jsonMode) setJsonMode(true);
+          try {
+            await withMockFetch(
+              fetchHandler,
+              () =>
+                pushCommand({
+                  projectDir,
+                  ...scenario.push,
+                  ...(expectedCommitSha ? { expectedCommitSha } : {}),
+                }),
+            );
+          } finally {
+            if (scenario.jsonMode) setJsonMode(false);
+          }
+        } catch (thrown) {
+          error = thrown;
+        } finally {
+          console.log = originalLog;
+          console.warn = originalWarn;
+        }
+
+        await assertOutcome({ projectDir, error, output, puts, historyCalls });
+      });
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  }
+
+  it("adopts server-resolved pins instead of failing the next push", async () => {
+    await runPinPush(
+      {
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts, historyCalls }) => {
+        assertEquals(error, undefined);
+        assertEquals(historyCalls, 1);
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), PINNED_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 1 server-resolved dependency pin into package.json (react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("reports the adopted pins even when the caller asked for a quiet push", async () => {
+    // `veryfront up` and `veryfront deploy` refresh through `pushCommand({
+    // quiet: true })`, which is the flow this reconciliation exists for. A
+    // rewrite of a tracked file is not progress output and must survive it.
+    await runPinPush(
+      {
+        push: { quiet: true },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        assertEquals(error, undefined);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), PINNED_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 1 server-resolved dependency pin into package.json (react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("checks the remote manifest again before replacing the local copy", async () => {
+    const changedRemote = `${
+      JSON.stringify({ name: "demo", private: true, dependencies: { react: "19.3.0" } }, null, 2)
+    }\n`;
+    await runPinPush(
+      {
+        packageJsonRemote: PINNED_PACKAGE_JSON,
+        remotePackageJsonAfterInitialList: changedRemote,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("leaves the manifest alone and keeps the conflict under --no-adopt-pins", async () => {
+    await runPinPush(
+      {
+        push: { noAdoptPins: true },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, historyCalls }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(historyCalls, 0);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("reaches the same verdict in a dry run without touching the manifest", async () => {
+    // A dry run that reports a hard conflict for a state the real push sails
+    // through is worse than no dry run at all.
+    await runPinPush(
+      {
+        push: { dryRun: true },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        assertEquals(error, undefined);
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Would adopt 1 server-resolved dependency pin into package.json (react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("previews a newly added dependency without prompting in a dry run", async () => {
+    const withAddition = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { clsx: "2.1.1", react: "19.3.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        push: { dryRun: true },
+        packageJsonRemote: withAddition,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { clsx: "2.1.1", react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        assertEquals(error, undefined);
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Would adopt 2 server-resolved dependency pins into package.json " +
+            "(clsx 2.1.1 (added), react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("does not write a dependency the resolver added without explicit consent", async () => {
+    // The preimage proof shows the API's writer produced the bytes, not that
+    // the user wanted them: anyone with project.files.write can set the remote
+    // manifest and trigger a resolve to seed both halves. A tightening stays
+    // inside a range the user declared; a brand-new package does not.
+    const withAddition = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { clsx: "2.1.1", react: "19.3.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        packageJsonRemote: withAddition,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { clsx: "2.1.1", react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+        assertStringIncludes(output.map(stripAnsi).join("\n"), "--adopt-new-deps");
+      },
+    );
+  });
+
+  it("names a recovery the operator can actually run when it cannot ask", async () => {
+    // The issue's headline command is `veryfront up`, which reaches this push
+    // with `quiet: true` and therefore cannot prompt. `--adopt-new-deps` is
+    // registered on `push` only, so a refusal that says "re-run with
+    // --adopt-new-deps" sends the operator to a flag the command they ran
+    // rejects.
+    const withAddition = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { clsx: "2.1.1", react: "19.3.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        push: { quiet: true },
+        packageJsonRemote: withAddition,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { clsx: "2.1.1", react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+        const text = output.map(stripAnsi).join("\n");
+        assertStringIncludes(text, "veryfront push --adopt-new-deps");
+        assertEquals(
+          /re-run with/i.test(text),
+          false,
+          "the refusal must not tell the operator to re-run the command they ran with a flag " +
+            "that only veryfront push accepts",
+        );
+      },
+    );
+  });
+
+  it("refuses a history answered for a different project", async () => {
+    // These bytes decide whether a remote package.json is written over the
+    // user's own file, so the preimage proof has to be bound to the project
+    // this push resolved. An unbound read would accept another project's
+    // declaration maps as proof.
+    await runPinPush(
+      {
+        history: {
+          version: 1,
+          project_id: OTHER_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("writes a dependency the resolver added once --adopt-new-deps is passed", async () => {
+    const withAddition = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { clsx: "2.1.1", react: "19.3.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        push: { adoptNewDeps: true },
+        packageJsonRemote: withAddition,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { clsx: "2.1.1", react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        assertEquals(error, undefined);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), withAddition);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 2 server-resolved dependency pins into package.json " +
+            "(clsx 2.1.1 (added), react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("does not promote a devDependency into dependencies without explicit consent", async () => {
+    // `applyResolvedPins` writes `nextDeps[name]` and deletes `nextDevDeps[name]`
+    // for every non-exact declaration it resolves, so a ranged devDependency the
+    // render resolved comes back as a production dependency. The merged preimage
+    // map cannot show that, and the version alone looks like an ordinary
+    // tightening, so nothing but the sections stands between the user and an
+    // unrequested change to what `npm install --production` installs.
+    const baseline = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "19.3.0" }, devDependencies: { zod: "^3.25.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    const promoted = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "19.3.0", zod: "3.25.7" }, devDependencies: {} },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        baselinePackageJson: baseline,
+        packageJsonRemote: promoted,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "19.3.0", zod: "^3.25.0" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0", zod: "3.25.7" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), baseline);
+        const text = output.map(stripAnsi).join("\n");
+        assertStringIncludes(text, "zod 3.25.7 (moved from devDependencies to dependencies)");
+        assertStringIncludes(text, "veryfront push --adopt-new-deps");
+      },
+    );
+  });
+
+  it("names the section move in the notice once --adopt-new-deps is passed", async () => {
+    const baseline = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "19.3.0" }, devDependencies: { zod: "^3.25.0" } },
+        null,
+        2,
+      )
+    }\n`;
+    const promoted = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "19.3.0", zod: "3.25.7" }, devDependencies: {} },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        push: { adoptNewDeps: true },
+        baselinePackageJson: baseline,
+        packageJsonRemote: promoted,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "19.3.0", zod: "^3.25.0" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0", zod: "3.25.7" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        assertEquals(error, undefined);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), promoted);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 1 server-resolved dependency pin into package.json " +
+            "(zod 3.25.7 (moved from devDependencies to dependencies))",
+        );
+      },
+    );
+  });
+
+  it("reports the adopted pins even when the push fails after the write", async () => {
+    // The manifest is replaced before the push re-captures its source snapshot,
+    // and that recapture throws when HEAD moved underneath it. A notice printed
+    // after the recapture would never run: the tracked file would be sitting
+    // there rewritten with nothing said, and the next push cannot re-enter this
+    // path because the local digest no longer matches the baseline.
+    await runPinPush(
+      {
+        pinExpectedCommitSha: true,
+        onHistoryRequest: async ({ runGit }) => {
+          await runGit("commit", "--quiet", "--allow-empty", "-m", "concurrent commit");
+        },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertStringIncludes(error.message, "Local source changed during push");
+        assertEquals(puts, []);
+        // The write already landed, so the report is the only thing telling the
+        // user their checkout now differs from what they committed.
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), PINNED_PACKAGE_JSON);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Adopted 1 server-resolved dependency pin into package.json (react 19.3.0)",
+        );
+      },
+    );
+  });
+
+  it("says so when the manifest changed on disk after the push read it", async () => {
+    // `writeAdoptedManifest` re-reads the file and declines when its digest no
+    // longer matches the baseline, which is correct - that edit is a local
+    // change this push never saw. The user still has to be told why the push
+    // failed with an untouched file, or the CLI looks like it did nothing.
+    const localEdit = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "^19.2.4" }, private: true },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        onHistoryRequest: async ({ projectDir }) => {
+          await Deno.writeTextFile(`${projectDir}/package.json`, localEdit);
+        },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(puts, []);
+        // The local edit is still there: the adoption wrote nothing.
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), localEdit);
+        const text = output.map(stripAnsi).join("\n");
+        assertStringIncludes(
+          text,
+          "your local copy changed after this push read it, so nothing was written",
+        );
+        assertEquals(
+          text.includes("Adopted 1 server-resolved dependency pin"),
+          false,
+          "a declined adoption must not report itself as adopted",
+        );
+      },
+    );
+  });
+
+  it("streams the adoption as an NDJSON line in JSON mode", async () => {
+    // An agent or CI consumer never sees the warning, so the machine-readable
+    // stream has to carry the same facts: what was pinned, and whether the
+    // write moved or added a declaration rather than tightening one.
+    await runPinPush(
+      {
+        jsonMode: true,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        assertEquals(error, undefined);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), PINNED_PACKAGE_JSON);
+        const events = output.map(stripAnsi).flatMap((line) => {
+          try {
+            return [JSON.parse(line) as Record<string, unknown>];
+          } catch {
+            return [];
+          }
+        });
+        const adopted = events.find((event) => event.type === "dependency-pins-adopted");
+        assertEquals(adopted?.data, {
+          path: "package.json",
+          dryRun: false,
+          pins: [{
+            name: "react",
+            version: "19.3.0",
+            added: false,
+            movedFrom: null,
+            movedTo: null,
+          }],
+        });
+      },
+    );
+  });
+
+  it("streams a declined adoption as an NDJSON line in JSON mode", async () => {
+    const localEdit = `${
+      JSON.stringify(
+        { name: "demo", dependencies: { react: "^19.2.4" }, private: true },
+        null,
+        2,
+      )
+    }\n`;
+    await runPinPush(
+      {
+        jsonMode: true,
+        onHistoryRequest: async ({ projectDir }) => {
+          await Deno.writeTextFile(`${projectDir}/package.json`, localEdit);
+        },
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, output }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), localEdit);
+        const events = output.map(stripAnsi).flatMap((line) => {
+          try {
+            return [JSON.parse(line) as Record<string, unknown>];
+          } catch {
+            return [];
+          }
+        });
+        const declined = events.find((event) => event.type === "dependency-pins-declined");
+        assertEquals(declined?.data, {
+          path: "package.json",
+          reason: "local-manifest-changed",
+        });
+      },
+    );
+  });
+
+  it("still reports a conflict when no preimage proves the API wrote the pins", async () => {
+    await runPinPush(
+      {
+        history: { version: 1, project_id: PIN_PROJECT_ID, branch: null, entries: [] },
+      },
+      async ({ projectDir, error, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"package.json"');
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("does not adopt a duplicated remote package manifest", async () => {
+    await runPinPush(
+      {
+        duplicatePackageJsonRemote: true,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, puts, historyCalls }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals(historyCalls, 0);
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("does not adopt an expired dependency-history preimage", async () => {
+    await runPinPush(
+      {
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: Date.now() - 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: Date.now() - 1 },
+          ],
+        },
+      },
+      async ({ error, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertStringIncludes(error.message, "remote files changed");
+        assertEquals(puts, []);
+      },
+    );
+  });
+
+  it("still reports a conflict when the remote rewrite is not a pin tightening", async () => {
+    const edited = `${
+      JSON.stringify({ name: "renamed", dependencies: { react: "19.3.0" } }, null, 2)
+    }\n`;
+    await runPinPush(
+      {
+        packageJsonRemote: edited,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("keeps a local edit of the same manifest as a conflict", async () => {
+    const localEdit = `${
+      JSON.stringify({ name: "demo", dependencies: { react: "^19.2.4", zod: "^3.25.0" } }, null, 2)
+    }\n`;
+    await runPinPush(
+      {
+        localPackageJson: localEdit,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, puts }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"package.json"');
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), localEdit);
+      },
+    );
+  });
+});

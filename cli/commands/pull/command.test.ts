@@ -26,6 +26,7 @@ import {
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import { readProjectLink } from "../../shared/project-link.ts";
+import { resetInteractiveMode, setAutoConfirm } from "../../shared/interactive.ts";
 import { computeContentDigest, readSyncTarget } from "../../sync/state.ts";
 import { join } from "veryfront/platform/path";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -2637,5 +2638,109 @@ describe("pullCommand", () => {
       _resetEnvironmentConfig();
       await Deno.remove(tempDir, { recursive: true });
     }
+  });
+});
+
+describe("pull local edit reporting", () => {
+  /**
+   * Issue #1456's only recovery from the package.json push conflict was a
+   * pull, and the pull "silently overwrote an unrelated local edit": the
+   * confirmation counts files, and `--yes` skips it entirely. Naming the
+   * differing paths is what makes the overwrite a choice.
+   */
+  async function runPullWithLocalEdit(
+    options: { force: boolean; quiet?: boolean; dryRun?: boolean; remotePath?: string },
+  ): Promise<{ warnings: string[]; content: string }> {
+    const originalWarn = console.warn;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const projectDir = await makeTempDir();
+    const warnings: string[] = [];
+    const remotePath = options.remotePath ?? "app.ts";
+    const autoConfirm = !options.force && options.quiet === true;
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.set("VERYFRONT_PROJECT_SLUG", "alpha");
+      _resetEnvironmentConfig();
+
+      await Deno.writeTextFile(join(projectDir, remotePath), "export const value = 2;\n");
+
+      if (autoConfirm) setAutoConfirm(true);
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      await withMockFetch(
+        (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname === "/projects/alpha") {
+            return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+          }
+          if (url.pathname === "/projects/alpha/files") {
+            return Promise.resolve(Response.json({
+              data: [{
+                path: remotePath,
+                content: "export const value = 1;\n",
+                version_id: "00000000-0000-4000-8000-000000000001",
+              }],
+              page_info: {},
+            }));
+          }
+          throw new Error(`Unexpected request: ${url.pathname}`);
+        },
+        () =>
+          pullCommand({
+            projectDir,
+            force: options.force,
+            quiet: options.quiet,
+            dryRun: options.dryRun,
+          }),
+      );
+
+      return { warnings, content: await Deno.readTextFile(join(projectDir, remotePath)) };
+    } finally {
+      if (autoConfirm) resetInteractiveMode();
+      console.warn = originalWarn;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  }
+
+  it("names the local files it overwrites even when --yes skips the prompt", async () => {
+    const { warnings, content } = await runPullWithLocalEdit({ force: true });
+
+    assertEquals(content, "export const value = 1;\n");
+    assertStringIncludes(
+      warnings.join("\n"),
+      "Pull will overwrite 1 local file that differs from the remote copy: app.ts.",
+    );
+  });
+
+  it("suppresses overwrite warnings in quiet confirmation mode", async () => {
+    const { warnings, content } = await runPullWithLocalEdit({ force: false, quiet: true });
+
+    assertEquals(content, "export const value = 1;\n");
+    assertEquals(warnings.some((line) => line.includes("Pull will overwrite")), false);
+  });
+
+  it("uses conditional wording for dry-run overwrite warnings", async () => {
+    const { warnings, content } = await runPullWithLocalEdit({ force: false, dryRun: true });
+
+    assertEquals(content, "export const value = 2;\n");
+    const warning = warnings.join("\n");
+    assertStringIncludes(warning, "Pull would overwrite 1 local file");
+    assertEquals(warning.includes("Pull will overwrite"), false);
+  });
+
+  it("sanitizes remote paths before printing overwrite warnings", async () => {
+    const remotePath = "app\x1b[31m.ts";
+    const { warnings, content } = await runPullWithLocalEdit({ force: true, remotePath });
+
+    assertEquals(content, "export const value = 1;\n");
+    const warning = warnings.join("\n");
+    assertEquals(warning.includes("\x1b"), false);
+    assertStringIncludes(warning, "app.ts");
   });
 });
