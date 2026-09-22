@@ -237,13 +237,14 @@ function declaredValue(
 function normalizeNpmPartialRange(value: string): string {
   let operator = "";
   let body = value.trim();
-  for (const candidate of [">=", "<=", ">", "<", "^", "~"]) {
+  for (const candidate of [">=", "<=", ">", "<", "^", "~>", "~"]) {
     if (body.startsWith(candidate)) {
       operator = candidate;
       body = body.slice(candidate.length);
       break;
     }
   }
+  if (operator === "~>") operator = "~";
   if (body.startsWith("=")) {
     if (operator !== "") return `${operator}=${body.slice(1)}`;
     body = body.slice(1);
@@ -251,10 +252,11 @@ function normalizeNpmPartialRange(value: string): string {
   }
   body = body.trim();
   if (operator === "" && /^(?:[xX*])(?:\.[xX*]){0,2}$/.test(body)) return "*";
-  const suffixedWildcardMajor = /^v?(\d+)\.[xX*]\.[xX*](?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
-    .exec(
-      body,
-    );
+  const suffixedWildcardMajor =
+    /^v?(\d+)\.[xX*]\.(?:\d+|[xX*])(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+      .exec(
+        body,
+      );
   if (suffixedWildcardMajor) return `${operator}v${suffixedWildcardMajor[1]}`;
   const suffixedWildcard = /^v?(\d+)\.(\d+)\.[xX*](?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
     body,

@@ -296,18 +296,27 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, outOfRange, inRangeHistory), "user-edit");
   });
 
+  it("keeps the major bound when a wildcard minor has a numeric patch", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: "1.x.0-beta" } });
+    const inRange = apiWrite({ name: "demo", dependencies: { react: "1.9.9" } });
+    const outOfRange = apiWrite({ name: "demo", dependencies: { react: "2.0.0" } });
+    const inRangeHistory = [{ react: "1.x.0-beta" }, { react: "1.9.9" }];
+    assertEquals(classifyPackageJsonDrift(baseline, inRange, inRangeHistory), "server-pins");
+    assertEquals(classifyPackageJsonDrift(baseline, outOfRange, inRangeHistory), "user-edit");
+  });
+
   it("accepts whitespace between an npm operator and its version", () => {
     const baseline = apiWrite({
       name: "demo",
-      dependencies: { caret: "^ 1.2.3", lower: ">= 1.0" },
+      dependencies: { caret: "^ 1.2.3", lower: ">= 1.0", tildeGreater: "~> 1.2.3" },
     });
     const resolved = apiWrite({
       name: "demo",
-      dependencies: { caret: "1.4.0", lower: "2.0.0" },
+      dependencies: { caret: "1.4.0", lower: "2.0.0", tildeGreater: "1.2.4" },
     });
     const history = [
-      { caret: "^ 1.2.3", lower: ">= 1.0" },
-      { caret: "1.4.0", lower: "2.0.0" },
+      { caret: "^ 1.2.3", lower: ">= 1.0", tildeGreater: "~> 1.2.3" },
+      { caret: "1.4.0", lower: "2.0.0", tildeGreater: "1.2.4" },
     ];
     assertEquals(classifyPackageJsonDrift(baseline, resolved, history), "server-pins");
   });
