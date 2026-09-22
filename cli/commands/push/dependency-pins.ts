@@ -186,6 +186,7 @@ interface VersionParts {
   major: number;
   minor: number;
   patch: number;
+  precision: 1 | 2 | 3;
   prerelease: readonly string[];
 }
 
@@ -211,8 +212,25 @@ function parseVersionParts(value: string): VersionParts | null {
     major: parts[0]!,
     minor: parts[1]!,
     patch: parts[2]!,
+    precision: match[3] === undefined ? (match[2] === undefined ? 1 : 2) : 3,
     prerelease: match[4]?.split(".") ?? [],
   };
+}
+
+function nextPartialBoundary(base: VersionParts): VersionParts | null {
+  if (base.precision === 1 && !Number.isSafeInteger(base.major + 1)) return null;
+  if (base.precision === 2 && !Number.isSafeInteger(base.minor + 1)) return null;
+  return base.precision === 1
+    ? { major: base.major + 1, minor: 0, patch: 0, precision: 3, prerelease: [] }
+    : { major: base.major, minor: base.minor + 1, patch: 0, precision: 3, prerelease: [] };
+}
+
+function matchesPartialPrefix(version: VersionParts, range: VersionParts): boolean {
+  if (range.precision === 1) return version.major === range.major;
+  if (range.precision === 2) {
+    return version.major === range.major && version.minor === range.minor;
+  }
+  return compareVersionParts(version, range) === 0;
 }
 
 function compareVersionParts(left: VersionParts, right: VersionParts): number {
@@ -315,12 +333,16 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
   }
   if (trimmed.startsWith(">")) {
     const base = parseVersionParts(trimmed.slice(1));
-    return base !== null && allowsPrerelease(parsed, base) && compareVersionParts(parsed, base) > 0;
+    if (base === null || !allowsPrerelease(parsed, base)) return false;
+    const lower = base.precision === 3 ? base : nextPartialBoundary(base);
+    return lower !== null && compareVersionParts(parsed, lower) >= 0;
   }
   if (trimmed.startsWith("<=")) {
     const base = parseVersionParts(trimmed.slice(2));
-    return base !== null && allowsPrerelease(parsed, base) &&
-      compareVersionParts(parsed, base) <= 0;
+    if (base === null || !allowsPrerelease(parsed, base)) return false;
+    if (base.precision === 3) return compareVersionParts(parsed, base) <= 0;
+    const upper = nextPartialBoundary(base);
+    return upper !== null && compareVersionParts(parsed, upper) < 0;
   }
   if (trimmed.startsWith("<")) {
     const base = parseVersionParts(trimmed.slice(1));
@@ -328,7 +350,7 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
   }
 
   const base = parseVersionParts(trimmed);
-  return base !== null && allowsPrerelease(parsed, base) && compareVersionParts(parsed, base) === 0;
+  return base !== null && allowsPrerelease(parsed, base) && matchesPartialPrefix(parsed, base);
 }
 
 /**

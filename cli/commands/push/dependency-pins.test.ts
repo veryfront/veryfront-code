@@ -197,6 +197,27 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, outOfRange, history), "user-edit");
   });
 
+  it("uses npm bounds for partial comparator ranges", () => {
+    const baseline = apiWrite({
+      name: "demo",
+      dependencies: { exact: "1.2", greater: ">1", preciseGreater: ">1.2" },
+    });
+    const inRange = apiWrite({
+      name: "demo",
+      dependencies: { exact: "1.2.5", greater: "2.0.0", preciseGreater: "1.3.0" },
+    });
+    const outOfRange = apiWrite({
+      name: "demo",
+      dependencies: { exact: "1.3.0", greater: "1.0.1", preciseGreater: "1.2.9" },
+    });
+    const history = [
+      { exact: "1.2", greater: ">1", preciseGreater: ">1.2" },
+      { exact: "1.2.5", greater: "2.0.0", preciseGreater: "1.3.0" },
+    ];
+    assertEquals(classifyPackageJsonDrift(baseline, inRange, history), "server-pins");
+    assertEquals(classifyPackageJsonDrift(baseline, outOfRange, history), "user-edit");
+  });
+
   it("rejects a pin tightening whose written state was never published", () => {
     assertEquals(
       classifyPackageJsonDrift(BASELINE_CONTENT, PINNED_CONTENT, [
