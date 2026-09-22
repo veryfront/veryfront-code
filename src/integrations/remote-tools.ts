@@ -372,11 +372,17 @@ function applyRemoteFailureCondition(
     return { ...payload, condition: validCondition };
   }
 
+  const message = text.length > 0
+    ? text
+    : isRecord(payload) && typeof payload.message === "string"
+    ? payload.message
+    : text;
+
   return {
     ...(isRecord(payload) ? payload : {}),
     error: validCondition.slug,
     status: validCondition.status,
-    message: text,
+    message,
     condition: validCondition,
   };
 }

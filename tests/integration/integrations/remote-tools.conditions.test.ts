@@ -99,6 +99,20 @@ describe("remote integration failure conditions", () => {
       condition,
     });
 
+    const structuredMessage = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: { message: "Remote search failed" },
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+    assertEquals(structuredMessage, {
+      message: "Remote search failed",
+      error: "provider-failed",
+      status: 503,
+      condition,
+    });
+
     const arbitraryJson = await withMockFetch(async () =>
       Response.json({
         isError: true,
