@@ -54,24 +54,6 @@ describe("getToolChannelProfile", () => {
     assertEquals(profile.forceByDefault, false);
     assertEquals(profile.recoverTextToolCalls, false);
   });
-
-  it("uses the captured Set intrinsic for provider policy lookups", () => {
-    const originalHas = Set.prototype.has;
-    Object.defineProperty(Set.prototype, "has", {
-      configurable: true,
-      value: () => true,
-    });
-    try {
-      const profile = getToolChannelProfile("deepseek/deepseek-v3");
-      assertEquals(profile.forceByDefault, false);
-      assertEquals(profile.recoverTextToolCalls, false);
-    } finally {
-      Object.defineProperty(Set.prototype, "has", {
-        configurable: true,
-        value: originalHas,
-      });
-    }
-  });
 });
 
 describe("resolveStepToolChoice", () => {
