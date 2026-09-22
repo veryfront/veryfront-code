@@ -129,16 +129,20 @@ verify_npm_compatibility_artifact() {
 NPM_PUBLISH_CONFLICT_ATTEMPTS="${NPM_PUBLISH_CONFLICT_ATTEMPTS:-5}"
 NPM_PUBLISH_CONFLICT_DELAY_SECONDS="${NPM_PUBLISH_CONFLICT_DELAY_SECONDS:-15}"
 # Stable publishes have landed close to an hour after `npm publish` started, and
-# the gitHead metadata can trail the version further. Poll for up to 30 minutes
-# by default so a publish that did land is not reported as a failed release.
+# the gitHead metadata can trail the version further. Poll one package for up to
+# 30 minutes by default so a publish that did land is not reported as a failed
+# release.
 NPM_GIT_HEAD_WAIT_ATTEMPTS="${NPM_GIT_HEAD_WAIT_ATTEMPTS:-180}"
 NPM_GIT_HEAD_WAIT_DELAY_SECONDS="${NPM_GIT_HEAD_WAIT_DELAY_SECONDS:-10}"
-# One budget for the whole release, not per package: a registry incident that
-# delays metadata for many of the ~30 packages must not multiply the wait past
-# the job limit and strand a partial publish. Only time spent in metadata
-# lookups and waits counts, so slow publishes of later packages do not eat into
-# their metadata checks.
-NPM_GIT_HEAD_WAIT_TOTAL_SECONDS="${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS:-1800}"
+# One budget for the whole release, on top of the per-package limit: a registry
+# incident that delays metadata for many of the ~30 packages must not multiply
+# the wait past the job limit (GitHub's 6-hour default) and strand a partial
+# publish. Only time spent in metadata lookups and waits counts, so slow
+# publishes of later packages do not eat into their metadata checks. Normal
+# propagation already takes 1-3 minutes per package, and 0.1.1261 spent 30
+# minutes across its first 21 packages, so the budget must cover every package
+# at that pace: 3 hours.
+NPM_GIT_HEAD_WAIT_TOTAL_SECONDS="${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS:-10800}"
 NPM_GIT_HEAD_WAIT_SPENT_SECONDS=0
 # Bound each metadata lookup: npm's defaults (5-minute fetch timeout, 2
 # retries) would let a single `npm view` run ~15 minutes, and every package
