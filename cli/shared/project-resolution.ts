@@ -79,10 +79,58 @@ export class ProjectReferenceNotFoundError extends Error {
     readonly reference: string,
     readonly source: ProjectReferenceSource,
     readonly byId: boolean,
+    /**
+     * Both identifiers the directory held, not just the one the lookup used.
+     * A link held by id looked the project up by uuid, so without the slug the
+     * adapters would name the project by something the user never typed.
+     */
+    readonly identity: { projectId?: string; projectSlug?: string } = {},
   ) {
     super(`Project "${reference}" was not found.`);
     this.name = "ProjectReferenceNotFoundError";
   }
+
+  get projectId(): string | undefined {
+    return this.identity.projectId;
+  }
+
+  get projectSlug(): string | undefined {
+    return this.identity.projectSlug;
+  }
+}
+
+/**
+ * The one sentence both `up` and `push` print for a reference that no longer
+ * resolves. It names every identifier the directory held and where the
+ * reference came from, so the two commands cannot drift into naming the same
+ * project by different identifiers.
+ */
+export function describeStaleProjectReference(
+  error: ProjectReferenceNotFoundError,
+): string {
+  const slug = error.projectSlug;
+  const id = error.projectId;
+  // A reference that is only an id records the same string as both, and
+  // `"x" (x)` reads as two projects.
+  const name = slug && id && slug !== id
+    ? `"${slug}" (${id})`
+    : `"${slug ?? id ?? error.reference}"`;
+  return `Project ${name} was not found. The reference came from ${error.source.name}; ` +
+    "the project may have been deleted, or it may belong to an account other than the one " +
+    "you are logged in as.";
+}
+
+/** The structured identity both adapters attach to the rendered error. */
+export function staleProjectReferenceContext(
+  error: ProjectReferenceNotFoundError,
+): Record<string, unknown> {
+  return {
+    reference: error.reference,
+    ...(error.projectId ? { projectId: error.projectId } : {}),
+    ...(error.projectSlug ? { projectSlug: error.projectSlug } : {}),
+    source: error.source.kind,
+    sourceName: error.source.name,
+  };
 }
 
 /** The reference to look a project up by: its id when known, else its slug. */
@@ -222,11 +270,15 @@ export async function resolveOrCreateProject(
   } catch (error) {
     if (error instanceof VeryfrontError) throw error;
     if (getErrorStatus(error) !== 404) throw error;
+    const identity = {
+      ...(config.projectId ? { projectId: config.projectId } : {}),
+      ...(config.projectSlug ? { projectSlug: config.projectSlug } : {}),
+    };
     if (config.projectId) {
-      throw new ProjectReferenceNotFoundError(reference, source, true);
+      throw new ProjectReferenceNotFoundError(reference, source, true, identity);
     }
     if (!createMissingReference) {
-      throw new ProjectReferenceNotFoundError(reference, source, false);
+      throw new ProjectReferenceNotFoundError(reference, source, false, identity);
     }
     return dryRun ? plannedCreate : createProject(request, allowAlternativeSlug);
   }

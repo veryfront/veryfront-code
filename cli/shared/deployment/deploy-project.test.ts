@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertMatch,
   assertRejects,
   assertStrictEquals,
@@ -22,6 +23,7 @@ import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl, relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
+import { writeProjectLink } from "../project-link.ts";
 import {
   computeSourceDigest,
   resolveGitSource,
@@ -689,6 +691,115 @@ describe("DeployProject", () => {
         );
 
         assertStrictEquals(error, original);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("classifies a project link this account cannot see as project-link-stale", async () => {
+    // The `up`/deploy twin of the push regression: after switching accounts the
+    // local link 404s, and the bare Error this used to raise reached the CLI
+    // boundary unclassified.
+    await withDeployEnv(async () => {
+      const { projectDir } = await createUnlinkedPushedProject();
+      await writeProjectLink(projectDir, {
+        controlPlane: CONTROL_PLANE,
+        projectId: "11111111-2222-4333-8444-555555555555",
+        projectSlug: "other-account-project",
+      });
+      const controlPlane = new InMemoryDeployControlPlane();
+      const notFound = new Error("API request failed: 404 Not Found") as Error & {
+        status: number;
+      };
+      notFound.status = 404;
+      controlPlane.getProjectError = notFound;
+      try {
+        const error = await expectDeployError(() =>
+          createDeployment(controlPlane).execute({
+            projectDir,
+            environment: "production",
+            mode: "dry-run",
+            source: { kind: "already-pushed" },
+          })
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "project-link-stale");
+        assertEquals(error.exitCode, 1);
+        assertEquals(error.context, {
+          reference: "11111111-2222-4333-8444-555555555555",
+          projectId: "11111111-2222-4333-8444-555555555555",
+          projectSlug: "other-account-project",
+          source: "local-link",
+          sourceName: ".veryfront/project.json",
+        });
+        // The same sentence push renders for the same condition: the two
+        // commands used to name the same project by different identifiers.
+        // This is the adapter boundary, not the terminal -- `up` wraps this
+        // detail as `Preview publish failed: <sentence>` on its way out
+        // (describeUpFailure, cli/commands/up/command.ts), keeping the slug
+        // and suggestion. So the identifiers match everywhere; the rendered
+        // strings are equal up to that prefix, not byte for byte.
+        assertEquals(
+          error.detail,
+          'Project "other-account-project" (11111111-2222-4333-8444-555555555555) was not found. ' +
+            "The reference came from .veryfront/project.json; the project may have been deleted, " +
+            "or it may belong to an account other than the one you are logged in as.",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("does not blame the local link for a --project reference that 404s", async () => {
+    // `--project <typo>` 404s against a directory whose link is correct.
+    // project-link-stale's suggestion is to delete that link and let the next
+    // run create and link a project, which would fork a duplicate, so the
+    // argument source keeps the generic message instead.
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      const notFound = new Error("API request failed: 404 Not Found") as Error & {
+        status: number;
+      };
+      notFound.status = 404;
+      controlPlane.getProjectError = notFound;
+      try {
+        const error = await expectDeployError(() =>
+          createDeployment(controlPlane).execute({
+            projectDir,
+            environment: "production",
+            mode: "dry-run",
+            projectSlug: "typo-slug",
+            source: { kind: "already-pushed" },
+          })
+        );
+
+        assertEquals(
+          error instanceof VeryfrontError,
+          false,
+          "a --project typo must not be classified as a stale local link",
+        );
+        assertStringIncludes(
+          (error as Error).message,
+          'Project "typo-slug" was not found.',
+        );
+        // Discriminating on its own: this is the generic message's own second
+        // sentence. The classified detail says "The reference came from
+        // --project; ..." instead, so removing the source gate fails here even
+        // if the instanceof assertion above were ever dropped. Without it the
+        // rest of this test passes against a fully classified error.
+        assertStringIncludes(
+          (error as Error).message,
+          "Check the project reference or remove it to let deploy create a project",
+        );
+        assertEquals(
+          (error as Error).message.includes(".veryfront/project.json"),
+          false,
+          "the generic message must not tell the user to delete a correct link",
+        );
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }

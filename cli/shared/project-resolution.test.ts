@@ -7,6 +7,7 @@ import type { ProjectReferenceSource, ResolvedConfig } from "./config.ts";
 import { PROJECT_LINK_RELATIVE_PATH } from "./project-link.ts";
 import {
   canPersistAlternativeSlug,
+  describeStaleProjectReference,
   getErrorStatus,
   projectApiReference,
   ProjectReferenceNotFoundError,
@@ -14,6 +15,7 @@ import {
   resolveOrCreateProject,
   shouldPersistProjectLink,
   slugConflictAction,
+  staleProjectReferenceContext,
 } from "./project-resolution.ts";
 import { ProjectSlugConflictError } from "./reserve-slug.ts";
 
@@ -223,7 +225,79 @@ describe("resolveOrCreateProject", () => {
         assertEquals(error.reference, "proj_gone");
         assertEquals(error.byId, true);
         assertEquals(error.source, LOCAL_LINK);
+        // The lookup used the uuid, but the directory also held the slug: both
+        // adapters need it so they name the project the way the user does.
+        assertEquals(error.projectId, "proj_gone");
+        assertEquals(error.projectSlug, "my-app");
       });
+    });
+
+    it("describes a stale link by slug and id, whichever identifier the lookup used", async () => {
+      await withTempDir(async (dir) => {
+        const { client } = fakeClient({ getProjectError: notFound });
+        const byId = await assertRejects(
+          () =>
+            resolveOrCreateProject({
+              projectDir: dir,
+              config: config({ projectId: "proj_gone" }),
+              source: LOCAL_LINK,
+              client,
+              createMissingReference: true,
+            }),
+          ProjectReferenceNotFoundError,
+        );
+        assertInstanceOf(byId, ProjectReferenceNotFoundError);
+
+        const bySlug = await assertRejects(
+          () =>
+            resolveOrCreateProject({
+              projectDir: dir,
+              config: config(),
+              source: JSON_CONFIG,
+              client,
+              createMissingReference: false,
+            }),
+          ProjectReferenceNotFoundError,
+        );
+        assertInstanceOf(bySlug, ProjectReferenceNotFoundError);
+
+        assertEquals(
+          describeStaleProjectReference(byId),
+          'Project "my-app" (proj_gone) was not found. The reference came from ' +
+            ".veryfront/project.json; the project may have been deleted, or it may belong to an " +
+            "account other than the one you are logged in as.",
+        );
+        assertEquals(
+          describeStaleProjectReference(bySlug),
+          'Project "my-app" was not found. The reference came from veryfront.json; the project ' +
+            "may have been deleted, or it may belong to an account other than the one you are " +
+            "logged in as.",
+        );
+        assertEquals(staleProjectReferenceContext(byId), {
+          reference: "proj_gone",
+          projectId: "proj_gone",
+          projectSlug: "my-app",
+          source: "local-link",
+          sourceName: ".veryfront/project.json",
+        });
+      });
+    });
+
+    it("names a reference that is only an id once", () => {
+      // VERYFRONT_PROJECT_ID records the same string as slug and id; `"x" (x)`
+      // would read as two projects.
+      const error = new ProjectReferenceNotFoundError(
+        "proj_env",
+        { kind: "tenant-environment", name: "VERYFRONT_PROJECT_ID" },
+        true,
+        { projectId: "proj_env", projectSlug: "proj_env" },
+      );
+      assertEquals(
+        describeStaleProjectReference(error),
+        'Project "proj_env" was not found. The reference came from VERYFRONT_PROJECT_ID; the ' +
+          "project may have been deleted, or it may belong to an account other than the one you " +
+          "are logged in as.",
+      );
     });
 
     it("reports a named slug when the caller does not create missing projects", async () => {

@@ -136,6 +136,36 @@ export const BRANCH_NOT_FOUND = defineError({
 });
 
 /**
+ * The local link in `.veryfront/project.json` names a project the control
+ * plane will not hand back. The link records no owning account, so a deleted
+ * project and one owned by a different account are indistinguishable here, so
+ * the CLI's detail names both. Reserved for the local link: any other project
+ * reference is misdirected by a suggestion to delete this file.
+ *
+ * This classifies the dead-end; it does not recover from it. Teaching
+ * `veryfront up` to re-link or create a project for the signed-in account, and
+ * adding `veryfront link <slug>` so the remedy is not "delete a dotfile", is
+ * veryfront-issue-inbox#1551.
+ */
+export const PROJECT_LINK_STALE = defineError({
+  slug: "project-link-stale",
+  category: "DEPLOY",
+  status: 404,
+  title: "Linked project not found",
+  // The remedy must not name `veryfront up`. Both `up` and `push` raise this,
+  // and `up` is not a re-link: it creates the project and then publishes a
+  // live Preview deployment (cli/commands/up/command.ts, publish:
+  // "live-source"), so prescribing it to a push or CI user performs a deploy
+  // they never asked for. `ErrorCreateOptions` carries no suggestion override,
+  // so one static string serves every raise site; unlinking is what is true at
+  // all of them, and `push` completes the remedy on its own
+  // (createMissingReference: true, then shouldPersistProjectLink re-links).
+  suggestion:
+    "Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json to unlink this directory and let veryfront push create and link a project for the signed-in account",
+  exitCode: 1,
+});
+
+/**
  * The project's configuration file uses a construct Veryfront Cloud's
  * configuration evaluator can never accept, so the release would answer 500 to
  * every request. Raised before a release is created; the detail names the file,
@@ -171,4 +201,5 @@ export const DEPLOY_REGISTRY = {
   "source-digest-mismatch": SOURCE_DIGEST_MISMATCH,
   "preview-hostname-too-long": PREVIEW_HOSTNAME_TOO_LONG,
   "branch-not-found": BRANCH_NOT_FOUND,
+  "project-link-stale": PROJECT_LINK_STALE,
 } as const;

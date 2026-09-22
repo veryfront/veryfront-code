@@ -766,6 +766,14 @@ Branch not found.
 - **HTTP status:** 404
 - **What to do:** List branches in Studio or push a new one with: veryfront push --branch \<name>
 
+### project-link-stale
+
+Linked project not found.
+
+- **HTTP status:** 404
+- **CLI exit code:** 1
+- **What to do:** Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json to unlink this directory and let veryfront push create and link a project for the signed-in account
+
 ## Agents
 
 Raised while running an agent, tool, or workflow.

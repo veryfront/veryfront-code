@@ -30,6 +30,7 @@ import {
   ENVIRONMENT_NOT_FOUND,
   ENVIRONMENT_NOT_ROUTABLE,
   PREVIEW_DEPLOYMENT_NOT_ALLOWED,
+  PROJECT_LINK_STALE,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -48,6 +49,7 @@ import {
 import { normalizeProjectSlug } from "../slug.ts";
 import { reserveProjectSlug } from "../reserve-slug.ts";
 import {
+  describeStaleProjectReference,
   getErrorStatus,
   inferProjectSlugFromDirectory,
   projectApiReference,
@@ -56,6 +58,7 @@ import {
   type ProjectResolutionOutcome,
   resolveOrCreateProject,
   shouldPersistProjectLink,
+  staleProjectReferenceContext,
 } from "../project-resolution.ts";
 import {
   isRetryableApiReadError,
@@ -365,6 +368,23 @@ async function ensureProjectLinkedForDeploy(
     });
   } catch (error) {
     if (error instanceof ProjectReferenceNotFoundError) {
+      // Only the local link owns `.veryfront/project.json`, and that file is
+      // what PROJECT_LINK_STALE's title and suggestion talk about. Deploy's
+      // reference can come from six other sources (--project, veryfront.json,
+      // VERYFRONT_PROJECT_*, module config, environment config, an inferred
+      // directory name), none of which the link file has any say over: telling
+      // a `--project <typo>` user to delete this directory's correct link and
+      // let the next run create a project in its place would fork a duplicate,
+      // and a fresh clone with no link at all would be pointed at a file that
+      // does not exist.
+      // Those sources keep the generic, source-neutral message instead.
+      if (error.source.kind === "local-link") {
+        throw PROJECT_LINK_STALE.create({
+          detail: describeStaleProjectReference(error),
+          context: staleProjectReferenceContext(error),
+          cause: error,
+        });
+      }
       throw new Error(
         `Project "${projectReference}" was not found. Check the project reference or remove it to let deploy create a project for this directory.`,
       );

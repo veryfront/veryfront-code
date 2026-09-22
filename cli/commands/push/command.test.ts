@@ -7,11 +7,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertMatch,
   assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
+import { formatCLIError, VeryfrontError } from "veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -1624,6 +1626,145 @@ describe("push receipt source snapshot", () => {
       ]);
     } finally {
       globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("classifies a project link this account cannot see as project-link-stale", async () => {
+    // Switching accounts leaves .veryfront/project.json pointing at a project
+    // the new token cannot read. The lookup 404s by uuid, which used to reach
+    // the CLI boundary as a bare Error and render as [unknown-error].
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        for (const key of envKeys.slice(2)) Deno.env.delete(key);
+        _resetEnvironmentConfig();
+
+        await writeProjectLink(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "11111111-2222-4333-8444-555555555555",
+          projectSlug: "other-account-project",
+        });
+
+        const error = await withMockFetch(
+          () => Promise.resolve(Response.json({ error: "not found" }, { status: 404 })),
+          async () => {
+            try {
+              await pushCommand({ projectDir, quiet: true });
+            } catch (thrown) {
+              return thrown;
+            }
+            throw new Error("Expected push to reject");
+          },
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "project-link-stale");
+        assertEquals(error.exitCode, 1);
+        assertEquals(error.context, {
+          reference: "11111111-2222-4333-8444-555555555555",
+          projectId: "11111111-2222-4333-8444-555555555555",
+          projectSlug: "other-account-project",
+          source: "local-link",
+          sourceName: ".veryfront/project.json",
+        });
+
+        const rendered = stripAnsi(formatCLIError(error, { color: false, verbose: false }));
+        assertStringIncludes(rendered, "[project-link-stale]");
+        assertEquals(
+          rendered.includes("[unknown-error]"),
+          false,
+          "a stale project link must not degrade to the unclassified error",
+        );
+        // Both identifiers, so the user can tell which project the link names.
+        assertStringIncludes(
+          rendered,
+          'Project "other-account-project" (11111111-2222-4333-8444-555555555555) was not found.',
+        );
+        assertStringIncludes(rendered, ".veryfront/project.json");
+        assertStringIncludes(rendered, "veryfront whoami");
+        // The registry suggestion is one static string, and this raise site is
+        // `push`. `veryfront up` creates the project *and* publishes a live
+        // Preview deployment, so a remedy that names it hands a push or CI
+        // user a deploy they never asked for. Unlinking is the whole remedy:
+        // push resolves the inferred slug and re-links on the next run.
+        assertStringIncludes(rendered, "veryfront push");
+        assertEquals(
+          rendered.includes("veryfront up"),
+          false,
+          "the remedy must not send a push user through a deployment",
+        );
+      });
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("does not blame the local link for a VERYFRONT_PROJECT_ID that 404s", async () => {
+    // VERYFRONT_PROJECT_ID also resolves by id, so `byId` alone would have
+    // classified it as a stale local link and told the user to delete
+    // .veryfront/project.json -- a file this reference does not come from.
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        Deno.env.delete("TENANT_PROJECT_SLUG");
+        Deno.env.delete("TENANT_PROJECT_ID");
+        Deno.env.set("VERYFRONT_PROJECT_ID", "11111111-2222-4333-8444-555555555555");
+        _resetEnvironmentConfig();
+
+        const error = await withMockFetch(
+          () => Promise.resolve(Response.json({ error: "not found" }, { status: 404 })),
+          async () => {
+            try {
+              await pushCommand({ projectDir, quiet: true });
+            } catch (thrown) {
+              return thrown;
+            }
+            throw new Error("Expected push to reject");
+          },
+        );
+
+        assertEquals(
+          error instanceof VeryfrontError,
+          false,
+          "an environment-supplied project id is not a stale local link",
+        );
+        assertStringIncludes(
+          (error as Error).message,
+          "Check VERYFRONT_PROJECT_ID",
+        );
+        assertEquals(
+          (error as Error).message.includes(".veryfront/project.json"),
+          false,
+          "the generic message must not name a file this reference never came from",
+        );
+      });
+    } finally {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
