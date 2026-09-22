@@ -1608,12 +1608,19 @@ function matchesExtglob(
       alternative.length === 1 && alternative[0]?.kind === "star"
     );
     if (index > 0 && isUniversalStar) return false;
+    const tail = tokens.slice(index + 1);
+    // With an empty alternative, minimatch's negative group excludes only an
+    // empty segment when it is the final token: `!(a|)` admits `a` and every
+    // other non-empty name. Treating `a` as a forbidden alternative here
+    // incorrectly drops valid npm workspace members.
+    if (tail.length === 0 && token.alternatives.some((alternative) => alternative.length === 0)) {
+      return offset < name.length;
+    }
     // minimatch folds the tokens AFTER the group into the negative lookahead,
     // so the refusal is over the whole remainder rather than the group's own
     // run: `!(a)b` excludes `ab`, and `a!(pp|xx)*` excludes `app` and `axxy`.
     // Testing each run on its own instead accepted those, by letting the
     // group consume nothing and the trailing `*` take the `pp`.
-    const tail = tokens.slice(index + 1);
     const tailForFallback = tail.map((tailToken) => {
       if (
         tailToken.kind !== "extglob" ||

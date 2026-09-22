@@ -1266,6 +1266,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/+(store-web)"]), "apps/store-web");
       assertEquals(await declaring(["apps/!(other)"]), "apps/store-web");
       assertEquals(await declaring(["apps/!(store-web)"]), "");
+      assertEquals(await declaring(["apps/!(a|)"], `${PROJECT}/apps/a`), "apps/a");
       assertEquals(await declaring(["apps/@(a|b)"]), "");
       assertEquals(await declaring(["apps/*@(a|b)"], `${PROJECT}/apps/a`), "");
       assertEquals(await declaring(["apps/*@(a|b)"], `${PROJECT}/apps/aa`), "apps/aa");
