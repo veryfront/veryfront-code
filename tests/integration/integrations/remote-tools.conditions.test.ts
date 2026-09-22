@@ -83,4 +83,33 @@ describe("remote integration failure conditions", () => {
       }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(success, "Done");
   });
+
+  it("preserves conditions on structured errors and arbitrary JSON text", async () => {
+    const condition = { slug: "provider-failed", status: 503, retryable: true };
+    const structured = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: { error: "authentication_required", message: "Reconnect" },
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+    assertEquals(structured, {
+      error: "authentication_required",
+      message: "Reconnect",
+      condition,
+    });
+
+    const arbitraryJson = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [{ type: "text", text: "{}" }],
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+    assertEquals(arbitraryJson, {
+      error: "provider-failed",
+      status: 503,
+      message: "{}",
+      condition,
+    });
+  });
 });

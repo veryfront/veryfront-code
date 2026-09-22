@@ -336,6 +336,51 @@ function parseJsonText(text: string): unknown | undefined {
   }
 }
 
+type RemoteFailureCondition = {
+  slug: string;
+  status: number;
+  retryable: boolean;
+};
+
+function readRemoteFailureCondition(value: unknown): RemoteFailureCondition | undefined {
+  if (
+    !isRecord(value) || typeof value.slug !== "string" ||
+    !/^[a-z][a-z0-9-]{0,127}$/.test(value.slug) ||
+    typeof value.status !== "number" || !Number.isInteger(value.status) ||
+    value.status < 400 || value.status > 599 || typeof value.retryable !== "boolean"
+  ) {
+    return undefined;
+  }
+  return { slug: value.slug, status: value.status, retryable: value.retryable };
+}
+
+function applyRemoteFailureCondition(
+  payload: unknown,
+  text: string,
+  condition: unknown,
+): unknown {
+  const validCondition = readRemoteFailureCondition(condition);
+  if (validCondition === undefined) {
+    if (isRecord(payload)) return payload;
+    return { error: "tool_error", message: text };
+  }
+
+  if (
+    isRecord(payload) &&
+    (payload.error === "authentication_required" || payload.error === "reconnect_required")
+  ) {
+    return { ...payload, condition: validCondition };
+  }
+
+  return {
+    ...(isRecord(payload) ? payload : {}),
+    error: validCondition.slug,
+    status: validCondition.status,
+    message: text,
+    condition: validCondition,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -826,34 +871,29 @@ async function callRemoteTool(
     if (isRecord(result) && Array.isArray(result.content)) {
       const text = joinCallToolText(result.content);
 
-      if (Object.hasOwn(result, "structuredContent")) {
-        if (!isRecord(result.structuredContent)) {
-          throw new TypeError(
-            "Integration tools API returned malformed MCP structured content",
-          );
-        }
-        return result.structuredContent;
+      const hasStructuredContent = Object.hasOwn(result, "structuredContent");
+      if (hasStructuredContent && !isRecord(result.structuredContent)) {
+        throw new TypeError(
+          "Integration tools API returned malformed MCP structured content",
+        );
       }
 
       if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
         throw new TypeError("Integration tools API returned a malformed MCP error marker");
       }
       if (result.isError === true) {
-        const parsed = parseJsonText(text);
+        const parsed = hasStructuredContent ? result.structuredContent : parseJsonText(text);
         const condition = isRecord(result._meta) ? result._meta.condition : undefined;
-        if (
-          isRecord(condition) && typeof condition.slug === "string" &&
-          /^[a-z][a-z0-9-]{0,127}$/.test(condition.slug) &&
-          typeof condition.status === "number" && Number.isInteger(condition.status) &&
-          condition.status >= 400 && condition.status <= 599 &&
-          typeof condition.retryable === "boolean"
-        ) {
-          if (isRecord(parsed)) return { ...parsed, condition };
-          return { error: condition.slug, status: condition.status, message: text, condition };
+        return applyRemoteFailureCondition(parsed, text, condition);
+      }
+
+      if (hasStructuredContent) {
+        if (!isRecord(result.structuredContent)) {
+          throw new TypeError(
+            "Integration tools API returned malformed MCP structured content",
+          );
         }
-        // Preserve structured errors such as authentication_required + connectUrl.
-        if (parsed && typeof parsed === "object") return parsed;
-        return { error: "tool_error", message: text };
+        return result.structuredContent;
       }
 
       return parseJsonText(text) ?? text;
