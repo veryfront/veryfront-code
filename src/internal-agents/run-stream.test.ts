@@ -3978,6 +3978,289 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.events.some((event) => event.name === "agent.run.completed"), false);
   });
 
+  it("records usage accumulated before a terminal runtime error on the agent.run span", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "failing-usage-agent",
+      config: {
+        id: "failing-usage-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_terminal_error_usage",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          callbacks?.onUsage?.({
+            promptTokens: 120,
+            completionTokens: 40,
+            totalTokens: 160,
+            costCredits: 34.8974,
+            costSource: "gateway",
+            usageCaptureStatus: "complete",
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"error","error":"Provider replay turn failed before its boundary"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.attributes["agent.usage.cost_credits"], 34.8974);
+    assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 160);
+    // The run-level "this total is a floor" fact rides its own attribute...
+    assertEquals(runSpan?.attributes["agent.run.usage_is_floor"], true);
+    // ...and does not overwrite the provider's own capture verdict, which has
+    // consumers that read it as "did the provider report this call's usage".
+    assertEquals(runSpan?.attributes["agent.usage.capture_status"], "complete");
+  });
+
+  it("records usage accumulated before cancellation on the agent.run span", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "cancelled-usage-agent",
+      config: {
+        id: "cancelled-usage-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_cancelled_usage",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          callbacks?.onUsage?.({
+            promptTokens: 50,
+            completionTokens: 10,
+            totalTokens: 60,
+            costCredits: 8.5,
+          });
+          sessionManager.cancelRun(input.runId);
+          return new ReadableStream<Uint8Array>();
+        },
+      }),
+    });
+    await response.text();
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "cancelled");
+    assertEquals(runSpan?.attributes["agent.usage.cost_credits"], 8.5);
+    assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 60);
+    assertEquals(runSpan?.attributes["agent.run.usage_is_floor"], true);
+    // The runtime reported no capture status here, so none is invented.
+    assertEquals(runSpan?.attributes["agent.usage.capture_status"], undefined);
+  });
+
+  // The floor marker qualifies a total; with no total to qualify it must stay absent,
+  // or a run cancelled before its first model call looks like one whose spend was
+  // merely under-captured.
+  it("omits the usage floor marker when a cancelled run never reached a model", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "cancelled-no-usage-agent",
+      config: {
+        id: "cancelled-no-usage-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_cancelled_no_usage",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: (_messages: unknown, _context: unknown) => {
+          sessionManager.cancelRun(input.runId);
+          return Promise.resolve(new ReadableStream<Uint8Array>());
+        },
+      }),
+    });
+    await response.text();
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "cancelled");
+    assertEquals(runSpan?.attributes["agent.run.usage_is_floor"], undefined);
+    assertEquals(runSpan?.attributes["agent.usage.cost_credits"], undefined);
+    assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], undefined);
+  });
+
+  // Fail-first regression for the floor marker's gate. `agent.run.usage_is_floor` says
+  // where the figure came from, not how the run ended, and those are different
+  // questions. A provider can return an empty assistant turn: `onFinish` delivers the
+  // exact total, then `finalizeAgUiEventsUnstamped` (src/agent/ag-ui/encoder.ts)
+  // raises EMPTY_ASSISTANT_OUTPUT and sets `sawTerminalError`, so the run is stamped
+  // failed. Gating the marker on that flag -- as this branch first did -- published an
+  // exact total as a lower bound, poisoning the very signal #1500's reconciliation is
+  // meant to trust.
+  it("does not mark a complete total as a floor on a run that failed after finishing", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "empty-output-agent",
+      config: {
+        id: "empty-output-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_empty_output_usage",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          // Both sources are populated, so the assertion below shows which one the
+          // span reported rather than which one happened to be the only one set.
+          callbacks?.onUsage?.({
+            promptTokens: 120,
+            completionTokens: 40,
+            totalTokens: 160,
+            costCredits: 34.8974,
+          });
+          callbacks?.onFinish?.({
+            text: "",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: {
+              promptTokens: 120,
+              completionTokens: 40,
+              totalTokens: 160,
+              costCredits: 34.8974,
+              costSource: "gateway",
+              usageCaptureStatus: "complete",
+            },
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"message-start","messageId":"assistant-1"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    const body = await response.text();
+
+    // The run genuinely ends as a terminal error: the empty-output guard fired.
+    assertStringIncludes(body, "EMPTY_ASSISTANT_OUTPUT");
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.attributes["agent.run.saw_terminal_error"], true);
+    // ...and the total on it is the one onFinish delivered, so it is exact, not a floor.
+    assertEquals(runSpan?.attributes["agent.usage.cost_credits"], 34.8974);
+    assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 160);
+    assertEquals(runSpan?.attributes["agent.run.usage_is_floor"], undefined);
+  });
+
+  // Guard, not a fail-first regression: this assertion already holds on the unfixed
+  // code. It exists so a later "just default the usage attributes to zero" change
+  // cannot land -- a run that never reached a model must leave the spend attributes
+  // absent, because 0.00 credits and "no model call at all" are different facts.
+  it("leaves agent.run usage attributes absent, not zero, when no model call happened", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "no-usage-agent",
+      config: {
+        id: "no-usage-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_no_usage",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: () =>
+          Promise.resolve(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    [
+                      'data: {"type":"message-start","messageId":"assistant-1"}',
+                      'data: {"type":"text-start","id":"text-1"}',
+                      'data: {"type":"text-delta","id":"text-1","delta":"done"}',
+                      'data: {"type":"text-end","id":"text-1"}',
+                      "",
+                      "",
+                    ].join("\n\n"),
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          ),
+      }),
+    });
+    await response.text();
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+    assertEquals(runSpan?.attributes["agent.usage.cost_credits"], undefined);
+    assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], undefined);
+  });
+
   it("emits comment heartbeats while the runtime stream is idle", async () => {
     using time = new FakeTime();
     const sessionManager = new AgentRunSessionManager();

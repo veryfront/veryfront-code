@@ -8,6 +8,7 @@ import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import type { HostedConversationRootRunState } from "../conversation/root-run-lifecycle.ts";
 import {
   type AgentTraceAttributes,
+  type AgentTraceUsage,
   buildAgentRunTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
 } from "./trace-attributes.ts";
@@ -28,15 +29,21 @@ export interface HostedAgentRunTracer {
 export interface HostedAgentRunSpanFinalState {
   status: "completed" | "failed" | "cancelled";
   modelId?: string | null;
-  usage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-    cachedInputTokens?: number;
-    cacheCreationInputTokens?: number;
-    cacheReadInputTokens?: number;
-    reasoningTokens?: number;
-  };
+  /**
+   * Tokens *and* cost.
+   *
+   * This span is **not** named `agent.run` in production. No caller passes
+   * `operationName: "chat"` and none supplies `spanName`, so the name resolved below
+   * is always `invoke_agent <agentName>`; hosted runs were never part of a
+   * `{ name = "agent.run" }` spend sum and were never diluting one.
+   *
+   * What they were doing is reporting token counts with no spend at all, on every
+   * status, so hosted spend could not be read off a trace by any query. That is what
+   * this shape fixes. The span keeps its `invoke_agent` name deliberately: the same
+   * controller also spans delegated sub-agent runs, so renaming it would make a
+   * name-based spend sum double count a parent and its children.
+   */
+  usage?: AgentTraceUsage;
   terminalErrorCode?: string | null;
   terminalErrorMessage?: string | null;
 }
@@ -144,6 +151,52 @@ export interface CreateHostedRootRunLifecycleRuntimeAdapterInput {
   ) => ConversationHostedTerminalAdapter;
 }
 
+/**
+ * Flattens hosted terminal metadata into the span's usage shape.
+ *
+ * Token counts arrive nested under `metadata.usage`; the billing fields sit beside it
+ * at the top level (ChatMessageMetadata's layout). The span wants them in one object,
+ * and an all-absent result stays `undefined` so a run with nothing to report emits no
+ * usage attributes rather than a row of zeroes.
+ */
+const HOSTED_RUN_BILLING_USAGE_KEYS = [
+  "billableInputTokens",
+  "billableOutputTokens",
+  "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
+  "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+  "costSource",
+  "billingMode",
+  "usageCaptureStatus",
+] as const satisfies readonly (
+  & keyof NonNullable<HostedLifecycleTerminalState["metadata"]>
+  & keyof AgentTraceUsage
+)[];
+
+function buildHostedAgentRunSpanUsage(
+  metadata: HostedLifecycleTerminalState["metadata"],
+): AgentTraceUsage | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const usage: Record<string, unknown> = { ...metadata.usage };
+  for (const key of HOSTED_RUN_BILLING_USAGE_KEYS) {
+    const value = metadata[key];
+    if (value !== undefined) {
+      usage[key] = value;
+    }
+  }
+
+  return Object.keys(usage).length > 0 ? usage as AgentTraceUsage : undefined;
+}
+
 function finalizeHostedAgentRunSpan(input: {
   agentRunSpan: Pick<HostedAgentRunSpanController, "finalize">;
   modelId: string;
@@ -152,7 +205,7 @@ function finalizeHostedAgentRunSpan(input: {
   input.agentRunSpan.finalize({
     status: input.terminalState.status,
     modelId: input.terminalState.metadata?.modelId ?? input.modelId,
-    usage: input.terminalState.metadata?.usage,
+    usage: buildHostedAgentRunSpanUsage(input.terminalState.metadata),
     terminalErrorCode: input.terminalState.terminalErrorCode,
     terminalErrorMessage: input.terminalState.terminalErrorMessage,
   });

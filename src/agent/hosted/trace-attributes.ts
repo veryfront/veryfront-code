@@ -1,3 +1,5 @@
+import { buildRuntimeUsageTraceAttributes } from "../runtime/trace-usage.ts";
+
 type TracePrimitive = string | number | boolean;
 type EnvReader = (name: string) => string | undefined;
 /** Public API contract for a value can be used as an agent trace attribute. */
@@ -9,7 +11,13 @@ export type AgentTraceAttributeValue =
 /** Public API contract for agent trace attributes. */
 export type AgentTraceAttributes = Record<string, AgentTraceAttributeValue>;
 
-/** Public API contract for agent trace usage. */
+/**
+ * Public API contract for agent trace usage.
+ *
+ * Carries the billing fields as well as the token counts. The hosted path's run span
+ * (named `invoke_agent <agentName>`, not `agent.run`) was reporting tokens and no
+ * spend at all, so hosted runs carried no queryable cost on any status.
+ */
 export type AgentTraceUsage = {
   inputTokens?: number;
   outputTokens?: number;
@@ -18,6 +26,20 @@ export type AgentTraceUsage = {
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
+  billableInputTokens?: number;
+  billableOutputTokens?: number;
+  costUsd?: number;
+  providerInputCostUsd?: number;
+  providerOutputCostUsd?: number;
+  providerCostUsd?: number;
+  veryfrontInputChargeUsd?: number;
+  veryfrontOutputChargeUsd?: number;
+  veryfrontChargeUsd?: number;
+  veryfrontBilledUsd?: number;
+  costCredits?: number;
+  costSource?: "gateway" | "missing" | "partial";
+  billingMode?: "direct" | "deferred";
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
 function compactTraceAttributes(attributes: AgentTraceAttributes): AgentTraceAttributes {
@@ -148,33 +170,21 @@ export function resolveGenAiProviderName(modelId: string | null | undefined): st
   }
 }
 
+/**
+ * Both agent run span emitters share one attribute builder.
+ *
+ * The internal-agent path (src/internal-agents/run-stream.ts, span `agent.run`)
+ * already used {@link buildRuntimeUsageTraceAttributes}; the hosted path (span
+ * `invoke_agent <agentName>`) had a parallel token-only copy, so two spans describing
+ * the same kind of work carried different attribute sets. Delegating keeps token
+ * naming identical and gives hosted runs the `agent.usage.*` billing attributes.
+ *
+ * Note for anyone building a spend roll-up on these attributes: the hosted emitter
+ * also spans delegated sub-agent runs, so summing `agent.usage.cost_credits` across
+ * `invoke_agent` spans without filtering will count a parent and its children.
+ */
 function buildUsageTraceAttributes(usage?: AgentTraceUsage): AgentTraceAttributes {
-  const totalTokens = typeof usage?.totalTokens === "number"
-    ? usage.totalTokens
-    : typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number"
-    ? usage.inputTokens + usage.outputTokens
-    : undefined;
-
-  return compactTraceAttributes({
-    ...(typeof usage?.inputTokens === "number"
-      ? { "gen_ai.usage.input_tokens": usage.inputTokens }
-      : {}),
-    ...(typeof usage?.outputTokens === "number"
-      ? { "gen_ai.usage.output_tokens": usage.outputTokens }
-      : {}),
-    ...(typeof totalTokens === "number" ? { "gen_ai.usage.total_tokens": totalTokens } : {}),
-    ...(typeof usage?.cacheCreationInputTokens === "number"
-      ? { "gen_ai.usage.cache_creation.input_tokens": usage.cacheCreationInputTokens }
-      : {}),
-    ...(typeof usage?.cacheReadInputTokens === "number"
-      ? { "gen_ai.usage.cache_read.input_tokens": usage.cacheReadInputTokens }
-      : typeof usage?.cachedInputTokens === "number"
-      ? { "gen_ai.usage.cache_read.input_tokens": usage.cachedInputTokens }
-      : {}),
-    ...(typeof usage?.reasoningTokens === "number"
-      ? { "gen_ai.usage.reasoning.output_tokens": usage.reasoningTokens }
-      : {}),
-  });
+  return compactTraceAttributes(buildRuntimeUsageTraceAttributes(usage));
 }
 
 /** Builds agent run trace attributes. */

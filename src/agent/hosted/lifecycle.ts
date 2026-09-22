@@ -15,6 +15,25 @@ export interface HostedLifecycleTerminalState {
       cacheReadInputTokens?: number;
       reasoningTokens?: number;
     };
+    // Billing fields sit beside `usage`, matching ChatMessageMetadata, which is what
+    // the hosted finalizer actually passes here. They were previously dropped from the
+    // type, so the hosted run span finalized from this metadata could never report
+    // spend. The type alone was not enough: toConversationHostedTerminalState
+    // (src/agent/conversation/hosted-terminal.ts) projects this metadata on the way to
+    // the span and had to be taught to carry them too.
+    billableInputTokens?: number;
+    billableOutputTokens?: number;
+    costUsd?: number;
+    providerInputCostUsd?: number;
+    providerOutputCostUsd?: number;
+    providerCostUsd?: number;
+    veryfrontInputChargeUsd?: number;
+    veryfrontOutputChargeUsd?: number;
+    veryfrontChargeUsd?: number;
+    veryfrontBilledUsd?: number;
+    costCredits?: number;
+    costSource?: "gateway" | "missing" | "partial";
+    billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
   };
   terminalErrorCode?: string | null;

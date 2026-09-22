@@ -186,6 +186,58 @@ function buildConversationAgentRunUsage(
   };
 }
 
+type HostedTerminalMetadata = NonNullable<HostedLifecycleTerminalState["metadata"]>;
+
+/**
+ * Billing fields carried through the terminal projection.
+ *
+ * They sit beside `usage` rather than inside it, matching the `ChatMessageMetadata`
+ * the hosted finalizer passes in. This projection is a whitelist by design, so they
+ * have to be named here to survive it -- and they have to survive it because the
+ * hosted agent run span is finalized from the projected state
+ * (src/agent/hosted/agent-run-lifecycle.ts). While they were dropped here, that span
+ * could report tokens but never spend, no matter what the span's own types allowed.
+ *
+ * `usageCaptureStatus` is deliberately absent: it is projected separately below,
+ * because it also gates whether a metadata block is emitted at all.
+ */
+const HOSTED_TERMINAL_BILLING_KEYS = [
+  "billableInputTokens",
+  "billableOutputTokens",
+  "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
+  "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+  "costSource",
+  "billingMode",
+] as const satisfies readonly (keyof HostedTerminalMetadata)[];
+
+type HostedTerminalBillingMetadata = Pick<
+  HostedTerminalMetadata,
+  typeof HOSTED_TERMINAL_BILLING_KEYS[number]
+>;
+
+function buildConversationHostedBillingMetadata(
+  metadata: HostedLifecycleTerminalState["metadata"],
+): HostedTerminalBillingMetadata {
+  const billing: Record<string, unknown> = {};
+  if (metadata) {
+    for (const key of HOSTED_TERMINAL_BILLING_KEYS) {
+      const value = metadata[key];
+      if (value !== undefined) {
+        billing[key] = value;
+      }
+    }
+  }
+
+  return billing as HostedTerminalBillingMetadata;
+}
+
 /** State for to conversation hosted terminal. */
 export function toConversationHostedTerminalState(input: {
   fallbackModelId: string;
@@ -194,14 +246,17 @@ export function toConversationHostedTerminalState(input: {
   const modelId = input.state.metadata?.modelId ?? input.fallbackModelId;
   const usage = buildConversationHostedLifecycleUsage(input.state.metadata?.usage);
   const usageCaptureStatus = input.state.metadata?.usageCaptureStatus;
+  const billing = buildConversationHostedBillingMetadata(input.state.metadata);
+  const hasBilling = Object.keys(billing).length > 0;
 
   return {
     status: input.state.status,
-    ...(modelId || usage || usageCaptureStatus
+    ...(modelId || usage || usageCaptureStatus || hasBilling
       ? {
         metadata: {
           ...(modelId ? { modelId } : {}),
           ...(usage ? { usage } : {}),
+          ...billing,
           ...(usageCaptureStatus ? { usageCaptureStatus } : {}),
         },
       }

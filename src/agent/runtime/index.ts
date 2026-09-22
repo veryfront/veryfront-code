@@ -366,7 +366,7 @@ import {
   type ResolvedModelTransport,
   revokeModelRuntimeResolver,
 } from "./model-transport.ts";
-import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
+import { buildRuntimeUsageTraceAttributes, type RuntimeUsageTraceInput } from "./trace-usage.ts";
 import {
   createToolExposureCheckpoint,
   createToolExposureState,
@@ -1763,6 +1763,14 @@ type AgentRuntimeStreamCallbacks = {
   onToolCall?: (toolCall: ToolCall) => void;
   onChunk?: (chunk: string) => void;
   onFinish?: (response: AgentResponse) => void;
+  /**
+   * Fires after every model call with the run's usage accumulated so far.
+   *
+   * A run that dies mid-stream never reaches {@link onFinish}, so callers that
+   * report spend (billing, tracing) need the running total instead of waiting
+   * for a final response that may never arrive.
+   */
+  onUsage?: (usage: RuntimeUsageTraceInput) => void;
 };
 
 type AgentRuntimeStreamArgs = [
@@ -3473,6 +3481,7 @@ export class AgentRuntime {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
       onFinish?: (response: AgentResponse) => void;
+      onUsage?: (usage: RuntimeUsageTraceInput) => void;
     } | undefined,
     textPartId: string | undefined,
     toolContextBase: Record<string, unknown> | undefined,
@@ -3859,7 +3868,12 @@ export class AgentRuntime {
           }
           releaseDeferredRecoveryOutputAfterDivergence();
         },
-        onUsage: (usage) => accumulateUsage(totalUsage, usage),
+        onUsage: (usage) => {
+          accumulateUsage(totalUsage, usage);
+          // Snapshot, not the live object: a later step must not mutate a total
+          // a caller has already recorded on a span.
+          callbacks?.onUsage?.({ ...totalUsage });
+        },
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
         streamLifecycleMode,
