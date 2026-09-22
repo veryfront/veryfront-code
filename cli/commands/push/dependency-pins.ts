@@ -247,6 +247,7 @@ function normalizeNpmPartialRange(value: string): string {
   if (body.startsWith("=")) {
     if (operator !== "") return `${operator}=${body.slice(1)}`;
     body = body.slice(1);
+    if (/^(?:>=|<=|>|<|\^|~|=)/.test(body)) return `=${body}`;
   }
   body = body.trim();
   if (operator === "" && /^(?:[xX*])(?:\.[xX*]){0,2}$/.test(body)) return "*";
