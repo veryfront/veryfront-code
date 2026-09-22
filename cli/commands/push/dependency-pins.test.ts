@@ -310,6 +310,13 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, remote, history), "user-edit");
   });
 
+  it("rejects equality combined with another range operator", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: "^=1.2.3" } });
+    const remote = apiWrite({ name: "demo", dependencies: { react: "1.3.0" } });
+    const history = [{ react: "^=1.2.3" }, { react: "1.3.0" }];
+    assertEquals(classifyPackageJsonDrift(baseline, remote, history), "user-edit");
+  });
+
   it("compares large numeric prerelease identifiers without rounding", () => {
     const baseline = apiWrite({
       name: "demo",
