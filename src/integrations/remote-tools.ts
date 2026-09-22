@@ -67,7 +67,6 @@ interface RemoteToolDefinition {
   description: string;
   inputSchema: Record<string, unknown>;
 }
-
 interface IntegrationRequestSignalScope {
   signal: AbortSignal;
   dispose: () => void;
@@ -372,11 +371,13 @@ function applyRemoteFailureCondition(
     return { ...payload, condition: validCondition };
   }
 
-  const message = text.trim().length > 0
-    ? text
-    : isRecord(payload) && typeof payload.message === "string"
-    ? payload.message
-    : text;
+  let message = text;
+  if (
+    message.trim().length === 0 && isRecord(payload) &&
+    typeof payload.message === "string"
+  ) {
+    message = payload.message;
+  }
 
   return {
     ...(isRecord(payload) ? payload : {}),

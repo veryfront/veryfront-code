@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { executeRemoteIntegrationTool } from "#veryfront/integrations/remote-tools.ts";
@@ -59,11 +59,17 @@ describe("remote integration failure conditions", () => {
 
   it("falls back for malformed conditions and ignores error metadata on success", async () => {
     for (
-      const condition of [null, { slug: "bad slug", status: 403, retryable: false }, {
-        slug: "authorization-denied",
-        status: 200,
-        retryable: false,
-      }, { slug: "authorization-denied", status: 403, retryable: "false" }]
+      const condition of [
+        undefined,
+        null,
+        42,
+        { slug: 42, status: 403, retryable: false },
+        { slug: "bad slug", status: 403, retryable: false },
+        { slug: "authorization-denied", status: 200, retryable: false },
+        { slug: "authorization-denied", status: 600, retryable: false },
+        { slug: "authorization-denied", status: 403.5, retryable: false },
+        { slug: "authorization-denied", status: 403, retryable: "false" },
+      ]
     ) {
       const result = await withMockFetch(
         async () =>
@@ -76,6 +82,17 @@ describe("remote integration failure conditions", () => {
       );
       assertEquals(result, { error: "tool_error", message: "Denied" });
     }
+    const preservedPayload = await withMockFetch(
+      async () =>
+        Response.json({
+          isError: true,
+          content: [{ type: "text", text: JSON.stringify({ error: "raw-error" }) }],
+          _meta: { condition: { slug: "bad-condition", status: 200, retryable: false } },
+        }),
+      async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+    );
+    assertEquals(preservedPayload, { error: "raw-error" });
+
     const success = await withMockFetch(async () =>
       Response.json({
         content: [{ type: "text", text: "Done" }],
@@ -159,5 +176,52 @@ describe("remote integration failure conditions", () => {
       message: "{}",
       condition,
     });
+
+    const nonStringStructuredMessage = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: { message: 42 },
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+    assertEquals(nonStringStructuredMessage, {
+      message: "",
+      error: "provider-failed",
+      status: 503,
+      condition,
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            Response.json({
+              isError: true,
+              content: [],
+              structuredContent: "malformed",
+              _meta: { condition },
+            }),
+          async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+        ),
+      TypeError,
+      "malformed MCP structured content",
+    );
+
+    const structuredSuccess = await withMockFetch(
+      async () =>
+        Response.json({
+          isError: false,
+          content: [],
+          structuredContent: { ok: true },
+        }),
+      async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+    );
+    assertEquals(structuredSuccess, { ok: true });
+
+    const rawSuccess = await withMockFetch(
+      async () => Response.json({ ok: true }),
+      async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+    );
+    assertEquals(rawSuccess, { ok: true });
   });
 });
