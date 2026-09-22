@@ -1021,4 +1021,11 @@ it("stable release creates a fresh upload token after npm publication", async ()
     freshToken > publish,
     "npm publication can exceed the one-hour App token lifetime",
   );
+  const tokenInputs = asRecord(
+    steps[freshToken].with,
+    "release upload token inputs",
+  );
+  assertEquals(tokenInputs["permission-contents"], "write");
+  assertEquals(tokenInputs.owner, "veryfront");
+  assertEquals(String(tokenInputs.repositories).trim(), "veryfront");
 });
