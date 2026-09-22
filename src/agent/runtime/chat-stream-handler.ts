@@ -713,6 +713,36 @@ function emitDeferredText(
   sendSSE(controller, encoder, { type: "text-end", id: textPartId });
 }
 
+interface DeferredTextBuffer {
+  readonly deferredText: string[];
+  readonly emitBufferedText: (text: string) => void;
+  readonly releaseDeferredText: () => void;
+}
+
+function createDeferredTextBuffer(
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  textPartId: string | undefined,
+  onChunk?: (chunk: string) => void,
+): DeferredTextBuffer {
+  const deferredText: string[] = [];
+  let deferredTextSegmentIndex = 0;
+  const emitBufferedText = (text: string) => {
+    if (text.length === 0) return;
+    const segmentId = textPartId === undefined || deferredTextSegmentIndex === 0
+      ? textPartId
+      : `${textPartId}:${deferredTextSegmentIndex}`;
+    deferredTextSegmentIndex += 1;
+    emitDeferredText(controller, encoder, segmentId, text, onChunk);
+  };
+  const releaseDeferredText = () => {
+    const text = deferredText.join("");
+    deferredText.length = 0;
+    emitBufferedText(text);
+  };
+  return { deferredText, emitBufferedText, releaseDeferredText };
+}
+
 async function processActiveStream(
   source: RuntimeStreamSource,
   state: ChatStreamState,
@@ -723,21 +753,12 @@ async function processActiveStream(
   abortSignal: AbortSignal | undefined,
 ): Promise<void> {
   const deferTextDelivery = callbacks?.onTextComplete !== undefined;
-  const deferredText: string[] = [];
-  let deferredTextSegmentIndex = 0;
-  const emitBufferedText = (text: string) => {
-    if (text.length === 0) return;
-    const segmentId = textPartId === undefined || deferredTextSegmentIndex === 0
-      ? textPartId
-      : `${textPartId}:${deferredTextSegmentIndex}`;
-    deferredTextSegmentIndex += 1;
-    emitDeferredText(controller, encoder, segmentId, text, callbacks?.onChunk);
-  };
-  const releaseDeferredText = () => {
-    const text = deferredText.join("");
-    deferredText.length = 0;
-    emitBufferedText(text);
-  };
+  const { deferredText, emitBufferedText, releaseDeferredText } = createDeferredTextBuffer(
+    controller,
+    encoder,
+    textPartId,
+    callbacks?.onChunk,
+  );
   const baseAdapter = createRuntimeStreamProviderAdapter({
     open: (signal) => source.open(signal).fullStream,
     options: {
@@ -935,21 +956,12 @@ export function processStreamInternal(
 
   const process = async () => {
     const deferTextDelivery = callbacks?.onTextComplete !== undefined;
-    const deferredText: string[] = [];
-    let deferredTextSegmentIndex = 0;
-    const emitBufferedText = (text: string) => {
-      if (text.length === 0) return;
-      const segmentId = textPartId === undefined || deferredTextSegmentIndex === 0
-        ? textPartId
-        : `${textPartId}:${deferredTextSegmentIndex}`;
-      deferredTextSegmentIndex += 1;
-      emitDeferredText(controller, encoder, segmentId, text, callbacks?.onChunk);
-    };
-    const releaseDeferredText = () => {
-      const text = deferredText.join("");
-      deferredText.length = 0;
-      emitBufferedText(text);
-    };
+    const { deferredText, emitBufferedText, releaseDeferredText } = createDeferredTextBuffer(
+      controller,
+      encoder,
+      textPartId,
+      callbacks?.onChunk,
+    );
     let eventCount = 0;
     let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
       ? internals.createShadow({

@@ -181,7 +181,18 @@ export function resolveStepToolChoice(
 }
 
 const MAX_RECOVERABLE_TOOL_CALL_TEXT_LENGTH = 16_384;
-const JSON_FENCE_PATTERN = /^```(?:json|JSON)?\s*\n([\s\S]*)\n?```$/;
+
+function readJsonFenceBody(text: string): string | undefined {
+  if (!text.startsWith("```")) return undefined;
+  const firstLineEnd = text.indexOf("\n", 3);
+  if (firstLineEnd < 0) return undefined;
+  const language = privateTextSlice(text, 3, firstLineEnd);
+  if (language !== "" && language !== "json" && language !== "JSON") return undefined;
+  if (!text.endsWith("```")) return undefined;
+  const bodyEnd = text.length - 3;
+  const body = privateTextSlice(text, firstLineEnd + 1, bodyEnd);
+  return body.endsWith("\n") ? privateTextSlice(body, 0, body.length - 1) : body;
+}
 
 /** Keys a recovered payload may carry beside its name and arguments. */
 const IGNORED_PAYLOAD_KEYS = new Set(["id", "type", "index"]);
@@ -236,26 +247,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * name, an argument bag, and the ignored wire keys is rejected, which is what
  * keeps ordinary JSON output from being read as a tool call.
  */
-function readToolCallPayload(
-  value: unknown,
-  knownToolNames: ReadonlySet<string>,
-): { toolName: string; input: Record<string, unknown> } | undefined {
-  if (!isPlainObject(value)) return undefined;
-
-  // `{"function": {"name": …, "arguments": …}}` wraps the same payload.
-  if (ObjectHasOwn(value, "function")) {
-    for (const key of ObjectKeys(value)) {
-      if (key !== "function" && !IGNORED_PAYLOAD_KEYS.has(key)) return undefined;
-    }
-    return readToolCallPayload(value.function, knownToolNames);
-  }
-
-  const toolName = readStringMember(value, NAME_KEYS);
-  if (toolName === undefined || !knownToolNames.has(toolName)) return undefined;
-
-  const argumentsMember = readArgumentsMember(value, ARGUMENT_KEYS);
-  if (!argumentsMember.found || argumentsMember.input === undefined) return undefined;
-
+function hasOnlyToolCallKeys(value: Record<string, unknown>): boolean {
   let sawName = false;
   let sawArguments = false;
   for (const key of ObjectKeys(value)) {
@@ -267,19 +259,53 @@ function readToolCallPayload(
       sawArguments = true;
       continue;
     }
-    if (!IGNORED_PAYLOAD_KEYS.has(key)) return undefined;
+    if (!IGNORED_PAYLOAD_KEYS.has(key)) return false;
   }
+  return true;
+}
 
+function hasOnlyWrapperKeys(value: Record<string, unknown>): boolean {
+  for (const key of ObjectKeys(value)) {
+    if (key !== "function" && !IGNORED_PAYLOAD_KEYS.has(key)) return false;
+  }
+  return true;
+}
+
+function readUnwrappedToolCallPayload(
+  value: unknown,
+  knownToolNames: ReadonlySet<string>,
+): { toolName: string; input: Record<string, unknown> } | undefined {
+  if (!isPlainObject(value)) return undefined;
+
+  const toolName = readStringMember(value, NAME_KEYS);
+  if (toolName === undefined || !knownToolNames.has(toolName)) return undefined;
+
+  const argumentsMember = readArgumentsMember(value, ARGUMENT_KEYS);
+  if (!argumentsMember.found || argumentsMember.input === undefined) return undefined;
+  if (!hasOnlyToolCallKeys(value)) return undefined;
   return { toolName, input: argumentsMember.input };
 }
 
-function parseWholeMessageJson(text: string): unknown | undefined {
+function readToolCallPayload(
+  value: unknown,
+  knownToolNames: ReadonlySet<string>,
+): { toolName: string; input: Record<string, unknown> } | undefined {
+  if (!isPlainObject(value)) return undefined;
+  // `{"function": {"name": …, "arguments": …}}` wraps the same payload.
+  if (ObjectHasOwn(value, "function")) {
+    if (!hasOnlyWrapperKeys(value)) return undefined;
+    return readToolCallPayload(value.function, knownToolNames);
+  }
+  return readUnwrappedToolCallPayload(value, knownToolNames);
+}
+
+function parseWholeMessageJson(text: string): unknown {
   const trimmed = privateTextTrim(text);
   if (trimmed.length === 0 || trimmed.length > MAX_RECOVERABLE_TOOL_CALL_TEXT_LENGTH) {
     return undefined;
   }
-  const fenced = JSON_FENCE_PATTERN.exec(trimmed);
-  const body = fenced ? privateTextTrim(fenced[1] ?? "") : trimmed;
+  const fencedBody = readJsonFenceBody(trimmed);
+  const body = fencedBody === undefined ? trimmed : privateTextTrim(fencedBody);
   const first = privateTextSlice(body, 0, 1);
   if (first !== "{" && first !== "[") return undefined;
   try {

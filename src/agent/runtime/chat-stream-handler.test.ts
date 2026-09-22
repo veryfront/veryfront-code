@@ -2910,6 +2910,66 @@ describe("active mode delivery failure precedence", () => {
   });
 });
 
+describe("deferred text delivery", () => {
+  for (const mode of ["legacy", "active"] as const) {
+    it(`releases text at boundaries and completion in ${mode} mode`, async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const chunks: string[] = [];
+      const completed: string[] = [];
+      let boundaries = 0;
+      const parts = [
+        { type: "text-delta", text: "before" },
+        { type: "reasoning-start", id: "reasoning-1" },
+        { type: "reasoning-delta", id: "reasoning-1", delta: "thinking" },
+        { type: "reasoning-end", id: "reasoning-1" },
+        { type: "text-delta", text: "after" },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ];
+      const result = mode === "active"
+        ? createRuntimeStreamSource(() => createMockResult(parts))
+        : createMockResult(parts);
+
+      await processStream(
+        result,
+        state,
+        controller,
+        encoder,
+        "text-1",
+        {
+          ...(mode === "active" ? { streamLifecycleMode: "active" as const } : {}),
+          onChunk: (chunk) => chunks.push(chunk),
+          onTextBoundary: (release) => {
+            boundaries++;
+            release();
+          },
+          onTextComplete: (text, emit) => {
+            completed.push(text);
+            emit();
+          },
+        },
+        undefined,
+      );
+
+      assertEquals(chunks, ["before", "after"]);
+      assertEquals(completed, ["after"]);
+      assertEquals(boundaries, 1);
+      assertEquals(state.accumulatedText, "beforeafter");
+      assertEquals(
+        events.filter((event) => typeof event.type === "string" && event.type.startsWith("text-")),
+        [
+          { type: "text-start", id: "text-1" },
+          { type: "text-delta", id: "text-1", delta: "before" },
+          { type: "text-end", id: "text-1" },
+          { type: "text-start", id: "text-1:1" },
+          { type: "text-delta", id: "text-1:1", delta: "after" },
+          { type: "text-end", id: "text-1:1" },
+        ],
+      );
+    });
+  }
+});
+
 describe("chat-stream-handler provider-executed tool finalization", () => {
   /**
    * Stream source whose parts can be separated by real delays.
