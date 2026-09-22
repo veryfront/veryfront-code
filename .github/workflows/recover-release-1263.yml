@@ -1,0 +1,112 @@
+# One-shot recovery of original tested 0.1.1263 artifacts; no package publication.
+# Source checkout and binary artifacts remain pinned to the original tested release.
+name: Recover original 0.1.1263 release artifacts
+on:
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  recover:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 8f1cd570de295d1de9cdd4adc4cc3a5558539bac
+          persist-credentials: false
+      - name: Verify original source, registry gate and skipped dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git rev-parse HEAD)" = 8f1cd570de295d1de9cdd4adc4cc3a5558539bac
+          test "$(gh api repos/veryfront/veryfront-code/git/ref/tags/v0.1.1263 --jq .object.sha)" = 8f1cd570de295d1de9cdd4adc4cc3a5558539bac
+          test "$(gh api repos/veryfront/veryfront-code/actions/runs/35751966714 --jq .head_sha)" = 8f1cd570de295d1de9cdd4adc4cc3a5558539bac
+          gh api --paginate 'repos/veryfront/veryfront-code/actions/runs/35751966714/jobs?filter=latest&per_page=100' --jq '.jobs[] | {name,conclusion}' | jq -s -e 'any(.[]; .name == "quality gate (registry)" and .conclusion == "success") and any(.[]; .name == "dispatch release" and .conclusion == "skipped")'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: 35751966714
+          github-token: ${{ github.token }}
+          pattern: veryfront-*
+          path: binaries
+      - name: Create fresh public release upload token
+        id: release-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
+          owner: veryfront
+          repositories: veryfront
+          permission-contents: write
+      - name: Verify and finish the existing draft without replacing uploaded assets
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          EXPECTED_ASSETS: '{"veryfront-linux-arm64": "212d78c24c34895fe545dbd038c5f08657d6ef824cb2ab7beca29d756d05d384", "veryfront-linux-x64": "879b853bb62e679a957bec83a7890f2598b89755cd495e2627fe3a7af244f17c", "veryfront-macos-arm64": "a4b7137bd935c4165b348961decf00fa9f8a140c73925138c44a418c546bca83", "veryfront-macos-x64": "37d93e33c4cd17bc20de34025a3273b0bcc58a040e4b4394ce915d0617a34a76", "veryfront-proxy-linux-arm64": "ce298df4a6d147c65d899fc3a8435bf1abbe2ea956fbd2f8853c731ca1f0760b", "veryfront-proxy-linux-x64": "27672ad23d0f5b5426149e1b2482807c4629eb5ddc2f37a0e88bd8f288b9ab53", "veryfront-windows-x64.exe": "6869fc18e85920b576d2674c8b0b5d026a664234a88c251ac6153fdd3a768313", "install.sh": "ce9e815ea496ccccb0c1372dd1232a846411f37800dfa092fcd71849ec3dc845", "install.ps1": "e9f042339c300b539cb94c66e37c998e6cb901170c5da5fa4ba98a1b62a9101d", "SHA256SUMS": "382265a3866975d0ec55620670e6075a7b29d9548d21a4163164570f08ccf3cb", "ext-observability-opentelemetry.json": "5dab91965c04f7c58e2dfb7cb3b62ba8cd5258a964d78a62fef2fc01240874d8", "ext-llm-google.json": "a7770d11cba21bf01c00b53a7d3e30a3d3f7e811eef92012f0b9ff587931ae09", "ext-cache-redis.json": "81838c61ad4b0b935c60dd0170be6cd849232bb85f45d42b6416c51e49a7020a", "dependencies-by-manifest.json": "c42ca0101700c06db811ff0f3e46740357659a370b2a78aed3ba17153e38f4de", "scripts-codemods.json": "0f201023a88b0adaeb17d92a2c209eb134dd1e112023d26012875440392bf95e", "ext-observability-sentry.json": "65ebdabb7b7a3ca4104de74e5c01b31b70fc26103d446e3e0a109cb3a951168e", "ext-auth-jwt.json": "361224ad169c28897add173e3e4face04c1bcb3525205a55833be04a6b4ce4db", "ext-redis.json": "7e1ebeb772f1777e02cd2f8c541d35a426b11a03c56789b00d6bc02a7bde1265", "ext-eval-report-mlflow.json": "fac552fa72a8c2e98c0159582884cea8b4006e18540ae21ec172569b6b919ef0", "proxy.json": "c9c23a74cd03f2cfbd7ae1d1edffc829ca856120ca461849bd7ece1fcbbab930", "ext-db-sqlite.json": "cc69e3370cafd6b71c967c0e56aa581e352e8aa6ebe0dc6a7777df1b44642f11", "ext-schema-zod.json": "f6cc4bb1c23da2ceb4ea3184ea93471db5fe7ef071689b5d82d67501744c79d4", "ext-llm-anthropic.json": "78de5385d61fa3014a9a7495bf10ea72da1accaecdb175ebd78ba97b39442f65", "ext-parser-babel.json": "37b7556e38db1c4e9cebb564f68079f4005af60ea70ebe8562058d90940e281e", "ext-dev-ui-react.json": "b4016b9d05eb95426d413deb81a7afc0709bc0d7ff37885bac80535f8720465e", "ext-yaml.json": "b9964741adccccc72989465d4e39781651b111e09207c713e10fc0ef4d497bf1", "ext-blob-s3.json": "0ea6c8e4dccc5572eba6c67052ab579ebd01177bc00b7c1210d2ef46ce2315bb", "cli.json": "3f834e4df43e923f0c26eeec0977abef9dede872ae255e33fc71eb59958644c2", "ext-css-purgecss.json": "1d972997aca55f59ffcf16f9836728984c089fc9dfd5736b18f1a081d9c2b608", "ext-css-tailwind.json": "1048bc2b92519314a0ee595a32158844db20ad65a5e3cc0c91fcb233cb3ec9ea", "react.json": "66b0c498fc49c2d8cf45ec08bd8602f63910923c7fc7d699e0c41a41a06ff79a", "ext-bundler-esbuild.json": "d116fcaef816d87d6784368fd74e563b7dd72f5a03710e3592181a05c6953d3c", "core.json": "e6c00922e017595030e5ae1788c3956b0eda6c7032ffa75ab3e584f8b56fafad", "ext-content-mdx.json": "bf85db95ca24d57800f10b829035b4bbd3bc6f85026985419162a1c4fd01f345", "ext-sandbox-shell-tools.json": "4bf3620b71d29b53d133ef55dab981028d76a2e23c8fcd093b65b161a8f69a36", "ext-css-lightning.json": "65077507c1073f733b577022fe6c2e2aa14a5af2a438c2f59cd58dad63daa523", "ext-blob-gcs.json": "67e332f8b4d3a6ed29b32aaea47ea973c7068558ff32bd2f72ad8036cc3247ed", "ext-image-sharp.json": "8a853fc9ef9be065df91c4eda5e7bdce8ba8e04f48be058dbcc69c00292766a7", "ext-llm-openai.json": "9cf8659b356e0b32ab283c3b7ead7f784dfe745337b0a129ad1794e559c75e62", "ext-react-ssr.json": "d2bed40c090091182a32c8f70fe1d4e3d9d41d8c5ff69cd9d28bc8de7f3565f0", "ext-eval-report-http.json": "31bf8731e10cf4b19bef768552d852c006dde22019f92dc5cb381c1a11fd7125", "ext-document-kreuzberg.json": "fbfd9f0f809dd310d86211a12ad9217409a0b82597b22fcc81282811e3d91a12", "ext-bundler-swc.json": "9276aa8235e8ab8545c7fb36c6c85ad98a275ed9c9b32d80b522c702987596ef", "all.json": "e453d516c6cb9dcd5fc7532ce57c41fb534d8e6874cb3a10ed3b592e6f442a62", "ext-node-websocket-ws.json": "335e34d0627a945c63b7adf0503275a7439bad4d5c78773084f5965e29e5865c"}'
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          expected=json.loads(os.environ['EXPECTED_ASSETS'])
+          repo='repos/veryfront/veryfront'
+          release_id='393998047'
+          def api(path,*args):
+              return json.loads(subprocess.check_output(['gh','api',path,*args],text=True))
+          release=api(repo+'/releases/'+release_id)
+          assert release['tag_name']=='v0.1.1263', 'Unexpected release tag'
+          files={p.name:p for p in pathlib.Path('binaries').glob('*/*') if p.is_file()}
+          assert set(files)=={n for n in expected if n.startswith('veryfront-')}, 'Unexpected binary artifact inventory'
+          for name in ['install.sh','install.ps1']: files[name]=pathlib.Path('scripts')/name
+          manifest=''.join(f'{expected[name]}  {name}\n' for name in expected if name.startswith('veryfront-') or name in ['install.sh','install.ps1'])
+          pathlib.Path('SHA256SUMS').write_text(manifest)
+          files['SHA256SUMS']=pathlib.Path('SHA256SUMS')
+          def digest(path):
+              h=hashlib.sha256()
+              with path.open('rb') as stream:
+                  for chunk in iter(lambda:stream.read(1048576),b''): h.update(chunk)
+              return h.hexdigest()
+          for name,path in files.items(): assert digest(path)==expected[name], 'Original artifact checksum mismatch: '+name
+          # Previously uploaded SBOMs were generated from this exact source/locks.
+          # Their pinned digests preserve those bytes, including generation metadata.
+          assets=api(repo+'/releases/'+release_id+'/assets?per_page=100')
+          assert all(a['name'] in expected for a in assets), 'Unexpected existing asset'
+          by_name={a['name']:a for a in assets}
+          assert len(by_name)==len(assets), 'Duplicate existing asset names'
+          for asset in assets:
+              if asset['state']=='uploaded':
+                  assert asset.get('digest')=='sha256:'+expected[asset['name']], 'Existing uploaded asset mismatch: '+asset['name']
+          if not release['draft']:
+              assert set(by_name)==set(expected) and all(a['state']=='uploaded' for a in assets), 'Published release must already be complete; no asset mutations allowed'
+          for name,want in expected.items():
+              asset=by_name.get(name)
+              if asset and asset['state']=='uploaded':
+                  assert asset.get('digest')=='sha256:'+want, 'Existing uploaded asset mismatch: '+name
+                  continue
+              assert name in files, 'A previously verified SBOM is missing: '+name
+              if asset:
+                  assert asset['state']=='starter', 'Unexpected incomplete asset state: '+name
+                  # Local transfers are stopped before this workflow starts.
+                  # Remove only their incomplete draft placeholders, never uploaded assets.
+                  subprocess.run(['gh','api','-X','DELETE',repo+'/releases/assets/'+str(asset['id'])],check=True)
+              subprocess.run(['gh','release','upload','v0.1.1263',str(files[name]),'--repo','veryfront/veryfront'],check=True)
+          final=api(repo+'/releases/'+release_id+'/assets?per_page=100')
+          assert len(final)==len(expected)
+          assert all(a['state']=='uploaded' and a.get('digest')=='sha256:'+expected[a['name']] for a in final)
+          pathlib.Path('recovered-assets.json').write_text(json.dumps([{k:a[k] for k in ['name','size','digest','state']} for a in final],indent=2))
+          if release['draft']:
+              subprocess.run(['gh','release','edit','v0.1.1263','--repo','veryfront/veryfront','--draft=false','--prerelease=false','--latest'],check=True)
+          PY
+      - name: Create the missing source release without changing its tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api repos/veryfront/veryfront-code/git/ref/tags/v0.1.1263 --jq .object.sha)" = 8f1cd570de295d1de9cdd4adc4cc3a5558539bac
+          if gh release view v0.1.1263 --repo veryfront/veryfront-code --json tagName >/dev/null 2>&1; then
+            echo 'Source release already exists; preserving it.'
+          else
+            gh release create v0.1.1263 --repo veryfront/veryfront-code --verify-tag --title v0.1.1263 --generate-notes --notes 'Binaries: https://github.com/veryfront/veryfront/releases/tag/v0.1.1263. Recovered original tested artifacts from run 35751966714 at commit 8f1cd570de295d1de9cdd4adc4cc3a5558539bac after publishing token expiry. No npm republish.'
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: recovered-1263-assets
+          path: recovered-assets.json
