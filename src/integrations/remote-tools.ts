@@ -40,6 +40,7 @@ import {
 } from "#veryfront/utils/response-body.ts";
 
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import { isIntegrationAuthenticationActionResult } from "#veryfront/tool/result.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   INTEGRATION_TOOL_LIST_RETRY_DELAY_MS,
@@ -66,7 +67,6 @@ interface RemoteToolDefinition {
   description: string;
   inputSchema: Record<string, unknown>;
 }
-
 interface IntegrationRequestSignalScope {
   signal: AbortSignal;
   dispose: () => void;
@@ -334,6 +334,57 @@ function parseJsonText(text: string): unknown | undefined {
   } catch {
     return undefined;
   }
+}
+
+type RemoteFailureCondition = {
+  slug: string;
+  status: number;
+  retryable: boolean;
+};
+
+function readRemoteFailureCondition(value: unknown): RemoteFailureCondition | undefined {
+  if (
+    !isRecord(value) || typeof value.slug !== "string" ||
+    !/^[a-z][a-z0-9-]{0,127}$/.test(value.slug) ||
+    typeof value.status !== "number" || !Number.isInteger(value.status) ||
+    value.status < 400 || value.status > 599 || typeof value.retryable !== "boolean"
+  ) {
+    return undefined;
+  }
+  return { slug: value.slug, status: value.status, retryable: value.retryable };
+}
+
+function applyRemoteFailureCondition(
+  payload: unknown,
+  text: string,
+  condition: unknown,
+): unknown {
+  const validCondition = readRemoteFailureCondition(condition);
+  if (validCondition === undefined) {
+    if (isRecord(payload)) return payload;
+    return { error: "tool_error", message: text };
+  }
+
+  if (
+    isRecord(payload) && isIntegrationAuthenticationActionResult(payload)
+  ) {
+    return { ...payload, condition: validCondition };
+  }
+
+  let message = text;
+  if (
+    isRecord(payload) && typeof payload.message === "string" && payload.message.trim().length > 0
+  ) {
+    message = payload.message;
+  }
+
+  return {
+    ...(isRecord(payload) ? payload : {}),
+    error: validCondition.slug,
+    status: validCondition.status,
+    message,
+    condition: validCondition,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -826,23 +877,32 @@ async function callRemoteTool(
     if (isRecord(result) && Array.isArray(result.content)) {
       const text = joinCallToolText(result.content);
 
-      if (Object.hasOwn(result, "structuredContent")) {
-        if (!isRecord(result.structuredContent)) {
-          throw new TypeError(
-            "Integration tools API returned malformed MCP structured content",
-          );
-        }
-        return result.structuredContent;
+      const hasStructuredContent = Object.hasOwn(result, "structuredContent");
+      if (hasStructuredContent && !isRecord(result.structuredContent)) {
+        throw new TypeError(
+          "Integration tools API returned malformed MCP structured content",
+        );
       }
 
       if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
         throw new TypeError("Integration tools API returned a malformed MCP error marker");
       }
       if (result.isError === true) {
-        // Preserve structured errors such as authentication_required + connectUrl.
-        const parsed = parseJsonText(text);
-        if (parsed && typeof parsed === "object") return parsed;
-        return { error: "tool_error", message: text };
+        const parsed = hasStructuredContent && isRecord(result.structuredContent) &&
+            Object.keys(result.structuredContent).length > 0
+          ? result.structuredContent
+          : parseJsonText(text);
+        const condition = isRecord(result._meta) ? result._meta.condition : undefined;
+        return applyRemoteFailureCondition(parsed, text, condition);
+      }
+
+      if (hasStructuredContent) {
+        if (!isRecord(result.structuredContent)) {
+          throw new TypeError(
+            "Integration tools API returned malformed MCP structured content",
+          );
+        }
+        return result.structuredContent;
       }
 
       return parseJsonText(text) ?? text;
