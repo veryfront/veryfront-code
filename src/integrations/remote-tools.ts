@@ -888,7 +888,10 @@ async function callRemoteTool(
         throw new TypeError("Integration tools API returned a malformed MCP error marker");
       }
       if (result.isError === true) {
-        const parsed = hasStructuredContent ? result.structuredContent : parseJsonText(text);
+        const parsed = hasStructuredContent && isRecord(result.structuredContent) &&
+            Object.keys(result.structuredContent).length > 0
+          ? result.structuredContent
+          : parseJsonText(text);
         const condition = isRecord(result._meta) ? result._meta.condition : undefined;
         return applyRemoteFailureCondition(parsed, text, condition);
       }

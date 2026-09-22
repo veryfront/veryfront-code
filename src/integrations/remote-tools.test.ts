@@ -1309,6 +1309,28 @@ describe("integrations/remote-tools", () => {
       condition,
     });
 
+    const emptyStructuredContent = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [{
+          text: JSON.stringify({
+            error: "authentication_required",
+            integration: "github",
+            connectUrl: "/oauth/connect/github",
+            message: "Connect GitHub",
+          }),
+        }],
+        structuredContent: {},
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+    assertEquals(emptyStructuredContent, {
+      error: "authentication_required",
+      integration: "github",
+      connectUrl: "/oauth/connect/github",
+      message: "Connect GitHub",
+      condition,
+    });
+
     const malformedCondition = await withMockFetch(async () =>
       Response.json({
         isError: true,
