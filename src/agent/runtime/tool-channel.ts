@@ -34,6 +34,12 @@ const ObjectHasOwn = Object.hasOwn;
 const ArrayIsArray = Array.isArray;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectPrototype = Object.prototype;
+const IntrinsicReflectApply = Reflect.apply;
+const SetPrototypeHas = Set.prototype.has;
+
+function hasSetValue<T>(set: ReadonlySet<T>, value: T): boolean {
+  return IntrinsicReflectApply(SetPrototypeHas, set, [value]) as boolean;
+}
 
 /**
  * Value sent as `tool_choice`. Every provider request builder in this package
@@ -112,9 +118,9 @@ export function getToolChannelProfile(model?: string): ToolChannelProfile {
     ? MODEL_TOOL_CHANNEL_OVERRIDES[`${provider}/${modelName}`]
     : undefined;
   if (override) return override;
-  if (FORCED_CHANNEL_PROVIDERS.has(provider)) return NEEDS_FORCED_CHANNEL;
+  if (hasSetValue(FORCED_CHANNEL_PROVIDERS, provider)) return NEEDS_FORCED_CHANNEL;
   if (provider === "openai") return HOLDS_CHANNEL_OPENAI;
-  if (CHANNEL_HOLDING_PROVIDERS.has(provider)) return HOLDS_CHANNEL;
+  if (hasSetValue(CHANNEL_HOLDING_PROVIDERS, provider)) return HOLDS_CHANNEL;
   return DRIFTS_FROM_CHANNEL;
 }
 
