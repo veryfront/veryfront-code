@@ -3085,7 +3085,8 @@ export class AgentRuntime {
         // step into a multi-step task. Read that payload back into the tool
         // channel so the loop continues instead of returning the JSON as prose.
         const response = recoverToolCallsEmittedAsText(rawResponse, {
-          enabled: shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode),
+          enabled: outputSchema === undefined &&
+            shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode),
           agentId: this.id,
           modelId: effectiveModel,
           step,
@@ -3990,6 +3991,41 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
+      const recoveredStreamingToolCalls = outputSchema === undefined &&
+        shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode) &&
+        state.toolCalls.size === 0
+        ? recoverTextEmittedToolCalls(state.accumulatedText, new Set(runtimeToolNames))
+        : undefined;
+      if (recoveredStreamingToolCalls !== undefined) {
+        state.accumulatedText = "";
+        state.finishReason = "tool-calls";
+        for (const recovered of recoveredStreamingToolCalls) {
+          const argumentsText = JSON.stringify(recovered.input);
+          state.toolCalls.set(recovered.toolCallId, {
+            id: recovered.toolCallId,
+            name: recovered.toolName,
+            arguments: argumentsText,
+            inputDeltas: [argumentsText],
+            inputAnnounced: true,
+            inputAvailable: true,
+          });
+          sendSSE(controller, encoder, {
+            type: "tool-input-start",
+            toolCallId: recovered.toolCallId,
+            toolName: recovered.toolName,
+          });
+          sendSSE(controller, encoder, {
+            type: "tool-input-available",
+            toolCallId: recovered.toolCallId,
+            toolName: recovered.toolName,
+            input: recovered.input,
+          });
+        }
+        logger.warn(
+          `Agent "${this.id}": a streaming model emitted ${recoveredStreamingToolCalls.length} ` +
+            "tool call(s) as assistant text; Veryfront recovered them into the tool channel.",
+        );
+      }
       const interruptedRecoveryPrefixLength = deferredRecoveryOutput === undefined
         ? 0
         : privateTextStartsWith(state.accumulatedText, previousRecoveryText)

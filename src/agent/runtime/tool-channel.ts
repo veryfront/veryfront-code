@@ -307,10 +307,16 @@ const TOOL_CALL_ID_LENGTH = 9;
  * provider accepts as an opaque string.
  */
 export function createRecoveredToolCallId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(TOOL_CALL_ID_LENGTH));
+  const alphabetLength = TOOL_CALL_ID_ALPHABET.length;
+  const byteLimit = 256 - (256 % alphabetLength);
   let id = "";
-  for (let index = 0; index < TOOL_CALL_ID_LENGTH; index++) {
-    id += TOOL_CALL_ID_ALPHABET[bytes[index]! % TOOL_CALL_ID_ALPHABET.length];
+  while (id.length < TOOL_CALL_ID_LENGTH) {
+    const bytes = crypto.getRandomValues(new Uint8Array(TOOL_CALL_ID_LENGTH));
+    for (let index = 0; index < bytes.length && id.length < TOOL_CALL_ID_LENGTH; index++) {
+      const byte = bytes[index]!;
+      if (byte >= byteLimit) continue;
+      id += TOOL_CALL_ID_ALPHABET[byte % alphabetLength];
+    }
   }
   return id;
 }
