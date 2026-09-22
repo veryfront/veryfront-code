@@ -53,7 +53,7 @@ jobs:
           def api(path,*args):
               return json.loads(subprocess.check_output(['gh','api',path,*args],text=True))
           release=api(repo+'/releases/'+release_id)
-          assert release['draft'] and release['tag_name']=='v0.1.1263', 'Only the known unpublished draft may be repaired'
+          assert release['tag_name']=='v0.1.1263', 'Unexpected release tag'
           files={p.name:p for p in pathlib.Path('binaries').glob('*/*') if p.is_file()}
           assert set(files)=={n for n in expected if n.startswith('veryfront-')}, 'Unexpected binary artifact inventory'
           for name in ['install.sh','install.ps1']: files[name]=pathlib.Path('scripts')/name
@@ -72,6 +72,11 @@ jobs:
           assert all(a['name'] in expected for a in assets), 'Unexpected existing asset'
           by_name={a['name']:a for a in assets}
           assert len(by_name)==len(assets), 'Duplicate existing asset names'
+          for asset in assets:
+              if asset['state']=='uploaded':
+                  assert asset.get('digest')=='sha256:'+expected[asset['name']], 'Existing uploaded asset mismatch: '+asset['name']
+          if not release['draft']:
+              assert set(by_name)==set(expected) and all(a['state']=='uploaded' for a in assets), 'Published release must already be complete; no asset mutations allowed'
           for name,want in expected.items():
               asset=by_name.get(name)
               if asset and asset['state']=='uploaded':
@@ -88,7 +93,8 @@ jobs:
           assert len(final)==len(expected)
           assert all(a['state']=='uploaded' and a.get('digest')=='sha256:'+expected[a['name']] for a in final)
           pathlib.Path('recovered-assets.json').write_text(json.dumps([{k:a[k] for k in ['name','size','digest','state']} for a in final],indent=2))
-          subprocess.run(['gh','release','edit','v0.1.1263','--repo','veryfront/veryfront','--draft=false','--prerelease=false','--latest'],check=True)
+          if release['draft']:
+              subprocess.run(['gh','release','edit','v0.1.1263','--repo','veryfront/veryfront','--draft=false','--prerelease=false','--latest'],check=True)
           PY
       - name: Create the missing source release without changing its tag
         env:
