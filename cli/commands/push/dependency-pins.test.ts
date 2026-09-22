@@ -188,6 +188,15 @@ describe("classifyPackageJsonDrift", () => {
     );
   });
 
+  it("keeps ^0.0 ranges below the next minor", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: "^0.0" } });
+    const inRange = apiWrite({ name: "demo", dependencies: { react: "0.0.9" } });
+    const outOfRange = apiWrite({ name: "demo", dependencies: { react: "0.1.0" } });
+    const history = [{ react: "^0.0" }, { react: "0.0.9" }];
+    assertEquals(classifyPackageJsonDrift(baseline, inRange, history), "server-pins");
+    assertEquals(classifyPackageJsonDrift(baseline, outOfRange, history), "user-edit");
+  });
+
   it("rejects a pin tightening whose written state was never published", () => {
     assertEquals(
       classifyPackageJsonDrift(BASELINE_CONTENT, PINNED_CONTENT, [

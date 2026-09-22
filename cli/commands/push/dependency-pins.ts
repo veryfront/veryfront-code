@@ -289,6 +289,10 @@ function satisfiesDeclaredRange(version: string, range: string): boolean {
       return parsed.major === base.major && parsed.minor === base.minor &&
         parsed.patch === base.patch && compareVersionParts(parsed, base) >= 0;
     }
+    if (dotCount >= 1) {
+      return parsed.major === 0 && parsed.minor === 0 &&
+        compareVersionParts(parsed, base) >= 0;
+    }
     return parsed.major === base.major && compareVersionParts(parsed, base) >= 0;
   }
 
