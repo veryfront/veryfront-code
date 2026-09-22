@@ -218,6 +218,23 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, outOfRange, history), "user-edit");
   });
 
+  it("compares large numeric prerelease identifiers without rounding", () => {
+    const baseline = apiWrite({
+      name: "demo",
+      dependencies: { react: ">=1.2.3-9007199254740993" },
+    });
+    const lower = apiWrite({
+      name: "demo",
+      dependencies: { react: "1.2.3-9007199254740992" },
+    });
+    const history = [
+      { react: ">=1.2.3-9007199254740993" },
+      { react: "1.2.3-9007199254740992" },
+    ];
+
+    assertEquals(classifyPackageJsonDrift(baseline, lower, history), "user-edit");
+  });
+
   it("rejects a pin tightening whose written state was never published", () => {
     assertEquals(
       classifyPackageJsonDrift(BASELINE_CONTENT, PINNED_CONTENT, [

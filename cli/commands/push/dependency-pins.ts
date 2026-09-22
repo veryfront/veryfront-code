@@ -254,8 +254,12 @@ function compareVersionParts(left: VersionParts, right: VersionParts): number {
     const leftNumeric = /^\d+$/.test(leftPart);
     const rightNumeric = /^\d+$/.test(rightPart);
     if (leftNumeric && rightNumeric) {
-      const comparison = Number(leftPart) - Number(rightPart);
-      if (comparison !== 0) return comparison < 0 ? -1 : 1;
+      const normalizedLeft = leftPart.replace(/^0+(?=\d)/, "");
+      const normalizedRight = rightPart.replace(/^0+(?=\d)/, "");
+      if (normalizedLeft.length !== normalizedRight.length) {
+        return normalizedLeft.length < normalizedRight.length ? -1 : 1;
+      }
+      if (normalizedLeft !== normalizedRight) return normalizedLeft < normalizedRight ? -1 : 1;
     } else if (leftNumeric !== rightNumeric) {
       return leftNumeric ? -1 : 1;
     } else if (leftPart < rightPart) {
