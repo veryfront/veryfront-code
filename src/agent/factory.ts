@@ -1,3 +1,4 @@
+import { registerOmittedModelConfig } from "./runtime/execution-config.ts";
 import type {
   Agent,
   AgentConfig,
@@ -621,6 +622,7 @@ function createAgent<TOutput = never>(
     shouldAttachAllowedSkillIds,
   });
 
+  if (config.model === undefined) registerOmittedModelConfig(agentInstance.config);
   setEffectiveAgentSystem(agentInstance, augmentedSystem);
   if (options.register) {
     agentRegistry.register(id, agentInstance);

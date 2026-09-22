@@ -1,3 +1,4 @@
+import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import { agentLogger } from "#veryfront/utils";
@@ -300,7 +301,7 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
   }
 
   const runtime = new AgentRuntime(agent.id, {
-    ...agent.config,
+    ...getAgentExecutionConfig(agent.config),
     tools: buildMergedTools(agent, request, sessionManager),
   });
 
