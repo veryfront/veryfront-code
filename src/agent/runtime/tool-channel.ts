@@ -25,6 +25,9 @@ import type { RuntimeGenerateToolCall } from "./runtime-tool-types.ts";
 
 const ObjectKeys = Object.keys;
 const ObjectHasOwn = Object.hasOwn;
+const ArrayIsArray = Array.isArray;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototype = Object.prototype;
 
 /**
  * Value sent as `tool_choice`. Every provider request builder in this package
@@ -221,9 +224,9 @@ function readArgumentsMember(
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  if (typeof value !== "object" || value === null || ArrayIsArray(value)) return false;
+  const prototype = ObjectGetPrototypeOf(value);
+  return prototype === ObjectPrototype || prototype === null;
 }
 
 /**

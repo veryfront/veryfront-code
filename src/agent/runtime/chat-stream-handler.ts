@@ -796,7 +796,8 @@ async function processActiveStream(
           if (!hasOwn(events, index)) continue;
           const eventType = (events[index] as { type?: unknown }).type;
           if (
-            eventType !== "text-start" && eventType !== "text-delta" && eventType !== "text-end"
+            eventType !== "text-start" && eventType !== "text-delta" && eventType !== "text-end" &&
+            eventType !== "finish"
           ) {
             hasNonTextEvent = true;
             break;
@@ -1325,7 +1326,9 @@ export function processStreamInternal(
           continue;
         }
 
-        if (deferTextDelivery && typedPart.type !== "text-delta") {
+        if (
+          deferTextDelivery && typedPart.type !== "text-delta" && typedPart.type !== "finish"
+        ) {
           callbacks.onTextBoundary?.(releaseDeferredText);
         }
 
