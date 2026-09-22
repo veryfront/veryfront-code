@@ -1170,6 +1170,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
             "apps/aa",
             "apps/ab",
             "apps/app",
+            "apps/web",
             "apps/{{1..2}}",
             "apps/{a}",
             "apps/.hidden",
@@ -1183,6 +1184,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           "apps/aa/package.json": "{}",
           "apps/ab/package.json": "{}",
           "apps/app/package.json": "{}",
+          "apps/web/package.json": "{}",
           "apps/{{1..2}}/package.json": "{}",
           "apps/{a}/package.json": "{}",
           "apps/.hidden/package.json": "{}",
@@ -1266,6 +1268,14 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(
         await declaring(["apps/!(x|y)@(app|web)"], `${PROJECT}/apps/app`),
         "apps/app",
+      );
+      assertEquals(
+        await declaring(["apps/@(app|web)**"], `${PROJECT}/apps/app`),
+        "apps/app",
+      );
+      assertEquals(
+        await declaring(["apps/@(app|web)**"], `${PROJECT}/apps/web`),
+        "apps/web",
       );
       assertEquals(await declaring(["apps/a!(*)"], `${PROJECT}/apps/a`), "");
       assertEquals(

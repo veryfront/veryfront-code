@@ -1258,7 +1258,7 @@ type ExtglobMark = "@" | "?" | "*" | "+" | "!";
 
 /** One unit of a pattern segment, as minimatch reads it. */
 type SegmentToken =
-  | { kind: "star"; synthetic?: boolean }
+  | { kind: "star"; synthetic?: boolean; consecutive?: boolean }
   | { kind: "any" }
   | { kind: "class"; matches: (char: string) => boolean; dotExplicit: boolean }
   | { kind: "extglob"; mark: ExtglobMark; alternatives: SegmentToken[][] }
@@ -1295,7 +1295,9 @@ function segmentTokens(pattern: string): SegmentToken[] {
     if (char === "*") {
       // `a**b` is `a*b`: within one segment a run of stars is still one run,
       // and minimatch collapses them before compiling.
-      if (tokens[tokens.length - 1]?.kind !== "star") tokens.push({ kind: "star" });
+      const previous = tokens[tokens.length - 1];
+      if (previous?.kind === "star") previous.consecutive = true;
+      else tokens.push({ kind: "star" });
       continue;
     }
     if (char === "?") {
@@ -1504,7 +1506,7 @@ function matchesTokenHere(
     const next = tokens[index + 1];
     const mustConsumeAdjacentToExtglob = !token.synthetic && (
       (index === 0 && next?.kind === "extglob" && (next.mark === "@" || next.mark === "+")) ||
-      tokens[index - 1]?.kind === "extglob"
+      tokens[index - 1]?.kind === "extglob" && !token.consecutive
     );
     const firstEnd = offset + (mustConsumeAdjacentToExtglob ? 1 : 0);
     for (let end = firstEnd; end <= name.length; end++) {
