@@ -1585,8 +1585,11 @@ function matchesExtglob(
   // consumes the segment's leading dot has to name it: `*(?)` does not match
   // `.ab`, while `?([a-c])*` does by matching nothing here.
   const guarded = offset === 0 && name.startsWith(".");
+  const alternatives = token.mark === "@" || token.mark === "+"
+    ? token.alternatives.filter((alternative) => alternative.length > 0)
+    : token.alternatives;
   const consumes = (from: number, to: number) =>
-    token.alternatives.some((alternative) =>
+    alternatives.some((alternative) =>
       (!guarded || to === from || allowsLeadingDot(alternative[0])) &&
       matchesTokens(alternative, 0, name.slice(from, to), 0, new Map())
     );
@@ -1623,7 +1626,7 @@ function matchesExtglob(
         canMatchEmpty(tail, 1)
       ? [{ kind: "any" } as SegmentToken, ...tail]
       : tail;
-    for (const alternative of token.alternatives) {
+    for (const alternative of alternatives) {
       // A `*` alternative has to consume something too, for the same reason:
       // minimatch compiles it as `[^/]+?` inside the lookahead, so `!(*)a`
       // refuses `aba` and not merely `a`.

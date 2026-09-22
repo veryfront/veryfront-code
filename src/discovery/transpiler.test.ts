@@ -1327,6 +1327,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         await declaring(["apps/!(a|b)*a"], `${PROJECT}/apps/aa`),
         "",
       );
+      assertEquals(
+        await declaring(["apps/!(a|b)@(a|)"], `${PROJECT}/apps/x`),
+        "",
+      );
       // A mark with no group after it is the wildcard it has always been.
       assertEquals(await declaring(["apps/*"]), "apps/store-web");
       // A `!` group refuses what its alternatives plus the TAIL would match,
