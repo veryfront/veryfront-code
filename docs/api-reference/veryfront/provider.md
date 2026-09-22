@@ -159,10 +159,12 @@ import {
 | Name                                              | Description                                                                     | Source                                                                                                           |
 | ------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS`      | Default deadline for one stream attempt to return response headers.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)     |
+| `DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS`         | Default deadline for the next chunk of a stream response body.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)     |
 | `DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS` | Ceiling on the wall time replays may spend waiting for stream response headers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)     |
 | `MAX_PROVIDER_SSE_BUFFER_CODE_UNITS`              | Maximum decoded provider SSE data retained or parsed in one pass.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-sse.ts)      |
 | `STREAM_FRAGMENT_COMPACTION_SIZE`                 | Fragments joined into one string at a time, bounding array growth.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/stream-retention.ts)  |
 | `TOOL_INPUT_PENDING_THRESHOLD_MS`                 | Shared tool input pending threshold ms value.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/tool-input-status.ts) |
+| `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV`      | Environment key overriding the stream body idle deadline, in milliseconds.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts)     |
 
 #### Functions
 

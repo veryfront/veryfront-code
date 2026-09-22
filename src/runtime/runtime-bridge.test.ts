@@ -2,16 +2,23 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertInstanceOf,
+  assertMatch,
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import { resolveRuntimeExecutionErrorEvent } from "#veryfront/agent/runtime/chat-stream-handler.ts";
-import { ProviderQuotaError } from "#veryfront/provider/runtime-loader.ts";
+import {
+  DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+  ProviderQuotaError,
+  ProviderRequestError,
+  requestStream,
+} from "#veryfront/provider/runtime-loader.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
@@ -19,6 +26,48 @@ import {
   createGenerateModel,
   createStreamModel,
 } from "./runtime-bridge.test-helpers.ts";
+
+/**
+ * A provider response body that delivers one chunk and then goes quiet.
+ *
+ * The first chunk matters: it puts the run past the header deadlines that
+ * already existed, so only the body deadline can end it.
+ */
+function stalledAfterFirstChunkBody(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("Hel"));
+    },
+    pull() {
+      return new Promise<void>(() => {});
+    },
+  });
+}
+
+/**
+ * Minimal provider stream adapter: one text delta per body chunk.
+ *
+ * Stands in for a real provider extension's SSE decoding so the test exercises
+ * the bytes-to-parts boundary a failing body actually crosses, without pulling
+ * a whole wire format into a runtime-bridge test.
+ */
+function textDeltasFromProviderBody(body: ReadableStream<Uint8Array>): ReadableStream<unknown> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  return new ReadableStream<unknown>({
+    async pull(controller) {
+      const result = await reader.read();
+      if (result.done) {
+        controller.close();
+        return;
+      }
+      controller.enqueue({ type: "text-delta", delta: decoder.decode(result.value) });
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+}
 
 function readableStreamFrom<T>(values: Iterable<T>): ReadableStream<T> {
   return new ReadableStream({
@@ -1395,6 +1444,61 @@ describe("runtime-bridge", () => {
         { toolCallId: "tool-2", toolName: "search", result: "boom", isError: true },
       ],
       "buffered generate surfaces provider tool results and failures",
+    );
+  });
+
+  it("bounds a stalled provider body reached through generate", async () => {
+    // End-to-end over the real `requestStream` body deadline rather than a
+    // hand-built error: a stalled HTTP body must abort the request and surface
+    // through the buffering drain loop that `generate` runs, which has no
+    // watchdog of its own (veryfront-issue-inbox#1465). Nothing configures the
+    // deadline, so the shipped 120s default is the one under test.
+    using time = new FakeTime();
+    let requestSignal: AbortSignal | undefined;
+    const model = {
+      ...createStreamModel(
+        "veryfront-cloud",
+        "veryfront-cloud/anthropic/claude-test",
+        async () => ({
+          stream: textDeltasFromProviderBody(
+            await requestStream({
+              url: "https://provider.test/v1/messages",
+              fetchImpl: (input, init) => {
+                requestSignal = new Request(input, init).signal;
+                return Promise.resolve(new Response(stalledAfterFirstChunkBody()));
+              },
+              init: { method: "POST" },
+              providerLabel: "veryfront-cloud",
+              providerKind: "anthropic",
+              modelId: "anthropic/claude-test",
+            }),
+          ),
+        }),
+      ),
+      _generateViaStream: true,
+    };
+
+    const generated = generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+      temperature: 0,
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    await time.tickAsync(DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS);
+    const error = await generated;
+
+    assertInstanceOf(error, ProviderRequestError);
+    assertMatch(
+      error.message,
+      /request timed out after \d+ms waiting for the next stream chunk \(120000ms deadline/,
+    );
+    assertEquals(error.retryable, true);
+    assertEquals(
+      requestSignal?.aborted,
+      true,
+      "the stalled request must be aborted, not left holding a connection",
     );
   });
 

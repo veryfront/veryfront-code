@@ -5,16 +5,26 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS } from "../../agent/hosted/child-fork-execution-runner.ts";
+import { DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS } from "../../agent/streaming/lifecycle/watchdog-compat-adapter.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
+import {
+  clearEnvFileValueSources,
+  deleteEnv,
+  markEnvFileValue,
+  setEnv,
+} from "#veryfront/platform/compat/process/env.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import {
   type ProviderRequestRetryEvent,
   runWithProviderRequestObserver,
 } from "./provider-request-observer.ts";
 import {
   buildProviderError,
+  DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
   ProviderOverloadedError,
@@ -23,7 +33,18 @@ import {
   ProviderRequestError,
   requestJson,
   requestStream,
+  resolveProviderStreamIdleTimeoutMs,
+  VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV,
 } from "./provider-http.ts";
+
+/** A response body that delivers nothing and never completes. */
+function stalledBody(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    pull() {
+      return new Promise<void>(() => {});
+    },
+  });
+}
 
 function jsonResponse(status: number, body: unknown, headers?: Record<string, string>): Response {
   return new Response(typeof body === "string" ? body : JSON.stringify(body), {
@@ -2078,6 +2099,397 @@ describe("provider-http", () => {
       assertStrictEquals(error, failure);
       await waitWithin(cancellationStarted.promise, "upstream failure cleanup to start");
       assertStrictEquals(upstreamCancelReason, failure);
+    });
+
+    describe("body idle deadline", () => {
+      it("pins the default against the consumer watchdog windows", () => {
+        // This deadline counts bytes on the wire; the consumer watchdogs count
+        // semantic chunks, so a smaller window here does not pre-empt them
+        // while the provider keeps sending SSE pings or gateway keepalives.
+        // Both relations are asserted rather than described because the
+        // comment on DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS reasons from
+        // them, and a silent drift on either side would leave that reasoning
+        // stating something untrue.
+        //
+        // `DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS` is deliberately not pinned.
+        // It is also 120s today, but that is two independent choices landing
+        // on the same round number, not a designed relation. It governs hosted
+        // chat runs through `createChatStreamWatchdog`, a different caller
+        // from the unwatched `agent.generate` drain this default exists for,
+        // and it lives in the lifecycle rollout's compatibility adapter. An
+        // equality assertion there would fail this suite for a change that
+        // says nothing about the provider deadline. The 300s tool-running
+        // window below is pinned because that relation does carry design
+        // content: this deadline must not pre-empt a tool run.
+        assertEquals(
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS >
+            DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
+          true,
+          "the hosted child-fork watchdog must keep reporting a fork stall first",
+        );
+        assertEquals(
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS <
+            DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+          true,
+          "a provider-executed tool run is bounded by wire silence, not by the tool window",
+        );
+      });
+
+      it("resolves the deadline from option, then environment, then default", () => {
+        // The environment knob is the only reachable one for `veryfront dev`,
+        // hosted runs and `agent.generate` callers, because no shipped
+        // provider extension exposes `idleTimeoutMs` as a model option.
+        const env = (value: string | undefined) => (key: string) =>
+          key === VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV ? value : undefined;
+
+        assertEquals(
+          resolveProviderStreamIdleTimeoutMs(undefined, env(undefined)),
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+        );
+        assertEquals(resolveProviderStreamIdleTimeoutMs(undefined, env("45000")), 45_000);
+        assertEquals(
+          resolveProviderStreamIdleTimeoutMs(undefined, env("0")),
+          0,
+          "0 must disable the deadline rather than fall back to the default",
+        );
+        assertEquals(
+          resolveProviderStreamIdleTimeoutMs(20, env("0")),
+          20,
+          "an explicit deadline must win over the environment",
+        );
+        assertEquals(
+          resolveProviderStreamIdleTimeoutMs(undefined, env("   ")),
+          DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+        );
+      });
+
+      it("ignores a malformed environment override instead of failing the request", () => {
+        // A typo in a deployment's environment must not take every provider
+        // request down with it, and the body stays bounded by the default.
+        for (const value of ["not-a-number", "-1", "12.5", String(MAX_TIMER_DELAY_MS + 1)]) {
+          assertEquals(
+            resolveProviderStreamIdleTimeoutMs(undefined, () => value),
+            DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+            `${value} must fall back to the default`,
+          );
+        }
+      });
+
+      it("ignores an override a project .env file put in the process environment", () => {
+        // `loadEnv` copies project `.env` entries into the real process
+        // environment, so the plain `getHostEnv` read this used to default to
+        // handed back a project-controlled value: a repository could ship
+        // `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS=0` and switch off the
+        // host's safety bound, restoring the unbounded stalled stream this
+        // change exists to prevent. Only the excluding reader consults the
+        // provenance `loadEnv` recorded, so the default must stay that one.
+        setEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV, "0");
+        markEnvFileValue(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV);
+        try {
+          assertEquals(
+            resolveProviderStreamIdleTimeoutMs(undefined),
+            DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+            "a project .env value must not widen or disable the host's deadline",
+          );
+        } finally {
+          clearEnvFileValueSources();
+          deleteEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV);
+        }
+      });
+
+      it("never echoes a rejected override into the warning", () => {
+        // `.env` expansion substitutes host process values into an entry, so a
+        // line like `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS=$DATABASE_PASSWORD`
+        // arrives here carrying a real credential. Serializing it would write
+        // that credential to the log on every stream request.
+        //
+        // The value below deliberately matches none of the shapes the logger's
+        // own `PROVIDER_CREDENTIAL_PATTERN` scrubs (`sk-`, `ghp_`, `xoxb-`,
+        // `eyJ`). Expansion can pull in *any* host variable -- a database
+        // password, a webhook secret, a session id -- so that pattern is a
+        // backstop for a few known providers, not a reason to log the value.
+        const secret = "9f3c1d7b2a48e6c05f1b-not-a-real-secret";
+        const entries: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          entries.push(entry);
+        });
+        try {
+          assertEquals(
+            resolveProviderStreamIdleTimeoutMs(undefined, () => secret),
+            DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+          );
+        } finally {
+          unsubscribe();
+        }
+
+        const warnings = entries.filter((entry) => entry.level === "warn");
+        assertEquals(warnings.length > 0, true, "a rejected override must still warn");
+        for (const warning of warnings) {
+          assertEquals(
+            JSON.stringify(warning).includes(secret),
+            false,
+            "the rejected value must not reach the log",
+          );
+          assertMatch(warning.message, /VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS/);
+        }
+      });
+
+      it("bounds a stalled body at the default deadline with no configuration", async () => {
+        // The shipped path: no `idleTimeoutMs` argument and no environment
+        // override, so the 120s default is what has to fire. Fake time keeps
+        // that a fast test without weakening it to a constant comparison.
+        using time = new FakeTime();
+        let requestSignal: AbortSignal | undefined;
+        const stream = await requestStream({
+          url: "https://provider.test/stream",
+          fetchImpl: (input, init) => {
+            requestSignal = new Request(input, init).signal;
+            return Promise.resolve(new Response(stalledBody()));
+          },
+          init: { method: "POST" },
+          providerLabel: "Test provider",
+          providerKind: "openai",
+        });
+        const read = stream.getReader().read().then(
+          () => undefined,
+          (caught: unknown) => caught,
+        );
+
+        await time.tickAsync(DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS - 1);
+        assertEquals(
+          requestSignal?.aborted,
+          false,
+          "the deadline must not fire before the default elapses",
+        );
+
+        await time.tickAsync(1);
+        const error = await read;
+
+        assertEquals(error instanceof ProviderRequestError, true);
+        assertMatch(
+          (error as ProviderRequestError).message,
+          /waiting for the next stream chunk \(120000ms deadline\)$/,
+        );
+        assertEquals(requestSignal?.aborted, true);
+      });
+
+      it("bounds a stalled body at the host environment override", async () => {
+        // The environment knob is the whole answer to the issue's
+        // "configurable" item, because no shipped provider extension forwards
+        // `idleTimeoutMs`. Every other test in this block either calls
+        // `resolveProviderStreamIdleTimeoutMs` directly with an injected
+        // reader or passes an explicit `idleTimeoutMs`, so swapping the
+        // resolver call inside `requestStream` for a plain default would leave
+        // all of them green while the knob stopped working for every caller
+        // the CHANGELOG names. This one drives `requestStream` with nothing
+        // but the environment set, so it fails on that swap.
+        //
+        // It mutates the real host environment rather than injecting a reader
+        // for the same reason "ignores an override a project .env file put in
+        // the process environment" does: the seam under test is the default
+        // argument `requestStream` relies on, and injecting past it would test
+        // the mock instead.
+        using time = new FakeTime();
+        const overrideMs = 5_000;
+        setEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV, String(overrideMs));
+        try {
+          let requestSignal: AbortSignal | undefined;
+          const stream = await requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (input, init) => {
+              requestSignal = new Request(input, init).signal;
+              return Promise.resolve(new Response(stalledBody()));
+            },
+            init: { method: "POST" },
+            providerLabel: "Test provider",
+            providerKind: "openai",
+          });
+          const read = stream.getReader().read().then(
+            () => undefined,
+            (caught: unknown) => caught,
+          );
+
+          await time.tickAsync(overrideMs - 1);
+          assertEquals(
+            requestSignal?.aborted,
+            false,
+            "the configured window must not fire early",
+          );
+
+          await time.tickAsync(1);
+          const error = await read;
+
+          assertEquals(error instanceof ProviderRequestError, true);
+          assertMatch(
+            (error as ProviderRequestError).message,
+            /waiting for the next stream chunk \(5000ms deadline\)$/,
+          );
+          assertEquals(requestSignal?.aborted, true);
+        } finally {
+          deleteEnv(VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV);
+        }
+      });
+
+      it("rejects invalid body idle deadlines before issuing a stream request", async () => {
+        for (
+          const idleTimeoutMs of [
+            Number.NaN,
+            Number.POSITIVE_INFINITY,
+            -1,
+            MAX_TIMER_DELAY_MS + 1,
+          ]
+        ) {
+          let attempts = 0;
+          await assertRejects(
+            () =>
+              requestStream({
+                url: "https://provider.test/stream",
+                fetchImpl: () => {
+                  attempts++;
+                  return Promise.resolve(new Response("chunk"));
+                },
+                init: { method: "POST" },
+                providerLabel: "Test provider",
+                providerKind: "openai",
+                idleTimeoutMs,
+              }),
+            RangeError,
+            "idleTimeoutMs",
+          );
+          assertEquals(attempts, 0, "an invalid idle deadline must not reach the provider");
+        }
+      });
+
+      it("fails a body that stalls after its first chunk and aborts the request", async () => {
+        let requestSignal: AbortSignal | undefined;
+        let upstreamCancelReason: unknown;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("first"));
+          },
+          pull() {
+            return new Promise<void>(() => {});
+          },
+          cancel(reason) {
+            upstreamCancelReason = reason;
+          },
+        });
+        const stream = await requestStream({
+          url: "https://provider.test/stream",
+          fetchImpl: (input, init) => {
+            requestSignal = new Request(input, init).signal;
+            return Promise.resolve(new Response(body));
+          },
+          init: { method: "POST" },
+          providerLabel: "veryfront-cloud",
+          providerKind: "openai",
+          modelId: "anthropic/claude-opus-4",
+          idleTimeoutMs: 20,
+        });
+        const reader = stream.getReader();
+
+        assertEquals(
+          await waitWithin(reader.read(), "the first chunk"),
+          { done: false, value: new TextEncoder().encode("first") },
+        );
+        const error = await waitWithin(
+          reader.read().then(
+            () => undefined,
+            (caught: unknown) => caught,
+          ),
+          "the stalled body to time out",
+        );
+
+        assertEquals(error instanceof ProviderRequestError, true);
+        const timeout = error as ProviderRequestError;
+        assertMatch(
+          timeout.message,
+          /^veryfront-cloud request failed: request timed out after \d+ms waiting for the next stream chunk \(20ms deadline, model anthropic\/claude-opus-4\)$/,
+        );
+        assertEquals(timeout.retryable, true);
+        assertEquals(timeout.status, 0);
+        assertEquals(
+          requestSignal?.aborted,
+          true,
+          "an idle body must abort the request, not just error the reader",
+        );
+        assertStrictEquals(requestSignal?.reason, timeout);
+        await waitFor(() => upstreamCancelReason !== undefined);
+        assertStrictEquals(upstreamCancelReason, timeout);
+      });
+
+      it("re-arms on every chunk so a slow but live stream is not cut off", async () => {
+        // Six 40ms gaps outlast the 150ms deadline in total, so a deadline
+        // armed once for the whole body would fire part way through.
+        const chunkCount = 6;
+        const gapMs = 40;
+        let delivered = 0;
+        const body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            await new Promise<void>((resolve) => setTimeout(resolve, gapMs));
+            if (controller.desiredSize === null) return;
+            if (delivered === chunkCount) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(new TextEncoder().encode(String(delivered)));
+            delivered++;
+          },
+        });
+        const stream = await requestStream({
+          url: "https://provider.test/stream",
+          fetchImpl: () => Promise.resolve(new Response(body)),
+          init: { method: "POST" },
+          providerLabel: "Test provider",
+          providerKind: "openai",
+          idleTimeoutMs: 150,
+        });
+
+        const received: string[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const result = await waitWithin(reader.read(), "the next live chunk", 5_000);
+          if (result.done) break;
+          received.push(new TextDecoder().decode(result.value));
+        }
+
+        assertEquals(received, ["0", "1", "2", "3", "4", "5"]);
+      });
+
+      it("leaves the body unbounded when the idle deadline is disabled", async () => {
+        const pullStarted = Promise.withResolvers<void>();
+        const body = new ReadableStream<Uint8Array>({
+          pull() {
+            pullStarted.resolve();
+            return new Promise<void>(() => {});
+          },
+        });
+        const stream = await requestStream({
+          url: "https://provider.test/stream",
+          fetchImpl: () => Promise.resolve(new Response(body)),
+          init: { method: "POST" },
+          providerLabel: "Test provider",
+          providerKind: "openai",
+          idleTimeoutMs: 0,
+        });
+        const reader = stream.getReader();
+        let settled = false;
+        const pendingRead = reader.read().then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        await waitWithin(pullStarted.promise, "the upstream pull to start");
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 60));
+
+        assertEquals(settled, false, "a disabled idle deadline must not bound the body");
+        await waitWithin(reader.cancel(), "consumer cancellation");
+        await waitWithin(pendingRead, "the cancelled read to settle");
+      });
     });
   });
 });

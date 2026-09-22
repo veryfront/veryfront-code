@@ -32,6 +32,60 @@ gateway path, which a chat-only surface does not serve, so it failed at the
 gateway instead. Reasoning-style model IDs on those providers stay on chat
 completions for the same reason.
 
+### Changed: a stalled provider stream now fails after 120 seconds instead of hanging
+
+Once response headers arrived, a provider response body had no deadline at
+all. A model stream that went silent mid-response blocked its caller until the
+caller cancelled.
+
+Streamed callers were already covered by a watchdog above this layer:
+`veryfront dev` chat and everything else that streams through the agent
+runtime stop at 60 seconds before the first output part and 15 seconds after
+it, hosted child forks stop at 45 seconds, and hosted chat runs carry their
+own idle and 300-second tool-running windows. `veryfront eval` gained
+`--record-timeout` in #4508.
+
+What had no bound was the non-streaming drain. `agent.generate` collects a
+result by looping over a stream with no timer of its own, and every Veryfront
+Cloud gateway model routes generate through `doStream`, so a stalled gateway
+response hung `agent.generate` and any library embedder on that path
+indefinitely.
+
+`requestStream` now arms a deadline around each wait for the next body chunk.
+If nothing arrives for `DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` (120 seconds)
+the request is aborted, the connection is released, and the stream rejects with
+a retryable `ProviderRequestError` reading "request timed out after Nms waiting
+for the next stream chunk". The deadline is re-armed on every chunk, so it
+bounds provider silence rather than total response length. It counts bytes on
+the wire, not semantic parts, and it disarms on any bytes the body yields, so
+a keepalive, an SSE comment line or a progress event re-arms it whether or not
+the extension decodes that event. That is what keeps it from firing while a
+provider-executed tool (web search, web fetch, code execution, the MCP
+connector) runs with the response held open. Two transports make this
+explicit: Anthropic sends SSE `ping` frames, and the Veryfront Cloud gateway
+sends a keepalive every 15 seconds. A directly-configured OpenAI or Google
+model publishes no keepalive interval that Veryfront relies on, so if you run
+one that can hold a response open silently for longer than the default, raise
+the setting below.
+
+This needs your decision if you depend on the old behaviour: a caller that
+previously blocked indefinitely on a dead stream now sees a rejection. That is
+the point -- `agent.generate` had no watchdog of its own, so a stalled gateway
+response was indistinguishable from a slow one.
+
+Set `VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_MS` to widen the window, or to `0`
+to disable it and restore an unbounded body, which only a deployment running
+its own idle watchdog should do. It is read from the host environment for every
+provider stream request, so it covers `veryfront dev` chat, hosted agent runs
+and library use of `agent.generate` / `agent.stream` without code changes; a
+value that is not an integer in range is ignored with a warning and the default
+applies. The warning names the variable and the accepted range but never the
+rejected value, because `.env` expansion can substitute a host secret into it.
+Set it in the host environment, not in a project `.env` file: this is an
+operator safety bound, so a value that `loadEnv` copied out of a project `.env`
+is ignored and the host's own setting stands. Custom provider extensions can also pass `idleTimeoutMs` per request
+to `requestStream`, which takes precedence over the environment.
+
 ### Changed: a response cut at the output token limit reports `PROVIDER_OUTPUT_TRUNCATED`
 
 An Anthropic response that stops at the output token limit part way through a

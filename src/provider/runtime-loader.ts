@@ -10,10 +10,12 @@ import type { ModelRuntimePromptMessage, ModelRuntimeToolDefinition } from "./ty
 import {
   buildProviderError,
   DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
   requestJson,
   requestStream,
+  VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV,
   waitForProviderStreamRetry,
 } from "./runtime-loader/provider-http.ts";
 import { readRecord } from "./runtime-loader/provider-records.ts";
@@ -47,6 +49,7 @@ export { TOOL_INPUT_PENDING_THRESHOLD_MS, withToolInputStatusTransitions };
 export {
   buildProviderError,
   DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
+  DEFAULT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   isNumberArray,
   mergeUsage,
@@ -55,6 +58,7 @@ export {
   readRecord,
   requestJson,
   requestStream,
+  VERYFRONT_PROVIDER_STREAM_IDLE_TIMEOUT_ENV,
   waitForProviderStreamRetry,
 };
 export type { RuntimePromptMessage } from "./types.ts";
