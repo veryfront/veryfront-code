@@ -1255,6 +1255,69 @@ describe("integrations/remote-tools", () => {
     );
   });
 
+  it("preserves typed remote failure conditions across error payload shapes", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    const condition = { slug: "provider-failed", status: 503, retryable: true };
+    const textFallback = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [{ text: "Remote failure" }],
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+    assertEquals(textFallback, {
+      error: "provider-failed",
+      status: 503,
+      message: "Remote failure",
+      condition,
+    });
+
+    const structuredMessage = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: { message: "Remote search failed" },
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+    assertEquals(structuredMessage, {
+      message: "Remote search failed",
+      error: "provider-failed",
+      status: 503,
+      condition,
+    });
+
+    const authenticationAction = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: {
+          error: "authentication_required",
+          integration: "github",
+          connectUrl: "/oauth/connect/github",
+          message: "Connect GitHub",
+        },
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+    assertEquals(authenticationAction, {
+      error: "authentication_required",
+      integration: "github",
+      connectUrl: "/oauth/connect/github",
+      message: "Connect GitHub",
+      condition,
+    });
+
+    const malformedCondition = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [{ text: JSON.stringify({ error: "raw-error" }) }],
+        _meta: { condition: { slug: "bad slug", status: 400, retryable: false } },
+      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+    assertEquals(malformedCondition, { error: "raw-error" });
+  });
+
   it("addresses execution by integration and tool path without duplicating identity in the body", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
