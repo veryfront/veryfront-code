@@ -604,6 +604,30 @@ describe("npm package publishing", () => {
     });
   });
 
+  it("defaults the shared metadata budget to cover a full release at normal registry pace", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        'printf "%s %s" "$NPM_GIT_HEAD_WAIT_TOTAL_SECONDS" "$NPM_GIT_HEAD_WAIT_DELAY_SECONDS"',
+      ].join("\n"),
+      {},
+    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    const [totalSeconds, delaySeconds] = decoder.decode(output.stdout).split(" ").map(Number);
+    // 0.1.1261 needed up to 19 metadata polls per package and spent the old
+    // 30-minute budget on its first 21 packages; a release publishes ~30.
+    const slowestNormalPackageSeconds = 19 * delaySeconds;
+    const releasePackageCount = 30;
+    assertEquals(
+      totalSeconds >= releasePackageCount * slowestNormalPackageSeconds,
+      true,
+      `budget ${totalSeconds}s`,
+    );
+    // Still bounded well under GitHub's 6-hour default job limit.
+    assertEquals(totalSeconds <= 4 * 60 * 60, true, `budget ${totalSeconds}s`);
+  });
+
   it("counts only time spent waiting against the shared metadata budget", async () => {
     await withTempDir(async (stateDir) => {
       const countFile = `${stateDir}/npm-view-count`;
