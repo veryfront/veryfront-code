@@ -287,6 +287,15 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, outOfRange, inRangeHistory), "user-edit");
   });
 
+  it("keeps the major bound on a fully wildcarded suffixed range", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: "1.x.x-beta" } });
+    const inRange = apiWrite({ name: "demo", dependencies: { react: "1.9.9" } });
+    const outOfRange = apiWrite({ name: "demo", dependencies: { react: "2.0.0" } });
+    const inRangeHistory = [{ react: "1.x.x-beta" }, { react: "1.9.9" }];
+    assertEquals(classifyPackageJsonDrift(baseline, inRange, inRangeHistory), "server-pins");
+    assertEquals(classifyPackageJsonDrift(baseline, outOfRange, inRangeHistory), "user-edit");
+  });
+
   it("accepts whitespace between an npm operator and its version", () => {
     const baseline = apiWrite({
       name: "demo",

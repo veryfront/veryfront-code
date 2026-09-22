@@ -251,6 +251,11 @@ function normalizeNpmPartialRange(value: string): string {
   }
   body = body.trim();
   if (operator === "" && /^(?:[xX*])(?:\.[xX*]){0,2}$/.test(body)) return "*";
+  const suffixedWildcardMajor = /^v?(\d+)\.[xX*]\.[xX*](?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+    .exec(
+      body,
+    );
+  if (suffixedWildcardMajor) return `${operator}v${suffixedWildcardMajor[1]}`;
   const suffixedWildcard = /^v?(\d+)\.(\d+)\.[xX*](?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
     body,
   );
