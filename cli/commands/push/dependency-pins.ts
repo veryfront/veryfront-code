@@ -217,6 +217,28 @@ function parseVersionParts(value: string): VersionParts | null {
   };
 }
 
+function normalizeNpmPartialRange(value: string): string {
+  let operator = "";
+  let body = value.trim();
+  for (const candidate of [">=", "<=", ">", "<", "^", "~"]) {
+    if (body.startsWith(candidate)) {
+      operator = candidate;
+      body = body.slice(candidate.length);
+      break;
+    }
+  }
+  if (body.startsWith("=")) body = body.slice(1);
+  const match = /^v?(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$/.exec(body);
+  if (!match) return `${operator}${body}`;
+  if (match[2] === undefined || /^[xX*]$/.test(match[2])) {
+    return `${operator}v${match[1]}`;
+  }
+  if (match[3] === undefined || /^[xX*]$/.test(match[3])) {
+    return `${operator}v${match[1]}.${match[2]}`;
+  }
+  return `${operator}v${match[1]}.${match[2]}.${match[3]}`;
+}
+
 function nextPartialBoundary(base: VersionParts): VersionParts | null {
   if (base.precision === 1 && !Number.isSafeInteger(base.major + 1)) return null;
   if (base.precision === 2 && !Number.isSafeInteger(base.minor + 1)) return null;
@@ -287,7 +309,7 @@ function allowsPrerelease(version: VersionParts, range: VersionParts): boolean {
  * classified as a user edit, which is the existing conflict behaviour.
  */
 function satisfiesDeclaredRange(version: string, range: string): boolean {
-  const trimmed = range.trim();
+  const trimmed = normalizeNpmPartialRange(range);
   if (trimmed === "") return false;
   if (/\s/.test(trimmed) || trimmed.includes("||")) return false;
 

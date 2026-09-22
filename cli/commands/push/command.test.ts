@@ -6946,6 +6946,8 @@ describe("push dependency pin reconciliation", () => {
     baselinePackageJson?: string;
     /** Return a changed remote manifest after the initial remote listing. */
     remotePackageJsonAfterInitialList?: string;
+    /** Return two remote entries for package.json to exercise duplicate rejection. */
+    duplicatePackageJsonRemote?: boolean;
     /**
      * Runs while the push is reading the preimage history: after it captured
      * its source snapshot, before the adoption writes the manifest.
@@ -7051,6 +7053,13 @@ describe("push dependency pin reconciliation", () => {
                   content: packageJson,
                   version_id: "00000000-0000-4000-8000-000000000012",
                 },
+                ...(scenario.duplicatePackageJsonRemote
+                  ? [{
+                    path: "package.json",
+                    content: packageJson,
+                    version_id: "00000000-0000-4000-8000-000000000013",
+                  }]
+                  : []),
               ],
               page_info: {},
             });
@@ -7674,6 +7683,30 @@ describe("push dependency pin reconciliation", () => {
         if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
         assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
         assertStringIncludes(error.message, '"package.json"');
+        assertEquals(puts, []);
+        assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("does not adopt a duplicated remote package manifest", async () => {
+    await runPinPush(
+      {
+        duplicatePackageJsonRemote: true,
+        history: {
+          version: 1,
+          project_id: PIN_PROJECT_ID,
+          branch: null,
+          entries: [
+            { dependencies: { react: "^19.2.4" }, expires_at: 1 },
+            { dependencies: { react: "19.3.0" }, expires_at: 1 },
+          ],
+        },
+      },
+      async ({ projectDir, error, puts, historyCalls }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(historyCalls, 0);
         assertEquals(puts, []);
         assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
       },

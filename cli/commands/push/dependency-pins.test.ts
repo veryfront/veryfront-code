@@ -218,6 +218,22 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, outOfRange, history), "user-edit");
   });
 
+  it("accepts npm x-ranges and optional equality ranges", () => {
+    const baseline = apiWrite({
+      name: "demo",
+      dependencies: { major: "19.x", minor: "1.2.x", equality: "=1.2" },
+    });
+    const resolved = apiWrite({
+      name: "demo",
+      dependencies: { major: "19.4.0", minor: "1.2.5", equality: "1.2.7" },
+    });
+    const history = [
+      { major: "19.x", minor: "1.2.x", equality: "=1.2" },
+      { major: "19.4.0", minor: "1.2.5", equality: "1.2.7" },
+    ];
+    assertEquals(classifyPackageJsonDrift(baseline, resolved, history), "server-pins");
+  });
+
   it("keeps strict full-version comparators exclusive", () => {
     const baseline = apiWrite({ name: "demo", dependencies: { react: ">1.2.3" } });
     const exactBase = apiWrite({ name: "demo", dependencies: { react: "1.2.3" } });

@@ -1225,8 +1225,10 @@ async function planServerDependencyPinAdoption(params: {
   if (baselineDigest === undefined) return null;
 
   const local = params.localFiles.find((file) => file.path === PACKAGE_JSON_PATH);
-  const remote = params.remoteFiles.find((file) => file.path === PACKAGE_JSON_PATH);
-  if (!local || !remote || typeof remote.content !== "string") return null;
+  const remoteManifests = params.remoteFiles.filter((file) => file.path === PACKAGE_JSON_PATH);
+  if (remoteManifests.length !== 1) return null;
+  const remote = remoteManifests[0]!;
+  if (!local || typeof remote.content !== "string") return null;
 
   const remoteDigest = await computeContentDigest(remote.content);
   if (remoteDigest === baselineDigest) return null;
