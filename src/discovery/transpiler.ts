@@ -1500,12 +1500,12 @@ function matchesTokenHere(
 ): boolean {
   const token = tokens[index]!;
   if (token.kind === "star") {
-    // minimatch's leading `*` in `*@(a|b)` and `*+(a|b)`, and a `*` after a
-    // positive extglob, consumes input; otherwise the group alone incorrectly
-    // accepts a name the following star should require more characters for.
+    // minimatch's leading `*` before an extglob, and a `*` after a positive
+    // extglob, consumes input; otherwise the group alone incorrectly accepts a
+    // name the following star should require more characters for.
     const next = tokens[index + 1];
     const mustConsumeAdjacentToExtglob = !token.synthetic && (
-      (index === 0 && next?.kind === "extglob" && next.mark !== "!") ||
+      (index === 0 && next?.kind === "extglob") ||
       tokens[index - 1]?.kind === "extglob" && !token.consecutive
     );
     const firstEnd = offset + (mustConsumeAdjacentToExtglob ? 1 : 0);
