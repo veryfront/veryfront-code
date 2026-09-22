@@ -1280,6 +1280,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/a!(*)"], `${PROJECT}/apps/a`), "");
       assertEquals(await declaring(["apps/aa!(a|*)"], `${PROJECT}/apps/aa`), "");
       assertEquals(
+        await declaring(["apps/*?(a|b)*"], `${PROJECT}/apps/x`),
+        "",
+      );
+      assertEquals(
         await declaring(["apps/!(a|b)*?(a|b)"], `${PROJECT}/apps/a`),
         "apps/a",
       );

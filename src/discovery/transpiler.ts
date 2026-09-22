@@ -1505,7 +1505,7 @@ function matchesTokenHere(
     // accepts a name the following star should require more characters for.
     const next = tokens[index + 1];
     const mustConsumeAdjacentToExtglob = !token.synthetic && (
-      (index === 0 && next?.kind === "extglob" && (next.mark === "@" || next.mark === "+")) ||
+      (index === 0 && next?.kind === "extglob" && next.mark !== "!") ||
       tokens[index - 1]?.kind === "extglob" && !token.consecutive
     );
     const firstEnd = offset + (mustConsumeAdjacentToExtglob ? 1 : 0);
