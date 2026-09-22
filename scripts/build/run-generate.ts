@@ -45,6 +45,24 @@ export interface GeneratorUnit {
 
 export const UNITS: GeneratorUnit[] = [
   {
+    // The two lockfiles are the whole input: `deno compile` freezes each
+    // lock's npm section into the binary compiled against it (full profile ->
+    // deno.lock, proxy profile -> scripts/build/proxy-deno.lock), and the
+    // discovery bundler needs the frozen set to tell a dependency the runtime
+    // carries from one it has to inline.
+    name: "embedded-npm-packages",
+    commands: [["deno", "run", "-A", "scripts/build/generate-embedded-npm-packages.ts"]],
+    inputRoots: [],
+    inputFiles: [
+      "deno.lock",
+      "scripts/build/proxy-deno.lock",
+      "scripts/build/generate-embedded-npm-packages.ts",
+      "scripts/lib/deno-lock.ts",
+      "deno.json",
+    ],
+    outputs: ["src/discovery/embedded-npm-packages.generated.ts"],
+  },
+  {
     name: "templates-manifest",
     commands: [["deno", "run", "-A", "scripts/build/generate-templates-manifest.ts"]],
     inputRoots: ["templates"],

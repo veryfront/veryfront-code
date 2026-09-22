@@ -51,6 +51,13 @@ export { getReactUrls };
 export interface HttpPluginOptions {
   fetchFn?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * How a URL is rendered in this plugin's diagnostics and logs; defaults to
+   * `sanitizeUrlForSpan`. A caller whose URLs carry project text -- a CDN
+   * coordinate built from a declared version, whose pre-release part is
+   * free-form -- passes its own so the raw text never reaches a log line.
+   */
+  describeUrl?: (url: string) => string;
 }
 
 function requireHttpTimeout(timeoutMs: number): number {
@@ -118,7 +125,8 @@ export function createHTTPPlugin(options: HttpPluginOptions = {}): Plugin {
 
       build.onLoad({ filter: /.*/, namespace: "http-url" }, async (args) => {
         let requestUrl = args.path;
-        const safeUrl = sanitizeUrlForSpan(args.path);
+        const describeUrl = options.describeUrl ?? sanitizeUrlForSpan;
+        const safeUrl = describeUrl(args.path);
 
         try {
           const url = new URL(args.path);
@@ -184,7 +192,11 @@ export function createHTTPPlugin(options: HttpPluginOptions = {}): Plugin {
 
           return { contents, loader: "js" };
         } catch (error) {
-          const errorMessage = snapshotThrowableDiagnostic(error);
+          // A transport error commonly quotes the URL it was given, so the raw
+          // request URL is replaced by its described form inside the text too.
+          const errorMessage = snapshotThrowableDiagnostic(error)
+            .split(requestUrl).join(describeUrl(requestUrl))
+            .split(args.path).join(safeUrl);
           logger.warn(`${LOG_PREFIX} Network error fetching ${safeUrl}: ${errorMessage}`);
           return { errors: [{ text: `Network error fetching ${safeUrl}: ${errorMessage}` }] };
         } finally {
