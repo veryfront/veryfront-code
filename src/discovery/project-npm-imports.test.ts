@@ -341,6 +341,10 @@ describe("rangeAdmitsVersion", () => {
       assertEquals(rangeAdmitsVersion(zero, "1.0.0-alpha"), false, zero);
       assertEquals(rangeAdmitsVersion(zero, "1.0.0"), true, zero);
     }
+    assertEquals(
+      rangeAdmitsVersion(">=0.0.0+build >=0.0.0-alpha", "0.0.0-beta"),
+      false,
+    );
     // A `v` prefix does not: npm applies the rewrite to the comparator as
     // written, which still carries the `v` at that point, so `>=v0.0.0` stays
     // an ordinary lower bound that no pre-release satisfies.

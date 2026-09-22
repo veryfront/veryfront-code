@@ -1169,6 +1169,8 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
             "apps/a",
             "apps/aa",
             "apps/ab",
+            "apps/app",
+            "apps/{{1..2}}",
             "apps/{a}",
             "apps/.hidden",
             ".apps/web",
@@ -1180,6 +1182,8 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           "apps/a/package.json": "{}",
           "apps/aa/package.json": "{}",
           "apps/ab/package.json": "{}",
+          "apps/app/package.json": "{}",
+          "apps/{{1..2}}/package.json": "{}",
           "apps/{a}/package.json": "{}",
           "apps/.hidden/package.json": "{}",
           ".apps/web/package.json": "{}",
@@ -1257,6 +1261,12 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/@(a|b)"]), "");
       assertEquals(await declaring(["apps/*@(a|b)"], `${PROJECT}/apps/a`), "");
       assertEquals(await declaring(["apps/*@(a|b)"], `${PROJECT}/apps/aa`), "apps/aa");
+      assertEquals(await declaring(["apps/@(a|b)*"], `${PROJECT}/apps/a`), "");
+      assertEquals(await declaring(["apps/a@(a|b)*"], `${PROJECT}/apps/aa`), "");
+      assertEquals(
+        await declaring(["apps/!(x|y)@(app|web)"], `${PROJECT}/apps/app`),
+        "apps/app",
+      );
       assertEquals(await declaring(["apps/a!(*)"], `${PROJECT}/apps/a`), "");
       assertEquals(
         await declaring(["apps/!(a|b)*?(a|b)"], `${PROJECT}/apps/a`),
@@ -1289,6 +1299,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         await declaring(["apps/{{a,b}}"], `${PROJECT}/apps/{a}`),
         "apps/{a}",
       );
+      assertEquals(await declaring(["apps/{{1..2}}"], `${PROJECT}/apps/{{1..2}}`), "apps/{{1..2}}");
       // A declaration with a pattern too large to expand is unreadable, and
       // an exclusion this could not expand may be the one covering the
       // member, so nothing in it is trusted.
