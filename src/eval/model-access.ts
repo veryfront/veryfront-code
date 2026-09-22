@@ -226,7 +226,7 @@ function classifyProviderError(error: ProviderError): EvalModelAccessDenial | un
   // The provider runtime keeps an `eu_inference_policy` body only from the
   // gateway. The refusal (403, or 503 from older gateways) is not a credential
   // or project access denial.
-  if (typeof error.responseBody === "string") {
+  if (fromGateway && typeof error.responseBody === "string") {
     const policy = toInferencePolicyDenial(
       parseKnownProblemBody(parseJsonBody(error.responseBody)),
     );

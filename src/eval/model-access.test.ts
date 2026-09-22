@@ -356,6 +356,15 @@ describe("eval/model-access", () => {
     }
   });
 
+  it("keeps a direct-provider policy-shaped response as a record failure", async () => {
+    const directProvider = await buildProviderError(
+      "openai",
+      jsonResponse(403, { code: "eu_inference_policy", model: "gpt-5" }),
+    );
+
+    assertEquals(classifyEvalModelAccessDenial(directProvider), undefined);
+  });
+
   it("keeps other 400 responses as record failures", async () => {
     const otherCode = await buildProviderError(
       "anthropic",
