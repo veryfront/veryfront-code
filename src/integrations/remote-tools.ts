@@ -839,6 +839,7 @@ async function callRemoteTool(
         throw new TypeError("Integration tools API returned a malformed MCP error marker");
       }
       if (result.isError === true) {
+        const parsed = parseJsonText(text);
         const condition = isRecord(result._meta) ? result._meta.condition : undefined;
         if (
           isRecord(condition) && typeof condition.slug === "string" &&
@@ -847,10 +848,10 @@ async function callRemoteTool(
           condition.status >= 400 && condition.status <= 599 &&
           typeof condition.retryable === "boolean"
         ) {
+          if (isRecord(parsed)) return { ...parsed, condition };
           return { error: condition.slug, status: condition.status, message: text, condition };
         }
         // Preserve structured errors such as authentication_required + connectUrl.
-        const parsed = parseJsonText(text);
         if (parsed && typeof parsed === "object") return parsed;
         return { error: "tool_error", message: text };
       }

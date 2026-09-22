@@ -35,6 +35,28 @@ describe("remote integration failure conditions", () => {
     assertEquals(calls, 1);
   });
 
+  it("adds conditions without replacing existing authentication actions", async () => {
+    const condition = { slug: "provider-not-connected", status: 404, retryable: false };
+    for (const error of ["authentication_required", "reconnect_required"]) {
+      const action = {
+        error,
+        integration: "github",
+        connectUrl: "/oauth/connect/github",
+        message: "Connect GitHub",
+      };
+      const result = await withMockFetch(
+        async () =>
+          Response.json({
+            isError: true,
+            content: [{ type: "text", text: JSON.stringify(action) }],
+            _meta: { condition },
+          }),
+        async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context),
+      );
+      assertEquals(result, { ...action, condition });
+    }
+  });
+
   it("falls back for malformed conditions and ignores error metadata on success", async () => {
     for (
       const condition of [null, { slug: "bad slug", status: 403, retryable: false }, {
