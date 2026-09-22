@@ -181,6 +181,18 @@ describe("agent/runtime/model-resolution", () => {
     }
   });
 
+  it("routes every catalog identity through Cloud when no direct credentials exist", () => {
+    clearModelEnv();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
+      const hosted = `veryfront-cloud/${model.modelId}`;
+      assertEquals(resolveRuntimeModel(model.id), hosted);
+      assertEquals(resolveRuntimeModel(model.modelId), hosted);
+      assertEquals(resolveRuntimeModel(hosted), hosted);
+    }
+  });
+
   it("does not resolve Object.prototype members as model aliases", () => {
     for (
       const inherited of [

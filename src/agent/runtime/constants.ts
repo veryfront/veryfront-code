@@ -23,6 +23,9 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "openai/gpt-5.4": 128_000,
   "openai/gpt-5.4-mini": 128_000,
   "openai/gpt-5.4-nano": 128_000,
+  "openai/gpt-5-nano": 128_000,
+  // Conservative runtime budget; the provider maximum is not yet evidenced.
+  "deepseek/deepseek-v4-flash": 16_384,
   "openai/gpt-5.2": 128_000,
   "google-ai-studio/gemini-3.1-pro-preview": 65_536,
   "google-ai-studio/gemini-3.5-flash": 65_536,
