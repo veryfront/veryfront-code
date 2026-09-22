@@ -58,6 +58,8 @@ describe("getModelMaxOutputTokens", () => {
   it("returns known limits for Mistral models", () => {
     assertEquals(getModelMaxOutputTokens("mistral/mistral-large-2512"), 1_024);
     assertEquals(getModelMaxOutputTokens("veryfront-cloud/mistral/mistral-large-2512"), 1_024);
+    assertEquals(getModelMaxOutputTokens("mistral/mistral-small-2503"), 16_384);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/mistral/mistral-small-2503"), 16_384);
   });
 
   it("returns a large limit for Kimi thinking models so reasoning_content does not exhaust the budget", () => {
