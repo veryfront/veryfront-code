@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseKnownProblemBody, parseProviderError } from "./provider-errors.ts";
+import {
+  parseGatewayProblemBody,
+  parseKnownProblemBody,
+  parseProviderError,
+} from "./provider-errors.ts";
 import {
   buildProviderError,
   markVeryfrontGatewayResponse,
@@ -51,7 +55,7 @@ describe("chat/provider-errors", () => {
     }
   });
 
-  it("uses fixed wording for an EU inference policy refusal without a usable model id", () => {
+  it("ignores an unmarked EU inference policy refusal without a usable model id", () => {
     const expected = {
       code: "MODEL_NOT_PERMITTED",
       message:
@@ -60,10 +64,11 @@ describe("chat/provider-errors", () => {
     };
     for (const model of ["", 42, "a\nb", "<script>", "x".repeat(300)]) {
       assertEquals(
-        parseProviderError({ code: "eu_inference_policy", model }),
-        expected,
-        `model ${JSON.stringify(model)}`,
+        parseProviderError({ code: "eu_inference_policy", model }).code,
+        "EXTERNAL_SERVICE_ERROR",
       );
+      assertEquals(parseKnownProblemBody({ code: "eu_inference_policy", model }), null);
+      assertEquals(parseGatewayProblemBody({ code: "eu_inference_policy", model }), expected);
     }
   });
 
@@ -76,7 +81,10 @@ describe("chat/provider-errors", () => {
         "This request is not permitted under this project's inference policy (EU-only inference).",
       status: 403,
     };
-    assertEquals(parseProviderError({ code: "eu_inference_policy", error: "text" }), expected);
+    assertEquals(
+      parseProviderError({ code: "eu_inference_policy", error: "text" }).code,
+      "EXTERNAL_SERVICE_ERROR",
+    );
     const providerError = await buildProviderError(
       "openai",
       markVeryfrontGatewayResponse(

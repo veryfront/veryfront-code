@@ -778,9 +778,31 @@ export async function buildProviderError(
     ));
   } catch (error) {
     if (abortSignal?.aborted === true) throw error;
-    return buildProviderErrorFromUnreadableBody(provider, response);
+    return markProviderErrorGatewayProvenance(
+      buildProviderErrorFromUnreadableBody(provider, response),
+      response,
+    );
   }
-  return buildProviderErrorFromBody(provider, response, rawBody, truncated);
+  return markProviderErrorGatewayProvenance(
+    buildProviderErrorFromBody(provider, response, rawBody, truncated),
+    response,
+  );
+}
+
+/** Preserve gateway provenance for callers that invoke buildProviderError directly. */
+function markProviderErrorGatewayProvenance<T extends ProviderError>(
+  error: T,
+  response: Response,
+): T {
+  if (isVeryfrontGatewayResponse(response) && error.viaVeryfrontGateway !== true) {
+    ObjectDefineProperty(error, "viaVeryfrontGateway", {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: false,
+    });
+  }
+  return error;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { safeJsonParse } from "#veryfront/utils/json.ts";
 import {
+  ProviderError,
   ProviderOutputTruncatedError,
   ProviderOverloadedError,
   ProviderQuotaError,
@@ -182,6 +183,18 @@ function inferencePolicyError(model: unknown): ParsedProviderError {
 
 /** Parses known problem bodies without exposing provider-controlled text. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
+  return parseKnownProblemBodyInternal(body, false);
+}
+
+/** Parses a problem body after the provider runtime marked it as gateway-originated. */
+export function parseGatewayProblemBody(body: unknown): ParsedProviderError | null {
+  return parseKnownProblemBodyInternal(body, true);
+}
+
+function parseKnownProblemBodyInternal(
+  body: unknown,
+  allowInferencePolicy: boolean,
+): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
     return null;
   }
@@ -195,7 +208,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   // The gateway refuses a request its EU-only inference policy cannot serve,
   // naming the model when the model is the reason. Retrying cannot succeed,
   // whatever status an older gateway sent (503).
-  if (getOwnDataProperty(body, "code") === "eu_inference_policy") {
+  if (allowInferencePolicy && getOwnDataProperty(body, "code") === "eu_inference_policy") {
     return inferencePolicyError(getOwnDataProperty(body, "model"));
   }
 
@@ -383,12 +396,13 @@ function parseKnownProviderBody(
   body: unknown,
   seen: WeakSet<object> = new WeakSet(),
   depth = 0,
+  parseProblemBody: typeof parseKnownProblemBody = parseKnownProblemBody,
 ): ParsedProviderError | null {
   if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
     return null;
   }
 
-  const problemMatch = parseKnownProblemBody(body);
+  const problemMatch = parseProblemBody(body);
   if (problemMatch) {
     return problemMatch;
   }
@@ -403,7 +417,7 @@ function parseKnownProviderBody(
   seen.add(body);
 
   if (isErrorRecord(body.error)) {
-    const nestedError = parseKnownProviderBody(body.error, seen, depth + 1);
+    const nestedError = parseKnownProviderBody(body.error, seen, depth + 1, parseProblemBody);
     if (nestedError) {
       return nestedError;
     }
@@ -510,6 +524,9 @@ function parseProviderErrorInner(
   }
 
   const responseBody = extractResponseBody(error);
+  const parseProblemBody = error instanceof ProviderError && error.viaVeryfrontGateway === true
+    ? parseGatewayProblemBody
+    : parseKnownProblemBody;
   if (responseBody) {
     const normalizedResponseBody = responseBody.toLowerCase();
     if (normalizedResponseBody.includes("invalid veryfront schema")) {
@@ -517,7 +534,7 @@ function parseProviderErrorInner(
     }
 
     const parsedBody = parseErrorJson(responseBody);
-    const parsedError = parseKnownProviderBody(parsedBody);
+    const parsedError = parseKnownProviderBody(parsedBody, new WeakSet(), 0, parseProblemBody);
     if (parsedError) {
       return parsedError;
     }
@@ -533,7 +550,7 @@ function parseProviderErrorInner(
     }
   }
 
-  const parsedDirectError = parseKnownProviderBody(error);
+  const parsedDirectError = parseKnownProviderBody(error, new WeakSet(), 0, parseProblemBody);
   if (parsedDirectError) {
     return parsedDirectError;
   }
@@ -541,13 +558,23 @@ function parseProviderErrorInner(
   const message = getErrorMessage(error);
   if (message) {
     const parsedMessage = parseErrorJson(message);
-    const parsedMessageError = parseKnownProviderBody(parsedMessage);
+    const parsedMessageError = parseKnownProviderBody(
+      parsedMessage,
+      new WeakSet(),
+      0,
+      parseProblemBody,
+    );
     if (parsedMessageError) {
       return parsedMessageError;
     }
 
     const parsedEmbeddedMessage = parseEmbeddedErrorJson(message);
-    const parsedEmbeddedMessageError = parseKnownProviderBody(parsedEmbeddedMessage);
+    const parsedEmbeddedMessageError = parseKnownProviderBody(
+      parsedEmbeddedMessage,
+      new WeakSet(),
+      0,
+      parseProblemBody,
+    );
     if (parsedEmbeddedMessageError) {
       return parsedEmbeddedMessageError;
     }

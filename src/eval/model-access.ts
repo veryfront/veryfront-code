@@ -9,7 +9,7 @@ import {
   EVAL_PROJECT_REQUIRED,
   VeryfrontError,
 } from "#veryfront/errors";
-import { parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
+import { parseGatewayProblemBody, parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
 import {
   curatedProviderFailure,
   type CuratedProviderFailureCode,
@@ -229,7 +229,7 @@ function classifyProviderError(error: ProviderError): EvalModelAccessDenial | un
   // or project access denial.
   if (fromGateway && typeof error.responseBody === "string") {
     const policy = toInferencePolicyDenial(
-      parseKnownProblemBody(parseJsonBody(error.responseBody)),
+      parseGatewayProblemBody(parseJsonBody(error.responseBody)),
     );
     if (policy) return policy;
   }
