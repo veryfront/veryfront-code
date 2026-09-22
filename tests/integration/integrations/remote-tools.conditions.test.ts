@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { executeRemoteIntegrationTool } from "./remote-tools.ts";
+import { executeRemoteIntegrationTool } from "#veryfront/integrations/remote-tools.ts";
 
 const context = { authToken: "synthetic-test-token", projectSlug: "test-project" };
 
