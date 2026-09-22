@@ -2649,7 +2649,7 @@ describe("pull local edit reporting", () => {
    * differing paths is what makes the overwrite a choice.
    */
   async function runPullWithLocalEdit(
-    options: { force: boolean; quiet?: boolean; remotePath?: string },
+    options: { force: boolean; quiet?: boolean; dryRun?: boolean; remotePath?: string },
   ): Promise<{ warnings: string[]; content: string }> {
     const originalWarn = console.warn;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -2689,7 +2689,13 @@ describe("pull local edit reporting", () => {
           }
           throw new Error(`Unexpected request: ${url.pathname}`);
         },
-        () => pullCommand({ projectDir, force: options.force, quiet: options.quiet }),
+        () =>
+          pullCommand({
+            projectDir,
+            force: options.force,
+            quiet: options.quiet,
+            dryRun: options.dryRun,
+          }),
       );
 
       return { warnings, content: await Deno.readTextFile(join(projectDir, remotePath)) };
@@ -2717,6 +2723,15 @@ describe("pull local edit reporting", () => {
 
     assertEquals(content, "export const value = 1;\n");
     assertEquals(warnings.some((line) => line.includes("Pull will overwrite")), false);
+  });
+
+  it("uses conditional wording for dry-run overwrite warnings", async () => {
+    const { warnings, content } = await runPullWithLocalEdit({ force: false, dryRun: true });
+
+    assertEquals(content, "export const value = 2;\n");
+    const warning = warnings.join("\n");
+    assertStringIncludes(warning, "Pull would overwrite 1 local file");
+    assertEquals(warning.includes("Pull will overwrite"), false);
   });
 
   it("sanitizes remote paths before printing overwrite warnings", async () => {

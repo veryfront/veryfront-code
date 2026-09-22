@@ -250,6 +250,9 @@ async function validateFilePath(
     if (isFinal && info.isDirectory) {
       throw new Error(`Invalid file path: "${filePath}" - destination is a directory`);
     }
+    if (isFinal && !info.isFile) {
+      throw new Error(`Invalid file path: "${filePath}" - destination is not a regular file`);
+    }
   }
 
   return { path: fullPath, relativePath: canonicalPath };
@@ -695,11 +698,13 @@ async function confirmPullWrite(
 }
 
 /** Name the local edits a pull is about to discard, so it never does so silently. */
-function warnOverwrittenLocalEdits(paths: readonly string[]): void {
+function warnOverwrittenLocalEdits(paths: readonly string[], dryRun = false): void {
   logWarning(
-    `Pull will overwrite ${paths.length} local file${paths.length === 1 ? "" : "s"} that ${
-      paths.length === 1 ? "differs" : "differ"
-    } from the remote copy: ${formatOverwrittenPaths(paths)}.`,
+    `Pull ${dryRun ? "would" : "will"} overwrite ${paths.length} local file${
+      paths.length === 1 ? "" : "s"
+    } that ${paths.length === 1 ? "differs" : "differ"} from the remote copy: ${
+      formatOverwrittenPaths(paths)
+    }.`,
   );
   logInfo("Commit or stash those changes first to keep them.");
 }
@@ -878,7 +883,7 @@ async function pullSingleProject(
       return { written: 0, deleted: 0, cancelled: true };
     }
   } else if (overwrittenLocalEdits.length > 0 && !quiet) {
-    warnOverwrittenLocalEdits(overwrittenLocalEdits);
+    warnOverwrittenLocalEdits(overwrittenLocalEdits, dryRun);
   }
 
   if (!dryRun && syncBranchForPullSource(source)) {
