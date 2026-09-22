@@ -53,7 +53,21 @@ describe("agent/runtime/model-resolution", () => {
     setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
     setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
 
-    assertEquals(resolveRuntimeModel(), `veryfront-cloud/${DEFAULT_AGENT_MODEL}`);
+    assertEquals(resolveRuntimeModel(), "veryfront-cloud/mistral/mistral-small-2503");
+  });
+
+  it("uses the hosted override for omitted models even with direct credentials", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf-token");
+    setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+    setEnv("VERYFRONT_DEFAULT_MODEL", "anthropic/claude-sonnet-4-6");
+    setEnv("OPENAI_API_KEY", "sk-test");
+    assertEquals(resolveRuntimeModel(), "veryfront-cloud/anthropic/claude-sonnet-4-6");
+  });
+
+  it("keeps self-hosted auto provider precedence when OpenAI and Mistral keys exist", () => {
+    setEnv("OPENAI_API_KEY", "sk-test");
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+    assertEquals(resolveRuntimeModel("auto"), "openai/gpt-5.4-nano");
   });
 
   it("reports a default-model mismatch when only another provider has a key", () => {
@@ -104,7 +118,7 @@ describe("agent/runtime/model-resolution", () => {
     );
     assertEquals(
       resolveConfiguredAgentModel("auto"),
-      "veryfront-cloud/openai/gpt-5.4-nano",
+      "veryfront-cloud/mistral/mistral-small-2503",
     );
   });
 
@@ -167,6 +181,18 @@ describe("agent/runtime/model-resolution", () => {
     }
   });
 
+  it("routes every catalog identity through Cloud when no direct credentials exist", () => {
+    clearModelEnv();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
+      const hosted = `veryfront-cloud/${model.modelId}`;
+      assertEquals(resolveRuntimeModel(model.id), hosted);
+      assertEquals(resolveRuntimeModel(model.modelId), hosted);
+      assertEquals(resolveRuntimeModel(hosted), hosted);
+    }
+  });
+
   it("does not resolve Object.prototype members as model aliases", () => {
     for (
       const inherited of [
@@ -194,7 +220,7 @@ describe("agent/runtime/model-resolution", () => {
 
     assertEquals(
       resolveRuntimeModel(),
-      "veryfront-cloud/openai/gpt-5.4-nano",
+      "veryfront-cloud/mistral/mistral-small-2503",
     );
   });
 
@@ -224,7 +250,7 @@ describe("agent/runtime/model-resolution", () => {
 
     assertEquals(
       resolveRuntimeModel("auto"),
-      "veryfront-cloud/openai/gpt-5.4-nano",
+      "veryfront-cloud/mistral/mistral-small-2503",
     );
   });
 

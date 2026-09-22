@@ -18,6 +18,7 @@ import {
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
+  resolveVeryfrontCloudOpenAITransportPlan,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
   tryGetVeryfrontCloudProviderFromModelId,
@@ -26,6 +27,20 @@ import {
 import { VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES } from "./model-catalog.data.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
+  it("keeps the EU Nano and DeepSeek identities distinct with their gateway transports", () => {
+    assertEquals(resolveVeryfrontCloudModelId("gpt-5-nano"), "openai/gpt-5-nano");
+    assertEquals(resolveVeryfrontCloudModelId("gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    assertEquals(resolveVeryfrontCloudModelId("deepseek-v4-flash"), "deepseek/deepseek-v4-flash");
+    assertEquals(
+      resolveVeryfrontCloudOpenAITransportPlan("openai", "gpt-5-nano").transport,
+      "responses",
+    );
+    assertEquals(
+      resolveVeryfrontCloudOpenAITransportPlan("deepseek", "deepseek-v4-flash").transport,
+      "chat-completions",
+    );
+  });
+
   it("finds a catalog model by model id through either spelling of its provider", () => {
     // The catalog publishes Gemini under the `google-ai-studio` alias; a caller
     // spelling the canonical provider (or carrying the gateway prefix) must
@@ -287,6 +302,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "google",
       "mistral",
       "moonshotai",
+      "deepseek",
     ]);
     assertEquals(groups[0]?.label, "Anthropic");
     assertEquals(groups[1]?.label, "OpenAI");
@@ -303,7 +319,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       resolveVeryfrontCloudModelId("opus"),
       "anthropic/claude-opus-4-8",
     );
-    assertEquals(resolveVeryfrontCloudModelId(), "openai/gpt-5.4-nano");
+    assertEquals(resolveVeryfrontCloudModelId(), "mistral/mistral-small-2503");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.5"), "openai/gpt-5.5");
     assertEquals(
       resolveVeryfrontCloudModelId("gpt-5.4-mini"),

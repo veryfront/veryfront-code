@@ -1,3 +1,4 @@
+import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import { createEphemeralAgent } from "../factory.ts";
@@ -387,7 +388,7 @@ async function createAgUiDirectStreamResponse(
   const streamAgent = hasAgUiRuntimeRestrictions(restrictions)
     ? createEphemeralAgent({
       ...applyAgUiRuntimeRestrictionsForModel(
-        agent.config,
+        getAgentExecutionConfig(agent.config),
         restrictions,
         request.model,
         agent.id,
@@ -488,8 +489,13 @@ async function createAgUiInjectedToolsStreamResponse(
   // injected-tools path outright, so this narrows the step budget without
   // touching the merged client tool surface.
   const restrictedConfig = hasAgUiRuntimeRestrictions(restrictions)
-    ? applyAgUiRuntimeRestrictionsForModel(agent.config, restrictions, request.model, agent.id)
-    : agent.config;
+    ? applyAgUiRuntimeRestrictionsForModel(
+      getAgentExecutionConfig(agent.config),
+      restrictions,
+      request.model,
+      agent.id,
+    )
+    : getAgentExecutionConfig(agent.config);
   const runtime = new AgentRuntime(agent.id, {
     ...restrictedConfig,
     tools: buildMergedAgUiTools(agent, runId, request.tools, sessionManager),

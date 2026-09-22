@@ -1,3 +1,4 @@
+import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
 import { replaceDiscoveredProjectPrimitives } from "#veryfront/discovery/registry-replacement.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
@@ -260,7 +261,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
   if (markdownDefinition) {
     return markdownDefinition;
   }
-  const config = { ...runtimeAgent.config };
+  const config = { ...getAgentExecutionConfig(runtimeAgent.config) };
   objectSetPrototypeOf(config, null);
   const toolNames = resolveAgentToolNames(config.tools);
   const deniedToolNames = resolveAgentDeniedToolNames(config.tools);

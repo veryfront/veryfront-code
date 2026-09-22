@@ -7,6 +7,7 @@ import { isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "#veryfront/agent/runtime/agent-delegation-names.ts";
 import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
+import { resolveConfiguredAgentModel } from "#veryfront/agent/runtime/model-resolution.ts";
 import { DEFAULT_MAX_STEPS } from "#veryfront/agent/runtime/constants.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
@@ -315,7 +316,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
   const allowedToolNames = restrictions.allowedTools;
   const allowedTools = toToolNameLookup(allowedToolNames);
   const supportedProviderTools = toToolNameLookup(getProviderNativeToolNames({
-    model: modelOverride ?? config.model,
+    model: modelOverride ?? config.model ?? resolveConfiguredAgentModel(),
   }));
   const configuredProviderToolNames = config.providerTools === undefined
     ? []

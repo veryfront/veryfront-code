@@ -1,3 +1,4 @@
+import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { CONFIG_INVALID, INITIALIZATION_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
@@ -241,7 +242,7 @@ async function startDefaultDetachedExecution(input: {
   sessionManager: RunResumeSessionManager<AgUiResumeValue>;
 }): Promise<void> {
   const runtime = new AgentRuntime(input.agent.id, {
-    ...input.agent.config,
+    ...getAgentExecutionConfig(input.agent.config),
     tools: buildMergedTools(input.agent, input.request, input.sessionManager),
   });
 

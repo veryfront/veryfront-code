@@ -1,3 +1,4 @@
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -52,6 +53,32 @@ describe("agent/ag-ui/runtime-restrictions", () => {
   });
 
   afterEach(() => clearMCPRegistry());
+
+  it("retains allowed native search for an omitted direct model without fixing the runtime model", () => {
+    const restricted = applyAgUiRuntimeRestrictionsForModel(
+      createConfig({ model: undefined, tools: true, providerTools: ["web_search"] }),
+      { allowedTools: ["web_search"] },
+    );
+    assertEquals(restricted.providerTools, ["web_search"]);
+    assertEquals(restricted.model, undefined);
+    assertEquals(restricted.tools, {});
+  });
+
+  it("classifies an omitted hosted default within the current request context", async () => {
+    await runWithVeryfrontCloudContext(
+      { apiToken: "vf_test", projectSlug: "test-project" },
+      () => {
+        const restricted = applyAgUiRuntimeRestrictionsForModel(
+          createConfig({ model: undefined, tools: true, providerTools: ["web_search"] }),
+          { allowedTools: ["web_search"] },
+        );
+        // The hosted Mistral default has no native search; preserve the local tool.
+        assertEquals(restricted.tools, { web_search: true });
+        assertEquals(restricted.model, undefined);
+        return Promise.resolve();
+      },
+    );
+  });
 
   it("reports whether a restriction set narrows anything", () => {
     assertEquals(hasAgUiRuntimeRestrictions(undefined), false);

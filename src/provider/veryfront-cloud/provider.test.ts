@@ -866,6 +866,18 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(model.modelProvider, "mistral");
   });
 
+  it("routes the distinct EU Nano and DeepSeek models through their supported endpoints", async () => {
+    setCloudBootstrap();
+    assertEquals(
+      await captureGatewayRequestUrl("openai/gpt-5-nano"),
+      "https://api.veryfront.com/ai/gateway/openai/v1/responses",
+    );
+    assertEquals(
+      await captureGatewayRequestUrl("deepseek/deepseek-v4-flash"),
+      "https://api.veryfront.com/ai/gateway/deepseek/v1/chat/completions",
+    );
+  });
+
   it("routes Mistral Small 3.1 through the hosted Mistral Chat Completions endpoint", async () => {
     setCloudBootstrap();
 

@@ -1,3 +1,4 @@
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -490,6 +491,55 @@ describe("agent/ag-ui-handler", () => {
     } finally {
       AgentRuntime.prototype.stream = originalStream;
     }
+  });
+
+  it("keeps omitted hosted models when restrictions rebuild the agent", async () => {
+    let resolvedModel = "";
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "mistral",
+      modelId: "mistral-small-2503",
+      doGenerate: () => {
+        throw new Error("Expected streaming");
+      },
+      doStream: () =>
+        Promise.resolve({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ type: "text-delta", id: "text-1", delta: "done" });
+              controller.enqueue({ type: "finish", finishReason: "stop" });
+              controller.close();
+            },
+          }),
+        }),
+    };
+    const source = createEphemeralAgent({
+      system: "Reply briefly.",
+      skills: [],
+      tools: {},
+      resolveModelTransport: (input) => {
+        resolvedModel = input.resolvedModel;
+        return Promise.resolve({ model });
+      },
+    });
+    const handler = createAgUiHandler({ agent: source, runtimeRestrictions: { maxSteps: 1 } });
+    await runWithVeryfrontCloudContext(
+      { apiToken: "vf_test", projectSlug: "test-project" },
+      async () => {
+        const response = await handler(
+          new Request("http://localhost/api/ag-ui", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              runId: "run_hosted_default",
+              threadId: crypto.randomUUID(),
+              messages: [{ id: "msg-1", role: "user", parts: [{ type: "text", text: "hello" }] }],
+            }),
+          }),
+        );
+        await response.text();
+      },
+    );
+    assertEquals(resolvedModel, "veryfront-cloud/mistral/mistral-small-2503");
   });
 
   it("runs a restricted AG-UI request through a framework-built restricted agent", async () => {

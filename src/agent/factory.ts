@@ -1,3 +1,4 @@
+import { registerOmittedModelConfig } from "./runtime/execution-config.ts";
 import type {
   Agent,
   AgentConfig,
@@ -603,6 +604,8 @@ function createAgent<TOutput = never>(
 
   const runtimeConfig = {
     ...publicConfig,
+    // Preserve omission so request-scoped hosted defaults resolve at execution.
+    model: config.model,
     tools: mergedToolsConfig,
     system: augmentedSystem,
     middleware: resolvedMiddleware,
@@ -619,6 +622,7 @@ function createAgent<TOutput = never>(
     shouldAttachAllowedSkillIds,
   });
 
+  if (config.model === undefined) registerOmittedModelConfig(agentInstance.config);
   setEffectiveAgentSystem(agentInstance, augmentedSystem);
   if (options.register) {
     agentRegistry.register(id, agentInstance);

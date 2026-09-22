@@ -50,7 +50,7 @@ export type VeryfrontCloudModelTransportCapabilities = {
  * Update this when the current default is deprecated. Otherwise the default
  * path silently breaks for users who have not set an explicit model.
  */
-export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
+export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "mistral-small-2503";
 
 /**
  * Accepted provider aliases mapped to their canonical provider ID.
@@ -65,6 +65,7 @@ export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyArray<
   Object.freeze(["google-ai-studio", "google"] as const),
   Object.freeze(["mistral", "mistral"] as const),
   Object.freeze(["moonshotai", "moonshotai"] as const),
+  Object.freeze(["deepseek", "deepseek"] as const),
 ]);
 
 /**
@@ -83,6 +84,9 @@ export const VERYFRONT_CLOUD_PROVIDER_ROUTING: ReadonlyArray<
   Object.freeze(["google", Object.freeze({ surface: "google" as const, native: true })] as const),
   Object.freeze(["mistral", Object.freeze({ surface: "openai" as const })] as const),
   Object.freeze(["moonshotai", Object.freeze({ surface: "openai" as const })] as const),
+  Object.freeze(
+    ["deepseek", Object.freeze({ surface: "openai" as const, native: false })] as const,
+  ),
 ]);
 
 /** Surface used for a provider the routing table does not list. */
@@ -285,6 +289,22 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
       description: "Previous Kimi generation",
       thinking: true,
     }),
+    Object.freeze({
+      id: "gpt-5-nano",
+      modelId: "openai/gpt-5-nano",
+      provider: "openai",
+      name: "GPT-5 Nano",
+      description: "Lowest-cost OpenAI model served from the EU Data Zone",
+      thinking: true,
+    }),
+    Object.freeze({
+      id: "deepseek-v4-flash",
+      modelId: "deepseek/deepseek-v4-flash",
+      provider: "deepseek",
+      name: "DeepSeek V4 Flash",
+      description: "Fast open-weight DeepSeek model served from the EU Data Zone",
+      thinking: true,
+    }),
   ],
 );
 
@@ -299,6 +319,7 @@ export const VERYFRONT_CLOUD_PROVIDER_ORDER = Object.freeze(
     "google",
     "mistral",
     "moonshotai",
+    "deepseek",
   ] as const,
 ) satisfies readonly KnownVeryfrontCloudProviderId[];
 
@@ -316,4 +337,5 @@ export const VERYFRONT_CLOUD_PROVIDER_LABELS: Readonly<
   google: "Google",
   moonshotai: "Kimi",
   mistral: "Mistral",
+  deepseek: "DeepSeek",
 });

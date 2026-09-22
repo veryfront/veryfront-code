@@ -10,6 +10,7 @@ import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getModelRuntimeProvider } from "#veryfront/provider/runtime-inspection.ts";
 
@@ -17,6 +18,7 @@ export const AUTO_AGENT_MODEL = "auto";
 export const DEFAULT_AGENT_MODEL = "openai/gpt-5.4-nano";
 
 const HOSTED_PROVIDER_NAMES = new Set([
+  "deepseek",
   "anthropic",
   "google",
   "google-ai-studio",
@@ -49,6 +51,8 @@ const LEGACY_MODEL_ALIASES = new Map<string, string>([
   ["gpt-5.4", "openai/gpt-5.4"],
   ["gpt-5.4-mini", "openai/gpt-5.4-mini"],
   ["gpt-5.4-nano", "openai/gpt-5.4-nano"],
+  ["gpt-5-nano", "openai/gpt-5-nano"],
+  ["deepseek-v4-flash", "deepseek/deepseek-v4-flash"],
   ["o3-pro", "openai/o3-pro"],
   ["o4-mini", "openai/o4-mini"],
   ["gemini-3.1-pro", "google-ai-studio/gemini-3.1-pro-preview"],
@@ -73,6 +77,9 @@ export function normalizeAgentModelConfig(model?: string): string {
 }
 
 export function resolveConfiguredAgentModel(model?: string): string {
+  if (model === undefined && isVeryfrontCloudEnabled()) {
+    return getDefaultVeryfrontCloudModel();
+  }
   const normalized = normalizeAgentModelConfig(model);
   if (normalized === AUTO_AGENT_MODEL) {
     return getDefaultVeryfrontCloudModel();
@@ -162,7 +169,9 @@ function resolveDirectRuntimeModelForDefault(modelId: string): string | undefine
 }
 
 function resolveDirectAutoRuntimeModel(): string | undefined {
-  const configuredDefault = resolveDirectRuntimeModelForDefault(getDefaultVeryfrontCloudModel());
+  const configuredDefault = resolveDirectRuntimeModelForDefault(
+    getHostEnv("VERYFRONT_DEFAULT_MODEL")?.trim() || DEFAULT_AGENT_MODEL,
+  );
   if (configuredDefault) {
     return configuredDefault;
   }
@@ -197,7 +206,10 @@ function resolveAutoRuntimeModel(): string {
  *   request-scoped Veryfront bootstrap but no direct provider API key
  */
 export function resolveRuntimeModel(model?: string): string {
-  if (normalizeAgentModelConfig(model) === AUTO_AGENT_MODEL) {
+  if (
+    (model === undefined && isVeryfrontCloudEnabled()) ||
+    normalizeAgentModelConfig(model) === AUTO_AGENT_MODEL
+  ) {
     return resolveAutoRuntimeModel();
   }
 

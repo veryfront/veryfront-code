@@ -12,7 +12,8 @@ isolated. Configure `memory` on the agent to persist history across calls, and
 use `createAgUiHandler` to stream the response back.
 
 Memory configuration is independent of model selection, so these examples omit
-`model` and use `openai/gpt-5.4-nano`.
+`model` to use the Cloud default (`mistral/mistral-small-2503`) with hosted context,
+or `openai/gpt-5.4-nano` with direct credentials.
 
 ## Prerequisites
 
