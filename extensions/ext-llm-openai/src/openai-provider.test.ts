@@ -500,6 +500,43 @@ describe("openai-provider", () => {
     }
   });
 
+  // The non-streaming surface delivers the same DeepSeek artifact already
+  // joined: `"arguments": "{}\"\""` for a tool with an empty parameter schema.
+  it("accepts the doubly closed empty Chat function arguments DeepSeek returns", async () => {
+    const prompt = [{ role: "user", content: [{ type: "text", text: "Hi" }] }] as const;
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [{
+                    id: "call_0ab27bf831704baf9daaccef",
+                    type: "function",
+                    function: { name: "outlook__list_folders", arguments: '{}""' },
+                  }],
+                },
+              }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "gpt-4o-mini");
+
+    const result = await runtime.doGenerate({ prompt });
+    const toolCalls = (result.content as Array<Record<string, unknown>>).filter(
+      (part) => part.type === "tool-call",
+    );
+    assertEquals(toolCalls.length, 1);
+    assertEquals(toolCalls[0].input, "{}");
+  });
+
   it("rejects malformed, duplicate, or finish-inconsistent Chat tool calls", async () => {
     const cases: Array<{ expected: string; choice: Record<string, unknown> }> = [
       {

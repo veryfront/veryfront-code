@@ -56,7 +56,11 @@ import {
   normalizeOpenAIResponsesFinishReason,
   streamOpenAIResponsesParts,
 } from "./openai-responses-stream.ts";
-import { isJsonObjectText, MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES } from "./openai-tool-input.ts";
+import {
+  isJsonObjectText,
+  MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
+  stripDoubleClosedToolArguments,
+} from "./openai-tool-input.ts";
 import {
   createOpenAIRawResponseMetadata,
   MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES,
@@ -464,7 +468,9 @@ function extractOpenAIToolCalls(
       )
       ? fn.name
       : undefined;
-    const argumentsText = typeof fn?.arguments === "string" ? fn.arguments : undefined;
+    const argumentsText = typeof fn?.arguments === "string"
+      ? stripDoubleClosedToolArguments(fn.arguments)
+      : undefined;
     if (record?.type !== "function" || !id || !name || argumentsText === undefined) {
       throw invalidOpenAIResponse(context, "message contained a malformed tool call");
     }

@@ -46,3 +46,31 @@ export function isJsonObjectText(value: string): boolean {
     return false;
   }
 }
+
+const EMPTY_JSON_STRING_SUFFIX = /\s*""\s*$/;
+
+/**
+ * Drop the empty JSON string some providers append after a complete tool call.
+ *
+ * DeepSeek on Azure AI Foundry closes a call that takes no arguments twice: its
+ * tool parser writes the object `{}` and then the JSON encoding of an empty
+ * string, so `function.arguments` reads `{}""` and no longer parses. The stream
+ * surface delivers the two pieces as separate fragments and the non-streaming
+ * surface delivers them already joined, so both need the same repair.
+ *
+ * The suffix is removed only when the text in front of it already parses as a
+ * JSON object and the whole text does not. Arguments that genuinely end in an
+ * empty string value, such as `{"path":""}`, parse on their own and are
+ * returned unchanged.
+ */
+export function stripDoubleClosedToolArguments(text: string): string {
+  if (isJsonObjectText(text)) {
+    return text;
+  }
+  const match = EMPTY_JSON_STRING_SUFFIX.exec(text);
+  if (!match) {
+    return text;
+  }
+  const head = text.slice(0, match.index);
+  return isJsonObjectText(head) ? head : text;
+}

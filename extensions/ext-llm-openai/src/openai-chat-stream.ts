@@ -12,6 +12,7 @@ import {
   MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
   MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS,
   type OpenAIStreamToolArgumentBudget,
+  stripDoubleClosedToolArguments,
 } from "./openai-tool-input.ts";
 import {
   isBoundedOpenAIStreamString,
@@ -195,7 +196,9 @@ function assertCompleteToolInput(
   toolCall: OpenAIStreamToolCallState,
   context: OpenAIChatStreamContext,
 ): string {
-  const argumentsText = joinOpenAIStreamToolArguments(toolCall.argumentChunks);
+  const argumentsText = stripDoubleClosedToolArguments(
+    joinOpenAIStreamToolArguments(toolCall.argumentChunks),
+  );
   if (!toolCall.started || !toolCall.id || !toolCall.name || !argumentsText) {
     throw invalidOpenAIStream(context, "tool call was incomplete");
   }
