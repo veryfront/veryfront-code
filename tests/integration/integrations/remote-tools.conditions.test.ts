@@ -90,11 +90,18 @@ describe("remote integration failure conditions", () => {
       Response.json({
         isError: true,
         content: [],
-        structuredContent: { error: "authentication_required", message: "Reconnect" },
+        structuredContent: {
+          error: "authentication_required",
+          integration: "github",
+          connectUrl: "/oauth/connect/github",
+          message: "Reconnect",
+        },
         _meta: { condition },
       }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
     assertEquals(structured, {
       error: "authentication_required",
+      integration: "github",
+      connectUrl: "/oauth/connect/github",
       message: "Reconnect",
       condition,
     });
@@ -124,6 +131,19 @@ describe("remote integration failure conditions", () => {
       message: "Remote search failed",
       error: "provider-failed",
       status: 503,
+      condition,
+    });
+
+    const incompleteAuth = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ error: "authentication_required" }) }],
+        _meta: { condition },
+      }), async () => await executeRemoteIntegrationTool("github__get_current_user", {}, context));
+    assertEquals(incompleteAuth, {
+      error: "provider-failed",
+      status: 503,
+      message: JSON.stringify({ error: "authentication_required" }),
       condition,
     });
 

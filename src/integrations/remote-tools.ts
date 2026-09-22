@@ -40,6 +40,7 @@ import {
 } from "#veryfront/utils/response-body.ts";
 
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import { isIntegrationAuthenticationActionResult } from "#veryfront/tool/result.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   INTEGRATION_TOOL_LIST_RETRY_DELAY_MS,
@@ -366,8 +367,7 @@ function applyRemoteFailureCondition(
   }
 
   if (
-    isRecord(payload) &&
-    (payload.error === "authentication_required" || payload.error === "reconnect_required")
+    isRecord(payload) && isIntegrationAuthenticationActionResult(payload)
   ) {
     return { ...payload, condition: validCondition };
   }
