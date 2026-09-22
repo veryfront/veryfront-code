@@ -1272,10 +1272,21 @@ jobs:
           git push "https://x-access-token:${SOURCE_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${TAG}"
           echo "Created tag ${TAG}"
 
+      - name: Create fresh release upload token
+        id: release-upload-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
+          owner: veryfront
+          repositories: |
+            veryfront
+          permission-contents: write
+
       - name: Create GitHub releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.release-upload-token.outputs.token }}
         run: |
           # Collect available binaries dynamically (Windows build is optional)
           BINARIES=()

@@ -998,3 +998,34 @@ jobs:
     }
   });
 });
+
+it("stable release creates a fresh upload token after npm publication", async () => {
+  const workflow = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
+  const release = asRecord(asRecord(workflow.jobs, "jobs").release, "release");
+  const steps = asSteps(release.steps, "release steps");
+  const publish = steps.findIndex((step) =>
+    step.name === "Publish tested stable npm artifact"
+  );
+  const upload = steps.findIndex((step) =>
+    step.name === "Create GitHub releases"
+  );
+  assert(publish >= 0 && upload > publish);
+  const uploadEnv = asRecord(steps[upload].env, "release upload env");
+  const tokenReference = String(uploadEnv.GH_TOKEN);
+  const freshToken = steps.findIndex((step, index) =>
+    index > publish && index < upload &&
+    String(step.uses).startsWith("actions/create-github-app-token@") &&
+    tokenReference === `\${{ steps.${step.id}.outputs.token }}`
+  );
+  assert(
+    freshToken > publish,
+    "npm publication can exceed the one-hour App token lifetime",
+  );
+  const tokenInputs = asRecord(
+    steps[freshToken].with,
+    "release upload token inputs",
+  );
+  assertEquals(tokenInputs["permission-contents"], "write");
+  assertEquals(tokenInputs.owner, "veryfront");
+  assertEquals(String(tokenInputs.repositories).trim(), "veryfront");
+});
