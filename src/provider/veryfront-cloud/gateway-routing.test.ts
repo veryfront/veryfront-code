@@ -144,6 +144,13 @@ describe("provider/veryfront-cloud gateway routing", () => {
         toolProfile: "unknown",
       },
       {
+        model: "mistral/mistral-small-2503",
+        provider: "mistral",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/mistral/v1",
+        genAiSystem: null,
+        toolProfile: "unknown",
+      },
+      {
         model: "moonshotai/kimi-k2.6",
         provider: "moonshotai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/moonshotai/v1",

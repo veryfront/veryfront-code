@@ -866,6 +866,23 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(model.modelProvider, "mistral");
   });
 
+  it("routes Mistral Small 3.1 through the hosted Mistral Chat Completions endpoint", async () => {
+    setCloudBootstrap();
+
+    const model = resolveModel("veryfront-cloud/mistral/mistral-small-2503") as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
+    assertEquals(model.modelProvider, "mistral");
+    assertEquals(
+      await captureGatewayRequestUrl("mistral/mistral-small-2503"),
+      "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
+    );
+  });
+
   it("rejects unsupported pre-prefixed veryfront-cloud Mistral models", () => {
     setCloudBootstrap();
 
