@@ -78,12 +78,23 @@ function normalizeModel(model?: string): string {
   return model?.trim().toLowerCase() ?? "";
 }
 
-/** Return provider tool profile. */
-export function getProviderToolProfile(model?: string): ProviderToolProfile {
+/**
+ * Split a model id into the provider that serves it and the model name.
+ *
+ * A Veryfront Cloud id carries the upstream provider in its second segment, so
+ * the gateway prefix is skipped rather than reported as the provider. Both
+ * members are empty strings when the id is missing or malformed.
+ */
+export function splitModelId(model?: string): { provider: string; modelName: string } {
   const normalized = normalizeModel(model);
   const parts = normalized.split("/").filter(Boolean);
-  const provider = parts[0] === "veryfront-cloud" ? parts[1] : parts[0];
-  const modelName = parts.at(-1);
+  const provider = (parts[0] === "veryfront-cloud" ? parts[1] : parts[0]) ?? "";
+  return { provider, modelName: parts.at(-1) ?? "" };
+}
+
+/** Return provider tool profile. */
+export function getProviderToolProfile(model?: string): ProviderToolProfile {
+  const { provider, modelName } = splitModelId(model);
 
   if (provider === "openai") {
     return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };

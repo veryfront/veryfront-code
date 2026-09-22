@@ -270,6 +270,13 @@ export {
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./chat-stream-handler.ts";
 import { resolveStreamLifecycleModeFromEnv } from "./stream-lifecycle-mode.ts";
+import {
+  getToolChannelProfile,
+  recoverTextEmittedToolCalls,
+  resolveStepToolChoice,
+  resolveToolChannelModeFromEnv,
+  shouldRecoverTextToolCalls,
+} from "./tool-channel.ts";
 export type {
   ChatStreamCallbacks,
   ChatStreamState,
@@ -1722,6 +1729,60 @@ function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
   );
 }
 
+/**
+ * Read a tool call the model wrote as assistant text back into the tool
+ * channel.
+ *
+ * The recovered result carries the tool calls and drops the text, so the
+ * assistant message holds a tool call rather than the raw JSON, and the loop
+ * continues exactly as it would after a provider-native tool call. The run is
+ * left untouched when nothing recovers.
+ */
+function recoverToolCallsEmittedAsText(
+  response: RuntimeGenerateTextResult,
+  context: {
+    enabled: boolean;
+    agentId: string;
+    modelId: string;
+    step: number;
+    toolNames: ReadonlySet<string>;
+  },
+): RuntimeGenerateTextResult {
+  if (!context.enabled) return response;
+  if (response.toolCalls?.length) return response;
+  if (!response.text) return response;
+
+  const recovered = recoverTextEmittedToolCalls(response.text, context.toolNames);
+  if (recovered === undefined) return response;
+
+  logger.warn(
+    `Agent "${context.agentId}": model "${context.modelId}" wrote ${recovered.length} tool ` +
+      `call(s) as assistant text on step ${context.step}. Veryfront read them back into the ` +
+      "tool channel. Use a model that holds the function-calling channel for this agent.",
+  );
+
+  return { ...response, text: "", toolCalls: recovered, finishReason: "tool-calls" };
+}
+
+/**
+ * Report a run that ended without entering the tool channel although the
+ * framework asked the provider to force it.
+ *
+ * Without this line the run reads as a normal answer: the model says it has no
+ * tools, the loop completes, and nothing records that the schemas were sent.
+ */
+function warnToolChannelNeverEntered(input: {
+  agentId: string;
+  modelId: string;
+  toolCount: number;
+}): void {
+  logger.warn(
+    `Agent "${input.agentId}" finished without calling a tool although ${input.toolCount} tool ` +
+      `definition(s) were sent and the tool channel was forced for model "${input.modelId}". ` +
+      "This model cannot sustain tool use for this agent; select a different model.",
+  );
+}
+
 function debugRuntimeModelRemap(requestedModel: string, resolvedModelString: string): void {
   if (resolvedModelString === requestedModel) return;
 
@@ -2832,6 +2893,9 @@ export class AgentRuntime {
         warnUnsupportedToolCalling(this.id, effectiveModel);
       }
 
+      const toolChannelProfile = getToolChannelProfile(effectiveModel);
+      const toolChannelMode = resolveToolChannelModeFromEnv();
+
       // Request-scoped skill policy (not class-level mutable state)
       const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
       const hasToolReplacements = toolReplacements !== undefined;
@@ -2972,7 +3036,14 @@ export class AgentRuntime {
           ),
           preparedStep.integrationToolDiscovery,
         );
-        const response = await withSpan("agent.generate_text", async (span) => {
+        const stepToolNames = new Set(ObjectKeys(runtimeTools ?? {}));
+        const stepToolChoice = resolveStepToolChoice(toolChannelProfile, {
+          step,
+          hasTools: stepToolNames.size > 0,
+          madeToolCall: toolCalls.length > 0,
+          hasOutputSchema: outputSchema !== undefined,
+        }, toolChannelMode);
+        const rawResponse = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
@@ -2995,6 +3066,7 @@ export class AgentRuntime {
               requireInternetReachableAttachments: !isLocalModelRuntime(languageModel),
             }),
             tools: runtimeTools,
+            ...(stepToolChoice ? { toolChoice: stepToolChoice } : {}),
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
             ...(temperature === undefined ? {} : { temperature }),
@@ -3008,6 +3080,17 @@ export class AgentRuntime {
           return result;
         });
         throwIfAborted(abortSignal);
+
+        // A model that wrote its tool call as assistant text ends the run one
+        // step into a multi-step task. Read that payload back into the tool
+        // channel so the loop continues instead of returning the JSON as prose.
+        const response = recoverToolCallsEmittedAsText(rawResponse, {
+          enabled: shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode),
+          agentId: this.id,
+          modelId: effectiveModel,
+          step,
+          toolNames: stepToolNames,
+        });
 
         // Accumulate usage
         if (response.usage) {
@@ -3097,6 +3180,15 @@ export class AgentRuntime {
         };
 
         if (!response.toolCalls?.length) {
+          if (
+            stepToolChoice !== undefined && toolCalls.length === 0 && stepToolNames.size > 0
+          ) {
+            warnToolChannelNeverEntered({
+              agentId: this.id,
+              modelId: effectiveModel,
+              toolCount: stepToolNames.size,
+            });
+          }
           for (const generatedToolResult of generatedToolResults.values()) {
             if (await rejectUnpairedRequestScopedGeneratedToolResult(generatedToolResult)) {
               continue;
@@ -3517,6 +3609,9 @@ export class AgentRuntime {
       warnUnsupportedToolCalling(this.id, effectiveModel);
     }
 
+    const toolChannelProfile = getToolChannelProfile(effectiveModel);
+    const toolChannelMode = resolveToolChannelModeFromEnv();
+
     // Request-scoped skill policy (not class-level mutable state)
     const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
     let finalFinishReason: string | undefined;
@@ -3629,6 +3724,12 @@ export class AgentRuntime {
         preparedStep.integrationToolDiscovery,
       );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
+      const stepToolChoice = resolveStepToolChoice(toolChannelProfile, {
+        step,
+        hasTools: runtimeToolNames.length > 0,
+        madeToolCall: toolCalls.length > 0,
+        hasOutputSchema: outputSchema !== undefined,
+      }, toolChannelMode);
 
       const temperature = this.resolveTemperature(
         temperatureModelString ?? effectiveModel,
@@ -3659,6 +3760,7 @@ export class AgentRuntime {
           system: providerSystemPrompt,
           messages: providerMessages,
           tools: runtimeTools,
+          ...(stepToolChoice ? { toolChoice: stepToolChoice } : {}),
           experimental_repairToolCall: repairToolCall,
           maxOutputTokens,
           ...(temperature === undefined ? {} : { temperature }),
