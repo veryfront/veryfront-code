@@ -155,6 +155,10 @@ describe("agent/runtime/model-resolution", () => {
       resolveConfiguredAgentModel("mistral-large"),
       "mistral/mistral-large-2512",
     );
+    assertEquals(
+      resolveConfiguredAgentModel("mistral-small-2503"),
+      "mistral/mistral-small-2503",
+    );
   });
 
   it("aliases every Veryfront Cloud catalog model id to its provider model", () => {
@@ -263,6 +267,10 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(
       resolveRuntimeModel("mistral-large"),
       "veryfront-cloud/mistral/mistral-large-2512",
+    );
+    assertEquals(
+      resolveRuntimeModel("mistral-small-2503"),
+      "veryfront-cloud/mistral/mistral-small-2503",
     );
     assertEquals(
       resolveRuntimeModel("mistral/mistral-small-2603"),

@@ -66,6 +66,18 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     );
   });
 
+  it("resolves Mistral Small 3.1 through the hosted catalog", () => {
+    const modelId = "mistral/mistral-small-2503";
+
+    assertEquals(findVeryfrontCloudModelByModelId(modelId)?.id, "mistral-small-2503");
+    assertEquals(isSupportedMistralModelId(modelId), true);
+    assertEquals(resolveVeryfrontCloudModelId(modelId), modelId);
+    assertEquals(
+      resolveHostedVeryfrontCloudModelId(modelId),
+      `veryfront-cloud/${modelId}`,
+    );
+  });
+
   it("looks capability rows up by the canonical provider, whatever the id spells", () => {
     // Rows are keyed `<canonical provider>/<upstream id>`. A listed alias and
     // the gateway prefix both normalize to that key; an unlisted provider is

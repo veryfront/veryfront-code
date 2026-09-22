@@ -263,6 +263,13 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
       description: "Most capable Mistral model",
     }),
     Object.freeze({
+      id: "mistral-small-2503",
+      modelId: "mistral/mistral-small-2503",
+      provider: "mistral",
+      name: "Mistral Small 3.1",
+      description: "Open-weight Mistral model served in the EU",
+    }),
+    Object.freeze({
       id: "kimi-k2.6",
       modelId: "moonshotai/kimi-k2.6",
       provider: "moonshotai",

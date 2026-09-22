@@ -60,6 +60,7 @@ const LEGACY_MODEL_ALIASES = new Map<string, string>([
   ["gemini-2.5-flash", "google-ai-studio/gemini-2.5-flash"],
   ["mistral-large", "mistral/mistral-large-2512"],
   ["mistral-large-2512", "mistral/mistral-large-2512"],
+  ["mistral-small-2503", "mistral/mistral-small-2503"],
   ["kimi-k2.6", "moonshotai/kimi-k2.6"],
   ["kimi-k2.5", "moonshotai/kimi-k2.5"],
 ]);
