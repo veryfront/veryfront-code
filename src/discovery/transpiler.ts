@@ -521,6 +521,22 @@ function withTrailingSlash(value: string): string {
   return `${value.slice(0, end)}/`;
 }
 
+/** Normalize a registry URL, including default ports and host casing. */
+function normalizeRegistryUrl(value: string): string {
+  // A backslash is npmrc escape syntax, not a URL separator. Preserve it so
+  // an unusual but valid npmrc value remains a private registry value.
+  if (value.includes("\\")) return withTrailingSlash(value);
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return `${url.origin}${withTrailingSlash(url.pathname)}`;
+    }
+  } catch (_) {
+    // An invalid registry value cannot be the public registry.
+  }
+  return withTrailingSlash(value);
+}
+
 /**
  * One `.npmrc` read the way npm's INI parser reads it: the LAST value of each
  * key, comments stripped, and surrounding quotes removed. A key written on its
@@ -556,7 +572,7 @@ export function npmrcRegistryFor(npmrcText: string, name: string): string | unde
   const scope = name.startsWith("@") ? name.slice(0, name.indexOf("/")) : null;
   const effective = (scope === null ? undefined : values.get(`${scope}:registry`)) ??
     values.get("registry");
-  return effective === undefined ? undefined : withTrailingSlash(effective);
+  return effective === undefined ? undefined : normalizeRegistryUrl(effective);
 }
 
 /**
@@ -1100,11 +1116,26 @@ function expandBraces(pattern: string): string[] | null {
   // `1` -- while a comma list needs a comma to be one at all: `{a}` is the
   // literal text `{a}`, as `brace-expansion` leaves it.
   const alternatives = sequenced ?? splitBraceBody(body);
-  if (sequenced === null && alternatives.length < 2) return [pattern];
+  let expandedAlternatives = alternatives;
+  if (sequenced === null && alternatives.length < 2) {
+    // brace-expansion preserves an outer pair when only a nested brace
+    // supplies the alternatives: `{{a,b}}` becomes `{a}` and `{b}`.
+    if (body.includes("{")) {
+      const nested = expandBraces(body);
+      if (nested === null) return null;
+      if (nested.length > 1 || nested[0] !== body) {
+        expandedAlternatives = nested.map((alternative) => `{${alternative}}`);
+      } else {
+        return [pattern];
+      }
+    } else {
+      return [pattern];
+    }
+  }
   const head = pattern.slice(0, open);
   const tail = pattern.slice(close + 1);
   const expanded: string[] = [];
-  for (const alternative of alternatives) {
+  for (const alternative of expandedAlternatives) {
     const rest = expandBraces(`${head}${alternative}${tail}`);
     // Past the cap the expansion is INCOMPLETE, and a partial one is not a
     // safe reading in either direction: dropping an alternative of an
@@ -1459,7 +1490,13 @@ function matchesTokenHere(
 ): boolean {
   const token = tokens[index]!;
   if (token.kind === "star") {
-    for (let end = offset; end <= name.length; end++) {
+    // minimatch's leading `*` in `*@(a|b)` and `*+(a|b)` consumes before the
+    // positive extglob; otherwise the group alone incorrectly accepts `a`.
+    const next = tokens[index + 1];
+    const mustConsumeBeforePositiveExtglob = index === 0 &&
+      next?.kind === "extglob" && (next.mark === "@" || next.mark === "+");
+    const firstEnd = offset + (mustConsumeBeforePositiveExtglob ? 1 : 0);
+    for (let end = firstEnd; end <= name.length; end++) {
       if (matchesTokens(tokens, index + 1, name, end, memo)) return true;
     }
     return false;
@@ -1493,6 +1530,12 @@ function matchesExtglob(
       matchesTokens(alternative, 0, name.slice(from, to), 0, new Map())
     );
   if (token.mark === "!") {
+    // A negative star is universal only at the beginning of a segment. With
+    // a literal prefix, `a!(*)` matches nothing: the empty suffix is not a
+    // valid negative-extglob match and every non-empty suffix matches `*`.
+    const isUniversalStar = token.alternatives.length === 1 &&
+      token.alternatives[0]?.length === 1 && token.alternatives[0][0]?.kind === "star";
+    if (index > 0 && isUniversalStar) return false;
     // minimatch folds the tokens AFTER the group into the negative lookahead,
     // so the refusal is over the whole remainder rather than the group's own
     // run: `!(a)b` excludes `ab`, and `a!(pp|xx)*` excludes `app` and `axxy`.
@@ -1504,7 +1547,7 @@ function matchesExtglob(
     // WHOLE tail of a group opening the segment has to consume something, so
     // `!(a)*` still names `a` itself while `!(a)b*` refuses `ab`. minimatch
     // compiles the first as `a[^/]+?` and the second as `ab[^/]*?`.
-    const forbidden = index === 0 && tail.length === 1 && tail[0]!.kind === "star"
+    const forbidden = index === 0 && tail[0]?.kind === "star"
       ? [{ kind: "any" } as SegmentToken, ...tail]
       : tail;
     for (const alternative of token.alternatives) {

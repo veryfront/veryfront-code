@@ -1166,6 +1166,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           "package.json": JSON.stringify({ workspaces }),
           "package-lock.json": publicLock("unpdf", "1.8.1", [
             "apps/store-web",
+            "apps/a",
+            "apps/aa",
+            "apps/ab",
+            "apps/{a}",
             "apps/.hidden",
             ".apps/web",
             "apps/02",
@@ -1173,6 +1177,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
             "node_modules/vendored",
           ]),
           "apps/store-web/package.json": "{}",
+          "apps/a/package.json": "{}",
+          "apps/aa/package.json": "{}",
+          "apps/ab/package.json": "{}",
+          "apps/{a}/package.json": "{}",
           "apps/.hidden/package.json": "{}",
           ".apps/web/package.json": "{}",
           "apps/02/package.json": "{}",
@@ -1247,6 +1255,13 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(await declaring(["apps/!(other)"]), "apps/store-web");
       assertEquals(await declaring(["apps/!(store-web)"]), "");
       assertEquals(await declaring(["apps/@(a|b)"]), "");
+      assertEquals(await declaring(["apps/*@(a|b)"], `${PROJECT}/apps/a`), "");
+      assertEquals(await declaring(["apps/*@(a|b)"], `${PROJECT}/apps/aa`), "apps/aa");
+      assertEquals(await declaring(["apps/a!(*)"], `${PROJECT}/apps/a`), "");
+      assertEquals(
+        await declaring(["apps/!(a|b)*?(a|b)"], `${PROJECT}/apps/a`),
+        "apps/a",
+      );
       // A mark with no group after it is the wildcard it has always been.
       assertEquals(await declaring(["apps/*"]), "apps/store-web");
       // A `!` group refuses what its alternatives plus the TAIL would match,
@@ -1270,6 +1285,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       );
       // A comma list still needs a comma: `{a}` is the literal text.
       assertEquals(await declaring(["apps/{2}"], `${PROJECT}/apps/2`), "");
+      assertEquals(
+        await declaring(["apps/{{a,b}}"], `${PROJECT}/apps/{a}`),
+        "apps/{a}",
+      );
       // A declaration with a pattern too large to expand is unreadable, and
       // an exclusion this could not expand may be the one covering the
       // member, so nothing in it is trusted.
@@ -1759,6 +1778,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(npmrcRegistryFor("", "pkg"), undefined);
       assertEquals(
         npmrcRegistryFor("registry=https://registry.npmjs.org", "pkg"),
+        "https://registry.npmjs.org/",
+      );
+      assertEquals(
+        npmrcRegistryFor("registry=https://REGISTRY.NPMJS.ORG:443/", "pkg"),
         "https://registry.npmjs.org/",
       );
       // A key written on its own is INI's `true`; a section header, and a
