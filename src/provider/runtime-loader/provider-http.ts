@@ -119,8 +119,10 @@ export class ProviderError extends Error {
     message: string;
     retryable: boolean;
     retryAfterMs?: number;
+    /** The underlying error, kept as the standard `cause` for diagnostics. */
+    cause?: unknown;
   }) {
-    super(options.message);
+    super(options.message, options.cause === undefined ? undefined : { cause: options.cause });
     // `this.constructor`, not `new.target`: DNT rewrites every meta-property
     // into its `import.meta` ponyfill when it emits the npm package, which
     // turned this line into `ponyfill(import.meta).name` — always `undefined`.

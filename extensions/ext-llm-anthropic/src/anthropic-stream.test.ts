@@ -15,6 +15,8 @@ import {
 
 type AnthropicStreamOptions = Parameters<typeof streamAnthropicCompatibleParts>[1];
 
+const LONG_STREAM_DELTAS = 20_000;
+
 function streamFromText(text: string): ReadableStream<Uint8Array> {
   return streamFromChunks([text], { close: true });
 }
@@ -391,7 +393,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     assertEquals(stream.locked, false);
   });
 
-  it("rejects more than 4096 partial_json deltas and cancels the provider body", async () => {
+  it("rejects more than 4096 empty partial_json deltas and cancels the provider body", async () => {
     let cancelCount = 0;
     const stream = streamFromChunksWithCancelSpy([
       [
@@ -418,13 +420,115 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     await assertRejects(
       () => iterator.next(),
       RangeError,
-      "partial_json exceeded 4096 deltas",
+      "partial_json exceeded 4096 empty fragments",
     );
     assertEquals(cancelCount, 1);
     assertEquals(stream.locked, false);
   });
 
-  it("bounds retained content across many small text deltas", async () => {
+  // Fine-grained streaming emits dozens of deltas per second, so a per-delta
+  // count limit is a wall-clock limit in disguise (4,096 tool-input deltas is
+  // about 110 seconds of Claude streaming). Long streams must be bounded by
+  // bytes only.
+  it("accepts a tool input split into 20,000 non-empty partial_json deltas", async () => {
+    const fragments = Array.from(
+      { length: LONG_STREAM_DELTAS },
+      (_, index) => index === 0 ? '{"content":"' : index === LONG_STREAM_DELTAS - 1 ? '"}' : "x",
+    );
+    const parts = await collectParts(streamFromText([
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "toolu_long", name: "save_snapshot", input: {} },
+      }),
+      ...fragments.map((partial_json) =>
+        data({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json },
+        })
+      ),
+      data({ type: "content_block_stop", index: 0 }),
+      data({ type: "message_delta", delta: { stop_reason: "tool_use" } }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    const toolCall = parts.find((part) => (part as { type?: string }).type === "tool-call") as {
+      input: string;
+    } | undefined;
+    assertEquals(toolCall?.input, fragments.join(""));
+    assertEquals(
+      parts.filter((part) => (part as { type?: string }).type === "tool-input-delta").length,
+      LONG_STREAM_DELTAS,
+    );
+  });
+
+  it("accepts text and thinking streams of 20,000 small deltas", async () => {
+    const parts = await collectParts(streamFromText([
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "thinking", thinking: "", signature: "" },
+      }),
+      ...Array.from({ length: LONG_STREAM_DELTAS }, () =>
+        data({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "thinking_delta", thinking: "t" },
+        })),
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "signature_delta", signature: "sig" },
+      }),
+      data({ type: "content_block_stop", index: 0 }),
+      data({
+        type: "content_block_start",
+        index: 1,
+        content_block: { type: "text", text: "" },
+      }),
+      ...Array.from({ length: LONG_STREAM_DELTAS }, () =>
+        data({
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "text_delta", text: "x" },
+        })),
+      data({ type: "content_block_stop", index: 1 }),
+      data({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    const count = (type: string) =>
+      parts.filter((part) => (part as { type?: string }).type === type).length;
+    assertEquals(count("text-delta"), LONG_STREAM_DELTAS);
+    assertEquals(count("reasoning-delta"), LONG_STREAM_DELTAS);
+    assertEquals(
+      (parts.at(-1) as { type?: string }).type,
+      "finish",
+    );
+  });
+
+  it("still caps structural content blocks by count", async () => {
+    const events = [
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      ...Array.from({ length: MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS + 1 }, (_, index) =>
+        data({
+          type: "content_block_start",
+          index,
+          content_block: { type: "text", text: "" },
+        })),
+    ];
+
+    await assertRejects(
+      () => collectParts(streamFromText(events.join(""))),
+      ProviderRequestError,
+      `retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} items (content block)`,
+    );
+  });
+
+  it("bounds retained content across a flood of empty text deltas", async () => {
     const events = [
       data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
       data({
@@ -433,20 +537,26 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         content_block: { type: "text", text: "" },
       }),
       ...Array.from(
-        { length: MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS },
+        { length: MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS + 1 },
         () =>
           data({
             type: "content_block_delta",
             index: 0,
-            delta: { type: "text_delta", text: "x" },
+            delta: { type: "text_delta", text: "" },
           }),
       ),
     ];
 
-    await assertRejects(
+    const error = await assertRejects(
       () => collectParts(streamFromText(events.join(""))),
       ProviderRequestError,
-      `retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} items`,
+      `retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} empty fragments`,
+    );
+    // The fixed diagnostic stays reachable as the wrapper's cause.
+    assertInstanceOf(error.cause, RangeError);
+    assertEquals(
+      (error.cause as Error).message,
+      `Anthropic retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} empty fragments (text delta)`,
     );
   });
 

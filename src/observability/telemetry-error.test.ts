@@ -17,9 +17,12 @@ import {
   sanitizeStructuredTelemetryData,
   sanitizeTelemetryAttributes,
   sanitizeTelemetryAttributeValue,
+  summarizeErrorCausesForLog,
   type TelemetryAttributeValue,
+  telemetryErrorCauseType,
   telemetryErrorType,
 } from "./telemetry-error.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 describe("observability/telemetry-error", () => {
@@ -876,5 +879,125 @@ describe("observability/telemetry-error", () => {
 
     assertEquals(snapshot.message.length, MAX_STRING_DISPLAY_LENGTH);
     assertEquals(snapshot.stack?.length, MAX_STRING_DISPLAY_LENGTH);
+  });
+
+  describe("wrapped causes", () => {
+    it("classifies a provider stream failure and its private cause", () => {
+      const failure = createRuntimeProviderStreamFailure(
+        new RangeError("partial_json exceeded for private@example.com"),
+      );
+
+      assertEquals(telemetryErrorType(failure), "RuntimeProviderStreamFailure");
+      assertEquals(telemetryErrorCauseType(failure), "RangeError");
+      assertEquals(
+        telemetryErrorType(Object.assign(new Error("x"), { name: "RuntimeProviderStreamFailure" })),
+        "Error",
+        "a lookalike name must not claim the provider stream failure type",
+      );
+    });
+
+    it("classifies a native cause without running accessors", () => {
+      const coded = Object.assign(new Error("reset"), { code: "ECONNRESET" });
+      assertEquals(telemetryErrorCauseType(new TypeError("read", { cause: coded })), "ECONNRESET");
+      assertEquals(telemetryErrorCauseType(new Error("no cause")), undefined);
+
+      let accessorCalls = 0;
+      const accessorBacked = new Error("outer");
+      Object.defineProperty(accessorBacked, "cause", {
+        get() {
+          accessorCalls++;
+          return new RangeError("hidden");
+        },
+      });
+      assertEquals(telemetryErrorCauseType(accessorBacked), undefined);
+      assertEquals(summarizeErrorCausesForLog(accessorBacked), undefined);
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("summarizes a bounded, cycle-safe cause chain for logs", () => {
+      const inner = Object.assign(new Error("y".repeat(5000)), { code: "ECONNRESET" });
+      const middle = new TypeError("error reading a body from connection", { cause: inner });
+      (inner as { cause?: unknown }).cause = middle;
+      const summary = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(middle));
+
+      assertExists(summary);
+      assertEquals(summary.length, 2);
+      assertEquals(summary[0], {
+        name: "TypeError",
+        message: "error reading a body from connection",
+      });
+      // Arbitrary cause text is never logged; only fixed classifications are.
+      assertEquals(summary[1], { name: "Error", code: "ECONNRESET", messageRedacted: true });
+      assertEquals(
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure("bare string")),
+        [{ name: "Unknown", messageRedacted: true }],
+      );
+    });
+
+    it("reaches an exact diagnostic through a provider error wrapper", () => {
+      const limit = new RangeError(
+        "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+      );
+      const wrapper = new Error(
+        "anthropic request failed: invalid successful stream (Anthropic retained content exceeded 8192 empty fragments (text delta))",
+        { cause: limit },
+      );
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(wrapper)), [
+        { name: "Error", messageRedacted: true },
+        {
+          name: "RangeError",
+          message: "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+        },
+      ]);
+    });
+
+    it("logs only allowlisted error names and transient codes", () => {
+      const customName = Object.assign(new Error("x"), { name: "CustomerAcme123Error" });
+      const customCode = Object.assign(new Error("x"), { code: "account-123456" });
+      const transientCode = Object.assign(new Error("x"), { code: "ECONNRESET" });
+      const summarize = (cause: unknown) =>
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(cause));
+
+      assertEquals(summarize(customName), [{ name: "Error", messageRedacted: true }]);
+      assertEquals(summarize(customCode), [{ name: "Error", messageRedacted: true }]);
+      assertEquals(summarize(transientCode), [
+        { name: "Error", code: "ECONNRESET", messageRedacted: true },
+      ]);
+    });
+
+    it("logs only allowlisted framework diagnostics, never untrusted cause text", () => {
+      const summarize = (message: string) =>
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(new RangeError(message)));
+
+      assertEquals(summarize("Anthropic partial_json exceeded 4096 deltas"), [
+        { name: "RangeError", message: "Anthropic partial_json exceeded 4096 deltas" },
+      ]);
+      assertEquals(
+        summarize("Anthropic retained content exceeded 8192 empty fragments (text delta)"),
+        [{
+          name: "RangeError",
+          message: "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+        }],
+      );
+      // Shape-only matches are not enough: a provider or custom runtime can put
+      // customer data inside an otherwise familiar template.
+      assertEquals(
+        summarize("openai request failed: invalid successful stream (customer account 123456789)"),
+        [{ name: "RangeError", messageRedacted: true }],
+      );
+      assertEquals(summarize("Anthropic retained content exceeded 8192 items (customer secret)"), [
+        { name: "RangeError", messageRedacted: true },
+      ]);
+      // Only the exact messages the Anthropic extension emits, with its constants.
+      assertEquals(summarize("Anthropic partial_json exceeded 123456 deltas"), [
+        { name: "RangeError", messageRedacted: true },
+      ]);
+      assertEquals(summarize("Tool input: my card number is <REDACTED> and my prompt says hello"), [
+        { name: "RangeError", messageRedacted: true },
+      ]);
+      assertEquals(summarize("connect ECONNREFUSED internal-db.cluster.local:5432"), [
+        { name: "RangeError", messageRedacted: true },
+      ]);
+    });
   });
 });

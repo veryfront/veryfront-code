@@ -1,47 +1,36 @@
+import {
+  reserveStreamRetention,
+  type StreamRetentionBudget,
+  type StreamRetentionLimits,
+} from "veryfront/provider/shared";
+
 export const MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES = 1_048_576;
+/** Zero-byte argument fragments accepted per tool call; see {@link appendOpenAIStreamToolArgument}. */
 export const MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS = 4_096;
 
-export type OpenAIStreamToolArgumentBudget = {
-  bytes: number;
-  fragments: number;
+export type OpenAIStreamToolArgumentBudget = StreamRetentionBudget;
+
+const TOOL_ARGUMENT_LIMITS: StreamRetentionLimits = {
+  maxBytes: MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
+  maxEmptyFragments: MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS,
 };
 
-const TOOL_ARGUMENT_ENCODER = new TextEncoder();
-
+/**
+ * Retain one streamed tool-argument fragment.
+ *
+ * Fragment count is chosen by the provider's tokenizer rather than by the
+ * caller, so arguments are bounded by UTF-8 bytes. Only zero-byte fragments,
+ * which never advance the byte budget, count against the fragment limit.
+ */
 export function appendOpenAIStreamToolArgument(
   budget: OpenAIStreamToolArgumentBudget,
   chunks: string[],
   fragment: string,
 ): "bytes" | "fragments" | undefined {
-  const fragmentBytes = TOOL_ARGUMENT_ENCODER.encode(fragment).byteLength;
-
-  // Zero-byte fragments never advance the byte budget, so they are the only
-  // ones that can arrive without bound -- and they are what the fragment cap
-  // exists to stop. Both provider streams exercise it exactly that way, by
-  // flooding empty deltas.
-  //
-  // Counting non-empty fragments here too made the cap bind long before the
-  // byte budget: at typical delta sizes, 4096 fragments is roughly 2-8% of the
-  // 1 MiB a tool call is nominally allowed, which left the byte limit
-  // unreachable. Fragment count is chosen by the provider's tokenizer rather
-  // than by the caller, so the same tool call passed or failed depending on how
-  // the stream happened to be chunked.
-  if (fragmentBytes === 0) {
-    if (budget.fragments >= MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS) {
-      return "fragments";
-    }
-    budget.fragments++;
-    return undefined;
-  }
-
-  if (fragmentBytes > MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES - budget.bytes) {
-    return "bytes";
-  }
-
-  // Content is bounded by bytes: every fragment kept here is at least one byte,
-  // so the array cannot outgrow the byte budget.
-  budget.bytes += fragmentBytes;
-  chunks.push(fragment);
+  const overflow = reserveStreamRetention(budget, fragment, TOOL_ARGUMENT_LIMITS);
+  if (overflow === "empty-fragments") return "fragments";
+  if (overflow === "bytes") return "bytes";
+  if (fragment.length > 0) chunks.push(fragment);
   return undefined;
 }
 

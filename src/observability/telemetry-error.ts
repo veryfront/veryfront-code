@@ -24,6 +24,7 @@ import {
   readNativeErrorNameWithoutHooks,
   readNativeErrorStackWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
+import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 
 const apply = Reflect.apply;
 const createObject = Object.create;
@@ -39,7 +40,10 @@ const NativeURL = URL;
 const dateGetTime = Date.prototype.getTime;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const regExpExec = RegExp.prototype.exec;
+const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
+const arrayPush = Array.prototype.push;
+const NativeSet = Set;
 const stringSlice = String.prototype.slice;
 const ERROR_PROTOTYPE = NativeError.prototype;
 const URL_HREF_GETTER = readOwnDescriptorGetter(NativeURL.prototype, "href");
@@ -499,6 +503,8 @@ export function sanitizeErrorForTelemetry(
   }
 }
 
+const RUNTIME_PROVIDER_STREAM_FAILURE = "RuntimeProviderStreamFailure";
+
 const SAFE_TELEMETRY_ERROR_NAMES = new Set([
   "Error",
   "EvalError",
@@ -543,6 +549,9 @@ export function telemetryErrorType(error: unknown): string {
   try {
     const veryfrontError = snapshotVeryfrontError(error);
     if (veryfrontError) return `VeryfrontError:${veryfrontError.status}`;
+    // Brand-checked rather than name-matched: the wrapper's cause is private,
+    // so its type is the only span-safe signal that the provider stream broke.
+    if (readRuntimeProviderStreamFailureCause(error).found) return RUNTIME_PROVIDER_STREAM_FAILURE;
     if (!isNativeErrorWithoutHooks(error)) return "Unknown";
 
     const code = readOwnErrorDataField(error, "code");
@@ -557,4 +566,118 @@ export function telemetryErrorType(error: unknown): string {
     // Classification is best effort and must never change the outcome it reports on.
     return "Error";
   }
+}
+
+const NO_CAUSE = Symbol("no-cause");
+const MAX_LOGGED_ERROR_CAUSES = 4;
+
+/**
+ * The failure an error wraps: the private cause of a provider stream failure,
+ * else a native error's own `cause` data property. Accessors are never run.
+ */
+function readErrorCause(error: unknown): unknown {
+  try {
+    const providerFailure = readRuntimeProviderStreamFailureCause(error);
+    if (providerFailure.found) return providerFailure.cause;
+    if (!isNativeErrorWithoutHooks(error)) return NO_CAUSE;
+    const descriptor = getOwnPropertyDescriptor(error, "cause");
+    if (!descriptor || !hasOwn(descriptor, "value")) return NO_CAUSE;
+    return descriptor.value;
+  } catch (_) {
+    return NO_CAUSE;
+  }
+}
+
+/**
+ * Bounded classification of the failure an error wraps, for a span attribute
+ * such as `error.cause.type`. Same safety posture as `telemetryErrorType`: the
+ * cause's message never leaves the process.
+ */
+export function telemetryErrorCauseType(error: unknown): string | undefined {
+  try {
+    const cause = readErrorCause(error);
+    return cause === NO_CAUSE ? undefined : telemetryErrorType(cause);
+  } catch (_) {
+    return undefined;
+  }
+}
+
+/** One link of a wrapped error's cause chain, safe to put in a server log. */
+export interface LoggedErrorCause {
+  name: string;
+  /** Present only for exact allowlisted diagnostics; see {@link LOGGABLE_CAUSE_MESSAGES}. */
+  message?: string;
+  /** True when the cause had a message that was withheld because it may carry untrusted content. */
+  messageRedacted?: true;
+  code?: string;
+}
+
+/**
+ * The complete set of cause messages safe to log verbatim: the exact texts the
+ * Anthropic stream parser emits with its fixed limits, and one fixed transport
+ * message. Matching is by equality, so no variable text (counts, identifiers,
+ * customer data) can pass, whichever component throws the error. Every other
+ * cause message may embed untrusted data and is withheld.
+ */
+const LOGGABLE_CAUSE_MESSAGES = new NativeSet<string>([
+  "Anthropic partial_json exceeded 4096 deltas",
+  "Anthropic partial_json exceeded 4096 empty fragments",
+  "Anthropic partial_json exceeded 1048576 UTF-8 bytes",
+  "Anthropic retained content exceeded 8192 items (content block)",
+  "Anthropic retained content exceeded 8192 items (citation delta)",
+  "Anthropic retained content exceeded 8192 items (text delta)",
+  "Anthropic retained content exceeded 8192 items (thinking delta)",
+  "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+  "Anthropic retained content exceeded 8192 empty fragments (thinking delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (content block)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (citation delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (text delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (thinking delta)",
+  "error reading a body from connection",
+]);
+
+function isLoggableCauseMessage(message: string): boolean {
+  return apply(setHas, LOGGABLE_CAUSE_MESSAGES, [message]) === true;
+}
+
+/**
+ * Summarize the failures an error wraps for a server log: name, a
+ * credential-redacted and bounded message, and `code` when present. Stacks are
+ * omitted, the chain is capped, and accessors are never run. Returns undefined
+ * when the error wraps nothing.
+ */
+export function summarizeErrorCausesForLog(error: unknown): LoggedErrorCause[] | undefined {
+  const causes: LoggedErrorCause[] = [];
+  try {
+    const seen = new NativeSet<unknown>();
+    apply(setAdd, seen, [error]);
+    let cause = readErrorCause(error);
+    while (cause !== NO_CAUSE && causes.length < MAX_LOGGED_ERROR_CAUSES) {
+      if (apply(setHas, seen, [cause]) === true) break;
+      apply(setAdd, seen, [cause]);
+      const snapshot = sanitizeErrorForTelemetry(cause, "withoutStack");
+      // Name and code are logged only as fixed classifications: an allowlisted
+      // error name (else "Error"/"Unknown") and a known transient code token.
+      const entry: LoggedErrorCause = { name: "Unknown" };
+      if (isNativeErrorWithoutHooks(cause)) {
+        const rawName = readNativeErrorNameWithoutHooks(cause);
+        entry.name = apply(setHas, SAFE_TELEMETRY_ERROR_NAMES, [rawName]) === true
+          ? rawName
+          : "Error";
+        const code = readOwnErrorDataField(cause, "code");
+        const knownCode = typeof code === "string" ? matchTransientErrorCode(code) : undefined;
+        if (knownCode !== undefined) entry.code = knownCode;
+      }
+      if (isLoggableCauseMessage(snapshot.message)) {
+        entry.message = snapshot.message;
+      } else if (snapshot.message.length > 0) {
+        entry.messageRedacted = true;
+      }
+      apply(arrayPush, causes, [entry]);
+      cause = readErrorCause(cause);
+    }
+  } catch (_) {
+    // Diagnostics are best effort and must never replace the logged failure.
+  }
+  return causes.length > 0 ? causes : undefined;
 }
