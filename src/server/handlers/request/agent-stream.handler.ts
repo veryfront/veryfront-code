@@ -131,7 +131,10 @@ export interface AgentStreamHandlerDeps
 
 type AgentSourceTargetIdentity = Pick<
   InternalAgentStreamRequest,
-  "runtimeTargetKind" | "runtimeTargetEnvironmentId" | "runtimeTargetBranchId"
+  | "runtimeTargetKind"
+  | "runtimeTargetEnvironmentId"
+  | "runtimeTargetBranchId"
+  | "executionEnvironmentId"
 >;
 
 export type AgentSourceEnvironmentLoader = (
@@ -419,12 +422,9 @@ function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContex
 /**
  * Load the project environment this agent source may read.
  *
- * Branch and bare-release sources do not carry an authoritative environment
- * identity, so they receive no project environment variables. Named sources
- * must carry an exact signed environment target, which is revalidated against
- * project metadata before any secrets are fetched.
- * Main-branch runs may omit a target environment pin and use the request-scoped
- * production fallback path.
+ * Branch sources read only the execution environment bound by the signed
+ * control-plane invocation. Unbound branches and bare releases receive no
+ * project variables. Named sources retain their exact release-bound target.
  */
 async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
@@ -433,10 +433,20 @@ async function resolveAgentSourceEnvironment(
   apiAuthToken: string,
   signal?: AbortSignal,
 ): Promise<Record<string, string>> {
-  if (sourceContext.type !== "environment") return {};
+  if (sourceContext.type === "release") return {};
   if (!ctx.projectSlug) {
     throw INVALID_ARGUMENT.create({
       detail: "Agent source environment requires a canonical project identity",
+    });
+  }
+  if (sourceContext.type === "branch") {
+    const environmentId = targetIdentity.executionEnvironmentId;
+    if (!environmentId) return {};
+    return await _agentEnvVarCache.get({
+      environmentId,
+      token: apiAuthToken,
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
     });
   }
   if (
@@ -1087,7 +1097,9 @@ export class AgentStreamHandler extends BaseHandler {
         proxyToken: apiAuthToken || undefined,
         // The signed invocation is authoritative. Never promote an unrelated
         // request header into the environment used for hosted evaluation.
-        environmentId: payload.runtimeTargetEnvironmentId ?? undefined,
+        environmentId: payload.agentSource.type === "branch"
+          ? payload.executionEnvironmentId
+          : payload.runtimeTargetEnvironmentId ?? undefined,
         requestContext: ctx.requestContext
           ? { ...ctx.requestContext, token: apiAuthToken }
           : ctx.requestContext,
@@ -1121,6 +1133,7 @@ export class AgentStreamHandler extends BaseHandler {
                   runtimeTargetKind: payload.runtimeTargetKind,
                   runtimeTargetEnvironmentId: payload.runtimeTargetEnvironmentId,
                   runtimeTargetBranchId: payload.runtimeTargetBranchId,
+                  executionEnvironmentId: payload.executionEnvironmentId,
                 },
                 apiAuthToken,
                 req.signal,

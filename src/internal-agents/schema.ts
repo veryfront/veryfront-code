@@ -86,6 +86,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     allowDelegation: v.boolean().optional(),
     runtimeTargetKind: getRuntimeAgentTargetKindSchema(),
     runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
+    executionEnvironmentId: v.string().uuid().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
     agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(

@@ -176,6 +176,7 @@ export const RuntimeAgentTargetKindSchema = lazySchema(getRuntimeAgentTargetKind
 export type RuntimeAgentTargetSelectionInput = {
   runtimeTargetKind?: InferSchema<ReturnType<typeof getRuntimeAgentTargetKindSchema>> | null;
   runtimeTargetEnvironmentId?: string | null;
+  executionEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
 };
 
@@ -262,6 +263,7 @@ export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
     projectSlug: v.string().min(1).max(255),
     runtimeTargetKind: getRuntimeAgentTargetKindSchema().nullable().optional(),
     runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
+    executionEnvironmentId: v.string().uuid().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
   }).superRefine(validateRuntimeAgentTargetSelection)
 );
@@ -502,6 +504,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   allowDelegation?: RuntimeAgentRunInvocation["allowDelegation"];
   runtimeTargetKind: NonNullable<RuntimeAgentProjectContext["runtimeTargetKind"]>;
   runtimeTargetEnvironmentId?: RuntimeAgentProjectContext["runtimeTargetEnvironmentId"];
+  executionEnvironmentId?: RuntimeAgentProjectContext["executionEnvironmentId"];
   runtimeTargetBranchId?: RuntimeAgentProjectContext["runtimeTargetBranchId"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource: RuntimeAgentRunInvocation["agentSource"];
@@ -530,6 +533,9 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     runtimeTargetKind: input.run.project.runtimeTargetKind ?? "main_branch",
     runtimeTargetEnvironmentId: input.run.project.runtimeTargetEnvironmentId ?? null,
     runtimeTargetBranchId: input.run.project.runtimeTargetBranchId ?? null,
+    ...(input.run.project.executionEnvironmentId
+      ? { executionEnvironmentId: input.run.project.executionEnvironmentId }
+      : {}),
     ...(input.credentials ? { credentials: input.credentials } : {}),
     agentSource: input.agentSource,
     ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
