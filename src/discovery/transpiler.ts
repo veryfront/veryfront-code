@@ -306,15 +306,6 @@ const LOCKED_REGISTRY_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za
 /** The dependency ranges one lockfile entry declares, whatever its format. */
 function lockedEntryDependencies(entry: Record<string, unknown>): Record<string, string> {
   const ranges: Record<string, string> = {};
-  const requiredNames = new Set<string>();
-  for (const field of ["dependencies", "optionalDependencies", "requires"]) {
-    const group = entry[field];
-    if (group && typeof group === "object") {
-      for (const name of Object.keys(group as Record<string, unknown>)) {
-        if (name !== "__proto__") requiredNames.add(name);
-      }
-    }
-  }
   // A peer the package itself marks optional may legitimately be absent, so
   // it is not an edge the install has to account for.
   const optionalPeers = new Set(
@@ -327,7 +318,7 @@ function lockedEntryDependencies(entry: Record<string, unknown>): Record<string,
     if (!group || typeof group !== "object") continue;
     for (const [name, range] of Object.entries(group as Record<string, unknown>)) {
       if (name === "__proto__" || typeof range !== "string") continue;
-      if (optionalPeers.has(name) && !requiredNames.has(name)) continue;
+      if (field === "peerDependencies" && optionalPeers.has(name)) continue;
       ranges[name] = range;
     }
   }
@@ -1147,6 +1138,10 @@ function expandBraces(pattern: string): string[] | null {
         return [pattern];
       }
     } else {
+      // npm leaves the complete expression literal when an unexpandable pair
+      // precedes a later sequence. Expanding that sequence alone would turn a
+      // pattern npm cannot match into a false workspace member.
+      if (containsBraceSequence(pattern.slice(close + 1))) return [pattern];
       const tail = expandBraces(pattern.slice(close + 1));
       return tail === null ? null : tail.map((rest) => `${pattern.slice(0, close + 1)}${rest}`);
     }
@@ -1166,6 +1161,16 @@ function expandBraces(pattern: string): string[] | null {
     expanded.push(...rest);
   }
   return expanded;
+}
+
+function containsBraceSequence(pattern: string): boolean {
+  const open = unescapedIndexOf(pattern, "{");
+  if (open < 0) return false;
+  const close = matchingBrace(pattern, open);
+  if (close < 0) return false;
+  const body = pattern.slice(open + 1, close);
+  return braceSequence(body) !== null || containsBraceSequence(body) ||
+    containsBraceSequence(pattern.slice(close + 1));
 }
 
 /** The first `needle` that is not escaped by a backslash, or -1. */
@@ -1269,7 +1274,13 @@ type ExtglobMark = "@" | "?" | "*" | "+" | "!";
 
 /** One unit of a pattern segment, as minimatch reads it. */
 type SegmentToken =
-  | { kind: "star"; synthetic?: boolean; consecutive?: boolean; required?: boolean }
+  | {
+    kind: "star";
+    synthetic?: boolean;
+    consecutive?: boolean;
+    required?: boolean;
+    negativePrefix?: boolean;
+  }
   | { kind: "any" }
   | { kind: "class"; matches: (char: string) => boolean; dotExplicit: boolean }
   | { kind: "extglob"; mark: ExtglobMark; alternatives: SegmentToken[][] }
@@ -1515,10 +1526,14 @@ function matchesTokenHere(
     // `*` after an extglob does the same. A nonterminal star can stay empty so
     // a later literal or group can consume the remaining name.
     const next = tokens[index + 1];
+    const suffixMayBeEmpty = canMatchEmpty(tokens, index + 1);
     const mustConsumeAdjacentToExtglob = !token.synthetic && !token.consecutive &&
       ((index === 0 && next?.kind === "extglob") ||
         (index + 1 === tokens.length && tokens[index - 1]?.kind === "extglob"));
-    const firstEnd = offset + ((token.required || mustConsumeAdjacentToExtglob) ? 1 : 0);
+    const mustConsume = token.required || mustConsumeAdjacentToExtglob ||
+      (!token.synthetic && !token.consecutive && suffixMayBeEmpty &&
+        tokens[index - 1]?.kind === "extglob");
+    const firstEnd = offset + (mustConsume ? 1 : 0);
     for (let end = firstEnd; end <= name.length; end++) {
       if (matchesTokens(tokens, index + 1, name, end, memo)) return true;
     }
@@ -1527,6 +1542,17 @@ function matchesTokenHere(
   if (token.kind === "extglob") return matchesExtglob(tokens, index, name, offset, memo);
   return offset < name.length && matchesToken(token, name[offset]!) &&
     matchesTokens(tokens, index + 1, name, offset + 1, memo);
+}
+
+function canMatchEmpty(tokens: readonly SegmentToken[], index: number): boolean {
+  for (let position = index; position < tokens.length; position++) {
+    const token = tokens[position]!;
+    if (token.kind === "star") continue;
+    if (token.kind !== "extglob") return false;
+    if (token.mark === "?" || token.mark === "*" || token.mark === "!") continue;
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -1553,6 +1579,16 @@ function matchesExtglob(
       matchesTokens(alternative, 0, name.slice(from, to), 0, new Map())
     );
   if (token.mark === "!") {
+    // Adjacent negative extglobs are one minimatch lookahead expression. The
+    // later group must not reject the remainder independently, or a valid
+    // pattern such as `!(a|b)!(a|*)` becomes impossible to match.
+    const previous = tokens[index - 1];
+    if (
+      (previous?.kind === "extglob" && previous.mark === "!") ||
+      (previous?.kind === "star" && previous.synthetic && previous.negativePrefix)
+    ) {
+      return rest(offset);
+    }
     // A negative star is universal only at the beginning of a segment. With
     // a literal prefix, `a!(*)` matches nothing: the empty suffix is not a
     // valid negative-extglob match and every non-empty suffix matches `*`.
@@ -1588,6 +1624,7 @@ function matchesExtglob(
       kind: "star",
       synthetic: true,
       required: index > 0 && tail[0]?.kind === "star",
+      negativePrefix: index === 0 && tail[0]?.kind === "extglob" && tail[0].mark === "!",
     } as const;
     return matchesTokens([fallbackStar, ...tail], 0, remainder, 0, new Map());
   }

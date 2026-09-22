@@ -1175,6 +1175,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
             "apps/{{1..2}}",
             "apps/{a}",
             "apps/{a}/x",
+            "apps/{a}/1",
             "apps/.hidden",
             ".apps/web",
             "apps/02",
@@ -1191,6 +1192,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           "apps/{{1..2}}/package.json": "{}",
           "apps/{a}/package.json": "{}",
           "apps/{a}/x/package.json": "{}",
+          "apps/{a}/1/package.json": "{}",
           "apps/.hidden/package.json": "{}",
           ".apps/web/package.json": "{}",
           "apps/02/package.json": "{}",
@@ -1301,6 +1303,14 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         await declaring(["apps/!(a|b)*?(a|b)"], `${PROJECT}/apps/a`),
         "apps/a",
       );
+      assertEquals(
+        await declaring(["apps/@(a|b)*?(a|b)"], `${PROJECT}/apps/x`),
+        "",
+      );
+      assertEquals(
+        await declaring(["apps/!(a|b)!(a|*)"], `${PROJECT}/apps/x`),
+        "apps/x",
+      );
       // A mark with no group after it is the wildcard it has always been.
       assertEquals(await declaring(["apps/*"]), "apps/store-web");
       // A `!` group refuses what its alternatives plus the TAIL would match,
@@ -1332,6 +1342,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(
         await declaring(["apps/{a}/{x,y}"], `${PROJECT}/apps/{a}/x`),
         "apps/{a}/x",
+      );
+      assertEquals(
+        await declaring(["apps/{a}/{1..2}"], `${PROJECT}/apps/{a}/1`),
+        "",
       );
       // A declaration with a pattern too large to expand is unreadable, and
       // an exclusion this could not expand may be the one covering the
