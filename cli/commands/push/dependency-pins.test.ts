@@ -305,6 +305,13 @@ describe("classifyPackageJsonDrift", () => {
     assertEquals(classifyPackageJsonDrift(baseline, outOfRange, inRangeHistory), "user-edit");
   });
 
+  it("rejects leading zeros in discarded wildcard components", () => {
+    const baseline = apiWrite({ name: "demo", dependencies: { react: "1.x.01-beta" } });
+    const resolved = apiWrite({ name: "demo", dependencies: { react: "1.9.9" } });
+    const history = [{ react: "1.x.01-beta" }, { react: "1.9.9" }];
+    assertEquals(classifyPackageJsonDrift(baseline, resolved, history), "user-edit");
+  });
+
   it("accepts whitespace between an npm operator and its version", () => {
     const baseline = apiWrite({
       name: "demo",

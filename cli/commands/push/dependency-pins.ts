@@ -253,11 +253,17 @@ function normalizeNpmPartialRange(value: string): string {
   body = body.trim();
   if (operator === "" && /^(?:[xX*])(?:\.[xX*]){0,2}$/.test(body)) return "*";
   const suffixedWildcardMajor =
-    /^v?(\d+)\.[xX*]\.(?:\d+|[xX*])(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+    /^v?(\d+)\.[xX*]\.(\d+|[xX*])(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
       .exec(
         body,
       );
-  if (suffixedWildcardMajor) return `${operator}v${suffixedWildcardMajor[1]}`;
+  if (suffixedWildcardMajor) {
+    const patch = suffixedWildcardMajor[2]!;
+    if (/^\d+$/.test(patch) && patch.length > 1 && patch.startsWith("0")) {
+      return `${operator}__invalid_npm_range__${body}`;
+    }
+    return `${operator}v${suffixedWildcardMajor[1]}`;
+  }
   const suffixedWildcard = /^v?(\d+)\.(\d+)\.[xX*](?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
     body,
   );
@@ -337,7 +343,12 @@ function allowsPrerelease(version: VersionParts, range: VersionParts): boolean {
 }
 
 function isNpmDistTag(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && parseVersionParts(value) === null;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) &&
+    !/^v?\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+      .test(
+        value,
+      ) &&
+    parseVersionParts(value) === null;
 }
 
 /**
