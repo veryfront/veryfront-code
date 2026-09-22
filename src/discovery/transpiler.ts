@@ -1105,7 +1105,7 @@ const MAX_WORKSPACE_PATTERN_ALTERNATIVES = 64;
  * `["packages/app", "packages/web"]`, which is how npm's minimatch reads it.
  * An unbalanced or empty `{` stays literal, as minimatch leaves it.
  */
-function expandBraces(pattern: string): string[] | null {
+function expandBraces(pattern: string, allowSequenceAfterLiteral = false): string[] | null {
   const open = unescapedIndexOf(pattern, "{");
   const close = open < 0 ? -1 : matchingBrace(pattern, open);
   if (close < 0) return [pattern];
@@ -1117,6 +1117,7 @@ function expandBraces(pattern: string): string[] | null {
   // literal text `{a}`, as `brace-expansion` leaves it.
   const alternatives = sequenced ?? splitBraceBody(body);
   let expandedAlternatives = alternatives;
+  let generatedLiteral = false;
   if (sequenced === null && alternatives.length < 2) {
     // brace-expansion preserves an outer pair when only a nested brace
     // supplies the alternatives: `{{a,b}}` becomes `{a}` and `{b}`.
@@ -1134,6 +1135,7 @@ function expandBraces(pattern: string): string[] | null {
       if (nested === null) return null;
       if (nested.length > 1 || nested[0] !== body) {
         expandedAlternatives = nested.map((alternative) => `{${alternative}}`);
+        generatedLiteral = true;
       } else {
         return [pattern];
       }
@@ -1141,7 +1143,9 @@ function expandBraces(pattern: string): string[] | null {
       // npm leaves the complete expression literal when an unexpandable pair
       // precedes a later sequence. Expanding that sequence alone would turn a
       // pattern npm cannot match into a false workspace member.
-      if (containsBraceSequence(pattern.slice(close + 1))) return [pattern];
+      if (!allowSequenceAfterLiteral && containsBraceSequence(pattern.slice(close + 1))) {
+        return [pattern];
+      }
       const tail = expandBraces(pattern.slice(close + 1));
       return tail === null ? null : tail.map((rest) => `${pattern.slice(0, close + 1)}${rest}`);
     }
@@ -1150,7 +1154,10 @@ function expandBraces(pattern: string): string[] | null {
   const tail = pattern.slice(close + 1);
   const expanded: string[] = [];
   for (const alternative of expandedAlternatives) {
-    const rest = expandBraces(`${head}${alternative}${tail}`);
+    const rest = expandBraces(
+      `${head}${alternative}${tail}`,
+      allowSequenceAfterLiteral || generatedLiteral,
+    );
     // Past the cap the expansion is INCOMPLETE, and a partial one is not a
     // safe reading in either direction: dropping an alternative of an
     // exclusion would admit a member npm excludes. The declaration is
@@ -1627,7 +1634,9 @@ function matchesExtglob(
     const fallbackStar = {
       kind: "star",
       synthetic: true,
-      required: index > 0 && tail[0]?.kind === "star",
+      required: (index > 0 && tail[0]?.kind === "star") ||
+        (index === 0 && tail[0]?.kind === "star" &&
+          (tail[1]?.kind === "extglob" && (tail[1].mark === "@" || tail[1].mark === "+"))),
       negativePrefix: index === 0 && tail[0]?.kind === "extglob" && tail[0].mark === "!",
     } as const;
     return matchesTokens([fallbackStar, ...tail], 0, remainder, 0, new Map());

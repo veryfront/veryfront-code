@@ -1316,6 +1316,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         "apps/x",
       );
       assertEquals(
+        await declaring(["apps/!(a|b)*@(a|b)"], `${PROJECT}/apps/a`),
+        "",
+      );
+      assertEquals(
         await declaring(["apps/!(a|b)*a"], `${PROJECT}/apps/aa`),
         "",
       );
@@ -1354,6 +1358,10 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(
         await declaring(["apps/{a}/{1..2}"], `${PROJECT}/apps/{a}/1`),
         "",
+      );
+      assertEquals(
+        await declaring(["apps/{{a,b}}/{1..2}"], `${PROJECT}/apps/{a}/1`),
+        "apps/{a}/1",
       );
       // A declaration with a pattern too large to expand is unreadable, and
       // an exclusion this could not expand may be the one covering the
