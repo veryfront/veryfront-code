@@ -16,6 +16,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !isArray(value);
 }
 
+function isCompleteJsonObject(value: string): boolean {
+  try {
+    return isRecord(privateJsonParse(value));
+  } catch {
+    return false;
+  }
+}
+
+function isDoubleClosedObject(value: string): boolean {
+  const normalized = trim(value);
+  if (!endsWith(normalized, '""')) return false;
+  return isCompleteJsonObject(trim(slice(normalized, 0, normalized.length - 2)));
+}
+
 /** Normalize provider tool input by removing transient empty-object prefixes. */
 export function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
   let normalized = trim(rawArgs);
@@ -129,6 +143,9 @@ export function mergeToolCallInput(currentArguments: string, nextInput: string):
   const normalizedCurrent = stripLeadingEmptyObjectPlaceholder(currentArguments);
 
   if (trim(nextInput) === "{}" && startsWith(trim(currentArguments), "{")) {
+    if (isDoubleClosedObject(currentArguments)) {
+      return nextInput;
+    }
     return currentArguments;
   }
 
