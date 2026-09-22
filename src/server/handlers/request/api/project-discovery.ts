@@ -24,9 +24,27 @@ const logger = serverLogger.component("api-wrapper");
 interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
   sourceSnapshotVersion?: number;
+  /** Set when the result has errors: rediscover once the clock reaches it. */
+  retryAt?: number;
 }
 
 const discoveredProjects = new LRUCacheAdapter({ maxEntries: 1000 });
+
+/**
+ * How long a production release keeps a discovery result that has per-file
+ * errors. A release cannot change, so the errors are either a defect in the
+ * release, which must not cost a full rediscovery on every run and resume
+ * (veryfront-issue-inbox#1620), or a transient read failure, which the next
+ * discovery after this window retries.
+ */
+export const PRODUCTION_DISCOVERY_ERROR_RETRY_MS = 60_000;
+
+let now: () => number = Date.now;
+
+/** Replace the clock that times discovery retries; `undefined` restores it. */
+export function __setProjectDiscoveryClockForTests(clock: (() => number) | undefined): void {
+  now = clock ?? Date.now;
+}
 const MAX_DISCOVERY_FAILURES_TO_LOG = 5;
 const MAX_DISCOVERY_ERROR_MESSAGE_LENGTH = 500;
 
@@ -164,12 +182,13 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   if (
     existing &&
     (sourceSnapshotVersion === undefined ||
-      existing.sourceSnapshotVersion === sourceSnapshotVersion)
+      existing.sourceSnapshotVersion === sourceSnapshotVersion) &&
+    (existing.retryAt === undefined || now() < existing.retryAt)
   ) {
     return existing.promise;
   }
 
-  const discovery = {
+  const discovery: DiscoveryRecord = {
     sourceSnapshotVersion,
     promise: (async () => {
       return await runWithRegistryTransaction(async () => {
@@ -201,7 +220,12 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
           // means control cannot reach here without the capability.
           allowHostProjectCodeExecution: true,
         });
-        const result = await discoverAll(discoveryOptions);
+        // Runs and resumes never use evals, and eval execution discovers them
+        // itself (src/eval/discovery.ts). Importing them here puts eval-only
+        // side effects, such as reading fixtures by a CWD-relative path, on
+        // every agent turn (veryfront-issue-inbox#1620). The configured
+        // evalDirs still mark those directories as server-only elsewhere.
+        const result = await discoverAll({ ...discoveryOptions, evalDirs: [] });
         const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
           discoveryOptions.agentDirs.length > 0;
 
@@ -237,9 +261,14 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   try {
     const result = await discovery.promise;
     if (result.errors.length > 0) {
-      const current = discoveredProjects.get<DiscoveryRecord>(key);
-      if (current === discovery) {
-        discoveredProjects.delete(key);
+      if (shouldCacheCompletedDiscovery(ctx)) {
+        discovery.retryAt = now() + PRODUCTION_DISCOVERY_ERROR_RETRY_MS;
+      } else {
+        // Mutable sources retry at once: the failing file may already be fixed.
+        const current = discoveredProjects.get<DiscoveryRecord>(key);
+        if (current === discovery) {
+          discoveredProjects.delete(key);
+        }
       }
     }
     return result;

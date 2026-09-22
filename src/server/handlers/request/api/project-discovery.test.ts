@@ -4,14 +4,22 @@ import "#veryfront/schemas/_test-setup.ts";
 import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { HandlerContext } from "../../types.ts";
 import {
+  __setProjectDiscoveryClockForTests,
   clearProjectDiscoveryCacheForProject,
   ensureProjectDiscovery,
+  PRODUCTION_DISCOVERY_ERROR_RETRY_MS,
 } from "./project-discovery.ts";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
@@ -984,6 +992,65 @@ describe(
       const recovered = await ensureProjectDiscovery(ctx);
       assertEquals(recovered.errors.length, 0);
       assertEquals(recovered.tools.has("recovered_tool"), true);
+    });
+
+    it("does not import eval modules on the run path", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/run-path-evals-project",
+        "run-path-evals-project",
+        "production",
+        "release-evals",
+      );
+      await writeAgentFile(ctx, "run-path-agent", "RUN");
+      // Evals may read project files at import time, which fails where the
+      // process CWD is not the project root (veryfront-issue-inbox#1620).
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/evals/reads-fixture.eval.ts`,
+        "throw new Error(\"ENOENT: no such file or directory, open 'knowledge/x.md'\");\n",
+      );
+
+      const result = await ensureProjectDiscovery(ctx);
+
+      assertEquals(result.errors.length, 0);
+      assertEquals(result.agents.has("run-path-agent"), true);
+    });
+
+    it("reuses a production release discovery with errors until its retry window ends", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      let now = 1_000_000;
+      __setProjectDiscoveryClockForTests(() => now);
+
+      try {
+        const ctx = createHandlerContext(
+          "/release-partial-project",
+          "release-partial-project",
+          "production",
+          "release-partial",
+        );
+        await ctx.adapter.fs.writeFile(
+          `${ctx.projectDir}/tools/broken-tool.ts`,
+          'throw new Error("persistent discovery failure");\n',
+        );
+
+        const first = await ensureProjectDiscovery(ctx);
+        assertEquals(first.errors.length, 1);
+
+        // A release cannot change, so every resume inside the window reuses it.
+        now += PRODUCTION_DISCOVERY_ERROR_RETRY_MS - 1;
+        assertStrictEquals(await ensureProjectDiscovery(ctx), first);
+
+        // A transient failure still gets retried once the window ends.
+        now += 1;
+        const retried = await ensureProjectDiscovery(ctx);
+        assertNotStrictEquals(retried, first);
+        assertEquals(retried.errors.length, 1);
+      } finally {
+        __setProjectDiscoveryClockForTests(undefined);
+      }
     });
 
     it("rethrows hard primitive discovery failures instead of returning an empty result", async () => {
