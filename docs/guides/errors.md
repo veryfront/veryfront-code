@@ -895,7 +895,14 @@ No access to the linked project for eval run.
 Eval model request refused by inference policy.
 
 - **HTTP status:** 403
-- **What to do:** The project allows EU-only inference. Choose a model with an EU inference route and remove provider-executed tools, such as provider web search, from the eval target, then run the eval again
+- **What to do:** The project allows EU-only inference. Choose a model with an EU inference route, then run the eval again
+
+### eval-inference-policy-denied
+
+Eval request refused by inference policy.
+
+- **HTTP status:** 403
+- **What to do:** The project allows EU-only inference. Remove provider-executed tools, such as provider web search, from the eval target, then run the eval again
 
 ### eval-record-timeout
 

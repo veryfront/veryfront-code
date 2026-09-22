@@ -324,8 +324,18 @@ describe("eval/model-access", () => {
     assertEquals(tools?.code, "INFERENCE_POLICY_DENIED");
 
     const error = createEvalModelAccessDeniedError("eval:a", tools!, undefined);
-    assertEquals(error.slug, "eval-model-inference-policy-denied");
+    assertEquals(error.slug, "eval-inference-policy-denied");
+    assertEquals(error.suggestion.includes("Remove provider-executed tools"), true);
     assertEquals(getEvalModelAccessDenialKind(error), "inference-policy");
+
+    const model = {
+      kind: "inference-policy" as const,
+      code: "MODEL_NOT_PERMITTED",
+      message: 'Model "gpt-5" is not available under this project\'s inference policy',
+    };
+    const modelError = createEvalModelAccessDeniedError("eval:a", model, undefined);
+    assertEquals(modelError.slug, "eval-model-inference-policy-denied");
+    assertEquals(modelError.suggestion.includes("Choose a model"), true);
   });
 
   it("classifies EU inference policy codes that crossed a runtime boundary", () => {

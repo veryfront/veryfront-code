@@ -1,4 +1,5 @@
 import {
+  EVAL_INFERENCE_POLICY_DENIED,
   EVAL_MODEL_ACCESS_DENIED,
   EVAL_MODEL_EGRESS_BLOCKED,
   EVAL_MODEL_INFERENCE_POLICY_DENIED,
@@ -347,7 +348,10 @@ export function createEvalModelAccessDeniedError(
   denial: EvalModelAccessDenial,
   cause: unknown,
 ): VeryfrontError {
-  return DENIAL_ERRORS[denial.kind].create({
+  const definition = denial.kind === "inference-policy" && denial.code === "INFERENCE_POLICY_DENIED"
+    ? EVAL_INFERENCE_POLICY_DENIED
+    : DENIAL_ERRORS[denial.kind];
+  return definition.create({
     detail: `Eval "${evalId}" stopped at its first refused model request: ${denial.message}`,
     context: { evalId, denialCode: denial.code },
     cause,
@@ -360,6 +364,7 @@ export function getEvalModelAccessDenialKind(
 ): EvalModelAccessDenialKind | undefined {
   try {
     if (!(error instanceof VeryfrontError)) return undefined;
+    if (error.slug === EVAL_INFERENCE_POLICY_DENIED.slug) return "inference-policy";
     for (const [kind, definition] of Object.entries(DENIAL_ERRORS)) {
       if (error.slug === definition.slug) return kind as EvalModelAccessDenialKind;
     }
