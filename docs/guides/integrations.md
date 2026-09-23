@@ -152,8 +152,7 @@ project runtime has no project source configuration to load.
 
 ## Connection state
 
-The legacy Project integration policy has been removed. There is no project
-integration policy or policy setup step. These are the
+The legacy Project integration policy has been removed. There is no project integration policy or policy setup step. These are the
 independent contracts:
 
 - Agent source controls which tools belong to an agent.
