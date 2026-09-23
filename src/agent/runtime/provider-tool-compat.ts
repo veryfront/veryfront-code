@@ -1,5 +1,4 @@
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { privateTextToLowerCase, privateTextTrim } from "#veryfront/security/private-text.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import type { JsonSchema } from "#veryfront/tool/schema";
 
@@ -47,8 +46,6 @@ const IntrinsicMapHas = Map.prototype.has;
 const IntrinsicMapSet = Map.prototype.set;
 const IntrinsicSetAdd = Set.prototype.add;
 const IntrinsicSetHas = Set.prototype.has;
-const IntrinsicStringSplit = String.prototype.split;
-const IntrinsicArrayFilter = Array.prototype.filter;
 const PERMISSIVE_TOOL_INPUT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {},
@@ -78,7 +75,7 @@ const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
 ]);
 
 function normalizeModel(model?: string): string {
-  return model === undefined ? "" : privateTextToLowerCase(privateTextTrim(model));
+  return model?.trim().toLowerCase() ?? "";
 }
 
 /**
@@ -89,15 +86,9 @@ function normalizeModel(model?: string): string {
  * members are empty strings when the id is missing or malformed.
  */
 export function splitModelId(model?: string): { provider: string; modelName: string } {
-  const normalized = normalizeModel(model);
-  const splitParts = IntrinsicReflectApply(IntrinsicStringSplit, normalized, ["/"]) as string[];
-  const parts = IntrinsicReflectApply(
-    IntrinsicArrayFilter,
-    splitParts,
-    [(part: string) => part.length > 0],
-  ) as string[];
+  const parts = normalizeModel(model).split("/").filter(Boolean);
   const provider = (parts[0] === "veryfront-cloud" ? parts[1] : parts[0]) ?? "";
-  return { provider, modelName: parts.length > 0 ? parts[parts.length - 1]! : "" };
+  return { provider, modelName: parts.at(-1) ?? "" };
 }
 
 /** Return provider tool profile. */

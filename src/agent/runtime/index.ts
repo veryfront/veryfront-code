@@ -270,11 +270,7 @@ export {
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./chat-stream-handler.ts";
 import { resolveStreamLifecycleModeFromEnv } from "./stream-lifecycle-mode.ts";
-import {
-  getToolChannelProfile,
-  resolveStepToolChoice,
-  resolveToolChannelModeFromEnv,
-} from "./tool-channel.ts";
+import { forcesToolChannel, resolveStepToolChoice } from "./tool-channel.ts";
 export type {
   ChatStreamCallbacks,
   ChatStreamState,
@@ -2856,8 +2852,7 @@ export class AgentRuntime {
         warnUnsupportedToolCalling(this.id, effectiveModel);
       }
 
-      const toolChannelProfile = getToolChannelProfile(effectiveModel);
-      const toolChannelMode = resolveToolChannelModeFromEnv();
+      const forcesChannel = forcesToolChannel(effectiveModel);
 
       // Request-scoped skill policy (not class-level mutable state)
       const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
@@ -3000,12 +2995,11 @@ export class AgentRuntime {
           preparedStep.integrationToolDiscovery,
         );
         const stepToolNames = new Set(ObjectKeys(runtimeTools ?? {}));
-        const stepToolChoice = resolveStepToolChoice(toolChannelProfile, {
-          step,
+        const stepToolChoice = resolveStepToolChoice(forcesChannel, {
           hasTools: stepToolNames.size > 0,
           madeToolCall: toolCalls.length > 0,
           hasOutputSchema: outputSchema !== undefined,
-        }, toolChannelMode);
+        });
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -3561,8 +3555,7 @@ export class AgentRuntime {
       warnUnsupportedToolCalling(this.id, effectiveModel);
     }
 
-    const toolChannelProfile = getToolChannelProfile(effectiveModel);
-    const toolChannelMode = resolveToolChannelModeFromEnv();
+    const forcesChannel = forcesToolChannel(effectiveModel);
 
     // Request-scoped skill policy (not class-level mutable state)
     const skillState = AgentLoopSkillState.hydrate(currentMessages, runtimeContext);
@@ -3676,12 +3669,11 @@ export class AgentRuntime {
         preparedStep.integrationToolDiscovery,
       );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
-      const stepToolChoice = resolveStepToolChoice(toolChannelProfile, {
-        step,
+      const stepToolChoice = resolveStepToolChoice(forcesChannel, {
         hasTools: runtimeToolNames.length > 0,
         madeToolCall: toolCalls.length > 0,
         hasOutputSchema: outputSchema !== undefined,
-      }, toolChannelMode);
+      });
 
       const temperature = this.resolveTemperature(
         temperatureModelString ?? effectiveModel,
