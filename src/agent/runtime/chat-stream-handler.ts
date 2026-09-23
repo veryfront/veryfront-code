@@ -1229,6 +1229,7 @@ export function processStreamInternal(
             abortSignal,
           )
           : await readNextStreamPart(streamIterator, state, abortSignal);
+        throwIfAborted(abortSignal);
         if (next === "timeout") {
           if (
             callbacks?.requireProviderFinish && !sawProviderFinishPart &&

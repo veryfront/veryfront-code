@@ -1222,6 +1222,37 @@ describe("chat-stream-handler", () => {
       });
     }
 
+    it("preserves cancellation when a required-finish tool stream closes on abort", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const cancellation = new DOMException("Cancelled by caller", "AbortError");
+      const abortController = new AbortController();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "tool-input-start", id: "local-1", toolName: "lookup" };
+            yield { type: "tool-input-delta", id: "local-1", delta: "{}" };
+            yield { type: "tool-input-end", id: "local-1" };
+            abortController.abort(cancellation);
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+      const error = await assertRejects(() =>
+        processStream(
+          result,
+          state,
+          controller,
+          encoder,
+          "t",
+          { requireProviderFinish: true },
+          abortController.signal,
+        )
+      );
+      assertEquals(error, cancellation);
+      assertEquals(state.finishReason, null);
+    });
+
     it("accepts required provider finish metadata with a null finish reason", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
