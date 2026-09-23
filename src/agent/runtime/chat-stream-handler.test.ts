@@ -1222,6 +1222,43 @@ describe("chat-stream-handler", () => {
       });
     }
 
+    it("restores local tool commit grace after required provider finish on an open stream", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const providerMetadata = {
+        google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+      };
+      const deadlinesAfterFinish: number[] = [];
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "tool-input-start", id: "local-1", toolName: "lookup" };
+            yield { type: "tool-input-delta", id: "local-1", delta: "{}" };
+            yield { type: "tool-input-end", id: "local-1" };
+            yield { type: "finish", finishReason: "tool-calls", providerMetadata };
+            await new Promise(() => {});
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+      await processStream(result, state, controller, encoder, "t", {
+        requireProviderFinish: true,
+        localToolCommitGraceMs: 7,
+        streamIdleTimeoutMs: 25,
+        setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
+          if (state.providerMetadata === providerMetadata) {
+            deadlinesAfterFinish.push(timeoutMs ?? 0);
+            queueMicrotask(callback);
+          }
+          return 0;
+        }) as typeof setTimeout,
+        clearTimeoutFn: () => {},
+      });
+      assertEquals(deadlinesAfterFinish, [7]);
+      assertEquals(state.providerMetadata, providerMetadata);
+      assertEquals(state.finishReason, "tool-calls");
+    });
+
     it("preserves cancellation when a required-finish tool stream closes on abort", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();

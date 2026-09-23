@@ -1182,7 +1182,8 @@ export function processStreamInternal(
         // a longer timeout only. It must not change what a timeout *means*, so
         // the finish-reason classification below stays on the ungated flag.
         const shouldStopForCommittedLocalToolCallNow = shouldStopForCommittedLocalToolCall &&
-          pendingProviderExecutedToolCallIds.size === 0 && !callbacks?.requireProviderFinish;
+          pendingProviderExecutedToolCallIds.size === 0 &&
+          (!callbacks?.requireProviderFinish || sawProviderFinishPart);
         const shouldStopForIdleOutput = !hasActiveLocalToolInput &&
           !shouldStopForCommittedLocalToolCallNow && hasStreamOutput(state);
         const shouldStopForIdleStart = !hasActiveLocalToolInput &&
