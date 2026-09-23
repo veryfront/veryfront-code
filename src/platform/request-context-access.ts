@@ -57,3 +57,20 @@ export function registerRequestScopedFileCacheIsolation(
 export function runWithoutRequestScopedFileCache<T>(fn: () => T): T {
   return fileCacheIsolation === undefined ? fn() : fileCacheIsolation(fn);
 }
+
+let runtimeAccessor: (() => Readonly<RequestContext> | null) | undefined;
+
+/** @internal Register the server execution identity for public contextual clients. */
+export function registerRuntimeRequestContextAccessor(
+  fn: () => Readonly<RequestContext> | null,
+): void {
+  if (runtimeAccessor !== undefined && runtimeAccessor !== fn) {
+    throw new TypeError("The runtime request context accessor is already registered");
+  }
+  runtimeAccessor = fn;
+}
+
+/** Consuming identity for service clients, falling back to ordinary hosted requests. */
+export function currentRuntimeRequestContext(): Readonly<RequestContext> | null {
+  return runtimeAccessor?.() ?? currentRequestContext();
+}

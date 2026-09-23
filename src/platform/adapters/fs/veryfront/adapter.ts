@@ -20,6 +20,7 @@ import type {
 } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
+import { enablePrivateVeryfrontApiClientSourceContext } from "../../veryfront-api-client/client.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
@@ -667,6 +668,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       proxyMode: vf.proxyMode,
       retry: retryConfig,
     });
+    enablePrivateVeryfrontApiClientSourceContext(this.client);
     this.client.enableContextualToken();
 
     const cacheConfig = buildFileCacheOptions(vf.cache);

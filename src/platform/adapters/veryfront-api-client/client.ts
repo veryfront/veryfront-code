@@ -16,7 +16,10 @@ import type {
   DependencyArtifactBuildResultBody,
   DependencyArtifactContentType,
 } from "#veryfront/release-assets/dependency-artifact-contracts.ts";
-import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import {
+  currentRequestContext,
+  currentRuntimeRequestContext,
+} from "#veryfront/platform/request-context-access.ts";
 import type { DependencyMetadataHistory } from "../dependency-metadata-history.ts";
 
 const logger = baseLogger.component("veryfront-api-client");
@@ -30,6 +33,9 @@ const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 const DEFAULT_SEARCH_LIMIT = 100;
 const requestTokens = new WeakMap<object, string>();
+const sourceContextClients = new WeakSet<object>();
+const WeakSetPrototypeHas = WeakSet.prototype.has;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const IntrinsicReflectApply = Reflect.apply;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
@@ -41,6 +47,11 @@ export function setPrivateVeryfrontApiClientRequestToken(
   token: string,
 ): void {
   IntrinsicReflectApply(WeakMapPrototypeSet, requestTokens, [client, token]);
+}
+
+/** @internal Bind a framework-owned filesystem client to source authority. */
+export function enablePrivateVeryfrontApiClientSourceContext(client: VeryfrontApiClient): void {
+  IntrinsicReflectApply(WeakSetPrototypeAdd, sourceContextClients, [client]);
 }
 
 /**
@@ -78,7 +89,11 @@ export class VeryfrontApiClient {
     this.config = { ...config, retry: retryConfig };
 
     const tokenProvider: TokenProvider = () => {
-      const requestContext = this.useContextualToken ? currentRequestContext() : null;
+      const requestContext = this.useContextualToken
+        ? (IntrinsicReflectApply(WeakSetPrototypeHas, sourceContextClients, [this])
+          ? currentRequestContext()
+          : currentRuntimeRequestContext())
+        : null;
       if (requestContext) {
         if (requestContext.token) return requestContext.token;
         if (this.config.apiToken) return this.config.apiToken;

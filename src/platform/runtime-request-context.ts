@@ -1,3 +1,4 @@
+import { registerRuntimeRequestContextAccessor } from "#veryfront/platform/request-context-access.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   getCurrentRequestContext,
@@ -25,3 +26,5 @@ export function getRuntimeRequestContext(): Readonly<RequestContext> | null {
 export function hasRuntimeRequestContextOverride(): boolean {
   return apply(getStore, executionContextStorage, []) !== undefined;
 }
+
+registerRuntimeRequestContextAccessor(getRuntimeRequestContext);
