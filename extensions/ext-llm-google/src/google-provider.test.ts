@@ -421,7 +421,7 @@ describe("ext-llm-google/google-provider", () => {
       },
       {
         type: "finish",
-        finishReason: { unified: "stop", raw: "STOP" },
+        finishReason: { unified: "tool-calls", raw: "STOP" },
         usage: {
           inputTokens: 8,
           outputTokens: 2,

@@ -925,8 +925,22 @@ export async function* streamGoogleCompatibleParts(
   }
   yield {
     type: "finish",
-    finishReason,
+    finishReason: normalizeGoogleToolFinishReason(finishReason, seenToolCalls.size > 0),
     ...(usage ? { usage } : {}),
     ...(providerMetadata ? { providerMetadata } : {}),
   };
+}
+
+// Google completes function-call turns with STOP or only [DONE]. They require
+// local tool execution even when text precedes the call. Keep explicit limits,
+// filters, and the raw provider reason when one is present.
+function normalizeGoogleToolFinishReason(
+  reason: ReturnType<typeof normalizeGoogleFinishReason>,
+  hasLocalCalls: boolean,
+): ReturnType<typeof normalizeGoogleFinishReason> {
+  if (!hasLocalCalls) return reason;
+  if (reason === null) return "tool-calls";
+  return typeof reason === "object" && reason.unified === "stop"
+    ? { ...reason, unified: "tool-calls" }
+    : reason;
 }

@@ -479,8 +479,15 @@ describe("agent provider metadata continuation", () => {
   // model turn is replayed, while 2.5 accepts an unsigned replay. The signature
   // itself is opaque to the replay path, so this fixture carries a fabricated
   // placeholder rather than a captured provider value.
-  for (const lifecycleMode of ["legacy", "active"] as const) {
-    it(`retains signed Gemini replay after delayed stream completion through ${lifecycleMode}`, () =>
+  for (
+    const [lifecycleMode, includeFinishReason] of [
+      ["legacy", true],
+      ["active", true],
+      ["legacy", false],
+      ["active", false],
+    ] as const
+  ) {
+    it(`retains signed Gemini replay after delayed stream completion through ${lifecycleMode} (finish reason: ${includeFinishReason})`, () =>
       withStreamLifecycleMode(lifecycleMode, async () => {
         const encoder = new TextEncoder();
         const signedFunctionCallPart = {
@@ -503,7 +510,10 @@ describe("agent provider metadata continuation", () => {
                   `data: ${
                     JSON.stringify({
                       candidates: [{
-                        content: { parts: [signedFunctionCallPart], role: "model" },
+                        content: {
+                          parts: [{ text: "Checking the lookup." }, signedFunctionCallPart],
+                          role: "model",
+                        },
                         index: 0,
                       }],
                       usageMetadata: {
@@ -521,7 +531,7 @@ describe("agent provider metadata continuation", () => {
                     JSON.stringify({
                       candidates: [{
                         content: { parts: [{ text: "" }], role: "model" },
-                        finishReason: "STOP",
+                        ...(includeFinishReason ? { finishReason: "STOP" } : {}),
                         index: 0,
                       }],
                       usageMetadata: {
@@ -576,7 +586,10 @@ describe("agent provider metadata continuation", () => {
         // empty-text part included, which is what the live API accepts.
         const continuationContents = requestBodies[1]?.contents as unknown[] | undefined;
         assertEquals(continuationContents?.slice(-2), [
-          { role: "model", parts: [signedFunctionCallPart, { text: "" }] },
+          {
+            role: "model",
+            parts: [{ text: "Checking the lookup." }, signedFunctionCallPart, { text: "" }],
+          },
           {
             role: "user",
             parts: [{

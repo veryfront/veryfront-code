@@ -83,6 +83,55 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-google/google-stream", () => {
+  for (
+    const fixture of [
+      { name: "text", parts: [{ text: "Done" }], expected: null },
+      {
+        name: "local call",
+        parts: [{ functionCall: { name: "lookup", args: {} } }],
+        expected: "tool-calls",
+      },
+      {
+        name: "provider execution",
+        parts: [
+          { executableCode: { language: "PYTHON", code: "print(1)" } },
+          { codeExecutionResult: { outcome: "OUTCOME_OK", output: "1" } },
+        ],
+        expected: null,
+      },
+      {
+        name: "explicit stop with local call",
+        parts: [{ functionCall: { name: "lookup", args: {} } }],
+        finishReason: "STOP",
+        expected: { unified: "tool-calls", raw: "STOP" },
+      },
+      {
+        name: "explicit length",
+        parts: [{ functionCall: { name: "lookup", args: {} } }],
+        finishReason: "MAX_TOKENS",
+        expected: { unified: "length", raw: "MAX_TOKENS" },
+      },
+    ]
+  ) {
+    it(`classifies terminal DONE for ${fixture.name}`, async () => {
+      const parts = await collectParts(streamFromText(
+        data({
+          candidates: [{
+            content: { parts: fixture.parts },
+            ...("finishReason" in fixture ? { finishReason: fixture.finishReason } : {}),
+          }],
+        }) + "data: [DONE]\r\n\r\n",
+      ));
+      const finish = parts.at(-1);
+      assertEquals(
+        typeof finish === "object" && finish !== null && "finishReason" in finish
+          ? finish.finishReason
+          : undefined,
+        fixture.expected,
+      );
+    });
+  }
+
   it("uses the provider metadata byte ceiling for retained stream state", () => {
     assertEquals(MAX_GOOGLE_RETAINED_STATE_BYTES, MAX_GOOGLE_PROVIDER_METADATA_BYTES);
   });
@@ -149,7 +198,7 @@ describe("ext-llm-google/google-stream", () => {
       },
       {
         type: "finish",
-        finishReason: { unified: "stop", raw: "STOP" },
+        finishReason: { unified: "tool-calls", raw: "STOP" },
         usage: {
           inputTokens: 5,
           outputTokens: 7,
@@ -337,7 +386,7 @@ describe("ext-llm-google/google-stream", () => {
       },
       {
         type: "finish",
-        finishReason: { unified: "stop", raw: "STOP" },
+        finishReason: { unified: "tool-calls", raw: "STOP" },
         providerMetadata: {
           google: {
             rawAssistantParts: [signedThought, signedToolCall, unsignedToolCall],
@@ -411,7 +460,7 @@ describe("ext-llm-google/google-stream", () => {
     );
     assertEquals(parts.at(-1), {
       type: "finish",
-      finishReason: { unified: "stop", raw: "STOP" },
+      finishReason: { unified: "tool-calls", raw: "STOP" },
       providerMetadata: {
         google: { rawAssistantParts },
       },
@@ -973,7 +1022,7 @@ describe("ext-llm-google/google-stream", () => {
 
     assertEquals(parts.at(-1), {
       type: "finish",
-      finishReason: { unified: "stop", raw: "STOP" },
+      finishReason: { unified: "tool-calls", raw: "STOP" },
       providerMetadata: {
         google: { rawAssistantParts },
       },

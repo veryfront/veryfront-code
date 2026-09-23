@@ -13,6 +13,9 @@ normal idle deadline. They no longer end after the short local tool handoff
 grace period, which could discard signatures and fail the next model request.
 A committed tool whose required provider finish never arrives fails as a
 provider stream error instead of continuing with incomplete replay data.
+Normal Google completion (`STOP` or `[DONE]` without a finish reason) now
+preserves local tool handoff, including when text precedes the function call.
+Explicit provider limit and filter reasons remain unchanged.
 
 ### Changed: model IDs naming a provider this package does not list now route through Veryfront Cloud
 
