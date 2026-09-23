@@ -8,7 +8,7 @@ import {
 import {
   getRuntimeRequestContext,
   runWithRuntimeRequestContext,
-} from "./runtime-request-context.ts";
+} from "#veryfront/platform/runtime-request-context.ts";
 
 describe("platform/runtime-request-context", () => {
   it("does not expose execution credentials to a replaced Object.freeze", () => {
