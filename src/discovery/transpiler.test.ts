@@ -1159,6 +1159,29 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(npmrcRegistryFor(sources.memberNpmrc, "pkg"), "https://registry.npmjs.org/");
     });
 
+    it("preserves npm's exclusion cancellation order", async () => {
+      const memberPath = "apps/store-web";
+      const cases: [string[], string][] = [
+        [["**", "!apps/**", "apps/store-web"], memberPath],
+        [["**", "!apps/**", "!apps/store-web", "apps/store-web"], ""],
+        [["**", "!apps/**", "!libs/**", "!apps/store-web", "apps/store-web"], memberPath],
+        [["**", "!libs/**", "!apps/**", "!apps/store-web", "apps/store-web"], ""],
+        [["**", "!apps/**", "!apps/store-web", "apps/store-web", "apps/store-web"], memberPath],
+      ];
+      for (const [workspaces, expectedMember] of cases) {
+        const sources = await sourcesFor({
+          "package.json": JSON.stringify({ workspaces }),
+          "package-lock.json": publicLock("unpdf", "1.8.1", [memberPath]),
+          [`${memberPath}/package.json`]: "{}",
+        }, `${PROJECT}/${memberPath}`);
+        assertEquals(sources.memberPath, expectedMember, JSON.stringify(workspaces));
+        assertEquals(
+          sources.locked["node_modules/unpdf"]?.version,
+          expectedMember ? "1.8.1" : undefined,
+        );
+      }
+    });
+
     it("matches the workspace patterns npm's own globs accept", async () => {
       const member = `${PROJECT}/apps/store-web`;
       const declaring = async (workspaces: unknown, at = member) =>
@@ -2440,7 +2463,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(mod.default.ok, true);
     });
 
-    it("reads project dependency metadata once per discovery context", async () => {
+    it("shares project dependency metadata across concurrent and later imports", async () => {
       const files = {
         "package.json": JSON.stringify({ dependencies: { "fixture-package": "1.0.0" } }),
         "package-lock.json": JSON.stringify({ lockfileVersion: 3, packages: {} }),
@@ -2448,6 +2471,8 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
           `export default { name: "metadata-a" };`,
         "src/discovery/__fixtures__/compiled-runtime-tool-b.ts":
           `export default { name: "metadata-b" };`,
+        "src/discovery/__fixtures__/compiled-runtime-tool-c.ts":
+          `export default { name: "metadata-c" };`,
       };
       const reads: string[] = [];
       const adapter = createMockAdapter(files, { projectDir });
@@ -2466,17 +2491,24 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         allowHostProjectCodeExecution: true,
       };
 
-      await importModuleRaw(
-        `file://${projectDir}/src/discovery/__fixtures__/compiled-runtime-tool-a.ts`,
-        context,
-      );
-      await importModuleRaw(
-        `file://${projectDir}/src/discovery/__fixtures__/compiled-runtime-tool-b.ts`,
-        context,
+      const modules = await Promise.all(["a", "b"].map((suffix) =>
+        importModuleRaw(
+          `file://${projectDir}/src/discovery/__fixtures__/compiled-runtime-tool-${suffix}.ts`,
+          context,
+        )
+      ));
+      modules.push(
+        await importModuleRaw(
+          `file://${projectDir}/src/discovery/__fixtures__/compiled-runtime-tool-c.ts`,
+          context,
+        ),
       );
 
-      // The first metadata load reads each project-level file once. The second
-      // module must not add another read of either file.
+      assertEquals(
+        modules.map((mod) => (mod as { default: { name: string } }).default.name),
+        ["metadata-a", "metadata-b", "metadata-c"],
+      );
+      // Concurrent and later imports share the same project-level reads.
       assertEquals(reads.filter((path) => path === `${projectDir}/package.json`).length, 1);
       assertEquals(reads.filter((path) => path === `${projectDir}/package-lock.json`).length, 1);
     });
