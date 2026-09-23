@@ -2,48 +2,26 @@
  * Keep a weaker model inside the provider function-calling channel.
  *
  * Some models that advertise tool calling drift out of the channel when a run
- * carries a large system prompt and several tool schemas. Two shapes of that
- * failure reach an agent run as a silent wrong answer rather than an error:
+ * carries a large system prompt and several tool schemas: the model answers in
+ * prose that it has no tools, although the schemas were sent and billed as
+ * input. The loop sees no tool calls and completes, so the failure reaches an
+ * agent run as a silent wrong answer rather than an error.
  *
- * 1. The model answers in prose that it has no tools, although the schemas were
- *    sent and billed as input. The loop sees no tool calls and completes.
- * 2. The model writes the tool call it wanted to make as assistant text, for
- *    example `[{"name":"get_file","arguments":{"path":"a.txt"}}]`. The loop
- *    again sees no tool calls and completes, one step into a multi-step task.
- *
- * This module holds the two countermeasures and the model table that decides
- * which models get them, so the agent loop stays readable and the policy is
- * reviewable in one place.
+ * The countermeasure is to send `tool_choice` for the affected models until the
+ * model makes its first real tool call, which makes a first-step refusal
+ * impossible by construction. This module holds that policy and the model table
+ * that decides which models get it, so the agent loop stays readable and the
+ * policy is reviewable in one place.
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { privateJsonParse } from "#veryfront/security/private-json.ts";
-import { pushPrivateArray } from "#veryfront/security/private-array.ts";
-import {
-  privateTextEndsWith,
-  privateTextIndexOf,
-  privateTextSlice,
-  privateTextStartsWith,
-  privateTextTrim,
-} from "#veryfront/security/private-text.ts";
 import { splitModelId } from "./provider-tool-compat.ts";
-import type { RuntimeGenerateToolCall } from "./runtime-tool-types.ts";
 
-const ObjectKeys = Object.keys;
-const ObjectHasOwn = Object.hasOwn;
-const ArrayIsArray = Array.isArray;
-const ObjectGetPrototypeOf = Object.getPrototypeOf;
-const ObjectPrototype = Object.prototype;
 const IntrinsicReflectApply = Reflect.apply;
 const SetPrototypeHas = Set.prototype.has;
-const ArrayPrototypeIncludes = Array.prototype.includes;
 
 function hasSetValue<T>(set: ReadonlySet<T>, value: T): boolean {
   return IntrinsicReflectApply(SetPrototypeHas, set, [value]) as boolean;
-}
-
-function hasArrayValue<T>(values: readonly T[], value: T): boolean {
-  return IntrinsicReflectApply(ArrayPrototypeIncludes, values, [value]) as boolean;
 }
 
 /**
@@ -72,37 +50,29 @@ export interface ToolChannelProfile {
    * call, then releases the channel so the run can still end in prose.
    */
   readonly forceScope: "first-step" | "until-tool-call";
-  /**
-   * Convert an assistant message that is exactly a tool-call payload into real
-   * tool calls instead of ending the run on it.
-   */
-  readonly recoverTextToolCalls: boolean;
 }
 
 function createProfile(
   forceByDefault: boolean,
-  recoverTextToolCalls: boolean,
   toolChoiceValue: ForcedToolChoice,
 ): ToolChannelProfile {
   return Object.freeze({
     forceByDefault,
     toolChoiceValue,
     forceScope: "until-tool-call",
-    recoverTextToolCalls,
   });
 }
 
-const HOLDS_CHANNEL = createProfile(false, false, "any");
-const HOLDS_CHANNEL_OPENAI = createProfile(false, false, "required");
-const DRIFTS_FROM_CHANNEL = createProfile(false, false, "any");
-const NEEDS_FORCED_CHANNEL = createProfile(true, true, "any");
-
 /**
- * Providers whose models hold the tool channel on their own. Forcing a tool on
- * these would cost a legitimate no-tool answer and buy nothing, so they keep
- * the provider default and the text-recovery path stays off.
+ * The default: the model holds the tool channel on its own, so the request
+ * keeps the provider default. Forcing here would cost a legitimate no-tool
+ * answer and buy nothing.
  */
-const CHANNEL_HOLDING_PROVIDERS = new Set(["anthropic", "google", "google-ai-studio"]);
+const HOLDS_CHANNEL = createProfile(false, "any");
+/** The same policy for OpenAI, which spells the forced value `"required"`. */
+const HOLDS_CHANNEL_OPENAI = createProfile(false, "required");
+/** Forced until the model's first tool call. */
+const NEEDS_FORCED_CHANNEL = createProfile(true, "any");
 
 /**
  * Providers observed to answer in prose while tool schemas were in the request.
@@ -111,22 +81,12 @@ const CHANNEL_HOLDING_PROVIDERS = new Set(["anthropic", "google", "google-ai-stu
  */
 const FORCED_CHANNEL_PROVIDERS = new Set(["mistral"]);
 
-/** Per-model override, for a checkpoint that behaves unlike its provider. */
-const MODEL_TOOL_CHANNEL_OVERRIDES: Readonly<Record<string, ToolChannelProfile>> = Object.freeze(
-  {},
-);
-
 /** Resolve how this model is kept inside the tool-calling channel. */
 export function getToolChannelProfile(model?: string): ToolChannelProfile {
-  const { provider, modelName } = splitModelId(model);
-  const override = ObjectHasOwn(MODEL_TOOL_CHANNEL_OVERRIDES, `${provider}/${modelName}`)
-    ? MODEL_TOOL_CHANNEL_OVERRIDES[`${provider}/${modelName}`]
-    : undefined;
-  if (override) return override;
+  const { provider } = splitModelId(model);
   if (hasSetValue(FORCED_CHANNEL_PROVIDERS, provider)) return NEEDS_FORCED_CHANNEL;
   if (provider === "openai") return HOLDS_CHANNEL_OPENAI;
-  if (hasSetValue(CHANNEL_HOLDING_PROVIDERS, provider)) return HOLDS_CHANNEL;
-  return DRIFTS_FROM_CHANNEL;
+  return HOLDS_CHANNEL;
 }
 
 /**
@@ -148,20 +108,12 @@ function applyToolChannelMode(
   mode: ToolChannelMode,
 ): ToolChannelProfile {
   if (mode === "default") return channel;
-  if (mode === "off") return { ...channel, forceByDefault: false, recoverTextToolCalls: false };
+  if (mode === "off") return { ...channel, forceByDefault: false };
   return {
     ...channel,
     forceByDefault: true,
     forceScope: mode === "force-first-step" ? "first-step" : "until-tool-call",
   };
-}
-
-/** Whether text-emitted tool calls are read back for this model and mode. */
-export function shouldRecoverTextToolCalls(
-  profile: ToolChannelProfile,
-  mode: ToolChannelMode = "default",
-): boolean {
-  return applyToolChannelMode(profile, mode).recoverTextToolCalls;
 }
 
 /** Inputs that decide the `tool_choice` for one model step. */
@@ -195,205 +147,4 @@ export function resolveStepToolChoice(
   if (input.madeToolCall) return undefined;
   if (effective.forceScope === "first-step" && input.step !== 0) return undefined;
   return effective.toolChoiceValue;
-}
-
-const MAX_RECOVERABLE_TOOL_CALL_TEXT_LENGTH = 16_384;
-
-function readJsonFenceBody(text: string): string | undefined {
-  if (!privateTextStartsWith(text, "```")) return undefined;
-  const firstLineEnd = privateTextIndexOf(text, "\n", 3);
-  if (firstLineEnd < 0) return undefined;
-  const languageWithLineEnding = privateTextSlice(text, 3, firstLineEnd);
-  const language = privateTextEndsWith(languageWithLineEnding, "\r")
-    ? privateTextSlice(languageWithLineEnding, 0, languageWithLineEnding.length - 1)
-    : languageWithLineEnding;
-  if (language !== "" && language !== "json" && language !== "JSON") return undefined;
-  if (!privateTextEndsWith(text, "```")) return undefined;
-  const bodyEnd = text.length - 3;
-  const body = privateTextSlice(text, firstLineEnd + 1, bodyEnd);
-  return privateTextEndsWith(body, "\n") ? privateTextSlice(body, 0, body.length - 1) : body;
-}
-
-/** Keys a recovered payload may carry beside its name and arguments. */
-const IGNORED_PAYLOAD_KEYS = new Set(["id", "type", "index"]);
-const NAME_KEYS = ["name", "tool", "tool_name", "toolName", "function_name"];
-const ARGUMENT_KEYS = ["arguments", "parameters", "input", "args", "tool_input", "toolInput"];
-
-function readStringMember(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): string | undefined {
-  for (const key of keys) {
-    if (!ObjectHasOwn(value, key)) continue;
-    const member = value[key];
-    if (typeof member !== "string" || member.length === 0) return undefined;
-    return member;
-  }
-  return undefined;
-}
-
-function readArgumentsMember(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): { found: boolean; input?: Record<string, unknown> } {
-  for (const key of keys) {
-    if (!ObjectHasOwn(value, key)) continue;
-    const member = value[key];
-    if (typeof member === "string") {
-      let parsed: unknown;
-      try {
-        parsed = privateJsonParse(member);
-      } catch {
-        return { found: false };
-      }
-      return isPlainObject(parsed) ? { found: true, input: parsed } : { found: false };
-    }
-    if (isPlainObject(member)) return { found: true, input: member };
-    return { found: false };
-  }
-  return { found: false };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || ArrayIsArray(value)) return false;
-  const prototype = ObjectGetPrototypeOf(value);
-  return prototype === ObjectPrototype || prototype === null;
-}
-
-/**
- * Read one tool-call-shaped payload.
- *
- * Every key must be accounted for. A payload that carries anything beyond a
- * name, an argument bag, and the ignored wire keys is rejected, which is what
- * keeps ordinary JSON output from being read as a tool call.
- */
-function hasOnlyToolCallKeys(value: Record<string, unknown>): boolean {
-  let sawName = false;
-  let sawArguments = false;
-  for (const key of ObjectKeys(value)) {
-    if (!sawName && hasArrayValue(NAME_KEYS, key)) {
-      sawName = true;
-      continue;
-    }
-    if (!sawArguments && hasArrayValue(ARGUMENT_KEYS, key)) {
-      sawArguments = true;
-      continue;
-    }
-    if (!hasSetValue(IGNORED_PAYLOAD_KEYS, key)) return false;
-  }
-  return true;
-}
-
-function hasOnlyWrapperKeys(value: Record<string, unknown>): boolean {
-  for (const key of ObjectKeys(value)) {
-    if (key !== "function" && !hasSetValue(IGNORED_PAYLOAD_KEYS, key)) return false;
-  }
-  return true;
-}
-
-function readUnwrappedToolCallPayload(
-  value: unknown,
-  knownToolNames: ReadonlySet<string>,
-): { toolName: string; input: Record<string, unknown> } | undefined {
-  if (!isPlainObject(value)) return undefined;
-
-  const toolName = readStringMember(value, NAME_KEYS);
-  if (toolName === undefined || !hasSetValue(knownToolNames, toolName)) return undefined;
-
-  const argumentsMember = readArgumentsMember(value, ARGUMENT_KEYS);
-  if (!argumentsMember.found || argumentsMember.input === undefined) return undefined;
-  if (!hasOnlyToolCallKeys(value)) return undefined;
-  return { toolName, input: argumentsMember.input };
-}
-
-function readToolCallPayload(
-  value: unknown,
-  knownToolNames: ReadonlySet<string>,
-): { toolName: string; input: Record<string, unknown> } | undefined {
-  if (!isPlainObject(value)) return undefined;
-  // `{"function": {"name": …, "arguments": …}}` wraps the same payload.
-  if (ObjectHasOwn(value, "function")) {
-    if (!hasOnlyWrapperKeys(value)) return undefined;
-    return readToolCallPayload(value.function, knownToolNames);
-  }
-  return readUnwrappedToolCallPayload(value, knownToolNames);
-}
-
-function parseWholeMessageJson(text: string): unknown {
-  const trimmed = privateTextTrim(text);
-  if (trimmed.length === 0 || trimmed.length > MAX_RECOVERABLE_TOOL_CALL_TEXT_LENGTH) {
-    return undefined;
-  }
-  const fencedBody = readJsonFenceBody(trimmed);
-  const body = fencedBody === undefined ? trimmed : privateTextTrim(fencedBody);
-  const first = privateTextSlice(body, 0, 1);
-  if (first !== "{" && first !== "[") return undefined;
-  try {
-    return privateJsonParse(body);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Convert an assistant message that is exactly a tool-call payload into real
- * tool calls, or return `undefined` to leave the message as prose.
- *
- * The whole message must parse as JSON, every element must be a tool-call
- * payload with no unexplained keys, and every named tool must be one this step
- * actually sent. Prose that merely contains JSON never parses whole, so it
- * cannot reach the payload check.
- */
-const TOOL_CALL_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const TOOL_CALL_ID_LENGTH = 9;
-
-/**
- * Mint an id for a recovered tool call.
- *
- * A recovered call is echoed back to the provider on the next step as an
- * assistant `tool_calls` entry and a matching `tool` message. Mistral rejects
- * the whole request with HTTP 400 unless that id is exactly nine alphanumeric
- * characters, so the format is the strictest provider's, which every other
- * provider accepts as an opaque string.
- */
-export function createRecoveredToolCallId(): string {
-  const alphabetLength = TOOL_CALL_ID_ALPHABET.length;
-  const byteLimit = 256 - (256 % alphabetLength);
-  let id = "";
-  while (id.length < TOOL_CALL_ID_LENGTH) {
-    const bytes = crypto.getRandomValues(new Uint8Array(TOOL_CALL_ID_LENGTH));
-    for (let index = 0; index < bytes.length && id.length < TOOL_CALL_ID_LENGTH; index++) {
-      const byte = bytes[index]!;
-      if (byte >= byteLimit) continue;
-      id += TOOL_CALL_ID_ALPHABET[byte % alphabetLength];
-    }
-  }
-  return id;
-}
-
-export function recoverTextEmittedToolCalls(
-  text: string,
-  knownToolNames: ReadonlySet<string>,
-  createToolCallId: () => string = createRecoveredToolCallId,
-): RuntimeGenerateToolCall[] | undefined {
-  if (knownToolNames.size === 0) return undefined;
-  const parsed = parseWholeMessageJson(text);
-  if (parsed === undefined) return undefined;
-
-  const payloads = Array.isArray(parsed) ? parsed : [parsed];
-  if (payloads.length === 0) return undefined;
-
-  const toolCalls: RuntimeGenerateToolCall[] = [];
-  for (let index = 0; index < payloads.length; index++) {
-    if (!ObjectHasOwn(payloads, index)) return undefined;
-    const payload = readToolCallPayload(payloads[index], knownToolNames);
-    if (payload === undefined) return undefined;
-    pushPrivateArray(toolCalls, {
-      toolCallId: createToolCallId(),
-      toolName: payload.toolName,
-      input: payload.input,
-    });
-  }
-
-  return toolCalls;
 }

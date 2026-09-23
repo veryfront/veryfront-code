@@ -272,10 +272,8 @@ export { createStreamState, processStream } from "./chat-stream-handler.ts";
 import { resolveStreamLifecycleModeFromEnv } from "./stream-lifecycle-mode.ts";
 import {
   getToolChannelProfile,
-  recoverTextEmittedToolCalls,
   resolveStepToolChoice,
   resolveToolChannelModeFromEnv,
-  shouldRecoverTextToolCalls,
 } from "./tool-channel.ts";
 export type {
   ChatStreamCallbacks,
@@ -357,11 +355,7 @@ import {
   resolveValidatedTurnInput,
 } from "./input-utils.ts";
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
-import type {
-  RuntimeGenerateTextResult,
-  RuntimeGenerateToolCall,
-  RuntimeGenerateToolResult,
-} from "./runtime-tool-types.ts";
+import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import {
   summarizeErrorCausesForLog,
@@ -1471,7 +1465,7 @@ function synchronizeRuntimeToolInventory(
   }
   const instructions = withRuntimeToolInventory(
     systemPrompt,
-    agentWriteApply(agentWriteArraySort, ObjectKeys(runtimeTools ?? {}), [compareStrings]),
+    Object.keys(runtimeTools ?? {}).sort(compareStrings),
     deferredTools,
   );
   return typeof systemPrompt === "string" ? flattenSystemInstructions(instructions) : instructions;
@@ -1731,41 +1725,6 @@ function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
     `Agent "${agentId}" has tools configured, but model "${modelId}" does not support ` +
       "tool calling. Tools will be skipped.",
   );
-}
-
-/**
- * Read a tool call the model wrote as assistant text back into the tool
- * channel.
- *
- * The recovered result carries the tool calls and drops the text, so the
- * assistant message holds a tool call rather than the raw JSON, and the loop
- * continues exactly as it would after a provider-native tool call. The run is
- * left untouched when nothing recovers.
- */
-function recoverToolCallsEmittedAsText(
-  response: RuntimeGenerateTextResult,
-  context: {
-    enabled: boolean;
-    agentId: string;
-    modelId: string;
-    step: number;
-    toolNames: ReadonlySet<string>;
-  },
-): RuntimeGenerateTextResult {
-  if (!context.enabled) return response;
-  if (response.toolCalls?.length) return response;
-  if (!response.text) return response;
-
-  const recovered = recoverTextEmittedToolCalls(response.text, context.toolNames);
-  if (recovered === undefined) return response;
-
-  logger.warn(
-    `Agent "${context.agentId}": model "${context.modelId}" wrote ${recovered.length} tool ` +
-      `call(s) as assistant text on step ${context.step}. Veryfront read them back into the ` +
-      "tool channel. Use a model that holds the function-calling channel for this agent.",
-  );
-
-  return { ...response, text: "", toolCalls: recovered, finishReason: "tool-calls" };
 }
 
 /**
@@ -3047,7 +3006,7 @@ export class AgentRuntime {
           madeToolCall: toolCalls.length > 0,
           hasOutputSchema: outputSchema !== undefined,
         }, toolChannelMode);
-        const rawResponse = await withSpan("agent.generate_text", async (span) => {
+        const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
@@ -3084,18 +3043,6 @@ export class AgentRuntime {
           return result;
         });
         throwIfAborted(abortSignal);
-
-        // A model that wrote its tool call as assistant text ends the run one
-        // step into a multi-step task. Read that payload back into the tool
-        // channel so the loop continues instead of returning the JSON as prose.
-        const response = recoverToolCallsEmittedAsText(rawResponse, {
-          enabled: outputSchema === undefined &&
-            shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode),
-          agentId: this.id,
-          modelId: effectiveModel,
-          step,
-          toolNames: stepToolNames,
-        });
 
         // Accumulate usage
         if (response.usage) {
@@ -3728,11 +3675,7 @@ export class AgentRuntime {
         ),
         preparedStep.integrationToolDiscovery,
       );
-      const runtimeToolNames = agentWriteApply(
-        agentWriteArraySort,
-        ObjectKeys(runtimeTools ?? {}),
-        [compareStrings],
-      );
+      const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
       const stepToolChoice = resolveStepToolChoice(toolChannelProfile, {
         step,
         hasTools: runtimeToolNames.length > 0,
@@ -3782,11 +3725,6 @@ export class AgentRuntime {
       );
 
       const state = createStreamState();
-      let recoveredStreamingToolCalls: RuntimeGenerateToolCall[] | undefined;
-      let streamingTextCommitted = false;
-      const deferStreamingText = outputSchema === undefined &&
-        shouldRecoverTextToolCalls(toolChannelProfile, toolChannelMode) &&
-        runtimeToolNames.length > 0;
       // Hold a possible replay only while it remains a prefix of the text the
       // client already received. Once it diverges, resume live delivery.
       const deferInterruptedRecoveryOutput = step === interruptedLocalToolBatchRecoveryStep &&
@@ -3984,20 +3922,6 @@ export class AgentRuntime {
           }
           releaseDeferredRecoveryOutputAfterDivergence();
         },
-        onTextComplete: deferStreamingText
-          ? (text, emit) => {
-            recoveredStreamingToolCalls = !streamingTextCommitted && state.toolCalls.size === 0
-              ? recoverTextEmittedToolCalls(text, new Set(runtimeToolNames))
-              : undefined;
-            if (recoveredStreamingToolCalls === undefined) emit();
-          }
-          : undefined,
-        onTextBoundary: deferStreamingText
-          ? (release) => {
-            streamingTextCommitted = true;
-            release();
-          }
-          : undefined,
         onUsage: (usage) => {
           accumulateUsage(totalUsage, usage);
           // Snapshot, not the live object: a later step must not mutate a total
@@ -4018,46 +3942,6 @@ export class AgentRuntime {
         },
       }, abortSignal);
       throwIfAborted(abortSignal);
-      if (recoveredStreamingToolCalls !== undefined) {
-        state.accumulatedText = "";
-        state.finishReason = "tool-calls";
-        for (
-          let recoveredIndex = 0;
-          recoveredIndex < recoveredStreamingToolCalls.length;
-          recoveredIndex++
-        ) {
-          if (!ObjectHasOwn(recoveredStreamingToolCalls, recoveredIndex)) continue;
-          const recovered = recoveredStreamingToolCalls[recoveredIndex]!;
-          const argumentsText = privateJsonStringify(recovered.input);
-          const dynamic = isDynamicTool(recovered.toolName);
-          state.toolCalls.set(recovered.toolCallId, {
-            id: recovered.toolCallId,
-            name: recovered.toolName,
-            arguments: argumentsText,
-            inputDeltas: [argumentsText],
-            inputAnnounced: true,
-            inputAvailable: true,
-            dynamic,
-          });
-          sendSSE(controller, encoder, {
-            type: "tool-input-start",
-            toolCallId: recovered.toolCallId,
-            toolName: recovered.toolName,
-            ...(dynamic ? { dynamic: true } : {}),
-          });
-          sendSSE(controller, encoder, {
-            type: "tool-input-available",
-            toolCallId: recovered.toolCallId,
-            toolName: recovered.toolName,
-            input: recovered.input,
-            ...(dynamic ? { dynamic: true } : {}),
-          });
-        }
-        logger.warn(
-          `Agent "${this.id}": a streaming model emitted ${recoveredStreamingToolCalls.length} ` +
-            "tool call(s) as assistant text; Veryfront recovered them into the tool channel.",
-        );
-      }
       if (stepToolChoice !== undefined && state.toolCalls.size === 0) {
         warnToolChannelNeverEntered({
           agentId: this.id,

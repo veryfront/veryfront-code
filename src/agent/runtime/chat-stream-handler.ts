@@ -1,11 +1,7 @@
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
-import {
-  joinPrivateArray,
-  pushPrivateArray,
-  somePrivateArray,
-} from "#veryfront/security/private-array.ts";
+import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
   closePrivateStream,
@@ -379,10 +375,6 @@ export interface ChatStreamState {
 
 export interface ChatStreamCallbacks {
   onChunk?: (chunk: string) => void;
-  /** Hold text until the caller classifies the complete assistant turn. */
-  onTextComplete?: (text: string, emit: () => void) => void;
-  /** Release held text before a later non-text event is delivered. */
-  onTextBoundary?: (release: () => void) => void;
   onUsage?: (usage: {
     promptTokens?: number;
     completionTokens?: number;
@@ -703,58 +695,6 @@ function finalizeActiveUnresolvedProviderToolCalls(
   }
 }
 
-function emitDeferredText(
-  controller: ReadableStreamDefaultController,
-  encoder: TextEncoder,
-  textPartId: string | undefined,
-  text: string,
-  onChunk?: (chunk: string) => void,
-): void {
-  if (text.length === 0) return;
-  sendSSE(controller, encoder, { type: "text-start", id: textPartId });
-  sendSSE(controller, encoder, { type: "text-delta", id: textPartId, delta: text });
-  onChunk?.(text);
-  sendSSE(controller, encoder, { type: "text-end", id: textPartId });
-}
-
-interface DeferredTextBuffer {
-  readonly deferredText: string[];
-  readonly emitBufferedText: (text: string) => void;
-  readonly releaseDeferredText: () => void;
-}
-
-function createDeferredTextBuffer(
-  controller: ReadableStreamDefaultController,
-  encoder: TextEncoder,
-  textPartId: string | undefined,
-  onChunk?: (chunk: string) => void,
-): DeferredTextBuffer {
-  const deferredText: string[] = [];
-  let deferredTextSegmentIndex = 0;
-  const emitBufferedText = (text: string) => {
-    if (text.length === 0) return;
-    const segmentId = textPartId === undefined || deferredTextSegmentIndex === 0
-      ? textPartId
-      : `${textPartId}:${deferredTextSegmentIndex}`;
-    deferredTextSegmentIndex += 1;
-    emitDeferredText(controller, encoder, segmentId, text, onChunk);
-  };
-  const releaseDeferredText = () => {
-    const text = joinPrivateArray(deferredText, "");
-    deferredText.length = 0;
-    emitBufferedText(text);
-  };
-  return { deferredText, emitBufferedText, releaseDeferredText };
-}
-
-function releaseTextAtBoundary(
-  callbacks: ChatStreamCallbacks | undefined,
-  releaseDeferredText: () => void,
-): void {
-  if (callbacks?.onTextBoundary) callbacks.onTextBoundary(releaseDeferredText);
-  else releaseDeferredText();
-}
-
 async function processActiveStream(
   source: RuntimeStreamSource,
   state: ChatStreamState,
@@ -764,13 +704,6 @@ async function processActiveStream(
   callbacks: ChatStreamCallbacks | undefined,
   abortSignal: AbortSignal | undefined,
 ): Promise<void> {
-  const deferTextDelivery = callbacks?.onTextComplete !== undefined;
-  const { deferredText, emitBufferedText, releaseDeferredText } = createDeferredTextBuffer(
-    controller,
-    encoder,
-    textPartId,
-    callbacks?.onChunk,
-  );
   const baseAdapter = createRuntimeStreamProviderAdapter({
     open: (signal) => source.open(signal).fullStream,
     options: {
@@ -821,45 +754,19 @@ async function processActiveStream(
   const live = createStreamLifecycleLiveAdapter({ textPartId });
   let deliveryError: unknown;
   let streamOutcome!: StreamOutcome;
-  let completedText: string | undefined;
   try {
     for await (const frame of getPrivateAsyncIterator(run.frames)) {
       if (frame.class === "semantic" && frame.event.type === "text_content") {
-        if (deferTextDelivery) pushPrivateArray(deferredText, frame.event.delta);
-        else callbacks?.onChunk?.(frame.event.delta);
+        callbacks?.onChunk?.(frame.event.delta);
       }
       if (frame.class === "semantic" && frame.event.type === "usage") {
         callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
       }
       const events = live.encode(frame);
-      if (deferTextDelivery) {
-        let hasNonTextEvent = false;
-        for (let index = 0; index < events.length; index++) {
-          if (!hasOwn(events, index)) continue;
-          const eventType = (events[index] as { type?: unknown }).type;
-          if (
-            eventType !== "text-start" && eventType !== "text-delta" && eventType !== "text-end" &&
-            eventType !== "finish"
-          ) {
-            hasNonTextEvent = true;
-            break;
-          }
-        }
-        if (hasNonTextEvent && deferredText.length > 0) {
-          releaseTextAtBoundary(callbacks, releaseDeferredText);
-        }
-      }
       for (let index = 0; index < events.length; index++) {
-        if (!hasOwn(events, index)) continue;
-        const eventType = (events[index] as { type?: unknown }).type;
-        if (
-          deferTextDelivery &&
-          (eventType === "text-start" || eventType === "text-delta" || eventType === "text-end")
-        ) continue;
-        sendSSE(controller, encoder, events[index]!);
+        if (hasOwn(events, index)) sendSSE(controller, encoder, events[index]!);
       }
     }
-    if (deferTextDelivery) completedText = joinPrivateArray(deferredText, "");
   } catch (error) {
     // A delivery failure is the primary run-finalization error. The
     // consumer_stopped Stream Outcome recorded below is secondary cleanup
@@ -872,17 +779,6 @@ async function processActiveStream(
     if (deliveryError === undefined) {
       applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
       finalizeActiveUnresolvedProviderToolCalls(state, controller, encoder);
-      if (deferTextDelivery) {
-        if (streamOutcome.status === "completed" || streamOutcome.status === "tool_handoff") {
-          callbacks.onTextComplete!(completedText ?? "", () => {
-            emitBufferedText(completedText ?? "");
-          });
-        } else {
-          releaseDeferredText();
-        }
-      }
-    } else if (deferTextDelivery) {
-      releaseDeferredText();
     }
   }
   if (streamOutcome.status === "failed") {
@@ -973,15 +869,7 @@ export function processStreamInternal(
     : resultOrSource;
 
   const process = async () => {
-    const deferTextDelivery = callbacks?.onTextComplete !== undefined;
-    const { deferredText, emitBufferedText, releaseDeferredText } = createDeferredTextBuffer(
-      controller,
-      encoder,
-      textPartId,
-      callbacks?.onChunk,
-    );
     let eventCount = 0;
-    let streamCompleted = false;
     let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
       ? internals.createShadow({
         availableToolNames: callbacks?.availableToolNames ?? null,
@@ -1099,7 +987,6 @@ export function processStreamInternal(
         ? textPartId
         : `${textPartId}:${nextTextSegmentIndex}`;
       nextTextSegmentIndex += 1;
-      if (deferTextDelivery) return;
       sendSSE(controller, encoder, {
         type: "text-start",
         id: activeTextPartId,
@@ -1112,10 +999,6 @@ export function processStreamInternal(
       }
 
       textOpen = false;
-      if (deferTextDelivery) {
-        activeTextPartId = undefined;
-        return;
-      }
       sendSSE(controller, encoder, {
         type: "text-end",
         id: activeTextPartId,
@@ -1369,9 +1252,6 @@ export function processStreamInternal(
         const typedPart = part as RuntimeStreamPart;
 
         if (typedPart.type.startsWith("data-")) {
-          if (deferTextDelivery && deferredText.length > 0) {
-            releaseTextAtBoundary(callbacks, releaseDeferredText);
-          }
           sendSSE(controller, encoder, {
             type: typedPart.type,
             data: "data" in typedPart ? typedPart.data : undefined,
@@ -1379,22 +1259,11 @@ export function processStreamInternal(
           continue;
         }
 
-        if (
-          deferTextDelivery && deferredText.length > 0 && typedPart.type !== "text-delta" &&
-          typedPart.type !== "finish" && (typedPart.type as string) !== "text-end"
-        ) {
-          releaseTextAtBoundary(callbacks, releaseDeferredText);
-        }
-
         switch (typedPart.type) {
           case "text-delta": {
             closeReasoningSegment();
             openTextSegment();
             state.accumulatedText += typedPart.text;
-            if (deferTextDelivery) {
-              pushPrivateArray(deferredText, typedPart.text);
-              break;
-            }
             sendSSE(controller, encoder, {
               type: "text-delta",
               id: activeTextPartId,
@@ -1894,9 +1763,7 @@ export function processStreamInternal(
           "stream.lifecycle_shadow.divergence_categories": [...report.categories],
         });
       }
-      streamCompleted = true;
     } finally {
-      if (deferTextDelivery && !streamCompleted) releaseDeferredText();
       finalizeUnresolvedProviderToolCalls();
       // `throwIfAborted` and `streamIterator.next()` can both throw past the
       // loop, so the upstream iterator is released here rather than only on the
@@ -1909,12 +1776,6 @@ export function processStreamInternal(
       "stream.tool_calls": state.toolCalls.size,
       "stream.text_length": state.accumulatedText.length,
     });
-    if (deferTextDelivery) {
-      const text = joinPrivateArray(deferredText, "");
-      callbacks.onTextComplete!(text, () => {
-        emitBufferedText(text);
-      });
-    }
   };
 
   return withSpan(traceSpanName, process, traceAttributes, { kind: SpanKind.CLIENT });
