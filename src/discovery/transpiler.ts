@@ -999,7 +999,7 @@ function workspacePatterns(
   patterns: readonly unknown[],
 ): { included: string[]; excluded: string[] } | null {
   const included: string[] = [];
-  const excluded: string[] = [];
+  let excluded: string[] = [];
   for (const pattern of patterns) {
     if (typeof pattern !== "string") continue;
     const marks = /^!*/.exec(pattern)![0].length;
@@ -1018,17 +1018,18 @@ function workspacePatterns(
       }
       // The cancellation is pattern against pattern, as npm does it: the
       // negation is the glob and the later positive is the path it covers.
-      // Written as npm's own splice loop rather than a filter, because the
-      // splice shifts the next negation into the index the loop has just
-      // finished with and the `++` then steps over it -- so of two ADJACENT
-      // matching negations npm removes only the first, and the second still
-      // excludes the member. Reproducing that is the point: this decides
-      // whether npm considers the project a member, not what it should.
-      for (let index = 0; index < excluded.length; ++index) {
-        if (matchesWorkspacePattern(excluded[index]!.split("/"), expanded.split("/"))) {
-          excluded.splice(index, 1);
+      // npm's splice loop skips the exclusion immediately after a removal.
+      // Preserve that ordering explicitly, without mutating the array being
+      // traversed: adjacent matching exclusions must not all be cancelled.
+      let skipNext = false;
+      excluded = excluded.filter((exclusion) => {
+        if (skipNext) {
+          skipNext = false;
+          return true;
         }
-      }
+        skipNext = matchesWorkspacePattern(exclusion.split("/"), expanded.split("/"));
+        return !skipNext;
+      });
       included.push(expanded);
     }
   }
@@ -1875,10 +1876,9 @@ async function readProjectDependencyMetadata(
   try {
     return await pending;
   } catch (error) {
-    // Do not retain a failed read if an adapter recovers during this run.
-    if (projectDependencyMetadataCache.get(context) === pending) {
-      projectDependencyMetadataCache.delete(context);
-    }
+    // Only the cache miss that installed this promise reaches this catch;
+    // concurrent readers return it above, so no newer entry can replace it.
+    projectDependencyMetadataCache.delete(context);
     throw error;
   }
 }
