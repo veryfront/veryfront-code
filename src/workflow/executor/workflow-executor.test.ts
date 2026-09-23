@@ -24,6 +24,8 @@ import { ApprovalManager } from "../runtime/approval-manager.ts";
 import type { WorkflowRun } from "../types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
 import { FakeTime } from "#std/testing/time";
+import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   getActiveSourceIntegrationPolicy,
   runWithExactSourceIntegrationPolicy,
@@ -352,6 +354,70 @@ class RejectFirstCancelledWaitReadBackend extends MemoryBackend {
 }
 
 describe("workflow/executor/workflow-executor", () => {
+  it("rejects connected durable workflow execution before accessing its backend", async () => {
+    let backendCalls = 0;
+    class RecordingBackend extends MemoryBackend {
+      override createRun(run: WorkflowRun): Promise<void> {
+        backendCalls++;
+        return super.createRun(run);
+      }
+      override getRun(runId: string): Promise<WorkflowRun | null> {
+        backendCalls++;
+        return super.getRun(runId);
+      }
+    }
+    const executor = new WorkflowExecutor({
+      backend: new RecordingBackend(),
+      enableLocking: false,
+    });
+    executor.register(
+      workflow({
+        id: "connected",
+        steps: [step("work", { tool: createTool("work", () => "done") })],
+      }).definition,
+    );
+    await runWithRequestContext({
+      projectId: "source-b",
+      projectSlug: "source-b",
+      token: "release-read-token",
+      productionMode: true,
+      releaseId: "release-b",
+    }, () =>
+      runWithRuntimeRequestContext({
+        projectId: "consumer-a",
+        projectSlug: "consumer-a",
+        token: "run-token",
+        productionMode: false,
+      }, async () => {
+        for (
+          const operation of [
+            () => executor.start("connected", {}),
+            () => executor.resume("existing-run"),
+            () => executor.retry("existing-run"),
+            () => executor.executeAsync("existing-run"),
+          ]
+        ) {
+          await assertRejects(
+            operation,
+            VeryfrontError,
+            "Connected runtimes cannot execute durable workflows",
+          );
+        }
+        await runWithRequestContext({
+          projectId: "consumer-a",
+          projectSlug: "consumer-a",
+          token: "run-token",
+          productionMode: false,
+        }, () =>
+          assertRejects(
+            () => executor.start("connected", {}),
+            VeryfrontError,
+            "Connected runtimes cannot execute durable workflows",
+          ));
+      }));
+    assertEquals(backendCalls, 0);
+  });
+
   it("sends only changed context keys to key-merge backends at DAG boundaries", async () => {
     const backend = new BoundaryPatchRecordingBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });

@@ -36,6 +36,13 @@ pool bounds this retention with memory-triggered, graceful pod recycling. Dedica
 runtime deployments need their own equivalent recycling policy before enabling
 repeated connected runs; the shared pool's policy does not cover those deployments.
 
+Connected agents and their child agent runs are supported. Starting, resuming, or
+retrying a source-defined durable workflow from connected execution is rejected
+before accessing the workflow backend. Durable workflow recovery needs a separate
+persisted source authorization and credential-renewal contract; ordinary same-project
+workflows and explicit calls to the consuming project's existing APIs keep their
+existing behavior.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see

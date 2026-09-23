@@ -20,3 +20,8 @@ export function getRuntimeRequestContext(): Readonly<RequestContext> | null {
   return apply(getStore, executionContextStorage, []) as Readonly<RequestContext> | undefined ??
     getCurrentRequestContext();
 }
+
+/** Whether execution has an independently bound identity instead of source tenancy. */
+export function hasRuntimeRequestContextOverride(): boolean {
+  return apply(getStore, executionContextStorage, []) !== undefined;
+}
