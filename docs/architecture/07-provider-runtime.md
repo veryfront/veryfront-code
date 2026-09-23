@@ -74,3 +74,12 @@ Primary source areas:
 
 - [`veryfront/provider`](../api-reference/veryfront/provider.md)
 - [`veryfront/embedding`](../api-reference/veryfront/embedding.md)
+
+### Tool continuation and final stream metadata
+
+A model runtime sets `runtimeCapabilities.toolCallStreamRequiresFinish` when a
+local tool continuation needs metadata from the provider's final stream part.
+Google uses this capability to preserve Gemini thought signatures across tool
+turns. Both stream lifecycles wait for provider completion under the normal idle
+deadline instead of ending the stream after the local tool commit grace period.
+Hosted model bridges preserve this capability.

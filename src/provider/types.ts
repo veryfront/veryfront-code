@@ -207,6 +207,8 @@ export interface ModelRuntimeCapabilities {
    * legacy behavior: false for legacy local runtimes and true otherwise.
    */
   readonly toolCalling?: boolean;
+  /** Whether local tool continuation must wait for the provider's finish metadata. */
+  readonly toolCallStreamRequiresFinish?: boolean;
   /**
    * Whether the runtime accepts structured response formats.
    *

@@ -205,9 +205,11 @@ export function runStreamLifecycle<TProviderPart>(
         }
         if (raced.kind === "provider_deadline") {
           notifyObserver(() => observer?.onDeadline(raced.deadline));
+          // Promoting buffered JSON here would hand off without final replay
+          // metadata, even though the provider never committed the tool input.
           if (
-            raced.deadline === "tool_input_idle" ||
-            raced.deadline === "tool_commit_grace"
+            !policy.requireProviderFinish &&
+            (raced.deadline === "tool_input_idle" || raced.deadline === "tool_commit_grace")
           ) {
             const resolved = resolveLocalToolDeadline(
               reducer,
@@ -241,7 +243,9 @@ export function runStreamLifecycle<TProviderPart>(
               yield frame;
             }
           } else {
-            const code = raced.deadline === "first_progress"
+            const code = raced.deadline === "tool_input_idle"
+              ? "TOOL_INPUT_TIMEOUT" as const
+              : raced.deadline === "first_progress"
               ? "FIRST_PROGRESS_TIMEOUT" as const
               : "SEMANTIC_IDLE_TIMEOUT" as const;
             const failed = resolveStreamOutcome({
@@ -252,7 +256,9 @@ export function runStreamLifecycle<TProviderPart>(
                 phase: reducer.snapshot.phase,
                 source: "provider",
                 retryable: true,
-                publicMessage: code === "FIRST_PROGRESS_TIMEOUT"
+                publicMessage: code === "TOOL_INPUT_TIMEOUT"
+                  ? "Provider did not finish tool input before the deadline"
+                  : code === "FIRST_PROGRESS_TIMEOUT"
                   ? "Provider did not produce semantic progress"
                   : "Provider stopped producing semantic progress",
               },
@@ -287,6 +293,18 @@ export function runStreamLifecycle<TProviderPart>(
         if (next.done) {
           if (reducer.terminal) {
             settleReducerTerminal(outcome, reducer, elapsedMs());
+          } else if (
+            policy.requireProviderFinish &&
+            reducer.snapshot.tools.some((tool) =>
+              tool.providerExecuted !== true && tool.phase === "input_ready"
+            )
+          ) {
+            settleProviderFailure(outcome, reducer, undefined, {
+              code: "PROVIDER_STREAM_ERROR",
+              publicMessage: "Provider stream ended before required tool continuation metadata",
+              retryable: true,
+              terminal: false,
+            }, elapsedMs());
           } else {
             outcome.settle(resolveStreamOutcome({
               snapshot: reducer.snapshot,
@@ -341,6 +359,7 @@ export function runStreamLifecycle<TProviderPart>(
             reducer,
             signal,
             elapsedMs(),
+            { recoverUnavailableToolCalls: policy.requireProviderFinish === true },
           );
           reducer = reduced.state;
           if (reduced.semanticProgress) {

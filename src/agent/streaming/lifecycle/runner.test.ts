@@ -17,6 +17,21 @@ import type {
 } from "./types.ts";
 
 describe("runStreamLifecycle", () => {
+  it("rejects EOF before required provider finish instead of handing off a committed tool", async () => {
+    const provider = createScriptedStreamProvider<StreamSignal>([{
+      kind: "protocol",
+      event: { type: "tool_input_ready", toolCallId: "t1", toolName: "lookup", input: {} },
+    }]);
+    const run = runStreamLifecycle({ provider, policy: { requireProviderFinish: true } });
+    for await (const _frame of run.frames) { /* drain */ }
+    const outcome = await run.outcome;
+    assertEquals(outcome.status, "failed");
+    if (outcome.status === "failed") {
+      assertEquals(outcome.error.code, "PROVIDER_STREAM_ERROR");
+      assertEquals(outcome.error.source, "provider");
+    }
+  });
+
   it("consumes decoded signals without consulting their own array iterator", async () => {
     const signals: StreamSignal[] = [
       { kind: "protocol", event: { type: "text_content", delta: "synthetic private signal" } },

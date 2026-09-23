@@ -1101,25 +1101,224 @@ describe("chat-stream-handler", () => {
       assertEquals(events, []);
     });
 
-    it("times out an idle output stream after assistant output starts", async () => {
+    for (const requireProviderFinish of [true, false]) {
+      it(`preserves text-only idle behavior with required finish (${requireProviderFinish})`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        const result = {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "text-delta", text: "Ready." };
+              await new Promise(() => {});
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        };
+
+        await processStream(result, state, controller, encoder, "t", {
+          streamIdleTimeoutMs: 10,
+          requireProviderFinish,
+        });
+
+        assertEquals(state.accumulatedText, "Ready.");
+        assertEquals(state.finishReason, "stop");
+      });
+    }
+
+    for (const startAnotherInput of [false, true]) {
+      it(`rejects a committed local tool at idle before required finish (second input: ${startAnotherInput})`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        const parts = [
+          { type: "tool-input-start", id: "local-1", toolName: "list_skills" },
+          { type: "tool-input-delta", id: "local-1", delta: "{}" },
+          { type: "tool-input-end", id: "local-1" },
+          ...(startAnotherInput
+            ? [{ type: "tool-input-start", id: "local-2", toolName: "lookup" }]
+            : []),
+        ];
+        let nextPartIndex = 0;
+        let markPendingReadStarted: () => void = () => {};
+        const pendingReadStarted = new Promise<void>((resolve) => {
+          markPendingReadStarted = resolve;
+        });
+        let releasePendingRead: () => void = () => {};
+        const pendingRead = new Promise<IteratorResult<unknown>>((resolve) => {
+          releasePendingRead = () => resolve({ done: true, value: undefined });
+        });
+        let nextTimerId = 0;
+        const pendingTimers = new Map<number, { callback: () => void; timeoutMs: number }>();
+        const result = {
+          fullStream: {
+            [Symbol.asyncIterator]() {
+              return {
+                next(): Promise<IteratorResult<unknown>> {
+                  const part = parts[nextPartIndex++];
+                  if (part !== undefined) {
+                    return Promise.resolve({ done: false, value: part });
+                  }
+                  markPendingReadStarted();
+                  return pendingRead;
+                },
+                return(): Promise<IteratorResult<unknown>> {
+                  releasePendingRead();
+                  return Promise.resolve({ done: true, value: undefined });
+                },
+              };
+            },
+          },
+          textStream: emptyAsyncIterable(),
+        };
+
+        const processing = processStream(result, state, controller, encoder, "t", {
+          requireProviderFinish: true,
+          streamIdleTimeoutMs: 25,
+          localToolInputIdleTimeoutMs: 25,
+          setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
+            const id = nextTimerId++;
+            pendingTimers.set(id, { callback, timeoutMs: timeoutMs ?? 0 });
+            return id;
+          }) as typeof setTimeout,
+          clearTimeoutFn: ((id: number) => {
+            pendingTimers.delete(id);
+          }) as typeof clearTimeout,
+        });
+
+        await pendingReadStarted;
+        const pendingDeadlines = [...pendingTimers.values()];
+        assertEquals(pendingDeadlines.length, 1);
+        assertEquals(pendingDeadlines[0]?.timeoutMs, 25);
+        pendingDeadlines[0]?.callback();
+
+        const error = await assertRejects(() => processing) as Error;
+        assertEquals(error.name, "RuntimeProviderStreamFailure");
+        assertEquals(state.finishReason, null);
+      });
+
+      it(`rejects EOF after a committed local tool before required finish (second input: ${startAnotherInput})`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+
+        const error = await assertRejects(() =>
+          processStream(
+            createMockResult([
+              { type: "tool-input-start", id: "local-1", toolName: "list_skills" },
+              { type: "tool-input-delta", id: "local-1", delta: "{}" },
+              { type: "tool-input-end", id: "local-1" },
+              ...(startAnotherInput
+                ? [{ type: "tool-input-start", id: "local-2", toolName: "lookup" }]
+                : []),
+            ]),
+            state,
+            controller,
+            encoder,
+            "t",
+            { requireProviderFinish: true },
+          )
+        ) as Error;
+
+        assertEquals(error.name, "RuntimeProviderStreamFailure");
+        assertEquals(state.finishReason, null);
+      });
+    }
+
+    it("restores local tool commit grace after required provider finish on an open stream", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
+      const providerMetadata = {
+        google: { rawAssistantParts: [{ thoughtSignature: "test-signature" }] },
+      };
+      const deadlinesAfterFinish: number[] = [];
       const result = {
         fullStream: {
           async *[Symbol.asyncIterator]() {
-            yield { type: "text-delta", text: "Ready." };
+            yield { type: "tool-input-start", id: "local-1", toolName: "lookup" };
+            yield { type: "tool-input-delta", id: "local-1", delta: "{}" };
+            yield { type: "tool-input-end", id: "local-1" };
+            yield { type: "finish", finishReason: "tool-calls", providerMetadata };
             await new Promise(() => {});
           },
         },
         textStream: emptyAsyncIterable(),
       };
-
       await processStream(result, state, controller, encoder, "t", {
-        streamIdleTimeoutMs: 10,
+        requireProviderFinish: true,
+        localToolCommitGraceMs: 7,
+        streamIdleTimeoutMs: 25,
+        setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
+          if (state.providerMetadata === providerMetadata) {
+            deadlinesAfterFinish.push(timeoutMs ?? 0);
+            queueMicrotask(callback);
+          }
+          return 0;
+        }) as typeof setTimeout,
+        clearTimeoutFn: () => {},
       });
+      assertEquals(deadlinesAfterFinish, [7]);
+      assertEquals(state.providerMetadata, providerMetadata);
+      assertEquals(state.finishReason, "tool-calls");
+    });
 
-      assertEquals(state.accumulatedText, "Ready.");
-      assertEquals(state.finishReason, "stop");
+    it("preserves cancellation when a required-finish tool stream closes on abort", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const cancellation = new DOMException("Cancelled by caller", "AbortError");
+      const abortController = new AbortController();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "tool-input-start", id: "local-1", toolName: "lookup" };
+            yield { type: "tool-input-delta", id: "local-1", delta: "{}" };
+            yield { type: "tool-input-end", id: "local-1" };
+            abortController.abort(cancellation);
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+      const error = await assertRejects(() =>
+        processStream(
+          result,
+          state,
+          controller,
+          encoder,
+          "t",
+          { requireProviderFinish: true },
+          abortController.signal,
+        )
+      );
+      assertEquals(error, cancellation);
+      assertEquals(state.finishReason, null);
+    });
+
+    it("accepts required provider finish metadata with a null finish reason", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const providerMetadata = {
+        anthropic: { stopSequence: null, requestId: "req-1" },
+      };
+
+      await processStream(
+        createMockResult([
+          { type: "tool-input-start", id: "local-1", toolName: "list_skills" },
+          { type: "tool-input-delta", id: "local-1", delta: "{}" },
+          { type: "tool-input-end", id: "local-1" },
+          {
+            type: "finish",
+            finishReason: null,
+            totalUsage: null,
+            providerMetadata,
+          },
+        ]),
+        state,
+        controller,
+        encoder,
+        "t",
+        { requireProviderFinish: true },
+      );
+
+      assertEquals(state.finishReason, null);
+      assertEquals(state.providerMetadata, providerMetadata);
+      assertEquals(state.toolCalls.get("local-1")?.inputAvailable, true);
     });
 
     it("captures finish reason and usage", async () => {

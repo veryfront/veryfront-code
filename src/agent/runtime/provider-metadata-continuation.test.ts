@@ -315,161 +315,183 @@ describe("agent provider metadata continuation", () => {
     assertEquals(readAssistantProviderMetadata(model.calls[1]), undefined);
   });
 
-  it("preserves the signed surviving Gemini call after suppressing an unavailable call", async () => {
-    const encoder = new TextEncoder();
-    const staleRawPart = {
-      functionCall: {
-        id: "stale-1",
-        name: "missing_tool",
-        args: { query: "stale" },
-      },
-      thoughtSignature: "stale-thought-signature",
-    };
-    const survivingRawPart = {
-      functionCall: {
-        id: "lookup-1",
-        name: "lookup",
-        args: { query: "Veryfront" },
-      },
-      thoughtSignature: "surviving-thought-signature",
-    };
-    const requestBodies: Array<Record<string, unknown>> = [];
-    const googleRuntime = createGoogleModelRuntime({
-      apiKey: "test-google-key",
-      baseURL: "https://example.google.test/v1beta",
-      fetch: (_input, init) => {
-        requestBodies.push(JSON.parse(readRequestBody(init)) as Record<string, unknown>);
-        const responseParts = requestBodies.length === 1
-          ? [
-            encoder.encode(
-              `data: ${
-                JSON.stringify({
-                  candidates: [{
-                    content: { role: "model", parts: [staleRawPart, survivingRawPart] },
-                  }],
-                })
-              }\n\n`,
-            ),
-            encoder.encode(
-              'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}\n\n',
-            ),
-          ]
-          : [
-            encoder.encode(
-              'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Done"}]}}]}\n\n',
-            ),
-            encoder.encode(
-              'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}}\n\n',
-            ),
-          ];
-        return Promise.resolve(
-          new Response(
-            ReadableStream.from([...responseParts, encoder.encode("data: [DONE]\n\n")]),
-            { status: 200, headers: { "content-type": "text/event-stream" } },
-          ),
-        );
-      },
-    }, "gemini-3.5-flash");
-    const assistant = agent({
-      model: "google/gemini-3.5-flash",
-      system: "Use the lookup tool.",
-      tools: { lookup: createLookupTool() },
-      maxSteps: 2,
-      resolveModelTransport: () => ({ model: googleRuntime }),
-    });
+  for (const lifecycleMode of ["legacy", "active"] as const) {
+    for (const includeAvailableTool of [true, false]) {
+      for (const includeFinishReason of [true, false]) {
+        it(`reconciles unavailable Google calls (${lifecycleMode}, available: ${includeAvailableTool}, finish: ${includeFinishReason})`, () =>
+          withStreamLifecycleMode(lifecycleMode, async () => {
+            const encoder = new TextEncoder();
+            const staleRawPart = {
+              functionCall: {
+                id: "stale-1",
+                name: "missing_tool",
+                args: { query: "stale" },
+              },
+              thoughtSignature: "stale-thought-signature",
+            };
+            const survivingRawPart = {
+              functionCall: {
+                id: "lookup-1",
+                name: "lookup",
+                args: { query: "Veryfront" },
+              },
+              thoughtSignature: "surviving-thought-signature",
+            };
+            const requestBodies: Array<Record<string, unknown>> = [];
+            const googleRuntime = createGoogleModelRuntime({
+              apiKey: "test-google-key",
+              baseURL: "https://example.google.test/v1beta",
+              fetch: (_input, init) => {
+                requestBodies.push(JSON.parse(readRequestBody(init)) as Record<string, unknown>);
+                const responseParts = requestBodies.length === 1
+                  ? [
+                    encoder.encode(
+                      `data: ${
+                        JSON.stringify({
+                          candidates: [{
+                            content: {
+                              role: "model",
+                              parts: includeAvailableTool
+                                ? [staleRawPart, survivingRawPart]
+                                : [staleRawPart],
+                            },
+                          }],
+                        })
+                      }\n\n`,
+                    ),
+                    encoder.encode(
+                      includeFinishReason
+                        ? 'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}\n\n'
+                        : 'data: {"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}\n\n',
+                    ),
+                  ]
+                  : [
+                    encoder.encode(
+                      'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Done"}]}}]}\n\n',
+                    ),
+                    encoder.encode(
+                      'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}}\n\n',
+                    ),
+                  ];
+                return Promise.resolve(
+                  new Response(
+                    ReadableStream.from([...responseParts, encoder.encode("data: [DONE]\n\n")]),
+                    { status: 200, headers: { "content-type": "text/event-stream" } },
+                  ),
+                );
+              },
+            }, "gemini-3.5-flash");
+            const assistant = agent({
+              model: "google/gemini-3.5-flash",
+              system: "Use the lookup tool.",
+              tools: { lookup: createLookupTool() },
+              maxSteps: 2,
+              resolveModelTransport: () => ({ model: googleRuntime }),
+            });
 
-    const body = await (await assistant.stream({ input: "Look up Veryfront" }))
-      .toDataStreamResponse()
-      .text();
+            const body = await (await assistant.stream({ input: "Look up Veryfront" }))
+              .toDataStreamResponse()
+              .text();
 
-    assertStringIncludes(body, "Done");
-    assertEquals(requestBodies.length, 2);
-    const continuationContents = requestBodies[1]?.contents as Array<{
-      role?: string;
-      parts?: unknown[];
-    }>;
-    const replayedAssistant = continuationContents.find((content) =>
-      content.role === "model" && JSON.stringify(content.parts).includes("lookup-1")
-    );
-    assertEquals(replayedAssistant?.parts, [survivingRawPart]);
-    assertEquals(JSON.stringify(continuationContents).includes("stale-1"), false);
-  });
+            assertStringIncludes(body, "Done");
+            assertEquals(requestBodies.length, 2);
+            const continuationContents = requestBodies[1]?.contents as Array<{
+              role?: string;
+              parts?: unknown[];
+            }>;
+            const replayedAssistant = continuationContents.find((content) =>
+              content.role === "model" && JSON.stringify(content.parts).includes("lookup-1")
+            );
+            assertEquals(
+              replayedAssistant?.parts,
+              includeAvailableTool ? [survivingRawPart] : undefined,
+            );
+            assertEquals(JSON.stringify(continuationContents).includes("stale-1"), false);
+          }));
+      }
+    }
+  }
 
-  it("preserves signed Gemini reasoning when every tool call is suppressed", async () => {
-    const signedThoughtPart = {
-      text: "Private reasoning.",
-      thought: true,
-      thoughtSignature: "surviving-thought-signature",
-    };
-    const staleRawPart = {
-      functionCall: {
-        id: "stale-1",
-        name: "missing_tool",
-        args: { query: "stale" },
-      },
-      thoughtSignature: "stale-thought-signature",
-    };
-    const signedProviderMetadata = {
-      google: { rawAssistantParts: [signedThoughtPart, staleRawPart] },
-    };
-    const model = scriptedModel([
-      {
-        parts: [
-          { type: "reasoning-start", id: "reasoning-0" },
-          {
-            type: "reasoning-delta",
-            id: "reasoning-0",
-            delta: "Private reasoning.",
+  for (const lifecycleMode of ["legacy", "active"] as const) {
+    it(`preserves signed Gemini reasoning when every tool call is suppressed through ${lifecycleMode}`, () =>
+      withStreamLifecycleMode(lifecycleMode, async () => {
+        const signedThoughtPart = {
+          text: "Private reasoning.",
+          thought: true,
+          thoughtSignature: "surviving-thought-signature",
+        };
+        const staleRawPart = {
+          functionCall: {
+            id: "stale-1",
+            name: "missing_tool",
+            args: { query: "stale" },
           },
+          thoughtSignature: "stale-thought-signature",
+        };
+        const signedProviderMetadata = {
+          google: { rawAssistantParts: [signedThoughtPart, staleRawPart] },
+        };
+        const model = scriptedModel([
           {
-            type: "reasoning-end",
-            id: "reasoning-0",
-            signature: "surviving-thought-signature",
+            parts: [
+              { type: "reasoning-start", id: "reasoning-0" },
+              {
+                type: "reasoning-delta",
+                id: "reasoning-0",
+                delta: "Private reasoning.",
+              },
+              {
+                type: "reasoning-end",
+                id: "reasoning-0",
+                signature: "surviving-thought-signature",
+              },
+              {
+                type: "tool-call",
+                toolCallId: "stale-1",
+                toolName: "missing_tool",
+                input: '{"query":"stale"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                providerMetadata: signedProviderMetadata,
+              },
+            ],
           },
-          {
-            type: "tool-call",
-            toolCallId: "stale-1",
-            toolName: "missing_tool",
-            input: '{"query":"stale"}',
+          { text: "Done" },
+        ], {
+          provider: "google",
+          modelId: "gemini-3.5-flash",
+          only: "stream",
+          reconcileProviderMetadata({ providerMetadata, suppressedToolCalls }) {
+            return reconcileGoogleProviderMetadata(providerMetadata, suppressedToolCalls);
           },
-          {
-            type: "finish",
-            finishReason: "tool-calls",
-            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            providerMetadata: signedProviderMetadata,
-          },
-        ],
-      },
-      { text: "Done" },
-    ], {
-      provider: "google",
-      modelId: "gemini-3.5-flash",
-      only: "stream",
-      reconcileProviderMetadata({ providerMetadata, suppressedToolCalls }) {
-        return reconcileGoogleProviderMetadata(providerMetadata, suppressedToolCalls);
-      },
-    });
-    const assistant = agent({
-      model: "google/gemini-3.5-flash",
-      system: "Use the lookup tool.",
-      tools: { lookup: createLookupTool() },
-      maxSteps: 2,
-      resolveModelTransport: () => ({ model }),
-    });
+        });
+        const assistant = agent({
+          model: "google/gemini-3.5-flash",
+          system: "Use the lookup tool.",
+          tools: { lookup: createLookupTool() },
+          maxSteps: 2,
+          resolveModelTransport: () => ({
+            model: { ...model, runtimeCapabilities: { toolCallStreamRequiresFinish: true } },
+          }),
+        });
 
-    const body = await (await assistant.stream({ input: "Look up Veryfront" }))
-      .toDataStreamResponse()
-      .text();
+        const body = await (await assistant.stream({ input: "Look up Veryfront" }))
+          .toDataStreamResponse()
+          .text();
 
-    assertStringIncludes(body, "Done");
-    assertEquals(model.callCount, 2);
-    assertEquals(readAssistantProviderMetadata(model.calls[1]), {
-      google: {
-        rawAssistantParts: [signedThoughtPart],
-        rawAssistantPartIndexes: [0],
-      },
-    });
-  });
+        assertStringIncludes(body, "Done");
+        assertEquals(model.callCount, 2);
+        assertEquals(readAssistantProviderMetadata(model.calls[1]), {
+          google: {
+            rawAssistantParts: [signedThoughtPart],
+            rawAssistantPartIndexes: [0],
+          },
+        });
+      }));
+  }
 
   // Wire shape modelled on a real gemini-3.1-pro-preview streamGenerateContent
   // response: the signature rides the functionCall part in the first chunk, and
@@ -479,104 +501,128 @@ describe("agent provider metadata continuation", () => {
   // model turn is replayed, while 2.5 accepts an unsigned replay. The signature
   // itself is opaque to the replay path, so this fixture carries a fabricated
   // placeholder rather than a captured provider value.
-  it("replays a Gemini 3.x signed tool call in the live wire shape", async () => {
-    const encoder = new TextEncoder();
-    const signedFunctionCallPart = {
-      functionCall: {
-        name: "lookup",
-        args: { query: "Veryfront" },
-        id: "call_2874307",
-      },
-      thoughtSignature: "dGVzdC1nZW1pbmktMy10aG91Z2h0LXNpZ25hdHVyZS1wbGFjZWhvbGRlcg==",
-    };
-    const requestBodies: Array<Record<string, unknown>> = [];
-    const googleRuntime = createGoogleModelRuntime({
-      apiKey: "test-google-key",
-      baseURL: "https://example.google.test/v1beta",
-      fetch: (_input, init) => {
-        requestBodies.push(JSON.parse(readRequestBody(init)) as Record<string, unknown>);
-        const responseParts = requestBodies.length === 1
-          ? [
-            encoder.encode(
-              `data: ${
-                JSON.stringify({
-                  candidates: [{
-                    content: { parts: [signedFunctionCallPart], role: "model" },
-                    index: 0,
-                  }],
-                  usageMetadata: {
-                    promptTokenCount: 57,
-                    candidatesTokenCount: 16,
-                    totalTokenCount: 165,
-                    thoughtsTokenCount: 92,
-                  },
-                  modelVersion: "gemini-3.1-pro-preview",
-                })
-              }\n\n`,
-            ),
-            encoder.encode(
-              `data: ${
-                JSON.stringify({
-                  candidates: [{
-                    content: { parts: [{ text: "" }], role: "model" },
-                    finishReason: "STOP",
-                    index: 0,
-                  }],
-                  usageMetadata: {
-                    promptTokenCount: 57,
-                    candidatesTokenCount: 16,
-                    totalTokenCount: 165,
-                  },
-                })
-              }\n\n`,
-            ),
-          ]
-          : [
-            encoder.encode(
-              'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Done"}]}}]}\n\n',
-            ),
-            encoder.encode(
-              'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}}\n\n',
-            ),
-          ];
-        return Promise.resolve(
-          new Response(
-            ReadableStream.from([...responseParts, encoder.encode("data: [DONE]\n\n")]),
-            { status: 200, headers: { "content-type": "text/event-stream" } },
-          ),
-        );
-      },
-    }, "gemini-3.1-pro-preview");
-    const assistant = agent({
-      model: "google/gemini-3.1-pro-preview",
-      system: "Use the lookup tool.",
-      tools: { lookup: createLookupTool() },
-      maxSteps: 2,
-      resolveModelTransport: () => ({ model: googleRuntime }),
-    });
-
-    const body = await (await assistant.stream({ input: "Look up Veryfront" }))
-      .toDataStreamResponse().text();
-
-    assertStringIncludes(body, "Done");
-    assertEquals(requestBodies.length, 2);
-    // The signature must never surface in the client-facing stream.
-    assertEquals(body.includes(signedFunctionCallPart.thoughtSignature), false);
-    // The tool-result leg must carry the signed model turn verbatim, trailing
-    // empty-text part included, which is what the live API accepts.
-    const continuationContents = requestBodies[1]?.contents as unknown[] | undefined;
-    assertEquals(continuationContents?.slice(-2), [
-      { role: "model", parts: [signedFunctionCallPart, { text: "" }] },
-      {
-        role: "user",
-        parts: [{
-          functionResponse: {
-            id: "call_2874307",
+  for (
+    const [lifecycleMode, includeFinishReason] of [
+      ["legacy", true],
+      ["active", true],
+      ["legacy", false],
+      ["active", false],
+    ] as const
+  ) {
+    it(`retains signed Gemini replay after delayed stream completion through ${lifecycleMode} (finish reason: ${includeFinishReason})`, () =>
+      withStreamLifecycleMode(lifecycleMode, async () => {
+        const encoder = new TextEncoder();
+        const signedFunctionCallPart = {
+          functionCall: {
             name: "lookup",
-            response: { result: { value: "Veryfront" } },
+            args: { query: "Veryfront" },
+            id: "call_2874307",
           },
-        }],
-      },
-    ]);
-  });
+          thoughtSignature: "dGVzdC1nZW1pbmktMy10aG91Z2h0LXNpZ25hdHVyZS1wbGFjZWhvbGRlcg==",
+        };
+        const requestBodies: Array<Record<string, unknown>> = [];
+        const googleRuntime = createGoogleModelRuntime({
+          apiKey: "test-google-key",
+          baseURL: "https://example.google.test/v1beta",
+          fetch: (_input, init) => {
+            requestBodies.push(JSON.parse(readRequestBody(init)) as Record<string, unknown>);
+            const responseParts = requestBodies.length === 1
+              ? [
+                encoder.encode(
+                  `data: ${
+                    JSON.stringify({
+                      candidates: [{
+                        content: {
+                          parts: [{ text: "Checking the lookup." }, signedFunctionCallPart],
+                          role: "model",
+                        },
+                        index: 0,
+                      }],
+                      usageMetadata: {
+                        promptTokenCount: 57,
+                        candidatesTokenCount: 16,
+                        totalTokenCount: 165,
+                        thoughtsTokenCount: 92,
+                      },
+                      modelVersion: "gemini-3.1-pro-preview",
+                    })
+                  }\n\n`,
+                ),
+                encoder.encode(
+                  `data: ${
+                    JSON.stringify({
+                      candidates: [{
+                        content: { parts: [{ text: "" }], role: "model" },
+                        ...(includeFinishReason ? { finishReason: "STOP" } : {}),
+                        index: 0,
+                      }],
+                      usageMetadata: {
+                        promptTokenCount: 57,
+                        candidatesTokenCount: 16,
+                        totalTokenCount: 165,
+                      },
+                    })
+                  }\n\n`,
+                ),
+              ]
+              : [
+                encoder.encode(
+                  'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Done"}]}}]}\n\n',
+                ),
+                encoder.encode(
+                  'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}}\n\n',
+                ),
+              ];
+            return Promise.resolve(
+              new Response(
+                ReadableStream.from((async function* () {
+                  for (const [index, part] of responseParts.entries()) {
+                    yield part;
+                    // Real gateway streaming exposes the tool before the final
+                    // metadata. Cross the runtime's 250 ms local handoff grace.
+                    if (index === 0) await new Promise((resolve) => setTimeout(resolve, 500));
+                  }
+                  yield encoder.encode("data: [DONE]\n\n");
+                })()),
+                { status: 200, headers: { "content-type": "text/event-stream" } },
+              ),
+            );
+          },
+        }, "gemini-3.1-pro-preview");
+        const assistant = agent({
+          model: "google/gemini-3.1-pro-preview",
+          system: "Use the lookup tool.",
+          tools: { lookup: createLookupTool() },
+          maxSteps: 2,
+          resolveModelTransport: () => ({ model: googleRuntime }),
+        });
+
+        const body = await (await assistant.stream({ input: "Look up Veryfront" }))
+          .toDataStreamResponse().text();
+
+        assertStringIncludes(body, "Done");
+        assertEquals(requestBodies.length, 2);
+        // The signature must never surface in the client-facing stream.
+        assertEquals(body.includes(signedFunctionCallPart.thoughtSignature), false);
+        // The tool-result leg must carry the signed model turn verbatim, trailing
+        // empty-text part included, which is what the live API accepts.
+        const continuationContents = requestBodies[1]?.contents as unknown[] | undefined;
+        assertEquals(continuationContents?.slice(-2), [
+          {
+            role: "model",
+            parts: [{ text: "Checking the lookup." }, signedFunctionCallPart, { text: "" }],
+          },
+          {
+            role: "user",
+            parts: [{
+              functionResponse: {
+                id: "call_2874307",
+                name: "lookup",
+                response: { result: { value: "Veryfront" } },
+              },
+            }],
+          },
+        ]);
+      }));
+  }
 });

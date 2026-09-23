@@ -101,7 +101,7 @@ export function createStreamDeadlineController(input: {
     }
     const localTools = snapshot.tools.filter((tool) => tool.providerExecuted !== true);
     if (localTools.some((tool) => tool.phase === "input_ready")) {
-      return "tool_commit_grace";
+      return policy.requireProviderFinish ? "semantic_idle" : "tool_commit_grace";
     }
     if (
       localTools.some((tool) => tool.phase === "input_open" || tool.phase === "input_streaming")

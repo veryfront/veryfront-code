@@ -402,6 +402,7 @@ export interface ChatStreamCallbacks {
   availableToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
   localToolCommitGraceMs?: number;
+  requireProviderFinish?: boolean;
   streamIdleTimeoutMs?: number;
   streamLifecycleMode?: StreamLifecycleMode;
   streamLifecyclePolicy?: Partial<StreamLifecyclePolicy>;
@@ -640,6 +641,7 @@ export function resolveRuntimeLifecyclePolicy(
   return resolveStreamLifecyclePolicy({
     ...compatibility,
     ...callbacks?.streamLifecyclePolicy,
+    ...(callbacks?.requireProviderFinish ? { requireProviderFinish: true } : {}),
   });
 }
 
@@ -883,6 +885,7 @@ export function processStreamInternal(
     let activeReasoningId: string | null = null;
     const reasoningParts = createPrivateMap<string, StreamingReasoningPart>();
     let shouldStopForCommittedLocalToolCall = false;
+    let sawProviderFinishPart = false;
     let hasActiveLocalToolInput = false;
     const providerExecutedToolNames = createPrivateSet(callbacks?.providerExecutedToolNames ?? []);
     const availableToolNames = callbacks?.availableToolNames
@@ -1179,7 +1182,8 @@ export function processStreamInternal(
         // a longer timeout only. It must not change what a timeout *means*, so
         // the finish-reason classification below stays on the ungated flag.
         const shouldStopForCommittedLocalToolCallNow = shouldStopForCommittedLocalToolCall &&
-          pendingProviderExecutedToolCallIds.size === 0;
+          pendingProviderExecutedToolCallIds.size === 0 &&
+          (!callbacks?.requireProviderFinish || sawProviderFinishPart);
         const shouldStopForIdleOutput = !hasActiveLocalToolInput &&
           !shouldStopForCommittedLocalToolCallNow && hasStreamOutput(state);
         const shouldStopForIdleStart = !hasActiveLocalToolInput &&
@@ -1226,12 +1230,35 @@ export function processStreamInternal(
             abortSignal,
           )
           : await readNextStreamPart(streamIterator, state, abortSignal);
+        throwIfAborted(abortSignal);
         if (next === "timeout") {
+          if (
+            callbacks?.requireProviderFinish && !sawProviderFinishPart &&
+            somePrivateArray(
+              [...state.toolCalls.values()],
+              (toolCall) => toolCall.inputAvailable === true && toolCall.providerExecuted !== true,
+            )
+          ) {
+            throw createRuntimeProviderStreamFailure(
+              new Error("Provider stream timed out before required tool continuation metadata"),
+            );
+          }
           state.finishReason ??= wouldTimeOutIdle ? "stop" : "tool-calls";
           returnStreamIteratorOnce();
           break;
         }
         if (next.done) {
+          if (
+            callbacks?.requireProviderFinish && !sawProviderFinishPart &&
+            somePrivateArray(
+              [...state.toolCalls.values()],
+              (toolCall) => toolCall.inputAvailable === true && toolCall.providerExecuted !== true,
+            )
+          ) {
+            throw createRuntimeProviderStreamFailure(
+              new Error("Provider stream ended before required tool continuation metadata"),
+            );
+          }
           break;
         }
 
@@ -1646,6 +1673,7 @@ export function processStreamInternal(
           }
 
           case "finish": {
+            sawProviderFinishPart = true;
             closeTextSegment();
             closeReasoningSegment();
             state.finishReason = typedPart.finishReason ?? null;

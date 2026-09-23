@@ -66,6 +66,7 @@ export function reduceStreamSignal(
   current: StreamReducerState,
   signal: StreamSignal,
   elapsedMs: number,
+  options: { recoverUnavailableToolCalls?: boolean } = {},
 ): StreamReduction {
   let state = cloneReducerState(current);
   const frames: StreamLifecycleFrame[] = [];
@@ -244,6 +245,7 @@ export function reduceStreamSignal(
         elapsedMs,
         emit,
         semanticProgress,
+        options.recoverUnavailableToolCalls === true,
       ));
   }
 
@@ -284,6 +286,7 @@ function reduceNonTextProtocolEvent(
   elapsedMs: number,
   emit: FrameEmitter,
   semanticProgress: boolean,
+  recoverUnavailableToolCalls: boolean,
 ): Pick<StreamReduction, "state" | "semanticProgress"> {
   switch (event.type) {
     case "message_start":
@@ -453,7 +456,12 @@ function reduceNonTextProtocolEvent(
         (tool) => tool.phase === "input_rejected" && tool.providerExecuted !== true,
       );
       const phaseBeforeFinish = state.snapshot.phase;
-      const terminalPhase = event.finishReason === "tool-calls" && readyLocal.length > 0
+      // Unavailable calls were deliberately suppressed, not malformed. Match
+      // the legacy recovery turn without making any rejected tool executable.
+      const recoverUnavailable = recoverUnavailableToolCalls && rejectedLocal.length > 0 &&
+        !somePrivateArray(rejectedLocal, (tool) => tool.rejectionReason !== "unavailable");
+      const terminalPhase = event.finishReason === "tool-calls" &&
+          (readyLocal.length > 0 || recoverUnavailable)
         ? "tool_handoff" as const
         : event.finishReason === "tool-calls"
         ? "failed" as const

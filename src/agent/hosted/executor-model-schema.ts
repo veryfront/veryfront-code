@@ -223,6 +223,7 @@ export const getExecutorModelMetadataSchema = defineSchema((v) =>
       executionMode: v.enum(["remote", "server-local"] as const).optional(),
       runtimeCapabilities: v.object({
         toolCalling: v.boolean().optional(),
+        toolCallStreamRequiresFinish: v.boolean().optional(),
         structuredOutput: v.union([
           v.boolean(),
           v.array(v.enum(["json", "json_schema"] as const)).max(2),
