@@ -265,6 +265,8 @@ export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
     runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
     executionEnvironmentId: v.string().uuid().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
+    runtimeTargetBranchName: v.string().min(1).max(255).optional(),
+    runtimeTargetEnvironmentName: v.string().min(1).max(255).optional(),
   }).superRefine(validateRuntimeAgentTargetSelection)
 );
 
@@ -405,6 +407,19 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
   }).superRefine((input, ctx) => {
     if (input.sourceProject) {
+      const executionTarget = input.run.project;
+      if (
+        (executionTarget.runtimeTargetKind === "environment" &&
+          !executionTarget.runtimeTargetEnvironmentName) ||
+        (executionTarget.runtimeTargetKind === "preview_branch" &&
+          !executionTarget.runtimeTargetBranchName)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Shared execution requires the consuming project's runtime target name",
+          path: ["run", "project"],
+        });
+      }
       if (input.agentSource.type === "branch") {
         ctx.addIssue({
           code: "custom",

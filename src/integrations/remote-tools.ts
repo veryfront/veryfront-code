@@ -24,7 +24,7 @@ import {
   isIntegrationToolAllowedBySourcePolicy,
   parseIntegrationToolIdentity,
 } from "#veryfront/integrations/source-policy.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { getHostEnv, getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
@@ -145,7 +145,7 @@ function getRemoteIntegrationToolDiscoveryScope():
   const runScope = remoteIntegrationToolDiscoveryStorage.getStore();
   if (runScope) return runScope;
 
-  const requestContext = getCurrentRequestContext();
+  const requestContext = getRuntimeRequestContext();
   if (!requestContext) return undefined;
 
   let requestScope = requestIntegrationToolDiscoveryScopes.get(requestContext);
@@ -255,7 +255,7 @@ function resolveRequestAuth(
     };
   }
 
-  const requestContext = getCurrentRequestContext();
+  const requestContext = getRuntimeRequestContext();
   if (requestContext) {
     const token = isValidApiToken(requestContext.token) ? requestContext.token : undefined;
     return {
@@ -307,7 +307,7 @@ function resolveRequestProjectSlug(
     return normalizeProjectSlug(context.projectSlug);
   }
 
-  const requestContext = getCurrentRequestContext();
+  const requestContext = getRuntimeRequestContext();
   if (requestContext) {
     return normalizeProjectSlug(requestContext.projectSlug);
   }

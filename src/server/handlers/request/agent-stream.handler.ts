@@ -115,11 +115,8 @@ import { getServerResolvedProviderReplayCheckpoints } from "#veryfront/agent/hos
 import { RUN_EVENT_APPEND_TOKEN_HEADER } from "#veryfront/agent/hosted/chat-request-parser.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import {
-  getCurrentRequestContext,
-  runWithoutRequestContext,
-  runWithRequestContext,
-} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithoutRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import type { SourceSnapshotFreshnessOptions } from "#veryfront/platform/adapters/base.ts";
 import { createRunScopedProviderReplayCheckpointPersister } from "#veryfront/internal-agents/provider-replay-checkpoint-persister.ts";
 
@@ -1356,11 +1353,14 @@ export class AgentStreamHandler extends BaseHandler {
                               )
                               : await runWithProjectEnv(agentEnv, runAgentStream)
                             : await runAgentStream();
-                        const response = payload.sourceProject
-                          ? await runWithRequestContext({
-                            ...getCurrentRequestContext(),
-                            projectSlug: payload.sourceProject.projectSlug,
-                            token: "",
+                        const response = executionProject
+                          ? await runWithRuntimeRequestContext({
+                            projectId: executionProject.projectId,
+                            projectSlug: executionProject.projectSlug,
+                            token: projectRuntimeToken,
+                            productionMode: executionProject.runtimeTargetKind === "environment",
+                            branch: executionProject.runtimeTargetBranchName ?? null,
+                            environmentName: executionProject.runtimeTargetEnvironmentName ?? null,
                           }, executeStream)
                           : await executeStream();
                         logger.info("Internal agent stream response created", {

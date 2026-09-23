@@ -16,7 +16,7 @@ import { getEnvValue } from "#veryfront/cache/backends/helpers.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
-import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 
 export type CacheRequestContext = {
   token?: string;
@@ -32,7 +32,7 @@ export interface ResolvedCacheAuthority {
   tokenSource: string;
 }
 
-const trustedRequestContextAccessor = currentRequestContext;
+const trustedRequestContextAccessor = getRuntimeRequestContext;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

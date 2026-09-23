@@ -2,6 +2,11 @@ import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runti
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { getTrustedProjectEnvIdentity } from "#veryfront/server/project-env/storage.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
+import {
+  getVeryfrontCloudAuthToken,
+  getVeryfrontCloudProjectSlug,
+} from "#veryfront/platform/cloud/resolver.ts";
 import { INVALID_ARGUMENT, NETWORK_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
 import {
   __registerLogRecordEmitter,
@@ -171,82 +176,110 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
-  it("executes an authorized source release with the consuming project identity and no source secrets", async () => {
-    const sourceId = "20000000-1000-4000-8000-100000000005";
-    const executionId = "10000000-1000-4000-8000-100000000005";
-    let discoveredProject: string | undefined;
-    let executionIdentity: unknown;
-    let executionToken: unknown;
-    let executionEnvironmentToken: unknown;
-    let executionSourceToken: unknown;
-    let executionSourceSecret: unknown;
-    let loadedSourceSecrets = false;
-    const handler = createTestAgentStreamHandler({
-      loadAgentSourceEnvironment: async () => {
-        loadedSourceSecrets = true;
-        return { SOURCE_SECRET: "must-not-be-exposed" };
-      },
-      ensureProjectDiscovery: async (ctx) => {
-        discoveredProject = ctx.projectId;
-        return createEmptyDiscoveryResult();
-      },
-      getAgent: () => createAgent("assistant-1"),
-      getAllAgentIds: () => ["assistant-1"],
-      sessionManager: new AgentRunSessionManager(),
-      createRuntime: () => ({
-        stream: async (_messages, context) => {
-          executionIdentity = getTrustedProjectEnvIdentity();
-          executionToken = context?.authToken;
-          executionEnvironmentToken = getEnv("VERYFRONT_API_TOKEN");
-          executionSourceToken = getCurrentRequestContext()?.token;
-          executionSourceSecret = getEnv("SOURCE_SECRET");
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.close();
-            },
-          });
-        },
-      }),
-    });
-    const body = createAgentStreamRequestBody({
-      sourceProject: {
-        projectId: sourceId,
-        projectSlug: "source-project",
-        runtimeTargetKind: "main_branch",
-      },
-      agentSource: { type: "release", releaseId: "release-1" },
-      credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
-    });
-    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
-      requestId: "run_1",
-      projectId: sourceId,
-      audience: "source-project",
-    });
-    const result = await handler.handle(
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: { "x-veryfront-control-plane-jws": jws },
-        body,
-      }),
+  for (
+    const executionTarget of [
       {
-        ...createCtx(publicKeyPem),
-        projectId: sourceId,
-        projectSlug: "source-project",
-        proxyToken: "source-runtime-secret",
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
+        runtimeTargetBranchName: "consumer-feature",
       },
-    );
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    await result.response.text();
-    assertEquals(discoveredProject, sourceId);
-    assertEquals((executionIdentity as { projectId: string }).projectId, executionId);
-    assertEquals((executionIdentity as { projectSlug: string }).projectSlug, "test-project");
-    assertEquals(executionToken, "execution-token");
-    assertEquals(executionEnvironmentToken, "execution-token");
-    assertEquals(executionSourceToken, "");
-    assertEquals(executionSourceSecret, undefined);
-    assertEquals(loadedSourceSecrets, false);
-  });
+      {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000007",
+        runtimeTargetEnvironmentName: "consumer-staging",
+      },
+    ]
+  ) {
+    it(`executes shared source with consuming ${executionTarget.runtimeTargetKind} identity and no source secrets`, async () => {
+      const sourceId = "20000000-1000-4000-8000-100000000005";
+      const executionId = "10000000-1000-4000-8000-100000000005";
+      let discoveredProject: string | undefined;
+      let executionIdentity: unknown;
+      let executionToken: unknown;
+      let executionEnvironmentToken: unknown;
+      let executionSourceToken: unknown;
+      let executionSourceSecret: unknown;
+      let cloudIdentity: unknown;
+      let executionBranch: unknown;
+      let executionEnvironment: unknown;
+      let loadedSourceSecrets = false;
+      const handler = createTestAgentStreamHandler({
+        loadAgentSourceEnvironment: async () => {
+          loadedSourceSecrets = true;
+          return { SOURCE_SECRET: "must-not-be-exposed" };
+        },
+        ensureProjectDiscovery: async (ctx) => {
+          discoveredProject = ctx.projectId;
+          return createEmptyDiscoveryResult();
+        },
+        getAgent: () => createAgent("assistant-1"),
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async (_messages, context) => {
+            executionIdentity = getTrustedProjectEnvIdentity();
+            executionToken = context?.authToken;
+            executionEnvironmentToken = getEnv("VERYFRONT_API_TOKEN");
+            executionSourceToken = getCurrentRequestContext()?.token;
+            executionSourceSecret = getEnv("SOURCE_SECRET");
+            cloudIdentity = {
+              token: getVeryfrontCloudAuthToken(),
+              projectSlug: getVeryfrontCloudProjectSlug(),
+            };
+            executionBranch = getRuntimeRequestContext()?.branch;
+            executionEnvironment = getRuntimeRequestContext()?.environmentName;
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+      const body = createAgentStreamRequestBody({
+        project: executionTarget,
+        sourceProject: {
+          projectId: sourceId,
+          projectSlug: "source-project",
+          runtimeTargetKind: "main_branch",
+        },
+        agentSource: { type: "release", releaseId: "release-1" },
+        credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+        projectId: sourceId,
+        audience: "source-project",
+      });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: { "x-veryfront-control-plane-jws": jws },
+          body,
+        }),
+        {
+          ...createCtx(publicKeyPem),
+          projectId: sourceId,
+          projectSlug: "source-project",
+          proxyToken: "source-runtime-secret",
+        },
+      );
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      await result.response.text();
+      assertEquals(discoveredProject, sourceId);
+      assertEquals((executionIdentity as { projectId: string }).projectId, executionId);
+      assertEquals((executionIdentity as { projectSlug: string }).projectSlug, "test-project");
+      assertEquals(executionToken, "execution-token");
+      assertEquals(executionEnvironmentToken, "execution-token");
+      assertEquals(executionSourceToken, "source-read-token");
+      assertEquals(cloudIdentity, { token: "execution-token", projectSlug: "test-project" });
+      assertEquals(executionBranch, executionTarget.runtimeTargetBranchName ?? null);
+      assertEquals(executionEnvironment, executionTarget.runtimeTargetEnvironmentName ?? null);
+      assertEquals(executionSourceSecret, undefined);
+      assertEquals(loadedSourceSecrets, false);
+    });
+  }
 
   it("parses run credentials with framework-captured JSON intrinsics", async () => {
     const inferenceAuthToken = "run-scoped-inference-token";

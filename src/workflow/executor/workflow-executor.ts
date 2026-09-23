@@ -33,7 +33,7 @@ import {
   updateRunIfStatus,
   type WorkflowBackend,
 } from "../backends/types.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
@@ -306,7 +306,7 @@ export class WorkflowExecutor {
     // When a workflow is started from an API route, the request context
     // carries the tenant info (slug, token, etc.). We persist it on the run
     // so that worker processes can restore the context when executing runs.
-    const requestCtx = getCurrentRequestContext();
+    const requestCtx = getRuntimeRequestContext();
     const tenant = requestCtx
       ? {
         projectSlug: requestCtx.projectSlug,

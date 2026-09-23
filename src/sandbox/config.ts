@@ -6,7 +6,7 @@ import {
   requireHostPrivateApiHttps,
   resolveHostOwnedApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createHostInternalOriginBoundOutboundFetch,
@@ -91,7 +91,7 @@ export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
     });
   }
 
-  const requestToken = trimString(getCurrentRequestContext()?.token);
+  const requestToken = trimString(getRuntimeRequestContext()?.token);
   if (requestToken) {
     if (requestToken === getHostSecret("VERYFRONT_API_TOKEN")) {
       if (!isHostApiOrigin(selectedApiUrl)) {

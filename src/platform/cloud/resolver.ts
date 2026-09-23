@@ -1,4 +1,4 @@
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import {
   getHostEnv,
   getHostEnvExcludingEnvFile,
@@ -140,7 +140,7 @@ function hasScopedRuntimeContext(context: VeryfrontCloudContext | undefined): bo
 }
 
 function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiBaseUrl"> {
-  const requestContext = getCurrentRequestContext();
+  const requestContext = getRuntimeRequestContext();
   const scopedContext = getCurrentVeryfrontCloudContext();
   const runtimeBootstrap = getRuntimeBootstrap();
 

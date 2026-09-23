@@ -1,6 +1,6 @@
 import { readDir, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -275,7 +275,7 @@ async function requestJson<T>(
 
 function getCloudStoreContext(config: RagStoreConfig): CloudStoreContext {
   const bootstrap = requireVeryfrontCloudBootstrap();
-  const requestContext = getCurrentRequestContext();
+  const requestContext = getRuntimeRequestContext();
   if (!bootstrap.projectSlug) {
     throw INVALID_ARGUMENT.create({
       detail:

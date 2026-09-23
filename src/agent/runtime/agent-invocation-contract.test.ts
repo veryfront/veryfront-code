@@ -77,6 +77,10 @@ describe("agent/runtime-agent-invocation-contract", () => {
     };
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       sourceProject,
+      run: {
+        ...createInvocation().run,
+        project: { ...createInvocation().run.project, runtimeTargetBranchName: "feature-a" },
+      },
       agentSource: { type: "environment", environmentName: "production", releaseId: "release-1" },
       credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
     }));
@@ -101,6 +105,30 @@ describe("agent/runtime-agent-invocation-contract", () => {
         agentSource: { type: "release", releaseId: "release-1" },
       }))
     );
+  });
+
+  it("rejects shared execution with unresolved consuming target names", () => {
+    for (
+      const target of [
+        { runtimeTargetKind: "preview_branch", runtimeTargetBranchId: branchId },
+        { runtimeTargetKind: "environment", runtimeTargetEnvironmentId: environmentId },
+      ]
+    ) {
+      const invocation = createInvocation();
+      assertThrows(() =>
+        RuntimeAgentRunInvocationSchema.parse({
+          ...invocation,
+          run: { ...invocation.run, project: { projectId, projectSlug: "consumer", ...target } },
+          sourceProject: {
+            projectId: "20000000-1000-4000-8000-100000000005",
+            projectSlug: "source",
+            runtimeTargetKind: "main_branch",
+          },
+          agentSource: { type: "release", releaseId: "release-1" },
+          credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+        })
+      );
+    }
   });
 
   it("keeps the legacy control-plane request shape source-compatible", () => {
