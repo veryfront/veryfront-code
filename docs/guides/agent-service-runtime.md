@@ -26,6 +26,15 @@ project's environment variables and runtime token are not passed to the connecte
 execution. Platform tool calls and inference use the consuming run's credentials.
 Child runs must inherit the authorized source connection through the control plane.
 
+Connected execution evaluates project modules in an invocation-specific registry
+namespace, including discovery under the consuming project's credential context.
+This prevents reuse of closures containing the source project's secrets or a
+previous invocation's credentials. Framework registries and evaluated-module cache
+entries are retired when the response completes, fails, or is cancelled. Deno's
+ESM module map itself lasts for the process lifetime, so managed deployments must
+retain their memory-triggered, graceful renderer recycling policy to bound module
+retention during repeated connected runs.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see

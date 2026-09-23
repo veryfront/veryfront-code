@@ -194,6 +194,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       const sourceId = "20000000-1000-4000-8000-100000000005";
       const executionId = "10000000-1000-4000-8000-100000000005";
       let discoveredProject: string | undefined;
+      let discoveryCloudIdentity: unknown;
       let executionIdentity: unknown;
       let executionToken: unknown;
       let executionEnvironmentToken: unknown;
@@ -210,6 +211,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
         ensureProjectDiscovery: async (ctx) => {
           discoveredProject = ctx.projectId;
+          discoveryCloudIdentity = {
+            token: getVeryfrontCloudAuthToken(),
+            projectSlug: getVeryfrontCloudProjectSlug(),
+          };
           return createEmptyDiscoveryResult();
         },
         getAgent: () => createAgent("assistant-1"),
@@ -268,6 +273,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(result.response.status, 200);
       await result.response.text();
       assertEquals(discoveredProject, sourceId);
+      assertEquals(discoveryCloudIdentity, {
+        token: "execution-token",
+        projectSlug: "test-project",
+      });
       assertEquals((executionIdentity as { projectId: string }).projectId, executionId);
       assertEquals((executionIdentity as { projectSlug: string }).projectSlug, "test-project");
       assertEquals(executionToken, "execution-token");

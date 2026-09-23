@@ -3,6 +3,13 @@ import {
   withPlatformMcpPolicyAliases,
 } from "#veryfront/agent/platform-mcp-tool-source.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
+import {
+  runWithRegistryScopeNamespace,
+  tryGetRegistryScopeId,
+} from "#veryfront/cache/cache-key-builder.ts";
+import { clearRegistryScope } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import { clearTranspileCacheForNamespace } from "#veryfront/discovery/transpiler.ts";
+import { withResponseCleanup } from "./response-cleanup.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { Agent } from "#veryfront/agent";
 import type { AgentMcpServerConfig } from "#veryfront/agent/types.ts";
@@ -157,6 +164,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
   createRunScopedProviderReplayCheckpointPersister,
 };
 const logger = serverLogger.component("agent-stream-handler");
+const createInvocationNamespace = crypto.randomUUID.bind(crypto);
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
 const TrustedInternalAgentStreamRequestSchema = getInternalAgentStreamRequestSchema();
@@ -1134,12 +1142,14 @@ export class AgentStreamHandler extends BaseHandler {
         hasAgentConfig: Boolean(payload.agentConfig),
       });
 
+      let sharedRegistryScope: string | null = null;
       const runWithAgentSourceContext = () =>
         this.withAgentSourceContext(
           requestScopedContext,
           payload.agentSource,
           () =>
             runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
+              if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
               // Resolved before the config load because hosted evaluation binds
               // config to the same environment the run will execute with.
               const envVarsForAgent = payload.sourceProject ? {} : await (
@@ -1202,6 +1212,7 @@ export class AgentStreamHandler extends BaseHandler {
                   projectScopedContext,
                   payload.agentSource,
                   async () => {
+                    if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
                     const sourceIntegrationPolicy = (
                       this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy
                     )(sourceConfig.integrations);
@@ -1353,16 +1364,7 @@ export class AgentStreamHandler extends BaseHandler {
                               )
                               : await runWithProjectEnv(agentEnv, runAgentStream)
                             : await runAgentStream();
-                        const response = executionProject
-                          ? await runWithRuntimeRequestContext({
-                            projectId: executionProject.projectId,
-                            projectSlug: executionProject.projectSlug,
-                            token: projectRuntimeToken,
-                            productionMode: executionProject.runtimeTargetKind === "environment",
-                            branch: executionProject.runtimeTargetBranchName ?? null,
-                            environmentName: executionProject.runtimeTargetEnvironmentName ?? null,
-                          }, executeStream)
-                          : await executeStream();
+                        const response = await executeStream();
                         logger.info("Internal agent stream response created", {
                           runId: payload.runId,
                           threadId: payload.threadId,
@@ -1390,9 +1392,44 @@ export class AgentStreamHandler extends BaseHandler {
               )();
             }),
         );
-      return payload.sourceProject
-        ? await runWithProjectEnv({}, runWithAgentSourceContext)
-        : await runWithAgentSourceContext();
+      if (!payload.sourceProject || !executionProject) return await runWithAgentSourceContext();
+      // Evaluated modules may capture credentials or environment values. Never
+      // reuse ordinary source-project closures or another invocation's closures.
+      return await runWithRegistryScopeNamespace(
+        createInvocationNamespace(),
+        () =>
+          runWithRuntimeRequestContext({
+            projectId: executionProject.projectId,
+            projectSlug: executionProject.projectSlug,
+            token: projectRuntimeToken,
+            productionMode: executionProject.runtimeTargetKind === "environment",
+            branch: executionProject.runtimeTargetBranchName ?? null,
+            environmentName: executionProject.runtimeTargetEnvironmentName ?? null,
+          }, () =>
+            runWithProjectEnv({}, async () => {
+              const cleanup = () => {
+                if (!sharedRegistryScope) return;
+                const retired = sharedRegistryScope;
+                sharedRegistryScope = null;
+                clearTranspileCacheForNamespace(retired);
+                clearRegistryScope(retired);
+              };
+              try {
+                const result = await runWithAgentSourceContext();
+                if (!result.response) {
+                  cleanup();
+                  return result;
+                }
+                return {
+                  ...result,
+                  response: withResponseCleanup(result.response, cleanup, req.signal),
+                };
+              } catch (error) {
+                cleanup();
+                throw error;
+              }
+            })),
+      );
     } catch (caught) {
       // The first negative-cache failure owns diagnostics. Replays retain the
       // original error for response construction but must not repeat reports.
