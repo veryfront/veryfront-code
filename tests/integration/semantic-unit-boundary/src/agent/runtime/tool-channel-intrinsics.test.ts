@@ -3,7 +3,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getToolChannelProfile } from "#veryfront/agent/runtime/tool-channel.ts";
+import {
+  getToolChannelProfile,
+  recoverTextEmittedToolCalls,
+} from "#veryfront/agent/runtime/tool-channel.ts";
 
 describe("tool-channel provider policy intrinsic boundary", () => {
   it("uses the captured Set intrinsic for provider policy lookups", () => {
@@ -47,6 +50,38 @@ describe("tool-channel provider policy intrinsic boundary", () => {
       Object.defineProperty(Array.prototype, "filter", {
         configurable: true,
         value: originalFilter,
+      });
+    }
+  });
+
+  it("uses captured set and array intrinsics for recovery classification", () => {
+    const originalHas = Set.prototype.has;
+    const originalIncludes = Array.prototype.includes;
+    Object.defineProperty(Set.prototype, "has", {
+      configurable: true,
+      value: () => true,
+    });
+    Object.defineProperty(Array.prototype, "includes", {
+      configurable: true,
+      value: () => true,
+    });
+    try {
+      assertEquals(
+        recoverTextEmittedToolCalls(
+          '{"name":"delete_file","arguments":{}}',
+          new Set(["get_file"]),
+          () => "call-test",
+        ),
+        undefined,
+      );
+    } finally {
+      Object.defineProperty(Set.prototype, "has", {
+        configurable: true,
+        value: originalHas,
+      });
+      Object.defineProperty(Array.prototype, "includes", {
+        configurable: true,
+        value: originalIncludes,
       });
     }
   });

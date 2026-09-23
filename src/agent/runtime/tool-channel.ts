@@ -36,9 +36,14 @@ const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectPrototype = Object.prototype;
 const IntrinsicReflectApply = Reflect.apply;
 const SetPrototypeHas = Set.prototype.has;
+const ArrayPrototypeIncludes = Array.prototype.includes;
 
 function hasSetValue<T>(set: ReadonlySet<T>, value: T): boolean {
   return IntrinsicReflectApply(SetPrototypeHas, set, [value]) as boolean;
+}
+
+function hasArrayValue<T>(values: readonly T[], value: T): boolean {
+  return IntrinsicReflectApply(ArrayPrototypeIncludes, values, [value]) as boolean;
 }
 
 /**
@@ -266,22 +271,22 @@ function hasOnlyToolCallKeys(value: Record<string, unknown>): boolean {
   let sawName = false;
   let sawArguments = false;
   for (const key of ObjectKeys(value)) {
-    if (!sawName && NAME_KEYS.includes(key)) {
+    if (!sawName && hasArrayValue(NAME_KEYS, key)) {
       sawName = true;
       continue;
     }
-    if (!sawArguments && ARGUMENT_KEYS.includes(key)) {
+    if (!sawArguments && hasArrayValue(ARGUMENT_KEYS, key)) {
       sawArguments = true;
       continue;
     }
-    if (!IGNORED_PAYLOAD_KEYS.has(key)) return false;
+    if (!hasSetValue(IGNORED_PAYLOAD_KEYS, key)) return false;
   }
   return true;
 }
 
 function hasOnlyWrapperKeys(value: Record<string, unknown>): boolean {
   for (const key of ObjectKeys(value)) {
-    if (key !== "function" && !IGNORED_PAYLOAD_KEYS.has(key)) return false;
+    if (key !== "function" && !hasSetValue(IGNORED_PAYLOAD_KEYS, key)) return false;
   }
   return true;
 }
@@ -293,7 +298,7 @@ function readUnwrappedToolCallPayload(
   if (!isPlainObject(value)) return undefined;
 
   const toolName = readStringMember(value, NAME_KEYS);
-  if (toolName === undefined || !knownToolNames.has(toolName)) return undefined;
+  if (toolName === undefined || !hasSetValue(knownToolNames, toolName)) return undefined;
 
   const argumentsMember = readArgumentsMember(value, ARGUMENT_KEYS);
   if (!argumentsMember.found || argumentsMember.input === undefined) return undefined;
