@@ -20,6 +20,40 @@ const ENVIRONMENT_TARGET = {
 } as const;
 
 describe("internal-agents/schema", () => {
+  it("requires complete immutable shared-source authorization in the internal shape", () => {
+    const project = {
+      projectId: "10000000-1000-4000-8000-100000000005",
+      projectSlug: "project",
+      ...MAIN_BRANCH_TARGET,
+    };
+    const base = {
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "release", releaseId: "release-1" },
+      messages: [],
+    };
+    for (
+      const malformed of [
+        { executionProject: project },
+        { sourceProject: project },
+        { sourceProject: project, executionProject: project },
+        {
+          sourceProject: project,
+          executionProject: project,
+          credentials: { authToken: "execution-token" },
+        },
+        {
+          sourceProject: project,
+          executionProject: project,
+          credentials: { authToken: "execution-token", sourceAuthToken: "source-token" },
+          agentSource: { type: "branch", branch: "main" },
+        },
+      ]
+    ) assertThrows(() => getInternalAgentStreamRequestSchema().parse({ ...base, ...malformed }));
+  });
+
   it("applies defaults for optional runtime collections", () => {
     const parsed = getRuntimeRunAgentInputSchema().parse({
       threadId: crypto.randomUUID(),

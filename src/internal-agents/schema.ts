@@ -103,6 +103,23 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     ),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
   }).strict().superRefine((input, ctx) => {
+    if (input.sourceProject || input.executionProject) {
+      if (!input.sourceProject || !input.executionProject || !input.credentials?.sourceAuthToken) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "Shared execution requires source and execution projects and a source credential",
+          path: ["sourceProject"],
+        });
+      }
+      if (input.agentSource.type === "branch") {
+        ctx.addIssue({
+          code: "custom",
+          message: "Shared agent source requires an immutable release",
+          path: ["agentSource"],
+        });
+      }
+    }
     validateRuntimeAgentTargetSelection(input, ctx);
     validateRuntimeAgentSourceTargetBinding(input, ctx);
 

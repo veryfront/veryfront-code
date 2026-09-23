@@ -1090,7 +1090,9 @@ export class AgentStreamHandler extends BaseHandler {
         });
       }
       assertAgentSourceMatchesHostedTarget(ctx, payload);
-      const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken || "";
+      const apiAuthToken = payload.sourceProject
+        ? payload.credentials?.authToken || ""
+        : payload.credentials?.authToken || ctx.proxyToken || "";
       const sourceAuthToken = payload.sourceProject
         ? payload.credentials?.sourceAuthToken || ""
         : apiAuthToken;
