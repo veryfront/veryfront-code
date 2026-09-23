@@ -16,6 +16,7 @@ import {
   runWithCacheKeyContext,
   runWithRegistryScopeNamespace,
   tryGetCacheKeyContext,
+  tryGetRegistryScopeId,
 } from "#veryfront/cache/cache-key-builder.ts";
 import {
   getRuntimeRequestContext,
@@ -27,6 +28,7 @@ import type { HandlerContext } from "../../types.ts";
 import {
   __setProjectDiscoveryClockForTests,
   clearProjectDiscoveryCacheForProject,
+  clearProjectDiscoveryCacheForScope,
   ensureProjectDiscovery,
   PRODUCTION_DISCOVERY_ERROR_RETRY_MS,
 } from "./project-discovery.ts";
@@ -800,6 +802,35 @@ describe(
       );
       assertExists(originalReleaseAgent);
       assertEquals(originalReleaseAgent.config.system, "FIRST");
+    });
+
+    it("retires only the completed invocation discovery even with a source snapshot version", async () => {
+      const ctx = createHandlerContext(
+        "/snapshot-invocation",
+        "snapshot-source",
+        "production",
+        "release-1",
+      );
+      ctx.adapter.fs.getSourceSnapshotVersion = () => 7;
+      await writeAgentFile(ctx, "snapshot-agent", "Pinned source");
+      const sourceCache = {
+        projectId: "snapshot-source",
+        mode: "production" as const,
+        versionId: "release-1",
+      };
+      const within = <T>(namespace: string, fn: () => Promise<T>) =>
+        runWithCacheKeyContext(sourceCache, () => runWithRegistryScopeNamespace(namespace, fn));
+      let retiredScope = "";
+      const first = await within("retired", async () => {
+        retiredScope = tryGetRegistryScopeId()!;
+        return await ensureProjectDiscovery(ctx);
+      });
+      const sibling = await within("live", () => ensureProjectDiscovery(ctx));
+      assertStrictEquals(await within("retired", () => ensureProjectDiscovery(ctx)), first);
+      clearProjectDiscoveryCacheForScope(retiredScope);
+      assertNotStrictEquals(await within("retired", () => ensureProjectDiscovery(ctx)), first);
+      assertStrictEquals(await within("live", () => ensureProjectDiscovery(ctx)), sibling);
+      clearProjectDiscoveryCacheForProject("snapshot-source");
     });
 
     it("isolates captured module identities from ordinary source and other shared invocations", async () => {

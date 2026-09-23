@@ -10,6 +10,7 @@ import {
 import { clearRegistryScope } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { clearTranspileCacheForNamespace } from "#veryfront/discovery/transpiler.ts";
 import { withResponseCleanup } from "./response-cleanup.ts";
+import { clearProjectDiscoveryCacheForScope } from "./api/project-discovery.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { Agent } from "#veryfront/agent";
 import type { AgentMcpServerConfig } from "#veryfront/agent/types.ts";
@@ -1411,6 +1412,7 @@ export class AgentStreamHandler extends BaseHandler {
                 if (!sharedRegistryScope) return;
                 const retired = sharedRegistryScope;
                 sharedRegistryScope = null;
+                clearProjectDiscoveryCacheForScope(retired);
                 clearTranspileCacheForNamespace(retired);
                 clearRegistryScope(retired);
               };

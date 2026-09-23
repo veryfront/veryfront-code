@@ -310,3 +310,8 @@ export function clearProjectDiscoveryCacheForProject(projectId: string): void {
     }
   }
 }
+
+/** Retire the completed discovery promise owned by one invocation scope. */
+export function clearProjectDiscoveryCacheForScope(scopeId: string): void {
+  discoveredProjects.delete(scopeId);
+}
