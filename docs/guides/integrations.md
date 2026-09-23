@@ -137,8 +137,7 @@ the running framework build does not yet know its connector.
 
 This source configuration is local capability selection. The runtime loads it
 from the same branch, release, or environment as the agent and intersects it
-with the agent declaration and connector catalog. It cannot enable an
-integration, select a credential scope, create a connection, or grant access
+with the agent declaration and connector catalog. It cannot enable an integration, select a credential scope, create a connection, or grant access
 to an account. The removed `scope`, `perUser`, and `tools` fields are rejected
 rather than normalized or silently ignored. Source configuration intentionally
 has no credential, provider-configuration, or execution-mode fields.
