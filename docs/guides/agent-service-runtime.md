@@ -31,9 +31,10 @@ namespace, including discovery under the consuming project's credential context.
 This prevents reuse of closures containing the source project's secrets or a
 previous invocation's credentials. Framework registries and evaluated-module cache
 entries are retired when the response completes, fails, or is cancelled. Deno's
-ESM module map itself lasts for the process lifetime, so managed deployments must
-retain their memory-triggered, graceful renderer recycling policy to bound module
-retention during repeated connected runs.
+ESM module map itself lasts for the process lifetime. The managed shared renderer
+pool bounds this retention with memory-triggered, graceful pod recycling. Dedicated
+runtime deployments need their own equivalent recycling policy before enabling
+repeated connected runs; the shared pool's policy does not cover those deployments.
 
 ## Prerequisites
 
