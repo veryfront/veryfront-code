@@ -14,6 +14,18 @@ each signed control-plane request by `agentId`. Projects on a managed dedicated
 server do not require a `service.ts` entrypoint. Add one only when you
 intentionally run the standalone Agent Service process described in this guide.
 
+Managed runtimes can execute a connected agent from another project's immutable
+release. The control plane authorizes the connection before dispatch: `run.project`
+identifies the project that owns conversations, runs, tools, and billing, while
+`sourceProject` identifies the project and environment supplying agent definitions.
+The signed request audience remains the source runtime's project. Registration
+alone does not authorize another project or relax the runtime's signature checks.
+
+Source reads use a separate, read-only `credentials.sourceAuthToken`. The source
+project's environment variables and runtime token are not passed to the connected
+execution. Platform tool calls and inference use the consuming run's credentials.
+Child runs must inherit the authorized source connection through the control plane.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see

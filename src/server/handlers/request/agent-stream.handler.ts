@@ -115,7 +115,11 @@ import { getServerResolvedProviderReplayCheckpoints } from "#veryfront/agent/hos
 import { RUN_EVENT_APPEND_TOKEN_HEADER } from "#veryfront/agent/hosted/chat-request-parser.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { runWithoutRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  getCurrentRequestContext,
+  runWithoutRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import type { SourceSnapshotFreshnessOptions } from "#veryfront/platform/adapters/base.ts";
 import { createRunScopedProviderReplayCheckpointPersister } from "#veryfront/internal-agents/provider-replay-checkpoint-persister.ts";
 
@@ -1075,33 +1079,48 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSurface: "studio",
       });
       const runEventAppendToken = req.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER);
+      if (
+        payload.sourceProject && (
+          payload.sourceProject.projectId !== ctx.projectId ||
+          payload.sourceProject.projectSlug !== ctx.projectSlug
+        )
+      ) {
+        throw PERMISSION_DENIED.create({
+          detail: "Shared agent source does not match the authenticated runtime project",
+        });
+      }
       assertAgentSourceMatchesHostedTarget(ctx, payload);
       const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken || "";
+      const sourceAuthToken = payload.sourceProject
+        ? payload.credentials?.sourceAuthToken || ""
+        : apiAuthToken;
+      const executionProject = payload.executionProject;
       if (payload.agentSource.type === "environment" && !apiAuthToken) {
         throw AUTHENTICATION_REQUIRED.create({
           detail: "Named agent source environment requires a request-scoped API token",
         });
       }
-      // Keep request-scoped user credentials within framework-owned API calls.
-      // Project code and sandbox-backed tools may only receive the runtime's
-      // existing project credential, never the credential supplied by the user.
+      // Shared execution receives the control plane's run-bound invocation
+      // credential for the consuming project. The source credential only reads
+      // its pinned release and is never used for runtime tools or inference.
+      // Legacy requests keep their user credential within framework API calls.
       // The process host token is never combined with request-selected tenant
       // identity, so it is not a fallback here either. The platform MCP tool
       // source is framework-owned: it authenticates with the verified run
       // invocation credential, whose scope profile authorizes the platform
       // tool callbacks (files:write among them) that the stream credential
       // deliberately lacks.
-      const projectRuntimeToken = ctx.proxyToken || "";
+      const projectRuntimeToken = payload.sourceProject ? apiAuthToken : ctx.proxyToken || "";
       const requestScopedContext: HandlerContext = {
         ...ctx,
-        proxyToken: apiAuthToken || undefined,
+        proxyToken: sourceAuthToken || undefined,
         // The signed invocation is authoritative. Never promote an unrelated
         // request header into the environment used for hosted evaluation.
         environmentId: payload.agentSource.type === "branch"
           ? payload.executionEnvironmentId
           : payload.runtimeTargetEnvironmentId ?? undefined,
         requestContext: ctx.requestContext
-          ? { ...ctx.requestContext, token: apiAuthToken }
+          ? { ...ctx.requestContext, token: sourceAuthToken }
           : ctx.requestContext,
       };
       logger.info("Accepted internal agent stream request", {
@@ -1124,7 +1143,7 @@ export class AgentStreamHandler extends BaseHandler {
             runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
               // Resolved before the config load because hosted evaluation binds
               // config to the same environment the run will execute with.
-              const envVarsForAgent = await (
+              const envVarsForAgent = payload.sourceProject ? {} : await (
                 this.deps.loadAgentSourceEnvironment ?? resolveAgentSourceEnvironment
               )(
                 requestScopedContext,
@@ -1135,7 +1154,7 @@ export class AgentStreamHandler extends BaseHandler {
                   runtimeTargetBranchId: payload.runtimeTargetBranchId,
                   executionEnvironmentId: payload.executionEnvironmentId,
                 },
-                apiAuthToken,
+                sourceAuthToken,
                 req.signal,
               );
               const requestSourceFingerprint = payload.agentSource.type === "branch"
@@ -1170,9 +1189,13 @@ export class AgentStreamHandler extends BaseHandler {
               // code can execute.
               const projectScopedContext: HandlerContext = {
                 ...sourceScopedContext,
-                proxyToken: projectRuntimeToken || undefined,
+                proxyToken: (payload.sourceProject ? sourceAuthToken : projectRuntimeToken) ||
+                  undefined,
                 requestContext: sourceScopedContext.requestContext
-                  ? { ...sourceScopedContext.requestContext, token: projectRuntimeToken }
+                  ? {
+                    ...sourceScopedContext.requestContext,
+                    token: payload.sourceProject ? sourceAuthToken : projectRuntimeToken,
+                  }
                   : sourceScopedContext.requestContext,
               };
               return await withoutVerifiedCacheApiCredential(() =>
@@ -1254,13 +1277,15 @@ export class AgentStreamHandler extends BaseHandler {
                         const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
                           agent: runtimeBaseAgent as Agent,
                           token: apiAuthToken || null,
-                          projectId: projectScopedContext.projectId ?? null,
+                          projectId: executionProject?.projectId ??
+                            projectScopedContext.projectId ?? null,
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                         });
                         const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
                           agent: platformRuntimeAgent,
                           token: projectRuntimeToken || null,
-                          projectId: projectScopedContext.projectId ?? null,
+                          projectId: executionProject?.projectId ??
+                            projectScopedContext.projectId ?? null,
                           forwardedProps: runtimeInput.forwardedProps,
                           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                           conversationId: runtimeInput.threadId,
@@ -1290,33 +1315,52 @@ export class AgentStreamHandler extends BaseHandler {
                             projectAgentSandbox: {
                               apiUrl: veryfrontApiUrl,
                               authToken: projectRuntimeToken || undefined,
-                              branchId: payload.runtimeTargetBranchId,
-                              projectId: projectScopedContext.projectId ?? null,
+                              branchId: executionProject
+                                ? executionProject.runtimeTargetBranchId
+                                : payload.runtimeTargetBranchId,
+                              projectId: executionProject?.projectId ??
+                                projectScopedContext.projectId ?? null,
                             },
                           });
                         const shouldIsolateEnv = apiAuthToken.length > 0;
                         const agentEnv = buildAgentStreamEnv({
                           envVars: envVarsForAgent,
                           proxyToken: projectRuntimeToken,
-                          projectSlug: projectScopedContext.projectSlug,
+                          projectSlug: executionProject?.projectSlug ??
+                            projectScopedContext.projectSlug,
                         });
-                        const trustedIdentity = projectScopedContext.projectId ||
-                            projectScopedContext.projectSlug || projectScopedContext.environmentId
+                        const trustedIdentity = executionProject
+                          ? {
+                            projectId: executionProject.projectId,
+                            projectSlug: executionProject.projectSlug,
+                            environmentId: executionProject.executionEnvironmentId ??
+                              executionProject.runtimeTargetEnvironmentId ?? undefined,
+                          }
+                          : projectScopedContext.projectId ||
+                              projectScopedContext.projectSlug || projectScopedContext.environmentId
                           ? {
                             projectId: projectScopedContext.projectId,
                             projectSlug: projectScopedContext.projectSlug,
                             environmentId: projectScopedContext.environmentId,
                           }
                           : undefined;
-                        const response = shouldIsolateEnv
-                          ? trustedIdentity
-                            ? await runWithTrustedProjectEnv(
-                              agentEnv,
-                              trustedIdentity,
-                              runAgentStream,
-                            )
-                            : await runWithProjectEnv(agentEnv, runAgentStream)
-                          : await runAgentStream();
+                        const executeStream = async () =>
+                          shouldIsolateEnv
+                            ? trustedIdentity
+                              ? await runWithTrustedProjectEnv(
+                                agentEnv,
+                                trustedIdentity,
+                                runAgentStream,
+                              )
+                              : await runWithProjectEnv(agentEnv, runAgentStream)
+                            : await runAgentStream();
+                        const response = payload.sourceProject
+                          ? await runWithRequestContext({
+                            ...getCurrentRequestContext(),
+                            projectSlug: payload.sourceProject.projectSlug,
+                            token: "",
+                          }, executeStream)
+                          : await executeStream();
                         logger.info("Internal agent stream response created", {
                           runId: payload.runId,
                           threadId: payload.threadId,
@@ -1344,7 +1388,9 @@ export class AgentStreamHandler extends BaseHandler {
               )();
             }),
         );
-      return await runWithAgentSourceContext();
+      return payload.sourceProject
+        ? await runWithProjectEnv({}, runWithAgentSourceContext)
+        : await runWithAgentSourceContext();
     } catch (caught) {
       // The first negative-cache failure owns diagnostics. Replays retain the
       // original error for response construction but must not repeat reports.

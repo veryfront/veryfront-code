@@ -16,6 +16,7 @@ import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/d
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   getRuntimeAgentCredentialsSchema,
+  getRuntimeAgentProjectContextSchema,
   getRuntimeAgentSourceContextSchema,
   getRuntimeAgentTargetKindSchema,
   getRuntimeAgentTaskIdSchema,
@@ -89,6 +90,8 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     executionEnvironmentId: v.string().uuid().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
     agentSource: getRuntimeAgentSourceContextSchema(),
+    sourceProject: getRuntimeAgentProjectContextSchema().optional(),
+    executionProject: getRuntimeAgentProjectContextSchema().optional(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
       { message: "agentConfig must be less than 64 KB" },

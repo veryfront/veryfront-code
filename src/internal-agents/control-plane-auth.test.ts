@@ -29,6 +29,34 @@ function createCtx(envGet: (key: string) => string | undefined): HandlerContext 
 describe("internal-agents/control-plane-auth", () => {
   const envKey = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 
+  it("binds shared source cache reads to the separate signed source credential", async () => {
+    const rawBody = JSON.stringify({
+      sourceProject: { projectId: "proj-1", projectSlug: "demo-project" },
+      credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody);
+    const previous = Deno.env.get(envKey);
+    Deno.env.set(envKey, publicKeyPem);
+    try {
+      const claims = await verifyControlPlaneRequest(
+        new Request("https://veryfront.test/api/control-plane/runs/run-1/stream", {
+          method: "POST",
+          headers: { "x-veryfront-control-plane-jws": jws },
+        }),
+        createVerificationCtx(publicKeyPem),
+        rawBody,
+      );
+      assertEquals(consumeVerifiedControlPlaneCacheCredential(claims), {
+        token: "source-read-token",
+        projectId: "proj-1",
+        projectSlug: "demo-project",
+      });
+    } finally {
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  });
+
   it("prefers adapter-provided verification keys", () => {
     const originalValue = Deno.env.get(envKey);
     Deno.env.set(envKey, "host-key");

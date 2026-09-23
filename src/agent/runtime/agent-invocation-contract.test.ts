@@ -68,6 +68,41 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("agent/runtime-agent-invocation-contract", () => {
+  it("preserves separate execution and immutable source projects", () => {
+    const sourceProject = {
+      projectId: "20000000-1000-4000-8000-100000000005",
+      projectSlug: "source-project",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: environmentId,
+    };
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      sourceProject,
+      agentSource: { type: "environment", environmentName: "production", releaseId: "release-1" },
+      credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+    }));
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+    assertEquals(parsed.run.project.projectId, projectId);
+    assertEquals(request.sourceProject, sourceProject);
+    assertEquals(request.executionProject?.projectId, projectId);
+    assertEquals(request.runtimeTargetEnvironmentId, environmentId);
+    assertEquals(request.credentials?.sourceAuthToken, "source-read-token");
+  });
+
+  it("rejects shared mutable branch source and missing source credentials", () => {
+    const sourceProject = {
+      projectId: "20000000-1000-4000-8000-100000000005",
+      projectSlug: "source-project",
+      runtimeTargetKind: "main_branch",
+    };
+    assertThrows(() => RuntimeAgentRunInvocationSchema.parse(createInvocation({ sourceProject })));
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        sourceProject,
+        agentSource: { type: "release", releaseId: "release-1" },
+      }))
+    );
+  });
+
   it("keeps the legacy control-plane request shape source-compatible", () => {
     const request: RuntimeAgentControlPlaneStreamRequest = {
       agentId: "builder",
