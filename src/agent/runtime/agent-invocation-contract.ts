@@ -411,7 +411,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       if (
         (executionTarget.runtimeTargetKind === "environment" &&
           !executionTarget.runtimeTargetEnvironmentName) ||
-        (executionTarget.runtimeTargetKind === "preview_branch" &&
+        (executionTarget.runtimeTargetKind !== "environment" &&
           !executionTarget.runtimeTargetBranchName)
       ) {
         ctx.addIssue({

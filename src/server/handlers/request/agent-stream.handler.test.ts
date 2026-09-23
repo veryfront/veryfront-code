@@ -149,6 +149,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     for (const mismatch of ["source", "audience", "project"] as const) {
       const body = createAgentStreamRequestBody({
+        project: { runtimeTargetBranchName: "trunk" },
         sourceProject: {
           projectId: mismatch === "source" ? "30000000-1000-4000-8000-100000000005" : sourceId,
           projectSlug: "source-project",
@@ -178,6 +179,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   for (
     const executionTarget of [
+      {
+        runtimeTargetKind: "main_branch",
+        runtimeTargetBranchName: "consumer-trunk",
+      },
       {
         runtimeTargetKind: "preview_branch",
         runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",

@@ -4,25 +4,47 @@ export function withResponseCleanup(
   cleanup: () => void,
   signal: AbortSignal,
 ): Response {
+  if (!response.body) {
+    cleanup();
+    return response;
+  }
+  const reader = response.body.getReader();
   let finished = false;
+  let cancellation: Promise<void> | undefined;
   const finish = () => {
     if (finished) return;
     finished = true;
-    signal.removeEventListener("abort", finish);
-    cleanup();
+    signal.removeEventListener("abort", abort);
+    try {
+      cleanup();
+    } finally {
+      reader.releaseLock();
+    }
   };
-  if (!response.body || signal.aborted) {
-    finish();
-    return response;
-  }
-  signal.addEventListener("abort", finish, { once: true });
-  const reader = response.body.getReader();
+  const cancel = (reason: unknown): Promise<void> => {
+    if (finished) return cancellation ?? Promise.resolve();
+    cancellation ??= Promise.resolve().then(() => reader.cancel(reason)).finally(finish);
+    return cancellation;
+  };
+  const abort = () => {
+    // Cancellation failure still retires the invocation, and must not create
+    // an unhandled rejection in the request signal's event listener.
+    void cancel(signal.reason).catch(() => {});
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
   return new Response(
     new ReadableStream<Uint8Array>({
       async pull(controller) {
         try {
+          if (finished) {
+            if (cancellation) await cancellation;
+            controller.close();
+            return;
+          }
           const result = await reader.read();
           if (result.done) {
+            if (cancellation) await cancellation;
             finish();
             controller.close();
           } else controller.enqueue(result.value);
@@ -31,13 +53,7 @@ export function withResponseCleanup(
           controller.error(error);
         }
       },
-      async cancel(reason) {
-        try {
-          await reader.cancel(reason);
-        } finally {
-          finish();
-        }
-      },
+      cancel,
     }, { highWaterMark: 0 }),
     { status: response.status, statusText: response.statusText, headers: response.headers },
   );

@@ -860,7 +860,7 @@ describe(
             ["consumer-a", "a-token-1", "invocation-a1"],
             ["consumer-c", "c-token", "invocation-c"],
             ["consumer-a", "a-token-2", "invocation-a2"],
-          ]
+          ] as const
         ) {
           assertEquals(
             await discover(project, token, namespace),

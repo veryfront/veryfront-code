@@ -74,7 +74,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
       projectSlug: "source-project",
       runtimeTargetKind: "environment",
       runtimeTargetEnvironmentId: environmentId,
-    };
+    } as const;
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       sourceProject,
       run: {
@@ -110,6 +110,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
   it("rejects shared execution with unresolved consuming target names", () => {
     for (
       const target of [
+        {},
+        { runtimeTargetKind: "main_branch" },
         { runtimeTargetKind: "preview_branch", runtimeTargetBranchId: branchId },
         { runtimeTargetKind: "environment", runtimeTargetEnvironmentId: environmentId },
       ]
@@ -118,7 +120,10 @@ describe("agent/runtime-agent-invocation-contract", () => {
       assertThrows(() =>
         RuntimeAgentRunInvocationSchema.parse({
           ...invocation,
-          run: { ...invocation.run, project: { projectId, projectSlug: "consumer", ...target } },
+          run: {
+            ...invocation.run,
+            project: { projectId, projectSlug: "demo-project", ...target },
+          },
           sourceProject: {
             projectId: "20000000-1000-4000-8000-100000000005",
             projectSlug: "source",
@@ -129,6 +134,34 @@ describe("agent/runtime-agent-invocation-contract", () => {
         })
       );
     }
+  });
+
+  it("preserves a consuming project's nonstandard default branch for shared execution", () => {
+    const invocation = createInvocation();
+    const parsed = RuntimeAgentRunInvocationSchema.parse({
+      ...invocation,
+      run: {
+        ...invocation.run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "main_branch",
+          runtimeTargetBranchName: "trunk",
+        },
+      },
+      sourceProject: {
+        projectId: "20000000-1000-4000-8000-100000000005",
+        projectSlug: "source",
+        runtimeTargetKind: "main_branch",
+      },
+      agentSource: { type: "release", releaseId: "release-1" },
+      credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+    });
+    assertEquals(
+      buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed).executionProject
+        ?.runtimeTargetBranchName,
+      "trunk",
+    );
   });
 
   it("keeps the legacy control-plane request shape source-compatible", () => {
