@@ -621,7 +621,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "./integration.md",
       "./mcp-server.md",
     ],
-    snippets: ["Salesforce MCP", "write-tool allowlisting", "cross-system"],
+    snippets: ["Salesforce MCP", "connected Salesforce", "cross-system"],
   },
   "concepts/mcp-server.md": {
     references: [
@@ -654,7 +654,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/integrations.md"],
     snippets: [
       "agent source",
-      "Project integration policy",
       "Connection inventory",
       "veryfront.config.ts",
       "Managed OAuth",

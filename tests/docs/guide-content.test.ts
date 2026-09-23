@@ -491,8 +491,8 @@ describe("guide content contracts", () => {
 
     assertStringIncludes(guide, "agent source");
     assertStringIncludes(guide, "integrations.allow");
-    assertStringIncludes(guide, "source-qualified and monotonic");
-    assertStringIncludes(guide, "Project integration policy");
+    assertStringIncludes(guide, "Source configuration is monotonic");
+    assertStringIncludes(guide, "no project integration policy");
     assertStringIncludes(guide, "Connection inventory");
     assertStringIncludes(guide, "Managed OAuth");
     assertStringIncludes(guide, "cannot\nenable an integration");
