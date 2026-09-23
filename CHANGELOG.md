@@ -6,6 +6,14 @@ versions are listed at
 
 ## Unreleased
 
+### Fixed: streamed Gemini tool continuations retain thought signatures
+
+Google tool turns now wait for the provider's final stream metadata under the
+normal idle deadline. They no longer end after the short local tool handoff
+grace period, which could discard signatures and fail the next model request.
+A committed tool whose required provider finish never arrives fails as a
+provider stream error instead of continuing with incomplete replay data.
+
 ### Changed: model IDs naming a provider this package does not list now route through Veryfront Cloud
 
 `resolveVeryfrontCloudGatewayModelId` and its alias

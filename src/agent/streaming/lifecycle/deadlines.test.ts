@@ -5,6 +5,49 @@ import { runStreamLifecycle } from "./runner.ts";
 import { createControllableSignalProvider, ManualMonotonicClock } from "./testing.ts";
 
 describe("stream lifecycle deadlines", () => {
+  it("fails at semantic idle when a committed tool never receives required provider finish", async () => {
+    const clock = new ManualMonotonicClock();
+    const provider = createControllableSignalProvider();
+    const run = runStreamLifecycle({
+      provider,
+      policy: {
+        clock,
+        requireProviderFinish: true,
+        semanticIdleTimeoutMs: 15_000,
+        toolCommitGraceMs: 250,
+        attemptTimeoutMs: 60_000,
+      },
+    });
+    const iterator = run.frames[Symbol.asyncIterator]();
+    provider.resolveNext({
+      done: false,
+      value: {
+        kind: "protocol",
+        event: {
+          type: "tool_input_ready",
+          toolCallId: "t1",
+          toolName: "lookup",
+          input: {},
+        },
+      },
+    });
+    while (true) {
+      const frame = (await iterator.next()).value;
+      if (frame?.class === "semantic" && frame.event.type === "tool_input_ready") break;
+    }
+    const pending = iterator.next();
+    clock.advanceBy(250);
+    assertEquals(
+      await Promise.race([pending.then(() => "settled"), Promise.resolve("pending")]),
+      "pending",
+    );
+    clock.advanceBy(14_750);
+    assertEquals((await pending).done, true);
+    const outcome = await run.outcome;
+    assertEquals(outcome.status, "failed");
+    if (outcome.status === "failed") assertEquals(outcome.error.code, "SEMANTIC_IDLE_TIMEOUT");
+  });
+
   it("does not let five-second status telemetry extend tool-input idle", async () => {
     const clock = new ManualMonotonicClock();
     const provider = createControllableSignalProvider();

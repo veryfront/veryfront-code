@@ -1230,14 +1230,27 @@ export function processStreamInternal(
           )
           : await readNextStreamPart(streamIterator, state, abortSignal);
         if (next === "timeout") {
-          if (callbacks?.requireProviderFinish && !sawProviderFinishPart) {
-            throw new Error("Provider stream timed out before required tool continuation metadata");
+          if (
+            callbacks?.requireProviderFinish && shouldStopForCommittedLocalToolCall &&
+            !sawProviderFinishPart
+          ) {
+            throw createRuntimeProviderStreamFailure(
+              new Error("Provider stream timed out before required tool continuation metadata"),
+            );
           }
           state.finishReason ??= wouldTimeOutIdle ? "stop" : "tool-calls";
           returnStreamIteratorOnce();
           break;
         }
         if (next.done) {
+          if (
+            callbacks?.requireProviderFinish && shouldStopForCommittedLocalToolCall &&
+            !sawProviderFinishPart
+          ) {
+            throw createRuntimeProviderStreamFailure(
+              new Error("Provider stream ended before required tool continuation metadata"),
+            );
+          }
           break;
         }
 

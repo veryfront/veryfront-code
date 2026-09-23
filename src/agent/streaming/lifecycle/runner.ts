@@ -287,6 +287,18 @@ export function runStreamLifecycle<TProviderPart>(
         if (next.done) {
           if (reducer.terminal) {
             settleReducerTerminal(outcome, reducer, elapsedMs());
+          } else if (
+            policy.requireProviderFinish &&
+            reducer.snapshot.tools.some((tool) =>
+              tool.providerExecuted !== true && tool.phase === "input_ready"
+            )
+          ) {
+            settleProviderFailure(outcome, reducer, undefined, {
+              code: "PROVIDER_STREAM_ERROR",
+              publicMessage: "Provider stream ended before required tool continuation metadata",
+              retryable: true,
+              terminal: false,
+            }, elapsedMs());
           } else {
             outcome.settle(resolveStreamOutcome({
               snapshot: reducer.snapshot,

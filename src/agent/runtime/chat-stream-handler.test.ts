@@ -1122,6 +1122,125 @@ describe("chat-stream-handler", () => {
       assertEquals(state.finishReason, "stop");
     });
 
+    it("rejects a committed local tool that idles before required provider finish metadata", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const parts = [
+        { type: "tool-input-start", id: "local-1", toolName: "list_skills" },
+        { type: "tool-input-delta", id: "local-1", delta: "{}" },
+        { type: "tool-input-end", id: "local-1" },
+      ];
+      let nextPartIndex = 0;
+      let markPendingReadStarted: () => void = () => {};
+      const pendingReadStarted = new Promise<void>((resolve) => {
+        markPendingReadStarted = resolve;
+      });
+      let releasePendingRead: () => void = () => {};
+      const pendingRead = new Promise<IteratorResult<unknown>>((resolve) => {
+        releasePendingRead = () => resolve({ done: true, value: undefined });
+      });
+      let nextTimerId = 0;
+      const pendingTimers = new Map<number, { callback: () => void; timeoutMs: number }>();
+      const result = {
+        fullStream: {
+          [Symbol.asyncIterator]() {
+            return {
+              next(): Promise<IteratorResult<unknown>> {
+                const part = parts[nextPartIndex++];
+                if (part !== undefined) {
+                  return Promise.resolve({ done: false, value: part });
+                }
+                markPendingReadStarted();
+                return pendingRead;
+              },
+              return(): Promise<IteratorResult<unknown>> {
+                releasePendingRead();
+                return Promise.resolve({ done: true, value: undefined });
+              },
+            };
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+
+      const processing = processStream(result, state, controller, encoder, "t", {
+        requireProviderFinish: true,
+        streamIdleTimeoutMs: 25,
+        setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
+          const id = nextTimerId++;
+          pendingTimers.set(id, { callback, timeoutMs: timeoutMs ?? 0 });
+          return id;
+        }) as typeof setTimeout,
+        clearTimeoutFn: ((id: number) => {
+          pendingTimers.delete(id);
+        }) as typeof clearTimeout,
+      });
+
+      await pendingReadStarted;
+      const pendingDeadlines = [...pendingTimers.values()];
+      assertEquals(pendingDeadlines.length, 1);
+      assertEquals(pendingDeadlines[0]?.timeoutMs, 25);
+      pendingDeadlines[0]?.callback();
+
+      const error = await assertRejects(() => processing) as Error;
+      assertEquals(error.name, "RuntimeProviderStreamFailure");
+      assertEquals(state.finishReason, null);
+    });
+
+    it("rejects clean EOF after a committed local tool when provider finish metadata is required", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const error = await assertRejects(() =>
+        processStream(
+          createMockResult([
+            { type: "tool-input-start", id: "local-1", toolName: "list_skills" },
+            { type: "tool-input-delta", id: "local-1", delta: "{}" },
+            { type: "tool-input-end", id: "local-1" },
+          ]),
+          state,
+          controller,
+          encoder,
+          "t",
+          { requireProviderFinish: true },
+        )
+      ) as Error;
+
+      assertEquals(error.name, "RuntimeProviderStreamFailure");
+      assertEquals(state.finishReason, null);
+    });
+
+    it("accepts required provider finish metadata with a null finish reason", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const providerMetadata = {
+        anthropic: { stopSequence: null, requestId: "req-1" },
+      };
+
+      await processStream(
+        createMockResult([
+          { type: "tool-input-start", id: "local-1", toolName: "list_skills" },
+          { type: "tool-input-delta", id: "local-1", delta: "{}" },
+          { type: "tool-input-end", id: "local-1" },
+          {
+            type: "finish",
+            finishReason: null,
+            totalUsage: null,
+            providerMetadata,
+          },
+        ]),
+        state,
+        controller,
+        encoder,
+        "t",
+        { requireProviderFinish: true },
+      );
+
+      assertEquals(state.finishReason, null);
+      assertEquals(state.providerMetadata, providerMetadata);
+      assertEquals(state.toolCalls.get("local-1")?.inputAvailable, true);
+    });
+
     it("captures finish reason and usage", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
