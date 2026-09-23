@@ -59,7 +59,8 @@ export default agent({
 ```
 
 The exact canonical IDs passed to `tools` are the source's capability grant.
-Source configuration is source-qualified and monotonic: integrations.allow only narrows that grant
+Source configuration is monotonic. It is source-qualified and monotonic:
+integrations.allow only narrows that grant
 when the source runs inside a Veryfront project runtime. It never enables
 another tool or selects a credential. The runtime resolves each credential
 immediately before the request and never sends local credentials to Veryfront,
