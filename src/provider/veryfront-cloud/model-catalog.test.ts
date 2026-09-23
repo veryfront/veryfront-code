@@ -28,6 +28,16 @@ import {
 import { VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES } from "./model-catalog.data.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
+  it("retires DeepSeek from managed selections while retaining Mistral as default", () => {
+    assertEquals(findVeryfrontCloudModelByModelId("deepseek/deepseek-v4-flash"), undefined);
+    assertEquals(
+      groupVeryfrontCloudModelsByProvider().some((group) => group.provider === "deepseek"),
+      false,
+    );
+    assertEquals(DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID, "mistral/mistral-small-2503");
+    assertThrows(() => resolveVeryfrontCloudModelId("deepseek-v4-flash"));
+  });
+
   it("preserves system layers only for the verified Mistral transport", () => {
     assertEquals(resolveVeryfrontCloudOpenAIChatSystemMessages("mistral/mistral-small-2503"), true);
     assertEquals(
@@ -49,7 +59,10 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   it("keeps the EU Nano and DeepSeek identities distinct with their gateway transports", () => {
     assertEquals(resolveVeryfrontCloudModelId("gpt-5-nano"), "openai/gpt-5-nano");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.4-nano"), "openai/gpt-5.4-nano");
-    assertEquals(resolveVeryfrontCloudModelId("deepseek-v4-flash"), "deepseek/deepseek-v4-flash");
+    assertEquals(
+      resolveVeryfrontCloudModelId("deepseek/deepseek-v4-flash"),
+      "deepseek/deepseek-v4-flash",
+    );
     assertEquals(
       resolveVeryfrontCloudOpenAITransportPlan("openai", "gpt-5-nano").transport,
       "responses",
@@ -321,7 +334,6 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "google",
       "mistral",
       "moonshotai",
-      "deepseek",
     ]);
     assertEquals(groups[0]?.label, "Anthropic");
     assertEquals(groups[1]?.label, "OpenAI");

@@ -171,13 +171,6 @@ describe("provider/veryfront-cloud gateway routing", () => {
         genAiSystem: "openai",
         toolProfile: "openai",
       },
-      {
-        model: "deepseek/deepseek-v4-flash",
-        provider: "deepseek",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/deepseek/v1",
-        genAiSystem: null,
-        toolProfile: "unknown",
-      },
     ]);
   });
 
