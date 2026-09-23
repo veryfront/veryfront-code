@@ -496,7 +496,7 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "Connection inventory");
     assertStringIncludes(guide, "Managed OAuth");
     assertStringIncludes(guide, "cannot enable an integration");
-    assertStringIncludes(guide, "`scope`, `perUser`, and\n`tools` fields are rejected");
+    assertStringIncludes(guide, "`scope`, `perUser`, and `tools` fields are rejected");
   });
 
   it("documents account-free local integration credentials without weakening grants", async () => {
