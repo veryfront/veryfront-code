@@ -100,7 +100,7 @@ export function createStreamDeadlineController(input: {
       return null;
     }
     const localTools = snapshot.tools.filter((tool) => tool.providerExecuted !== true);
-    if (localTools.some((tool) => tool.phase === "input_ready")) {
+    if (!policy.requireProviderFinish && localTools.some((tool) => tool.phase === "input_ready")) {
       return "tool_commit_grace";
     }
     if (

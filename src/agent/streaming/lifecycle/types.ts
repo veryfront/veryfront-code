@@ -264,6 +264,7 @@ export interface StreamLifecyclePolicy {
   semanticIdleTimeoutMs: number;
   toolInputIdleTimeoutMs: number;
   toolCommitGraceMs: number;
+  requireProviderFinish?: boolean;
   statusIntervalMs: number;
   attemptTimeoutMs: number;
 }

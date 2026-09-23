@@ -89,7 +89,7 @@ export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.E
         ),
         // Auto-loading images would let an injected answer beacon to arbitrary
         // hosts. Render inert text, not an anchor: Markdown allows a linked
-        // image (`[![alt](src)](href)`), and an anchor here would nest inside
+        // image wrapped in a link, and an anchor here would nest inside
         // that link, which is invalid HTML and breaks hydration.
         img: ({ src, alt }) => (
           <span title={typeof src === "string" ? src : undefined}>{alt || "image"}</span>

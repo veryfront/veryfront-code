@@ -48,7 +48,7 @@ export interface ManagedExecutorStarter {
   ): Promise<ManagedExecutorRuntime>;
 }
 
-/** Handle signed run invocations with configured detached or request-owned SSE responses. */
+/** Handles signed run invocations with configured detached or request-owned SSE responses. */
 export function createManagedBrokerHandler<TAuthorization>(options: {
   broker: ManagedExecutorStarter;
   /** Trusted route configuration; never read from request data. */

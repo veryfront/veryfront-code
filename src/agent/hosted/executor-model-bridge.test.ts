@@ -32,7 +32,11 @@ function stubModel(
     modelProvider: "openai",
     executionMode: "remote",
     _generateViaStream: true,
-    runtimeCapabilities: { toolCalling: true, structuredOutput: ["json_schema"] },
+    runtimeCapabilities: {
+      toolCalling: true,
+      toolCallStreamRequiresFinish: true,
+      structuredOutput: ["json_schema"],
+    },
     doGenerate: () =>
       Promise.resolve({
         content: [{ type: "text", text: "Synthetic answer" }],
