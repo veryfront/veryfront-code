@@ -1101,26 +1101,29 @@ describe("chat-stream-handler", () => {
       assertEquals(events, []);
     });
 
-    it("times out an idle output stream after assistant output starts", async () => {
-      const { controller, encoder } = createSSECollector();
-      const state = createStreamState();
-      const result = {
-        fullStream: {
-          async *[Symbol.asyncIterator]() {
-            yield { type: "text-delta", text: "Ready." };
-            await new Promise(() => {});
+    for (const requireProviderFinish of [true, false]) {
+      it(`preserves text-only idle behavior with required finish (${requireProviderFinish})`, async () => {
+        const { controller, encoder } = createSSECollector();
+        const state = createStreamState();
+        const result = {
+          fullStream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "text-delta", text: "Ready." };
+              await new Promise(() => {});
+            },
           },
-        },
-        textStream: emptyAsyncIterable(),
-      };
+          textStream: emptyAsyncIterable(),
+        };
 
-      await processStream(result, state, controller, encoder, "t", {
-        streamIdleTimeoutMs: 10,
+        await processStream(result, state, controller, encoder, "t", {
+          streamIdleTimeoutMs: 10,
+          requireProviderFinish,
+        });
+
+        assertEquals(state.accumulatedText, "Ready.");
+        assertEquals(state.finishReason, "stop");
       });
-
-      assertEquals(state.accumulatedText, "Ready.");
-      assertEquals(state.finishReason, "stop");
-    });
+    }
 
     it("rejects a committed local tool that idles before required provider finish metadata", async () => {
       const { controller, encoder } = createSSECollector();
