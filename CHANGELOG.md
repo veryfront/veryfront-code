@@ -16,6 +16,9 @@ provider stream error instead of continuing with incomplete replay data.
 Normal Google completion (`STOP` or `[DONE]` without a finish reason) now
 preserves local tool handoff, including when text precedes the function call.
 Explicit provider limit and filter reasons remain unchanged.
+For finish-required streams in the active lifecycle, a completed turn containing
+only unavailable tool calls now permits the same recovery turn as the legacy lifecycle. Rejected tools are
+not executed, and malformed or empty handoff requests still fail.
 
 ### Changed: model IDs naming a provider this package does not list now route through Veryfront Cloud
 

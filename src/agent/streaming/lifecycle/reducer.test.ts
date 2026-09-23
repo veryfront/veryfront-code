@@ -10,15 +10,46 @@ const protocol = (event: StreamProtocolEvent) => ({
   event,
 });
 
-function reduceEvents(events: readonly StreamProtocolEvent[]) {
+function reduceEvents(events: readonly StreamProtocolEvent[], recoverUnavailableToolCalls = false) {
   let state = createInitialReducerState();
   for (const [index, event] of events.entries()) {
-    state = reduceStreamSignal(state, protocol(event), index + 1).state;
+    state =
+      reduceStreamSignal(state, protocol(event), index + 1, { recoverUnavailableToolCalls }).state;
   }
   return state;
 }
 
 describe("stream lifecycle reducer", () => {
+  for (
+    const [reasons, expectedPhase] of [
+      [[], "failed"],
+      [["unavailable"], "tool_handoff"],
+      [["unavailable", "unavailable"], "tool_handoff"],
+      [["invalid"], "failed"],
+      [["unavailable", "malformed"], "failed"],
+    ] as const
+  ) {
+    it(`only recovers tool handoff when every rejected call is unavailable (${reasons.join(",")})`, () => {
+      const events: StreamProtocolEvent[] = reasons.map((reason, index) => ({
+        type: "tool_input_rejected",
+        toolCallId: `t${index}`,
+        toolName: "lookup",
+        reason,
+      }));
+      const pending = reduceEvents(events, true);
+      assertEquals(pending.terminal, false);
+      const state = reduceEvents(
+        [...events, { type: "step_finish", finishReason: "tool-calls" }],
+        true,
+      );
+      assertEquals(
+        state.snapshot.phase,
+        expectedPhase,
+      );
+      assertEquals(collectCommittedLocalToolCalls(state.snapshot), []);
+    });
+  }
+
   for (const target of ["reasoning", "tools", "snapshot deltas", "map deltas"] as const) {
     it(`clones ${target} without dispatching through own collection hooks`, () => {
       const state = reduceEvents([

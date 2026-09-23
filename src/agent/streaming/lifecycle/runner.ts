@@ -359,6 +359,7 @@ export function runStreamLifecycle<TProviderPart>(
             reducer,
             signal,
             elapsedMs(),
+            { recoverUnavailableToolCalls: policy.requireProviderFinish === true },
           );
           reducer = reduced.state;
           if (reduced.semanticProgress) {
