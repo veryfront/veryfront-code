@@ -248,10 +248,12 @@ function incompatibleProviderReplayError(subject: "calls" | "results"): TypeErro
 /**
  * Convert runtime prompt messages into OpenAI-compatible chat messages.
  * Adjacent non-empty system layers become one ordered instruction so strict
- * Chat Completions providers receive a compatible message sequence.
+ * Chat Completions providers receive a compatible message sequence. A verified
+ * transport capability can preserve the original system message boundaries.
  */
 export function toOpenAICompatibleMessages(
   prompt: readonly ModelRuntimePromptMessage[],
+  options: { readonly preserveSystemMessages?: boolean } = {},
 ): OpenAICompatibleChatMessage[] {
   const messages: OpenAICompatibleChatMessage[] = [];
 
@@ -262,7 +264,7 @@ export function toOpenAICompatibleMessages(
           break;
         }
         const previous = messages.at(-1);
-        if (previous?.role === "system") {
+        if (previous?.role === "system" && !options.preserveSystemMessages) {
           previous.content = `${previous.content}\n\n${message.content}`;
         } else {
           messages.push({ role: "system", content: message.content });

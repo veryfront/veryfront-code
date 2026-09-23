@@ -28,6 +28,7 @@ export type OverlayTransportCapabilities = {
   readonly anthropicThinkingMode?: "adaptive";
   readonly openAITransport?: "chat-completions" | "responses";
   readonly openAIChatReasoningWithFunctionTools?: boolean;
+  readonly openAIChatPreserveSystemMessages?: boolean;
 };
 
 /** Every hand-maintained fact the generator merges into the catalog data. */
@@ -70,6 +71,9 @@ export type ModelCatalogOverlay = {
    * transport but not this constraint on it.
    */
   readonly openAIChatReasoningWithFunctionTools:
+    readonly (readonly [string, boolean])[];
+  /** Verified Chat transports that preserve separate system instruction layers. */
+  readonly openAIChatPreserveSystemMessages?:
     readonly (readonly [string, boolean])[];
   /**
    * Transport capabilities for models the catalog no longer serves but this
@@ -115,6 +119,7 @@ export const MODEL_CATALOG_OVERLAY: ModelCatalogOverlay = {
     ["anthropic/claude-sonnet-4-6", 2048],
     ["anthropic/claude-haiku-4-5-20251001", 1024],
   ],
+  openAIChatPreserveSystemMessages: [["mistral/mistral-small-2503", true]],
   openAIChatReasoningWithFunctionTools: [
     ["openai/gpt-5.4", false],
     ["openai/gpt-5.5", false],

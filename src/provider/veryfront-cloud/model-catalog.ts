@@ -264,6 +264,13 @@ export function resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
     ?.openAIChatReasoningWithFunctionTools;
 }
 
+/** Resolves whether a verified Chat transport preserves system message boundaries. */
+export function resolveVeryfrontCloudOpenAIChatSystemMessages(
+  modelId: string,
+): boolean | undefined {
+  return getVeryfrontCloudModelTransportCapabilities(modelId)?.openAIChatPreserveSystemMessages;
+}
+
 /** Provider name the OpenAI runtime is built under for Veryfront Cloud models. */
 const VERYFRONT_CLOUD_OPENAI_RUNTIME_NAME = "veryfront-cloud";
 

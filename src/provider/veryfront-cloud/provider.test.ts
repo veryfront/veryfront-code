@@ -9,7 +9,7 @@ import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensi
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
-import { createVeryfrontCloudInferenceModel } from "./provider.ts";
+import { createVeryfrontCloudInferenceModel, createVeryfrontCloudModel } from "./provider.ts";
 import { createVeryfrontCloudFetch } from "./shared.ts";
 import {
   isVeryfrontGatewayResponse,
@@ -893,6 +893,76 @@ describe("provider/veryfront-cloud", () => {
       await captureGatewayRequestUrl("mistral/mistral-small-2503"),
       "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
     );
+  });
+
+  it("preserves verified Mistral system layers without changing strict compatible models", async () => {
+    setCloudBootstrap();
+    for (
+      const [modelId, expectedSystems] of [
+        ["mistral/mistral-small-2503", 4],
+        ["mistral/mistral-large-2512", 1],
+        ["moonshotai/kimi-k2.6", 1],
+      ] as const
+    ) {
+      let body: { messages?: Array<{ role: string; content: string }>; tools?: unknown[] } = {};
+      installMockFetch(async (_input, init) => {
+        body = await new Request(_input, init).json();
+        return new Response(
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+          {
+            headers: { "content-type": "text/event-stream" },
+          },
+        );
+      });
+      for (
+        const runtime of [
+          createVeryfrontCloudInferenceModel(modelId, "test-inference-token"),
+          createVeryfrontCloudModel(modelId),
+        ]
+      ) {
+        const result = await runtime.doStream({
+          prompt: [
+            { role: "system", content: "Use authorized project tools." },
+            { role: "system", content: "External web access is unavailable." },
+            { role: "system", content: "Internal tool discovery is available." },
+            { role: "system", content: "Available tools: load_skill, tool_search." },
+            {
+              role: "user",
+              content: [{
+                type: "text",
+                text: "Collect input and create a file without web search.",
+              }],
+            },
+          ],
+          tools: [{
+            type: "function",
+            name: "tool_search",
+            inputSchema: { type: "object", properties: { query: { type: "string" } } },
+          }],
+          temperature: 0,
+          maxOutputTokens: 16384,
+        });
+        await drainStream(result.stream);
+        const layers = [
+          "Use authorized project tools.",
+          "External web access is unavailable.",
+          "Internal tool discovery is available.",
+          "Available tools: load_skill, tool_search.",
+        ];
+        assertEquals(
+          body.messages?.filter((message) => message.role === "system").map((message) =>
+            message.content
+          ),
+          expectedSystems === 4 ? layers : [layers.join("\n\n")],
+        );
+        assertEquals(body.messages?.at(-1), {
+          role: "user",
+          content: "Collect input and create a file without web search.",
+        });
+        assertEquals(body.tools?.length, 1);
+      }
+      restoreMockFetch();
+    }
   });
 
   it("rejects unsupported pre-prefixed veryfront-cloud Mistral models", () => {

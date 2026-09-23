@@ -1468,6 +1468,35 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
   });
 
+  it("carries explicit system boundary capability through the catalog renderer", () => {
+    const overlay: ModelCatalogOverlay = {
+      ...OVERLAY,
+      openAIChatPreserveSystemMessages: [["beta-works/plain-3", true]],
+    };
+    const data = buildModelCatalogData(fakePayload(), overlay);
+    assertEquals(
+      data.modelTransportCapabilities.find(([id]) =>
+        id === "beta-works/plain-3"
+      )?.[1],
+      {
+        openAIChatPreserveSystemMessages: true,
+      },
+    );
+    assertEquals(
+      renderModelCatalogModule(data).includes(
+        "openAIChatPreserveSystemMessages: true",
+      ),
+      true,
+    );
+    assertEquals(
+      buildModelCatalogData(fakePayload(), OVERLAY).modelTransportCapabilities
+        .some(([, capability]) =>
+          capability.openAIChatPreserveSystemMessages !== undefined
+        ),
+      false,
+    );
+  });
+
   it("rejects a present capabilities value that is not an object", () => {
     for (const capabilities of ["a string", ["an array"], null, 7]) {
       const payload = fakePayload();

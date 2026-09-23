@@ -43,6 +43,7 @@ export type VeryfrontCloudModelTransportCapabilities = {
   readonly anthropicThinkingMode?: "adaptive";
   readonly openAITransport?: "chat-completions" | "responses";
   readonly openAIChatReasoningWithFunctionTools?: boolean;
+  readonly openAIChatPreserveSystemMessages?: boolean;
 };
 
 /**
@@ -129,6 +130,12 @@ export const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES: ReadonlyArray<
     [
       "anthropic/claude-opus-4-8",
       Object.freeze({ anthropicThinkingMode: "adaptive" as const }),
+    ] as const,
+  ),
+  Object.freeze(
+    [
+      "mistral/mistral-small-2503",
+      Object.freeze({ openAIChatPreserveSystemMessages: true }),
     ] as const,
   ),
   Object.freeze(
