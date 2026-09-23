@@ -4017,7 +4017,13 @@ export class AgentRuntime {
       if (recoveredStreamingToolCalls !== undefined) {
         state.accumulatedText = "";
         state.finishReason = "tool-calls";
-        for (const recovered of recoveredStreamingToolCalls) {
+        for (
+          let recoveredIndex = 0;
+          recoveredIndex < recoveredStreamingToolCalls.length;
+          recoveredIndex++
+        ) {
+          if (!ObjectHasOwn(recoveredStreamingToolCalls, recoveredIndex)) continue;
+          const recovered = recoveredStreamingToolCalls[recoveredIndex]!;
           const argumentsText = privateJsonStringify(recovered.input);
           const dynamic = isDynamicTool(recovered.toolName);
           state.toolCalls.set(recovered.toolCallId, {
