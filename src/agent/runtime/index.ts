@@ -1471,7 +1471,7 @@ function synchronizeRuntimeToolInventory(
   }
   const instructions = withRuntimeToolInventory(
     systemPrompt,
-    Object.keys(runtimeTools ?? {}).sort(compareStrings),
+    agentWriteApply(agentWriteArraySort, ObjectKeys(runtimeTools ?? {}), [compareStrings]),
     deferredTools,
   );
   return typeof systemPrompt === "string" ? flattenSystemInstructions(instructions) : instructions;
@@ -3728,7 +3728,11 @@ export class AgentRuntime {
         ),
         preparedStep.integrationToolDiscovery,
       );
-      const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
+      const runtimeToolNames = agentWriteApply(
+        agentWriteArraySort,
+        ObjectKeys(runtimeTools ?? {}),
+        [compareStrings],
+      );
       const stepToolChoice = resolveStepToolChoice(toolChannelProfile, {
         step,
         hasTools: runtimeToolNames.length > 0,
