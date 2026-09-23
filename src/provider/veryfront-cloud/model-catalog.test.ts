@@ -17,6 +17,7 @@ import {
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
+  resolveVeryfrontCloudOpenAIChatSystemMessages,
   resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudOpenAITransportPlan,
   resolveVeryfrontCloudReasoningOption,
@@ -27,6 +28,24 @@ import {
 import { VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES } from "./model-catalog.data.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
+  it("preserves system layers only for the verified Mistral transport", () => {
+    assertEquals(resolveVeryfrontCloudOpenAIChatSystemMessages("mistral/mistral-small-2503"), true);
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatSystemMessages("veryfront-cloud/mistral/mistral-small-2503"),
+      true,
+    );
+    for (
+      const model of [
+        "mistral/mistral-large-2512",
+        "openai/gpt-5.4",
+        "moonshotai/kimi-k2.6",
+        "unlisted/model",
+      ]
+    ) {
+      assertEquals(resolveVeryfrontCloudOpenAIChatSystemMessages(model), undefined);
+    }
+  });
+
   it("keeps the EU Nano and DeepSeek identities distinct with their gateway transports", () => {
     assertEquals(resolveVeryfrontCloudModelId("gpt-5-nano"), "openai/gpt-5-nano");
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.4-nano"), "openai/gpt-5.4-nano");

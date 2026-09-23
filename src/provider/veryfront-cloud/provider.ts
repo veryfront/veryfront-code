@@ -20,6 +20,7 @@ import {
 import {
   requireVeryfrontCloudWireSurface,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
+  resolveVeryfrontCloudOpenAIChatSystemMessages,
   resolveVeryfrontCloudOpenAITransportPlan,
   resolveVeryfrontCloudProviderRouting,
 } from "./model-catalog.ts";
@@ -129,6 +130,9 @@ function createVeryfrontCloudModelInternal(
   // would select the Responses runtime and request an endpoint that this
   // provider's surface does not serve.
   function createOpenAICompatibleModel(): ModelRuntime {
+    const openAIChatPreserveSystemMessages = resolveVeryfrontCloudOpenAIChatSystemMessages(
+      `${provider}/${upstreamModelId}`,
+    );
     const chatCompletionsOnlyReason =
       `Veryfront Cloud provider "${provider}" speaks the OpenAI chat completions surface, ` +
       "which carries no hosted tools. Use a provider that implements the OpenAI surface " +
@@ -140,6 +144,7 @@ function createVeryfrontCloudModelInternal(
           apiToken: providerCredential,
           baseURL,
           openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
+          openAIChatPreserveSystemMessages,
           openAITransport: "chat-completions",
           fetch,
         }),
@@ -155,6 +160,7 @@ function createVeryfrontCloudModelInternal(
           name: "veryfront-cloud",
           providerName: "openai-compatible",
           openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
+          openAIChatPreserveSystemMessages,
           openAITransport: "chat-completions",
           fetch,
         }),
@@ -166,6 +172,7 @@ function createVeryfrontCloudModelInternal(
         apiToken: providerCredential,
         baseURL,
         openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
+        openAIChatPreserveSystemMessages,
         openAITransport: "chat-completions",
         fetch,
       }),

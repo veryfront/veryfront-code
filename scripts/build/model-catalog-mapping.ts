@@ -467,6 +467,10 @@ function readTransportCapabilities(
   overlay: ModelCatalogOverlay,
   surface: string,
 ): TransportCapabilities | undefined {
+  const preserveSystemMessages = new Map(
+    overlay.openAIChatPreserveSystemMessages ?? [],
+  )
+    .get(capabilityKey(served));
   const functionToolReasoning = new Map(
     overlay.openAIChatReasoningWithFunctionTools,
   )
@@ -489,6 +493,9 @@ function readTransportCapabilities(
       : {}),
     ...(transport !== undefined && KNOWN_OPENAI_TRANSPORTS.has(transport)
       ? { openAITransport: transport as "chat-completions" | "responses" }
+      : {}),
+    ...(surface === "openai" && preserveSystemMessages !== undefined
+      ? { openAIChatPreserveSystemMessages: preserveSystemMessages }
       : {}),
     ...(functionToolReasoning === undefined
       ? {}
@@ -1028,6 +1035,10 @@ function overlayModelKeyTables(
       overlay.openAIChatReasoningWithFunctionTools.map(([key]) => key),
     ],
     [
+      "openAIChatPreserveSystemMessages",
+      (overlay.openAIChatPreserveSystemMessages ?? []).map(([key]) => key),
+    ],
+    [
       "retainedTransportCapabilities",
       overlay.retainedTransportCapabilities.map(([key]) => key),
     ],
@@ -1361,6 +1372,11 @@ function renderTransportCapabilities(
       `openAITransport: ${quote(capabilities.openAITransport)} as const`,
     );
   }
+  if (capabilities.openAIChatPreserveSystemMessages !== undefined) {
+    fields.push(
+      `openAIChatPreserveSystemMessages: ${capabilities.openAIChatPreserveSystemMessages}`,
+    );
+  }
   if (capabilities.openAIChatReasoningWithFunctionTools !== undefined) {
     fields.push(
       `openAIChatReasoningWithFunctionTools: ${capabilities.openAIChatReasoningWithFunctionTools}`,
@@ -1445,6 +1461,7 @@ export function renderModelCatalogModule(data: ModelCatalogData): string {
     '  readonly anthropicThinkingMode?: "adaptive";',
     '  readonly openAITransport?: "chat-completions" | "responses";',
     "  readonly openAIChatReasoningWithFunctionTools?: boolean;",
+    "  readonly openAIChatPreserveSystemMessages?: boolean;",
     "};",
     "",
     "/**",

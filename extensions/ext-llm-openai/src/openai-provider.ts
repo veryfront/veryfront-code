@@ -1369,11 +1369,12 @@ export class OpenAIProvider implements LLMProvider {
       baseURL: config.baseURL,
       name: providerLabel,
       providerName,
-      chatRequestCapabilities: typeof config.openAIChatReasoningWithFunctionTools === "boolean"
-        ? {
-          reasoningWithFunctionTools: config.openAIChatReasoningWithFunctionTools,
-        }
-        : undefined,
+      chatRequestCapabilities: {
+        ...(typeof config.openAIChatReasoningWithFunctionTools === "boolean"
+          ? { reasoningWithFunctionTools: config.openAIChatReasoningWithFunctionTools }
+          : {}),
+        preserveSystemMessages: config.openAIChatPreserveSystemMessages === true,
+      },
       fetch: config.fetch,
     };
     const responsesRuntime = createOpenAIResponsesRuntime(

@@ -22,6 +22,7 @@ export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions
 
 export type OpenAIChatRequestCapabilities = {
   readonly reasoningWithFunctionTools?: boolean;
+  readonly preserveSystemMessages?: boolean;
 };
 
 /** @deprecated Import `ModelRuntimeToolDefinition` from `veryfront/provider` instead. */
@@ -88,7 +89,9 @@ export function buildOpenAIChatRequest(
   const samplingRejected = rejectsOpenAISamplingParams(modelId);
   const fixedSampling = isFixedSamplingModel(modelId);
   const dropSamplingParams = reasoningEnabled || samplingRejected || fixedSampling;
-  const messages = toOpenAICompatibleMessages(options.prompt);
+  const messages = toOpenAICompatibleMessages(options.prompt, {
+    preserveSystemMessages: capabilities?.preserveSystemMessages,
+  });
 
   // OpenAI Chat Completions has no top_k surface.
   if (options.topK !== undefined) {

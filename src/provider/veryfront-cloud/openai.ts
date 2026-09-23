@@ -11,6 +11,7 @@ interface VeryfrontCloudOpenAIConfig {
   baseURL: string;
   openAIChatCompletionsOnlyReason?: string;
   openAIChatReasoningWithFunctionTools?: boolean;
+  openAIChatPreserveSystemMessages?: boolean;
   openAITransport?: "chat-completions" | "responses";
   fetch: typeof globalThis.fetch;
 }
@@ -26,6 +27,7 @@ export function createVeryfrontCloudOpenAIModel(
     providerName: "veryfront-cloud",
     openAIChatCompletionsOnlyReason: config.openAIChatCompletionsOnlyReason,
     openAIChatReasoningWithFunctionTools: config.openAIChatReasoningWithFunctionTools,
+    openAIChatPreserveSystemMessages: config.openAIChatPreserveSystemMessages,
     openAITransport: config.openAITransport,
     fetch: config.fetch,
   });
