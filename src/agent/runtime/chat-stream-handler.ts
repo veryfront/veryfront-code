@@ -1231,8 +1231,11 @@ export function processStreamInternal(
           : await readNextStreamPart(streamIterator, state, abortSignal);
         if (next === "timeout") {
           if (
-            callbacks?.requireProviderFinish && shouldStopForCommittedLocalToolCall &&
-            !sawProviderFinishPart
+            callbacks?.requireProviderFinish && !sawProviderFinishPart &&
+            somePrivateArray(
+              [...state.toolCalls.values()],
+              (toolCall) => toolCall.inputAvailable === true && toolCall.providerExecuted !== true,
+            )
           ) {
             throw createRuntimeProviderStreamFailure(
               new Error("Provider stream timed out before required tool continuation metadata"),
@@ -1244,8 +1247,11 @@ export function processStreamInternal(
         }
         if (next.done) {
           if (
-            callbacks?.requireProviderFinish && shouldStopForCommittedLocalToolCall &&
-            !sawProviderFinishPart
+            callbacks?.requireProviderFinish && !sawProviderFinishPart &&
+            somePrivateArray(
+              [...state.toolCalls.values()],
+              (toolCall) => toolCall.inputAvailable === true && toolCall.providerExecuted !== true,
+            )
           ) {
             throw createRuntimeProviderStreamFailure(
               new Error("Provider stream ended before required tool continuation metadata"),
