@@ -280,6 +280,32 @@ function collectKeys(value: unknown, into: Set<string>): Set<string> {
 }
 
 describe("scripts/build/model-catalog-mapping", () => {
+  it("removes retired selections and empty provider groups without changing the default", () => {
+    const payload = fakePayload();
+    payload.models = (payload.models as Record<string, unknown>[]).filter((
+      model,
+    ) => model.provider !== "acme-labs");
+    const data = buildModelCatalogData(payload, OVERLAY);
+    assertEquals(
+      data.chatModels.some((model) => model.provider === "acme-labs"),
+      false,
+    );
+    assertEquals(data.providerOrder.includes("acme-labs"), false);
+    assertEquals(
+      data.providerAliases.some(([alias]) => alias === "acme-labs"),
+      false,
+    );
+    assertEquals(
+      data.providerLabels.some(([provider]) => provider === "acme-labs"),
+      false,
+    );
+    assertEquals(data.defaultModelId, "riddle-9");
+    assertEquals(
+      data.providerRouting.some(([provider]) => provider === "acme-labs"),
+      true,
+    );
+  });
+
   it("maps the allowlisted served fields onto the catalog entries", () => {
     const data = buildModelCatalogData(fakePayload(), OVERLAY);
 
@@ -1224,6 +1250,10 @@ describe("scripts/build/model-catalog-mapping", () => {
     const data = buildModelCatalogData(payload, OVERLAY);
 
     assertEquals(data.providerOrder.includes("acme-labs"), false);
+    assertEquals(
+      data.providerAliases.some(([alias]) => alias === "acme-labs"),
+      false,
+    );
     assertEquals(
       data.modelTransportCapabilities.some(([id]) => id === "acme-labs/gone-0"),
       true,

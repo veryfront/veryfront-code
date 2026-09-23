@@ -66,7 +66,6 @@ export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyArray<
   Object.freeze(["google-ai-studio", "google"] as const),
   Object.freeze(["mistral", "mistral"] as const),
   Object.freeze(["moonshotai", "moonshotai"] as const),
-  Object.freeze(["deepseek", "deepseek"] as const),
 ]);
 
 /**
@@ -304,14 +303,6 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
       description: "Lowest-cost OpenAI model served from the EU Data Zone",
       thinking: true,
     }),
-    Object.freeze({
-      id: "deepseek-v4-flash",
-      modelId: "deepseek/deepseek-v4-flash",
-      provider: "deepseek",
-      name: "DeepSeek V4 Flash",
-      description: "Fast open-weight DeepSeek model served from the EU Data Zone",
-      thinking: true,
-    }),
   ],
 );
 
@@ -326,7 +317,6 @@ export const VERYFRONT_CLOUD_PROVIDER_ORDER = Object.freeze(
     "google",
     "mistral",
     "moonshotai",
-    "deepseek",
   ] as const,
 ) satisfies readonly KnownVeryfrontCloudProviderId[];
 
@@ -344,5 +334,4 @@ export const VERYFRONT_CLOUD_PROVIDER_LABELS: Readonly<
   google: "Google",
   moonshotai: "Kimi",
   mistral: "Mistral",
-  deepseek: "DeepSeek",
 });
