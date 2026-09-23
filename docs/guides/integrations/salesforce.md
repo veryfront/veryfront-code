@@ -4,14 +4,17 @@ description: "Install and connect the Veryfront Salesforce integration with per-
 order: 50
 ---
 
-Use this guide to connect a Salesforce org to Veryfront. Choose per-user OAuth
-when each action must use an individual's Salesforce access. Choose a service
-account for scheduled or project-owned automation.
+Use this guide to connect a Salesforce org to Veryfront. The integration flow is
+catalog, connect, then call a tool. It does not require an integration policy,
+allowlist, or separate enablement step. Choose per-user OAuth when each action
+must use an individual's Salesforce access. Choose a service account for
+scheduled or project-owned automation.
 
 ## Prerequisites
 
 - A Salesforce administrator for the target org.
-- A Veryfront project with Salesforce tools declared in an agent.
+- A Veryfront project with Salesforce tools declared in an agent, or a local
+  Veryfront Code project that loads the tools explicitly.
 - The hosted Veryfront API for per-user OAuth, which supplies the Salesforce
   provider adapter. The generic runtime does not scaffold Salesforce OAuth
   routes. An embedding host that supplies its own Salesforce adapter must declare
@@ -33,15 +36,16 @@ authorization request.
 4. Wait for the installation to complete.
 5. In Salesforce Setup, open **External Client App Manager** and select **Veryfront**.
 6. Confirm that the app is **Packaged (Installed)** and **Enabled**.
-7. Under **Policies**, select the permitted-users policy. The beta package permits all users to self-authorize. Restrict access to the required profile or permission set when the org uses a tighter access policy.
+7. Under **Policies**, select the Salesforce permitted-users setting. The beta package permits all users to self-authorize. Restrict access to the required profile or permission set when the org uses a tighter Salesforce access setting.
 
 Install the beta package in a sandbox or test org before installing it in a
 production Salesforce org.
 
-In Veryfront, open the project and start the Salesforce connection from the
-integration prompt or project integration settings. Sign in to the Salesforce
-org where the package is installed, approve consent, then run a read-only
-Salesforce tool to verify access.
+In Veryfront, discover the Salesforce integration and its tools, then start the
+connection from the integration prompt or project integration settings. Sign in
+to the Salesforce org where the package is installed and approve consent. After
+the connection reports `connected`, call a read-only Salesforce tool to verify
+access. No policy update is required before the call.
 
 Never paste a Salesforce consumer secret into an agent prompt, project file,
 ticket, or client-side environment variable.
@@ -129,6 +133,20 @@ variables from the active project environment and calls Salesforce directly. See
 [Self-host Veryfront Code](../self-hosting.md#run-salesforce-integration-tools-locally)
 for a complete agent example.
 
+The `allowedTools` option on a local source is a developer-selected tool list
+for that source. It is not an integration policy and does not affect hosted
+connections. Keep the list explicit in local applications so the agent only
+receives the tools the application needs.
+
+## Keep local and mock usage working
+
+Hosted Salesforce connections and local service-account sources are separate
+execution paths. Local development and tests can continue to use explicit mock
+tools or mocked provider transport without Salesforce credentials. A policy
+configuration is not required for either path. When a test verifies Salesforce
+credential handling, stub the provider token and API requests and keep secrets
+out of fixtures and logs.
+
 ## Verify it worked
 
 1. Start a new agent run that uses a read-only Salesforce tool, such as account or case lookup.
@@ -138,4 +156,4 @@ for a complete agent example.
 ## Related
 
 - [veryfront/integrations](../../api-reference/veryfront/integrations.md): Connector catalog and helper API.
-- [Salesforce integration](../../concepts/salesforce-integration.md): Why Veryfront uses a governed Salesforce integration layer.
+- [Salesforce integration](../../concepts/salesforce-integration.md): How Salesforce tools fit the Veryfront integration flow.
