@@ -14,6 +14,35 @@ each signed control-plane request by `agentId`. Projects on a managed dedicated
 server do not require a `service.ts` entrypoint. Add one only when you
 intentionally run the standalone Agent Service process described in this guide.
 
+Managed runtimes can execute a connected agent from another project's immutable
+release. The control plane authorizes the connection before dispatch: `run.project`
+identifies the project that owns conversations, runs, tools, and billing, while
+`sourceProject` identifies the project and environment supplying agent definitions.
+The signed request audience remains the source runtime's project. Registration
+alone does not authorize another project or relax the runtime's signature checks.
+
+Source reads use a separate, read-only `credentials.sourceAuthToken`. The source
+project's environment variables and runtime token are not passed to the connected
+execution. Platform tool calls and inference use the consuming run's credentials.
+Child runs must inherit the authorized source connection through the control plane.
+
+Connected execution evaluates project modules in an invocation-specific registry
+namespace, including discovery under the consuming project's credential context.
+This prevents reuse of closures containing the source project's secrets or a
+previous invocation's credentials. Framework registries and evaluated-module cache
+entries are retired when the response completes, fails, or is cancelled. Deno's
+ESM module map itself lasts for the process lifetime. The managed shared renderer
+pool bounds this retention with memory-triggered, graceful pod recycling. Dedicated
+runtime deployments need their own equivalent recycling policy before enabling
+repeated connected runs; the shared pool's policy does not cover those deployments.
+
+Connected agents and their child agent runs are supported. Starting, resuming, or
+retrying a source-defined durable workflow from connected execution is rejected
+before accessing the workflow backend. Durable workflow recovery needs a separate
+persisted source authorization and credential-renewal contract; ordinary same-project
+workflows and explicit calls to the consuming project's existing APIs keep their
+existing behavior.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see

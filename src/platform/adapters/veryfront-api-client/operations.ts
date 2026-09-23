@@ -1,3 +1,7 @@
+import {
+  currentRequestContext,
+  currentRuntimeRequestContext,
+} from "#veryfront/platform/request-context-access.ts";
 import { computeHashBytes, logger as baseLogger } from "#veryfront/utils";
 import type {
   DependencyArtifactBuildResultBody,
@@ -355,6 +359,12 @@ async function listAllFiles(
   return allFiles;
 }
 
+function isPrivateSourceCredential(token: string): boolean {
+  const source = currentRequestContext();
+  const execution = currentRuntimeRequestContext();
+  return Boolean(source?.token && source.token === token && execution?.token !== token);
+}
+
 export class VeryfrontAPIOperations {
   #tokenProvider: TokenProvider;
   private transport: VeryfrontApiTransport<unknown>;
@@ -372,7 +382,7 @@ export class VeryfrontAPIOperations {
       apiBaseUrl,
       () => {
         const token = this.#tokenProvider();
-        if (token === getHostSecret("VERYFRONT_API_TOKEN")) {
+        if (token === getHostSecret("VERYFRONT_API_TOKEN") || isPrivateSourceCredential(token)) {
           requireHostPrivateApiHttps(apiBaseUrl);
           const selectedOrigin = tokenBoundaryApply(
             tokenBoundaryOriginGetter,
@@ -403,7 +413,7 @@ export class VeryfrontAPIOperations {
 
   getToken(): string {
     const token = this.#tokenProvider();
-    if (token === getHostSecret("VERYFRONT_API_TOKEN")) {
+    if (token === getHostSecret("VERYFRONT_API_TOKEN") || isPrivateSourceCredential(token)) {
       throw API_CLIENT_ERROR.create({
         detail: "Host-private credentials cannot be read",
         status: 401,

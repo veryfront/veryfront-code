@@ -26,7 +26,7 @@ import { exists, readDir, readTextFile } from "#veryfront/platform/compat/index.
 import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
 import { isAbsolute, join, relative } from "#veryfront/platform/compat/path/index.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { JsonSchema } from "#veryfront/tool/schema/index.ts";
@@ -621,7 +621,7 @@ async function getProjectKnowledgeManifest(
 }
 
 function getHostedKnowledgeContext(context?: ToolExecutionContext): HostedKnowledgeContext | null {
-  const requestContext = getCurrentRequestContext();
+  const requestContext = getRuntimeRequestContext();
   const authToken = typeof context?.authToken === "string" && context.authToken
     ? context.authToken
     : requestContext?.token;

@@ -92,6 +92,7 @@ export function buildVersionedRegistryScopeId(
 }
 
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
+const registryNamespaceStorage = new AsyncLocalStorage<string>();
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
 const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;
@@ -224,7 +225,31 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
  * local dev without a multi-project context), in which case the caller should
  * fall back to DEFAULT_SCOPE_ID.
  */
+export function runWithRegistryScopeNamespace<T>(namespace: string, fn: () => T): T {
+  return IntrinsicReflectApply(AsyncLocalStorageRun, registryNamespaceStorage, [
+    namespace,
+    fn,
+  ]) as T;
+}
+
 export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
+  const scope = getSourceRegistryScopeContext();
+  const namespace = IntrinsicReflectApply(
+    AsyncLocalStorageGetStore,
+    registryNamespaceStorage,
+    [],
+  ) as
+    | string
+    | undefined;
+  return scope && namespace
+    ? {
+      scopeId: `${scope.scopeId}:invocation:${encodeRegistryScopeSegment(namespace)}`,
+      immutable: false,
+    }
+    : scope;
+}
+
+function getSourceRegistryScopeContext(): RegistryScopeContext | null {
   // Explicit contexts are authoritative for workflows and other callers that
   // intentionally override ambient filesystem tenancy.
   const cacheCtx = getCacheKeyContextStore();

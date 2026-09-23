@@ -48,7 +48,9 @@ function extractVerifiedCacheCredential(
       return null;
     }
 
-    const token = (credentials as Record<string, unknown>).authToken;
+    const token = body.sourceProject
+      ? (credentials as Record<string, unknown>).sourceAuthToken
+      : (credentials as Record<string, unknown>).authToken;
     if (typeof token !== "string" || token.length === 0) return null;
 
     return Object.freeze({

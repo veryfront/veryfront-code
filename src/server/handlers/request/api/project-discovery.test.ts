@@ -12,12 +12,23 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import {
+  runWithCacheKeyContext,
+  runWithRegistryScopeNamespace,
+  tryGetCacheKeyContext,
+  tryGetRegistryScopeId,
+} from "#veryfront/cache/cache-key-builder.ts";
+import {
+  getRuntimeRequestContext,
+  runWithRuntimeRequestContext,
+} from "#veryfront/platform/runtime-request-context.ts";
+import { getProjectEnv, runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { HandlerContext } from "../../types.ts";
 import {
   __setProjectDiscoveryClockForTests,
   clearProjectDiscoveryCacheForProject,
+  clearProjectDiscoveryCacheForScope,
   ensureProjectDiscovery,
   PRODUCTION_DISCOVERY_ERROR_RETRY_MS,
 } from "./project-discovery.ts";
@@ -791,6 +802,110 @@ describe(
       );
       assertExists(originalReleaseAgent);
       assertEquals(originalReleaseAgent.config.system, "FIRST");
+    });
+
+    it("retires only the completed invocation discovery even with a source snapshot version", async () => {
+      const ctx = createHandlerContext(
+        "/snapshot-invocation",
+        "snapshot-source",
+        "production",
+        "release-1",
+      );
+      ctx.adapter.fs.getSourceSnapshotVersion = () => 7;
+      await writeAgentFile(ctx, "snapshot-agent", "Pinned source");
+      const sourceCache = {
+        projectId: "snapshot-source",
+        mode: "production" as const,
+        versionId: "release-1",
+      };
+      const within = <T>(namespace: string, fn: () => Promise<T>) =>
+        runWithCacheKeyContext(sourceCache, () => runWithRegistryScopeNamespace(namespace, fn));
+      let retiredScope = "";
+      const first = await within("retired", async () => {
+        retiredScope = tryGetRegistryScopeId()!;
+        return await ensureProjectDiscovery(ctx);
+      });
+      const sibling = await within("live", () => ensureProjectDiscovery(ctx));
+      assertStrictEquals(await within("retired", () => ensureProjectDiscovery(ctx)), first);
+      clearProjectDiscoveryCacheForScope(retiredScope);
+      assertNotStrictEquals(await within("retired", () => ensureProjectDiscovery(ctx)), first);
+      assertStrictEquals(await within("live", () => ensureProjectDiscovery(ctx)), sibling);
+      clearProjectDiscoveryCacheForProject("snapshot-source");
+    });
+
+    it("isolates captured module identities from ordinary source and other shared invocations", async () => {
+      const ctx = createHandlerContext(
+        "/shared-capture-project",
+        "source-b",
+        "production",
+        "release-b",
+      );
+      const agentId = "shared-capture-agent";
+      const marker = "__vf_capture_shared_discovery__";
+      const globals = globalThis as Record<string, unknown>;
+      globals[marker] = () =>
+        JSON.stringify({
+          secret: getProjectEnv("SOURCE_SECRET") ?? null,
+          project: getRuntimeRequestContext()?.projectSlug,
+          token: getRuntimeRequestContext()?.token,
+        });
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/agents/${agentId}.ts`,
+        [
+          'import { agent } from "veryfront/agent";',
+          `const captured = globalThis.${marker}();`,
+          `export default agent({ id: "${agentId}", system: captured });`,
+        ].join("\n"),
+      );
+      const sourceCache = {
+        projectId: "source-b",
+        mode: "production" as const,
+        versionId: "release-b",
+      };
+      const discover = (project: string, token: string, namespace?: string) =>
+        runWithCacheKeyContext(sourceCache, () =>
+          runWithRuntimeRequestContext({
+            projectSlug: project,
+            token,
+            productionMode: false,
+          }, () =>
+            runWithProjectEnv(namespace ? {} : { SOURCE_SECRET: "b-secret" }, async () => {
+              const read = async () => {
+                assertEquals(tryGetCacheKeyContext(), sourceCache);
+                await ensureProjectDiscovery(ctx);
+                const result = getAgent(agentId);
+                assertExists(result);
+                return result.config.system;
+              };
+              return namespace
+                ? await runWithRegistryScopeNamespace(namespace, read)
+                : await read();
+            })));
+      try {
+        assertEquals(
+          await discover("source-b", "b-token"),
+          JSON.stringify({ secret: "b-secret", project: "source-b", token: "b-token" }),
+        );
+        for (
+          const [project, token, namespace] of [
+            ["consumer-a", "a-token-1", "invocation-a1"],
+            ["consumer-c", "c-token", "invocation-c"],
+            ["consumer-a", "a-token-2", "invocation-a2"],
+          ] as const
+        ) {
+          assertEquals(
+            await discover(project, token, namespace),
+            JSON.stringify({ secret: null, project, token }),
+          );
+        }
+        assertEquals(
+          await discover("source-b", "unused-new-b-token"),
+          JSON.stringify({ secret: "b-secret", project: "source-b", token: "b-token" }),
+        );
+      } finally {
+        delete globals[marker];
+        clearProjectDiscoveryCacheForProject("source-b");
+      }
     });
 
     it("respects configured custom discovery paths for request-time discovery", async () => {

@@ -33,7 +33,8 @@ import {
   updateRunIfStatus,
   type WorkflowBackend,
 } from "../backends/types.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { hasRuntimeRequestContextOverride } from "#veryfront/platform/runtime-request-context.ts";
+import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
@@ -62,6 +63,15 @@ import { validateWorkflowPathSegment } from "../dsl/validation.ts";
 import { captureWorkflowNodes } from "./workflow-definition-snapshot.ts";
 
 const logger = baseLogger.component("workflow-executor");
+
+function requireDurableWorkflowSourceContext(): void {
+  if (hasRuntimeRequestContextOverride()) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Connected runtimes cannot execute durable workflows. " +
+        "Durable workflow recovery requires an independently authorized source binding.",
+    });
+  }
+}
 
 /** Default polling interval for waiting on workflow result */
 const DEFAULT_RESULT_POLL_INTERVAL_MS = 1_000;
@@ -292,6 +302,7 @@ export class WorkflowExecutor {
     input: TInput,
     options?: { runId?: string },
   ): Promise<WorkflowHandle<TOutput>> {
+    requireDurableWorkflowSourceContext();
     if (options?.runId !== undefined) {
       validateWorkflowPathSegment(options.runId, "Workflow run ID");
     }
@@ -360,6 +371,7 @@ export class WorkflowExecutor {
     fromCheckpoint?: string,
     expectedWorkerId?: string,
   ): Promise<void> {
+    requireDurableWorkflowSourceContext();
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
@@ -383,6 +395,7 @@ export class WorkflowExecutor {
    * Retry a failed workflow run from its failed node state.
    */
   async retry(runId: string): Promise<void> {
+    requireDurableWorkflowSourceContext();
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
@@ -600,6 +613,7 @@ export class WorkflowExecutor {
     startFromNode?: string,
     expectedWorkerId?: string,
   ): Promise<void> {
+    requireDurableWorkflowSourceContext();
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
     if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {

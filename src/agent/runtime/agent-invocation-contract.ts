@@ -265,6 +265,8 @@ export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
     runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
     executionEnvironmentId: v.string().uuid().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
+    runtimeTargetBranchName: v.string().min(1).max(255).optional(),
+    runtimeTargetEnvironmentName: v.string().min(1).max(255).optional(),
   }).superRefine(validateRuntimeAgentTargetSelection)
 );
 
@@ -375,6 +377,7 @@ export const getRuntimeAgentCredentialsSchema = defineSchema((v) => {
     // refinement and transport-safe character set are intentionally limited to
     // the new inference credential.
     authToken: credential(),
+    sourceAuthToken: inferenceCredential().optional(),
     inferenceAuthToken: inferenceCredential().optional(),
   }).strict();
 });
@@ -382,6 +385,7 @@ export const getRuntimeAgentCredentialsSchema = defineSchema((v) => {
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({
     run: getRuntimeAgentRunContextSchema(),
+    sourceProject: getRuntimeAgentProjectContextSchema().optional(),
     taskId: getRuntimeAgentTaskIdSchema().optional(),
     messages: v.array(v.unknown()).default([]),
     tools: v.array(getRuntimeAgentToolSchema()).max(50).default([]),
@@ -402,6 +406,35 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
     ),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
   }).superRefine((input, ctx) => {
+    if (input.sourceProject) {
+      const executionTarget = input.run.project;
+      if (
+        (executionTarget.runtimeTargetKind === "environment" &&
+          !executionTarget.runtimeTargetEnvironmentName) ||
+        (executionTarget.runtimeTargetKind !== "environment" &&
+          !executionTarget.runtimeTargetBranchName)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Shared execution requires the consuming project's runtime target name",
+          path: ["run", "project"],
+        });
+      }
+      if (input.agentSource.type === "branch") {
+        ctx.addIssue({
+          code: "custom",
+          message: "Shared agent source requires an immutable release",
+          path: ["agentSource"],
+        });
+      }
+      if (!input.credentials?.sourceAuthToken) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Shared agent source requires a source credential",
+          path: ["credentials", "sourceAuthToken"],
+        });
+      }
+    }
     if (input.agentConfig && input.agentConfig.id !== input.run.agentId) {
       ctx.addIssue({
         code: "custom",
@@ -412,7 +445,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
 
     validateRuntimeAgentSourceTargetBinding(
       {
-        ...input.run.project,
+        ...(input.sourceProject ?? input.run.project),
         agentSource: input.agentSource,
       },
       ctx,
@@ -508,6 +541,8 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   runtimeTargetBranchId?: RuntimeAgentProjectContext["runtimeTargetBranchId"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource: RuntimeAgentRunInvocation["agentSource"];
+  sourceProject?: RuntimeAgentRunInvocation["sourceProject"];
+  executionProject?: RuntimeAgentProjectContext;
   agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
   serverResolvedProviderReplayCheckpoints?: RuntimeAgentRunInvocation[
@@ -519,6 +554,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
 export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
   input: RuntimeAgentRunInvocation,
 ): RuntimeAgentControlPlaneStreamRequest {
+  const sourceProject = input.sourceProject ?? input.run.project;
   return {
     agentId: input.run.agentId,
     threadId: input.run.conversationId,
@@ -530,11 +566,14 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     tools: input.tools,
     context: input.context,
     ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
-    runtimeTargetKind: input.run.project.runtimeTargetKind ?? "main_branch",
-    runtimeTargetEnvironmentId: input.run.project.runtimeTargetEnvironmentId ?? null,
-    runtimeTargetBranchId: input.run.project.runtimeTargetBranchId ?? null,
-    ...(input.run.project.executionEnvironmentId
-      ? { executionEnvironmentId: input.run.project.executionEnvironmentId }
+    ...(input.sourceProject
+      ? { sourceProject: input.sourceProject, executionProject: input.run.project }
+      : {}),
+    runtimeTargetKind: sourceProject.runtimeTargetKind ?? "main_branch",
+    runtimeTargetEnvironmentId: sourceProject.runtimeTargetEnvironmentId ?? null,
+    runtimeTargetBranchId: sourceProject.runtimeTargetBranchId ?? null,
+    ...(sourceProject.executionEnvironmentId
+      ? { executionEnvironmentId: sourceProject.executionEnvironmentId }
       : {}),
     ...(input.credentials ? { credentials: input.credentials } : {}),
     agentSource: input.agentSource,

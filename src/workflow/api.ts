@@ -20,7 +20,7 @@
  */
 
 import { getWorkflowTenant } from "./executor/step-executor.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import {
   setPrivateVeryfrontApiClientRequestToken,
   VeryfrontApiClient,
@@ -63,7 +63,7 @@ function isValidProjectSlug(slug: string): boolean {
 function getTenant() {
   // Check workflow context first (for tool execution within workflows)
   // Then fall back to request context (for direct API route calls)
-  const tenant = getWorkflowTenant() ?? getCurrentRequestContext();
+  const tenant = getWorkflowTenant() ?? getRuntimeRequestContext();
 
   if (!tenant) {
     throw INITIALIZATION_ERROR.create({

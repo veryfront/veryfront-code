@@ -2910,3 +2910,16 @@ export function clearTranspileCache(): void {
   transpileCache.clear();
   clearDependencySourceCache();
 }
+
+/** Retire evaluated modules for one invocation without invalidating source bytes. */
+export function clearTranspileCacheForNamespace(namespace: string): void {
+  for (const key of transpileCache.keys()) {
+    const cachedNamespace = (JSON.parse(key) as unknown[])[0];
+    if (
+      cachedNamespace === namespace ||
+      (typeof cachedNamespace === "string" && cachedNamespace.startsWith(`${namespace}:snapshot:`))
+    ) {
+      transpileCache.delete(key);
+    }
+  }
+}

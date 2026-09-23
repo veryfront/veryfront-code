@@ -20,7 +20,7 @@ import {
   type ObservableGauge,
 } from "#veryfront/observability";
 import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 import {
@@ -242,7 +242,7 @@ function normalizeAttributes(attributes?: MetricAttributes): Record<string, Attr
     apply(objectDefineProperty, Object, [normalized, key, dataPropertyDescriptor(value)]);
   }
 
-  const context = getCurrentRequestContext();
+  const context = getRuntimeRequestContext();
   const addAttribute = (key: string, value: AttributeValue): void => {
     apply(objectDefineProperty, Object, [normalized, key, dataPropertyDescriptor(value)]);
   };
@@ -419,7 +419,7 @@ function resolveDirectCapacityScope(): string {
       "project:unattributed";
   }
 
-  const requestContext = getCurrentRequestContext();
+  const requestContext = getRuntimeRequestContext();
   return capacityIdentity("project-id", requestContext?.projectId) ??
     capacityIdentity("project-slug", requestContext?.projectSlug) ??
     "project:unattributed";

@@ -68,6 +68,102 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("agent/runtime-agent-invocation-contract", () => {
+  it("preserves separate execution and immutable source projects", () => {
+    const sourceProject = {
+      projectId: "20000000-1000-4000-8000-100000000005",
+      projectSlug: "source-project",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: environmentId,
+    } as const;
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      sourceProject,
+      run: {
+        ...createInvocation().run,
+        project: { ...createInvocation().run.project, runtimeTargetBranchName: "feature-a" },
+      },
+      agentSource: { type: "environment", environmentName: "production", releaseId: "release-1" },
+      credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+    }));
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+    assertEquals(parsed.run.project.projectId, projectId);
+    assertEquals(request.sourceProject, sourceProject);
+    assertEquals(request.executionProject?.projectId, projectId);
+    assertEquals(request.runtimeTargetEnvironmentId, environmentId);
+    assertEquals(request.credentials?.sourceAuthToken, "source-read-token");
+  });
+
+  it("rejects shared mutable branch source and missing source credentials", () => {
+    const sourceProject = {
+      projectId: "20000000-1000-4000-8000-100000000005",
+      projectSlug: "source-project",
+      runtimeTargetKind: "main_branch",
+    };
+    assertThrows(() => RuntimeAgentRunInvocationSchema.parse(createInvocation({ sourceProject })));
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        sourceProject,
+        agentSource: { type: "release", releaseId: "release-1" },
+      }))
+    );
+  });
+
+  it("rejects shared execution with unresolved consuming target names", () => {
+    for (
+      const target of [
+        {},
+        { runtimeTargetKind: "main_branch" },
+        { runtimeTargetKind: "preview_branch", runtimeTargetBranchId: branchId },
+        { runtimeTargetKind: "environment", runtimeTargetEnvironmentId: environmentId },
+      ]
+    ) {
+      const invocation = createInvocation();
+      assertThrows(() =>
+        RuntimeAgentRunInvocationSchema.parse({
+          ...invocation,
+          run: {
+            ...invocation.run,
+            project: { projectId, projectSlug: "demo-project", ...target },
+          },
+          sourceProject: {
+            projectId: "20000000-1000-4000-8000-100000000005",
+            projectSlug: "source",
+            runtimeTargetKind: "main_branch",
+          },
+          agentSource: { type: "release", releaseId: "release-1" },
+          credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+        })
+      );
+    }
+  });
+
+  it("preserves a consuming project's nonstandard default branch for shared execution", () => {
+    const invocation = createInvocation();
+    const parsed = RuntimeAgentRunInvocationSchema.parse({
+      ...invocation,
+      run: {
+        ...invocation.run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "main_branch",
+          runtimeTargetBranchName: "trunk",
+        },
+      },
+      sourceProject: {
+        projectId: "20000000-1000-4000-8000-100000000005",
+        projectSlug: "source",
+        runtimeTargetKind: "main_branch",
+      },
+      agentSource: { type: "release", releaseId: "release-1" },
+      credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+    });
+    assertEquals(
+      buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed).executionProject
+        ?.runtimeTargetBranchName,
+      "trunk",
+    );
+  });
+
   it("keeps the legacy control-plane request shape source-compatible", () => {
     const request: RuntimeAgentControlPlaneStreamRequest = {
       agentId: "builder",
