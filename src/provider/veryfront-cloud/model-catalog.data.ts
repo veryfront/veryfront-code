@@ -66,7 +66,6 @@ export const VERYFRONT_CLOUD_PROVIDER_ALIASES: ReadonlyArray<
   Object.freeze(["google-ai-studio", "google"] as const),
   Object.freeze(["mistral", "mistral"] as const),
   Object.freeze(["moonshotai", "moonshotai"] as const),
-  Object.freeze(["deepseek", "deepseek"] as const),
 ]);
 
 /**

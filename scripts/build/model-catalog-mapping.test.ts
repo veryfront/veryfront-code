@@ -292,6 +292,10 @@ describe("scripts/build/model-catalog-mapping", () => {
     );
     assertEquals(data.providerOrder.includes("acme-labs"), false);
     assertEquals(
+      data.providerAliases.some(([alias]) => alias === "acme-labs"),
+      false,
+    );
+    assertEquals(
       data.providerLabels.some(([provider]) => provider === "acme-labs"),
       false,
     );
@@ -1246,6 +1250,10 @@ describe("scripts/build/model-catalog-mapping", () => {
     const data = buildModelCatalogData(payload, OVERLAY);
 
     assertEquals(data.providerOrder.includes("acme-labs"), false);
+    assertEquals(
+      data.providerAliases.some(([alias]) => alias === "acme-labs"),
+      false,
+    );
     assertEquals(
       data.modelTransportCapabilities.some(([id]) => id === "acme-labs/gone-0"),
       true,
