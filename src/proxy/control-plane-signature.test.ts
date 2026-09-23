@@ -169,6 +169,61 @@ describe("proxy/control-plane-signature", () => {
     );
   });
 
+  for (const runtimeTargetKind of ["main_branch", "preview_branch"] as const) {
+    it(`uses B's signed source environment for A's ${runtimeTargetKind} execution`, async () => {
+      assertEquals(
+        await resolveNestedTarget(JSON.stringify({
+          run: {
+            project: {
+              projectId: "consumer-project",
+              runtimeTargetKind,
+              runtimeTargetBranchId: runtimeTargetKind === "preview_branch"
+                ? "consumer-branch"
+                : null,
+              runtimeTargetBranchName: "consumer-branch-name",
+            },
+          },
+          sourceProject: {
+            projectId: "proj-1",
+            projectSlug: "protected",
+            runtimeTargetKind: "environment",
+            runtimeTargetEnvironmentId: "source-environment",
+          },
+          agentSource: {
+            type: "environment",
+            environmentName: "staging",
+            releaseId: "source-release",
+          },
+        })),
+        {},
+      );
+    });
+  }
+
+  it("rejects malformed or mismatched signed source projects", async () => {
+    for (
+      const sourceProject of [
+        null,
+        [],
+        "proj-1",
+        { projectId: "another-project", projectSlug: "protected" },
+        { projectId: "proj-1", projectSlug: "another-project" },
+        { projectId: "proj-1" },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          resolveNestedTarget(JSON.stringify({
+            run: { project: { runtimeTargetKind: "main_branch" } },
+            sourceProject,
+            agentSource: { type: "release", releaseId: "source-release" },
+          })),
+        ControlPlaneBranchBindingError,
+        "Invalid control-plane source project",
+      );
+    }
+  });
+
   it("rejects mismatched nested runtime targets", async () => {
     const cases = [
       createNestedTargetBody(

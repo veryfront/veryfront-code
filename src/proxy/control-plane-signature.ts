@@ -139,7 +139,10 @@ function requireBranchName(value: unknown): string {
   return value;
 }
 
-function parseVerifiedBranchBinding(rawBody: string): VerifiedControlPlaneBranchBinding {
+function parseVerifiedBranchBinding(
+  rawBody: string,
+  binding: InternalControlPlaneProjectBinding,
+): VerifiedControlPlaneBranchBinding {
   let value: unknown;
   try {
     value = JSON.parse(rawBody);
@@ -159,7 +162,20 @@ function parseVerifiedBranchBinding(rawBody: string): VerifiedControlPlaneBranch
   if (!project || typeof project !== "object" || Array.isArray(project)) {
     throw new ControlPlaneBranchBindingError(400, "Invalid control-plane runtime target");
   }
-  const target = project as Record<string, unknown>;
+  let target = project as Record<string, unknown>;
+  if (request.sourceProject !== undefined) {
+    const sourceProject = request.sourceProject;
+    if (
+      !sourceProject || typeof sourceProject !== "object" || Array.isArray(sourceProject) ||
+      !binding.expectedProjectId ||
+      (sourceProject as Record<string, unknown>).projectId !== binding.expectedProjectId ||
+      (sourceProject as Record<string, unknown>).projectSlug !== binding.audience
+    ) {
+      throw new ControlPlaneBranchBindingError(400, "Invalid control-plane source project");
+    }
+    // Proxy routing follows the signed source project; run.project remains the execution owner.
+    target = sourceProject as Record<string, unknown>;
+  }
   const source = request.agentSource;
   if (!source || typeof source !== "object" || Array.isArray(source)) {
     throw new ControlPlaneBranchBindingError(400, "Invalid control-plane source target");
@@ -256,7 +272,7 @@ export async function resolveVerifiedControlPlaneBranchBinding(
   if (!verified) {
     throw new ControlPlaneBranchBindingError(401, "Invalid control-plane signature");
   }
-  return parseVerifiedBranchBinding(rawBody);
+  return parseVerifiedBranchBinding(rawBody, binding);
 }
 
 /**
