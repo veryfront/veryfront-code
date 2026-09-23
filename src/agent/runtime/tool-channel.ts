@@ -198,7 +198,10 @@ function readJsonFenceBody(text: string): string | undefined {
   if (!privateTextStartsWith(text, "```")) return undefined;
   const firstLineEnd = privateTextIndexOf(text, "\n", 3);
   if (firstLineEnd < 0) return undefined;
-  const language = privateTextSlice(text, 3, firstLineEnd);
+  const languageWithLineEnding = privateTextSlice(text, 3, firstLineEnd);
+  const language = privateTextEndsWith(languageWithLineEnding, "\r")
+    ? privateTextSlice(languageWithLineEnding, 0, languageWithLineEnding.length - 1)
+    : languageWithLineEnding;
   if (language !== "" && language !== "json" && language !== "JSON") return undefined;
   if (!privateTextEndsWith(text, "```")) return undefined;
   const bodyEnd = text.length - 3;

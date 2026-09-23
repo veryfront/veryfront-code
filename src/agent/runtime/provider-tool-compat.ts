@@ -1,4 +1,5 @@
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateTextToLowerCase, privateTextTrim } from "#veryfront/security/private-text.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import type { JsonSchema } from "#veryfront/tool/schema";
 
@@ -77,7 +78,7 @@ const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
 ]);
 
 function normalizeModel(model?: string): string {
-  return model?.trim().toLowerCase() ?? "";
+  return model === undefined ? "" : privateTextToLowerCase(privateTextTrim(model));
 }
 
 /**

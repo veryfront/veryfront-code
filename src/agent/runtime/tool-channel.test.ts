@@ -162,6 +162,13 @@ describe("recoverTextEmittedToolCalls", () => {
       nextToolCallId,
     );
     assertEquals(recovered?.[0]?.input, { path: "b.txt" });
+
+    const recoveredCrLf = recoverTextEmittedToolCalls(
+      '```json\r\n[{"name": "get_file", "arguments": {"path": "c.txt"}}]\r\n```',
+      TOOL_NAMES,
+      nextToolCallId,
+    );
+    assertEquals(recoveredCrLf?.[0]?.input, { path: "c.txt" });
   });
 
   it("reads the OpenAI function wrapper", () => {

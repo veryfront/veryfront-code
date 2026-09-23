@@ -1,7 +1,11 @@
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
-import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  joinPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
 import {
   closePrivateStream,
@@ -736,7 +740,7 @@ function createDeferredTextBuffer(
     emitDeferredText(controller, encoder, segmentId, text, onChunk);
   };
   const releaseDeferredText = () => {
-    const text = deferredText.join("");
+    const text = joinPrivateArray(deferredText, "");
     deferredText.length = 0;
     emitBufferedText(text);
   };
@@ -821,7 +825,7 @@ async function processActiveStream(
   try {
     for await (const frame of getPrivateAsyncIterator(run.frames)) {
       if (frame.class === "semantic" && frame.event.type === "text_content") {
-        if (deferTextDelivery) deferredText.push(frame.event.delta);
+        if (deferTextDelivery) pushPrivateArray(deferredText, frame.event.delta);
         else callbacks?.onChunk?.(frame.event.delta);
       }
       if (frame.class === "semantic" && frame.event.type === "usage") {
@@ -855,7 +859,7 @@ async function processActiveStream(
         sendSSE(controller, encoder, events[index]!);
       }
     }
-    if (deferTextDelivery) completedText = deferredText.join("");
+    if (deferTextDelivery) completedText = joinPrivateArray(deferredText, "");
   } catch (error) {
     // A delivery failure is the primary run-finalization error. The
     // consumer_stopped Stream Outcome recorded below is secondary cleanup
@@ -1388,7 +1392,7 @@ export function processStreamInternal(
             openTextSegment();
             state.accumulatedText += typedPart.text;
             if (deferTextDelivery) {
-              deferredText.push(typedPart.text);
+              pushPrivateArray(deferredText, typedPart.text);
               break;
             }
             sendSSE(controller, encoder, {
@@ -1906,7 +1910,7 @@ export function processStreamInternal(
       "stream.text_length": state.accumulatedText.length,
     });
     if (deferTextDelivery) {
-      const text = deferredText.join("");
+      const text = joinPrivateArray(deferredText, "");
       callbacks.onTextComplete!(text, () => {
         emitBufferedText(text);
       });
