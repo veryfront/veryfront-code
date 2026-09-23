@@ -8,6 +8,8 @@ Veryfront treats Salesforce as an integration behind the Veryfront tool and MCP
 control plane, rather than asking agents to connect directly to Salesforce MCP.
 
 Salesforce MCP is a useful provider surface for generic Salesforce access.
+The current Veryfront flow does not require write-tool allowlisting; tool
+metadata and the connected Salesforce account determine what can run.
 Veryfront provides a consistent integration surface so an application can
 discover Salesforce tools, connect an org, and call those tools through the
 same project context as other integrations.

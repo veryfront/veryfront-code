@@ -59,7 +59,7 @@ export default agent({
 ```
 
 The exact canonical IDs passed to `tools` are the source's capability grant.
-Source configuration is monotonic: integrations.allow only narrows that grant
+Source configuration is source-qualified and monotonic: integrations.allow only narrows that grant
 when the source runs inside a Veryfront project runtime. It never enables
 another tool or selects a credential. The runtime resolves each credential
 immediately before the request and never sends local credentials to Veryfront,
@@ -151,7 +151,8 @@ project runtime has no project source configuration to load.
 
 ## Connection state
 
-There is no project integration policy or policy setup step. These are the
+The legacy Project integration policy has been removed. There is no project
+integration policy or policy setup step. These are the
 independent contracts:
 
 - Agent source controls which tools belong to an agent.
