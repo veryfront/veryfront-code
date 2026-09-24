@@ -829,39 +829,6 @@ function proveBinding(
 }
 
 /**
- * Whether the identifier's binding only ever held a fresh literal, function or
- * class, so a property copied onto it lands on an object this analysis already
- * tracks. A binding that may alias anything else (`const p = Array.prototype`,
- * a parameter, a member read) is not.
- */
-function isLiteralBackedBinding(
-  target: ASTNode,
-  scope: Scope,
-  nodeScopes: WeakMap<ASTNode, Scope>,
-  context = createBindingProofContext(),
-): boolean {
-  const expression = unwrapExpression(target);
-  if (expression.type !== "Identifier" || typeof expression.name !== "string") return false;
-  const binding = resolveBinding(scope, expression.name);
-  if (
-    binding === null || binding.hasUnknownIncomingValue ||
-    binding.loopAssigned || binding.memberInitializers.length > 0 ||
-    binding.initializers.length === 0
-  ) return false;
-  return proveBinding(context, binding, false, () =>
-    binding.initializers.every((initializer) => {
-      const value = unwrapExpression(initializer);
-      return isAttributableMutationValue(value) ||
-        isLiteralBackedBinding(
-          value,
-          nodeScopes.get(initializer) ?? binding.scope,
-          nodeScopes,
-          context,
-        );
-    }));
-}
-
-/**
  * Whether the call defines `constructor`, `prototype` or `__proto__` (or a
  * key this analysis cannot read) on some object through `Object.defineProperty`,
  * `Reflect.defineProperty`, `Object.defineProperties` or `Object.assign`.
@@ -899,33 +866,70 @@ function isPropertyDefiningIntegrityWrite(
       if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
       continue;
     }
-    const targetIsTracked = args[0] !== undefined &&
-      isLiteralBackedBinding(args[0], scope, nodeScopes);
+    const resolved = new Map<Binding, ASTNode[] | null>();
     for (const source of args.slice(1)) {
-      const expression = unwrapExpression(source);
-      if (expression.type !== "ObjectExpression" || !Array.isArray(expression.properties)) {
-        // A source this analysis cannot read may carry any own property. A
-        // target that only ever held a fresh literal is tracked by the
-        // property-copy and enumerable `__proto__` machinery; any other target
-        // (an intrinsic prototype, an alias of one, a parameter) is not, so
-        // fail closed.
-        if (!targetIsTracked) return true;
-        continue;
-      }
-      for (const property of expression.properties) {
-        if (!isNode(property)) continue;
-        if (property.type === "SpreadElement") return true;
-        const key = staticPropertyKey(property);
-        if (key === null) return true;
-        // A non-computed `__proto__:` in a literal sets that literal's own
-        // prototype and is never copied; a computed `["__proto__"]` is an own
-        // property whose copy invokes the target's `__proto__` setter.
-        if (key === "__proto__" && property.computed !== true) continue;
-        if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
+      // A source this analysis cannot read back to object literals may carry
+      // any own property, whatever the target is; fail closed.
+      const literals = copiedObjectLiterals(source, scope, nodeScopes, resolved);
+      if (literals === null) return true;
+      for (const literal of literals) {
+        for (const property of literal.properties as unknown[]) {
+          if (!isNode(property)) continue;
+          if (property.type === "SpreadElement") return true;
+          const key = staticPropertyKey(property);
+          if (key === null) return true;
+          // A non-computed `__proto__:` in a literal sets that literal's own
+          // prototype and is never copied; a computed `["__proto__"]` is an
+          // own property whose copy invokes the target's `__proto__` setter.
+          if (key === "__proto__" && property.computed !== true) continue;
+          if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
+        }
       }
     }
   }
   return false;
+}
+
+/**
+ * The object literals a property-copy source evaluates to, following a
+ * binding's initializers, or null when the source may carry own properties
+ * this analysis cannot read (a parameter, a member read, a loop-assigned or
+ * cyclic binding). `resolved` memoizes bindings; a cycle resolves to null.
+ */
+function copiedObjectLiterals(
+  source: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  resolved: Map<Binding, ASTNode[] | null>,
+): ASTNode[] | null {
+  const expression = unwrapExpression(source);
+  if (expression.type === "ObjectExpression") {
+    return Array.isArray(expression.properties) ? [expression] : null;
+  }
+  if (expression.type !== "Identifier" || typeof expression.name !== "string") return null;
+  const binding = resolveBinding(scope, expression.name);
+  if (
+    binding === null || binding.hasUnknownIncomingValue || binding.loopAssigned ||
+    binding.memberInitializers.length > 0 || binding.initializers.length === 0
+  ) return null;
+  if (resolved.has(binding)) return resolved.get(binding) ?? null;
+  resolved.set(binding, null);
+  // Aliases that name the same literal through several initializers must
+  // not multiply it, or a chain of them grows exponentially.
+  const literals = new Set<ASTNode>();
+  for (const initializer of binding.initializers) {
+    const found = copiedObjectLiterals(
+      initializer,
+      nodeScopes.get(initializer) ?? binding.scope,
+      nodeScopes,
+      resolved,
+    );
+    if (found === null) return null;
+    for (const literal of found) literals.add(literal);
+  }
+  const unique = [...literals];
+  resolved.set(binding, unique);
+  return unique;
 }
 
 /**
@@ -1435,17 +1439,20 @@ function collectAssignments(
       ALIAS_ASSIGNMENT_OPERATORS.has(String(node.operator)) &&
       isNode(node.left) && isNode(node.right)
     ) {
+      // `(k as any) = v` assigns `k`; strip the wrappers so the value is
+      // recorded against the binding the proofs later consult.
+      const left = unwrapExpression(node.left);
       if (
-        node.left.type === "Identifier" || node.left.type === "ObjectPattern" ||
-        node.left.type === "ArrayPattern"
+        left.type === "Identifier" || left.type === "ObjectPattern" ||
+        left.type === "ArrayPattern"
       ) {
-        recordPatternInitializer(scope, node.left, node.right, true);
-      } else if (isMemberExpressionWithObject(node.left)) {
+        recordPatternInitializer(scope, left, node.right, true);
+      } else if (isMemberExpressionWithObject(left)) {
         recordPropertyInitializer(
-          node.left.object,
+          left.object,
           scope,
           {
-            propertyName: memberPropertyName(node.left),
+            propertyName: memberPropertyName(left),
             value: node.right,
             nodeScopes,
             definitelyAssigned: node.operator === "=" &&

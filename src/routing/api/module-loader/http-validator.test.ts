@@ -1409,6 +1409,50 @@ describe("routing/api/module-loader/http-validator", () => {
       }
     });
 
+    it("should record assignments through TypeScript wrappers before proving binding values", async () => {
+      const sources = [
+        `let k = 0; (k as any) = "constructor"; const make = (() => {})[k]; make("return 1")();`,
+        `let a = {}; (a as any) = () => {}; const make = a["constructor"]; make("return 1")();`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
+    it("should resolve long source alias chains with repeated initializers in linear time", async () => {
+      let source = "const a0 = { x: 1 };";
+      for (let i = 1; i <= 40; i++) source += ` let a${i} = a${i - 1}; a${i} = a${i - 1};`;
+      source += " const out = Object.assign({}, a40); export function f(i) { return [1, 2][i]; }";
+      const started = performance.now();
+      const scan = await validateHTTPImports(source, []);
+      const elapsed = performance.now() - started;
+      assertEquals(scan.specifiers, []);
+      assert(elapsed < 1_000, `source alias chain took ${elapsed.toFixed(0)}ms`);
+    });
+
+    it("should fail closed on property copies whose source cannot be read back to literals", async () => {
+      const sources = [
+        `export function f(make) { const a = []; const props = { constructor: make };` +
+        ` Object.assign(a, props); return a.constructor("return 1")(); }`,
+        `export function f(make) { const a = []; const d = { constructor: { value: make } };` +
+        ` Object.defineProperties(a, d); return a.constructor("return 1")(); }`,
+        `export function f(props) { const a = []; Object.assign(a, props); return a.constructor("return 1")(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
     it("should keep property definitions with numeric or symbol keys out of prototype invalidation", async () => {
       const sources = [
         `const obj = {}; Object.defineProperty(obj, 0, { value: 1 }); export function f(k) { return obj[k]; }`,
