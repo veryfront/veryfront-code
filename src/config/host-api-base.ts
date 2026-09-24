@@ -57,3 +57,14 @@ export function resolveHostOwnedApiBaseUrl(): string {
   const hostApiBaseUrl = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_BASE_URL"));
   return hostApiBaseUrl ? normalizeHostApiUrl(hostApiBaseUrl) : DEFAULT_HOST_API_BASE_URL;
 }
+
+/**
+ * Match the runtime source client: BASE selects its public API even when URL
+ * selects a separate internal endpoint. Stored-login URL precedence is separate.
+ */
+export function resolveHostOwnedSourceApiBaseUrl(): string {
+  const hostApiBaseUrl = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_BASE_URL"));
+  if (hostApiBaseUrl) return normalizeHostApiUrl(hostApiBaseUrl);
+  const hostApiUrl = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_URL"));
+  return hostApiUrl ? normalizeHostApiUrl(hostApiUrl) : DEFAULT_HOST_API_BASE_URL;
+}
