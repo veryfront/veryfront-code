@@ -495,7 +495,7 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "There is no project integration policy");
     assertStringIncludes(guide, "Connection inventory");
     assertStringIncludes(guide, "Managed OAuth");
-    assertStringIncludes(guide, "cannot enable an\nintegration");
+    assertStringIncludes(guide.replaceAll("\n", " "), "cannot enable an integration");
     assertStringIncludes(guide, "`scope`, `perUser`, and `tools` fields are rejected");
   });
 

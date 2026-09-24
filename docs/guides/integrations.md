@@ -163,8 +163,9 @@ independent contracts:
   target.
 - Connection inventory records which project or user has authenticated.
 
-The catalog and authenticated connection determine which integration tools can
-run. Adding a tool does not create a connection. Connecting OAuth does not
+The agent source and source configuration select eligible tools from the
+catalog. An authenticated connection is required to run a selected integration
+tool. Adding a tool does not create a connection. Connecting OAuth does not
 rewrite agent source or source configuration. If a project has several
 accessible accounts, a REST or GraphQL call can provide an optional
 `connection_id`; Veryfront validates that it belongs to the project and is
