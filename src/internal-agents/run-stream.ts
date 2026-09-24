@@ -313,20 +313,30 @@ export function buildMergedTools(
         .map(([toolName]) => toolName),
     )
     : new Set<string>();
-  const configOwnsDelegation = hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID);
+  // When the trusted agent configuration declares delegation and the control
+  // plane also declares invoke_agent, the control plane owns the execution: it
+  // parks the run on the tool call and runs the child itself. The injected
+  // wait-for-result tool must replace the config-owned local implementation,
+  // otherwise the local tool settles with its own result and the agent loop
+  // starts a model call whose output the parked run discards. An explicit
+  // `invoke_agent: false` stays authoritative and is not a declaration.
+  const controlPlaneOwnsDelegation = hasTrustedAgentToolDeclaration(
+    agent,
+    INVOKE_AGENT_TOOL_ID,
+  );
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
         !failClosedUnrestrictedSelector &&
-        !authoritativeSourceToolNames.has(tool.name) &&
+        (!authoritativeSourceToolNames.has(tool.name) ||
+          (tool.name === INVOKE_AGENT_TOOL_ID && controlPlaneOwnsDelegation)) &&
         !isExplicitlyDeniedToolName(
           agent,
           explicitlyDeniedToolNames,
           tool.name,
           availableLocalTools,
         ) &&
-        !serverResolvedProjectToolNames.has(tool.name) &&
-        !(tool.name === INVOKE_AGENT_TOOL_ID && configOwnsDelegation)
+        !serverResolvedProjectToolNames.has(tool.name)
       )
       .map((tool) => [
         tool.name,
