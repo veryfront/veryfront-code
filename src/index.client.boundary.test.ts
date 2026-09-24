@@ -65,6 +65,11 @@ const SERVER_ONLY_PATTERNS: readonly RegExp[] = [
   /\/platform\/adapters\/runtime\/node\/filesystem-adapter\.ts$/,
   /\/platform\/adapters\/runtime\/bun\/filesystem-adapter\.ts$/,
   /\/platform\/adapters\/runtime\/shared\/node-filesystem-adapter\.ts$/,
+  // Application-auth runtime: `identity.ts` dereferences `node:util`'s `types.isProxy`
+  // at module load, which is absent from the browser shim and kills hydration when
+  // the config schema drags it in through `trusted-proxy.ts` (#4228).
+  /\/security\/application-auth\/identity\.ts$/,
+  /\/security\/application-auth\/trusted-proxy\.ts$/,
 ];
 
 // Only follow value imports/exports with a `from` clause. Skipping `import type`
@@ -236,6 +241,8 @@ describe("index.client static import boundary", () => {
       "src/platform/adapters/runtime/node/filesystem-adapter.ts",
       "src/platform/adapters/runtime/bun/filesystem-adapter.ts",
       "src/platform/adapters/runtime/shared/node-filesystem-adapter.ts",
+      "src/security/application-auth/identity.ts",
+      "src/security/application-auth/trusted-proxy.ts",
     ];
     for (const path of canonical) {
       assert(

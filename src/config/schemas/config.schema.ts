@@ -76,7 +76,7 @@ import {
   MAX_APPLICATION_AUTH_SCOPE_LENGTH,
   MAX_APPLICATION_IDENTITY_HEADER_NAME_LENGTH,
 } from "#veryfront/security/application-auth/policy.ts";
-import { canonicalizePeerAddress } from "#veryfront/security/application-auth/trusted-proxy.ts";
+import { canonicalizePeerAddress } from "#veryfront/security/application-auth/peer-address.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
