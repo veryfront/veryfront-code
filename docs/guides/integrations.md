@@ -12,9 +12,10 @@ and transport surfaces.
 
 - **Catalog:** Provider metadata, setup requirements, available tools, input
   schemas, and side-effect information.
-- **Connection:** The authenticated provider account. A connection can be
-  personal to a user or shared with a project. OAuth and connector credentials
-  are both connection methods.
+- **Connection:** The authenticated provider account used by managed execution.
+  A connection can be personal to a user or shared with a project. Local
+  connector credentials are resolved by the host for account-free execution and
+  are not recorded in connection inventory.
 - **Tools:** Provider operations such as `gmail__list_emails` or
   `salesforce__find_customer`. The catalog defines their names and schemas;
   the connection supplies their provider access.
