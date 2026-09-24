@@ -2528,8 +2528,15 @@ function objectPropertyValues(
       )
     );
   }
-  const classObjects = localClassObjects(expression, scope, nodeScopes, new Set(seen));
+  // Resolve classes on a copy so a lookup that finds an ordinary object does
+  // not consume the binding the identifier fallback below still needs. When a
+  // class is found, the bindings on that path join `seen`, so the recursion
+  // into its members' return expressions remembers the class they may name
+  // again (`static f(n) { return n ? C.f(n - 1) : 0; }`).
+  const classSeen = new Set(seen);
+  const classObjects = localClassObjects(expression, scope, nodeScopes, classSeen);
   if (classObjects.length > 0) {
+    for (const binding of classSeen) seen.add(binding);
     return classObjects.flatMap((classObject) =>
       classMemberPropertyValues(
         classObject.classValue,

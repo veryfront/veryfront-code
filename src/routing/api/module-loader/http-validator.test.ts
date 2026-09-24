@@ -474,6 +474,10 @@ describe("routing/api/module-loader/http-validator", () => {
       "let a = [1]; a = a.map((o) => o); export const GET = () => Response.json(a);",
       "export function f(h) { let a = [1]; let b = h - a.reduce((p, o) => p + o, 0);" +
       " if (b < 1) { a = a.map((o) => o); b = h - a.reduce((p, o) => p + o, 0); } return b; }",
+      // A class whose static method calls itself through the class name.
+      "const X = class C { static f(n) { return n ? C.f(n - 1) : 0; } }; export const GET = () => new Response(String(X.f(2)));",
+      "class D { static g(n) { return n ? D.g(n - 1) : 0; } } export const GET = () => new Response(String(D.g(2)));",
+      "const run = function f(n) { return n ? f(n - 1) : 0; }; export const GET = () => new Response(String(run(2)));",
     ];
     for (const source of sources) {
       const scan = await validateHTTPImports(source, []);
