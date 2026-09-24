@@ -200,7 +200,20 @@ async function getParser(): Promise<ParseOnlyParser> {
   }
 }
 
-async function parseSource(source: string): Promise<ASTNode | null> {
+export interface SourceParseOptions {
+  /**
+   * Whether the source may be a CommonJS dependency, where a top-level
+   * `return` is legal. A route or any other ES module must not be read that
+   * way, or an invalid module is approved here only to fail in the bundler.
+   * Defaults to true for callers that do not know what they are reading.
+   */
+  readonly commonJS?: boolean;
+}
+
+async function parseSource(
+  source: string,
+  options: SourceParseOptions = {},
+): Promise<ASTNode | null> {
   let parser: ParseOnlyParser;
   try {
     parser = await getParser();
@@ -213,7 +226,10 @@ async function parseSource(source: string): Promise<ASTNode | null> {
   // a `.cjs`/`.js` path, so try that reading after the two TypeScript ones; it
   // is the same TypeScript-plus-JSX grammar with that single allowance. The
   // caller rejects the module when no reading parses.
-  for (const filePath of ["route.tsx", "route.ts", "dependency.cjs"]) {
+  const readings = options.commonJS === false
+    ? ["route.tsx", "route.ts"]
+    : ["route.tsx", "route.ts", "dependency.cjs"];
+  for (const filePath of readings) {
     try {
       const ast = await parser.parse({ code: source, filePath });
       const program = isNode(ast.program) ? ast.program : ast;
@@ -5003,8 +5019,9 @@ function applyExportedCapabilityAlias(
  */
 export async function analyzeSourceCapabilities(
   source: string,
+  options: SourceParseOptions = {},
 ): Promise<SourceCapabilityAnalysis | null> {
-  const program = await parseSource(source);
+  const program = await parseSource(source, options);
   if (program === null) return null;
 
   const { nodeScopes, parents } = buildScopes(program);

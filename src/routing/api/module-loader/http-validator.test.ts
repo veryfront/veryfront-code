@@ -534,6 +534,19 @@ describe("routing/api/module-loader/http-validator", () => {
       }
     });
 
+    it("rejects a route with a top-level return even when only a dynamic import marks it", async () => {
+      // `import()` alone leaves the CommonJS reading's sourceType as "script",
+      // so the caller must say the file is a module for the return to fail here.
+      const source = `const helper = import("./helper.ts"); return;`;
+      await assertRejects(
+        async () => await validateHTTPImports(source, [], { commonJS: false }),
+        Error,
+        "could not parse this module",
+      );
+      const dependency = await validateHTTPImports(source, [], { commonJS: true });
+      assertEquals(dependency.hasUnconstrainedDynamicImport, false);
+    });
+
     it("accepts a CommonJS dependency with a top-level return", async () => {
       // Bundled project dependencies pass through this validator too, and a
       // literal `require()` is tracked as a dependency like an import.

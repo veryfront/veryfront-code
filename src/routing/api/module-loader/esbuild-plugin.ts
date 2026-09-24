@@ -70,7 +70,8 @@ async function validateRemoteModuleSource(
   readonly contents: string;
   readonly loader: "js";
 }> {
-  const scan = await validateHTTPImports(contents, allowedHosts);
+  // A fetched module is ESM; a top-level `return` must not parse as CommonJS.
+  const scan = await validateHTTPImports(contents, allowedHosts, { commonJS: false });
   if (scan.localWorkerSpecifiers.length > 0) {
     throw new TypeError(
       "[API] handler build failed: a fetched remote module cannot start a local Worker whose graph is outside remote source validation.",
