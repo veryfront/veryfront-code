@@ -782,6 +782,53 @@ const PROPERTY_DEFINING_INTRINSICS: ReadonlyArray<readonly [string, string, "sin
 ];
 
 /**
+ * Bookkeeping for proofs over bindings whose initializers reference each
+ * other. `active` maps each binding on the current traversal path to its
+ * depth, `proven` memoizes finished bindings so repeated aliases stay linear,
+ * and `lowestAssumed` records the shallowest depth a cycle assumption referred
+ * to, so a result that leaned on a binding still being proven is not cached.
+ */
+interface BindingProofContext {
+  readonly active: Map<Binding, number>;
+  readonly proven: Map<Binding, boolean>;
+  lowestAssumed: number;
+}
+
+function createBindingProofContext(): BindingProofContext {
+  return { active: new Map(), proven: new Map(), lowestAssumed: Infinity };
+}
+
+/**
+ * Prove a property of `binding`, resolving a cycle back to a binding on the
+ * active path to `onCycle` (true for coinductive proofs such as numeric-ness,
+ * where a self-reference is fine when every other initializer qualifies;
+ * false where a cycle must fail closed).
+ */
+function proveBinding(
+  context: BindingProofContext,
+  binding: Binding,
+  onCycle: boolean,
+  prove: () => boolean,
+): boolean {
+  const cached = context.proven.get(binding);
+  if (cached !== undefined) return cached;
+  const index = context.active.get(binding);
+  if (index !== undefined) {
+    context.lowestAssumed = Math.min(context.lowestAssumed, index);
+    return onCycle;
+  }
+  const depth = context.active.size;
+  context.active.set(binding, depth);
+  const result = prove();
+  context.active.delete(binding);
+  if (context.lowestAssumed >= depth) {
+    context.proven.set(binding, result);
+    context.lowestAssumed = Infinity;
+  }
+  return result;
+}
+
+/**
  * Whether the identifier's binding only ever held a fresh literal, function or
  * class, so a property copied onto it lands on an object this analysis already
  * tracks. A binding that may alias anything else (`const p = Array.prototype`,
@@ -791,37 +838,27 @@ function isLiteralBackedBinding(
   target: ASTNode,
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
-  active = new Set<Binding>(),
-  proven = new Map<Binding, boolean>(),
+  context = createBindingProofContext(),
 ): boolean {
   const expression = unwrapExpression(target);
   if (expression.type !== "Identifier" || typeof expression.name !== "string") return false;
   const binding = resolveBinding(scope, expression.name);
   if (
-    binding === null || active.has(binding) || binding.hasUnknownIncomingValue ||
+    binding === null || binding.hasUnknownIncomingValue ||
     binding.loopAssigned || binding.memberInitializers.length > 0 ||
     binding.initializers.length === 0
   ) return false;
-  const cached = proven.get(binding);
-  if (cached !== undefined) return cached;
-  // `active` holds only the current traversal path, so sibling initializers
-  // naming the same alias (`let t = base; t = base;`) are not cycles, and
-  // `proven` memoizes finished bindings so repeated aliases stay linear.
-  active.add(binding);
-  const result = binding.initializers.every((initializer) => {
-    const value = unwrapExpression(initializer);
-    return isAttributableMutationValue(value) ||
-      isLiteralBackedBinding(
-        value,
-        nodeScopes.get(initializer) ?? binding.scope,
-        nodeScopes,
-        active,
-        proven,
-      );
-  });
-  active.delete(binding);
-  proven.set(binding, result);
-  return result;
+  return proveBinding(context, binding, false, () =>
+    binding.initializers.every((initializer) => {
+      const value = unwrapExpression(initializer);
+      return isAttributableMutationValue(value) ||
+        isLiteralBackedBinding(
+          value,
+          nodeScopes.get(initializer) ?? binding.scope,
+          nodeScopes,
+          context,
+        );
+    }));
 }
 
 /**
@@ -847,8 +884,18 @@ function isPropertyDefiningIntegrityWrite(
     if (args === undefined) continue;
     if (args === null) return true;
     if (shape === "single") {
-      const key = args[1] === undefined ? null : staticString(args[1]);
-      if (key === null) return true;
+      const keyNode = args[1];
+      if (keyNode === undefined) return true;
+      const key = staticString(keyNode);
+      if (key === null) {
+        // A numeric or symbol key cannot spell `constructor`; any other
+        // unreadable key may.
+        if (
+          isDefinitelySymbolValue(keyNode, scope, nodeScopes) ||
+          isDefinitelyNumericValue(keyNode, scope, nodeScopes)
+        ) continue;
+        return true;
+      }
       if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
       continue;
     }
@@ -4457,23 +4504,27 @@ function isDefinitelySymbolValue(
   node: ASTNode,
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
-  seen = new Set<Binding>(),
+  context = createBindingProofContext(),
 ): boolean {
   const expression = unwrapExpression(node);
   if (expression.type === "Identifier" && typeof expression.name === "string") {
     const binding = resolveBinding(scope, expression.name);
     if (
-      binding === null || binding.hasAliasAssignment || seen.has(binding) ||
-      binding.initializers.length === 0
+      binding === null || binding.hasAliasAssignment || binding.initializers.length === 0
     ) return false;
-    seen.add(binding);
-    return binding.initializers.every((initializer) =>
-      isDefinitelySymbolValue(
-        initializer,
-        nodeScopes.get(initializer) ?? binding.scope,
-        nodeScopes,
-        new Set(seen),
-      )
+    return proveBinding(
+      context,
+      binding,
+      false,
+      () =>
+        binding.initializers.every((initializer) =>
+          isDefinitelySymbolValue(
+            initializer,
+            nodeScopes.get(initializer) ?? binding.scope,
+            nodeScopes,
+            context,
+          )
+        ),
     );
   }
   if (isCallExpression(expression) && isNode(expression.callee)) {
@@ -4489,12 +4540,12 @@ function isDefinitelySymbolValue(
   }
   if (isAliasAssignmentExpression(expression)) {
     return expression.operator === "=" &&
-      isDefinitelySymbolValue(expression.right, scope, nodeScopes, seen);
+      isDefinitelySymbolValue(expression.right, scope, nodeScopes, context);
   }
   const branches = expressionBranches(expression);
   return branches !== null &&
-    isDefinitelySymbolValue(branches[0], scope, nodeScopes, new Set(seen)) &&
-    isDefinitelySymbolValue(branches[1], scope, nodeScopes, new Set(seen));
+    isDefinitelySymbolValue(branches[0], scope, nodeScopes, context) &&
+    isDefinitelySymbolValue(branches[1], scope, nodeScopes, context);
 }
 
 /** Literal forms whose prototype is an intrinsic that is not `Function`. */
@@ -4584,7 +4635,7 @@ function isDefinitelyNumericValue(
   node: ASTNode,
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
-  seen = new Set<Binding>(),
+  context = createBindingProofContext(),
 ): boolean {
   const expression = unwrapExpression(node);
   if (
@@ -4600,8 +4651,8 @@ function isDefinitelyNumericValue(
     const operator = String(expression.operator);
     if (NUMERIC_BINARY_OPERATORS.has(operator)) return true;
     return operator === "+" &&
-      isDefinitelyNumericValue(expression.left, scope, nodeScopes, new Set(seen)) &&
-      isDefinitelyNumericValue(expression.right, scope, nodeScopes, new Set(seen));
+      isDefinitelyNumericValue(expression.left, scope, nodeScopes, context) &&
+      isDefinitelyNumericValue(expression.right, scope, nodeScopes, context);
   }
   if (expression.type === "Identifier" && typeof expression.name === "string") {
     const binding = resolveBinding(scope, expression.name);
@@ -4609,31 +4660,35 @@ function isDefinitelyNumericValue(
       binding === null || binding.loopAssigned || binding.hasUnknownIncomingValue ||
       binding.initializers.length === 0 || binding.memberInitializers.length > 0
     ) return false;
-    if (seen.has(binding)) return true;
-    seen.add(binding);
-    return binding.initializers.every((initializer) =>
-      isDefinitelyNumericValue(
-        initializer,
-        nodeScopes.get(initializer) ?? binding.scope,
-        nodeScopes,
-        new Set(seen),
-      )
+    return proveBinding(
+      context,
+      binding,
+      true,
+      () =>
+        binding.initializers.every((initializer) =>
+          isDefinitelyNumericValue(
+            initializer,
+            nodeScopes.get(initializer) ?? binding.scope,
+            nodeScopes,
+            context,
+          )
+        ),
     );
   }
   if (expression.type === "AssignmentExpression" && isNode(expression.right)) {
     const operator = String(expression.operator);
     if (operator === "=") {
-      return isDefinitelyNumericValue(expression.right, scope, nodeScopes, seen);
+      return isDefinitelyNumericValue(expression.right, scope, nodeScopes, context);
     }
     if (NUMERIC_BINARY_OPERATORS.has(operator.slice(0, -1))) return true;
     return operator === "+=" && isNode(expression.left) &&
-      isDefinitelyNumericValue(expression.left, scope, nodeScopes, new Set(seen)) &&
-      isDefinitelyNumericValue(expression.right, scope, nodeScopes, new Set(seen));
+      isDefinitelyNumericValue(expression.left, scope, nodeScopes, context) &&
+      isDefinitelyNumericValue(expression.right, scope, nodeScopes, context);
   }
   const branches = expressionBranches(expression);
   return branches !== null &&
-    isDefinitelyNumericValue(branches[0], scope, nodeScopes, new Set(seen)) &&
-    isDefinitelyNumericValue(branches[1], scope, nodeScopes, new Set(seen));
+    isDefinitelyNumericValue(branches[0], scope, nodeScopes, context) &&
+    isDefinitelyNumericValue(branches[1], scope, nodeScopes, context);
 }
 
 function resolvesDefinitelyToGlobalIntrinsic(

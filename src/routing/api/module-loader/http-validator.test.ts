@@ -1366,6 +1366,46 @@ describe("routing/api/module-loader/http-validator", () => {
       assert(elapsed < 1_000, `alias chain took ${elapsed.toFixed(0)}ms`);
     });
 
+    it("should resolve long numeric alias chains with repeated initializers in linear time", async () => {
+      let source = "let a0 = 0;";
+      for (let i = 1; i <= 40; i++) source += ` let a${i} = a${i - 1}; a${i} = a${i - 1};`;
+      source += " const arr = [1, 2]; export function f() { return arr[a40]; }";
+      const started = performance.now();
+      const scan = await validateHTTPImports(source, []);
+      const elapsed = performance.now() - started;
+      assertEquals(scan.specifiers, []);
+      assert(elapsed < 1_000, `numeric alias chain took ${elapsed.toFixed(0)}ms`);
+    });
+
+    it("should not cache a numeric proof that leaned on a binding still being proven", async () => {
+      // Proving `b` first assumes `a` numeric through the cycle; `b` then
+      // turns out to hold a string, so `a` must be re-proven, not remembered.
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let a = 0; let b = a; a = b; b = ["con", "structor"].join("");` +
+              ` const first = [][b]; const ctor = [][a]; const make = ctor[a]; make("return 1")();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+      );
+    });
+
+    it("should keep property definitions with numeric or symbol keys out of prototype invalidation", async () => {
+      const sources = [
+        `const obj = {}; Object.defineProperty(obj, 0, { value: 1 }); export function f(k) { return obj[k]; }`,
+        `const obj = {}; Object.defineProperty(obj, Symbol.iterator, { value: 1 });` +
+        ` export function f(k) { return obj[k]; }`,
+        `const obj = {}; let i = 1; i = i + 1; Reflect.defineProperty(obj, i, { value: 1 });` +
+        ` export function f(k) { return obj[k]; }`,
+      ];
+      for (const source of sources) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.specifiers, [], source);
+      }
+    });
+
     it("should keep indexed writes with numeric or symbol keys out of prototype invalidation", async () => {
       // `arr[i] = v` cannot name `__proto__`; it must neither mark `arr` as
       // prototype-mutated nor switch the module's exemptions off.
