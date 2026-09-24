@@ -167,11 +167,13 @@ describe("platform/runtime-request-context", () => {
               client.enableContextualToken();
               if (apiBaseUrl === "https://login.example") {
                 assertEquals((await client.getProject()).slug, "source");
-              } else {await assertRejects(
+              } else {
+                await assertRejects(
                   () => client.getProject(),
                   Error,
                   "Host-private credentials require the host API origin",
-                );}
+                );
+              }
             }
           }),
       );

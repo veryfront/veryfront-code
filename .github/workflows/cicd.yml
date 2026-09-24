@@ -356,14 +356,17 @@ jobs:
           START=$(date +%s)
           deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/4 --coverage-dir=coverage-shard-${{ matrix.shard }}
           echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
-      - name: Include CLI and dependency history integration coverage
+      - name: Include CLI, dependency history, and runtime security integration coverage
         if: matrix.shard == 1
         run: |
           rm -rf coverage-history coverage-cli
           deno task test:file --coverage=coverage-history \
             tests/integration/semantic-unit-boundary/src/platform/adapters/fs/veryfront/dependency-metadata-history.test.ts \
             tests/integration/semantic-unit-boundary/src/platform/adapters/veryfront-api-client/dependency-metadata-history.test.ts \
-            tests/integration/semantic-unit-boundary/src/transforms/esm/package-registry-metadata-history.test.ts
+            tests/integration/semantic-unit-boundary/src/transforms/esm/package-registry-metadata-history.test.ts \
+            tests/integration/semantic-unit-boundary/src/config/host-api-base.test.ts \
+            tests/integration/platform/runtime-request-context.test.ts \
+            tests/integration/server/shared-agent-bootstrap.test.ts
           # The CLI regression changes cwd, so give it a separate process.
           deno task test:file --coverage=coverage-cli \
             tests/integration/cli/merge-preview.integration.test.ts
