@@ -6,7 +6,9 @@ order: 50
 
 Use this guide to connect a Salesforce org to the hosted Veryfront API. In the
 managed hosted flow, the lifecycle is catalog, connect, then call a tool. It
-does not require an integration policy, allowlist, or separate enablement step.
+does not require an integration policy or separate enablement step. If the
+agent's source defines an `integrations.allow` map, that source allowlist still
+narrows which Salesforce tools are eligible.
 Local and self-hosted Veryfront Code execution follows the local credential
 and exact-grant requirements described below. Choose per-user OAuth when each action
 must use an individual's Salesforce access. Choose a service account for
