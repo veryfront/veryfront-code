@@ -13,6 +13,7 @@ import { createError, toError } from "#veryfront/errors";
 import {
   analyzeSourceCapabilities,
   describeSourceParseFailure,
+  type SourceParseOptions,
   type WorkerUrlClassification,
 } from "./source-capability-analyzer.ts";
 
@@ -191,8 +192,9 @@ export interface LocalWorkerSpecifier {
 export async function validateHTTPImports(
   source: string,
   allowedHosts: string[],
+  options: SourceParseOptions = {},
 ): Promise<ValidatedModuleScan> {
-  const analysis = await analyzeSourceCapabilities(source);
+  const analysis = await analyzeSourceCapabilities(source, options);
   if (analysis === null) {
     const failure = await describeSourceParseFailure();
     throw toError(
