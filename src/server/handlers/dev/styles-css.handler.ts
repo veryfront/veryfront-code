@@ -122,8 +122,9 @@ body::before {
 
 /**
  * Project scopes (and configured stylesheet paths) already warned about a
- * missing stylesheet. Keyed by the same resolved identity the scans use, so
- * proxy tenants sharing one `projectDir` are each reported once. Bounded so a
+ * missing stylesheet. Keyed by the scans' canonical partition, which carries
+ * the project ID in shared proxy mode, so tenants sharing one `projectDir`,
+ * or one slug during a reassignment, are each reported once. Bounded so a
  * long-lived multi-project process cannot grow it without limit.
  */
 const missingStylesheetWarned = new Set<string>();
@@ -179,7 +180,7 @@ export class StylesCSSHandler extends BaseHandler {
         const contentContext = this.getContentContext(ctx);
         let rawCss = await profilePhase(
           "css.load_stylesheet",
-          () => this.loadStylesheet(ctx, projectScope),
+          () => this.loadStylesheet(ctx, scanIdentity.partition),
         );
         // Production SSR merges CSS imported by modules (`import "./styles.css"`
         // in a layout) into the page stylesheet during module loading. This
@@ -386,7 +387,7 @@ export class StylesCSSHandler extends BaseHandler {
    */
   private async loadStylesheet(
     ctx: HandlerContext,
-    projectScope: string,
+    projectPartition: string,
   ): Promise<string | undefined> {
     const configuredPath = ctx.config?.tailwind?.stylesheet;
 
@@ -415,7 +416,7 @@ export class StylesCSSHandler extends BaseHandler {
     // without the project's theme, which looks like a broken site. The
     // stylesheet is resolved again on every request, so warn once per project
     // and configured path and keep the repeats at debug.
-    const warningKey = `${projectScope}\u0000${configuredPath ?? ""}`;
+    const warningKey = `${projectPartition}\u0000${configuredPath ?? ""}`;
     const details = { projectDir: ctx.projectDir, configuredPath: configuredPath ?? null };
     if (missingStylesheetWarned.has(warningKey)) {
       logger.debug("No project stylesheet found; provider default will be used", details);
