@@ -1408,6 +1408,60 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(events, ["environment", "source-policy"]);
   });
 
+  for (
+    const [method, suffix, expectedLoads] of [
+      ["POST", "/execute", 1],
+      ["POST", "/stream", 0],
+      ["POST", "/resume", 0],
+      ["DELETE", "", 0],
+    ] as const
+  ) {
+    it(`preserves the environment loading contract for ${method} run${suffix} without a production release`, async () => {
+      const req = new Request(`http://localhost/api/control-plane/runs/run_1${suffix}`, {
+        method,
+        headers: {
+          "x-project-slug": "proxy-project",
+          "x-project-id": "proj-proxy",
+          "x-token": "proxy-token",
+          "x-environment-id": "env-production",
+        },
+      });
+      const url = new URL(req.url);
+      let envLoads = 0;
+      const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+        req,
+        url,
+        adapter: createExtendedMockAdapter(),
+        headers: extractRequestHeaders(req, url, true, true),
+        requestContext: createRequestContext(req, { proxyTrusted: true }),
+        isProxyMode: true,
+        projectIdentity: {
+          projectSlug: "proxy-project",
+          projectId: "proj-proxy",
+          releaseId: undefined,
+          environmentName: "Production",
+          proxyEnv: "production",
+          parsedDomain: defaultParsedDomain,
+        },
+        envVarCache: {
+          get: async (scope: ProjectEnvironmentScope) => {
+            envLoads++;
+            assertEquals(scope, {
+              environmentId: "env-production",
+              token: "proxy-token",
+              projectSlug: "proxy-project",
+              projectId: "proj-proxy",
+            });
+            return { PROJECT_SECRET: "retained" };
+          },
+        },
+      }));
+      assertEquals(result.adapter.configOutcome, "deferred");
+      assertEquals(envLoads, expectedLoads);
+      assertEquals(result.rawEnvVars, expectedLoads ? { PROJECT_SECRET: "retained" } : {});
+    });
+  }
+
   it("keeps exact-source control-plane config undefined at the runtime-context boundary", async () => {
     __resetLoggerConfigForTests();
     const entries: LogEntry[] = [];

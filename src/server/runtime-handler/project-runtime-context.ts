@@ -1,4 +1,5 @@
 import { getBaseLogger } from "#veryfront/utils";
+import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
@@ -456,7 +457,8 @@ export async function resolveProjectRuntimeContext(
   if (
     !hostedConfigLoadPromise &&
     // Exact-source handlers authenticate and select their own environment before loading secrets.
-    adapterRes.configOutcome !== "deferred" &&
+    !(input.isProxyMode &&
+      isConfigOptionalControlPlaneRunRequest(input.req.method, input.url.pathname)) &&
     !adapterRes.isLocalProject &&
     environmentId &&
     reqCtx.token &&
