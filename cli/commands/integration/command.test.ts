@@ -43,6 +43,32 @@ describe("integration command primitives", () => {
       },
     ]]);
   });
+  it("uses shared readiness without deriving permission from OAuth status", async () => {
+    const calls: unknown[] = [];
+    const result = {
+      local_eligibility: { state: "unknown" },
+      provider_verification: { state: "not_checked" },
+    };
+    const client = {
+      readiness: (...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve(result);
+      },
+      status: () => {
+        throw new Error("must not infer readiness from status");
+      },
+    } as unknown as IntegrationClient;
+    const output = await runIntegrationOperation({
+      subcommand: "status",
+      target: "github",
+      toolName: "github__get_current_user",
+      scope: "user",
+      noBrowser: false,
+      timeout: 300,
+    }, client);
+    assertEquals(output, { selected_readiness: result });
+    assertEquals(calls, [["github__get_current_user", {}]]);
+  });
   it("fails malformed arguments before calling a provider", async () => {
     let calls = 0;
     const client = {

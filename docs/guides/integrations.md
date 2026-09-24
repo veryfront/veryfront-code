@@ -19,6 +19,56 @@ inventory records credential readiness independently of all three.
 - Project environment credentials only for static-credential connectors or an
   explicitly selected custom OAuth app override (see [OAuth](./oauth.md)).
 
+## Inspect readiness for one tool
+
+Use `readiness` with a canonical tool name to read the server's selected-account
+assessment. The client requests fresh metadata for its bound project on every
+call; it does not cache readiness or contact the provider. Replace these
+placeholders with your trusted API origin, project and selected connection:
+
+```ts
+import { createIntegrationClient } from "veryfront/integrations";
+
+const client = await createIntegrationClient({
+  apiBaseUrl: "<API_BASE_URL>",
+  authToken: "<TOKEN>",
+  projectReference: "<PROJECT_ID>",
+});
+const readiness = await client.readiness("github__get_current_user", {
+  connectionId: "<CONNECTION_ID>",
+});
+console.log(readiness.selection.state);
+console.log(readiness.local_eligibility.state);
+console.log(readiness.provider_verification.state);
+```
+
+The equivalent CLI command is:
+
+```bash
+veryfront integration status github --project "<PROJECT_ID>" \
+  --tool github__get_current_user --connection "<CONNECTION_ID>" --json
+```
+
+With `--tool`, status returns `selected_readiness` from the shared client instead
+of deriving readiness from OAuth connectivity. `--scope` is rejected for this
+operation: the selected connection determines its scope. An optional
+`--expected-generation "<CONNECTION_GENERATION_ID>"` checks a previously observed
+generation. A stale observation is returned as a blocked assessment, not repaired
+by selecting another account.
+
+`local_eligibility.state === "eligible"` means the evaluated local metadata checks
+passed. It does not establish provider permission. Key presence cannot prove usable
+credential values, and recorded shared-account metadata is not provider-verified
+identity. Inspect `pending_checks` and `blockers`; `provider_verification.state`
+remains `not_checked`. A later tool call still requires current authorization.
+
+This method requires the selected-readiness API contract. A missing or malformed
+projection, or a response for another project/tool/connection, throws
+`IntegrationApiError` with `kind === "invalid_response"` and `outcomeUnknown === false`.
+Changing project or platform credentials requires a new bound client. Concurrent
+reads return independent results; the client never applies one response to another
+selection. The selected account and generation are metadata, not a reusable grant.
+
 ## Call the connection generation you observed
 
 For direct client calls, provide platform credentials, an authorized project and

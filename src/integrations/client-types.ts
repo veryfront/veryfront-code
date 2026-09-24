@@ -1,3 +1,4 @@
+import type { IntegrationSelectedReadiness } from "./readiness.ts";
 import type { BoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { IntegrationFailureCondition } from "./integration-condition.ts";
 
@@ -121,6 +122,11 @@ export type IntegrationConnectOutcome = IntegrationOAuthHandoff | {
 /** Project-bound primitives. Iterators use a bounded deadline and fail rather than silently truncate. */
 export interface IntegrationClient {
   readonly project: Readonly<{ id: string; slug: string }>;
+  /** Read fresh selected-tool metadata. This neither executes a tool nor verifies provider access. */
+  readiness(
+    toolName: string,
+    options?: IntegrationCallOptions,
+  ): Promise<IntegrationSelectedReadiness>;
   discover(
     options?: { search?: string; sortOrder?: "asc" | "desc" },
   ): AsyncIterable<IntegrationCatalogEntry>;

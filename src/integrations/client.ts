@@ -1,3 +1,4 @@
+import { type IntegrationSelectedReadiness, isSelectedReadiness } from "./readiness.ts";
 import {
   API_CLIENT_ERROR,
   defineError,
@@ -415,6 +416,55 @@ export async function createIntegrationClient(
       );
     },
     getIntegration: getDetails,
+    async readiness(
+      toolName: string,
+      options: IntegrationCallOptions = {},
+    ): Promise<IntegrationSelectedReadiness> {
+      const identity =
+        typeof toolName === "string" && toolName.length <= MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH
+          ? parseIntegrationToolIdentity(toolName)
+          : null;
+      if (!identity) {
+        throw new TypeError("Tool name must use canonical integration__tool_id format");
+      }
+      if (options.connectionId !== undefined && !uuid(options.connectionId)) {
+        throw new TypeError("connectionId must be a UUID");
+      }
+      if (
+        options.expectedConnectionGenerationId !== undefined &&
+        (!options.connectionId || !uuid(options.expectedConnectionGenerationId))
+      ) {
+        throw new TypeError(
+          "expectedConnectionGenerationId requires connectionId and both must be UUIDs",
+        );
+      }
+      const params = new URLSearchParams({
+        tool_name: toolName,
+        ...(options.connectionId ? { connection_id: options.connectionId } : {}),
+        ...(options.expectedConnectionGenerationId
+          ? { expected_connection_generation_id: options.expectedConnectionGenerationId }
+          : {}),
+      });
+      const body = await request(
+        `/projects/${selectedProject.id}/integrations/${
+          encodeURIComponent(identity.integration)
+        }?${params}`,
+        { signal: options.abortSignal },
+      );
+      const value = body.selected_readiness;
+      if (
+        !isSelectedReadiness(value, {
+          projectId: selectedProject.id,
+          integration: identity.integration,
+          toolName,
+          ...(options.connectionId ? { connectionId: options.connectionId } : {}),
+          ...(options.expectedConnectionGenerationId
+            ? { generation: options.expectedConnectionGenerationId }
+            : {}),
+        })
+      ) throw new IntegrationApiError("invalid_response", 200, false);
+      return value;
+    },
     async connect(
       integration: string,
       options: IntegrationConnectOptions = {},

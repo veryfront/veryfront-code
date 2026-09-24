@@ -112,3 +112,5 @@ export type {
   IntegrationFailureCondition,
   IntegrationHttpProblem,
 } from "./integration-condition.ts";
+
+export type { IntegrationSelectedReadiness } from "./readiness.ts";
