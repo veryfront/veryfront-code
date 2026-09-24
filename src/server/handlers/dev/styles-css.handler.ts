@@ -120,8 +120,14 @@ body::before {
 `;
 }
 
-/** Projects (and configured stylesheet paths) already warned about a missing stylesheet. */
+/**
+ * Project scopes (and configured stylesheet paths) already warned about a
+ * missing stylesheet. Keyed by the same resolved identity the scans use, so
+ * proxy tenants sharing one `projectDir` are each reported once. Bounded so a
+ * long-lived multi-project process cannot grow it without limit.
+ */
 const missingStylesheetWarned = new Set<string>();
+const MISSING_STYLESHEET_WARNING_LIMIT = 256;
 
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -171,7 +177,10 @@ export class StylesCSSHandler extends BaseHandler {
         const projectScope = scanIdentity.scope;
         const styleProfile = scanIdentity.styleProfile;
         const contentContext = this.getContentContext(ctx);
-        let rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx));
+        let rawCss = await profilePhase(
+          "css.load_stylesheet",
+          () => this.loadStylesheet(ctx, projectScope),
+        );
         // Production SSR merges CSS imported by modules (`import "./styles.css"`
         // in a layout) into the page stylesheet during module loading. This
         // route has no module-loading pass, so discover those imports from the
@@ -375,7 +384,10 @@ export class StylesCSSHandler extends BaseHandler {
    * path-shaped filesystem read, which is not how sources arrive when they are
    * served from the control plane rather than local disk.
    */
-  private async loadStylesheet(ctx: HandlerContext): Promise<string | undefined> {
+  private async loadStylesheet(
+    ctx: HandlerContext,
+    projectScope: string,
+  ): Promise<string | undefined> {
     const configuredPath = ctx.config?.tailwind?.stylesheet;
 
     const files = await this.getSourceFiles(ctx);
@@ -403,11 +415,14 @@ export class StylesCSSHandler extends BaseHandler {
     // without the project's theme, which looks like a broken site. The
     // stylesheet is resolved again on every request, so warn once per project
     // and configured path and keep the repeats at debug.
-    const warningKey = `${ctx.projectDir}\u0000${configuredPath ?? ""}`;
+    const warningKey = `${projectScope}\u0000${configuredPath ?? ""}`;
     const details = { projectDir: ctx.projectDir, configuredPath: configuredPath ?? null };
     if (missingStylesheetWarned.has(warningKey)) {
       logger.debug("No project stylesheet found; provider default will be used", details);
     } else {
+      if (missingStylesheetWarned.size >= MISSING_STYLESHEET_WARNING_LIMIT) {
+        missingStylesheetWarned.clear();
+      }
       missingStylesheetWarned.add(warningKey);
       logger.warn("No project stylesheet found; provider default will be used", details);
     }

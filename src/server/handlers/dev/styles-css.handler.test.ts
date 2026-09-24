@@ -23,7 +23,13 @@ import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orches
 import { invalidateProjectCandidateScans } from "./styles-candidate-scanner.ts";
 import { invalidateProjectCssImportScans } from "./styles-css-import-scanner.ts";
 import { StylesCSSHandler } from "./styles-css.handler.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 
 const TEST_STYLESHEET = `@import "tailwindcss";`;
 const PROJECT_SLUG = "dreamy-haven";
@@ -156,6 +162,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
     // The stylesheet is resolved on every request; a project without one must
     // not repeat the warning each time the browser refetches styles.css.
     const stub = mockTailwindFetch();
+    setLogLevel(LogLevel.DEBUG);
     const records: LogEntry[] = [];
     const unsubscribe = __subscribeLogRecordEmitter((entry) => {
       if (String(entry.message).includes("No project stylesheet found")) records.push(entry);
@@ -177,10 +184,14 @@ describe("server/handlers/dev/styles-css.handler", () => {
         invalidateProjectCSS(projectDir);
         invalidatePreparedProjectCSS(projectDir);
       }
-      const warnings = records.filter((entry) => entry.level === "warn");
-      assertEquals(warnings.length, 1, "the missing stylesheet must be warned about exactly once");
+      assertEquals(
+        records.map((entry) => entry.level),
+        ["warn", "debug"],
+        "the missing stylesheet is warned about once, then noted at debug",
+      );
     } finally {
       unsubscribe();
+      __resetLoggerConfigForTests();
       stub.restore();
     }
   });
