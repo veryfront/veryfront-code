@@ -3,10 +3,10 @@ import "#veryfront/schemas/_test-setup.ts";
  * Browser Utility Tests
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { canOpenBrowser } from "./browser.ts";
+import { canOpenBrowser, openBrowser } from "./browser.ts";
 
 describe("Browser Utility", () => {
   describe("canOpenBrowser", () => {
@@ -39,5 +39,22 @@ describe("Browser Utility", () => {
         true,
       );
     });
+  });
+});
+
+describe("bounded browser launch", () => {
+  it("rejects cancellation and elapsed budgets before creating a launcher", async () => {
+    const controller = new AbortController();
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    await assertRejects(
+      () => openBrowser("https://synthetic.example.test", { signal: controller.signal }),
+      DOMException,
+      "cancelled",
+    );
+    await assertRejects(
+      () => openBrowser("https://synthetic.example.test", { timeoutMs: 0 }),
+      Error,
+      "deadline elapsed",
+    );
   });
 });

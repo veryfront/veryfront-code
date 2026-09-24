@@ -11,9 +11,28 @@ function getOpenCommand(): { cmd: string; args: string[] } {
   return { cmd: "xdg-open", args: [] };
 }
 
-export async function openBrowser(url: string): Promise<void> {
+export interface BrowserLaunchOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+export async function openBrowser(url: string, options?: BrowserLaunchOptions): Promise<void> {
+  options?.signal?.throwIfAborted();
+  if (
+    options?.timeoutMs !== undefined &&
+    (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)
+  ) {
+    throw new Error("Browser launch deadline elapsed");
+  }
   const { cmd, args } = getOpenCommand();
-  await runCommand(cmd, { args: [...args, url] });
+  const result = await runCommand(cmd, {
+    args: [...args, url],
+    ...(options ? { signal: options.signal, timeoutMs: options.timeoutMs } : {}),
+  });
+  options?.signal?.throwIfAborted();
+  // Preserve the existing default login behavior; bounded lifecycle callers
+  // must observe failed launch/termination without exposing subprocess output.
+  if (options && !result.success) throw new Error("Browser launch failed or timed out");
 }
 
 export function canOpenBrowser(env: EnvironmentConfig = getEnvironmentConfig()): boolean {

@@ -90,3 +90,25 @@ export {
   SALESFORCE_SERVICE_ACCOUNT_ENV_VARS,
 } from "./salesforce-service-account.ts";
 export type { SalesforceServiceAccountToolSourceOptions } from "./salesforce-service-account.ts";
+
+export { createIntegrationClient, IntegrationApiError } from "./client.ts";
+export type {
+  IntegrationCallOptions,
+  IntegrationCallOutcome,
+  IntegrationCatalogEntry,
+  IntegrationClient,
+  IntegrationClientConnection,
+  IntegrationClientContext,
+  IntegrationClientTool,
+  IntegrationConnectionStatus,
+  IntegrationConnectOptions,
+  IntegrationConnectOutcome,
+  IntegrationDetails,
+  IntegrationJsonObject,
+  IntegrationOAuthHandoff,
+  IntegrationToolResult,
+} from "./client-types.ts";
+export type {
+  IntegrationFailureCondition,
+  IntegrationHttpProblem,
+} from "./integration-condition.ts";

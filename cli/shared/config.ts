@@ -676,6 +676,7 @@ async function resolveConfigBase(
   env: EnvironmentConfig,
   interactive: boolean,
   allowModuleConfigExecution: boolean,
+  allowAuthPrompt: boolean,
 ): Promise<ResolvedConfigDetails> {
   const dir = projectDir ?? cwd();
   const configFileResolution = await readConfigFileResolution(dir, allowModuleConfigExecution);
@@ -697,7 +698,7 @@ async function resolveConfigBase(
     );
   }
 
-  if (!apiToken && interactive) {
+  if (!apiToken && interactive && allowAuthPrompt) {
     const userInfo = await ensureAuthenticated(env, dir);
     if (!userInfo) throw new Error("Authentication required for this operation.");
     apiToken = (await readToken(env)) ?? null;
@@ -776,9 +777,19 @@ async function resolveConfigBase(
   };
 }
 
-function createConfigResolver(interactive: boolean, allowModuleConfigExecution = true) {
+function createConfigResolver(
+  interactive: boolean,
+  allowModuleConfigExecution = true,
+  allowAuthPrompt = true,
+) {
   return async (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
-    (await resolveConfigByMode(projectDir, env, interactive, allowModuleConfigExecution)).config;
+    (await resolveConfigByMode(
+      projectDir,
+      env,
+      interactive,
+      allowModuleConfigExecution,
+      allowAuthPrompt,
+    )).config;
 }
 
 export const resolveConfig = createConfigResolver(false);
@@ -803,6 +814,9 @@ export const resolveConfigWithAuth = createConfigResolver(true);
  */
 export const resolveConfigWithAuthNoModule = createConfigResolver(true, false);
 
+/** Management credential precedence without local code execution or a second login flow. */
+export const resolveManagementConfigNoModule = createConfigResolver(true, false, false);
+
 export function resolveConfigWithAuthDetails(
   projectDir?: string,
   env?: EnvironmentConfig,
@@ -815,12 +829,14 @@ function resolveConfigByMode(
   env: EnvironmentConfig | undefined,
   interactive: boolean,
   allowModuleConfigExecution = true,
+  allowAuthPrompt = true,
 ): Promise<ResolvedConfigDetails> {
   return resolveConfigBase(
     projectDir,
     env ?? getEnvironmentConfig(),
     interactive,
     allowModuleConfigExecution,
+    allowAuthPrompt,
   );
 }
 

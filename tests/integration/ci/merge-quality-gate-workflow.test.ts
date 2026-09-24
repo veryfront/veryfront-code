@@ -34,7 +34,7 @@ const SONAR_REQUIRED_CONDITION =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')";
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_EXPRESSION =
-  `\${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 35;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
@@ -304,18 +304,30 @@ describe("merge quality gate workflow", () => {
     const nativeDownloadIndex = steps.findIndex((step) =>
       step.name === "Download native executor coverage lcov"
     );
+    const clientDownloadIndex = steps.findIndex((step) =>
+      step.name === "Download integration client coverage lcov"
+    );
+    assert(clientDownloadIndex > nativeDownloadIndex);
+    assertEquals(asRecord(steps[clientDownloadIndex].with, "integration client coverage options"), {
+      name: "coverage-integration-client",
+      path: "coverage-profiles/coverage-integration-client",
+    });
     const normalizeIndex = steps.findIndex((step) => step.name === "Normalize lcov paths");
     const scanIndex = steps.findIndex((step) => step.name === "SonarQube Cloud scan");
 
     assert(downloadIndex >= 0, "sonar must download the coverage artifacts");
     assert(nativeDownloadIndex > downloadIndex, "sonar must download native executor coverage");
-    assertEquals(sonar.needs, ["coverage-shards", "coverage-node-executor"]);
+    assertEquals(sonar.needs, [
+      "coverage-shards",
+      "coverage-node-executor",
+      "coverage-integration-client",
+    ]);
     assertEquals(asRecord(steps[nativeDownloadIndex].with, "native coverage download options"), {
       name: "coverage-native-executor",
       path: "coverage-profiles/coverage-native-executor",
     });
     assert(
-      normalizeIndex > nativeDownloadIndex,
+      normalizeIndex > clientDownloadIndex,
       "sonar must normalize downloaded coverage",
     );
     assert(
@@ -336,7 +348,7 @@ describe("merge quality gate workflow", () => {
     );
     assertEquals(
       sonarProperties.get("sonar.javascript.lcov.reportPaths"),
-      "coverage-profiles/coverage-shard-*/lcov.info,coverage-profiles/coverage-native-executor/lcov.info",
+      "coverage-profiles/coverage-shard-*/lcov.info,coverage-profiles/coverage-native-executor/lcov.info,coverage-profiles/coverage-integration-client/lcov.info",
     );
 
     for (const step of steps) {

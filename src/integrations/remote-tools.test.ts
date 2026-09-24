@@ -1261,7 +1261,12 @@ describe("integrations/remote-tools", () => {
       VERYFRONT_API_TOKEN: "env-token",
     });
 
-    const condition = { slug: "provider-failed", status: 503, retryable: true };
+    const condition = {
+      slug: "provider-failed",
+      status: 503,
+      retryable: true,
+      retry_after_seconds: 17,
+    };
     const textFallback = await withMockFetch(async () =>
       Response.json({
         isError: true,

@@ -33,6 +33,7 @@ const typedArrayByteLengthGetter = reflectGetOwnPropertyDescriptor(
   "byteLength",
 )!.get!;
 
+/** Data-only JSON shape; runtime ceilings are imposed by the snapshot entry point. */
 export type BoundedJsonValue =
   | string
   | number
@@ -112,6 +113,16 @@ function serializedByteLength(value: string | number | boolean | null): number |
   return serialized === undefined ? undefined : encodedByteLength(serialized);
 }
 
+function snapshotPrimitiveBytes(
+  value: string | number | boolean | null,
+  decoded: boolean,
+): number | undefined {
+  if (!decoded) return serializedByteLength(value);
+  // Numeric source spellings may be shorter than JSON.stringify's spelling.
+  // Their source bytes were already bounded; the node ceiling bounds storage.
+  return typeof value === "string" ? encodedByteLength(value) + 2 : 0;
+}
+
 function encodedByteLength(value: string): number {
   const encoded = reflectApply(
     textEncoderEncode,
@@ -138,13 +149,30 @@ export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
   return result.success ? { success: true, value: result.value } : result;
 }
 
+/**
+ * Snapshot JSON parsed from a byte-bounded source. The caller must enforce
+ * maxSourceBytes on the source before parsing. Counts decoded string/key bytes
+ * rather than reserialized escape sequences; depth/node/key/prototype/accessor
+ * safeguards remain identical to the default snapshot. Not for authored inputs.
+ */
+export function snapshotBoundedParsedJsonValue(
+  value: unknown,
+  maxSourceBytes: number,
+): BoundedJsonSnapshot {
+  if (!numberIsSafeInteger(maxSourceBytes) || maxSourceBytes <= 0) {
+    return { success: false, path: [] };
+  }
+  const result = snapshotBoundedJsonWithSize(value, maxSourceBytes);
+  return result.success ? { success: true, value: result.value } : result;
+}
+
 /** Exact serialized UTF-8 size under the snapshot's existing limits, without serialization hooks. */
 export function boundedJsonByteLength(value: unknown): number | undefined {
   const result = snapshotBoundedJsonWithSize(value);
   return result.success ? result.serializedBytes : undefined;
 }
 
-function snapshotBoundedJsonWithSize(value: unknown):
+function snapshotBoundedJsonWithSize(value: unknown, maxSourceBytes?: number):
   | { success: true; value: BoundedJsonValue; serializedBytes: number }
   | { success: false; path: readonly BoundedJsonPathSegment[] } {
   let activePath: SnapshotPathNode | undefined;
@@ -163,7 +191,7 @@ function snapshotBoundedJsonWithSize(value: unknown):
 
     const addSerializedBytes = (amount: number): boolean => {
       serializedBytes += amount;
-      return serializedBytes <= JSON_VALUE_MAX_SERIALIZED_BYTES;
+      return serializedBytes <= (maxSourceBytes ?? JSON_VALUE_MAX_SERIALIZED_BYTES);
     };
 
     const assign = (frame: SnapshotVisitFrame, canonical: BoundedJsonValue): void => {
@@ -195,7 +223,7 @@ function snapshotBoundedJsonWithSize(value: unknown):
 
       const current = frame.value;
       if (current === null || typeof current === "boolean") {
-        const bytes = serializedByteLength(current);
+        const bytes = snapshotPrimitiveBytes(current, maxSourceBytes !== undefined);
         if (bytes === undefined || !addSerializedBytes(bytes)) {
           return invalidJsonSnapshot(frame.path);
         }
@@ -203,10 +231,12 @@ function snapshotBoundedJsonWithSize(value: unknown):
         continue;
       }
       if (typeof current === "string") {
-        if (utf8LengthWithin(current, JSON_VALUE_MAX_STRING_BYTES) === undefined) {
+        if (
+          utf8LengthWithin(current, maxSourceBytes ?? JSON_VALUE_MAX_STRING_BYTES) === undefined
+        ) {
           return invalidJsonSnapshot(frame.path);
         }
-        const bytes = serializedByteLength(current);
+        const bytes = snapshotPrimitiveBytes(current, maxSourceBytes !== undefined);
         if (bytes === undefined || !addSerializedBytes(bytes)) {
           return invalidJsonSnapshot(frame.path);
         }
@@ -215,7 +245,7 @@ function snapshotBoundedJsonWithSize(value: unknown):
       }
       if (typeof current === "number") {
         if (!numberIsFinite(current)) return invalidJsonSnapshot(frame.path);
-        const bytes = serializedByteLength(current);
+        const bytes = snapshotPrimitiveBytes(current, maxSourceBytes !== undefined);
         if (bytes === undefined || !addSerializedBytes(bytes)) {
           return invalidJsonSnapshot(frame.path);
         }
@@ -249,6 +279,7 @@ function snapshotBoundedJsonWithSize(value: unknown):
         activeAncestors,
         addSerializedBytes,
         assign,
+        maxSourceBytes !== undefined,
       );
       if (invalidPath !== null) return invalidJsonSnapshot(invalidPath.path);
     }
@@ -323,6 +354,7 @@ function snapshotObject(
   activeAncestors: Set<object>,
   addSerializedBytes: (amount: number) => boolean,
   assign: (frame: SnapshotVisitFrame, canonical: BoundedJsonValue) => void,
+  decodedBytes: boolean,
 ): InvalidSnapshotPath | null {
   const prototype = reflectGetPrototypeOf(value);
   if (prototype !== OBJECT_PROTOTYPE && prototype !== null) {
@@ -345,7 +377,7 @@ function snapshotObject(
     if (utf8LengthWithin(key, JSON_VALUE_MAX_KEY_BYTES) === undefined) {
       return invalidSnapshotPath(childPath);
     }
-    const keyBytes = serializedByteLength(key);
+    const keyBytes = decodedBytes ? encodedByteLength(key) + 2 : serializedByteLength(key);
     if (keyBytes === undefined || !addSerializedBytes(keyBytes + 1)) {
       return invalidSnapshotPath(childPath);
     }

@@ -75,3 +75,9 @@ export const MAX_REMOTE_INTEGRATION_TOOL_SCHEMA_DEPTH = 64;
  * proxies enforce. It mirrors the control plane's own cap.
  */
 export const MAX_GRANTED_INTEGRATION_TOOL_NAMES = 100;
+
+/** Maximum opaque cursor size accepted from integration pagination responses. */
+export const MAX_INTEGRATION_PAGINATION_CURSOR_LENGTH = 8_192;
+
+/** Traversal safety ceiling; exceeding it is an explicit error, never silent truncation. */
+export const MAX_INTEGRATION_PAGINATION_PAGES = 1_000;

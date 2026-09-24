@@ -26,7 +26,6 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { getHostEnv, getHostSecret } from "#veryfront/platform/compat/process/env.ts";
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
@@ -39,6 +38,15 @@ import {
   readResponseTextPrefix,
 } from "#veryfront/utils/response-body.ts";
 
+import {
+  createIntegrationRequestSignalScope,
+  discardResponseBody,
+  dispatchIntegrationApiRequest,
+  isValidIntegrationApiToken as isValidApiToken,
+  readBoundedResponseJson,
+} from "./integration-transport.ts";
+import { readIntegrationFailureCondition as readRemoteFailureCondition } from "./integration-condition.ts";
+
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { isIntegrationAuthenticationActionResult } from "#veryfront/tool/result.ts";
 import {
@@ -49,7 +57,6 @@ import {
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
   MAX_INTEGRATION_TOOL_LIST_ATTEMPTS,
   MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES,
-  MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH,
   MAX_REMOTE_INTEGRATION_CONTEXT_ID_LENGTH,
   MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS,
   MAX_REMOTE_INTEGRATION_TOOL_DESCRIPTION_LENGTH,
@@ -66,10 +73,6 @@ interface RemoteToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-}
-interface IntegrationRequestSignalScope {
-  signal: AbortSignal;
-  dispose: () => void;
 }
 
 /**
@@ -217,28 +220,6 @@ function snapshotToolExecutionContext(
 // Per-request token resolution
 // ---------------------------------------------------------------------------
 
-// Captured before project code runs: `resolveRequestAuth` passes the
-// host-private stored login token through this validator, so a project that
-// replaces `String.prototype.charCodeAt` must not observe the credential from
-// the method receiver.
-const applyIntrinsic = Reflect.apply;
-const stringCharCodeAt = String.prototype.charCodeAt;
-
-function isValidApiToken(token: unknown): token is string {
-  if (
-    typeof token !== "string" ||
-    token.length === 0 ||
-    token.length > MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH
-  ) {
-    return false;
-  }
-  for (let index = 0; index < token.length; index++) {
-    const code = applyIntrinsic(stringCharCodeAt, token, [index]) as number;
-    if (code < 0x21 || code > 0x7e) return false;
-  }
-  return true;
-}
-
 /**
  * Resolve the API token for the active runtime mode.
  * Proxy mode requires a valid request-scoped project token. Single-project
@@ -334,24 +315,6 @@ function parseJsonText(text: string): unknown | undefined {
   } catch {
     return undefined;
   }
-}
-
-type RemoteFailureCondition = {
-  slug: string;
-  status: number;
-  retryable: boolean;
-};
-
-function readRemoteFailureCondition(value: unknown): RemoteFailureCondition | undefined {
-  if (
-    !isRecord(value) || typeof value.slug !== "string" ||
-    !/^[a-z][a-z0-9-]{0,127}$/.test(value.slug) ||
-    typeof value.status !== "number" || !Number.isInteger(value.status) ||
-    value.status < 400 || value.status > 599 || typeof value.retryable !== "boolean"
-  ) {
-    return undefined;
-  }
-  return { slug: value.slug, status: value.status, retryable: value.retryable };
 }
 
 function applyRemoteFailureCondition(
@@ -465,111 +428,6 @@ function parseToolListResponse(value: unknown): RemoteToolDefinition[] | undefin
   return definitions;
 }
 
-function createIntegrationRequestSignalScope(
-  callerSignal: AbortSignal | undefined,
-): IntegrationRequestSignalScope {
-  callerSignal?.throwIfAborted();
-
-  const controller = new AbortController();
-  const forwardCallerAbort = () => controller.abort(callerSignal?.reason);
-  const timeoutId = setTimeout(() => {
-    controller.abort(
-      new DOMException(
-        `Integration API request timed out after ${INTEGRATION_REQUEST_TIMEOUT_MS} ms`,
-        "TimeoutError",
-      ),
-    );
-  }, INTEGRATION_REQUEST_TIMEOUT_MS);
-  const detachCaller = () => {
-    callerSignal?.removeEventListener("abort", forwardCallerAbort);
-  };
-  const cleanupAfterAbort = () => {
-    clearTimeout(timeoutId);
-    detachCaller();
-  };
-  controller.signal.addEventListener("abort", cleanupAfterAbort, { once: true });
-
-  if (callerSignal) {
-    callerSignal.addEventListener("abort", forwardCallerAbort, { once: true });
-    // An abort can race the initial check and listener registration.
-    if (callerSignal.aborted) forwardCallerAbort();
-  }
-
-  let disposed = false;
-  return {
-    signal: controller.signal,
-    dispose: () => {
-      if (disposed) return;
-      disposed = true;
-      clearTimeout(timeoutId);
-      detachCaller();
-      controller.signal.removeEventListener("abort", cleanupAfterAbort);
-    },
-  };
-}
-
-function discardResponseBody(response: Response): void {
-  if (!response.body) return;
-
-  try {
-    const cancellation = response.body.cancel();
-    void cancellation.catch((error) => {
-      logger.debug("Failed to discard integration API response body", {
-        status: response.status,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-    });
-  } catch (error) {
-    logger.debug("Failed to discard integration API response body", {
-      status: response.status,
-      errorName: error instanceof Error ? error.name : typeof error,
-    });
-  }
-}
-
-function assertResponseContentLengthWithin(
-  response: Response,
-  maxBytes: number,
-  label: string,
-): void {
-  const rawContentLength = response.headers.get("content-length");
-  if (rawContentLength === null) return;
-
-  const contentLength = Number(rawContentLength.trim());
-  if (
-    !/^\d+$/.test(rawContentLength.trim()) ||
-    !Number.isSafeInteger(contentLength) ||
-    contentLength > maxBytes
-  ) {
-    discardResponseBody(response);
-    throw new Error(`${label} exceeds the ${maxBytes}-byte response limit`);
-  }
-}
-
-async function readBoundedResponseJson(
-  response: Response,
-  maxBytes: number,
-  signal: AbortSignal,
-  label: string,
-): Promise<unknown> {
-  assertResponseContentLengthWithin(response, maxBytes, label);
-  const { text, truncated } = await readResponseTextPrefix(
-    response,
-    maxBytes + 1,
-    signal,
-    { fatalUtf8: true },
-  );
-  if (truncated || utf8Encoder.encode(text).byteLength > maxBytes) {
-    throw new Error(`${label} exceeds the ${maxBytes}-byte response limit`);
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch (cause) {
-    throw new SyntaxError(`${label} is not valid JSON`, { cause });
-  }
-}
-
 function snapshotRemoteToolArguments(
   args: Record<string, unknown>,
 ): Record<string, BoundedJsonValue> {
@@ -624,58 +482,18 @@ function serializeCallRequest(
   return serialized;
 }
 
-/**
- * Issue an authenticated POST to the integration tools API with a bounded
- * timeout. Discovery and execution have different response contracts: tool
- * listing throws on failure while tool calls map failures into a structured result,
- * so callers own response handling and request-signal lifetime; this
- * centralizes authenticated dispatch. No retry: tool execution is not idempotent
- * (a retried call could re-send an email or re-create a record).
- */
-async function postIntegrationApi(
-  requestUrl: string,
-  token: string,
-  serializedBody: string | undefined,
-  projectSlug: string | undefined,
-  signal: AbortSignal,
-): Promise<Response> {
-  signal.throwIfAborted();
-
-  // The credential may be the host-private stored login token, so the request
-  // goes through the host transport rather than `globalThis.fetch`. Locally
-  // loaded project code runs in this process and can replace the global, and a
-  // direct call would hand its replacement the `Authorization` header to read.
-  //
-  // This also puts the call under the host egress ceiling, which denies private
-  // and loopback destinations. A deployment that points `VERYFRONT_API_URL` /
-  // `VERYFRONT_API_BASE_URL` at an internal host must set
-  // `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; that is the intended disposition,
-  // since only the host process can set it and a project overlay cannot.
-  return await guardedOutboundFetch(requestUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(projectSlug ? { "x-veryfront-project-slug": projectSlug } : {}),
-    },
-    ...(serializedBody !== undefined ? { body: serializedBody } : {}),
-    signal,
-  });
-}
-
 async function fetchToolListAttempt(
   toolListUrl: string,
   token: string,
   projectSlug: string | undefined,
   signal: AbortSignal,
 ): Promise<RemoteToolDefinition[]> {
-  const response = await postIntegrationApi(
-    toolListUrl,
+  const response = await dispatchIntegrationApiRequest({
+    requestUrl: toolListUrl,
     token,
-    undefined,
     projectSlug,
     signal,
-  );
+  });
 
   if (!response.ok) {
     // Throw so callers can distinguish a fetch failure from "no remote tools
@@ -841,13 +659,13 @@ async function callRemoteTool(
     const requestUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
       `/integrations/${encodeURIComponent(integration)}/tools/${encodeURIComponent(toolId)}/call`,
     );
-    const response = await postIntegrationApi(
+    const response = await dispatchIntegrationApiRequest({
       requestUrl,
       token,
       serializedBody,
       projectSlug,
-      requestScope.signal,
-    );
+      signal: requestScope.signal,
+    });
 
     if (!response.ok) {
       const { text } = await readResponseTextPrefix(
