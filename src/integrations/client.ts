@@ -61,7 +61,12 @@ export class IntegrationApiError extends VeryfrontError {
   readonly httpProblem?: IntegrationHttpProblem;
   readonly problem?: IntegrationJsonObject;
   constructor(
-    readonly kind: "http" | "transport" | "invalid_response" | "project_binding",
+    readonly kind:
+      | "http"
+      | "transport"
+      | "invalid_response"
+      | "project_binding"
+      | "unsupported_precondition",
     readonly httpStatus: number | undefined,
     readonly outcomeUnknown: boolean,
     readonly condition?: IntegrationFailureCondition,
@@ -77,11 +82,15 @@ export class IntegrationApiError extends VeryfrontError {
       title: existing.title,
       suggestion: outcomeUnknown
         ? "Check the provider outcome before retrying this operation"
+        : kind === "unsupported_precondition"
+        ? "Use an API deployment that confirms connection-generation precondition support"
         : existing.suggestion,
       ...(existing.exitCode === undefined ? {} : { exitCode: existing.exitCode }),
     });
     super(
-      kind === "http"
+      kind === "unsupported_precondition"
+        ? "The API did not confirm connection-generation precondition support"
+        : kind === "http"
         ? `Integration API request failed (${httpStatus})`
         : `Integration API ${kind.replaceAll("_", " ")} failure`,
       {
@@ -204,12 +213,16 @@ export async function createIntegrationClient(
   // Bound only after the authorized project preflight completes.
   let project: Readonly<{ id: string; slug: string }> | undefined = undefined;
 
+  let generationPreconditionSupported = false;
+
   async function request(path: string, options: {
     method?: "GET" | "POST";
     body?: string;
     signal?: AbortSignal | undefined;
     execution?: boolean;
     requireProjectBinding?: boolean;
+    capturePreconditions?: boolean;
+    requireGenerationPrecondition?: boolean;
   } = {}): Promise<IntegrationJsonObject> {
     const {
       method = "GET",
@@ -269,6 +282,13 @@ export async function createIntegrationClient(
         discardResponseBody(response);
         throw new IntegrationApiError("project_binding", response.status, call);
       }
+      const advertised = response.headers.get("x-veryfront-tool-preconditions")?.split(",")
+        .map((value) => value.trim()).includes("connection_generation_id") ?? false;
+      if (options.capturePreconditions) generationPreconditionSupported = advertised;
+      if (options.requireGenerationPrecondition && !advertised) {
+        discardResponseBody(response);
+        throw new IntegrationApiError("unsupported_precondition", response.status, call);
+      }
       const value = await readBoundedResponseJson(
         response,
         call ? MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES : MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES,
@@ -313,6 +333,7 @@ export async function createIntegrationClient(
   // selection used by calls, including project-bound credential precedence.
   const binding = await request("/integrations/tools/list?limit=1", {
     method: "POST",
+    capturePreconditions: true,
     requireProjectBinding: true,
   });
   if (!Array.isArray(binding.tools)) throw new IntegrationApiError("invalid_response", 200, false);
@@ -542,6 +563,16 @@ export async function createIntegrationClient(
       if (options.connectionId !== undefined && !uuid(options.connectionId)) {
         throw new TypeError("connectionId must be a UUID");
       }
+      if (options.expectedConnectionGenerationId !== undefined) {
+        if (!options.connectionId || !uuid(options.expectedConnectionGenerationId)) {
+          throw new TypeError(
+            "expectedConnectionGenerationId requires connectionId and both must be UUIDs",
+          );
+        }
+        if (!generationPreconditionSupported) {
+          throw new IntegrationApiError("unsupported_precondition", undefined, false);
+        }
+      }
       const signal = context.abortSignal && options.abortSignal
         ? AbortSignal.any([context.abortSignal, options.abortSignal])
         : context.abortSignal ?? options.abortSignal;
@@ -549,6 +580,9 @@ export async function createIntegrationClient(
       const body = JSON.stringify({
         arguments: boundedObject(args),
         ...(options.connectionId !== undefined ? { connection_id: options.connectionId } : {}),
+        ...(options.expectedConnectionGenerationId !== undefined
+          ? { expected_connection_generation_id: options.expectedConnectionGenerationId }
+          : {}),
       });
       if (new TextEncoder().encode(body).byteLength > MAX_INTEGRATION_CALL_REQUEST_BYTES) {
         throw new RangeError("Integration call request exceeds the byte limit");
@@ -558,7 +592,14 @@ export async function createIntegrationClient(
           `/integrations/${encodeURIComponent(identity.integration)}/tools/${
             encodeURIComponent(identity.toolId)
           }/call`,
-          { method: "POST", body, signal, execution: true, requireProjectBinding: true },
+          {
+            method: "POST",
+            body,
+            signal,
+            execution: true,
+            requireProjectBinding: true,
+            requireGenerationPrecondition: options.expectedConnectionGenerationId !== undefined,
+          },
         ),
       );
       if (result.isError === true) {

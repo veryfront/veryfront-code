@@ -14,6 +14,7 @@ const schema = defineSchema((v) =>
     projectDir: v.string().optional(),
     scope: v.enum(["user", "project"]).default("user"),
     connectionId: v.string().uuid().optional(),
+    expectedConnectionGenerationId: v.string().uuid().optional(),
     argumentsJson: v.string().optional(),
     search: v.string().optional(),
     noBrowser: v.boolean().default(false),
@@ -29,6 +30,7 @@ export const parseIntegrationArgs = createArgParser(lazySchema(schema), {
   projectDir: CommonArgs.projectDir,
   scope: { keys: ["scope"], type: "string" },
   connectionId: { keys: ["connection"], type: "string" },
+  expectedConnectionGenerationId: { keys: ["expected-generation"], type: "string" },
   argumentsJson: { keys: ["args"], type: "string" },
   search: { keys: ["search"], type: "string" },
   noBrowser: { keys: ["no-browser"], type: "boolean" },
@@ -101,6 +103,9 @@ export async function runIntegrationOperation(
       }
       return client.call(target, args as Record<string, unknown>, {
         connectionId: options.connectionId,
+        ...(options.expectedConnectionGenerationId !== undefined
+          ? { expectedConnectionGenerationId: options.expectedConnectionGenerationId }
+          : {}),
       });
     }
     default:

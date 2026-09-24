@@ -29,6 +29,7 @@ describe("integration command primitives", () => {
       target: "github__read",
       argumentsJson: '{"connection_id":"provider-field","run_id":"native-run"}',
       connectionId: "11111111-1111-4111-8111-111111111111",
+      expectedConnectionGenerationId: "22222222-2222-4222-8222-222222222222",
       scope: "user",
       noBrowser: false,
       timeout: 300,
@@ -36,7 +37,10 @@ describe("integration command primitives", () => {
     assertEquals(calls, [[
       "github__read",
       { connection_id: "provider-field", run_id: "native-run" },
-      { connectionId: "11111111-1111-4111-8111-111111111111" },
+      {
+        connectionId: "11111111-1111-4111-8111-111111111111",
+        expectedConnectionGenerationId: "22222222-2222-4222-8222-222222222222",
+      },
     ]]);
   });
   it("fails malformed arguments before calling a provider", async () => {

@@ -52,13 +52,15 @@ describe("integration JSON safety metadata", () => {
   for (
     const [kind, status, unknown] of [
       ["transport", undefined, false],
+      ["unsupported_precondition", undefined, false],
+      ["unsupported_precondition", 200, true],
       ["transport", undefined, true],
       ["http", 408, true],
       ["http", 409, true],
     ] as const
   ) {
     it(`emits ${kind}/${status}/${unknown} outcome metadata through the CLI boundary`, async () => {
-      const problem = status
+      const problem = status !== undefined && status >= 400
         ? {
           slug: status === 409 ? "integration-execution-outcome-unknown" : "request-timeout",
           status,
@@ -73,7 +75,7 @@ describe("integration JSON safety metadata", () => {
         outcomeUnknown: unknown,
         automaticReplay: false,
         retryable: false,
-        ...(status ? { httpStatus: status, httpProblem: { slug: problem!.slug, status } } : {}),
+        ...(problem ? { httpStatus: status, httpProblem: { slug: problem.slug, status } } : {}),
       });
     });
   }

@@ -78,6 +78,8 @@ export type IntegrationCallOutcome =
 /** Optional selection metadata, separate from native provider arguments. */
 export interface IntegrationCallOptions {
   readonly connectionId?: string;
+  /** Refuse replacement of the observed connection. Requires connectionId and server support. */
+  readonly expectedConnectionGenerationId?: string;
   readonly abortSignal?: AbortSignal;
 }
 

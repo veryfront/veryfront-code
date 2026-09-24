@@ -59,6 +59,10 @@ export async function handleIntegrationCommand(
     }
   };
   allowed(options.connectionId !== undefined, ["call", "status"], "--connection");
+  allowed(options.expectedConnectionGenerationId !== undefined, ["call"], "--expected-generation");
+  if (options.expectedConnectionGenerationId !== undefined && options.connectionId === undefined) {
+    throw INVALID_ARGUMENT.create({ detail: "--expected-generation requires --connection." });
+  }
   allowed(options.argumentsJson !== undefined, ["call"], "--args");
   allowed(options.search !== undefined, ["list", "tools"], "--search");
   allowed(options.noBrowser || options.redirectUri !== undefined || args.timeout !== undefined, [
