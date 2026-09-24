@@ -3419,38 +3419,11 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  denoIt("serves an edited standalone JavaScript route on reload", async () => {
-    // A `.js` route without imports loads directly; its URL must still carry
-    // a revision so an edit is not served from Deno's module cache.
-    const tmpDir = await makeTempDir();
-    const modulePath = join(tmpDir, "reload-route.js");
-    await fs.writeTextFile(modulePath, `export const GET = () => new Response(String(4 / 2));`);
-    const first = await loadHandlerModule({
-      projectDir: tmpDir,
-      modulePath,
-      adapter,
-      config: undefined,
-    });
-    assertEquals(await getText(first), "2");
-
-    await fs.writeTextFile(modulePath, `export const GET = () => new Response(String(6 / 2));`);
-    const second = await loadHandlerModule({
-      projectDir: tmpDir,
-      modulePath,
-      adapter,
-      config: undefined,
-    });
-    assertEquals(
-      await getText(second),
-      "3",
-      "an edited JavaScript route must be reflected on the next load",
-    );
-  });
-
-  denoIt("serves an edited helper of a directly loadable route on reload", async () => {
-    // A route with only static local imports loads directly. Deno caches the
-    // helper by URL, so a fresh entry revision alone must not keep serving the
-    // helper's previous implementation after it is edited.
+  denoIt("serves an edited helper of a directly loaded route on reload", async () => {
+    // A route with only static local imports loads directly and shares its
+    // helper's module instance with other routes. Deno keys that helper by its
+    // unchanged URL, so once the helper is edited the graph must bundle; a
+    // fresh entry revision alone would keep serving the old helper.
     const tmpDir = await makeTempDir();
     const helperPath = join(tmpDir, "helper.ts");
     await fs.writeTextFile(helperPath, `export const value = "first";`);
@@ -3482,6 +3455,237 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       await getText(second),
       "second2",
       "an edited helper must be reflected on the next load of the route",
+    );
+  });
+
+  denoIt("bundles a graph whose import map remaps a local specifier", async () => {
+    // The walk validates the mapped target, but a direct import lets Deno
+    // resolve the literal specifier with whatever map the process runs under.
+    // Only bundling guarantees the executed graph is the validated one.
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      JSON.stringify({ imports: { "./helper.ts": "./actual.ts" } }),
+    );
+    await fs.writeTextFile(join(tmpDir, "helper.ts"), `export const value = "unmapped";`);
+    await fs.writeTextFile(join(tmpDir, "actual.ts"), `export const value = "mapped";`);
+    const modulePath = join(tmpDir, "mapped-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "./helper.ts";`,
+        `const half = 4 / 2;`,
+        `export const GET = () => new Response(value + half);`,
+      ].join("\n"),
+    );
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(route),
+      "mapped2",
+      "the executed graph must be the validated, mapped one",
+    );
+  });
+
+  denoIt("serves an edited route that imports itself alongside a helper", async () => {
+    // A self-import is an edge back to the entry too: the versioned entry
+    // would otherwise read its old exports through the cached unversioned copy.
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(join(tmpDir, "helper.ts"), `export const suffix = "!";`);
+    const modulePath = join(tmpDir, "self-helper-route.ts");
+    const write = (value: string) =>
+      fs.writeTextFile(
+        modulePath,
+        [
+          `import { value as self } from "./self-helper-route.ts";`,
+          `import { suffix } from "./helper.ts";`,
+          `export const value = "${value}";`,
+          `const half = 4 / 2;`,
+          `export const GET = () => new Response(self + suffix + half);`,
+        ].join("\n"),
+      );
+    await write("first");
+    const first = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(first), "first!2");
+
+    await write("second");
+    const second = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(second),
+      "second!2",
+      "an edited self-importing route with a helper must not read its cached old exports",
+    );
+  });
+
+  denoIt("serves an edited route that imports itself through a query-qualified URL", async () => {
+    // `./route.ts?inner` is a second module URL for the entry's own path; the
+    // versioned entry must not keep reading its old exports through it.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "query-self-route.ts");
+    const write = (value: string) =>
+      fs.writeTextFile(
+        modulePath,
+        [
+          `import { value as inner } from "./query-self-route.ts?inner";`,
+          `export const value = "${value}";`,
+          `const half = 4 / 2;`,
+          `export const GET = () => new Response(inner + half);`,
+        ].join("\n"),
+      );
+    await write("first");
+    const first = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(first), "first2");
+
+    await write("second");
+    const second = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(second),
+      "second2",
+      "an edited route must not read its old exports through a query-qualified self-import",
+    );
+  });
+
+  denoIt("serves an edited route that its own dependency imports back", async () => {
+    // In a cycle the entry is also loaded as an unversioned dependency, so an
+    // edit to the entry alone must still invalidate the graph.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "cycle-route.ts");
+    await fs.writeTextFile(
+      join(tmpDir, "helper.ts"),
+      `import { value } from "./cycle-route.ts"; export const label = () => value;`,
+    );
+    const write = (value: string) =>
+      fs.writeTextFile(
+        modulePath,
+        [
+          `import { label } from "./helper.ts";`,
+          `export const value = "${value}";`,
+          `const half = 4 / 2;`,
+          `export const GET = () => new Response(label() + half);`,
+        ].join("\n"),
+      );
+    await write("first");
+    const first = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(first), "first2");
+
+    await write("second");
+    const second = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(second),
+      "second2",
+      "an edited entry reached through a dependency cycle must be reflected",
+    );
+  });
+
+  denoIt("rejects a directly imported helper symlinked outside the project", async () => {
+    // The direct-import graph walk must judge dependencies by their canonical
+    // path, like the bundling path does, or a symlink executes outside code.
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const outsideModule = join(outsideDir, "secret.ts");
+    const linkedModule = join(projectDir, "linked.ts");
+    await fs.writeTextFile(outsideModule, `export const secret = "outside-project";`);
+    try {
+      await Deno.symlink(outsideModule, linkedModule);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+    const modulePath = join(projectDir, "symlink-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { secret } from "./linked.ts";\n` +
+        `export const GET = () => new Response(secret);`,
+    );
+    await assertRejects(
+      () => loadHandlerModule({ projectDir, modulePath, adapter, config: undefined }),
+      Error,
+      "escapes the project directory",
+    );
+  });
+
+  denoIt("bundles a route that imports JSON without a type attribute", async () => {
+    // Deno's direct loader rejects such an import; the bundler accepts it.
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(join(tmpDir, "data.json"), `{ "label": "json" }`);
+    const modulePath = join(tmpDir, "json-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import data from "./data.json";`,
+        `const half = 4 / 2;`,
+        `export const GET = () => new Response(data.label + half);`,
+      ].join("\n"),
+    );
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(route), "json2", "an attribute-less JSON import must keep loading");
+  });
+
+  denoIt("serves an edited standalone JavaScript route on reload", async () => {
+    // A `.js` route without imports loads directly; its URL must still carry
+    // a revision so an edit is not served from Deno's module cache.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "reload-route.js");
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response(String(4 / 2));`);
+    const first = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(first), "2");
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response(String(6 / 2));`);
+    const second = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(second),
+      "3",
+      "an edited JavaScript route must be reflected on the next load",
     );
   });
 
