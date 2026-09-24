@@ -85,8 +85,9 @@ flowchart TD
   provider calls without exposing credentials to tool arguments or the model.
 
 Effective integration capability is the intersection of agent selection,
-connector catalog, source configuration, and control-plane policy. No policy
-layer can add a capability removed by another layer.
+connector catalog, and source configuration. Source configuration can only
+narrow the tools already selected by the agent and catalog; it cannot add a
+capability or grant provider access.
 
 The framework normalizes source configuration once at the project request
 boundary and carries it in request-local runtime context. Direct agents, AG-UI

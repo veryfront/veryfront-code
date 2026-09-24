@@ -621,7 +621,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "./integration.md",
       "./mcp-server.md",
     ],
-    snippets: ["Salesforce MCP", "write-tool allowlisting", "cross-system"],
+    snippets: ["Salesforce MCP", "allowedTools", "cross-system"],
   },
   "concepts/mcp-server.md": {
     references: [
