@@ -5038,6 +5038,10 @@ export async function analyzeSourceCapabilities(
     applyExportedCapabilityAlias(node, scope, nodeScopes, analysis);
     if (isImportMeta(node)) analysis.usesImportMeta = true;
     if (node.type === "JSXElement" || node.type === "JSXFragment") analysis.usesJsx = true;
+    // `with` resolves every identifier in its body against an arbitrary object
+    // before the lexical scope, so nothing this analysis proves about a binding
+    // holds inside it. Sloppy-mode scripts and CommonJS dependencies can use it.
+    if (node.type === "WithStatement") analysis.hasDynamicCodeGeneration = true;
 
     forEachChild(node, visit);
   };

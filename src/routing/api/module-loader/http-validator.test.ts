@@ -544,6 +544,26 @@ describe("routing/api/module-loader/http-validator", () => {
       assertEquals(scan.specifiers, ["./helper.cjs"]);
     });
 
+    it("rejects a with statement, which defeats lexical binding resolution", async () => {
+      // Only sloppy-mode scripts and CommonJS dependencies can contain `with`;
+      // inside it an identifier may name a property of any object, so no
+      // binding proof holds. Fail closed on the statement itself.
+      for (
+        const source of [
+          `var cfg = { a: 1 }; with (cfg) { console.log(a); }`,
+          `var eval = () => 0; with (globalThis) { eval('return import("https://blocked.example/mod.js")'); }`,
+          `module.exports = () => { with (require("./scope.cjs")) { run(); } };`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
     it("rejects a module that parses under neither grammar", async () => {
       for (
         const source of [
