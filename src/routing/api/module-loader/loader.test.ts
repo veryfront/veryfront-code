@@ -4002,7 +4002,10 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       modulePath,
       [
         `import { value } from "HTTPS://EXAMPLE.COM/pkg/../dep.js";`,
-        `const marker = /x/;`,
+        // A literal dynamic import routes the graph through the bundler; a
+        // parsed module no longer bundles merely because it contains a slash.
+        `export const warm = () => import("./helper.ts");`,
+        `const marker = { source: "x" };`,
         `export const GET = () => new Response(value + marker.source);`,
       ].join("\n"),
     );

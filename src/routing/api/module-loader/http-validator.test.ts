@@ -464,6 +464,51 @@ describe("rewriteImportMetaLocations", () => {
 
 describe("routing/api/module-loader/http-validator", () => {
   describe("validateHTTPImports", () => {
+    it("uses the parsed analysis alone when the source parses", async () => {
+      // Slashes no longer force bundling: the AST knows the import edges exactly.
+      const parsed = await validateHTTPImports(
+        `const pattern = /import\\("https:\\/\\/evil.example\\/x.js"\\)/;` +
+          ` export const GET = (req: Request) => new Response(String(4 / 2), { status: 200 });`,
+        [],
+      );
+      assertEquals(parsed.parserBacked, true);
+      assertEquals(parsed.specifiers, []);
+      assertEquals(parsed.requiresBundling, false);
+      assertEquals(parsed.hasUnconstrainedDynamicImport, false);
+
+      // A literal dynamic import can execute later, so it still bundles.
+      const dynamic = await validateHTTPImports(
+        `export const GET = async () => { const mod = await import("./helper.ts"); return mod.run(); };`,
+        [],
+      );
+      assertEquals(dynamic.specifiers, ["./helper.ts"]);
+      assertEquals(dynamic.requiresBundling, true);
+
+      // `import.meta` locations are rewritten by the bundling pipeline, so they bundle too.
+      const meta = await validateHTTPImports(
+        `export const GET = () => new Response(import.meta.resolve("./asset.txt"));`,
+        [],
+      );
+      assertEquals(meta.requiresBundling, true);
+    });
+
+    it("keeps the textual fallback contract when the parser is unavailable", async () => {
+      __setSourceCapabilityParserLoaderForTests(() =>
+        Promise.reject(new Error("parser unavailable"))
+      );
+      try {
+        const scan = await validateHTTPImports(
+          `export const GET = () => new Response(String(4 / 2));`,
+          [],
+        );
+        assertEquals(scan.parserBacked, false);
+        // Without a parser a slash may hide an import, so the bundler must parse it.
+        assertEquals(scan.requiresBundling, true);
+      } finally {
+        __setSourceCapabilityParserLoaderForTests();
+      }
+    });
+
     it("should block all remote imports when allowedHosts is empty", async () => {
       await assertRejects(
         async () => await validateHTTPImports('import foo from "https://evil.com/lib.js";', []),

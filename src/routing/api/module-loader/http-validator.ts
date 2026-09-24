@@ -1555,9 +1555,12 @@ export async function validateHTTPImports(
   source: string,
   allowedHosts: string[],
 ): Promise<ValidatedModuleScan> {
-  const scan = scanModuleSpecifiers(source);
+  // The parsed capability analysis is the single source of truth whenever the
+  // source parses. The textual scan below is the no-parser fallback only: it
+  // never runs, and never contributes a verdict, once an AST is available.
   const analysis = await analyzeSourceCapabilities(source);
-  const specifiers = analysis?.moduleSpecifiers ?? scan.specifiers;
+  const scan = analysis === null ? scanModuleSpecifiers(source) : null;
+  const specifiers = analysis?.moduleSpecifiers ?? scan?.specifiers ?? [];
   validateModuleSpecifierHosts([...specifiers], allowedHosts);
   assertNoRestrictedRuntimeModules(specifiers);
   const workers = analysis?.workers ?? fallbackWorkerUrlClassifications(source);
@@ -1571,7 +1574,7 @@ export async function validateHTTPImports(
     );
   }
 
-  const fallbackHasDynamicCodeGeneration = scan.hasDynamicCodeGeneration ||
+  const fallbackHasDynamicCodeGeneration = scan !== null && (scan.hasDynamicCodeGeneration ||
     containsFallbackCapabilityName(source, [
       "Bun",
       "Deno",
@@ -1587,7 +1590,7 @@ export async function validateHTTPImports(
       "require",
       "self",
       "window",
-    ]);
+    ]));
   if (analysis?.hasDynamicCodeGeneration ?? fallbackHasDynamicCodeGeneration) {
     throw toError(
       createError({
@@ -1599,7 +1602,7 @@ export async function validateHTTPImports(
   }
 
   const hasUnconstrainedDynamicImport = analysis?.hasUnconstrainedDynamicImport ??
-    scan.hasUnconstrainedDynamicImport;
+    scan?.hasUnconstrainedDynamicImport ?? true;
   if (hasUnconstrainedDynamicImport) {
     throw toError(
       createError({
@@ -1613,7 +1616,15 @@ export async function validateHTTPImports(
   return {
     specifiers,
     hasUnconstrainedDynamicImport,
-    requiresBundling: scan.requiresBundling,
+    // With an AST the import edges are exact, so only a dynamic import (which
+    // can execute after validation) or an `import.meta` read (whose locations
+    // the bundling pipeline rewrites and validates) needs the bundled path.
+    // Without one, the textual scan cannot tell a regular expression from
+    // division and routes any slash through the bundler, whose parser
+    // enforces the real edges.
+    requiresBundling: analysis !== null
+      ? analysis.hasDynamicImport || analysis.usesImportMeta
+      : scan?.requiresBundling ?? true,
     parserBacked: analysis !== null,
     localWorkerSpecifiers: workers.flatMap((worker) =>
       worker.kind === "local" && worker.specifier !== null
