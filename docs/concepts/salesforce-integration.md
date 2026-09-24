@@ -48,9 +48,10 @@ responsible for deciding when to invoke a write tool such as creating a case,
 adding a case comment, or updating a case. Veryfront does not require a separate
 integration policy to discover or call the tool. write-tool allowlisting is not
 a separate Veryfront setup step; provider permissions and tool metadata remain
-the execution boundary. Agent tool selection determines which tools the agent
-can discover and call; source configuration can narrow that selection. Tool
-metadata describes inputs and effects but does not select or authorize a tool.
+the provider access boundary. Agent tool selection determines which tools the
+agent can discover and call; source configuration can narrow that selection.
+Tool metadata describes inputs and effects but does not select or authorize a
+tool.
 
 ## Why this scales across Salesforce orgs
 
