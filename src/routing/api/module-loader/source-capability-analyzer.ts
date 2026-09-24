@@ -38,6 +38,17 @@ interface Binding {
   }>;
   readonly workerObjectInitializers: ASTNode[];
   hasAliasAssignment: boolean;
+  /**
+   * A `for...of` / `for...in` assigns into this existing binding. Loop values
+   * are not recorded as initializers, so value proofs over the initializer list
+   * must fail closed for such a binding.
+   */
+  loopAssigned: boolean;
+  /**
+   * A function or catch parameter: it holds a caller-supplied value that no
+   * initializer records, so initializer-only value proofs must fail closed.
+   */
+  hasUnknownIncomingValue: boolean;
   prototypeMutated: boolean;
   enumerableProtoPropertyDefined: boolean;
   processModuleObjectImport: boolean;
@@ -57,6 +68,14 @@ interface Scope {
   readonly parent: Scope | null;
   readonly kind: "program" | "function" | "block" | "catch" | "class";
   readonly bindings: Map<string, Binding>;
+  /**
+   * Set on the program scope when the module mutates a prototype through a
+   * target this analysis cannot attribute to a binding (`box.a`,
+   * `Array.prototype`), or writes `constructor`, `prototype` or `__proto__` on
+   * any object. Every exemption that relies on a value's prototype chain being
+   * intact then fails closed for the whole module.
+   */
+  prototypeIntegrityUnknown: boolean;
 }
 
 interface LocalClassObject {
@@ -685,7 +704,107 @@ function hasSourceRange(
 }
 
 function createScope(parent: Scope | null, kind: Scope["kind"]): Scope {
-  return { parent, kind, bindings: new Map() };
+  return { parent, kind, bindings: new Map(), prototypeIntegrityUnknown: false };
+}
+
+function programScope(scope: Scope): Scope {
+  let current = scope;
+  while (current.parent !== null) current = current.parent;
+  return current;
+}
+
+const PROTOTYPE_INTEGRITY_PROPERTIES = new Set(["constructor", "prototype", "__proto__"]);
+
+/**
+ * A value a prototype mutation can be attributed to without a binding: a
+ * fresh literal, function or class is the mutated object itself, so marking
+ * the binding that holds it is enough. Anything else (a member read, a call
+ * or constructor result, a conditional) may alias an object this walk never
+ * sees; a constructor can return any existing object.
+ */
+function isAttributableMutationValue(expression: ASTNode): boolean {
+  return expression.type === "ObjectExpression" ||
+    INTRINSIC_NON_CALLABLE_LITERAL_TYPES.has(expression.type) ||
+    isLocalFunctionValue(expression) || expression.type === "ClassDeclaration" ||
+    expression.type === "ClassExpression";
+}
+
+/** Visit every leaf target (identifier or member) an assignment pattern writes to. */
+function forEachAssignmentTarget(pattern: ASTNode, visit: (target: ASTNode) => void): void {
+  const node = unwrapExpression(pattern);
+  switch (node.type) {
+    case "AssignmentPattern":
+      if (isNode(node.left)) forEachAssignmentTarget(node.left, visit);
+      return;
+    case "RestElement":
+      if (isNode(node.argument)) forEachAssignmentTarget(node.argument, visit);
+      return;
+    case "ArrayPattern":
+      if (Array.isArray(node.elements)) {
+        for (const element of node.elements) {
+          if (isNode(element)) forEachAssignmentTarget(element, visit);
+        }
+      }
+      return;
+    case "ObjectPattern":
+      if (Array.isArray(node.properties)) {
+        for (const property of node.properties) {
+          if (!isNode(property)) continue;
+          const target = property.type === "RestElement"
+            ? patternChild(property.argument)
+            : bindingNodeForObjectPatternProperty(property);
+          if (target) forEachAssignmentTarget(target, visit);
+        }
+      }
+      return;
+    default:
+      visit(node);
+  }
+}
+
+/** A computed key that can never spell a property name: a symbol or a number. */
+function computedKeyCannotSpellName(
+  target: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  return target.computed === true && isNode(target.property) &&
+    (isDefinitelySymbolValue(target.property, scope, nodeScopes) ||
+      isDefinitelyNumericValue(target.property, scope, nodeScopes));
+}
+
+/**
+ * Whether the node writes to, or deletes, `x.constructor`, `x.prototype`,
+ * `x.__proto__`, or a computed member whose key may spell one of them, through
+ * a plain assignment, a destructuring pattern, a loop head or `delete`.
+ * Indexed writes with a provably numeric or symbol key (`arr[i] = v`) are not
+ * such writes.
+ */
+function isPrototypeIntegrityWrite(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  let pattern: unknown;
+  if (node.type === "AssignmentExpression") pattern = node.left;
+  else if (node.type === "UnaryExpression" && node.operator === "delete") pattern = node.argument;
+  else if (
+    (node.type === "ForInStatement" || node.type === "ForOfStatement") &&
+    isNode(node.left) && node.left.type !== "VariableDeclaration"
+  ) pattern = node.left;
+  else return false;
+  if (!isNode(pattern)) return false;
+  let found = false;
+  forEachAssignmentTarget(pattern, (target) => {
+    if (!isMemberExpressionWithObject(target)) return;
+    const property = memberPropertyName(target);
+    if (
+      PROTOTYPE_INTEGRITY_PROPERTIES.has(property ?? "") ||
+      (target.computed === true && property === null &&
+        !computedKeyCannotSpellName(target, scope, nodeScopes))
+    ) found = true;
+  });
+  return found;
 }
 
 function ensureBinding(scope: Scope, name: string): Binding {
@@ -699,6 +818,8 @@ function ensureBinding(scope: Scope, name: string): Binding {
     memberInitializers: [],
     workerObjectInitializers: [],
     hasAliasAssignment: false,
+    loopAssigned: false,
+    hasUnknownIncomingValue: false,
     prototypeMutated: false,
     enumerableProtoPropertyDefined: false,
     processModuleObjectImport: false,
@@ -710,6 +831,52 @@ function ensureBinding(scope: Scope, name: string): Binding {
 
 function patternChild(node: unknown): ASTNode | undefined {
   return isNode(node) ? node : undefined;
+}
+
+/** Visit every identifier a binding pattern (or plain identifier) assigns to. */
+function forEachPatternIdentifier(pattern: ASTNode, visit: (name: string) => void): void {
+  const node = unwrapExpression(pattern);
+  switch (node.type) {
+    case "Identifier":
+      if (typeof node.name === "string") visit(node.name);
+      return;
+    case "AssignmentPattern":
+      if (isNode(node.left)) forEachPatternIdentifier(node.left, visit);
+      return;
+    case "RestElement":
+      if (isNode(node.argument)) forEachPatternIdentifier(node.argument, visit);
+      return;
+    case "ArrayPattern":
+      if (Array.isArray(node.elements)) {
+        for (const element of node.elements) {
+          if (isNode(element)) forEachPatternIdentifier(element, visit);
+        }
+      }
+      return;
+    case "ObjectPattern":
+      if (Array.isArray(node.properties)) {
+        for (const property of node.properties) {
+          if (!isNode(property)) continue;
+          const target = property.type === "RestElement"
+            ? patternChild(property.argument)
+            : bindingNodeForObjectPatternProperty(property);
+          if (target) forEachPatternIdentifier(target, visit);
+        }
+      }
+      return;
+    case "TSParameterProperty":
+      if (isNode(node.parameter)) forEachPatternIdentifier(node.parameter, visit);
+      return;
+  }
+}
+
+/** Register a parameter pattern and mark its bindings as caller-supplied. */
+function registerParameterPattern(scope: Scope, pattern: ASTNode | undefined): void {
+  if (!pattern) return;
+  registerPattern(scope, pattern);
+  forEachPatternIdentifier(pattern, (name) => {
+    ensureBinding(scope, name).hasUnknownIncomingValue = true;
+  });
 }
 
 function registerPattern(scope: Scope, pattern: ASTNode | null | undefined): void {
@@ -940,18 +1107,32 @@ function createNodeScope(node: ASTNode, incomingScope: Scope, root: Scope): Scop
 
 function registerScopeLocalBindings(scope: Scope, node: ASTNode): void {
   if (isFunction(node)) {
-    if (node.type === "FunctionExpression" && isNode(node.id)) registerPattern(scope, node.id);
+    // A named function expression binds its own name inside its body. The
+    // value is the function itself, so record it: a proof that walks the
+    // binding's initializers must see a callable, not only a later reassignment.
+    if (node.type === "FunctionExpression" && isNode(node.id)) {
+      registerPattern(scope, node.id);
+      if (node.id.type === "Identifier" && typeof node.id.name === "string") {
+        ensureBinding(scope, node.id.name).initializers.push(node);
+      }
+    }
     const params = node.params;
     if (Array.isArray(params)) {
-      for (const parameter of params) registerPattern(scope, patternChild(parameter));
+      for (const parameter of params) registerParameterPattern(scope, patternChild(parameter));
     }
     return;
   }
   if (node.type === "CatchClause") {
-    registerPattern(scope, patternChild(node.param));
+    registerParameterPattern(scope, patternChild(node.param));
     return;
   }
-  if (node.type === "ClassExpression") registerPattern(scope, patternChild(node.id));
+  if (node.type === "ClassExpression" && isNode(node.id)) {
+    // Same as a named function expression: the class is its own name's value.
+    registerPattern(scope, node.id);
+    if (node.id.type === "Identifier" && typeof node.id.name === "string") {
+      ensureBinding(scope, node.id.name).initializers.push(node);
+    }
+  }
 }
 
 function registerImportBindings(scope: Scope, node: ASTNode): void {
@@ -1119,21 +1300,56 @@ function collectAssignments(
         );
       }
     }
+    if ((node.type === "ForInStatement" || node.type === "ForOfStatement") && isNode(node.left)) {
+      // A `var` loop declaration reuses any outer binding of the same name, so
+      // declared targets are marked exactly like assigned ones.
+      const targets = node.left.type === "VariableDeclaration"
+        ? (Array.isArray(node.left.declarations) ? node.left.declarations : [])
+          .map((declarator) => isNode(declarator) ? patternChild(declarator.id) : undefined)
+        : [node.left];
+      for (const target of targets) {
+        if (!target) continue;
+        forEachPatternIdentifier(target, (name) => {
+          const binding = resolveBinding(scope, name);
+          if (binding !== null) binding.loopAssigned = true;
+        });
+      }
+    }
     forEachChild(node, collectAliasAssignments);
   };
   collectAliasAssignments(program);
 
+  // A mutation whose target this walk cannot attribute to the objects it
+  // reaches (an unbound identifier, a parameter, a loop or destructuring
+  // target, or an alias of a member or call result) invalidates every
+  // prototype-based exemption in the module instead of silently marking
+  // nothing: the mutated object may be any value the module can name.
   const markPrototypeMutation = (
     target: ASTNode,
     scope: Scope,
     seen = new Set<Binding>(),
   ): void => {
     const expression = unwrapExpression(target);
-    if (expression.type !== "Identifier" || typeof expression.name !== "string") return;
+    if (expression.type !== "Identifier" || typeof expression.name !== "string") {
+      if (!isAttributableMutationValue(expression)) {
+        programScope(scope).prototypeIntegrityUnknown = true;
+      }
+      return;
+    }
     const binding = resolveBinding(scope, expression.name);
-    if (binding === null || seen.has(binding)) return;
+    if (binding === null) {
+      programScope(scope).prototypeIntegrityUnknown = true;
+      return;
+    }
+    if (seen.has(binding)) return;
     seen.add(binding);
     binding.prototypeMutated = true;
+    if (
+      binding.hasUnknownIncomingValue || binding.loopAssigned ||
+      binding.memberInitializers.length > 0 || binding.initializers.length === 0
+    ) {
+      programScope(scope).prototypeIntegrityUnknown = true;
+    }
     for (const initializer of binding.initializers) {
       markPrototypeMutation(
         initializer,
@@ -1163,17 +1379,27 @@ function collectAssignments(
     }
   };
 
+  const notePrototypeMutation = markPrototypeMutation;
+
   const visit = (node: ASTNode): void => {
     const scope = nodeScopes.get(node) as Scope;
     recordObjectPropertyCopies(node, scope, nodeScopes, parents);
+    if (isPrototypeIntegrityWrite(node, scope, nodeScopes)) {
+      programScope(scope).prototypeIntegrityUnknown = true;
+    }
     const assignmentTarget = protoAssignmentMutationTarget(node);
-    if (assignmentTarget) markPrototypeMutation(assignmentTarget, scope);
+    // `arr[i] = v` with a numeric or symbol key cannot reach `__proto__`, so it
+    // leaves the target's prototype chain, and its exemptions, intact.
+    if (
+      assignmentTarget && isNode(node.left) &&
+      !computedKeyCannotSpellName(node.left, scope, nodeScopes)
+    ) notePrototypeMutation(assignmentTarget, scope);
 
     for (const target of borrowedPrototypeMutatorCallTargets(node, scope, nodeScopes)) {
-      markPrototypeMutation(target, scope);
+      notePrototypeMutation(target, scope);
     }
     const callMutationTarget = protoCallMutationTarget(node, scope, nodeScopes);
-    if (callMutationTarget) markPrototypeMutation(callMutationTarget, scope);
+    if (callMutationTarget) notePrototypeMutation(callMutationTarget, scope);
 
     const protoSourceTarget = enumerableProtoDefinitionTarget(node, scope, nodeScopes);
     if (protoSourceTarget) markEnumerableProtoProperty(protoSourceTarget, scope);
@@ -2285,7 +2511,13 @@ function objectPropertyValues(
       seen,
     );
   }
-  const assignArgs = objectIntrinsicCallArguments(expression, "assign", scope, nodeScopes);
+  const assignArgs = objectIntrinsicCallArguments(
+    expression,
+    "assign",
+    scope,
+    nodeScopes,
+    seen,
+  );
   if (Array.isArray(assignArgs)) {
     return assignedPropertyValuesFromSources(
       assignArgs,
@@ -2301,6 +2533,7 @@ function objectPropertyValues(
     "defineProperty",
     scope,
     nodeScopes,
+    seen,
   );
   if (Array.isArray(definePropertyArgs) && definePropertyArgs[0] !== undefined) {
     return definedPropertyValues(
@@ -2823,17 +3056,31 @@ function descriptorDefinedValues(
   return values;
 }
 
+// `seen` carries the bindings already on the current walk. A probe launched from
+// inside `objectPropertyValues` must keep it: restarting with a fresh set lets a
+// binding whose initializer reads itself (`a = a.map(...)`) re-enter the walk
+// without end and overflow the stack.
 function objectIntrinsicCallArguments(
   node: ASTNode,
   method: string,
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
 ): ResolvedCallArguments {
   return argumentsForResolvedCall(
     node,
-    (callee) => resolvesToGlobalIntrinsicMember(callee, "Object", method, scope, nodeScopes),
+    (callee) =>
+      resolvesToGlobalIntrinsicMember(
+        callee,
+        "Object",
+        method,
+        scope,
+        nodeScopes,
+        new Set(seen),
+      ),
     scope,
     nodeScopes,
+    seen,
   );
 }
 
@@ -2844,6 +3091,7 @@ function argumentsForResolvedCall(
   resolvesCallee: (callee: ASTNode) => boolean,
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
 ): ResolvedCallArguments {
   if (!isCallExpression(node) || !isNode(node.callee)) return undefined;
   const callee = unwrapExpression(node.callee);
@@ -2855,7 +3103,14 @@ function argumentsForResolvedCall(
     if (invocation === "apply" || invocation === "bind") return null;
   }
   if (
-    resolvesToGlobalIntrinsicMember(callee, "Reflect", "apply", scope, nodeScopes) &&
+    resolvesToGlobalIntrinsicMember(
+      callee,
+      "Reflect",
+      "apply",
+      scope,
+      nodeScopes,
+      new Set(seen),
+    ) &&
     args[0] !== undefined && resolvesCallee(args[0])
   ) return null;
   return undefined;
@@ -3419,6 +3674,7 @@ function isPlainObjectValue(
   nodeScopes: WeakMap<ASTNode, Scope>,
   seen = new Set<Binding>(),
 ): boolean {
+  if (programScope(scope).prototypeIntegrityUnknown) return false;
   const expression = unwrapExpression(node);
   if (expression.type === "ObjectExpression") {
     return !objectLiteralMutatesPrototype(expression);
@@ -3728,10 +3984,15 @@ function isNewExpressionCallee(node: ASTNode, parents: WeakMap<ASTNode, ParentLi
   return link?.parent.type === "NewExpression" && link.key === "callee";
 }
 
-function isCallExpressionCallee(
+/**
+ * The parent link of `node` once inert wrappers (`x as T`, `x!`, `<T>x`,
+ * `x satisfies T`, parentheses) are climbed, so a position test sees the same
+ * parent for `(globalThis as any).x` as for `globalThis.x`.
+ */
+function significantParentLink(
   node: ASTNode,
   parents: WeakMap<ASTNode, ParentLink>,
-): boolean {
+): ParentLink | undefined {
   let current = node;
   let link = parents.get(current);
   while (
@@ -3741,7 +4002,22 @@ function isCallExpressionCallee(
     current = link.parent;
     link = parents.get(current);
   }
+  return link;
+}
+
+function isCallExpressionCallee(
+  node: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  const link = significantParentLink(node, parents);
   return link !== undefined && isCallExpression(link.parent) && link.key === "callee";
+}
+
+/** `typeof x` yields a string, so the operand cannot escape through it. */
+function isTypeofOperand(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>): boolean {
+  const link = significantParentLink(node, parents);
+  return link?.parent.type === "UnaryExpression" && link.parent.operator === "typeof" &&
+    link.key === "argument";
 }
 
 function isInertCapabilityInspection(
@@ -3831,7 +4107,7 @@ function isTrackedPrototypeMutatorInvocationUse(
 }
 
 function isMemberObjectUse(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>): boolean {
-  const link = parents.get(node);
+  const link = significantParentLink(node, parents);
   return (link?.parent.type === "MemberExpression" ||
     link?.parent.type === "OptionalMemberExpression") &&
     link.key === "object";
@@ -3947,6 +4223,7 @@ function applyIdentifierCapability(
   if (
     isGlobalObject(node, scope, nodeScopes) &&
     !isMemberObjectUse(node, parents) &&
+    !isTypeofOperand(node, parents) &&
     !isAliasInitializerUse(node, parents) &&
     !isReflectGetGlobalArgument(node, scope, parents)
   ) {
@@ -3978,12 +4255,20 @@ function applyMemberCapability(
   if (objectIsGlobal && property === "Symbol" && isMutationTarget(node, parents)) {
     analysis.hasDynamicCodeGeneration = true;
   }
-  const computedKeyIsDefinitelySymbol = node.computed === true && isNode(node.property) &&
-    isDefinitelySymbolValue(node.property, scope, nodeScopes);
+  // A symbol or a number can never spell "constructor", whatever the object is.
+  const computedKeyCannotSpellConstructor = node.computed === true && isNode(node.property) &&
+    (isDefinitelySymbolValue(node.property, scope, nodeScopes) ||
+      isDefinitelyNumericValue(node.property, scope, nodeScopes));
   const mayReadConstructor = !isMemberWriteTarget(node, parents) &&
     (property === "constructor" ||
-      node.computed === true && property === null && !computedKeyIsDefinitelySymbol);
-  if (mayReadConstructor && !objectIsProvablyPlain) analysis.hasDynamicCodeGeneration = true;
+      node.computed === true && property === null && !computedKeyCannotSpellConstructor);
+  // `constructor` on a plain object is `Object`; on an array, string, number,
+  // boolean or regular-expression literal it is that intrinsic. None of them is
+  // `Function`, so the read is inert in one hop, and a second hop on the result
+  // is a computed read on a callable this analysis rejects on its own.
+  const objectConstructorIsInert = objectIsProvablyPlain ||
+    object !== undefined && hasIntrinsicNonCallablePrototype(object, scope, nodeScopes);
+  if (mayReadConstructor && !objectConstructorIsInert) analysis.hasDynamicCodeGeneration = true;
   if (
     property === "extensions" && object !== undefined &&
     resolvesToUnboundIdentifier(object, "require", scope, nodeScopes)
@@ -4096,6 +4381,145 @@ function isDefinitelySymbolValue(
   return branches !== null &&
     isDefinitelySymbolValue(branches[0], scope, nodeScopes, new Set(seen)) &&
     isDefinitelySymbolValue(branches[1], scope, nodeScopes, new Set(seen));
+}
+
+/** Literal forms whose prototype is an intrinsic that is not `Function`. */
+const INTRINSIC_NON_CALLABLE_LITERAL_TYPES = new Set([
+  "ArrayExpression",
+  "BigIntLiteral",
+  "BooleanLiteral",
+  "NumericLiteral",
+  "RegExpLiteral",
+  "StringLiteral",
+  "TemplateLiteral",
+]);
+
+/**
+ * Whether the value is a literal (or a binding only ever holding literals) whose
+ * `constructor` is `Array`, `String`, `Number`, `Boolean`, `BigInt` or `RegExp`.
+ * Mirrors `isPlainObjectValue`: a later prototype mutation of the binding, or
+ * one the module aims at a target this analysis cannot attribute (see
+ * `Scope.prototypeIntegrityUnknown`), revokes the exemption, because the
+ * mutated chain may end in `Function`, and
+ * a value that arrived through destructuring (a member initializer), a
+ * `for...of` / `for...in` loop, or a parameter is not resolved, so the binding
+ * fails closed.
+ */
+function hasIntrinsicNonCallablePrototype(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  if (programScope(scope).prototypeIntegrityUnknown) return false;
+  const expression = unwrapExpression(node);
+  if (INTRINSIC_NON_CALLABLE_LITERAL_TYPES.has(expression.type)) return true;
+  if (expression.type !== "Identifier" || typeof expression.name !== "string") return false;
+  const binding = resolveBinding(scope, expression.name);
+  if (
+    binding === null || binding.prototypeMutated || binding.loopAssigned ||
+    binding.hasUnknownIncomingValue || seen.has(binding) ||
+    binding.initializers.length === 0 || binding.memberInitializers.length > 0
+  ) return false;
+  seen.add(binding);
+  return binding.initializers.every((initializer) =>
+    hasIntrinsicNonCallablePrototype(
+      initializer,
+      nodeScopes.get(initializer) ?? binding.scope,
+      nodeScopes,
+      seen,
+    )
+  );
+}
+
+/** Binary operators that coerce both operands and always yield a number or bigint. */
+const NUMERIC_BINARY_OPERATORS = new Set([
+  "-",
+  "*",
+  "/",
+  "%",
+  "**",
+  "<<",
+  ">>",
+  ">>>",
+  "&",
+  "|",
+  "^",
+]);
+const NUMERIC_UNARY_OPERATORS = new Set(["-", "+", "~"]);
+
+/**
+ * Whether the expression can only evaluate to a number or bigint, so that as a
+ * property key it can never spell "constructor".
+ *
+ * Only forms the language itself coerces count: literals, arithmetic and
+ * bitwise operators, and `++`/`--`. Calls such as `Math.floor(x)` do not, since
+ * `Math` and `Number` are mutable objects whose methods a module can replace.
+ *
+ * Bindings count when every recorded initializer is numeric and no value came
+ * in through destructuring (recorded as member initializers this proof does not
+ * resolve), a `for...of` / `for...in` loop (not recorded), or a parameter (the
+ * caller's value is never recorded, and may be read before any assignment). Compound arithmetic assignments and `++`/`--` are
+ * not recorded as initializers, and cannot turn a numeric value into the
+ * string "constructor" (`0 += "x"` keeps the numeric prefix), so ignoring them
+ * is sound. A self-reference inside the binding's own initializers (`n = n + 1`)
+ * is numeric whenever every other initializer is, so a cycle resolves to true
+ * rather than aborting the walk.
+ */
+function isDefinitelyNumericValue(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (
+    expression.type === "NumericLiteral" || expression.type === "BigIntLiteral" ||
+    expression.type === "UpdateExpression"
+  ) return true;
+  if (expression.type === "UnaryExpression") {
+    return NUMERIC_UNARY_OPERATORS.has(String(expression.operator));
+  }
+  if (
+    expression.type === "BinaryExpression" && isNode(expression.left) && isNode(expression.right)
+  ) {
+    const operator = String(expression.operator);
+    if (NUMERIC_BINARY_OPERATORS.has(operator)) return true;
+    return operator === "+" &&
+      isDefinitelyNumericValue(expression.left, scope, nodeScopes, new Set(seen)) &&
+      isDefinitelyNumericValue(expression.right, scope, nodeScopes, new Set(seen));
+  }
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (
+      binding === null || binding.loopAssigned || binding.hasUnknownIncomingValue ||
+      binding.initializers.length === 0 || binding.memberInitializers.length > 0
+    ) return false;
+    if (seen.has(binding)) return true;
+    seen.add(binding);
+    return binding.initializers.every((initializer) =>
+      isDefinitelyNumericValue(
+        initializer,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        new Set(seen),
+      )
+    );
+  }
+  if (expression.type === "AssignmentExpression" && isNode(expression.right)) {
+    const operator = String(expression.operator);
+    if (operator === "=") {
+      return isDefinitelyNumericValue(expression.right, scope, nodeScopes, seen);
+    }
+    if (NUMERIC_BINARY_OPERATORS.has(operator.slice(0, -1))) return true;
+    return operator === "+=" && isNode(expression.left) &&
+      isDefinitelyNumericValue(expression.left, scope, nodeScopes, new Set(seen)) &&
+      isDefinitelyNumericValue(expression.right, scope, nodeScopes, new Set(seen));
+  }
+  const branches = expressionBranches(expression);
+  return branches !== null &&
+    isDefinitelyNumericValue(branches[0], scope, nodeScopes, new Set(seen)) &&
+    isDefinitelyNumericValue(branches[1], scope, nodeScopes, new Set(seen));
 }
 
 function resolvesDefinitelyToGlobalIntrinsic(
