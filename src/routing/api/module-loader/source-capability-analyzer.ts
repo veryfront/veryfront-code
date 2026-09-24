@@ -773,18 +773,82 @@ function computedKeyCannotSpellName(
       isDefinitelyNumericValue(target.property, scope, nodeScopes));
 }
 
+const PROPERTY_DEFINING_INTRINSICS: ReadonlyArray<readonly [string, string, "single" | "map"]> = [
+  ["Object", "defineProperty", "single"],
+  ["Reflect", "defineProperty", "single"],
+  ["Object", "defineProperties", "map"],
+  ["Object", "assign", "map"],
+];
+
+/**
+ * Whether the call defines `constructor`, `prototype` or `__proto__` (or a
+ * key this analysis cannot read) on some object through `Object.defineProperty`,
+ * `Reflect.defineProperty`, `Object.defineProperties` or `Object.assign`.
+ * Such a call can replace an intrinsic's `constructor` the same way an
+ * assignment can, so it counts as a prototype-integrity write.
+ */
+function isPropertyDefiningIntegrityWrite(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  if (!isCallExpression(node) || !isNode(node.callee)) return false;
+  for (const [objectName, method, shape] of PROPERTY_DEFINING_INTRINSICS) {
+    const args = argumentsForResolvedCall(
+      node,
+      (callee) => resolvesToGlobalIntrinsicMember(callee, objectName, method, scope, nodeScopes),
+      scope,
+      nodeScopes,
+    );
+    if (args === undefined) continue;
+    if (args === null) return true;
+    if (shape === "single") {
+      const key = args[1] === undefined ? null : staticString(args[1]);
+      if (key === null) return true;
+      if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
+      continue;
+    }
+    const targetIsBinding = args[0] !== undefined &&
+      unwrapExpression(args[0]).type === "Identifier";
+    for (const source of args.slice(1)) {
+      const expression = unwrapExpression(source);
+      if (expression.type !== "ObjectExpression" || !Array.isArray(expression.properties)) {
+        // A source this analysis cannot read may carry any own property. A
+        // binding target is tracked by the property-copy and enumerable
+        // `__proto__` machinery; any other target (an intrinsic prototype, a
+        // member alias) is not, so fail closed.
+        if (!targetIsBinding) return true;
+        continue;
+      }
+      for (const property of expression.properties) {
+        if (!isNode(property)) continue;
+        if (property.type === "SpreadElement") return true;
+        const key = staticPropertyKey(property);
+        if (key === null) return true;
+        // A non-computed `__proto__:` in a literal sets that literal's own
+        // prototype and is never copied; a computed `["__proto__"]` is an own
+        // property whose copy invokes the target's `__proto__` setter.
+        if (key === "__proto__" && property.computed !== true) continue;
+        if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Whether the node writes to, or deletes, `x.constructor`, `x.prototype`,
  * `x.__proto__`, or a computed member whose key may spell one of them, through
- * a plain assignment, a destructuring pattern, a loop head or `delete`.
- * Indexed writes with a provably numeric or symbol key (`arr[i] = v`) are not
- * such writes.
+ * a plain assignment, a destructuring pattern, a loop head, `delete`, or a
+ * property-defining intrinsic call. Indexed writes with a provably numeric or
+ * symbol key (`arr[i] = v`) are not such writes.
  */
 function isPrototypeIntegrityWrite(
   node: ASTNode,
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
 ): boolean {
+  if (isPropertyDefiningIntegrityWrite(node, scope, nodeScopes)) return true;
   let pattern: unknown;
   if (node.type === "AssignmentExpression") pattern = node.left;
   else if (node.type === "UnaryExpression" && node.operator === "delete") pattern = node.argument;
@@ -1379,8 +1443,6 @@ function collectAssignments(
     }
   };
 
-  const notePrototypeMutation = markPrototypeMutation;
-
   const visit = (node: ASTNode): void => {
     const scope = nodeScopes.get(node) as Scope;
     recordObjectPropertyCopies(node, scope, nodeScopes, parents);
@@ -1393,13 +1455,13 @@ function collectAssignments(
     if (
       assignmentTarget && isNode(node.left) &&
       !computedKeyCannotSpellName(node.left, scope, nodeScopes)
-    ) notePrototypeMutation(assignmentTarget, scope);
+    ) markPrototypeMutation(assignmentTarget, scope);
 
     for (const target of borrowedPrototypeMutatorCallTargets(node, scope, nodeScopes)) {
-      notePrototypeMutation(target, scope);
+      markPrototypeMutation(target, scope);
     }
     const callMutationTarget = protoCallMutationTarget(node, scope, nodeScopes);
-    if (callMutationTarget) notePrototypeMutation(callMutationTarget, scope);
+    if (callMutationTarget) markPrototypeMutation(callMutationTarget, scope);
 
     const protoSourceTarget = enumerableProtoDefinitionTarget(node, scope, nodeScopes);
     if (protoSourceTarget) markEnumerableProtoProperty(protoSourceTarget, scope);
