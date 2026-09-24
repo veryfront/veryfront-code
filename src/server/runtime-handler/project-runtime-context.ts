@@ -455,6 +455,8 @@ export async function resolveProjectRuntimeContext(
   const environmentId = input.environmentId ?? input.headers.environmentId;
   if (
     !hostedConfigLoadPromise &&
+    // Exact-source handlers authenticate and select their own environment before loading secrets.
+    adapterRes.configOutcome !== "deferred" &&
     !adapterRes.isLocalProject &&
     environmentId &&
     reqCtx.token &&
