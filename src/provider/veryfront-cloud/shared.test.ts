@@ -238,6 +238,40 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(capturedRequest?.headers.get("x-veryfront-billing-group-id"), null);
   });
 
+  it("aborts an in-flight gateway request when the caller signal aborts (#1815)", async () => {
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://93.184.216.34/ai/gateway/anthropic/v1",
+    );
+    const caller = new AbortController();
+    let transportSignal: AbortSignal | undefined;
+
+    await withMockFetch(
+      (input: URL | Request | string, init?: RequestInit) => {
+        const signal = new Request(input, init).signal;
+        transportSignal = signal;
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          caller.abort(new DOMException("Run cancelled", "AbortError"));
+        });
+      },
+      () =>
+        assertRejects(() =>
+          wrappedFetch("https://93.184.216.34/ai/gateway/anthropic/v1/messages", {
+            method: "POST",
+            body: "{}",
+            signal: caller.signal,
+          })
+        ),
+    );
+
+    assertEquals(
+      transportSignal?.aborted,
+      true,
+      "a run cancel must abort the gateway request on the wire",
+    );
+  });
+
   it("replaces caller identity headers with trusted project and billing context", async () => {
     let capturedRequest: Request | undefined;
 
