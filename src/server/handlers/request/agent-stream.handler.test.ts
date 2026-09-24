@@ -79,6 +79,13 @@ import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { FSAdapter } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { __setHostedConfigEvaluatorForTests } from "#veryfront/config/loader.ts";
+import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import { resolveVerifiedControlPlaneBranchBinding } from "#veryfront/proxy/control-plane-signature.ts";
+import {
+  prepareProjectRequest,
+  resolveProjectIdentity,
+  resolveProjectRuntimeContext,
+} from "#veryfront/server/runtime-handler/project-runtime-context.ts";
 
 // Literal public addresses exercise guarded egress deterministically without
 // depending on external DNS answers for production or reserved test hosts.
@@ -251,9 +258,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
         sourceProject: {
           projectId: sourceId,
           projectSlug: "source-project",
-          runtimeTargetKind: "main_branch",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: "20000000-1000-4000-8000-100000000007",
         },
-        agentSource: { type: "release", releaseId: "release-1" },
+        agentSource: { type: "environment", environmentName: "staging", releaseId: "release-1" },
         credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
       });
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -261,19 +269,85 @@ describe("server/handlers/request/agent-stream.handler", () => {
         projectId: sourceId,
         audience: "source-project",
       });
-      const result = await handler.handle(
-        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-          method: "POST",
-          headers: { "x-veryfront-control-plane-jws": jws },
-          body,
-        }),
+      const req = new Request(
+        "https://source-project.staging.example.com/api/control-plane/runs/run_1/stream",
         {
-          ...createCtx(publicKeyPem),
-          projectId: sourceId,
-          projectSlug: "source-project",
-          proxyToken: "source-runtime-secret",
+          method: "POST",
+          headers: {
+            "x-veryfront-control-plane-jws": jws,
+            "x-project-id": sourceId,
+            "x-project-slug": "source-project",
+            "x-release-id": "release-1",
+            "x-environment": "production",
+            "x-environment-name": "staging",
+            "x-environment-id": "20000000-1000-4000-8000-100000000007",
+            "x-token": "execution-token",
+          },
+          body,
         },
       );
+      const url = new URL(req.url);
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+      try {
+        assertEquals(
+          await resolveVerifiedControlPlaneBranchBinding(req, url, {
+            audience: "source-project",
+            expectedProjectId: sourceId,
+          }),
+          {},
+        );
+      } finally {
+        if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+      }
+      const prepared = await prepareProjectRequest({
+        req,
+        url,
+        isProxyMode: true,
+        trustProxy: async () => true,
+      });
+      const base = createCtx(publicKeyPem);
+      const projectIdentity = await resolveProjectIdentity({
+        req,
+        url,
+        headers: prepared.headers,
+        requestContext: prepared.requestContext,
+        config: undefined,
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        defaultReleaseId: undefined,
+        wsSlugOverride: undefined,
+        proxyTrust: { proxyTrusted: true },
+      });
+      let outerEnvLoads = 0;
+      const resolved = await resolveProjectRuntimeContext({
+        req,
+        url,
+        projectDir: base.projectDir,
+        adapter: base.adapter,
+        config: undefined,
+        projectIdentity,
+        headers: prepared.headers,
+        requestContext: prepared.requestContext,
+        isProxyMode: true,
+        proxyTrust: { proxyTrusted: true },
+        securityConfig: null,
+        debug: false,
+        routeRegistry: new RouteRegistry(),
+        moduleServerUrl: undefined,
+        envVarCache: {
+          get: async () => {
+            outerEnvLoads++;
+            throw new Error("B environment access denied for A credential");
+          },
+        },
+      });
+      assertExists(resolved.handlerContext);
+      assertEquals(resolved.adapter.configOutcome, "deferred");
+      assertEquals(resolved.rawEnvVars, {});
+      const result = await handler.handle(req, resolved.handlerContext);
+      assertEquals(outerEnvLoads, 0);
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       await result.response.text();
