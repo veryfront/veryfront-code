@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
+import { enablePrivateVeryfrontApiClientSourceContext } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
@@ -42,28 +44,41 @@ describe("shared agent runtime bootstrap", () => {
       const sourceReads: Array<{ projectId?: string; token?: string; executionProject?: string }> =
         [];
       const fs = createNoopFsAdapter([]);
-      const recordRead = () => {
+      const sourceClient = new VeryfrontApiClient({
+        apiBaseUrl: "https://api.veryfront.org",
+        projectSlug: SOURCE_ID,
+        retry: { maxRetries: 0 },
+      });
+      enablePrivateVeryfrontApiClientSourceContext(sourceClient);
+      sourceClient.enableContextualToken();
+      const recordRead = async () => {
         sourceReads.push({
           projectId: getCurrentRequestContext()?.projectId,
           token: getCurrentRequestContext()?.token,
           executionProject: getRuntimeRequestContext()?.projectId,
         });
+        await sourceClient.listReleaseFiles("source-release");
       };
       fs.readFile = async () => {
-        recordRead();
+        await recordRead();
         throw new Deno.errors.NotFound("No source file");
       };
       fs.readDir = async function* () {
-        recordRead();
+        await recordRead();
         yield* [];
       };
       fs.exists = async () => {
-        recordRead();
+        await recordRead();
         return false;
       };
       const adapter = { ...createMockAdapter(), fs };
       adapter.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
-      adapter.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34/api");
+      adapter.env.set("VERYFRONT_API_BASE_URL", "https://api.veryfront.org");
+      adapter.env.set("VERYFRONT_API_URL", "http://veryfront-api:80");
+      const apiKeys = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL"] as const;
+      const previousApi = apiKeys.map((key) => Deno.env.get(key));
+      Deno.env.set(apiKeys[0], "http://veryfront-api:80");
+      Deno.env.set(apiKeys[1], "https://api.veryfront.org");
       const previousTrust = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
       const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
@@ -101,9 +116,23 @@ describe("shared agent runtime bootstrap", () => {
             {},
           );
         }
-        const response = await withMockFetch(() => {
+        const response = await withMockFetch((input, init) => {
           fetches++;
-          return Promise.resolve(new Response("Forbidden", { status: 403 }));
+          assertEquals(
+            String(input).startsWith(
+              `https://api.veryfront.org/projects/${SOURCE_ID}/releases/source-release/files?`,
+            ),
+            true,
+          );
+          assertEquals(new Headers(init?.headers).get("authorization"), "Bearer source-read-token");
+          return Promise.resolve(
+            Response.json({
+              data: [],
+              page_info: { self: null, first: null, next: null, prev: null },
+              release_id: "source-release",
+              release_version: "v1",
+            }),
+          );
         }, () => handler(req));
         assertEquals(response.status, authentic ? 404 : 401);
         const result = await response.json();
@@ -118,8 +147,13 @@ describe("shared agent runtime bootstrap", () => {
             true,
           );
         } else assertEquals(sourceReads, []);
-        assertEquals(fetches, 0);
+        assertEquals(fetches, authentic ? sourceReads.length : 0);
       } finally {
+        apiKeys.forEach((key, index) =>
+          previousApi[index] === undefined
+            ? Deno.env.delete(key)
+            : Deno.env.set(key, previousApi[index]!)
+        );
         if (previousTrust === undefined) Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
         else Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousTrust);
         if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");

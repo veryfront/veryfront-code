@@ -57,3 +57,11 @@ export function resolveHostOwnedApiBaseUrl(): string {
   const hostApiBaseUrl = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_BASE_URL"));
   return hostApiBaseUrl ? normalizeHostApiUrl(hostApiBaseUrl) : DEFAULT_HOST_API_BASE_URL;
 }
+
+/** Resolve the host-owned source API using the runtime's BASE-first precedence. */
+export function resolveHostOwnedSourceApiBaseUrl(): string {
+  const hostApiBaseUrl = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_BASE_URL"));
+  if (hostApiBaseUrl) return normalizeHostApiUrl(hostApiBaseUrl);
+  const hostApiUrl = normalizeHostApiEnv(getHostApiEnv("VERYFRONT_API_URL"));
+  return hostApiUrl ? normalizeHostApiUrl(hostApiUrl) : DEFAULT_HOST_API_BASE_URL;
+}

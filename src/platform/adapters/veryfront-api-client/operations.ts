@@ -18,6 +18,7 @@ import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import {
   requireHostPrivateApiHttps,
   resolveHostOwnedApiBaseUrl,
+  resolveHostOwnedSourceApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
 
 const TokenBoundaryURL = URL;
@@ -382,7 +383,8 @@ export class VeryfrontAPIOperations {
       apiBaseUrl,
       () => {
         const token = this.#tokenProvider();
-        if (token === getHostSecret("VERYFRONT_API_TOKEN") || isPrivateSourceCredential(token)) {
+        const isStoredLogin = token === getHostSecret("VERYFRONT_API_TOKEN");
+        if (isStoredLogin || isPrivateSourceCredential(token)) {
           requireHostPrivateApiHttps(apiBaseUrl);
           const selectedOrigin = tokenBoundaryApply(
             tokenBoundaryOriginGetter,
@@ -391,7 +393,9 @@ export class VeryfrontAPIOperations {
           );
           const hostOrigin = tokenBoundaryApply(
             tokenBoundaryOriginGetter,
-            new TokenBoundaryURL(resolveHostOwnedApiBaseUrl()),
+            new TokenBoundaryURL(
+              isStoredLogin ? resolveHostOwnedApiBaseUrl() : resolveHostOwnedSourceApiBaseUrl(),
+            ),
             [],
           );
           if (selectedOrigin !== hostOrigin) {
@@ -413,7 +417,8 @@ export class VeryfrontAPIOperations {
 
   getToken(): string {
     const token = this.#tokenProvider();
-    if (token === getHostSecret("VERYFRONT_API_TOKEN") || isPrivateSourceCredential(token)) {
+    const isStoredLogin = token === getHostSecret("VERYFRONT_API_TOKEN");
+    if (isStoredLogin || isPrivateSourceCredential(token)) {
       throw API_CLIENT_ERROR.create({
         detail: "Host-private credentials cannot be read",
         status: 401,
