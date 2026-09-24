@@ -1,3 +1,5 @@
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+
 export interface ParsedDomain {
   slug: string | null;
   branch: string | null;
@@ -22,6 +24,52 @@ type Environment = ParsedDomain["environment"];
 const LOCAL_DEV_DOMAINS = "localhost";
 // Production domains
 const PROD_DOMAINS = "veryfront\\.com|veryfront\\.org";
+
+const MAX_PLATFORM_ROOTS = 8;
+const PUBLIC_LOOPBACK_WILDCARD_ROOTS = new Set(["sslip.io", "nip.io", "xip.io", "zip.io"]);
+
+/**
+ * Parse the platform roots set by an administrator on the server and proxy.
+ * A project or request host cannot add roots. Public wildcard-DNS providers
+ * are not roots themselves; an operator may configure a specific namespace
+ * beneath one, such as `verified-0924.127.0.0.1.sslip.io`.
+ */
+export function parseConfiguredPlatformRoots(raw: string | undefined): readonly string[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  const entries = raw.split(",");
+  if (entries.length > MAX_PLATFORM_ROOTS) {
+    throw new TypeError(`PLATFORM_DOMAIN_SUFFIXES allows at most ${MAX_PLATFORM_ROOTS} roots`);
+  }
+  const roots = new Set<string>();
+  for (const entry of entries) {
+    const root = entry.trim().toLowerCase();
+    const labels = root.split(".");
+    if (
+      root.length > 253 || labels.length < 2 ||
+      labels.some((label) =>
+        label.length > 63 ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
+      ) ||
+      root === "localhost" || root.endsWith(".localhost") ||
+      /^(?:\d{1,3}\.){3}\d{1,3}$/.test(root) ||
+      PUBLIC_LOOPBACK_WILDCARD_ROOTS.has(root) || roots.has(root)
+    ) {
+      throw new TypeError("PLATFORM_DOMAIN_SUFFIXES contains an invalid or duplicate root");
+    }
+    roots.add(root);
+  }
+  return [...roots].sort((a, b) =>
+    b.split(".").length - a.split(".").length ||
+    b.length - a.length || a.localeCompare(b)
+  );
+}
+
+// This host-private value is captured before project-scoped environment views
+// can be installed. An invalid administrator setting refuses startup rather
+// than treating its hosts as custom domains or broadening a public DNS root.
+const CONFIGURED_PLATFORM_ROOTS = parseConfiguredPlatformRoots(
+  getHostEnv("PLATFORM_DOMAIN_SUFFIXES"),
+);
 
 // Domains that allow iframe embedding but aren't veryfront domains
 const IFRAME_EMBED_DOMAINS = /^(localhost|.*\.xip\.io|.*\.zip\.io)$/i;
@@ -119,6 +167,26 @@ function matchDomain(domain: string, pattern: string): RegExpMatchArray | null {
   return domain.match(new RegExp(pattern));
 }
 
+function parseConfiguredProjectDomain(
+  domain: string,
+  roots: readonly string[],
+): ParsedDomain | null {
+  for (const root of roots) {
+    const suffix = `.${root}`;
+    if (!domain.toLowerCase().endsWith(suffix)) continue;
+    const prefix = domain.slice(0, -suffix.length);
+    const match = /^([A-Za-z0-9-]+)\.(preview|staging|production)$/i.exec(prefix);
+    if (!match) continue;
+    const environment = match[2]!.toLowerCase() as HostedEnvironmentName;
+    if (environment === "preview") {
+      const { slug, branch } = parseSlugAndBranch(match[1]!);
+      return createParsedDomain(slug, branch, environment, true, true);
+    }
+    return createParsedDomain(match[1]!, null, environment, true, false);
+  }
+  return null;
+}
+
 /**
  * Extract project slug and branch from domain/host header
  */
@@ -132,6 +200,9 @@ export function parseProjectDomain(host: string): ParsedDomain {
   if (domain === "localhost") {
     return createParsedDomain(null, null, "development", true, true);
   }
+
+  const configured = parseConfiguredProjectDomain(domain, CONFIGURED_PLATFORM_ROOTS);
+  if (configured) return configured;
 
   if (IFRAME_EMBED_DOMAINS.test(domain)) {
     return createParsedDomain(null, null, "development", false, true, true);
@@ -255,6 +326,8 @@ export function isVeryfrontDomain(host: string): boolean {
   const domain = stripPort(host);
 
   if (domain === "localhost") return true;
+
+  if (parseConfiguredProjectDomain(domain, CONFIGURED_PLATFORM_ROOTS)) return true;
 
   return new RegExp(`^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)*\\.(${ALL_DOMAINS})$`).test(domain);
 }
