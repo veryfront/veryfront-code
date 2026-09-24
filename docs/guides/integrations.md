@@ -18,14 +18,17 @@ and transport surfaces.
 - **Tools:** Provider operations such as `gmail__list_emails` or
   `salesforce__find_customer`. The catalog defines their names and schemas;
   the connection supplies their provider access.
-- **Transport:** REST, GraphQL, MCP, the Veryfront framework/TypeScript client,
-  and the Veryfront CLI expose the same discovery, connection, status, and call
-  lifecycle.
+- **Transport:** REST and GraphQL expose the hosted discovery, connection, status,
+  and call lifecycle. MCP, the Veryfront framework/TypeScript client, and the
+  Veryfront CLI expose integration tools where their current runtime supports
+  them; they do not all provide connection-management operations.
 
-The basic flow is `discover → connect → status → call`. No integration policy
-setup is required. A call can include an optional `connection_id` when a
-project has multiple accessible accounts; otherwise Veryfront selects the
-applicable connected account and still enforces project and caller access.
+The hosted API flow is `discover → connect → status → call`. No integration
+policy setup is required. REST and GraphQL calls can include an optional
+`connection_id` when a project has multiple accessible accounts; framework
+tool calls currently use the connection selected by the hosted runtime, and a
+`connection_id` passed inside tool arguments is provider input rather than an
+account selector.
 
 ## Prerequisites
 
@@ -137,7 +140,8 @@ the running framework build does not yet know its connector.
 
 This source configuration is local capability selection. The runtime loads it
 from the same branch, release, or environment as the agent and intersects it
-with the agent declaration and connector catalog. It cannot enable an integration, select a credential scope, create a connection, or grant access
+with the agent declaration and connector catalog. It cannot enable an
+integration, select a credential scope, create a connection, or grant access
 to an account. The removed `scope`, `perUser`, and `tools` fields are rejected
 rather than normalized or silently ignored. Source configuration intentionally
 has no credential, provider-configuration, or execution-mode fields.
@@ -151,7 +155,7 @@ project runtime has no project source configuration to load.
 
 ## Connection state
 
-The legacy Project integration policy has been removed. There is no project integration policy or policy setup step. These are the
+There is no project integration policy or policy setup step. These are the
 independent contracts:
 
 - Agent source controls which tools belong to an agent.
@@ -162,9 +166,10 @@ independent contracts:
 The catalog and authenticated connection determine which integration tools can
 run. Adding a tool does not create a connection. Connecting OAuth does not
 rewrite agent source or source configuration. If a project has several
-accessible accounts, a call can provide an optional `connection_id`; Veryfront
-validates that it belongs to the project and is visible to the caller. Without
-one, Veryfront selects the applicable connection.
+accessible accounts, a REST or GraphQL call can provide an optional
+`connection_id`; Veryfront validates that it belongs to the project and is
+visible to the caller. Framework tool calls use the runtime-selected
+connection.
 
 ## Authentication flow
 

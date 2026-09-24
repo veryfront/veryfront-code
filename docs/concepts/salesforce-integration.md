@@ -8,8 +8,6 @@ Veryfront treats Salesforce as an integration behind the Veryfront tool and MCP
 control plane, rather than asking agents to connect directly to Salesforce MCP.
 
 Salesforce MCP is a useful provider surface for generic Salesforce access.
-The current Veryfront flow does not require write-tool allowlisting; tool
-metadata and the connected Salesforce account determine what can run.
 Veryfront provides a consistent integration surface so an application can
 discover Salesforce tools, connect an org, and call those tools through the
 same project context as other integrations.
@@ -48,7 +46,9 @@ avoiding a brittle tool list full of every possible provider operation. Tool
 metadata describes each tool's inputs and effects. The caller remains
 responsible for deciding when to invoke a write tool such as creating a case,
 adding a case comment, or updating a case. Veryfront does not require a separate
-integration policy to discover or call the tool.
+integration policy to discover or call the tool. write-tool allowlisting is not
+a separate Veryfront setup step; provider permissions and tool metadata remain
+the execution boundary.
 
 ## Why this scales across Salesforce orgs
 

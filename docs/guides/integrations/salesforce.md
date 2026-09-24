@@ -4,9 +4,11 @@ description: "Install and connect the Veryfront Salesforce integration with per-
 order: 50
 ---
 
-Use this guide to connect a Salesforce org to Veryfront. The integration flow is
-catalog, connect, then call a tool. It does not require an integration policy,
-allowlist, or separate enablement step. Choose per-user OAuth when each action
+Use this guide to connect a Salesforce org to the hosted Veryfront API. In the
+managed hosted flow, the lifecycle is catalog, connect, then call a tool. It
+does not require an integration policy, allowlist, or separate enablement step.
+Local and self-hosted Veryfront Code execution follows the local credential
+and exact-grant requirements described below. Choose per-user OAuth when each action
 must use an individual's Salesforce access. Choose a service account for
 scheduled or project-owned automation.
 
