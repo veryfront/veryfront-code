@@ -82,8 +82,7 @@ export function discardResponseBody(response: Response): void {
   if (!response.body) return;
 
   try {
-    const cancellation = response.body.cancel();
-    void cancellation.catch((error) => {
+    void response.body.cancel().catch((error) => {
       logger.debug("Failed to discard integration API response body", {
         status: response.status,
         errorName: error instanceof Error ? error.name : typeof error,

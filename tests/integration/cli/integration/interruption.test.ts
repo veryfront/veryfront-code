@@ -3,9 +3,13 @@ import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testin
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { cliErrorBoundary, VeryfrontError } from "veryfront/errors";
-import { classifyCliError, safeJsonErrorContext } from "../../router.ts";
-import { createErrorEnvelope, outputJson, setJsonMode } from "../../shared/json-output.ts";
-import { handleIntegrationCommand } from "./handler.ts";
+import { classifyCliError, safeJsonErrorContext } from "../../../../cli/router.ts";
+import {
+  createErrorEnvelope,
+  outputJson,
+  setJsonMode,
+} from "../../../../cli/shared/json-output.ts";
+import { handleIntegrationCommand } from "../../../../cli/commands/integration/handler.ts";
 
 const project = { id: "11111111-1111-4111-8111-111111111111", slug: "fixture" };
 const config = {

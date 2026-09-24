@@ -8,8 +8,8 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createIntegrationClient, IntegrationApiError } from "./client.ts";
-import type { IntegrationToolResult } from "./client-types.ts";
+import { createIntegrationClient, IntegrationApiError } from "../../../src/integrations/client.ts";
+import type { IntegrationToolResult } from "../../../src/integrations/client-types.ts";
 
 const project = { id: "11111111-1111-4111-8111-111111111111", slug: "test-project" };
 const context = {

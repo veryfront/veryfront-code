@@ -51,9 +51,9 @@ import type {
   IntegrationToolResult,
 } from "./client-types.ts";
 
-/** A bounded API failure. Call failures never authorize automatic replay. */
-
 import { createIntegrationErrorContext } from "./error-context.ts";
+
+/** A bounded API failure. Call failures never authorize automatic replay. */
 export class IntegrationApiError extends VeryfrontError {
   override readonly name = "IntegrationApiError";
   /** Conservative client replay policy, not a server retryability declaration. */

@@ -3,8 +3,8 @@ import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testin
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { cliErrorBoundary, VeryfrontError } from "veryfront/errors";
 import { IntegrationApiError } from "veryfront/integrations";
-import { classifyCliError, safeJsonErrorContext } from "../../router.ts";
-import { createErrorEnvelope, outputJson } from "../../shared/json-output.ts";
+import { classifyCliError, safeJsonErrorContext } from "../../../../cli/router.ts";
+import { createErrorEnvelope, outputJson } from "../../../../cli/shared/json-output.ts";
 
 async function emittedContext(error: VeryfrontError): Promise<unknown> {
   const lines: string[] = [];
@@ -186,7 +186,9 @@ describe("integration JSON safety metadata", () => {
 
 describe("integration usage errors before HTTP", () => {
   it("classifies malformed canonical names as exit2 and emits a usage envelope without dispatch", async () => {
-    const { handleIntegrationCommand } = await import("./handler.ts");
+    const { handleIntegrationCommand } = await import(
+      "../../../../cli/commands/integration/handler.ts"
+    );
     const { withMockFetch } = await import("#veryfront/testing/mock-fetch.ts");
     for (
       const [operation, target] of [
