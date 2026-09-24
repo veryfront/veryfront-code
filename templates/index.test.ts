@@ -16,6 +16,7 @@ import { getIntegrationTemplate } from "#veryfront/templates/loader.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
 
 const STYLED_STARTER_TEMPLATES: TemplateName[] = [
+  "minimal",
   "ai-agent",
   "docs-agent",
   "multi-agent-system",

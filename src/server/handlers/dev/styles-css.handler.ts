@@ -120,6 +120,9 @@ body::before {
 `;
 }
 
+/** Projects (and configured stylesheet paths) already warned about a missing stylesheet. */
+const missingStylesheetWarned = new Set<string>();
+
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "StylesCSSHandler",
@@ -397,11 +400,17 @@ export class StylesCSSHandler extends BaseHandler {
     }
 
     // Worth a warning rather than a debug line: the page still renders, but
-    // without the project's theme, which looks like a broken site.
-    logger.warn("No project stylesheet found; provider default will be used", {
-      projectDir: ctx.projectDir,
-      configuredPath: configuredPath ?? null,
-    });
+    // without the project's theme, which looks like a broken site. The
+    // stylesheet is resolved again on every request, so warn once per project
+    // and configured path and keep the repeats at debug.
+    const warningKey = `${ctx.projectDir}\u0000${configuredPath ?? ""}`;
+    const details = { projectDir: ctx.projectDir, configuredPath: configuredPath ?? null };
+    if (missingStylesheetWarned.has(warningKey)) {
+      logger.debug("No project stylesheet found; provider default will be used", details);
+    } else {
+      missingStylesheetWarned.add(warningKey);
+      logger.warn("No project stylesheet found; provider default will be used", details);
+    }
     return undefined;
   }
 
