@@ -1453,6 +1453,46 @@ describe("routing/api/module-loader/http-validator", () => {
       }
     });
 
+    it("should see a mutation through TypeScript wrappers on the target", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `((globalThis as any).Symbol as any) = () => "constructor"; const key = Symbol();` +
+              ` const make = (() => {})[key]; make("return 1")();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+      );
+    });
+
+    it("should treat legacy accessor definitions as prototype writes", async () => {
+      const sources = [
+        `export function f(make) { const arr = []; arr.__defineGetter__("constructor", () => make);` +
+        ` return arr.constructor("return 1")(); }`,
+        `export function f(make) { const arr = []; const d = arr.__defineGetter__;` +
+        ` d.call(arr, "constructor", () => make); return arr.constructor("return 1")(); }`,
+        `export function f(make) { const arr = [];` +
+        ` Object.prototype.__defineGetter__.call(arr, "constructor", () => make);` +
+        ` return arr.constructor("return 1")(); }`,
+        `export function f(make, k) { const arr = []; arr.__defineSetter__(k, () => make);` +
+        ` return arr.constructor("return 1")(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+      const safe = await validateHTTPImports(
+        `const arr = []; arr.__defineGetter__("size", () => 1); export function f(k) { return [1, 2][k]; }`,
+        [],
+      );
+      assertEquals(safe.specifiers, []);
+    });
+
     it("should keep property definitions with numeric or symbol keys out of prototype invalidation", async () => {
       const sources = [
         `const obj = {}; Object.defineProperty(obj, 0, { value: 1 }); export function f(k) { return obj[k]; }`,

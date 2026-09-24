@@ -1545,7 +1545,10 @@ function collectAssignments(
   const visit = (node: ASTNode): void => {
     const scope = nodeScopes.get(node) as Scope;
     recordObjectPropertyCopies(node, scope, nodeScopes, parents);
-    if (isPrototypeIntegrityWrite(node, scope, nodeScopes)) {
+    if (
+      isPrototypeIntegrityWrite(node, scope, nodeScopes) ||
+      isLegacyAccessorDefinition(node, scope, nodeScopes, parents)
+    ) {
       programScope(scope).prototypeIntegrityUnknown = true;
     }
     const assignmentTarget = protoAssignmentMutationTarget(node);
@@ -4490,12 +4493,43 @@ function isMutationTarget(
 ): boolean {
   let current = node;
   while (true) {
-    const link = parents.get(current);
+    // `(x as any) = v` assigns `x`: look through the wrappers to the
+    // assignment, as the recorder does.
+    const link = significantParentLink(current, parents);
     if (!link) return false;
     if (isDirectMutationTarget(link)) return true;
     if (!isNestedBindingPatternPosition(link.parent, link.key, parents)) return false;
     current = link.parent;
   }
+}
+
+const LEGACY_ACCESSOR_DEFINERS = new Set(["__defineGetter__", "__defineSetter__"]);
+
+/**
+ * Whether `node` reads `__defineGetter__` or `__defineSetter__`, which can
+ * install an accessor named `constructor` on any object without an
+ * assignment. A direct call with a key that provably cannot name a
+ * prototype-integrity property is harmless; any other use (an unreadable
+ * key, a borrowed `.call`/`.apply`, or storing the method) may be, so it
+ * counts as a prototype-integrity write.
+ */
+function isLegacyAccessorDefinition(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  if (!isMemberExpressionWithObject(node)) return false;
+  const name = memberPropertyName(node);
+  if (name === null || !LEGACY_ACCESSOR_DEFINERS.has(name)) return false;
+  const link = significantParentLink(node, parents);
+  if (!link || !isCallExpression(link.parent) || link.key !== "callee") return true;
+  const key = callArguments(link.parent)[0];
+  if (key === undefined) return true;
+  const staticKey = staticString(key);
+  if (staticKey !== null) return PROTOTYPE_INTEGRITY_PROPERTIES.has(staticKey);
+  return !(isDefinitelySymbolValue(key, scope, nodeScopes) ||
+    isDefinitelyNumericValue(key, scope, nodeScopes));
 }
 
 function isDirectMutationTarget(link: ParentLink): boolean {
