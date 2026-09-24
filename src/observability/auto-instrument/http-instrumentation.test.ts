@@ -186,10 +186,14 @@ describe("observability/auto-instrument/http-instrumentation", () => {
     }) as typeof fetch;
 
     await createInstrumentedFetch(baseFetch)("https://example.com/items", {
-      headers: { traceparent: "00-22222222222222222222222222222222-2222222222222222-01" },
+      headers: {
+        traceparent: "00-22222222222222222222222222222222-2222222222222222-01",
+        tracestate: "vendor=stale",
+      },
     });
 
     assertEquals(received?.headers.get("traceparent"), TEST_TRACEPARENT);
+    assertEquals(received?.headers.get("tracestate"), null);
   });
 
   it("preserves injected headers when fallback span formatting fails", async () => {

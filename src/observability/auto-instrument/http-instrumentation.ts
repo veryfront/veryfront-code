@@ -190,7 +190,10 @@ export function createInstrumentedFetch(
               if (!traceparentInjected) {
                 try {
                   const traceparent = formatTraceparent(span.spanContext());
-                  if (traceparent) headers.set("traceparent", traceparent);
+                  if (traceparent) {
+                    headers.set("traceparent", traceparent);
+                    headers.delete("tracestate");
+                  }
                 } catch (error) {
                   reportTelemetryFailure("Failed to format fetch trace context", error);
                 }
