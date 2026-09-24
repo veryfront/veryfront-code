@@ -525,8 +525,9 @@ function loadTSModuleDirect(modulePath: string, revision: string): Promise<APIRo
   return import(url);
 }
 
-function loadJSModule(modulePath: string): Promise<APIRoute> {
-  return import(`file://${modulePath}`);
+/** Directly import a JavaScript route, keyed by revision so an edit is not served from the module cache. */
+function loadJSModule(modulePath: string, revision: string): Promise<APIRoute> {
+  return import(`file://${modulePath}?v=${revision}`);
 }
 
 /**
@@ -1181,7 +1182,7 @@ async function loadValidatedJSModule(
 ): Promise<APIRoute> {
   const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
   if (await canDirectImportModuleGraph({ modulePath, projectDir, fs, allowedHosts })) {
-    return loadJSModule(modulePath);
+    return loadJSModule(modulePath, await moduleRevision(fs, modulePath));
   }
   return loadAndTranspileModule(
     modulePath,

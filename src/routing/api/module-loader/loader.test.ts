@@ -3402,6 +3402,34 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  denoIt("serves an edited standalone JavaScript route on reload", async () => {
+    // A `.js` route without imports loads directly; its URL must still carry
+    // a revision so an edit is not served from Deno's module cache.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "reload-route.js");
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response(String(4 / 2));`);
+    const first = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(first), "2");
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response(String(6 / 2));`);
+    const second = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(second),
+      "3",
+      "an edited JavaScript route must be reflected on the next load",
+    );
+  });
+
   denoIt("serves an edited helper of a directly loadable route on reload", async () => {
     // A route with only static local imports loads directly. Deno caches the
     // helper by URL, so a fresh entry revision alone must not keep serving the
