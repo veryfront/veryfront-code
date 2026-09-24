@@ -172,10 +172,14 @@ export function createInstrumentedFetch(
               const headers = new Headers(
                 init?.headers ?? (input instanceof Request ? input.headers : undefined),
               );
+              let traceparentInjected = false;
               runTelemetryOperation(
                 () =>
                   propagation.inject(otContext.active(), headers, {
-                    set: (h, k, v) => h.set(k, v),
+                    set: (h, k, v) => {
+                      if (k.toLowerCase() === "traceparent") traceparentInjected = true;
+                      h.set(k, v);
+                    },
                   }),
                 "Failed to inject fetch trace context",
               );
@@ -183,9 +187,13 @@ export function createInstrumentedFetch(
               // a tracer but has not registered a global propagator yet. The
               // normal propagator remains authoritative; this only fills the
               // missing W3C header and prevents a detached downstream trace.
-              if (!headers.has("traceparent")) {
-                const traceparent = formatTraceparent(span.spanContext());
-                if (traceparent) headers.set("traceparent", traceparent);
+              if (!traceparentInjected) {
+                try {
+                  const traceparent = formatTraceparent(span.spanContext());
+                  if (traceparent) headers.set("traceparent", traceparent);
+                } catch (error) {
+                  reportTelemetryFailure("Failed to format fetch trace context", error);
+                }
               }
               effectiveInit = { ...init, headers };
             } catch (error) {
