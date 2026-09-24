@@ -776,9 +776,53 @@ function computedKeyCannotSpellName(
 const PROPERTY_DEFINING_INTRINSICS: ReadonlyArray<readonly [string, string, "single" | "map"]> = [
   ["Object", "defineProperty", "single"],
   ["Reflect", "defineProperty", "single"],
+  ["Reflect", "set", "single"],
   ["Object", "defineProperties", "map"],
   ["Object", "assign", "map"],
 ];
+
+/**
+ * Whether the identifier's binding only ever held a fresh literal, function or
+ * class, so a property copied onto it lands on an object this analysis already
+ * tracks. A binding that may alias anything else (`const p = Array.prototype`,
+ * a parameter, a member read) is not.
+ */
+function isLiteralBackedBinding(
+  target: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  active = new Set<Binding>(),
+  proven = new Map<Binding, boolean>(),
+): boolean {
+  const expression = unwrapExpression(target);
+  if (expression.type !== "Identifier" || typeof expression.name !== "string") return false;
+  const binding = resolveBinding(scope, expression.name);
+  if (
+    binding === null || active.has(binding) || binding.hasUnknownIncomingValue ||
+    binding.loopAssigned || binding.memberInitializers.length > 0 ||
+    binding.initializers.length === 0
+  ) return false;
+  const cached = proven.get(binding);
+  if (cached !== undefined) return cached;
+  // `active` holds only the current traversal path, so sibling initializers
+  // naming the same alias (`let t = base; t = base;`) are not cycles, and
+  // `proven` memoizes finished bindings so repeated aliases stay linear.
+  active.add(binding);
+  const result = binding.initializers.every((initializer) => {
+    const value = unwrapExpression(initializer);
+    return isAttributableMutationValue(value) ||
+      isLiteralBackedBinding(
+        value,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        active,
+        proven,
+      );
+  });
+  active.delete(binding);
+  proven.set(binding, result);
+  return result;
+}
 
 /**
  * Whether the call defines `constructor`, `prototype` or `__proto__` (or a
@@ -808,16 +852,17 @@ function isPropertyDefiningIntegrityWrite(
       if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
       continue;
     }
-    const targetIsBinding = args[0] !== undefined &&
-      unwrapExpression(args[0]).type === "Identifier";
+    const targetIsTracked = args[0] !== undefined &&
+      isLiteralBackedBinding(args[0], scope, nodeScopes);
     for (const source of args.slice(1)) {
       const expression = unwrapExpression(source);
       if (expression.type !== "ObjectExpression" || !Array.isArray(expression.properties)) {
         // A source this analysis cannot read may carry any own property. A
-        // binding target is tracked by the property-copy and enumerable
-        // `__proto__` machinery; any other target (an intrinsic prototype, a
-        // member alias) is not, so fail closed.
-        if (!targetIsBinding) return true;
+        // target that only ever held a fresh literal is tracked by the
+        // property-copy and enumerable `__proto__` machinery; any other target
+        // (an intrinsic prototype, an alias of one, a parameter) is not, so
+        // fail closed.
+        if (!targetIsTracked) return true;
         continue;
       }
       for (const property of expression.properties) {
