@@ -5,7 +5,6 @@ import {
   _resetShimForTests,
   type AttributeValue,
   propagation,
-  setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
   setGlobalTracerProvider,
   type Span,
@@ -163,12 +162,6 @@ describe("observability/auto-instrument/http-instrumentation", () => {
 
   it("adds a W3C traceparent when no global propagator is installed", async () => {
     installTracer();
-    setGlobalActiveSpanAccessor({
-      getActiveSpan: () => ({
-        spanContext: () => ({ traceId: "1".repeat(32), spanId: "1".repeat(16), traceFlags: 1 }),
-      } as Span),
-      getSpan: () => undefined,
-    });
     let received: Request | undefined;
     const baseFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       received = new Request(input, init);

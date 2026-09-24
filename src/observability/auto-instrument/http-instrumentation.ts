@@ -184,7 +184,7 @@ export function createInstrumentedFetch(
               // normal propagator remains authoritative; this only fills the
               // missing W3C header and prevents a detached downstream trace.
               if (!headers.has("traceparent")) {
-                const traceparent = formatTraceparent(trace.getActiveSpan()?.spanContext());
+                const traceparent = formatTraceparent(span.spanContext());
                 if (traceparent) headers.set("traceparent", traceparent);
               }
               effectiveInit = { ...init, headers };
