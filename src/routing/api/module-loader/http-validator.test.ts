@@ -464,8 +464,9 @@ describe("rewriteImportMetaLocations", () => {
 
 describe("routing/api/module-loader/http-validator", () => {
   describe("validateHTTPImports", () => {
-    it("uses the parsed analysis alone when the source parses", async () => {
-      // Slashes no longer force bundling: the AST knows the import edges exactly.
+    it("does not bundle a parsed module for slashes alone", async () => {
+      // Regular expressions and division no longer force bundling: with an AST
+      // the import edges are exact, so the textual slash ambiguity is moot.
       const parsed = await validateHTTPImports(
         `const pattern = /import\\("https:\\/\\/evil.example\\/x.js"\\)/;` +
           ` export const GET = (req: Request) => new Response(String(4 / 2), { status: 200 });`,
@@ -475,16 +476,21 @@ describe("routing/api/module-loader/http-validator", () => {
       assertEquals(parsed.specifiers, []);
       assertEquals(parsed.requiresBundling, false);
       assertEquals(parsed.hasUnconstrainedDynamicImport, false);
+    });
 
-      // A literal dynamic import can execute later, so it still bundles.
+    it("bundles a parsed module that contains a literal dynamic import", async () => {
+      // A literal dynamic import can execute after validation, so the bundler
+      // must capture its local dependency immutably.
       const dynamic = await validateHTTPImports(
         `export const GET = async () => { const mod = await import("./helper.ts"); return mod.run(); };`,
         [],
       );
       assertEquals(dynamic.specifiers, ["./helper.ts"]);
       assertEquals(dynamic.requiresBundling, true);
+    });
 
-      // `import.meta` locations are rewritten by the bundling pipeline, so they bundle too.
+    it("bundles a parsed module that reads import.meta", async () => {
+      // `import.meta` locations are rewritten and validated by the bundling pipeline.
       const meta = await validateHTTPImports(
         `export const GET = () => new Response(import.meta.resolve("./asset.txt"));`,
         [],

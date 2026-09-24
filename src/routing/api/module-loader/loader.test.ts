@@ -3402,34 +3402,75 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  denoIt("preserves import.meta.url when parser-valid slash syntax requires bundling", async () => {
+  denoIt("serves an edited helper of a directly loadable route on reload", async () => {
+    // A route with only static local imports loads directly. Deno caches the
+    // helper by URL, so a fresh entry revision alone must not keep serving the
+    // helper's previous implementation after it is edited.
     const tmpDir = await makeTempDir();
-    await fs.writeTextFile(join(tmpDir, "adjacent.txt"), "beside-route");
-    const modulePath = join(tmpDir, "slash-route.ts");
+    const helperPath = join(tmpDir, "helper.ts");
+    await fs.writeTextFile(helperPath, `export const value = "first";`);
+    const modulePath = join(tmpDir, "reload-route.ts");
     await fs.writeTextFile(
       modulePath,
       [
-        `const marker = /x/;`,
-        `export const GET = async () => {`,
-        `  const value = await Deno.readTextFile(new URL("./adjacent.txt", import.meta.url));`,
-        `  return new Response(value + marker.source);`,
-        `};`,
+        `import { value } from "./helper.ts";`,
+        `const half = 4 / 2;`,
+        `export const GET = () => new Response(value + half);`,
       ].join("\n"),
     );
-
-    const route = await loadHandlerModule({
+    const first = await loadHandlerModule({
       projectDir: tmpDir,
       modulePath,
       adapter,
       config: undefined,
     });
+    assertEquals(await getText(first), "first2");
 
+    await fs.writeTextFile(helperPath, `export const value = "second";`);
+    const second = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
     assertEquals(
-      await getText(route),
-      "beside-routex",
-      "bundling must preserve the route module as the base for adjacent resources",
+      await getText(second),
+      "second2",
+      "an edited helper must be reflected on the next load of the route",
     );
   });
+
+  denoIt(
+    "preserves import.meta.url as the base for adjacent resources when a route bundles",
+    async () => {
+      const tmpDir = await makeTempDir();
+      await fs.writeTextFile(join(tmpDir, "adjacent.txt"), "beside-route");
+      const modulePath = join(tmpDir, "slash-route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `const marker = /x/;`,
+          `export const GET = async () => {`,
+          `  const value = await Deno.readTextFile(new URL("./adjacent.txt", import.meta.url));`,
+          `  return new Response(value + marker.source);`,
+          `};`,
+        ].join("\n"),
+      );
+
+      const route = await loadHandlerModule({
+        projectDir: tmpDir,
+        modulePath,
+        adapter,
+        config: undefined,
+      });
+
+      assertEquals(
+        await getText(route),
+        "beside-routex",
+        "bundling must preserve the route module as the base for adjacent resources",
+      );
+    },
+  );
 
   denoIt("preserves import.meta.url for dependencies when bundling", async () => {
     const tmpDir = await makeTempDir();
@@ -4175,7 +4216,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   denoIt(
-    "preserves import.meta.url for parser-validated division syntax",
+    "preserves the original route URL in import.meta.url when a route bundles",
     async () => {
       const tmpDir = await makeTempDir();
       const modulePath = join(tmpDir, "division-import-meta-route.ts");

@@ -572,6 +572,13 @@ async function canDirectImportModuleGraph(args: {
     }
   }
 
+  // A direct import cache-busts only the entry URL. Deno keys every other
+  // module in the graph by its unchanged URL, so an edited helper keeps
+  // serving its previous implementation until the process restarts. A route
+  // with local dependencies therefore bundles, where each load captures the
+  // current sources.
+  if (visited.size > 1) return false;
+
   return canDirectImport;
 }
 
