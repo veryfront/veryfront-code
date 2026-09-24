@@ -75,7 +75,16 @@ export type IntegrationCallOutcome =
     readonly condition?: IntegrationFailureCondition;
   };
 
-/** Optional selection metadata, separate from native provider arguments. */
+/**
+ * Selection metadata, separate from native provider arguments. `connectionId` selects
+ * a saved OAuth connection. `expectedConnectionGenerationId` accepts its observed
+ * `connection_generation_id` and requires `connectionId`; both values must be UUIDs.
+ * The API must advertise generation-precondition support. Unsupported deployments
+ * throw `IntegrationApiError` with kind `unsupported_precondition` and
+ * `outcomeUnknown: false` before dispatch. Missing confirmation after a successful
+ * call response reports the same kind with `outcomeUnknown: true`. Calls never
+ * authorize automatic replay. Omitting the generation retains existing call behavior.
+ */
 export interface IntegrationCallOptions {
   readonly connectionId?: string;
   /** Refuse replacement of the observed connection. Requires connectionId and server support. */
