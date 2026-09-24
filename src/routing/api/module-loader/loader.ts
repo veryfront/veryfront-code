@@ -657,7 +657,9 @@ async function inspectDirectGraphModule(options: {
 
   // Reuse the parser-aware public validator so direct and bundled routes
   // enforce the same remote-import, Worker, and generated-code contract.
-  const scan = await validateHTTPImports(source, allowedHosts);
+  const scan = await validateHTTPImports(source, allowedHosts, {
+    commonJS: mayBeCommonJSDependency(filePath),
+  });
   if (scan.hasUnconstrainedDynamicImport || scan.requiresBundling) return "bundle";
 
   // A worker's entry is executed by the worker's own loader, which neither
@@ -696,6 +698,16 @@ async function canonicalDirectGraphPath(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether a bundled file may be a CommonJS dependency, where a top-level
+ * `return` is legal: a `.cjs` file, or a `.js` file under `node_modules`. A
+ * route and every other project module is ESM and must parse as one.
+ */
+function mayBeCommonJSDependency(filePath: string): boolean {
+  return /\.cjs$/i.test(filePath) ||
+    (/\.js$/i.test(filePath) && /(^|[\\/])node_modules[\\/]/.test(filePath));
 }
 
 async function readDirectGraphSource(fs: FileSystem, filePath: string): Promise<string | null> {
@@ -1410,7 +1422,9 @@ function createNamespaceOnLoadHandler(options: {
       // execute nor name an import. Scanning it as JavaScript would reject an
       // ordinary value such as `{ "label": "Function" }`.
       if (executableModule) {
-        const scan = await validateHTTPImports(contents, allowedHosts);
+        const scan = await validateHTTPImports(contents, allowedHosts, {
+          commonJS: mayBeCommonJSDependency(filePath),
+        });
         await validateBundledLocalWorkerEntries({
           sourceSnapshot,
           projectDir,
@@ -1558,7 +1572,9 @@ async function validateBundledLocalWorkerGraph(options: {
 
     if (isJSONModulePath(filePath)) continue;
 
-    const scan = await validateHTTPImports(contents, allowedHosts);
+    const scan = await validateHTTPImports(contents, allowedHosts, {
+      commonJS: mayBeCommonJSDependency(filePath),
+    });
     for (const specifier of scan.specifiers) {
       const localTarget = bundledWorkerImportTarget({
         specifier,
@@ -1806,7 +1822,9 @@ function createProjectBoundaryPlugin(
           const executableModule = !isJSONModulePath(source.logicalPath);
           // JSON is parsed as data, never executed; see the note above.
           if (executableModule) {
-            const scan = await validateHTTPImports(source.contents, allowedHosts);
+            const scan = await validateHTTPImports(source.contents, allowedHosts, {
+              commonJS: mayBeCommonJSDependency(source.logicalPath),
+            });
             await validateBundledLocalWorkerEntries({
               sourceSnapshot,
               projectDir,
@@ -1898,7 +1916,9 @@ function buildTranspiledModuleSource(
 
       const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
       const workerImportMap = await readDenoImportMap(sourceSnapshot, projectDir);
-      const sourceScan = await validateHTTPImports(source, allowedHosts);
+      const sourceScan = await validateHTTPImports(source, allowedHosts, {
+        commonJS: mayBeCommonJSDependency(resolvedPath),
+      });
       await validateBundledLocalWorkerEntries({
         sourceSnapshot,
         projectDir,

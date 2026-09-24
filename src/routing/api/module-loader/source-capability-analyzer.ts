@@ -200,7 +200,20 @@ async function getParser(): Promise<ParseOnlyParser> {
   }
 }
 
-async function parseSource(source: string): Promise<ASTNode | null> {
+export interface SourceParseOptions {
+  /**
+   * Whether the source may be a CommonJS dependency, where a top-level
+   * `return` is legal. A route or any other ES module must not be read that
+   * way, or an invalid module is approved here only to fail in the bundler.
+   * Defaults to true for callers that do not know what they are reading.
+   */
+  readonly commonJS?: boolean;
+}
+
+async function parseSource(
+  source: string,
+  options: SourceParseOptions = {},
+): Promise<ASTNode | null> {
   let parser: ParseOnlyParser;
   try {
     parser = await getParser();
@@ -208,17 +221,45 @@ async function parseSource(source: string): Promise<ASTNode | null> {
     return null;
   }
 
-  for (const filePath of ["route.tsx", "route.ts"]) {
+  // The validator also runs on a route's bundled project dependencies, which
+  // may be CommonJS with a top-level `return`. The parser allows that only for
+  // a `.cjs`/`.js` path, so try that reading after the two TypeScript ones; it
+  // is the same TypeScript-plus-JSX grammar with that single allowance. The
+  // caller rejects the module when no reading parses.
+  const readings = options.commonJS === false
+    ? ["route.tsx", "route.ts"]
+    : ["route.tsx", "route.ts", "dependency.cjs"];
+  for (const filePath of readings) {
     try {
       const ast = await parser.parse({ code: source, filePath });
       const program = isNode(ast.program) ? ast.program : ast;
-      return program.type === "Program" ? program : null;
+      if (program.type !== "Program") return null;
+      // The CommonJS reading exists for a top-level `return`, which is only
+      // legal in a script. A program it parses as a module is ESM the two
+      // TypeScript readings already refused, so it is invalid and must not be
+      // approved here only to fail in the bundler or at runtime.
+      if (filePath === "dependency.cjs" && program.sourceType === "module") return null;
+      return program;
     } catch {
-      // Try the other supported TypeScript/JSX reading. The caller retains a
-      // conservative textual fallback when neither grammar parses.
+      // Try the next supported reading.
     }
   }
   return null;
+}
+
+export type SourceParseFailure = "parser-unavailable" | "unparseable";
+
+/**
+ * Why `analyzeSourceCapabilities` returned null: the parser extension could
+ * not be loaded, or the source parses under neither grammar.
+ */
+export async function describeSourceParseFailure(): Promise<SourceParseFailure> {
+  try {
+    await getParser();
+  } catch {
+    return "parser-unavailable";
+  }
+  return "unparseable";
 }
 
 export type ImportMetaSpecifierResolver = (
@@ -4978,8 +5019,9 @@ function applyExportedCapabilityAlias(
  */
 export async function analyzeSourceCapabilities(
   source: string,
+  options: SourceParseOptions = {},
 ): Promise<SourceCapabilityAnalysis | null> {
-  const program = await parseSource(source);
+  const program = await parseSource(source, options);
   if (program === null) return null;
 
   const { nodeScopes, parents } = buildScopes(program);
@@ -5019,6 +5061,10 @@ export async function analyzeSourceCapabilities(
     applyExportedCapabilityAlias(node, scope, nodeScopes, analysis);
     if (isImportMeta(node)) analysis.usesImportMeta = true;
     if (node.type === "JSXElement" || node.type === "JSXFragment") analysis.usesJsx = true;
+    // `with` resolves every identifier in its body against an arbitrary object
+    // before the lexical scope, so nothing this analysis proves about a binding
+    // holds inside it. Sloppy-mode scripts and CommonJS dependencies can use it.
+    if (node.type === "WithStatement") analysis.hasDynamicCodeGeneration = true;
 
     forEachChild(node, visit);
   };
