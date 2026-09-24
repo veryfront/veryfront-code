@@ -11,7 +11,7 @@ import type {
 interface IntegrationErrorFacts {
   outcomeUnknown: boolean;
   interrupted?: boolean;
-  kind?: "http" | "transport" | "invalid_response" | "project_binding";
+  kind?: "http" | "transport" | "invalid_response" | "project_binding" | "unsupported_precondition";
   httpStatus?: number;
   httpProblem?: IntegrationHttpProblem;
   condition?: IntegrationFailureCondition;
@@ -51,7 +51,8 @@ export function readIntegrationErrorContext(value: unknown): Record<string, unkn
   const condition = readIntegrationFailureCondition(dataProperties(data.condition));
   const httpProblem = readIntegrationHttpProblem(dataProperties(data.httpProblem));
   const kind = typeof data.kind === "string" &&
-      ["http", "transport", "invalid_response", "project_binding"].includes(data.kind)
+      ["http", "transport", "invalid_response", "project_binding", "unsupported_precondition"]
+        .includes(data.kind)
     ? data.kind
     : undefined;
   return {

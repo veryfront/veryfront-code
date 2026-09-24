@@ -78,6 +78,35 @@ describe("integration CLI envelopes", () => {
     );
     assertEquals(resolutions, 0);
   });
+  it("rejects invalid generation selectors before resolving credentials", async () => {
+    let resolutions = 0;
+    for (
+      const args of [
+        {
+          _: ["integration", "call", "github__get_current_user"],
+          "expected-generation": "22222222-2222-4222-8222-222222222222",
+        },
+        {
+          _: ["integration", "status", "github"],
+          connection: "11111111-1111-4111-8111-111111111111",
+          "expected-generation": "22222222-2222-4222-8222-222222222222",
+        },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          handleIntegrationCommand(args, {
+            resolveConfig: () => {
+              resolutions++;
+              throw new Error("unexpected resolution");
+            },
+          }),
+        Error,
+        "--expected-generation",
+      );
+    }
+    assertEquals(resolutions, 0);
+  });
   it("does not construct a client after trusted configuration fails", async () => {
     let clients = 0, disposed = 0;
     await assertRejects(

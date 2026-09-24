@@ -18,6 +18,11 @@ export const integrationHelp: CommandHelp = {
       description: "Connect/status ownership scope (default: user)",
     },
     { flag: "--connection <uuid>", description: "Exact visible connection for call or status" },
+    {
+      flag: "--expected-generation <uuid>",
+      description:
+        "Require the observed connection generation for call; requires --connection and API support",
+    },
     { flag: "--args <json>", description: "Native JSON object arguments for one tool call" },
     { flag: "--search <text>", description: "Catalog search or tool-name filter" },
     {

@@ -9,7 +9,7 @@ Declare the tools an agent can use in agent source. Optionally narrow those
 capabilities in `veryfront.config.ts` and with project policy. Connection
 inventory records credential readiness independently of all three.
 
-## Prerequisites
+## Prerequisites for agent tools
 
 - A Veryfront project with a configured agent (see [Agents](./agents.md)).
 - The integration tool names the agent needs.
@@ -18,6 +18,74 @@ inventory records credential readiness independently of all three.
 - For local execution, provider credentials in the project environment.
 - Project environment credentials only for static-credential connectors or an
   explicitly selected custom OAuth app override (see [OAuth](./oauth.md)).
+
+## Call the connection generation you observed
+
+For direct client calls, provide platform credentials, an authorized project and
+an existing OAuth connection. Project access and provider authorization are
+sufficient for this path.
+
+Replace the placeholders below. Use your trusted HTTPS API origin and the exact
+connection ID you selected from connection inventory. Read that connection's
+current generation, then supply both identifiers to the call:
+
+```ts
+import { createIntegrationClient, type IntegrationClientConnection } from "veryfront/integrations";
+
+const client = await createIntegrationClient({
+  apiBaseUrl: "<API_BASE_URL>",
+  authToken: "<TOKEN>",
+  projectReference: "<PROJECT_ID>",
+});
+const selectedConnectionId = "<CONNECTION_ID>";
+let observed: IntegrationClientConnection | undefined;
+for await (const connection of client.listConnections("github")) {
+  if (connection.id === selectedConnectionId && connection.scope === "user") {
+    observed = connection;
+    break;
+  }
+}
+if (!observed || observed.status !== "connected") {
+  throw new Error("Select a connected personal GitHub connection before calling.");
+}
+const outcome = await client.call("github__get_current_user", {}, {
+  connectionId: observed.id,
+  expectedConnectionGenerationId: observed.connection_generation_id,
+});
+console.log(outcome.status);
+```
+
+Use `scope === "project"` when you intentionally select a shared connection. A
+reconnect can replace a generation between inventory and execution. The API
+rejects a mismatched generation before reading credentials or calling the provider.
+A generation match does not establish provider permission or prevent a later
+provider-side revocation.
+
+For the equivalent CLI call, copy the selected row's `id` and
+`connection_generation_id` from inventory:
+
+```bash
+veryfront integration connections github --project "<PROJECT_ID>" --json
+veryfront integration call github__get_current_user \
+  --project "<PROJECT_ID>" \
+  --connection "<CONNECTION_ID>" \
+  --expected-generation "<CONNECTION_GENERATION_ID>" \
+  --args '{}' --json
+```
+
+`--expected-generation` is available only for `call` and requires `--connection`.
+The API deployment must support the generation precondition. If it does not
+advertise support, the client throws `IntegrationApiError` with
+`kind === "unsupported_precondition"` and `outcomeUnknown === false` before
+sending the call. Update the API deployment before using the option.
+
+If support is no longer confirmed on a successful call response, the error has
+`outcomeUnknown === true`: the operation may already have run. Inspect the
+provider outcome before retrying. The client never automatically replays the call.
+Omit the generation option to retain the existing call behavior, with no
+caller-observed generation check. See the
+[integration API reference](../api-reference/veryfront/integrations.md) for the
+public types.
 
 ## Run account-free local integration tools
 
