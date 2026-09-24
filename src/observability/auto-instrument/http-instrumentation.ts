@@ -9,6 +9,7 @@ import {
   SpanStatusCode,
   trace,
 } from "#veryfront/observability/tracing/api-shim.ts";
+import { formatTraceparent } from "../tracing/traceparent.ts";
 import type { ErrorAttributes, HttpAttributes } from "./types.ts";
 import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributes } from "../telemetry-error.ts";
 import { runAsyncWithContextFallback } from "../tracing/context-callback.ts";
@@ -178,6 +179,14 @@ export function createInstrumentedFetch(
                   }),
                 "Failed to inject fetch trace context",
               );
+              // Keep propagation working when an embedding runtime has installed
+              // a tracer but has not registered a global propagator yet. The
+              // normal propagator remains authoritative; this only fills the
+              // missing W3C header and prevents a detached downstream trace.
+              if (!headers.has("traceparent")) {
+                const traceparent = formatTraceparent(trace.getActiveSpan()?.spanContext());
+                if (traceparent) headers.set("traceparent", traceparent);
+              }
               effectiveInit = { ...init, headers };
             } catch (error) {
               reportTelemetryFailure("Failed to prepare fetch trace context", error);

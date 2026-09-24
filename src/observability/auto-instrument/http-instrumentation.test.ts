@@ -5,6 +5,7 @@ import {
   _resetShimForTests,
   type AttributeValue,
   propagation,
+  setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
   setGlobalTracerProvider,
   type Span,
@@ -157,6 +158,29 @@ describe("observability/auto-instrument/http-instrumentation", () => {
       received?.headers.get("traceparent"),
       TEST_TRACEPARENT,
       "outbound fetch must carry the injected trace context",
+    );
+  });
+
+  it("adds a W3C traceparent when no global propagator is installed", async () => {
+    installTracer();
+    setGlobalActiveSpanAccessor({
+      getActiveSpan: () => ({
+        spanContext: () => ({ traceId: "1".repeat(32), spanId: "1".repeat(16), traceFlags: 1 }),
+      } as Span),
+      getSpan: () => undefined,
+    });
+    let received: Request | undefined;
+    const baseFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      received = new Request(input, init);
+      return Promise.resolve(new Response("ok"));
+    }) as typeof fetch;
+
+    await createInstrumentedFetch(baseFetch)("https://example.com/items");
+
+    assertEquals(
+      received?.headers.get("traceparent"),
+      TEST_TRACEPARENT,
+      "outbound fetch must remain linkable without an embedding propagator",
     );
   });
 
