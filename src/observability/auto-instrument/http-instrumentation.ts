@@ -177,8 +177,8 @@ export function createInstrumentedFetch(
                 () =>
                   propagation.inject(otContext.active(), headers, {
                     set: (h, k, v) => {
-                      if (k.toLowerCase() === "traceparent") traceparentInjected = true;
                       h.set(k, v);
+                      if (k.toLowerCase() === "traceparent") traceparentInjected = true;
                     },
                   }),
                 "Failed to inject fetch trace context",

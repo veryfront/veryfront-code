@@ -226,6 +226,28 @@ describe("observability/auto-instrument/http-instrumentation", () => {
     assertEquals(received?.headers.get("traceparent"), TEST_TRACEPARENT);
   });
 
+  it("falls back when propagation cannot set traceparent", async () => {
+    installTracer();
+    propagation.setGlobalPropagator({
+      inject: (_ctx, carrier, setter) => {
+        setter?.set(carrier, "traceparent", "invalid\ntraceparent");
+      },
+      extract: (ctx) => ctx,
+      fields: () => ["traceparent"],
+    });
+    let received: Request | undefined;
+    const baseFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      received = new Request(input, init);
+      return Promise.resolve(new Response("ok"));
+    }) as typeof fetch;
+
+    await createInstrumentedFetch(baseFetch)("https://example.com/items", {
+      headers: { traceparent: "00-22222222222222222222222222222222-2222222222222222-01" },
+    });
+
+    assertEquals(received?.headers.get("traceparent"), TEST_TRACEPARENT);
+  });
+
   it("runs HTTP handlers exactly once despite adversarial active-span providers", async () => {
     for (const behavior of ["duplicate", "omit", "replace", "throw-after"] as const) {
       _resetShimForTests();
