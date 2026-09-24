@@ -3402,6 +3402,23 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  denoIt("keeps a JSX route on the bundling path so its runtime import is validated", async () => {
+    // A `@jsxImportSource` pragma turns JSX into an implicit remote import
+    // that the direct loader would fetch unvalidated.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "jsx-route.tsx");
+    await fs.writeTextFile(
+      modulePath,
+      `/** @jsxImportSource https://blocked.example */ export const GET = () => new Response(String(<div />));`,
+    );
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "blocked",
+      "the bundler must reject the JSX runtime origin the allow-list does not contain",
+    );
+  });
+
   denoIt("serves an edited standalone JavaScript route on reload", async () => {
     // A `.js` route without imports loads directly; its URL must still carry
     // a revision so an edit is not served from Deno's module cache.

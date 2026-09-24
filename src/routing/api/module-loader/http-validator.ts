@@ -1569,10 +1569,11 @@ function parsedVerdict(analysis: SourceCapabilityAnalysis): ModuleVerdict {
     workers: analysis.workers,
     hasDynamicCodeGeneration: analysis.hasDynamicCodeGeneration,
     hasUnconstrainedDynamicImport: analysis.hasUnconstrainedDynamicImport,
-    // The import edges are exact, so only a dynamic import (which can execute
-    // after validation) or an `import.meta` read (whose locations the bundling
-    // pipeline rewrites and validates) needs the bundled path.
-    requiresBundling: analysis.hasDynamicImport || analysis.usesImportMeta,
+    // The import edges are exact, so the bundled path is needed only for a
+    // dynamic import (which can execute after validation), an `import.meta`
+    // read (whose locations the bundling pipeline rewrites and validates), or
+    // JSX (whose implicit runtime import only the bundler validates).
+    requiresBundling: analysis.hasDynamicImport || analysis.usesImportMeta || analysis.usesJsx,
   };
 }
 

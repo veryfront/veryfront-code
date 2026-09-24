@@ -91,6 +91,13 @@ export interface SourceCapabilityAnalysis {
    * pipeline, so such a module must not be loaded directly.
    */
   readonly usesImportMeta: boolean;
+  /**
+   * The module contains JSX. It compiles to an implicit import of a JSX
+   * runtime whose origin a `@jsxImportSource` pragma can set to any URL, and
+   * that import never appears in `moduleSpecifiers`. Only the bundling
+   * pipeline validates it against the allow-list.
+   */
+  readonly usesJsx: boolean;
 }
 
 const COMMENT_KEYS = new Set([
@@ -3875,6 +3882,7 @@ interface MutableSourceCapabilityAnalysis {
   hasUnconstrainedDynamicImport: boolean;
   hasDynamicImport: boolean;
   usesImportMeta: boolean;
+  usesJsx: boolean;
 }
 
 function recordModuleSpecifier(
@@ -4984,6 +4992,7 @@ export async function analyzeSourceCapabilities(
     hasUnconstrainedDynamicImport: false,
     hasDynamicImport: false,
     usesImportMeta: false,
+    usesJsx: false,
   };
 
   const visit = (node: ASTNode): void => {
@@ -5009,6 +5018,7 @@ export async function analyzeSourceCapabilities(
     applyInheritedClassCapability(node, scope, nodeScopes, analysis);
     applyExportedCapabilityAlias(node, scope, nodeScopes, analysis);
     if (isImportMeta(node)) analysis.usesImportMeta = true;
+    if (node.type === "JSXElement" || node.type === "JSXFragment") analysis.usesJsx = true;
 
     forEachChild(node, visit);
   };
@@ -5021,6 +5031,7 @@ export async function analyzeSourceCapabilities(
     hasUnconstrainedDynamicImport: analysis.hasUnconstrainedDynamicImport,
     hasDynamicImport: analysis.hasDynamicImport,
     usesImportMeta: analysis.usesImportMeta,
+    usesJsx: analysis.usesJsx,
   };
 }
 

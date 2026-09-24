@@ -489,6 +489,21 @@ describe("routing/api/module-loader/http-validator", () => {
       assertEquals(dynamic.requiresBundling, true);
     });
 
+    it("bundles a parsed module that contains JSX", async () => {
+      // JSX compiles to an implicit runtime import that `moduleSpecifiers`
+      // never records, and a pragma can point it at any origin. Only the
+      // bundling pipeline validates that import against the allow-list.
+      for (
+        const source of [
+          `/** @jsxImportSource https://blocked.example */ export const GET = () => <div />;`,
+          `export const GET = () => <><p>ok</p></>;`,
+        ]
+      ) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.requiresBundling, true, source);
+      }
+    });
+
     it("bundles a parsed module that reads import.meta", async () => {
       // `import.meta` locations are rewritten and validated by the bundling pipeline.
       const meta = await validateHTTPImports(
