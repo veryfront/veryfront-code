@@ -523,6 +523,7 @@
     "coverage:gate": "deno coverage coverage --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage/lcov.info && deno run --allow-read scripts/lint/check-coverage.ts 80",
     "coverage:ci:shard": "deno run --config=scripts/test.deno.json --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts shard",
     "coverage:ci:merge": "deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts merge",
+    "coverage:ci:integration-client": "rm -rf coverage/integration-client && deno task test:file --coverage=coverage/integration-client tests/integration/integrations/ tests/integration/cli/integration/ && deno coverage coverage/integration-client --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage/integration-client/lcov.info",
     "coverage:ci:node-executor": "node scripts/test/coverage-node-executor.mjs",
     "coverage:ci": "deno task test:coverage:unit && deno task coverage:gate",
     "coverage:html": "deno coverage coverage --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --html",

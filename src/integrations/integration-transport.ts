@@ -81,19 +81,16 @@ export function createIntegrationRequestSignalScope(
 export function discardResponseBody(response: Response): void {
   if (!response.body) return;
 
-  try {
-    void response.body.cancel().catch((error) => {
+  void (async () => {
+    try {
+      await response.body?.cancel();
+    } catch (error) {
       logger.debug("Failed to discard integration API response body", {
         status: response.status,
         errorName: error instanceof Error ? error.name : typeof error,
       });
-    });
-  } catch (error) {
-    logger.debug("Failed to discard integration API response body", {
-      status: response.status,
-      errorName: error instanceof Error ? error.name : typeof error,
-    });
-  }
+    }
+  })();
 }
 
 function assertResponseContentLengthWithin(
