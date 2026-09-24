@@ -1,10 +1,6 @@
-import { isDeno } from "veryfront/platform";
 import { escapeHtml } from "veryfront/utils/html-escape";
-import {
-  DEFAULT_CALLBACK_PORT,
-  DEFAULT_LOGIN_TIMEOUT_MS,
-  MAX_PORT_ATTEMPTS,
-} from "../shared/constants.ts";
+import { DEFAULT_CALLBACK_PORT } from "../shared/constants.ts";
+import { startLoopbackCallbackServer } from "../shared/loopback-callback-server.ts";
 
 export interface CallbackResult {
   token: string;
@@ -146,32 +142,6 @@ function renderErrorPage(error: string): string {
 </html>`;
 }
 
-function createWaitForCallback(
-  callbackPromise: Promise<CallbackResult>,
-): (timeoutMs?: number) => Promise<CallbackResult> {
-  return function waitForCallback(
-    timeoutMs: number = DEFAULT_LOGIN_TIMEOUT_MS,
-  ): Promise<CallbackResult> {
-    const timeout = new Promise<CallbackResult>((_, reject) => {
-      setTimeout(() => reject(new Error("Login timed out. Please try again.")), timeoutMs);
-    });
-
-    return Promise.race([callbackPromise, timeout]);
-  };
-}
-
-function isAddrInUseError(error: unknown): boolean {
-  if (error instanceof Error) {
-    // Deno: "AddrInUse: Address already in use (os error 48)" - error.name is "AddrInUse"
-    // Node.js: error.code is "EADDRINUSE"
-    const name = error.name || "";
-    const message = error.message || "";
-    const code = (error as { code?: string }).code || "";
-    return name === "AddrInUse" || code === "EADDRINUSE" || message.includes("EADDRINUSE");
-  }
-  return false;
-}
-
 function callbackError(message: string): { result: CallbackResult; html: string } {
   return { result: { token: "", error: message }, html: renderErrorPage(message) };
 }
@@ -224,140 +194,20 @@ function handleCallback(
   return callbackError("No token received");
 }
 
-function tryStartDenoServer(port: number, options: CallbackServerOptions = {}): CallbackServer {
-  let resolveCallback: (result: CallbackResult) => void = () => {};
-  const callbackPromise = new Promise<CallbackResult>((resolve) => {
-    resolveCallback = resolve;
-  });
-
-  // Access native Deno.serve via `self` to bypass dnt shim transform.
-  const nativeDeno = (self as typeof self & { Deno?: typeof Deno })["Deno"]!;
-  const server = nativeDeno.serve(
-    { port, hostname: "127.0.0.1", onListen: () => {} },
-    (request: Request) => {
-      const url = new URL(request.url);
-
-      if (url.pathname !== "/callback") {
-        return new Response("Not Found", { status: 404, headers: { Connection: "close" } });
-      }
-
-      const { result, html } = handleCallback(url, request.headers, options);
-      resolveCallback(result);
-
-      // Close connection immediately to allow clean server shutdown
-      return new Response(html, {
-        headers: { "Content-Type": "text/html; charset=utf-8", Connection: "close" },
-      });
-    },
-  );
-
-  return {
-    port,
-    waitForCallback: createWaitForCallback(callbackPromise),
-    stop: async function stop(): Promise<void> {
-      await server.shutdown();
-    },
-  };
-}
-
-function startDenoServer(startPort: number, options: CallbackServerOptions = {}): CallbackServer {
-  for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
-    try {
-      return tryStartDenoServer(port, options);
-    } catch (error) {
-      if (!isAddrInUseError(error) || i === MAX_PORT_ATTEMPTS - 1) {
-        throw error;
-      }
-      // Port in use, try next port
-    }
-  }
-  throw new Error("Could not find an available port");
-}
-
-function nodeHeadersToHeaders(headers: Record<string, string | string[] | undefined>): Headers {
-  const result = new Headers();
-  for (const [name, value] of Object.entries(headers)) {
-    if (value === undefined) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) result.append(name, item);
-      continue;
-    }
-    result.set(name, value);
-  }
-  return result;
-}
-
-async function tryStartNodeServer(
-  port: number,
-  options: CallbackServerOptions = {},
-): Promise<CallbackServer> {
-  const http = await import("node:http");
-
-  let resolveCallback: (result: CallbackResult) => void = () => {};
-  const callbackPromise = new Promise<CallbackResult>((resolve) => {
-    resolveCallback = resolve;
-  });
-
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-
-    if (url.pathname !== "/callback") {
-      res.statusCode = 404;
-      res.end("Not Found");
-      return;
-    }
-
-    const { result, html } = handleCallback(
-      url,
-      nodeHeadersToHeaders(req.headers),
-      options,
-    );
-    resolveCallback(result);
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(html);
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => {
-      server.removeListener("error", reject);
-      resolve();
-    });
-  });
-
-  return {
-    port,
-    waitForCallback: createWaitForCallback(callbackPromise),
-    stop: function stop(): Promise<void> {
-      return new Promise<void>((resolve) => server.close(() => resolve()));
-    },
-  };
-}
-
-async function startNodeServer(
-  startPort: number,
-  options: CallbackServerOptions = {},
-): Promise<CallbackServer> {
-  for (let port = startPort, i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
-    try {
-      return await tryStartNodeServer(port, options);
-    } catch (error) {
-      if (!isAddrInUseError(error) || i === MAX_PORT_ATTEMPTS - 1) {
-        throw error;
-      }
-      // Port in use, try next port
-    }
-  }
-  throw new Error("Could not find an available port");
-}
-
 export async function startCallbackServer(
   preferredPort: number = DEFAULT_CALLBACK_PORT,
   options: CallbackServerOptions = {},
 ): Promise<CallbackServer> {
-  // Server functions handle port retry internally to avoid race conditions
-  return isDeno ? startDenoServer(preferredPort, options) : startNodeServer(preferredPort, options);
+  return await startLoopbackCallbackServer({
+    timeoutMessage: "Login timed out. Please try again.",
+    handle(url, headers) {
+      const { result, html } = handleCallback(url, headers, options);
+      return {
+        result,
+        response: new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } }),
+      };
+    },
+  }, preferredPort);
 }
 
 export function getCallbackUrl(port: number): string {

@@ -18,6 +18,7 @@ import {
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
   resolveConfigWithAuthNoModule,
+  resolveManagementConfigNoModule,
 } from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
@@ -1896,6 +1897,39 @@ describe("resolveApiCredentialCandidatesForAuth", () => {
       } finally {
         __resetEnvLoaderForTests();
       }
+    });
+  });
+});
+
+describe("nonprompting management configuration", () => {
+  it("requires an existing credential without starting a platform login", async () => {
+    await withTempDir(async (dir) => {
+      await assertRejects(
+        () =>
+          resolveManagementConfigNoModule(
+            dir,
+            createMockEnv({ xdgConfigHome: dir, projectSlug: "chosen" }),
+          ),
+        Error,
+        "Missing API token",
+      );
+    });
+  });
+  it("rejects repository-steered origins before any dispatch", async () => {
+    await withTempDir(async (dir) => {
+      await Deno.writeTextFile(
+        join(dir, "veryfront.json"),
+        JSON.stringify({ apiUrl: "https://attacker.example", projectSlug: "chosen" }),
+      );
+      await assertRejects(
+        () =>
+          resolveManagementConfigNoModule(
+            dir,
+            createMockEnv({ xdgConfigHome: dir, apiToken: "private-token" }),
+          ),
+        Error,
+        "repository-configured API endpoint",
+      );
     });
   });
 });

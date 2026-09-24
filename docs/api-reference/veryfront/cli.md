@@ -35,15 +35,16 @@ The CLI groups commands by category. Each command supports `--help` for its full
 
 ### Deploy & Sync
 
-| Command            | Description                                           |
-| ------------------ | ----------------------------------------------------- |
-| `veryfront deploy` | Promote a branch to an environment                    |
-| `veryfront env`    | Mint a short-lived token for a protected environment  |
-| `veryfront lock`   | Manage remote import lockfile for reproducible builds |
-| `veryfront merge`  | Merge a branch into main (or another branch)          |
-| `veryfront pull`   | Download project files from Veryfront remote          |
-| `veryfront push`   | Push source to a cloud preview                        |
-| `veryfront up`     | Create and publish the initial cloud preview          |
+| Command                 | Description                                                    |
+| ----------------------- | -------------------------------------------------------------- |
+| `veryfront deploy`      | Promote a branch to an environment                             |
+| `veryfront env`         | Mint a short-lived token for a protected environment           |
+| `veryfront integration` | Discover, connect, inspect, and call project integration tools |
+| `veryfront lock`        | Manage remote import lockfile for reproducible builds          |
+| `veryfront merge`       | Merge a branch into main (or another branch)                   |
+| `veryfront pull`        | Download project files from Veryfront remote                   |
+| `veryfront push`        | Push source to a cloud preview                                 |
+| `veryfront up`          | Create and publish the initial cloud preview                   |
 
 ### Project
 

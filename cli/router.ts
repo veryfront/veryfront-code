@@ -4,6 +4,12 @@
  * @module cli/router
  */
 
+import {
+  isIntegrationErrorContext,
+  readIntegrationErrorContext,
+  readIntegrationThrowableContext,
+} from "#veryfront/integrations/error-context.ts";
+
 import { cliErrorBoundary, type VeryfrontError } from "veryfront/errors";
 import { cliLogger, isVerbose, VERSION } from "#cli/utils";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
@@ -55,6 +61,8 @@ const commands: Record<string, CommandLoader> = {
   "knowledge": async () => (await import("./commands/knowledge/index.ts")).handleKnowledgeCommand,
   "merge": async () => (await import("./commands/merge/handler.ts")).handleMergeCommand,
   "deploy": async () => (await import("./commands/deploy/handler.ts")).handleDeployCommand,
+  "integration": async () =>
+    (await import("./commands/integration/handler.ts")).handleIntegrationCommand,
   "env": async () => (await import("./commands/env/handler.ts")).handleEnvCommand,
   "up": async () => (await import("./commands/up/index.ts")).handleUpCommand,
   "schedule": async () => (await import("./commands/schedule/handler.ts")).handleScheduleCommand,
@@ -173,8 +181,14 @@ function redactedProtectedDeleteContext(context: unknown): Record<string, unknow
     : undefined;
 }
 
-export function safeJsonErrorContext(context: unknown): Record<string, unknown> | undefined {
+export function safeJsonErrorContext(
+  context: unknown,
+  originalError?: unknown,
+): Record<string, unknown> | undefined {
+  const integration = readIntegrationThrowableContext(originalError);
+  if (integration) return integration;
   if (context === undefined) return undefined;
+  if (isIntegrationErrorContext(context)) return readIntegrationErrorContext(context);
   return boundedProtectedDeleteContext(context) ?? redactedProtectedDeleteContext(context);
 }
 
@@ -328,7 +342,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     const handler = await handlerLoader();
     await handler(args);
   }, {
-    onError: async (_error, vfError) => {
+    onError: async (error, vfError) => {
       if (!isJsonMode()) {
         console.error((await import("veryfront/errors")).formatCLIError(vfError, {
           color: shouldUseColor(),
@@ -344,7 +358,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         slug: classification.slug,
         registrySlug: vfError.slug,
         message: vfError.detail ?? message,
-        context: safeJsonErrorContext(vfError.context),
+        context: safeJsonErrorContext(vfError.context, error),
       });
     },
     getExitCode: (_error, vfError) => classifyCliError(vfError).exitCode,
