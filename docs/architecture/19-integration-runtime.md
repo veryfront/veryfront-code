@@ -27,8 +27,7 @@ Primary source areas:
 flowchart TD
   catalog[Connector catalog] --> schema[Integration schemas]
   source[Agent source tool list] --> capabilities[Resolve agent capabilities]
-  sourcePolicy[Optional exact-source allowlist] --> narrowing[Intersect capability policies]
-  sourceConfig[Optional exact-source capability narrowing] --> narrowing
+  sourceConfig[Optional exact-source allowlist] --> narrowing[Intersect capability policies]
   connections[Connection inventory] --> readiness[Select a ready project or user credential]
 
   request[Agent request context] --> list[Fetch remote tool definitions]
@@ -51,18 +50,17 @@ flowchart TD
    prompts, icons, and environment requirements.
 2. Schema helpers validate connector metadata.
 3. Agent source declares which integration tools belong to the agent.
-4. Optional `veryfront.config.ts` source configuration narrows integrations and tools for the
-   exact branch, release, or environment without enabling capabilities.
-5. Optional source configuration narrows agent capabilities without selecting
-   credentials or creating a connection.
-6. Connection inventory is the control-plane record of authenticated provider
+4. Optional `veryfront.config.ts` source configuration narrows integrations and
+   tools for the exact branch, release, or environment without enabling
+   capabilities, selecting credentials, or creating a connection.
+5. Connection inventory is the control-plane record of authenticated provider
    accounts and determines credential readiness independently of agent source.
-7. Remote tool helpers resolve request-scoped or environment API credentials.
-8. Tool definitions are fetched per request so source-declared integration
+6. Remote tool helpers resolve request-scoped or environment API credentials.
+7. Tool definitions are fetched per request so source-declared integration
    requests remain project-scoped.
-9. Remote tool execution is delegated to the configured API layer and normalized
+8. Remote tool execution is delegated to the configured API layer and normalized
    for the agent runtime.
-10. A local source can instead grant exact catalog tool IDs, resolve catalog-
+9. A local source can instead grant exact catalog tool IDs, resolve catalog-
     named credentials immediately before each call, and execute supported HTTPS
     REST endpoints without a Veryfront account or project token.
 

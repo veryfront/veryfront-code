@@ -145,11 +145,12 @@ receives the tools the application needs.
 ## Keep local and mock usage working
 
 Hosted Salesforce connections and local service-account sources are separate
-execution paths. Local development and tests can continue to use explicit mock
-tools or mocked provider transport without Salesforce credentials. A policy
-configuration is not required for either path. When a test verifies Salesforce
-credential handling, stub the provider token and API requests and keep secrets
-out of fixtures and logs.
+execution paths. Local development can use explicit mock tools without
+Salesforce credentials. Tests of a real local Salesforce source must provide
+dummy service-account variables and stub the provider token and API requests;
+the source resolves credentials before invoking the mocked transport. Keep
+secrets out of fixtures and logs. A policy configuration is not required for
+either path.
 
 ## Verify it worked
 

@@ -18,7 +18,8 @@ and transport surfaces.
   are not recorded in connection inventory.
 - **Tools:** Provider operations such as `gmail__list_emails` or
   `salesforce__find_customer`. The catalog defines their names and schemas;
-  the connection supplies their provider access.
+  managed connections supply provider access, while local tools use host-
+  resolved credentials.
 - **Transport:** REST and GraphQL expose the hosted discovery, connection, status,
   and call lifecycle. MCP, the Veryfront framework/TypeScript client, and the
   Veryfront CLI expose integration tools where their current runtime supports
