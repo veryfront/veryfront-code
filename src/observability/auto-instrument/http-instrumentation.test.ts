@@ -160,6 +160,94 @@ describe("observability/auto-instrument/http-instrumentation", () => {
     );
   });
 
+  it("adds a W3C traceparent when no global propagator is installed", async () => {
+    installTracer();
+    let received: Request | undefined;
+    const baseFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      received = new Request(input, init);
+      return Promise.resolve(new Response("ok"));
+    }) as typeof fetch;
+
+    await createInstrumentedFetch(baseFetch)("https://example.com/items");
+
+    assertEquals(
+      received?.headers.get("traceparent"),
+      TEST_TRACEPARENT,
+      "outbound fetch must remain linkable without an embedding propagator",
+    );
+  });
+
+  it("replaces an incoming traceparent when fallback propagation is needed", async () => {
+    installTracer();
+    let received: Request | undefined;
+    const baseFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      received = new Request(input, init);
+      return Promise.resolve(new Response("ok"));
+    }) as typeof fetch;
+
+    await createInstrumentedFetch(baseFetch)("https://example.com/items", {
+      headers: {
+        traceparent: "00-22222222222222222222222222222222-2222222222222222-01",
+        tracestate: "vendor=stale",
+      },
+    });
+
+    assertEquals(received?.headers.get("traceparent"), TEST_TRACEPARENT);
+    assertEquals(received?.headers.get("tracestate"), null);
+  });
+
+  it("preserves injected headers when fallback span formatting fails", async () => {
+    const span = {
+      spanContext() {
+        throw new Error("span context unavailable");
+      },
+    } as unknown as Span;
+    const tracer = {
+      startActiveSpan(_name: string, _options: unknown, callback: (span: Span) => unknown) {
+        return callback(span);
+      },
+    } as unknown as Tracer;
+    setGlobalTracerProvider({ getTracer: () => tracer });
+    propagation.setGlobalPropagator({
+      inject: (_ctx, carrier, setter) => {
+        setter?.set(carrier, "traceparent", TEST_TRACEPARENT);
+      },
+      extract: (ctx) => ctx,
+      fields: () => ["traceparent"],
+    });
+    let received: Request | undefined;
+    const baseFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      received = new Request(input, init);
+      return Promise.resolve(new Response("ok"));
+    }) as typeof fetch;
+
+    await createInstrumentedFetch(baseFetch)("https://example.com/items");
+
+    assertEquals(received?.headers.get("traceparent"), TEST_TRACEPARENT);
+  });
+
+  it("falls back when propagation cannot set traceparent", async () => {
+    installTracer();
+    propagation.setGlobalPropagator({
+      inject: (_ctx, carrier, setter) => {
+        setter?.set(carrier, "traceparent", "invalid\ntraceparent");
+      },
+      extract: (ctx) => ctx,
+      fields: () => ["traceparent"],
+    });
+    let received: Request | undefined;
+    const baseFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      received = new Request(input, init);
+      return Promise.resolve(new Response("ok"));
+    }) as typeof fetch;
+
+    await createInstrumentedFetch(baseFetch)("https://example.com/items", {
+      headers: { traceparent: "00-22222222222222222222222222222222-2222222222222222-01" },
+    });
+
+    assertEquals(received?.headers.get("traceparent"), TEST_TRACEPARENT);
+  });
+
   it("runs HTTP handlers exactly once despite adversarial active-span providers", async () => {
     for (const behavior of ["duplicate", "omit", "replace", "throw-after"] as const) {
       _resetShimForTests();
