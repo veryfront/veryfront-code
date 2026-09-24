@@ -569,6 +569,10 @@ describe("routing/api/module-loader/http-validator", () => {
         const source of [
           `export const GET = () => {`,
           `export const GET = () => new Response(<div>{`,
+          // A top-level return is legal only in a script; the CommonJS reading
+          // must not approve an ES module the TypeScript readings refused.
+          `export const GET = () => new Response("ok"); return;`,
+          `import os from "node:os"; module.exports = os; return;`,
         ]
       ) {
         await assertRejects(

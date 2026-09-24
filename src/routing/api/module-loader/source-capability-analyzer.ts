@@ -217,7 +217,13 @@ async function parseSource(source: string): Promise<ASTNode | null> {
     try {
       const ast = await parser.parse({ code: source, filePath });
       const program = isNode(ast.program) ? ast.program : ast;
-      return program.type === "Program" ? program : null;
+      if (program.type !== "Program") return null;
+      // The CommonJS reading exists for a top-level `return`, which is only
+      // legal in a script. A program it parses as a module is ESM the two
+      // TypeScript readings already refused, so it is invalid and must not be
+      // approved here only to fail in the bundler or at runtime.
+      if (filePath === "dependency.cjs" && program.sourceType === "module") return null;
+      return program;
     } catch {
       // Try the next supported reading.
     }
