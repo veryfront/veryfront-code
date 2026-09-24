@@ -436,7 +436,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 20,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: () => {},
@@ -445,7 +445,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 20,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
