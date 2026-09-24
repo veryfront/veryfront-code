@@ -1493,6 +1493,28 @@ describe("routing/api/module-loader/http-validator", () => {
       assertEquals(safe.specifiers, []);
     });
 
+    it("should judge a computed method call it cannot name by its key like an accessor definer", async () => {
+      const sources = [
+        `export function f(make) { const k = ["__define", "Getter__"].join(""); const a = [];` +
+        ` a[k]("constructor", () => make); return a.constructor("return 1")(); }`,
+        `export function f(make, k) { const a = []; a[k].call(a, "constructor", () => make);` +
+        ` return a.constructor("return 1")(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+      const safe = await validateHTTPImports(
+        `export function f(k, j) { const a = []; a[k]("size", () => 1); return [1, 2][j]; }`,
+        [],
+      );
+      assertEquals(safe.specifiers, []);
+    });
+
     it("should keep property definitions with numeric or symbol keys out of prototype invalidation", async () => {
       const sources = [
         `const obj = {}; Object.defineProperty(obj, 0, { value: 1 }); export function f(k) { return obj[k]; }`,

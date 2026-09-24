@@ -4521,9 +4521,25 @@ function isLegacyAccessorDefinition(
 ): boolean {
   if (!isMemberExpressionWithObject(node)) return false;
   const name = memberPropertyName(node);
-  if (name === null || !LEGACY_ACCESSOR_DEFINERS.has(name)) return false;
   const link = significantParentLink(node, parents);
-  if (!link || !isCallExpression(link.parent) || link.key !== "callee") return true;
+  if (name === null) {
+    // `a[k](...)` with a key this analysis cannot read may be either
+    // definer; judge such a call, or a borrowed `.call`/`.apply` of it, by
+    // its first argument like a named one. Other reads are handled by the
+    // computed-member rules.
+    if (node.computed !== true || computedKeyCannotSpellName(node, scope, nodeScopes)) {
+      return false;
+    }
+    if (link && isMemberExpressionWithObject(link.parent) && link.key === "object") {
+      const method = memberPropertyName(link.parent);
+      return method === "call" || method === "apply";
+    }
+    if (!link || !isCallExpression(link.parent) || link.key !== "callee") return false;
+  } else if (!LEGACY_ACCESSOR_DEFINERS.has(name)) {
+    return false;
+  } else if (!link || !isCallExpression(link.parent) || link.key !== "callee") {
+    return true;
+  }
   const key = callArguments(link.parent)[0];
   if (key === undefined) return true;
   const staticKey = staticString(key);
