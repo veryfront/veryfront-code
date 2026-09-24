@@ -4509,8 +4509,12 @@ function isDefinitelySymbolValue(
   const expression = unwrapExpression(node);
   if (expression.type === "Identifier" && typeof expression.name === "string") {
     const binding = resolveBinding(scope, expression.name);
+    // A loop head or an unrecorded incoming value (a parameter, a member
+    // read) can replace the symbol with any string, so fail closed on them.
     if (
-      binding === null || binding.hasAliasAssignment || binding.initializers.length === 0
+      binding === null || binding.hasAliasAssignment || binding.loopAssigned ||
+      binding.hasUnknownIncomingValue || binding.memberInitializers.length > 0 ||
+      binding.initializers.length === 0
     ) return false;
     return proveBinding(
       context,

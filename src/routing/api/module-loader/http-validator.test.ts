@@ -1392,6 +1392,23 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should not treat a symbol binding a loop or parameter can overwrite as a symbol key", async () => {
+      const sources = [
+        `let k = Symbol(); const a = []; for (k of ["__proto__"]) a[k] = () => {}; a.constructor("return 1")();`,
+        `let k = Symbol(); const a = []; for (k of ["constructor"]) Object.defineProperty(a, k, { value: 1 });` +
+        ` const r = [].constructor; export const GET = () => new Response(String(r));`,
+        `export function f(k = Symbol()) { const a = []; a[k] = () => {}; return a.constructor("return 1")(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
     it("should keep property definitions with numeric or symbol keys out of prototype invalidation", async () => {
       const sources = [
         `const obj = {}; Object.defineProperty(obj, 0, { value: 1 }); export function f(k) { return obj[k]; }`,
