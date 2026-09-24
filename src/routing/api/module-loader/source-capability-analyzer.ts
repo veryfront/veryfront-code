@@ -208,17 +208,36 @@ async function parseSource(source: string): Promise<ASTNode | null> {
     return null;
   }
 
-  for (const filePath of ["route.tsx", "route.ts"]) {
+  // The validator also runs on a route's bundled project dependencies, which
+  // may be CommonJS with a top-level `return`. The parser allows that only for
+  // a `.cjs`/`.js` path, so try that reading after the two TypeScript ones; it
+  // is the same TypeScript-plus-JSX grammar with that single allowance. The
+  // caller rejects the module when no reading parses.
+  for (const filePath of ["route.tsx", "route.ts", "dependency.cjs"]) {
     try {
       const ast = await parser.parse({ code: source, filePath });
       const program = isNode(ast.program) ? ast.program : ast;
       return program.type === "Program" ? program : null;
     } catch {
-      // Try the other supported TypeScript/JSX reading. The caller retains a
-      // conservative textual fallback when neither grammar parses.
+      // Try the next supported reading.
     }
   }
   return null;
+}
+
+export type SourceParseFailure = "parser-unavailable" | "unparseable";
+
+/**
+ * Why `analyzeSourceCapabilities` returned null: the parser extension could
+ * not be loaded, or the source parses under neither grammar.
+ */
+export async function describeSourceParseFailure(): Promise<SourceParseFailure> {
+  try {
+    await getParser();
+  } catch {
+    return "parser-unavailable";
+  }
+  return "unparseable";
 }
 
 export type ImportMetaSpecifierResolver = (
