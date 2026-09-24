@@ -27,8 +27,7 @@ Primary source areas:
 flowchart TD
   catalog[Connector catalog] --> schema[Integration schemas]
   source[Agent source tool list] --> capabilities[Resolve agent capabilities]
-  sourcePolicy[Optional exact-source allowlist] --> narrowing[Intersect capability policies]
-  projectPolicy[Optional control-plane project policy] --> narrowing
+  sourceConfig[Optional exact-source allowlist] --> narrowing[Intersect capability policies]
   connections[Connection inventory] --> readiness[Select a ready project or user credential]
 
   request[Agent request context] --> list[Fetch remote tool definitions]
@@ -51,18 +50,17 @@ flowchart TD
    prompts, icons, and environment requirements.
 2. Schema helpers validate connector metadata.
 3. Agent source declares which integration tools belong to the agent.
-4. Optional `veryfront.config.ts` policy narrows integrations and tools for the
-   exact branch, release, or environment without enabling capabilities.
-5. Optional project policy adds control-plane narrowing without redefining
-   agent capabilities.
-6. Connection inventory remains control-plane data and determines credential
-   readiness independently of agent source and both policy layers.
-7. Remote tool helpers resolve request-scoped or environment API credentials.
-8. Tool definitions are fetched per request so source-declared integration
+4. Optional `veryfront.config.ts` source configuration narrows integrations and
+   tools for the exact branch, release, or environment without enabling
+   capabilities, selecting credentials, or creating a connection.
+5. Connection inventory is the control-plane record of authenticated provider
+   accounts and determines credential readiness independently of agent source.
+6. Remote tool helpers resolve request-scoped or environment API credentials.
+7. Tool definitions are fetched per request so source-declared integration
    requests remain project-scoped.
-9. Remote tool execution is delegated to the configured API layer and normalized
+8. Remote tool execution is delegated to the configured API layer and normalized
    for the agent runtime.
-10. A local source can instead grant exact catalog tool IDs, resolve catalog-
+9. A local source can instead grant exact catalog tool IDs, resolve catalog-
     named credentials immediately before each call, and execute supported HTTPS
     REST endpoints without a Veryfront account or project token.
 
@@ -73,7 +71,8 @@ flowchart TD
 - Agent source owns the agent's integration tool declaration.
 - Exact-source `veryfront.config.ts` owns an optional monotonic allowlist. Its
   absence is unrestricted; it never enables an integration or grants credentials.
-- The control plane owns optional project policy and connection inventory.
+- The control plane owns connection inventory. It does not require a project
+  integration policy to discover or call a connected tool.
 - OAuth runtime owns provider redirects, callbacks, and token storage.
 - Project-authored tools belong in [agent runtime](./05-agent-runtime.md) and the
   public [Tools](../guides/tools.md) guide.
@@ -84,8 +83,9 @@ flowchart TD
   provider calls without exposing credentials to tool arguments or the model.
 
 Effective integration capability is the intersection of agent selection,
-connector catalog, source configuration, and control-plane policy. No policy
-layer can add a capability removed by another layer.
+connector catalog, and source configuration. Source configuration can only
+narrow the tools already selected by the agent and catalog; it cannot add a
+capability or grant provider access.
 
 The framework normalizes source configuration once at the project request
 boundary and carries it in request-local runtime context. Direct agents, AG-UI
@@ -104,8 +104,8 @@ child; handler-local tool-list rewriting is not an authorization boundary.
 - Keep per-project tool visibility scoped to the active request or environment
   token.
 - Keep config caches qualified by the exact branch, release, or environment;
-  never reuse one source target's integration policy for another.
-- Update [Integrations](../guides/integrations.md) when catalog, policy, or
+  never reuse one source target's capability configuration for another.
+- Update [Integrations](../guides/integrations.md) when catalog, connection, or
   connection behavior changes.
 
 ## Related guides
