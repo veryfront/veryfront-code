@@ -1,3 +1,4 @@
+import { instrumentConversationRunFetch } from "#veryfront/agent/conversation/durable.ts";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import {
   MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
@@ -222,16 +223,19 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
   runId: string;
   runEventAppendToken: string | null | undefined;
   timeoutMs?: number;
-  /** Explicit host-owned transport for tests. */
+  /** Explicit host-owned transport for tests; it joins the active trace like the default. */
   fetch?: Fetch;
 }): ProviderReplayCheckpointPersister | undefined {
   if (!isValidRunEventAppendToken(input.runEventAppendToken)) return undefined;
 
   const token = input.runEventAppendToken;
   const timeoutMs = input.timeoutMs ?? DEFAULT_PROVIDER_REPLAY_APPEND_TIMEOUT_MS;
-  const fetchImpl = input.fetch
-    ? snapshotFetch(input.fetch)
-    : createOriginBoundOutboundFetch(input.apiUrl);
+  // Checkpoint appends are the only durable writes the shared runtime makes
+  // over HTTP during a streamed run, so they must carry the execution trace to
+  // veryfront-api. The wrapper is a no-op until a tracer provider is installed.
+  const fetchImpl = instrumentConversationRunFetch(
+    input.fetch ? snapshotFetch(input.fetch) : createOriginBoundOutboundFetch(input.apiUrl),
+  );
   const resolveApiUrl: VeryfrontApiRequestUrlResolver = createVeryfrontApiRequestUrlResolver(
     input.apiUrl,
   );
