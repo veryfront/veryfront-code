@@ -94,7 +94,6 @@ export type { SalesforceServiceAccountToolSourceOptions } from "./salesforce-ser
 export { createIntegrationClient, IntegrationApiError } from "./client.ts";
 export type {
   IntegrationCallOptions,
-  IntegrationSelectionOptions,
   IntegrationCallOutcome,
   IntegrationCatalogEntry,
   IntegrationClient,
@@ -107,6 +106,7 @@ export type {
   IntegrationDetails,
   IntegrationJsonObject,
   IntegrationOAuthHandoff,
+  IntegrationSelectionOptions,
   IntegrationToolResult,
 } from "./client-types.ts";
 export type {

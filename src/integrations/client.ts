@@ -38,7 +38,6 @@ import {
 } from "./limits.ts";
 import type {
   IntegrationCallOptions,
-  IntegrationSelectionOptions,
   IntegrationCatalogEntry,
   IntegrationClient,
   IntegrationClientConnection,
@@ -50,6 +49,7 @@ import type {
   IntegrationDetails,
   IntegrationJsonObject,
   IntegrationOAuthHandoff,
+  IntegrationSelectionOptions,
   IntegrationToolResult,
 } from "./client-types.ts";
 
