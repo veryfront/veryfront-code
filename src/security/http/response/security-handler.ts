@@ -1,6 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "#veryfront/observability";
 import { HOSTED_STUDIO_ORIGINS } from "#veryfront/security/http/studio-origin-policy.ts";
+import { getOperatorStudioOrigin } from "#veryfront/security/http/studio-operator-origin.ts";
 import { isCorsPolicyResponseHeaderName } from "#veryfront/utils/cors-policy-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
@@ -87,7 +88,10 @@ export function generateNonce(): string {
  * clickjacking). Local development hosts (`*.localhost`) are omitted because
  * dev mode skips the default CSP entirely.
  */
-const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
+function veryfrontFrameAncestors(): string[] {
+  const operatorOrigin = getOperatorStudioOrigin();
+  return ["'self'", ...HOSTED_STUDIO_ORIGINS, ...(operatorOrigin ? [operatorOrigin] : [])];
+}
 
 /**
  * The structural half of the platform floor: sources a project can never drop.
@@ -137,7 +141,7 @@ function requiredDirectives(
     "worker-src": ["'self'"],
     "object-src": ["'none'"],
     "frame-src": ["'self'"],
-    "frame-ancestors": isVeryfrontDomain ? [...VERYFRONT_FRAME_ANCESTORS] : ["'none'"],
+    "frame-ancestors": isVeryfrontDomain ? veryfrontFrameAncestors() : ["'none'"],
     "base-uri": ["'self'"],
     "form-action": ["'self'"],
     // Both spellings: `report-to` is the current one, `report-uri` is

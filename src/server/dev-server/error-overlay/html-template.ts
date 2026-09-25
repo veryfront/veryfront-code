@@ -1,6 +1,7 @@
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
+import { getOperatorStudioOrigin } from "#veryfront/security/http/studio-operator-origin.ts";
 
 /** Base delay multiplied by attempt count for WebSocket reconnection */
 const WS_RECONNECT_BASE_DELAY_MS = 1_000;
@@ -33,7 +34,7 @@ export function generateRuntimeScript(): string {
         .replace(/'/g, '&#39;');
     }
 
-    ${studioTargetOriginHelperSource()}
+    ${studioTargetOriginHelperSource(getOperatorStudioOrigin())}
 
     window.showErrorOverlay = function(errorInfo) {
       const existing = document.getElementById('veryfront-error-overlay');
@@ -370,7 +371,7 @@ export function generateErrorHTML(
     </div>
     ${fixButtonHtml}
   </div>
-  <script${nonceAttr}>${studioTargetOriginHelperSource()}${
+  <script${nonceAttr}>${studioTargetOriginHelperSource(getOperatorStudioOrigin())}${
     projectSlug
       ? `
     (function() {
