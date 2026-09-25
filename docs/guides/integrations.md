@@ -123,7 +123,8 @@ veryfront integration call github__get_current_user \
   --args '{}' --json
 ```
 
-`--expected-generation` is available only for `call` and requires `--connection`.
+`--expected-generation` is available for `call` and `status --tool`, and requires
+`--connection`.
 The API deployment must support the generation precondition. If it does not
 advertise support, the client throws `IntegrationApiError` with
 `kind === "unsupported_precondition"` and `outcomeUnknown === false` before
