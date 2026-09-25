@@ -7,11 +7,11 @@ import { clearModelProviders } from "#veryfront/provider";
 import { createVeryfrontCloudModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
-import { agent } from "../index.ts";
-import { AgentRuntime } from "./index.ts";
-import { prepareAgentRuntimeMessagesFromUiMessages } from "./message-preparation.ts";
-import type { AgentConfig } from "../types.ts";
-import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
+import { agent } from "../../../../../../src/agent/index.ts";
+import { AgentRuntime } from "../../../../../../src/agent/runtime/index.ts";
+import { prepareAgentRuntimeMessagesFromUiMessages } from "../../../../../../src/agent/runtime/message-preparation.ts";
+import type { AgentConfig } from "../../../../../../src/agent/types.ts";
+import type { RuntimeToolFilterConfig } from "../../../../../../src/agent/runtime/runtime-tool-config.ts";
 
 function toolCallSse(id: string, name: string, input: Record<string, unknown>): string {
   return [
@@ -35,7 +35,7 @@ function toolCallSse(id: string, name: string, input: Record<string, unknown>): 
   ].join("\n\n");
 }
 
-import { issue1834CapturedEmptyVertexSse } from "#veryfront/provider/veryfront-cloud/issue-1834-recorded-context.fixture.ts";
+import { issue1834CapturedEmptyVertexSse } from "../../provider/veryfront-cloud/issue-1834-recorded-context.fixture.ts";
 
 const finalTextSse =
   'data: {"choices":[{"delta":{"content":"Updated src/example.ts."}}]}\n\ndata: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';

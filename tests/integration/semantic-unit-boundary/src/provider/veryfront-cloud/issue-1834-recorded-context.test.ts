@@ -4,7 +4,7 @@ import { afterEach, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearModelProviders } from "#veryfront/provider";
-import { createVeryfrontCloudModel } from "./provider.ts";
+import { createVeryfrontCloudModel } from "../../../../../../src/provider/veryfront-cloud/provider.ts";
 import {
   issue1834CapturedEmptyVertexSse,
   issue1834RecordedMessages,
