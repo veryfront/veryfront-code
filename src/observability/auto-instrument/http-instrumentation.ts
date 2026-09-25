@@ -15,7 +15,21 @@ import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributes } from "../telem
 import { runAsyncWithContextFallback } from "../tracing/context-callback.ts";
 
 const logger = serverLogger.component("auto-instrument");
+// Control-plane requests carry bearer credentials through this wrapper, so the
+// header work around them must not reach tenant-replaceable realm state. These
+// intrinsics are captured before tenant code can mutate the shared realm.
 const NativeHeaders = Headers;
+const nativeHeadersSet = Headers.prototype.set;
+const nativeHeadersDelete = Headers.prototype.delete;
+const apply = Reflect.apply;
+
+function setHeader(headers: Headers, name: string, value: string): void {
+  apply(nativeHeadersSet, headers, [name, value]);
+}
+
+function deleteHeader(headers: Headers, name: string): void {
+  apply(nativeHeadersDelete, headers, [name]);
+}
 
 function getHttpTracer() {
   return trace.getTracer("veryfront-http");
@@ -178,7 +192,7 @@ export function createInstrumentedFetch(
                 () =>
                   propagation.inject(otContext.active(), headers, {
                     set: (h, k, v) => {
-                      h.set(k, v);
+                      setHeader(h, k, v);
                       if (k.toLowerCase() === "traceparent") traceparentInjected = true;
                     },
                   }),
@@ -192,8 +206,8 @@ export function createInstrumentedFetch(
                 try {
                   const traceparent = formatTraceparent(span.spanContext());
                   if (traceparent) {
-                    headers.set("traceparent", traceparent);
-                    headers.delete("tracestate");
+                    setHeader(headers, "traceparent", traceparent);
+                    deleteHeader(headers, "tracestate");
                   }
                 } catch (error) {
                   reportTelemetryFailure("Failed to format fetch trace context", error);
