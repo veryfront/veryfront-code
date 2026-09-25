@@ -308,10 +308,11 @@ export function requireVeryfrontCloudBootstrap(
 export const VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV = "VERYFRONT_CLOUD_GATEWAY_ROUTES";
 
 /**
- * Vendor-neutral gateway paths by wire surface. A surface with no entry (Google)
- * keeps its vendor-scoped path.
+ * Vendor-neutral gateway paths, keyed by the wire protocol a model speaks
+ * (`resolveVeryfrontCloudSurface`). A protocol with no entry (Google) keeps its
+ * vendor-scoped path.
  */
-const NEUTRAL_GATEWAY_PATHS: ReadonlyMap<string, string> = new Map([
+const NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL: ReadonlyMap<string, string> = new Map([
   ["openai", "ai/v1"],
   ["anthropic", "ai/anthropic/v1"],
 ]);
@@ -362,7 +363,7 @@ export function resolveVeryfrontCloudGatewayRoute(
 ): VeryfrontCloudGatewayRoute {
   const providerId = resolveVeryfrontCloudProviderId(provider);
   if (providerId && !usesVendorGatewayRoutes()) {
-    const neutralPath = IntrinsicReflectApply(MapPrototypeGet, NEUTRAL_GATEWAY_PATHS, [
+    const neutralPath = IntrinsicReflectApply(MapPrototypeGet, NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL, [
       resolveVeryfrontCloudSurface(providerId),
     ]) as string | undefined;
     if (neutralPath) {
@@ -441,9 +442,11 @@ function sendOnNeutralRoute(
       [normalizeNeutralGatewayRefusal],
     ) as Promise<Response>;
 
+  // Without the captured getter, read the request's own method rather than
+  // assume one: a GET or HEAD must never get a rewritten body.
   const method = RequestMethodGet
     ? IntrinsicReflectApply(RequestMethodGet, request, []) as string
-    : "POST";
+    : request.method;
   if (method === "GET" || method === "HEAD") return send(new NativeRequest(request, { headers }));
   if (typeof initBody === "string") {
     return send(toNeutralRouteRequest(request, headers, initBody, wireModelProvider));
