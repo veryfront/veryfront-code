@@ -373,6 +373,22 @@ Set this one in the host environment, not in a project `.env` file. It is an
 operator safety bound, so a value that came from a project `.env` file is
 ignored and the host's own setting stands.
 
+### Veryfront Cloud model routes
+
+`veryfront-cloud/*` models call the platform's vendor-neutral endpoints.
+Models that speak the OpenAI protocol use `<api>/ai/v1`, and models that speak
+the Anthropic protocol use `<api>/ai/anthropic/v1`. The request body names the
+model as `<provider>/<model>`, for example `anthropic/claude-sonnet-4-6`.
+Google models keep their existing route.
+
+| Variable                         | Default | Effect                                                                                 |
+| -------------------------------- | ------- | -------------------------------------------------------------------------------------- |
+| `VERYFRONT_CLOUD_GATEWAY_ROUTES` | unset   | `vendor` restores the previous per-provider routes and request bodies for every model. |
+
+The opt-out is temporary. It exists for one release so a deployment can move
+back while it migrates, and a later release removes it. Any value other than
+`vendor` keeps the vendor-neutral routes.
+
 ## SSR transform cache
 
 Veryfront compiles every page and its local import tree before it can render on

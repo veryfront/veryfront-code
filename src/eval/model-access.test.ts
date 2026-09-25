@@ -8,11 +8,13 @@ import {
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
+  __runWithOutboundFetchTransportForTests,
   createOutboundFetchBoundary,
   OutboundRequestBlockedError,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import { markVeryfrontGatewayTransportFailure } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { WorkerEgressBlockedError } from "#veryfront/security/sandbox/worker-egress-guard.ts";
+import { createVeryfrontCloudFetch } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import {
   classifyAgentServiceModelAccessDenial,
   classifyEvalModelAccessDenial,
@@ -256,6 +258,113 @@ describe("eval/model-access", () => {
     );
     const unrouted = await buildProviderError("anthropic", jsonResponse(400, projectRequiredBody));
     assertEquals(classifyEvalModelAccessDenial(unrouted), undefined);
+  });
+
+  it("recognizes the vendor-neutral routes as gateway provenance", async () => {
+    const projectRequiredBody = { error: "x", code: "gateway_project_required" };
+    for (
+      const path of [
+        "/ai/v1/chat/completions",
+        "/ai/v1/responses",
+        "/ai/v1/embeddings",
+        "/ai/anthropic/v1/messages",
+      ]
+    ) {
+      assertEquals(
+        [
+          classifyEvalModelAccessDenial(await rejectedRequest(veryfrontApiOrigin(), 401, { path }))
+            ?.kind,
+          classifyEvalModelAccessDenial(await rejectedRequest(veryfrontApiOrigin(), 403, { path }))
+            ?.kind,
+          classifyEvalModelAccessDenial(
+            await rejectedRequest(veryfrontApiOrigin(), 400, { path, body: projectRequiredBody }),
+          )?.kind,
+        ],
+        ["unauthorized", "forbidden", "project-required"],
+        path,
+      );
+    }
+    // Look-alike paths on the API origin are not gateway routes.
+    for (const path of ["/ai/v1beta/models", "/ai/anthropicx/v1/messages", "/ai/other/v1"]) {
+      assertEquals(
+        classifyEvalModelAccessDenial(await rejectedRequest(veryfrontApiOrigin(), 401, { path })),
+        undefined,
+        path,
+      );
+    }
+  });
+
+  it("classifies a neutral-envelope refusal from the gateway fetch like the vendor route's", async () => {
+    const refuse = (status: number, envelope: unknown) => {
+      // The gateway's transport answers with the neutral envelope; nothing
+      // leaves the process.
+      const answer = () => Promise.resolve(jsonResponse(status, envelope));
+      const transport = {
+        fetch: answer,
+        pinnedFetch: answer,
+        resolveHost: () => Promise.resolve(["93.184.216.34"]),
+      };
+      return __runWithOutboundFetchTransportForTests(transport, async () => {
+        try {
+          await requestJson({
+            url: `${veryfrontApiOrigin()}/ai/anthropic/v1/messages`,
+            fetchImpl: createVeryfrontCloudFetch(
+              "vf_test_provider",
+              `${veryfrontApiOrigin()}/ai/anthropic/v1`,
+              undefined,
+              { wireModelProvider: "anthropic" },
+            ),
+            init: { method: "POST", body: JSON.stringify({ model: "claude-sonnet-4-6" }) },
+            providerLabel: "veryfront-cloud",
+            providerKind: "anthropic",
+          });
+        } catch (error) {
+          return classifyEvalModelAccessDenial(error);
+        }
+        throw new Error("expected the request to reject");
+      });
+    };
+
+    const credits = await refuse(402, {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "AI credit limit exceeded",
+        code: "insufficient-credits",
+        veryfront: {
+          suggestion: "Purchase additional credits or upgrade your subscription plan.",
+          balance_credits: 0,
+          required_credits: 0.25,
+        },
+      },
+    });
+    assertEquals(credits, {
+      kind: "billing",
+      code: "INSUFFICIENT_CREDITS",
+      message:
+        "AI credit limit exceeded: 0.25 credits required, 0 available. Purchase additional credits or upgrade your subscription plan.",
+    });
+
+    const projectRequired = await refuse(400, {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "A project is required",
+        code: "gateway_project_required",
+      },
+    });
+    assertEquals(projectRequired?.kind, "project-required");
+
+    const policy = await refuse(403, {
+      type: "error",
+      error: {
+        type: "permission_error",
+        message: "Model is not available",
+        code: "eu_inference_policy",
+        veryfront: { model: "anthropic/claude-sonnet-4-6" },
+      },
+    });
+    assertEquals([policy?.kind, policy?.code], ["inference-policy", "MODEL_NOT_PERMITTED"]);
   });
 
   it("classifies rejections from a gateway fetch built with an explicit base URL", async () => {

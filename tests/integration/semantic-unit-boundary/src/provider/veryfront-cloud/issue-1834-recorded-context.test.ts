@@ -48,9 +48,9 @@ it("converts the sanitized issue 1834 context into a valid Mistral gateway ingre
 
   assertEquals(
     capturedUrl,
-    "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
+    "https://api.veryfront.com/ai/v1/chat/completions",
   );
-  assertEquals(capturedBody.model, "mistral-small-2503");
+  assertEquals(capturedBody.model, "mistral/mistral-small-2503");
   assertEquals(capturedBody.temperature, 0);
   assertEquals(capturedBody.max_tokens, 16_384);
   assertEquals(capturedBody.max_completion_tokens, undefined);

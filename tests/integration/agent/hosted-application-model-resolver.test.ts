@@ -101,7 +101,7 @@ describe("hosted ordinary application model resolver", () => {
           const request = new Request(input, init);
           assertEquals(
             new URL(request.url).pathname,
-            `/ai/gateway/openai/v1/${useHostedTool ? "responses" : "chat/completions"}`,
+            `/ai/v1/${useHostedTool ? "responses" : "chat/completions"}`,
           );
           const body = await request.json();
           for (
@@ -275,7 +275,7 @@ describe("hosted ordinary application model resolver", () => {
       assertEquals(request.project, null);
       assertEquals(request.billing, null);
       assertEquals(request.scopedToken, appToken);
-      assert(request.url.startsWith("https://example.com/ai/gateway/openai/"));
+      assert(request.url.startsWith("https://example.com/ai/v1/"));
     }
   });
 
@@ -389,7 +389,7 @@ describe("hosted ordinary application model resolver", () => {
       requests++;
       const request = new Request(requestInput, init);
       assertEquals(request.headers.get("authorization"), `Bearer ${appToken}`);
-      assert(request.url.startsWith("https://example.com/ai/gateway/openai/"));
+      assert(request.url.startsWith("https://example.com/ai/v1/"));
       const body = await request.json();
       return response(body.stream === true);
     }, async () => {

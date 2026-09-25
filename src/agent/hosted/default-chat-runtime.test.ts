@@ -994,7 +994,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
       await withMockFetch(
         async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
-          if (new URL(request.url).pathname.includes("/ai/gateway/")) {
+          if (/\/ai\/(?:gateway|anthropic|v1)\//.test(new URL(request.url).pathname)) {
             capturedProviderBody = await request.clone().json();
           }
           return Response.json({ content: [], stop_reason: "end_turn", usage: {} });

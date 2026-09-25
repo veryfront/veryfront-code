@@ -10,7 +10,12 @@ import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { createVeryfrontCloudInferenceModel, createVeryfrontCloudModel } from "./provider.ts";
-import { createVeryfrontCloudFetch } from "./shared.ts";
+import {
+  createVeryfrontCloudFetch,
+  getVeryfrontCloudGatewayBaseUrl,
+  resolveVeryfrontCloudGatewayRoute,
+  VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV,
+} from "./shared.ts";
 import {
   isVeryfrontGatewayResponse,
   markVeryfrontGatewayResponse,
@@ -672,7 +677,7 @@ describe("provider/veryfront-cloud", () => {
 
     assertEquals(
       capturedRequest?.url,
-      "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
+      "https://api.veryfront.com/ai/v1/chat/completions",
     );
     assertEquals(capturedRequest?.headers.get("Authorization"), "Bearer vf_test_provider");
     assertEquals(capturedRequest?.headers.get("x-veryfront-project-slug"), "provider-test-project");
@@ -737,8 +742,8 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(
       capturedRequests.map(({ url }) => url),
       [
-        "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
-        "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
+        "https://api.veryfront.com/ai/v1/chat/completions",
+        "https://api.veryfront.com/ai/v1/chat/completions",
       ],
     );
     // gpt-5.4 and gpt-5.5 are reasoning-capable, so they carry the documented
@@ -834,7 +839,7 @@ describe("provider/veryfront-cloud", () => {
 
     assertEquals(
       capturedRequest?.url,
-      "https://api.veryfront.com/ai/gateway/openai/v1/responses",
+      "https://api.veryfront.com/ai/v1/responses",
     );
     assertEquals(capturedBody?.stream, true);
     assertEquals(capturedBody?.reasoning, { effort: "medium", summary: "auto" });
@@ -870,11 +875,11 @@ describe("provider/veryfront-cloud", () => {
     setCloudBootstrap();
     assertEquals(
       await captureGatewayRequestUrl("openai/gpt-5-nano"),
-      "https://api.veryfront.com/ai/gateway/openai/v1/responses",
+      "https://api.veryfront.com/ai/v1/responses",
     );
     assertEquals(
       await captureGatewayRequestUrl("deepseek/deepseek-v4-flash"),
-      "https://api.veryfront.com/ai/gateway/deepseek/v1/chat/completions",
+      "https://api.veryfront.com/ai/v1/chat/completions",
     );
   });
 
@@ -891,7 +896,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(model.modelProvider, "mistral");
     assertEquals(
       await captureGatewayRequestUrl("mistral/mistral-small-2503"),
-      "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
+      "https://api.veryfront.com/ai/v1/chat/completions",
     );
   });
 
@@ -1022,7 +1027,7 @@ describe("provider/veryfront-cloud", () => {
     await drainStream(stream);
 
     assertEquals(
-      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/gateway/anthropic/v1"),
+      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/anthropic/v1"),
       true,
       "the anthropic runtime must be pointed at the Veryfront Cloud anthropic gateway",
     );
@@ -1183,7 +1188,7 @@ describe("provider/veryfront-cloud", () => {
         fetchStub(url, init),
       resolveHost: () => Promise.resolve(["10.255.128.3"]),
     };
-    const gatewayUrl = `${apiBaseUrl}/ai/gateway/openai/v1/chat/completions`;
+    const gatewayUrl = `${apiBaseUrl}/ai/v1/chat/completions`;
 
     __resetOperatorVeryfrontApiOriginsForTests();
     try {
@@ -1235,17 +1240,17 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(routes, [
       [
         "anthropic/claude-sonnet-4-6",
-        "https://api.veryfront.com/ai/gateway/anthropic/v1/messages",
+        "https://api.veryfront.com/ai/anthropic/v1/messages",
         "anthropic",
       ],
       [
         "openai/gpt-5.5",
-        "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
+        "https://api.veryfront.com/ai/v1/chat/completions",
         "openai",
       ],
       [
         "openai/gpt-5.4-nano",
-        "https://api.veryfront.com/ai/gateway/openai/v1/responses",
+        "https://api.veryfront.com/ai/v1/responses",
         "openai",
       ],
       [
@@ -1255,12 +1260,12 @@ describe("provider/veryfront-cloud", () => {
       ],
       [
         "mistral/mistral-large-2512",
-        "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
+        "https://api.veryfront.com/ai/v1/chat/completions",
         "mistral",
       ],
       [
         "moonshotai/kimi-k2.6",
-        "https://api.veryfront.com/ai/gateway/moonshotai/v1/chat/completions",
+        "https://api.veryfront.com/ai/v1/chat/completions",
         "moonshotai",
       ],
     ]);
@@ -1304,7 +1309,7 @@ describe("provider/veryfront-cloud", () => {
 
     assertEquals(
       capturedRequest?.url,
-      "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions",
+      "https://api.veryfront.com/ai/v1/chat/completions",
     );
     assertEquals(result.text, "Hello");
   });
@@ -1335,7 +1340,7 @@ describe("provider/veryfront-cloud", () => {
     const result = await model.doStream({ prompt: [] });
     await drainStream(result.stream);
 
-    assertEquals(capturedUrl, "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions");
+    assertEquals(capturedUrl, "https://api.veryfront.com/ai/v1/chat/completions");
   });
 
   it("refuses hosted tools on a chat-surface provider instead of switching surface", async () => {
@@ -1374,5 +1379,345 @@ describe("provider/veryfront-cloud", () => {
       assertEquals(requestCount, 0);
       restoreMockFetch();
     }
+  });
+});
+
+describe("provider/veryfront-cloud vendor-neutral routes", () => {
+  afterEach(() => {
+    restoreMockFetch();
+    clearCloudEnv();
+    clearModelProviders();
+    clearEmbeddingProviders();
+  });
+
+  type CapturedGatewayRequest = {
+    url: string;
+    body: string;
+    authorization: string | null;
+    projectSlug: string | null;
+  };
+
+  /** The one request a model sends for a short streamed prompt. */
+  async function captureGatewayRequest(modelId: string): Promise<CapturedGatewayRequest> {
+    let captured: CapturedGatewayRequest | undefined;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        captured ??= {
+          url: request.url,
+          body: await request.text(),
+          authorization: request.headers.get("authorization"),
+          projectSlug: request.headers.get("x-veryfront-project-slug"),
+        };
+        return new Response(new ReadableStream({ start: (controller) => controller.close() }), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }) as typeof fetch,
+    );
+    try {
+      const model = resolveModel(`veryfront-cloud/${modelId}`) as ModelRuntime;
+      const result = await model.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        maxOutputTokens: 16,
+      } as never);
+      await drainStream(result.stream);
+    } catch {
+      // expected: an empty gateway stream is not a valid provider response
+    } finally {
+      restoreMockFetch();
+    }
+    if (!captured) throw new Error(`no request captured for ${modelId}`);
+    return captured;
+  }
+
+  /** [model, neutral URL, vendor-scoped URL, upstream id the builder sends]. */
+  const PROTOCOL_CASES: ReadonlyArray<readonly [string, string, string, string]> = [
+    [
+      "anthropic/claude-sonnet-4-6",
+      "https://api.veryfront.com/ai/anthropic/v1/messages",
+      "https://api.veryfront.com/ai/gateway/anthropic/v1/messages",
+      "claude-sonnet-4-6",
+    ],
+    [
+      "openai/gpt-5.5",
+      "https://api.veryfront.com/ai/v1/chat/completions",
+      "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
+      "gpt-5.5",
+    ],
+    [
+      "openai/gpt-5.4-nano",
+      "https://api.veryfront.com/ai/v1/responses",
+      "https://api.veryfront.com/ai/gateway/openai/v1/responses",
+      "gpt-5.4-nano",
+    ],
+    [
+      "mistral/mistral-large-2512",
+      "https://api.veryfront.com/ai/v1/chat/completions",
+      "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
+      "mistral-large-2512",
+    ],
+    [
+      "acme-labs/mystery-1",
+      "https://api.veryfront.com/ai/v1/chat/completions",
+      "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions",
+      "mystery-1",
+    ],
+  ];
+
+  it("restores every vendor-scoped route when the opt-out is set", async () => {
+    for (const value of ["vendor", " Vendor "]) {
+      await withEnv({ [VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV]: value }, () => {
+        assertEquals(
+          ["anthropic", "openai", "google", "mistral", "moonshotai", "acme-labs"].map((
+            provider,
+          ) => resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", provider)),
+          [
+            { baseURL: "https://api.veryfront.com/ai/gateway/anthropic/v1" },
+            { baseURL: "https://api.veryfront.com/ai/gateway/openai/v1" },
+            { baseURL: "https://api.veryfront.com/ai/gateway/google/v1beta" },
+            { baseURL: "https://api.veryfront.com/ai/gateway/mistral/v1" },
+            { baseURL: "https://api.veryfront.com/ai/gateway/moonshotai/v1" },
+            { baseURL: "https://api.veryfront.com/ai/gateway/acme-labs/v1" },
+          ],
+        );
+        return Promise.resolve();
+      });
+    }
+  });
+
+  it("keeps the vendor-neutral routes for any other opt-out value", async () => {
+    await withEnv({ [VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV]: "neutral" }, () => {
+      assertEquals(
+        getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com", "anthropic"),
+        "https://api.veryfront.com/ai/anthropic/v1",
+      );
+      return Promise.resolve();
+    });
+  });
+
+  it("sends each protocol to its vendor-neutral route with the provider-qualified id", async () => {
+    setCloudBootstrap();
+    for (const [modelId, neutralUrl] of PROTOCOL_CASES) {
+      const request = await captureGatewayRequest(modelId);
+      assertEquals(
+        [request.url, JSON.parse(request.body).model, request.authorization, request.projectSlug],
+        [neutralUrl, modelId, "Bearer vf_test_provider", "provider-test-project"],
+        modelId,
+      );
+    }
+  });
+
+  it("keeps Google on its vendor-scoped route with the model id in the path", async () => {
+    setCloudBootstrap();
+    const request = await captureGatewayRequest("google-ai-studio/gemini-3.5-flash");
+    assertEquals(
+      request.url,
+      "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+    );
+    assertEquals(JSON.parse(request.body).model, undefined);
+  });
+
+  it("restores the vendor-scoped URL and the builder's exact body under the opt-out", async () => {
+    setCloudBootstrap();
+    for (const [modelId, , vendorUrl, upstreamId] of PROTOCOL_CASES) {
+      const neutral = await captureGatewayRequest(modelId);
+      const vendor = await withEnv(
+        { VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" },
+        () => captureGatewayRequest(modelId),
+      );
+      assertEquals(vendor.url, vendorUrl, modelId);
+      assertEquals(JSON.parse(vendor.body).model, upstreamId, modelId);
+      // Everything but `model` is byte-identical: the builder's body is sent
+      // untouched under the opt-out, and only `model` changes on a neutral route.
+      assertEquals(
+        JSON.stringify({ ...JSON.parse(neutral.body), model: upstreamId }),
+        vendor.body,
+        modelId,
+      );
+      assertEquals(vendor.authorization, neutral.authorization, modelId);
+      assertEquals(vendor.projectSlug, neutral.projectSlug, modelId);
+    }
+  });
+
+  it("sends OpenAI embeddings to the vendor-neutral route, and back under the opt-out", async () => {
+    setCloudBootstrap();
+    async function captureEmbeddingRequest(): Promise<{ url: string; model: unknown }> {
+      let captured: { url: string; model: unknown } | undefined;
+      installMockFetch(
+        (async (input: URL | Request | string, init?: RequestInit) => {
+          const request = new Request(input, init);
+          captured ??= { url: request.url, model: (await request.json()).model };
+          return Response.json({
+            data: [{ embedding: [0.1, 0.2], index: 0 }],
+            usage: { prompt_tokens: 1, total_tokens: 1 },
+          });
+        }) as typeof fetch,
+      );
+      try {
+        const model = resolveEmbeddingModel("veryfront-cloud/openai/text-embedding-3-small");
+        await model.doEmbed({ values: ["hello"] });
+      } finally {
+        restoreMockFetch();
+        clearEmbeddingProviders();
+      }
+      if (!captured) throw new Error("no embedding request captured");
+      return captured;
+    }
+
+    assertEquals(await captureEmbeddingRequest(), {
+      url: "https://api.veryfront.com/ai/v1/embeddings",
+      model: "openai/text-embedding-3-small",
+    });
+    assertEquals(
+      await withEnv({ VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" }, captureEmbeddingRequest),
+      {
+        url: "https://api.veryfront.com/ai/gateway/openai/v1/embeddings",
+        model: "text-embedding-3-small",
+      },
+    );
+  });
+
+  it("reads a Veryfront refusal in either neutral envelope as the vendor route's body", async () => {
+    const cases: ReadonlyArray<readonly [number, unknown, Record<string, unknown>]> = [
+      [
+        402,
+        {
+          error: {
+            message: "AI credit limit exceeded",
+            type: "insufficient_quota",
+            param: null,
+            code: "insufficient-credits",
+            veryfront: {
+              suggestion: "Purchase additional credits or upgrade your subscription plan.",
+              balance_credits: 0,
+              required_credits: 0.25,
+            },
+          },
+        },
+        {
+          error: "AI credit limit exceeded",
+          suggestion: "Purchase additional credits or upgrade your subscription plan.",
+          balance: 0,
+          required: 0.25,
+          slug: "insufficient-credits",
+        },
+      ],
+      [
+        402,
+        {
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: "AI provider spend limit exceeded for the daily window.",
+            code: "provider-spend-limit",
+            veryfront: { remaining_usd: 0, required_usd: 0.01 },
+          },
+        },
+        {
+          error: "AI provider spend limit exceeded for the daily window.",
+          balance: 0,
+          required: 0.01,
+          slug: "insufficient-credits",
+        },
+      ],
+      [
+        400,
+        {
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: "A project is required",
+            code: "gateway_project_required",
+          },
+        },
+        { error: "A project is required", code: "gateway_project_required" },
+      ],
+      [
+        403,
+        {
+          error: {
+            message: "Model is not available",
+            type: "permission_error",
+            param: null,
+            code: "eu_inference_policy",
+            veryfront: { model: "acme-labs/mystery-1" },
+          },
+        },
+        {
+          error: "Model is not available",
+          model: "acme-labs/mystery-1",
+          code: "eu_inference_policy",
+        },
+      ],
+    ];
+
+    for (const [status, envelope, vendorBody] of cases) {
+      installMockFetch(() => Promise.resolve(Response.json(envelope, { status })));
+      const wrappedFetch = createVeryfrontCloudFetch(
+        "vf_test_provider",
+        "https://api.veryfront.com/ai/v1",
+        undefined,
+        { wireModelProvider: "openai" },
+      );
+      const response = await wrappedFetch("https://api.veryfront.com/ai/v1/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: "gpt-5.5" }),
+      });
+      restoreMockFetch();
+      assertEquals(response.status, status);
+      assertEquals(isVeryfrontGatewayResponse(response), true);
+      assertEquals(await response.json(), vendorBody);
+    }
+  });
+
+  it("forwards upstream errors and successes from a neutral route untouched", async () => {
+    const upstreamBodies: ReadonlyArray<readonly [number, string]> = [
+      [
+        429,
+        '{"error":{"message":"Rate limit reached","type":"rate_limit_error","code":"rate_limit_exceeded"}}',
+      ],
+      [529, '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'],
+      [500, "upstream failure"],
+      [200, '{"id":"chatcmpl-1","model":"gpt-5.5"}'],
+    ];
+    for (const [status, body] of upstreamBodies) {
+      installMockFetch(() =>
+        Promise.resolve(
+          new Response(body, { status, headers: { "content-type": "application/json" } }),
+        )
+      );
+      const wrappedFetch = createVeryfrontCloudFetch(
+        "vf_test_provider",
+        "https://api.veryfront.com/ai/v1",
+        undefined,
+        { wireModelProvider: "openai" },
+      );
+      const response = await wrappedFetch("https://api.veryfront.com/ai/v1/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: "gpt-5.5" }),
+      });
+      restoreMockFetch();
+      assertEquals([response.status, await response.text()], [status, body]);
+    }
+  });
+
+  it("sends a body without a string model unchanged on a neutral route", async () => {
+    const sent: string[] = [];
+    installMockFetch(async (input, init) => {
+      sent.push(await new Request(input, init).text());
+      return Response.json({});
+    });
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://api.veryfront.com/ai/v1",
+      undefined,
+      { wireModelProvider: "openai" },
+    );
+    for (const body of ['{"input":"x"}', "[1,2]", "not json", '{"model":7}']) {
+      await wrappedFetch("https://api.veryfront.com/ai/v1/embeddings", { method: "POST", body });
+    }
+    restoreMockFetch();
+    assertEquals(sent, ['{"input":"x"}', "[1,2]", "not json", '{"model":7}']);
   });
 });

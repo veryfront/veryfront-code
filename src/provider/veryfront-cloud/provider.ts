@@ -9,9 +9,9 @@ import type { ModelRuntime } from "../types.ts";
 import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import {
   createVeryfrontCloudFetch,
-  getVeryfrontCloudGatewayBaseUrl,
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
+  resolveVeryfrontCloudGatewayRoute,
 } from "./shared.ts";
 import {
   createVeryfrontCloudOpenAIModel,
@@ -97,9 +97,12 @@ function createVeryfrontCloudModelInternal(
   const { apiBaseUrl, apiToken, projectSlug } = options.credentialSource === "application"
     ? requireApplicationBootstrap()
     : requireVeryfrontCloudBootstrap(inferenceCredential, options.apiBaseUrl);
-  const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
+  // Builders keep the upstream model id; on a vendor-neutral route the fetch
+  // wrapper sends it as `<provider>/<id>`.
+  const { baseURL, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
     inferenceCredential: inferenceCredential !== undefined,
+    ...(wireModelProvider ? { wireModelProvider } : {}),
     ...(options.assertCredentialActive || options.assertInferenceCredentialActive
       ? {
         assertInferenceCredentialActive: options.assertCredentialActive ??
