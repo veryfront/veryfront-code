@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createIntegrationClient, IntegrationApiError } from "../../../src/integrations/client.ts";
+import { createIntegrationClient, IntegrationApiError } from "#veryfront/integrations/client.ts";
 const project = { id: "11111111-1111-4111-8111-111111111111", slug: "test-project" };
 const connectionId = "22222222-2222-4222-8222-222222222222";
 const generation = "33333333-3333-4333-8333-333333333333";
