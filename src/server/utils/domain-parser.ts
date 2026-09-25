@@ -167,7 +167,7 @@ function matchDomain(domain: string, pattern: string): RegExpMatchArray | null {
   return domain.match(new RegExp(pattern));
 }
 
-function parseConfiguredProjectDomain(
+export function parseConfiguredProjectDomain(
   domain: string,
   roots: readonly string[],
 ): ParsedDomain | null {
