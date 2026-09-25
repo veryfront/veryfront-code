@@ -763,3 +763,123 @@ Deno.test("ServerResolver", async (t) => {
     );
   });
 });
+
+Deno.test("strict dedicated assignment resolution", async (t) => {
+  const strict = { requireAssignment: true };
+  await t.step("explicitly unassigned environment uses shared routing", async () => {
+    const api = createMockApi(() => Response.json({ server: null, assignment: "none" }));
+    const resolver = new ServerResolver(api.url, "", "", 30_000, strict);
+    try {
+      assertEquals(await resolver.resolve("env-unassigned"), null);
+    } finally {
+      resolver.close();
+      await api.close();
+    }
+  });
+  await t.step("assigned but unavailable fails closed", async () => {
+    const api = createMockApi(() => Response.json({ server: null, assignment: "unavailable" }));
+    const resolver = new ServerResolver(api.url, "", "", 0, strict);
+    try {
+      await assertRejects(() => resolver.resolve("env-pending"), Error);
+    } finally {
+      resolver.close();
+      await api.close();
+    }
+  });
+  await t.step("legacy null, malformed assignment and transport error fail closed", async () => {
+    for (
+      const body of [{ server: null }, { server: null, assignment: "unknown" }, {
+        server: { status: "running" },
+        assignment: "none",
+      }]
+    ) {
+      const api = createMockApi(() => Response.json(body));
+      const resolver = new ServerResolver(api.url, "", "", 0, strict);
+      try {
+        await assertRejects(() => resolver.resolve("env-unknown"), Error);
+      } finally {
+        resolver.close();
+        await api.close();
+      }
+    }
+    const resolver = new ServerResolver("http://localhost:1", "", "", 0, strict);
+    try {
+      await assertRejects(() => resolver.resolve("env-transport"), Error);
+    } finally {
+      resolver.close();
+    }
+  });
+  await t.step("strict no-assignment is not cached across a new assignment", async () => {
+    let assigned = false;
+    let calls = 0;
+    const api = createMockApi(() => {
+      calls++;
+      return assigned
+        ? Response.json({
+          assignment: "running",
+          server: {
+            id: "srv-later",
+            short_id: "4281039506",
+            hostname: "veryfront-server-4281039506.owned.svc.cluster.local",
+            status: "running",
+          },
+        })
+        : Response.json({ server: null, assignment: "none" });
+    });
+    const resolver = new ServerResolver(api.url, "", "", 30_000, strict);
+    try {
+      assertEquals(await resolver.resolve("env-later"), null);
+      assigned = true;
+      assertEquals(
+        await resolver.resolve("env-later"),
+        "http://veryfront-server-4281039506.owned.svc.cluster.local",
+      );
+      assertEquals(calls, 2);
+    } finally {
+      resolver.close();
+      await api.close();
+    }
+  });
+  await t.step("strict lookup capacity refuses instead of sharing", async () => {
+    const gate = Promise.withResolvers<Response>();
+    const resolver = new ServerResolver("https://api.example.com", "", "", 0, {
+      ...strict,
+      maxInflight: 1,
+      requestTimeoutMs: 30,
+      fetchImpl: () => gate.promise,
+    });
+    try {
+      const first = resolver.resolve("env-first");
+      await Promise.resolve();
+      await assertRejects(() => resolver.resolve("env-second"), Error);
+      gate.resolve(Response.json({ server: null, assignment: "none" }));
+      assertEquals(await first, null);
+    } finally {
+      gate.resolve(Response.json({ server: null, assignment: "none" }));
+      resolver.close();
+    }
+  });
+  await t.step("running assignment resolves only the dedicated URL", async () => {
+    const api = createMockApi(() =>
+      Response.json({
+        assignment: "running",
+        server: {
+          id: "srv-1",
+          short_id: "4281039506",
+          hostname: "veryfront-server-4281039506.owned.svc.cluster.local",
+          status: "running",
+        },
+      })
+    );
+    const resolver = new ServerResolver(api.url, "", "", 0, strict);
+    try {
+      assertEquals(
+        await resolver.resolve("env-assigned"),
+        "http://veryfront-server-4281039506.owned.svc.cluster.local",
+      );
+    } finally {
+      resolver.close();
+      await api.close();
+    }
+  });
+});
