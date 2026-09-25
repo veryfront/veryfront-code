@@ -32,7 +32,10 @@ import {
 } from "#veryfront/agent/runtime/trace-usage.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
-import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
+import {
+  INVOKE_AGENT_TOOL_ID,
+  isFrameworkInvokeAgentTool,
+} from "#veryfront/agent/runtime/agent-delegation.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -319,11 +322,13 @@ export function buildMergedTools(
   // wait-for-result tool must replace the config-owned local implementation,
   // otherwise the local tool settles with its own result and the agent loop
   // starts a model call whose output the parked run discards. An explicit
-  // `invoke_agent: false` stays authoritative and is not a declaration.
-  const controlPlaneOwnsDelegation = hasTrustedAgentToolDeclaration(
-    agent,
-    INVOKE_AGENT_TOOL_ID,
-  );
+  // `invoke_agent: false` stays authoritative and is not a declaration, and a
+  // custom inline tool that merely shares the name keeps executing.
+  const configuredInvokeAgent = isRecord(agent.config.tools)
+    ? agent.config.tools[INVOKE_AGENT_TOOL_ID]
+    : undefined;
+  const controlPlaneOwnsDelegation = configuredInvokeAgent === true ||
+    isFrameworkInvokeAgentTool(configuredInvokeAgent);
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>

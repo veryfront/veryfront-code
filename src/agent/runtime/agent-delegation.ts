@@ -12,6 +12,12 @@ export { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId };
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const frameworkInvokeAgentTools = new WeakSet<object>();
+
+/** Whether a tool is the framework-created invoke_agent from {@link createInvokeAgentTool}. */
+export function isFrameworkInvokeAgentTool(value: unknown): boolean {
+  return value !== null && typeof value === "object" && frameworkInvokeAgentTools.has(value);
+}
 
 const getInvokeAgentInputSchema = defineSchema((v) =>
   v.object({
@@ -65,7 +71,7 @@ function buildInvokeAgentPrompt(
  */
 export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): Tool {
   const resolveAgent = input.resolveAgent ?? getAgent;
-  return markSkillDelegationOverridesUnsupported(markRuntimeLocalTool({
+  const tool = markSkillDelegationOverridesUnsupported(markRuntimeLocalTool({
     id: INVOKE_AGENT_TOOL_ID,
     type: "function",
     description:
@@ -95,6 +101,8 @@ export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): T
       }, context);
     },
   }));
+  frameworkInvokeAgentTools.add(tool);
+  return tool;
 }
 
 /** Input payload for build agent delegate tools. */

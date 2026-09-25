@@ -14,9 +14,12 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitFor } from "#veryfront/testing/deno-compat.ts";
 import { agent as createAgent } from "#veryfront/agent";
+import { isFrameworkInvokeAgentTool } from "#veryfront/agent/runtime/agent-delegation.ts";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
-import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
 
 type RunInput = Parameters<typeof createRuntimeAgentStreamResponse>[0];
 
@@ -45,6 +48,51 @@ const controlPlaneInvokeAgent = {
 };
 
 describe("internal-agents/run-stream invoke_agent park (#1815)", () => {
+  it("replaces the framework invoke_agent with the control-plane tool", () => {
+    const runtimeAgent = createAgent({
+      id: "intake-orchestrator",
+      model: "hosted/invoke-merge-model",
+      system: "Delegate classification.",
+      tools: { invoke_agent: true },
+      skills: false,
+    });
+    const configured = (runtimeAgent.config.tools as Record<string, unknown>).invoke_agent;
+    assert(isFrameworkInvokeAgentTool(configured));
+
+    const merged = buildMergedTools(
+      runtimeAgent,
+      runInput("run_invoke_merge_framework", [controlPlaneInvokeAgent]),
+      new AgentRunSessionManager(),
+    ) as Record<string, unknown>;
+
+    assert(merged.invoke_agent !== configured, "the control-plane tool must replace the local one");
+    assertEquals(isFrameworkInvokeAgentTool(merged.invoke_agent), false);
+  });
+
+  it("keeps a custom inline tool named invoke_agent", () => {
+    const customInvokeAgent = tool({
+      id: "invoke_agent",
+      description: "Project-specific delegation",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    });
+    const runtimeAgent = createAgent({
+      id: "intake-orchestrator",
+      model: "hosted/invoke-merge-model",
+      system: "Delegate classification.",
+      tools: { invoke_agent: customInvokeAgent },
+      skills: false,
+    });
+
+    const merged = buildMergedTools(
+      runtimeAgent,
+      runInput("run_invoke_merge_custom", [controlPlaneInvokeAgent]),
+      new AgentRunSessionManager(),
+    ) as Record<string, unknown>;
+
+    assertEquals(merged.invoke_agent, customInvokeAgent);
+  });
+
   it("waits for the control-plane invoke_agent result instead of starting another model call", async () => {
     const model = scriptedModel([
       {
