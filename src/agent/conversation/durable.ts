@@ -83,6 +83,8 @@ type ConversationRunApiFetch = typeof globalThis.fetch;
  * Keep durable run API calls in the same distributed trace as the execution
  * span. The host deliberately does not replace globalThis.fetch, so callers
  * that do not inject a transport must opt into the framework's HTTP wrapper.
+ * Explicit transports remain host-owned and are expected to provide their own
+ * instrumentation; preserving them avoids double instrumentation.
  */
 function resolveConversationRunFetch(fetch?: ConversationRunApiFetch): ConversationRunApiFetch {
   return fetch ?? createInstrumentedFetch(globalThis.fetch);

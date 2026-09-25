@@ -29,6 +29,11 @@ import {
 import { DurableRunEventPersistenceError } from "./private-run-event.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  _resetShimForTests,
+  setGlobalTracerProvider,
+  type Span,
+} from "#veryfront/observability/tracing/api-shim.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -129,6 +134,57 @@ function stubFetchUntilAborted(): void {
 describe("agent/durable", () => {
   afterEach(() => {
     restoreMockFetch();
+    _resetShimForTests();
+  });
+
+  it("propagates traceparent on the default durable API transport", async () => {
+    const traceparent = "00-11111111111111111111111111111111-2222222222222222-01";
+    const span: Span = {
+      setAttribute: () => span,
+      setAttributes: () => span,
+      setStatus: () => span,
+      recordException: () => undefined,
+      addEvent: () => span,
+      end: () => undefined,
+      spanContext: () => ({ traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 }),
+      updateName: () => undefined,
+    };
+    setGlobalTracerProvider({
+      getTracer: () => ({
+        startSpan: () => span,
+        startActiveSpan: (
+          _name: string,
+          optionsOrCallback: unknown,
+          contextOrCallback?: unknown,
+          callback?: (activeSpan: Span) => unknown,
+        ) => {
+          const activeCallback = typeof optionsOrCallback === "function"
+            ? optionsOrCallback
+            : typeof contextOrCallback === "function"
+            ? contextOrCallback
+            : callback;
+          return activeCallback!(span);
+        },
+      }),
+    });
+
+    const fetchCalls = stubFetchSequence(
+      acceptedRunResponse({ run_id: "run_traceparent" }),
+      jsonResponse(durableRunProjection({ run_id: "run_traceparent" }), 200),
+    );
+
+    await createConversationAgentRun({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_traceparent",
+      agentId: "default-chat",
+      projectId: null,
+      branchId: null,
+    });
+
+    const headers = new Headers(fetchCalls[0]?.[1]?.headers);
+    assertEquals(headers.get("traceparent"), traceparent);
   });
 
   it("resolves non-project run targets to nulls", () => {
