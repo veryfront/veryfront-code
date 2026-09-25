@@ -423,9 +423,9 @@ describe("executor runtime preparation", () => {
             visible.push(
               (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
             );
-            return finishStream(visible.length === 1 ? "load_skill" : undefined, {
-              skillId: "example",
-            });
+            return visible.length === 1
+              ? finishStream("load_skill", { skillId: "example" })
+              : finishStream(undefined, {}, "Synthetic answer");
           },
         }),
       },
@@ -797,12 +797,19 @@ async function preparedStream(
   });
 }
 
-function finishStream(toolName?: string, input: Record<string, unknown> = {}) {
+function finishStream(
+  toolName?: string,
+  input: Record<string, unknown> = {},
+  text?: string,
+) {
   return Promise.resolve({
     stream: new ReadableStream<unknown>({
       start(controller) {
         if (toolName) {
           controller.enqueue({ type: "tool-call", toolCallId: "synthetic-call", toolName, input });
+        }
+        if (text) {
+          controller.enqueue({ type: "text-delta", id: "text-1", delta: text });
         }
         controller.enqueue({
           type: "finish",
@@ -1117,7 +1124,10 @@ describe("executor runtime preparation review regressions", () => {
         publishParentRunEvents: () => Promise.resolve(),
         resolveModelRuntime: () => ({
           ...model,
-          doStream: () => finishStream(calls++ === 0 ? "visible" : undefined),
+          doStream: () =>
+            calls++ === 0
+              ? finishStream("visible")
+              : finishStream(undefined, {}, "Synthetic answer"),
         }),
       },
     });
@@ -2117,7 +2127,9 @@ Synthetic source instructions.`,
             ...model,
             doStream: (options) => {
               systems.push(JSON.stringify((options as ModelRuntimeCallOptions).prompt));
-              return finishStream(calls++ === 0 ? "update_file" : undefined, { path });
+              return calls++ === 0
+                ? finishStream("update_file", { path })
+                : finishStream(undefined, {}, "Synthetic answer");
             },
           }),
         },
@@ -2178,9 +2190,9 @@ Synthetic source instructions.`,
               visible.push(
                 (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
               );
-              return finishStream(visible.length === 1 ? "update_file" : undefined, {
-                path: "AGENTS.md",
-              });
+              return visible.length === 1
+                ? finishStream("update_file", { path: "AGENTS.md" })
+                : finishStream(undefined, {}, "Synthetic answer");
             },
           }),
         },
