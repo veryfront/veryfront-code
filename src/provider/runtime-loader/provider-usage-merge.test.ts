@@ -589,4 +589,51 @@ describe("provider/runtime-usage amount readers", () => {
       {},
     );
   });
+
+  it("defines gateway costs as own data without consulting a polluted prototype", () => {
+    let setterCalls = 0;
+    let getterCalls = 0;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "providerCostUsd",
+    );
+    Object.defineProperty(Object.prototype, "providerCostUsd", {
+      configurable: true,
+      get() {
+        getterCalls++;
+        return 99;
+      },
+      set() {
+        setterCalls++;
+      },
+    });
+    Object.defineProperty(Object.prototype, "cost_usd", {
+      configurable: true,
+      get() {
+        getterCalls++;
+        return "0.5";
+      },
+    });
+
+    try {
+      const costs = readGatewayUsageCosts({ provider_cost_usd: "0.0010000000" });
+
+      assertEquals(Object.getPrototypeOf(costs), null);
+      assertEquals(Object.hasOwn(costs, "providerCostUsd"), true);
+      assertEquals(costs.providerCostUsd, 0.001);
+      assertEquals(costs.costUsd, undefined);
+      assertEquals(JSON.stringify(costs), '{"providerCostUsd":0.001}');
+      assertEquals(Object.getPrototypeOf(readGatewayUsageCosts(undefined)), null);
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Object.prototype, "providerCostUsd", originalDescriptor);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).providerCostUsd;
+      }
+      delete (Object.prototype as Record<string, unknown>).cost_usd;
+    }
+
+    assertEquals(setterCalls, 0);
+    assertEquals(getterCalls, 0);
+  });
 });

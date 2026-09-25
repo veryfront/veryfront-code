@@ -128,15 +128,20 @@ const GATEWAY_USAGE_COST_FIELDS = [
   ["costCredits", "cost_credits"],
 ] as const satisfies readonly (readonly [keyof RuntimeUsage, string])[];
 
-/** Read the cost and credit amounts of a gateway `veryfront` usage envelope. */
+/**
+ * Read the cost and credit amounts of a gateway `veryfront` usage envelope.
+ *
+ * The result is a null-prototype data record so a polluted `Object.prototype`
+ * can neither intercept the writes nor surface absent fields.
+ */
 export function readGatewayUsageCosts(
   envelope: Record<string, unknown> | undefined,
 ): RuntimeUsage {
-  const costs: RuntimeUsage = {};
+  const costs = Object.create(null) as RuntimeUsage;
   if (!envelope) return costs;
   for (const [field, key] of GATEWAY_USAGE_COST_FIELDS) {
-    const amount = readRuntimeCost(envelope[key]);
-    if (amount !== undefined) costs[field] = amount;
+    const amount = readRuntimeCost(Object.hasOwn(envelope, key) ? envelope[key] : undefined);
+    if (amount !== undefined) defineRuntimeUsageDataProperty(costs, field, amount);
   }
   return costs;
 }

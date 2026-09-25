@@ -243,23 +243,16 @@ function joinApiUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
-function readFiniteNumber(
-  record: Record<string, unknown>,
-  field: keyof GatewayBillingGroupFinalization,
-): number | undefined {
-  return readRuntimeAmount(record[field]);
-}
-
 function parseGatewayBillingGroupFinalization(
   payload: unknown,
 ): GatewayBillingGroupFinalization | undefined {
   if (!isRecord(payload) || typeof payload.billing_group_id !== "string") return undefined;
-  const chargedCredits = readFiniteNumber(payload, "charged_credits");
-  const targetCredits = readFiniteNumber(payload, "target_credits");
-  const adjustmentCredits = readFiniteNumber(payload, "adjustment_credits");
-  const providerCostUsd = readFiniteNumber(payload, "provider_cost_usd");
-  const veryfrontChargeUsd = readFiniteNumber(payload, "veryfront_charge_usd");
-  const veryfrontBilledUsd = readFiniteNumber(payload, "veryfront_billed_usd");
+  const chargedCredits = readRuntimeAmount(payload.charged_credits);
+  const targetCredits = readRuntimeAmount(payload.target_credits);
+  const adjustmentCredits = readRuntimeAmount(payload.adjustment_credits);
+  const providerCostUsd = readRuntimeAmount(payload.provider_cost_usd);
+  const veryfrontChargeUsd = readRuntimeAmount(payload.veryfront_charge_usd);
+  const veryfrontBilledUsd = readRuntimeAmount(payload.veryfront_billed_usd);
 
   if (
     chargedCredits === undefined ||
