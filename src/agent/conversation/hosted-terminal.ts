@@ -5,6 +5,7 @@ import {
 } from "./durable.ts";
 import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 import { resolveKnownProviderTerminalError } from "#veryfront/agent/streaming/stream-outcome.ts";
+import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 
 /** Input payload for conversation hosted terminal state. */
 export interface ConversationHostedTerminalStateInput {
@@ -25,6 +26,16 @@ export const CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_CODE =
 const DEFAULT_CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_MESSAGE = "Chat stream aborted";
 const DEFAULT_CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_MESSAGE =
   "Assistant completed before tool execution completed";
+const EMPTY_RESPONSE_TERMINAL_ERROR_CODE = "EMPTY_RESPONSE";
+const EMPTY_RESPONSE_TERMINAL_ERROR_MESSAGE = "Assistant completed without producing a response";
+
+function isExecutorEmptyResponseError(error: unknown): boolean {
+  try {
+    return error instanceof ExecutorAgentError && error.code === EMPTY_RESPONSE_TERMINAL_ERROR_CODE;
+  } catch {
+    return false;
+  }
+}
 
 /** Input payload for resolve conversation hosted terminal state. */
 export interface ResolveConversationHostedTerminalStateInput {
@@ -69,6 +80,13 @@ export function resolveConversationHostedTerminalState(
 export function resolveConversationHostedStreamErrorState(
   error: unknown,
 ): ConversationHostedTerminalStateResolution {
+  if (isExecutorEmptyResponseError(error)) {
+    return {
+      status: "failed",
+      terminalErrorCode: EMPTY_RESPONSE_TERMINAL_ERROR_CODE,
+      terminalErrorMessage: EMPTY_RESPONSE_TERMINAL_ERROR_MESSAGE,
+    };
+  }
   const knownProviderError = resolveKnownProviderTerminalError(error);
   return {
     status: "failed",

@@ -7,10 +7,10 @@ import { clearModelProviders } from "#veryfront/provider";
 import { createVeryfrontCloudModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
-import { agent } from "../../../../../../src/agent/index.ts";
 import { AgentRuntime } from "../../../../../../src/agent/runtime/index.ts";
 import { prepareAgentRuntimeMessagesFromUiMessages } from "../../../../../../src/agent/runtime/message-preparation.ts";
 import type { AgentConfig } from "../../../../../../src/agent/types.ts";
+import type { Message } from "../../../../../../src/agent/schemas/index.ts";
 import type { RuntimeToolFilterConfig } from "../../../../../../src/agent/runtime/runtime-tool-config.ts";
 
 function toolCallSse(id: string, name: string, input: Record<string, unknown>): string {
@@ -62,6 +62,7 @@ it("recovers the recorded Mistral tool-search then empty-stop sequence", async (
       str_replace: { old_string: "before", new_string: "after" },
     }),
     finalTextSse,
+    'data: {"choices":[{"delta":{"content":"Follow-up complete."}}]}\n\ndata: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
   ];
   installMockFetch(async (input, init) => {
     const request = new Request(input, init);
@@ -76,62 +77,113 @@ it("recovers the recorded Mistral tool-search then empty-stop sequence", async (
     });
   });
 
+  const recoveryFileMarker = "ISSUE_1834_RECOVERY_FILE_EVIDENCE";
+  const prepared = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      {
+        id: "user00001",
+        role: "user",
+        parts: [{ type: "text", text: "Review src/example.ts." }],
+      },
+      {
+        id: "assist001",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "get_file",
+          toolCallId: "read00001",
+          state: "output-available",
+          input: { path: "src/example.ts" },
+          output: {
+            path: "src/example.ts",
+            content: `${recoveryFileMarker}\n${"export const value = 1;\n".repeat(32)}`,
+            checksum: "checksum-recovery-v1",
+            version_id: "version-recovery-v1",
+          },
+        }, { type: "text", text: "I found the requested edit." }],
+      },
+      {
+        id: "user00002",
+        role: "user",
+        parts: [{ type: "text", text: "Apply it now." }],
+      },
+    ],
+  });
   let executions = 0;
   const model = createVeryfrontCloudModel("mistral/mistral-small-2503");
-  const assistant = agent(
-    {
-      id: "issue-1834-mistral-recovery",
-      model: "mistral/mistral-small-2503",
-      system: "Update the requested project file and report completion.",
-      skills: false,
-      tools: {
-        update_file: tool({
-          id: "update_file",
-          description: "Update a project file",
-          inputSchema: defineSchema((v) =>
-            v.object({
-              path: v.string(),
-              str_replace: v.object({ old_string: v.string(), new_string: v.string() }),
-            })
-          )(),
-          execute: ({ path }) => {
-            executions++;
-            return { success: true, path };
-          },
-        }),
-      },
-      maxSteps: 4,
-      resolveModelTransport: () => ({ model }),
-      __vfToolLoadingMode: "deferred",
-    } as AgentConfig & RuntimeToolFilterConfig,
-  );
+  const runtimeConfig = {
+    model: "mistral/mistral-small-2503",
+    system: "Update the requested project file and report completion.",
+    skills: false,
+    tools: {
+      update_file: tool({
+        id: "update_file",
+        description: "Update a project file",
+        inputSchema: defineSchema((v) =>
+          v.object({
+            path: v.string(),
+            str_replace: v.object({ old_string: v.string(), new_string: v.string() }),
+          })
+        )(),
+        execute: ({ path }) => {
+          executions++;
+          return { success: true, path };
+        },
+      }),
+    },
+    maxSteps: 4,
+    __vfToolLoadingMode: "deferred",
+  } as AgentConfig & RuntimeToolFilterConfig;
+  const createRuntime = () =>
+    new AgentRuntime("issue-1834-mistral-recovery", runtimeConfig, {
+      resolveModelRuntime: () => model,
+    });
+  const runtime = createRuntime();
 
-  const response = await assistant.stream({ input: "Update src/example.ts" });
-  const body = await response.toDataStreamResponse().text();
+  let completedMessages: Message[] | undefined;
+  const response = await runtime.stream(prepared, undefined, {
+    onFinish: (finished) => {
+      completedMessages = finished.messages;
+    },
+  });
+  const body = await new Response(response).text();
 
   assertEquals(bodies.length, 4);
   assertEquals(executions, 1);
   assertStringIncludes(body, "Updated src/example.ts.");
   assertEquals(body.includes('"type":"error"'), false);
+  assertStringIncludes(JSON.stringify(bodies[2]), recoveryFileMarker);
 
   const emptyRequestMessages = bodies[1]?.messages as Array<Record<string, unknown>>;
-  const searchCall = emptyRequestMessages.find((message) =>
-    message.role === "assistant" &&
-    Array.isArray(message.tool_calls)
+  const searchCallIds = emptyRequestMessages.flatMap((message) =>
+    message.role === "assistant" && Array.isArray(message.tool_calls)
+      ? (message.tool_calls as Array<{ id: string }>).map((call) => call.id)
+      : []
   );
   const searchResult = emptyRequestMessages.find((message) =>
     message.role === "tool" && message.tool_call_id === "search002"
   );
-  assertEquals(
-    (searchCall?.tool_calls as Array<{ id: string }> | undefined)?.at(-1)?.id,
-    "search002",
-  );
+  assertEquals(searchCallIds.includes("search002"), true);
   assertEquals(searchResult?.tool_call_id, "search002");
   assertEquals(
     (bodies[1]?.tools as Array<{ function: { name: string } }>).map((entry) => entry.function.name)
       .includes("update_file"),
     true,
   );
+
+  assertEquals(completedMessages !== undefined, true);
+  const followUp = await createRuntime().generate([
+    ...(completedMessages ?? []),
+    {
+      id: "user00003",
+      role: "user",
+      parts: [{ type: "text", text: "Make one more related edit." }],
+      timestamp: 10,
+    },
+  ]);
+  assertEquals(followUp.text, "Follow-up complete.");
+  assertEquals(bodies.length, 5);
+  assertStringIncludes(JSON.stringify(bodies[4]), recoveryFileMarker);
 });
 
 it("retains the preceding file evidence through preparation and the Mistral edit request", async () => {
