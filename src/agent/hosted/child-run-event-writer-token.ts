@@ -5,6 +5,7 @@ import {
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { instrumentConversationRunFetch } from "../conversation/durable.ts";
 import {
   type ConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
@@ -378,7 +379,9 @@ export function createHostedConversationRunChunkMirrorFromCapability(
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
     runId: state.runId,
-    fetch: state.fetch,
+    // Capability transports are host-owned, but durable persistence still
+    // needs to stay in the active execution trace.
+    fetch: instrumentConversationRunFetch(state.fetch),
   });
 }
 

@@ -1,5 +1,11 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  _resetShimForTests,
+  setGlobalTracerProvider,
+  type Span,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
   createHostedRunEventWriterCapability,
@@ -105,11 +111,40 @@ Deno.test("run event writer capability delegates parent to child to grandchild e
   );
 });
 
+const TEST_TRACEPARENT = "00-11111111111111111111111111111111-2222222222222222-01";
+
+/** Install a tracer whose active span encodes as `TEST_TRACEPARENT`. */
+function installTestTracer(): void {
+  const span: Span = {
+    setAttribute: () => span,
+    setAttributes: () => span,
+    setStatus: () => span,
+    recordException: () => undefined,
+    addEvent: () => span,
+    end: () => undefined,
+    spanContext: () => ({ traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 }),
+    updateName: () => undefined,
+  };
+  setGlobalTracerProvider({
+    getTracer: () => ({
+      startSpan: () => span,
+      startActiveSpan: ((...args: unknown[]) => {
+        const callback = args.find((arg) => typeof arg === "function") as
+          | ((activeSpan: Span) => unknown)
+          | undefined;
+        if (!callback) throw new Error("Expected tracing callback");
+        return callback(span);
+      }) as never,
+    }),
+  });
+}
+
 Deno.test("capability-backed mirrors ignore caller-supplied API and run identities", async () => {
   const originalFetch = globalThis.fetch;
   const requests: Request[] = [];
   const conversationId = "11111111-1111-4111-8111-111111111111";
   try {
+    installTestTracer();
     globalThis.fetch = ((input, init) => {
       const request = new Request(input, init);
       requests.push(request);
@@ -162,9 +197,106 @@ Deno.test("capability-backed mirrors ignore caller-supplied API and run identiti
       `${"https://trusted.example.test"}/conversations/${conversationId}/runs/run_trusted/events`,
     );
     assertEquals(request.headers.get("Authorization"), "Bearer trusted-writer-token");
+    assertEquals(request.headers.get("traceparent"), TEST_TRACEPARENT);
   } finally {
     globalThis.fetch = originalFetch;
+    _resetShimForTests();
   }
+});
+
+Deno.test("traced capability-backed writes keep credentials off tenant-mutable header intrinsics", async () => {
+  const writerToken = "writer-token-must-stay-private";
+  const conversationId = "11111111-1111-4111-8111-111111111111";
+  const nativeApply = Reflect.apply;
+  const nativeHeadersGet = Headers.prototype.get;
+  const nativeHeadersSet = Headers.prototype.set;
+  const nativeHeadersAppend = Headers.prototype.append;
+  const nativeHeadersDelete = Headers.prototype.delete;
+  const observations = { headerMutator: 0, headerSecret: 0, poisonedFetch: 0 };
+  const trusted: Array<{ url: string; authorization: string | null; traceparent: string | null }> =
+    [];
+  const trustedFetch: typeof fetch = (input, init) => {
+    const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers);
+    trusted.push({
+      url: String(input),
+      authorization: nativeApply(nativeHeadersGet, headers, ["Authorization"]) as string | null,
+      traceparent: nativeApply(nativeHeadersGet, headers, ["traceparent"]) as string | null,
+    });
+    return Promise.resolve(Response.json({
+      latestEventId: 1,
+      latestExternalEventSequence: 1,
+      appendedCount: 1,
+      run: {
+        runId: "run_traced",
+        conversationId,
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+    }));
+  };
+  const observeMutator = function (this: Headers) {
+    observations.headerMutator += 1;
+    if (nativeApply(nativeHeadersGet, this, ["Authorization"]) === `Bearer ${writerToken}`) {
+      observations.headerSecret += 1;
+    }
+  };
+
+  try {
+    installTestTracer();
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.test",
+      runId: "run_traced",
+      runEventAppendToken: writerToken,
+      fetch: trustedFetch,
+    });
+    const mirror = createHostedConversationRunChunkMirrorFromCapability(capability, {
+      expectedRunId: "run_traced",
+      conversationId,
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    });
+    if (!mirror) throw new Error("Expected a capability-backed mirror");
+
+    Headers.prototype.set = function (name: string, value: string) {
+      observeMutator.call(this);
+      return nativeApply(nativeHeadersSet, this, [name, value]);
+    };
+    Headers.prototype.append = function (name: string, value: string) {
+      observeMutator.call(this);
+      return nativeApply(nativeHeadersAppend, this, [name, value]);
+    };
+    Headers.prototype.delete = function (name: string) {
+      observeMutator.call(this);
+      return nativeApply(nativeHeadersDelete, this, [name]);
+    };
+    installMockFetch(
+      (() => {
+        observations.poisonedFetch += 1;
+        return Promise.reject(new Error("poisoned global fetch must not run"));
+      }) as typeof fetch,
+    );
+    Reflect.apply = (() => {
+      throw new Error("poisoned Reflect.apply must not run");
+    }) as typeof Reflect.apply;
+
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+    await mirror.flush();
+    mirror.dispose();
+  } finally {
+    Reflect.apply = nativeApply;
+    Headers.prototype.set = nativeHeadersSet;
+    Headers.prototype.append = nativeHeadersAppend;
+    Headers.prototype.delete = nativeHeadersDelete;
+    restoreMockFetch();
+    _resetShimForTests();
+  }
+
+  assertEquals(observations, { headerMutator: 0, headerSecret: 0, poisonedFetch: 0 });
+  assertEquals(trusted, [{
+    url: `https://api.example.test/conversations/${conversationId}/runs/run_traced/events`,
+    authorization: `Bearer ${writerToken}`,
+    traceparent: TEST_TRACEPARENT,
+  }]);
 });
 
 for (const capabilityRunId of ["run_parent", "run_sibling"]) {
