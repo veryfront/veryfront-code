@@ -421,8 +421,11 @@ export class StylesCSSHandler extends BaseHandler {
     if (missingStylesheetWarned.has(warningKey)) {
       logger.debug("No project stylesheet found; provider default will be used", details);
     } else {
+      // Evict the oldest key rather than clearing, so reaching the bound does
+      // not make every project already reported warn again.
       if (missingStylesheetWarned.size >= MISSING_STYLESHEET_WARNING_LIMIT) {
-        missingStylesheetWarned.clear();
+        const oldest = missingStylesheetWarned.values().next().value;
+        if (oldest !== undefined) missingStylesheetWarned.delete(oldest);
       }
       missingStylesheetWarned.add(warningKey);
       logger.warn("No project stylesheet found; provider default will be used", details);
