@@ -223,9 +223,10 @@ threshold when measured, and improves cost, token use, or p95 latency. Otherwise
 the comparison keeps the baseline or asks for review.
 
 Gateway-backed runs add split input/output tokens, billable input/output tokens,
-provider cost, Veryfront charge, credits, and cost source to the comparison
-report. Direct local runs do not estimate prices in the framework; their cost
-cells stay `not measured` unless a gateway supplies billing metadata.
+credits, and cost source to the comparison report. A credit is the unit of
+account; the framework keeps no pricing table and does not convert credits to
+a currency. Direct local runs do not estimate prices in the framework; their
+cost cells stay `not measured` unless a gateway supplies billing metadata.
 
 Use a comparison policy when latency, cost, and quality tradeoffs depend on the
 product. Constraints are hard gates. Objectives rank candidates that pass those
@@ -255,10 +256,9 @@ veryfront eval deep-research \
 
 Policy metrics can reference `passRate`, `failed`, `gateFailures`,
 `groundednessScore`, `inputTokens`, `outputTokens`, `totalTokens`,
-`billableInputTokens`, `billableOutputTokens`, `costUsd`, `providerCostUsd`,
-`veryfrontChargeUsd`, `veryfrontBilledUsd`, `costCredits`, and `p95Ms`.
-`costUsd` remains a backward-compatible cost objective and prefers gateway
-Veryfront charge when it is available. Use `min`, `max`, and
+`billableInputTokens`, `billableOutputTokens`, `costUsd`, `costCredits`, and
+`p95Ms`. `costUsd` remains a backward-compatible cost objective; for
+gateway-backed runs it compares `costCredits`. Use `min`, `max`, and
 `maxRegressionPct` for constraints. Use `weight` with `direction` set to
 `"minimize"` or `"maximize"` for objectives.
 
@@ -395,10 +395,10 @@ metrics.ops.cost({ maxCredits: 0.5 }).budget();
 
 `metrics.ops.cost` budgets the gateway `costCredits` of a record. A credit is
 the unit of account; the framework keeps no pricing table and does not convert
-credits to a currency. `maxUsd` still reads the USD amounts of older gateway
-usage but is deprecated and leaves with the next release. Token and cost
-budgets fail when the measurement required by their configured limit is
-missing; absent usage evidence never passes a budget.
+credits to a currency. `maxUsd` is removed; `metrics.ops.cost({ maxUsd })`
+throws at construction and names `maxCredits`. Token and cost budgets fail
+when the measurement required by their configured limit is missing; absent
+usage evidence never passes a budget.
 
 Use `calledTool` when the agent must call a tool. Add `input` when the tool
 arguments must include specific fields. `match: "partial"` checks that the

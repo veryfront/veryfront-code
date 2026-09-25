@@ -6,12 +6,13 @@ versions are listed at
 
 ## Unreleased
 
-### Changed: eval cost budgets and gateway usage are measured in credits
+### Breaking: eval cost budgets and gateway usage are measured in credits
 
 `metrics.ops.cost` takes `maxCredits` and reads the gateway `costCredits` of a
-record; its evidence carries `costCredits` and `maxCredits`. `maxUsd` still
-reads the USD amounts of older gateway usage but is deprecated and leaves with
-the next release. Gateway usage envelopes and AG-UI run metadata contribute
+record; its evidence carries `costCredits` and `maxCredits`, and the Markdown
+eval report's examples table drops its `Billed USD` column. `maxUsd` is
+removed: `metrics.ops.cost({ maxUsd })` throws at construction and names
+`maxCredits`. Gateway usage envelopes and AG-UI run metadata contribute
 `costCredits` only: `cost_usd`, `provider_*_cost_usd`, `veryfront_*_charge_usd`
 and `veryfront_billed_usd` are no longer copied into runtime or eval usage, and
 eval billing finalization parses `charged_credits`, `target_credits` and

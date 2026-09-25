@@ -21,7 +21,6 @@ describe("eval/metric-labels", () => {
       formatEvalMetricLabel("ops.cost", { maxCredits: 0.5 }),
       "Cost stayed under 0.5 credits",
     );
-    assertEquals(formatEvalMetricLabel("ops.cost", { maxUsd: 0.05 }), "Cost stayed under $0.05");
   });
 
   it("phrases parameterless metrics without inventing a parameter", () => {
@@ -41,7 +40,7 @@ describe("eval/metric-labels", () => {
     );
     assertEquals(formatEvalMetricLabel("knowledge.mrr", {}), "Knowledge MRR");
     assertEquals(
-      formatEvalMetricLabel("ops.cost", { maxUsd: Number.NaN }),
+      formatEvalMetricLabel("ops.cost", { maxCredits: Number.NaN }),
       "Cost stayed within budget",
     );
   });

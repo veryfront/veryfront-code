@@ -13,7 +13,6 @@ import type {
   EvalSeverity,
   EvalToolCallCountOptions,
   EvalToolCallMatchOptions,
-  EvalUsage,
 } from "./types.ts";
 import { formatEvalMetricLabel } from "./metric-labels.ts";
 import {
@@ -724,32 +723,6 @@ function normalizeBudgetLimit(value: number, label: string): number {
   return value;
 }
 
-function createCostBudgetMetric(
-  measure: "costCredits" | "costUsd",
-  limitKey: "maxCredits" | "maxUsd",
-  limit: number,
-  readCost: (usage: EvalUsage) => number | undefined,
-): EvalMetric {
-  return createMetric("ops.cost", "ops", (record) => {
-    const cost = readCost(record.usage);
-    const measured = cost !== undefined && Number.isFinite(cost) && cost >= 0;
-    const pass = measured && cost <= limit;
-    return {
-      name: "ops.cost",
-      family: "ops",
-      severity: "budget",
-      score: pass ? 1 : 0,
-      pass,
-      ...(!measured ? { explanation: "Eval cost was not measured." } : {}),
-      evidence: {
-        ...(cost === undefined ? {} : { [measure]: cost }),
-        [limitKey]: limit,
-        ...(record.usage.costSource ? { costSource: record.usage.costSource } : {}),
-      },
-    };
-  }, { [limitKey]: limit });
-}
-
 function createMetric(
   name: string,
   family: EvalMetricFamily,
@@ -1301,30 +1274,32 @@ export const metrics = {
       }, limits);
     },
 
-    cost(
-      options: { maxCredits: number } | {
-        /** @deprecated USD cost leaves eval usage in the next release; use `maxCredits`. */
-        maxUsd: number;
-      },
-    ): EvalMetric {
+    cost(options: { maxCredits: number }): EvalMetric {
       if (options && "maxUsd" in options) {
-        const maxUsd = normalizeBudgetLimit(options.maxUsd, "ops.cost maxUsd");
-        return createCostBudgetMetric(
-          "costUsd",
-          "maxUsd",
-          maxUsd,
-          (usage) =>
-            usage.veryfrontBilledUsd ?? usage.veryfrontChargeUsd ?? usage.costUsd ??
-              usage.providerCostUsd,
+        throw createEvalValidationError(
+          "ops.cost maxUsd was removed; budget cost in credits with maxCredits",
         );
       }
       const maxCredits = normalizeBudgetLimit(options?.maxCredits, "ops.cost maxCredits");
-      return createCostBudgetMetric(
-        "costCredits",
-        "maxCredits",
-        maxCredits,
-        (usage) => usage.costCredits,
-      );
+      return createMetric("ops.cost", "ops", (record) => {
+        const costCredits = record.usage.costCredits;
+        const measured = costCredits !== undefined && Number.isFinite(costCredits) &&
+          costCredits >= 0;
+        const pass = measured && costCredits <= maxCredits;
+        return {
+          name: "ops.cost",
+          family: "ops",
+          severity: "budget",
+          score: pass ? 1 : 0,
+          pass,
+          ...(!measured ? { explanation: "Eval cost was not measured." } : {}),
+          evidence: {
+            ...(costCredits === undefined ? {} : { costCredits }),
+            maxCredits,
+            ...(record.usage.costSource ? { costSource: record.usage.costSource } : {}),
+          },
+        };
+      }, { maxCredits });
     },
   },
 
