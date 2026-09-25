@@ -142,6 +142,13 @@ values.
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
 
+If a provider stops without producing assistant text or a new tool call after
+a completed tool, the runtime uses one remaining step to ask it to continue
+from the existing tool results. It preserves those results rather than
+rerunning the prior step. A second empty response, or an empty response with no
+remaining step, fails the run with `EMPTY_RESPONSE` instead of completing with
+an empty answer.
+
 ## Load broad tool catalogs progressively
 
 The `tools` selector controls both authorization and initial schema exposure:

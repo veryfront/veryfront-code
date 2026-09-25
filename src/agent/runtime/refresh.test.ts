@@ -683,7 +683,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-generate");
   });
 
-  it("preserves the finish reason when generate() stops without final text", async () => {
+  it("recovers when generate() stops without final text after a completed tool", async () => {
     const model = scriptedModel([
       {
         toolCalls: [{
@@ -693,6 +693,7 @@ describe("agent runtime refresh hooks", () => {
         }],
       },
       { content: [], finishReason: "stop" },
+      { text: "The report was written." },
     ], { modelId: "hosted/empty-final-text", only: "generate" });
 
     const writeReport = tool({
@@ -712,9 +713,9 @@ describe("agent runtime refresh hooks", () => {
 
     const response = await assistant.generate({ input: "Write a report" });
 
-    assertEquals(model.callCount, 2);
+    assertEquals(model.callCount, 3);
     assertEquals(response.status, "completed");
-    assertEquals(response.text, "");
+    assertEquals(response.text, "The report was written.");
     assertEquals(response.metadata?.finishReason, "stop");
     assertEquals(response.toolCalls[0]?.status, "completed");
   });
