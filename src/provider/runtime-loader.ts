@@ -3,6 +3,7 @@ import { createError, toError } from "#veryfront/errors";
 import {
   mergeUsage,
   readGatewayBillingMode,
+  readGatewayUsageCosts,
   type RuntimeUsage,
 } from "./runtime-loader/provider-usage.ts";
 import type { ProviderKind } from "./runtime-loader/provider-http.ts";
@@ -55,6 +56,7 @@ export {
   mergeUsage,
   parseRetryAfterMs,
   readGatewayBillingMode,
+  readGatewayUsageCosts,
   readRecord,
   requestJson,
   requestStream,

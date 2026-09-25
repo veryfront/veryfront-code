@@ -255,13 +255,31 @@ describe("chat/provider-errors", () => {
     );
   });
 
+  it("accepts decimal-string credit amounts from the gateway", () => {
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "Agent run credit limit exceeded",
+        suggestion: "Start a new reviewed run.",
+        balance: "57.2500000000",
+        required: "85.5000000000",
+      }),
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message:
+          "Agent run credit limit exceeded: 85.5 credits required, 57.25 remaining. Start a new reviewed run or reduce the scope of this run.",
+        status: 402,
+      },
+    );
+  });
+
   it("falls back safely when gateway credit values are invalid", () => {
     assertEquals(
       parseProviderError({
         slug: "insufficient-credits",
         error: "Agent run credit limit exceeded",
         suggestion: "Start a new reviewed run.",
-        balance: "57.25",
+        balance: "57.25 credits",
         required: 85.5,
       }),
       {

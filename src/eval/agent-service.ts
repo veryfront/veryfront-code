@@ -7,6 +7,7 @@ import {
   parseAgUiSseResponse,
   type ParseAgUiSseResponseOptions,
 } from "#veryfront/agent";
+import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import type {
   EvalAgentAdapter,
   EvalAgentAdapterContext,
@@ -602,25 +603,25 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
   const reasoningTokens = readNonNegativeNumber(record.reasoningTokens) ??
     readNonNegativeNumber(record.reasoning_output_tokens) ??
     readNonNegativeNumber(record.reasoning_tokens);
-  const providerInputCostUsd = readNonNegativeNumber(record.providerInputCostUsd) ??
-    readNonNegativeNumber(record.provider_input_cost_usd);
-  const providerOutputCostUsd = readNonNegativeNumber(record.providerOutputCostUsd) ??
-    readNonNegativeNumber(record.provider_output_cost_usd);
-  const providerCostUsd = readNonNegativeNumber(record.providerCostUsd) ??
-    readNonNegativeNumber(record.provider_cost_usd);
-  const veryfrontInputChargeUsd = readNonNegativeNumber(record.veryfrontInputChargeUsd) ??
-    readNonNegativeNumber(record.veryfront_input_charge_usd);
-  const veryfrontOutputChargeUsd = readNonNegativeNumber(record.veryfrontOutputChargeUsd) ??
-    readNonNegativeNumber(record.veryfront_output_charge_usd);
-  const veryfrontChargeUsd = readNonNegativeNumber(record.veryfrontChargeUsd) ??
-    readNonNegativeNumber(record.veryfront_charge_usd);
-  const veryfrontBilledUsd = readNonNegativeNumber(record.veryfrontBilledUsd) ??
-    readNonNegativeNumber(record.veryfront_billed_usd);
-  const costCredits = readNonNegativeNumber(record.costCredits) ??
-    readNonNegativeNumber(record.cost_credits);
-  const costUsd = readNonNegativeNumber(record.costUsd) ??
-    readNonNegativeNumber(record.totalCostUsd) ??
-    readNonNegativeNumber(record.total_cost_usd) ??
+  const providerInputCostUsd = readRuntimeCost(record.providerInputCostUsd) ??
+    readRuntimeCost(record.provider_input_cost_usd);
+  const providerOutputCostUsd = readRuntimeCost(record.providerOutputCostUsd) ??
+    readRuntimeCost(record.provider_output_cost_usd);
+  const providerCostUsd = readRuntimeCost(record.providerCostUsd) ??
+    readRuntimeCost(record.provider_cost_usd);
+  const veryfrontInputChargeUsd = readRuntimeCost(record.veryfrontInputChargeUsd) ??
+    readRuntimeCost(record.veryfront_input_charge_usd);
+  const veryfrontOutputChargeUsd = readRuntimeCost(record.veryfrontOutputChargeUsd) ??
+    readRuntimeCost(record.veryfront_output_charge_usd);
+  const veryfrontChargeUsd = readRuntimeCost(record.veryfrontChargeUsd) ??
+    readRuntimeCost(record.veryfront_charge_usd);
+  const veryfrontBilledUsd = readRuntimeCost(record.veryfrontBilledUsd) ??
+    readRuntimeCost(record.veryfront_billed_usd);
+  const costCredits = readRuntimeCost(record.costCredits) ??
+    readRuntimeCost(record.cost_credits);
+  const costUsd = readRuntimeCost(record.costUsd) ??
+    readRuntimeCost(record.totalCostUsd) ??
+    readRuntimeCost(record.total_cost_usd) ??
     providerCostUsd;
   const costSource = readUsageCostSource(record.costSource ?? record.cost_source);
   const billingMode = readUsageBillingMode(record.billingMode ?? record.billing_mode);

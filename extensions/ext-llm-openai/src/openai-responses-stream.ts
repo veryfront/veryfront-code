@@ -2,6 +2,7 @@ import {
   mergeUsage,
   ProviderRequestError,
   readGatewayBillingMode,
+  readGatewayUsageCosts,
   readRecord,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
@@ -177,29 +178,7 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
     ...(typeof veryfront?.billable_output_tokens === "number"
       ? { billableOutputTokens: veryfront.billable_output_tokens }
       : {}),
-    ...(typeof veryfront?.cost_usd === "number" ? { costUsd: veryfront.cost_usd } : {}),
-    ...(typeof veryfront?.provider_input_cost_usd === "number"
-      ? { providerInputCostUsd: veryfront.provider_input_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_output_cost_usd === "number"
-      ? { providerOutputCostUsd: veryfront.provider_output_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_cost_usd === "number"
-      ? { providerCostUsd: veryfront.provider_cost_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_input_charge_usd === "number"
-      ? { veryfrontInputChargeUsd: veryfront.veryfront_input_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_output_charge_usd === "number"
-      ? { veryfrontOutputChargeUsd: veryfront.veryfront_output_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_charge_usd === "number"
-      ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_billed_usd === "number"
-      ? { veryfrontBilledUsd: veryfront.veryfront_billed_usd }
-      : {}),
-    ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
+    ...readGatewayUsageCosts(veryfront),
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
       ? { costSource }
       : {}),

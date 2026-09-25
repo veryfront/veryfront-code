@@ -43,6 +43,7 @@ import {
   getCurrentVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
+import { readRuntimeAmount } from "../../../src/provider/runtime-usage.ts";
 import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { getEnv } from "#cli/process-env";
 import { brand, dim } from "#cli/ui";
@@ -246,8 +247,7 @@ function readFiniteNumber(
   record: Record<string, unknown>,
   field: keyof GatewayBillingGroupFinalization,
 ): number | undefined {
-  const value = record[field];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return readRuntimeAmount(record[field]);
 }
 
 function parseGatewayBillingGroupFinalization(
