@@ -6,8 +6,17 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
 import type { AgentConfig } from "../types.ts";
+import { isRuntimeEmptyResponseError } from "./empty-response-recovery.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
+
+it("does not classify forged or uninspectable errors as empty-response failures", () => {
+  assertEquals(isRuntimeEmptyResponseError({ code: "EMPTY_RESPONSE" }), false);
+
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  assertEquals(isRuntimeEmptyResponseError(proxy), false);
+});
 
 it("generate classifies exhausted empty-response recovery with a stable registry slug", async () => {
   const model = scriptedModel([
