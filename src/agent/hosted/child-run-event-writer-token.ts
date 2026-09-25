@@ -5,6 +5,8 @@ import {
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { createInstrumentedFetch } from "#veryfront/observability/auto-instrument/http-instrumentation.ts";
+import { isGlobalTracerProviderInstalled } from "#veryfront/observability/tracing/api-shim.ts";
 import {
   type ConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
@@ -378,7 +380,9 @@ export function createHostedConversationRunChunkMirrorFromCapability(
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
     runId: state.runId,
-    fetch: state.fetch,
+    // Capability transports are host-owned, but durable persistence still
+    // needs to stay in the active execution trace.
+    fetch: isGlobalTracerProviderInstalled() ? createInstrumentedFetch(state.fetch) : state.fetch,
   });
 }
 

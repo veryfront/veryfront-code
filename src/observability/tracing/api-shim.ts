@@ -547,6 +547,11 @@ export function getGlobalTracerProvider(): TracerProvider {
   return telemetryState.tracerProvider;
 }
 
+/** Whether a host tracer provider has been installed for this process. */
+export function isGlobalTracerProviderInstalled(): boolean {
+  return telemetryState.tracerProviderInstalled;
+}
+
 export function getTracerProviderRevision(): number {
   return telemetryState.tracerProviderRevision;
 }

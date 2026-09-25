@@ -1,6 +1,11 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  _resetShimForTests,
+  setGlobalTracerProvider,
+  type Span,
+} from "#veryfront/observability/tracing/api-shim.ts";
+import {
   createHostedConversationRunChunkMirrorFromCapability,
   createHostedRunEventWriterCapability,
   createHostedRunEventWriterCapabilityForRequest,
@@ -110,6 +115,28 @@ Deno.test("capability-backed mirrors ignore caller-supplied API and run identiti
   const requests: Request[] = [];
   const conversationId = "11111111-1111-4111-8111-111111111111";
   try {
+    const span: Span = {
+      setAttribute: () => span,
+      setAttributes: () => span,
+      setStatus: () => span,
+      recordException: () => undefined,
+      addEvent: () => span,
+      end: () => undefined,
+      spanContext: () => ({ traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 }),
+      updateName: () => undefined,
+    };
+    setGlobalTracerProvider({
+      getTracer: () => ({
+        startSpan: () => span,
+        startActiveSpan: ((...args: unknown[]) => {
+          const callback = args.find((arg) => typeof arg === "function") as
+            | ((activeSpan: Span) => unknown)
+            | undefined;
+          if (!callback) throw new Error("Expected tracing callback");
+          return callback(span);
+        }) as never,
+      }),
+    });
     globalThis.fetch = ((input, init) => {
       const request = new Request(input, init);
       requests.push(request);
@@ -162,8 +189,13 @@ Deno.test("capability-backed mirrors ignore caller-supplied API and run identiti
       `${"https://trusted.example.test"}/conversations/${conversationId}/runs/run_trusted/events`,
     );
     assertEquals(request.headers.get("Authorization"), "Bearer trusted-writer-token");
+    assertEquals(
+      request.headers.get("traceparent"),
+      "00-11111111111111111111111111111111-2222222222222222-01",
+    );
   } finally {
     globalThis.fetch = originalFetch;
+    _resetShimForTests();
   }
 });
 
