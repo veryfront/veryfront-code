@@ -495,7 +495,7 @@ async function request(signal?: AbortSignal, requestPath = path) {
 
 function runtimeFixture(
   streamFailure = false,
-  terminalChunk?: "error" | "coded-error" | "finish-error",
+  terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error",
   finishWithUsage?: true,
 ) {
   const release = Promise.withResolvers<void>();
@@ -537,6 +537,14 @@ function runtimeFixture(
                   type: "error",
                   errorText: "INSUFFICIENT_CREDITS",
                   code: "INSUFFICIENT_CREDITS",
+                } as const;
+                return;
+              }
+              if (terminalChunk === "empty-response-error") {
+                yield {
+                  type: "error",
+                  errorText: "private executor empty-response detail",
+                  code: "EMPTY_RESPONSE",
                 } as const;
                 return;
               }
@@ -593,7 +601,7 @@ async function handler(
     waitForAuthorization?: boolean;
     throwingObserver?: boolean;
     streamFailure?: boolean;
-    terminalChunk?: "error" | "coded-error" | "finish-error";
+    terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error";
     finishWithUsage?: true;
     missingOutput?: boolean;
     waitForOutput?: boolean;
@@ -851,6 +859,19 @@ describe("managed broker handler", () => {
       status: "failed",
       terminalErrorCode: "INSUFFICIENT_CREDITS",
       terminalErrorMessage: "Insufficient AI credits",
+    });
+  });
+
+  it("preserves EMPTY_RESPONSE through managed broker durable terminal classification", async () => {
+    const f = await handler("detached", { terminalChunk: "empty-response-error" });
+    assertEquals((await f.managed.handle(f.first.request)).status, 202);
+    f.fixture.release();
+    await f.managed.close();
+
+    assertEquals(resolveConversationHostedStreamErrorState(f.outputFinishErrors[0]), {
+      status: "failed",
+      terminalErrorCode: "EMPTY_RESPONSE",
+      terminalErrorMessage: "Assistant completed without producing a response",
     });
   });
 

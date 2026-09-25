@@ -423,15 +423,16 @@ describe("executor runtime preparation", () => {
             visible.push(
               (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
             );
-            return finishStream(visible.length === 1 ? "load_skill" : undefined, {
-              skillId: "example",
-            });
+            return visible.length === 1
+              ? finishStream("load_skill", { skillId: "example" })
+              : finishStream(undefined, {}, "Synthetic answer");
           },
         }),
       },
     });
     try {
-      await Array.fromAsync(await preparedStream(f));
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
       assertEquals(visible, [["load_skill"], ["load_skill"]]);
     } finally {
       await f.owner.close();
@@ -797,12 +798,19 @@ async function preparedStream(
   });
 }
 
-function finishStream(toolName?: string, input: Record<string, unknown> = {}) {
+function finishStream(
+  toolName?: string,
+  input: Record<string, unknown> = {},
+  text: string | undefined = toolName ? undefined : "Synthetic answer",
+) {
   return Promise.resolve({
     stream: new ReadableStream<unknown>({
       start(controller) {
         if (toolName) {
           controller.enqueue({ type: "tool-call", toolCallId: "synthetic-call", toolName, input });
+        }
+        if (text) {
+          controller.enqueue({ type: "text-delta", id: "text-1", delta: text });
         }
         controller.enqueue({
           type: "finish",
@@ -813,6 +821,17 @@ function finishStream(toolName?: string, input: Record<string, unknown> = {}) {
       },
     }),
   });
+}
+
+function assertCleanCompletion(events: readonly unknown[]): void {
+  assertEquals(
+    events.some((event) =>
+      event !== null && typeof event === "object" && !Array.isArray(event) &&
+      (event as { type?: unknown }).type === "error"
+    ),
+    false,
+  );
+  assertEquals(events.at(-1), { type: "complete" });
 }
 
 function syntheticHostTool() {
@@ -1117,12 +1136,16 @@ describe("executor runtime preparation review regressions", () => {
         publishParentRunEvents: () => Promise.resolve(),
         resolveModelRuntime: () => ({
           ...model,
-          doStream: () => finishStream(calls++ === 0 ? "visible" : undefined),
+          doStream: () =>
+            calls++ === 0
+              ? finishStream("visible")
+              : finishStream(undefined, {}, "Synthetic answer"),
         }),
       },
     });
     try {
-      await Array.fromAsync(await preparedStream(f));
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
       assertEquals(inheritedReads, 0);
       assertEquals(calls, 2);
     } finally {
@@ -1373,6 +1396,7 @@ describe("executor runtime preparation review regressions", () => {
     });
     try {
       const frames = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(frames);
       const serialized = JSON.stringify(frames);
       assertEquals(serialized.includes(privateDetail), false);
       assertEquals(serialized.includes("Hosted project tool execution failed"), true);
@@ -1491,12 +1515,13 @@ describe("executor runtime preparation review regressions", () => {
       },
     });
     try {
-      await Array.fromAsync(
+      const events = await Array.fromAsync(
         await preparedStream(f, {
           agentId: "coder",
           allowedToolNames: ["update_file"],
         }),
       );
+      assertCleanCompletion(events);
       assertEquals(executions, [{
         name: "update_file",
         args: { project_reference: "project-one" },
@@ -1581,12 +1606,13 @@ Synthetic source instructions.`,
         },
       });
       try {
-        await Array.fromAsync(
+        const events = await Array.fromAsync(
           await preparedStream(f, {
             agentId: "coder",
             ...(selection.requested === undefined ? {} : { allowedToolNames: selection.requested }),
           }),
         );
+        assertCleanCompletion(events);
         assertEquals([...visible].sort(), [...selection.expected].sort());
         assertEquals(
           executions,
@@ -1895,7 +1921,8 @@ Synthetic source instructions.`,
       },
     });
     try {
-      await Array.fromAsync(await preparedStream(f));
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
       assertEquals(executions, ["allowed"]);
     } finally {
       await f.owner.close();
@@ -2057,12 +2084,13 @@ Synthetic source instructions.`,
         },
       });
       try {
-        await Array.fromAsync(
+        const events = await Array.fromAsync(
           await preparedStream(f, {
             agentId: "coder",
             allowedToolNames: selection.requested,
           }),
         );
+        assertCleanCompletion(events);
         assertEquals(visible, selection.expected);
         assertEquals(executions, selection.expected);
       } finally {
@@ -2117,13 +2145,16 @@ Synthetic source instructions.`,
             ...model,
             doStream: (options) => {
               systems.push(JSON.stringify((options as ModelRuntimeCallOptions).prompt));
-              return finishStream(calls++ === 0 ? "update_file" : undefined, { path });
+              return calls++ === 0
+                ? finishStream("update_file", { path })
+                : finishStream(undefined, {}, "Synthetic answer");
             },
           }),
         },
       });
       try {
-        await Array.fromAsync(await preparedStream(f));
+        const events = await Array.fromAsync(await preparedStream(f));
+        assertCleanCompletion(events);
         assertEquals(calls, 2);
         assertEquals(refreshes, expectedRefreshes);
         assertEquals(refreshedTools, expectedRefreshes === 1 ? ["update_file"] : undefined);
@@ -2178,15 +2209,16 @@ Synthetic source instructions.`,
               visible.push(
                 (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
               );
-              return finishStream(visible.length === 1 ? "update_file" : undefined, {
-                path: "AGENTS.md",
-              });
+              return visible.length === 1
+                ? finishStream("update_file", { path: "AGENTS.md" })
+                : finishStream(undefined, {}, "Synthetic answer");
             },
           }),
         },
       });
       try {
-        await Array.fromAsync(await preparedStream(f));
+        const events = await Array.fromAsync(await preparedStream(f));
+        assertCleanCompletion(events);
         assertEquals(visible.length, 2);
         assertEquals(visible[0]!.length, Math.min(extraToolCount + 2, 128));
         assert(visible[0]!.includes("web_search"));
@@ -2439,7 +2471,7 @@ describe("executor runtime preparation artifact and materialization regressions"
         const frames = await Array.fromAsync(
           await preparedStream(f, { agentId: "coder" }, researchRequest),
         );
-        assertEquals(frames.at(-1), { type: "complete" });
+        assertCleanCompletion(frames);
         const expectedCalls = existing === "none"
           ? [["create_file", reportPath], ["create_file", mirrorPath]]
           : existing === "ungranted retry"
