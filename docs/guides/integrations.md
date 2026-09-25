@@ -59,7 +59,8 @@ AUTH="Authorization: Bearer $VERYFRONT_API_TOKEN"
 PROJECT="x-veryfront-project-slug: <PROJECT_SLUG>"
 
 curl -sS "$API/integrations/gmail/tools" -H "$AUTH" -H "$PROJECT"
-curl -sS "$API/integrations/gmail/connections?limit=100" -H "$AUTH" -H "$PROJECT"
+curl -sS "$API/projects/<PROJECT_REFERENCE>/integrations/gmail/connections?limit=100" \
+  -H "$AUTH"
 curl -sS -X POST "$API/integrations/gmail/tools/list_emails/call" \
   -H "$AUTH" -H "$PROJECT" -H 'Content-Type: application/json' \
   -d '{"arguments":{"q":"in:inbox","maxResults":10},"connection_id":"<CONNECTION_ID>"}'
@@ -72,23 +73,10 @@ Open that URL, finish provider consent, wait for the connection to become
 
 ### GraphQL
 
-GraphQL exposes catalog metadata. Use it to discover a connector and its tool
-schemas; execute provider tools through REST, MCP, the TypeScript runtime, or
-the CLI.
-
-```graphql
-query Integration($name: String!) {
-  integration(input: { name: $name }) {
-    integration {
-      name
-      displayName
-      tools { id name description }
-      credentialRequirement { mode managedOAuth mandatoryEnvVars }
-      envVars { name required }
-    }
-  }
-}
-```
+Use the served GraphQL schema for integration catalog and project-configuration
+queries. Tool execution is documented through REST, MCP, the TypeScript runtime,
+and the CLI because this release does not expose a verified GraphQL tool-call
+field.
 
 ### MCP
 
@@ -127,8 +115,9 @@ veryfront integration call gmail__list_emails --project <PROJECT_SLUG> \
   --args '{"q":"in:inbox","maxResults":10}' --json
 ```
 
-The CLI opens the provider connect URL when the selected tool needs OAuth.
-Use `--connection <CONNECTION_ID>` when more than one account is available.
+Use `veryfront integration connect gmail --project <PROJECT_SLUG>` to start
+OAuth. The `call` command executes an already connected account. Use
+`--connection <CONNECTION_ID>` when more than one account is available.
 
 ## Run account-free local integration tools
 
