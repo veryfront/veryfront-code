@@ -9,6 +9,7 @@ import {
   createConversationHostedTerminalAdapter,
   resolveConversationHostedStreamErrorState,
 } from "../conversation/hosted-terminal.ts";
+import { instrumentConversationRunFetch } from "../conversation/durable.ts";
 import { createDurableRunEventSink } from "./durable-run-event-sink.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
@@ -70,7 +71,10 @@ export function createManagedBrokerTerminal(input: {
     fallbackModelId: input.modelId,
     // Do not expose secret-bearing adapter options as the caller's receiver.
     resolveProvider: (modelId) => resolveProvider(modelId),
-    fetch: input.fetch,
+    // A trusted completion transport joins the active execution trace like
+    // capability-backed event appends; an omitted transport already resolves
+    // to the instrumented default.
+    fetch: input.fetch ? instrumentConversationRunFetch(input.fetch) : undefined,
   });
   const terminal = freezeTerminal({ kind: "managed-broker-terminal" as const });
   terminalStates.set(terminal, { runId: run.runId, dispatch: adapter.dispatch });

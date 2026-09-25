@@ -1,5 +1,6 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { createInstrumentedFetch } from "#veryfront/observability/auto-instrument/http-instrumentation.ts";
+import { isGlobalTracerProviderInstalled } from "#veryfront/observability/tracing/api-shim.ts";
 import { isVeryfrontError, NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import {
   AppendConversationRunEventsResponseSchema,
@@ -80,14 +81,27 @@ const AGENT_RUN_API_TIMEOUT_MS = 15_000;
 type ConversationRunApiFetch = typeof globalThis.fetch;
 
 /**
+ * Wrap a trusted transport so durable run persistence stays in the active
+ * execution trace. Without an installed tracer provider there is no trace to
+ * join, so the transport is returned unchanged and credential-bearing requests
+ * never pass through the instrumentation wrapper.
+ */
+export function instrumentConversationRunFetch(
+  fetch: ConversationRunApiFetch,
+): ConversationRunApiFetch {
+  return isGlobalTracerProviderInstalled() ? createInstrumentedFetch(fetch) : fetch;
+}
+
+/**
  * Keep durable run API calls in the same distributed trace as the execution
  * span. The host deliberately does not replace globalThis.fetch, so callers
  * that do not inject a transport must opt into the framework's HTTP wrapper.
- * Explicit transports remain host-owned and are expected to provide their own
- * instrumentation; preserving them avoids double instrumentation.
+ * Explicit transports are host-owned: the trust boundary that pins them wraps
+ * them with `instrumentConversationRunFetch` once, so preserving them here
+ * avoids double instrumentation.
  */
 function resolveConversationRunFetch(fetch?: ConversationRunApiFetch): ConversationRunApiFetch {
-  return fetch ?? createInstrumentedFetch(globalThis.fetch);
+  return fetch ?? instrumentConversationRunFetch(globalThis.fetch);
 }
 
 function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {

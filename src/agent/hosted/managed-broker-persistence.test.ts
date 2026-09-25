@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetShimForTests,
+  setGlobalTracerProvider,
+  type Span,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import {
   createManagedBrokerPersistence,
   createManagedBrokerPersistenceFromCapability,
@@ -212,5 +217,66 @@ describe("managed persistence authority validation", () => {
     });
     await persistence.cleanup();
     fixture.assertNoEffects();
+  });
+});
+
+describe("managed persistence trace propagation", () => {
+  afterEach(() => {
+    _resetShimForTests();
+  });
+
+  it("keeps the trusted completion transport in the active execution trace", async () => {
+    const span: Span = {
+      setAttribute: () => span,
+      setAttributes: () => span,
+      setStatus: () => span,
+      recordException: () => undefined,
+      addEvent: () => span,
+      end: () => undefined,
+      spanContext: () => ({ traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 }),
+      updateName: () => undefined,
+    };
+    setGlobalTracerProvider({
+      getTracer: () => ({
+        startSpan: () => span,
+        startActiveSpan: ((...args: unknown[]) => {
+          const callback = args.find((arg) => typeof arg === "function") as
+            | ((activeSpan: Span) => unknown)
+            | undefined;
+          if (!callback) throw new Error("Expected tracing callback");
+          return callback(span);
+        }) as never,
+      }),
+    });
+    const requests: Request[] = [];
+    const fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({
+        completed: true,
+        run: { runId: run.runId, status: "completed" },
+      }));
+    }) as typeof globalThis.fetch;
+    const persistence = createManagedBrokerPersistence({
+      apiUrl: "https://api.example.test",
+      runEventToken: "synthetic-event-token",
+      completionAuthToken: "synthetic-completion-token",
+      run,
+      modelId: "model",
+      resolveProvider: () => "provider",
+      fetch,
+    });
+    persistence.bindSessionOwnedWork((operation) => operation());
+
+    await persistence.output.finish({ completed: true });
+    await persistence.cleanup();
+
+    assertEquals(requests.map((request) => `${request.method} ${request.url}`), [
+      `POST https://api.example.test/runs/${run.runId}/complete`,
+    ]);
+    assertEquals(requests[0]?.headers.get("Authorization"), "Bearer synthetic-completion-token");
+    assertEquals(
+      requests[0]?.headers.get("traceparent"),
+      "00-11111111111111111111111111111111-2222222222222222-01",
+    );
   });
 });
