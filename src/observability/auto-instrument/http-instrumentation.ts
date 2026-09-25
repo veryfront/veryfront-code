@@ -15,6 +15,7 @@ import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributes } from "../telem
 import { runAsyncWithContextFallback } from "../tracing/context-callback.ts";
 
 const logger = serverLogger.component("auto-instrument");
+const NativeHeaders = Headers;
 
 function getHttpTracer() {
   return trace.getTracer("veryfront-http");
@@ -169,7 +170,7 @@ export function createInstrumentedFetch(
           let effectiveInit = init;
           if (span) {
             try {
-              const headers = new Headers(
+              const headers = new NativeHeaders(
                 init?.headers ?? (input instanceof Request ? input.headers : undefined),
               );
               let traceparentInjected = false;
