@@ -129,7 +129,7 @@ export const getApiConversationSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
     projectId: v.string().nullable().optional(),
-    type: getConversationTypeSchema().optional(),
+    type: v.string().optional(),
     title: v.string().nullable().optional(),
     status: v.enum(["active", "archived", "deleted"]),
     summary: v.string().nullable().optional(),

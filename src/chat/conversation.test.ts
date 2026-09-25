@@ -173,7 +173,7 @@ describe("chat/conversation schemas", () => {
     assertEquals(
       apiConversationSchema.safeParse({
         id: "conv-1",
-        type: "chat",
+        type: "default_chat",
         status: "active",
         messageCount: 1,
         createdBy: "user-1",
