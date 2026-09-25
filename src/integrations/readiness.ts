@@ -106,6 +106,12 @@ export function isSelectedReadiness(value: unknown, expected: {
     (s.connection_id === null || s.connection_generation_id === null || s.scope === null)
   ) return false;
   if (
+    s.state === "stale" &&
+    (s.mode !== "oauth_connection" || s.connection_id === null ||
+      s.connection_generation_id === null || !expected.generation ||
+      sameUuid(s.connection_generation_id, expected.generation))
+  ) return false;
+  if (
     a.state === "unknown" && (a.id !== null || a.display_name !== null || a.evidence !== "none")
   ) return false;
   if (a.state === "recorded" && (a.evidence !== "stored_metadata" || s.scope !== "project")) {

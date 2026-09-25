@@ -45,6 +45,7 @@ describe("selected readiness client", () => {
       "stale",
       "provider-claim",
       "inconsistent-stale",
+      "stale-same-generation",
       "blocked-empty-blockers",
     ] as const
   ) {
@@ -71,6 +72,11 @@ describe("selected readiness client", () => {
           data.selection.connection_generation_id = connectionId;
         }
         if (scenario === "stale") {
+          data.selection.state = "stale";
+          data.local_eligibility.state = "blocked";
+          data.local_eligibility.blockers = ["connection_stale"];
+        }
+        if (scenario === "stale-same-generation") {
           data.selection.state = "stale";
           data.local_eligibility.state = "blocked";
           data.local_eligibility.blockers = ["connection_stale"];
