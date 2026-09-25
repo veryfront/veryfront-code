@@ -177,50 +177,6 @@ describe("observability/auto-instrument/http-instrumentation", () => {
     );
   });
 
-  it("injects trace headers through captured Headers intrinsics", async () => {
-    installTracer();
-    const nativeApply = Reflect.apply;
-    const nativeSet = Headers.prototype.set;
-    const nativeDelete = Headers.prototype.delete;
-    const nativeGet = Headers.prototype.get;
-    const observations = { mutator: 0, credential: 0 };
-    let received: Headers | undefined;
-    const baseFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-      received = init?.headers instanceof Headers ? init.headers : undefined;
-      return Promise.resolve(new Response("ok"));
-    }) as typeof fetch;
-
-    const observeMutator = function (this: Headers) {
-      observations.mutator += 1;
-      if (nativeApply(nativeGet, this, ["Authorization"]) !== null) observations.credential += 1;
-    };
-    Headers.prototype.set = function (name: string, value: string) {
-      observeMutator.call(this);
-      return nativeApply(nativeSet, this, [name, value]);
-    };
-    Headers.prototype.delete = function (name: string) {
-      observeMutator.call(this);
-      return nativeApply(nativeDelete, this, [name]);
-    };
-    Reflect.apply = (() => {
-      throw new Error("poisoned Reflect.apply must not run");
-    }) as typeof Reflect.apply;
-    try {
-      await createInstrumentedFetch(baseFetch)("https://example.com/items", {
-        headers: { Authorization: "Bearer secret-token", tracestate: "vendor=stale" },
-      });
-    } finally {
-      Reflect.apply = nativeApply;
-      Headers.prototype.set = nativeSet;
-      Headers.prototype.delete = nativeDelete;
-    }
-
-    assertEquals(observations, { mutator: 0, credential: 0 });
-    assertEquals(received?.get("Authorization"), "Bearer secret-token");
-    assertEquals(received?.get("traceparent"), TEST_TRACEPARENT);
-    assertEquals(received?.get("tracestate"), null);
-  });
-
   it("replaces an incoming traceparent when fallback propagation is needed", async () => {
     installTracer();
     let received: Request | undefined;

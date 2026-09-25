@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   _resetShimForTests,
   setGlobalTracerProvider,
@@ -240,7 +241,6 @@ Deno.test("traced capability-backed writes keep credentials off tenant-mutable h
     }
   };
 
-  const originalFetch = globalThis.fetch;
   try {
     installTestTracer();
     const capability = createHostedRunEventWriterCapability({
@@ -269,10 +269,12 @@ Deno.test("traced capability-backed writes keep credentials off tenant-mutable h
       observeMutator.call(this);
       return nativeApply(nativeHeadersDelete, this, [name]);
     };
-    globalThis.fetch = (() => {
-      observations.poisonedFetch += 1;
-      return Promise.reject(new Error("poisoned global fetch must not run"));
-    }) as typeof fetch;
+    installMockFetch(
+      (() => {
+        observations.poisonedFetch += 1;
+        return Promise.reject(new Error("poisoned global fetch must not run"));
+      }) as typeof fetch,
+    );
     Reflect.apply = (() => {
       throw new Error("poisoned Reflect.apply must not run");
     }) as typeof Reflect.apply;
@@ -285,7 +287,7 @@ Deno.test("traced capability-backed writes keep credentials off tenant-mutable h
     Headers.prototype.set = nativeHeadersSet;
     Headers.prototype.append = nativeHeadersAppend;
     Headers.prototype.delete = nativeHeadersDelete;
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
     _resetShimForTests();
   }
 
