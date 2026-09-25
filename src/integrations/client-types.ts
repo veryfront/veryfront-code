@@ -86,7 +86,9 @@ export interface IntegrationSelectionOptions {
 
 /**
  * Selection metadata for a tool call, separate from native provider arguments.
- * The API must advertise generation-precondition support. Unsupported deployments throw `IntegrationApiError` with kind `unsupported_precondition` and `outcomeUnknown: false` before dispatch. Missing confirmation after a successful
+ * The API must advertise generation-precondition support. Unsupported deployments
+ * throw `IntegrationApiError` with kind `unsupported_precondition` and
+ * `outcomeUnknown: false` before dispatch. Missing confirmation after a successful
  * call response reports the same kind with `outcomeUnknown: true`. Calls never
  * authorize automatic replay. Omitting the generation retains existing call behavior.
  */
