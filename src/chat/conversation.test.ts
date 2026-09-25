@@ -183,6 +183,17 @@ describe("chat/conversation schemas", () => {
       true,
     );
     assertEquals(
+      apiConversationSchema.safeParse({
+        id: "conv-2",
+        status: "active",
+        messageCount: 0,
+        createdBy: "user-1",
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+      }).success,
+      true,
+    );
+    assertEquals(
       apiMessageSchema.safeParse({
         id: "msg-1",
         conversationId: "conv-1",
