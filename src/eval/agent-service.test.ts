@@ -533,14 +533,6 @@ describe("eval/agent-service", () => {
       totalTokens: 20,
       billableInputTokens: 12,
       billableOutputTokens: 10,
-      costUsd: 0.002,
-      providerInputCostUsd: 0.0004,
-      providerOutputCostUsd: 0.0006,
-      providerCostUsd: 0.001,
-      veryfrontInputChargeUsd: 0.001,
-      veryfrontOutputChargeUsd: 0.0015,
-      veryfrontChargeUsd: 0.0025,
-      veryfrontBilledUsd: 0.1,
       costCredits: 1,
       costSource: "gateway",
       cacheReadInputTokens: 3,
@@ -554,14 +546,6 @@ describe("eval/agent-service", () => {
       totalTokens: 20,
       billableInputTokens: 12,
       billableOutputTokens: 10,
-      costUsd: 0.002,
-      providerInputCostUsd: 0.0004,
-      providerOutputCostUsd: 0.0006,
-      providerCostUsd: 0.001,
-      veryfrontInputChargeUsd: 0.001,
-      veryfrontOutputChargeUsd: 0.0015,
-      veryfrontChargeUsd: 0.0025,
-      veryfrontBilledUsd: 0.1,
       costCredits: 1,
       costSource: "gateway",
       cacheReadInputTokens: 3,
@@ -674,11 +658,49 @@ describe("eval/agent-service", () => {
       inputTokens: 12,
       outputTokens: 8,
       totalTokens: 20,
-      costUsd: 0.001,
-      providerCostUsd: 0.001,
-      veryfrontChargeUsd: 0.0025,
-      veryfrontBilledUsd: 0.1,
       costCredits: 1,
+      costSource: "gateway",
+    });
+  });
+
+  it("reads credits from usage metadata that carries no USD amounts", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          { event: "TextMessageContent", data: { delta: "Done" } },
+          {
+            event: "RunFinished",
+            data: {
+              metadata: {
+                input_tokens: 12,
+                output_tokens: 8,
+                cost_credits: "1.5000000000",
+                cost_source: "gateway",
+              },
+            },
+          },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-credit-usage",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "List files" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(result.usage, {
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+      costCredits: 1.5,
       costSource: "gateway",
     });
   });

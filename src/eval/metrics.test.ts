@@ -14,7 +14,7 @@ function createRecord(overrides: Partial<EvalRecord> = {}): EvalRecord {
     reference: "Paris",
     metadata: {},
     trace: { events: [], toolCalls: [] },
-    usage: { inputTokens: 12, outputTokens: 4, totalTokens: 16, costUsd: 0.001 },
+    usage: { inputTokens: 12, outputTokens: 4, totalTokens: 16, costCredits: 0.01 },
     durationMs: 42,
     completed: true,
     ...overrides,
@@ -234,7 +234,7 @@ describe("eval/metrics", () => {
     const record = createRecord({ usage: {} });
 
     const tokens = await metrics.ops.tokens({ maxTotal: 20 }).budget().evaluate(record);
-    const cost = await metrics.ops.cost({ maxUsd: 0.05 }).budget().evaluate(record);
+    const cost = await metrics.ops.cost({ maxCredits: 0.5 }).budget().evaluate(record);
 
     assertEquals(tokens.pass, false);
     assertEquals(tokens.explanation, "Eval token usage was not measured: totalTokens.");
@@ -259,9 +259,14 @@ describe("eval/metrics", () => {
       "requires",
     );
     assertThrows(
-      () => metrics.ops.cost({ maxUsd: Number.NaN }),
+      () => metrics.ops.cost({ maxCredits: Number.NaN }),
       Error,
       "finite",
+    );
+    assertThrows(
+      () => metrics.ops.cost({ maxUsd: -1 }),
+      Error,
+      "ops.cost maxUsd",
     );
     assertThrows(
       () => metrics.answer.exactMatch().gate({ min: 1, max: 0 }),
@@ -275,7 +280,42 @@ describe("eval/metrics", () => {
     );
   });
 
-  it("evaluates operation cost budgets with billed gateway cost when present", async () => {
+  it("evaluates operation cost budgets in credits", async () => {
+    const cost = metrics.ops.cost({ maxCredits: 0.5 }).budget();
+
+    assertEquals(
+      await cost.evaluate(createRecord({
+        usage: {
+          inputTokens: 12,
+          outputTokens: 4,
+          totalTokens: 16,
+          veryfrontBilledUsd: 0.01,
+          costCredits: 1,
+          costSource: "gateway",
+        },
+      })),
+      {
+        name: "ops.cost",
+        family: "ops",
+        severity: "budget",
+        score: 0,
+        pass: false,
+        label: "Cost stayed under 0.5 credits",
+        evidence: {
+          costCredits: 1,
+          maxCredits: 0.5,
+          costSource: "gateway",
+        },
+      },
+    );
+    assertEquals((await cost.evaluate(createRecord())).pass, true);
+    assertEquals(
+      (await cost.evaluate(createRecord({ usage: { veryfrontBilledUsd: 0.01 } }))).explanation,
+      "Eval cost was not measured.",
+    );
+  });
+
+  it("keeps the deprecated maxUsd budget reading billed gateway cost", async () => {
     const cost = metrics.ops.cost({ maxUsd: 0.05 }).budget();
 
     assertEquals(
@@ -288,6 +328,7 @@ describe("eval/metrics", () => {
           providerCostUsd: 0.01,
           veryfrontChargeUsd: 0.01,
           veryfrontBilledUsd: 0.1,
+          costCredits: 0.1,
           costSource: "gateway",
         },
       })),
@@ -304,6 +345,10 @@ describe("eval/metrics", () => {
           costSource: "gateway",
         },
       },
+    );
+    assertEquals(
+      (await cost.evaluate(createRecord({ usage: { costCredits: 0.1 } }))).explanation,
+      "Eval cost was not measured.",
     );
   });
 

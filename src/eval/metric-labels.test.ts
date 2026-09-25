@@ -17,6 +17,10 @@ describe("eval/metric-labels", () => {
       formatEvalMetricLabel("ops.latency", { maxMs: 2000 }),
       "Latency stayed under 2000ms",
     );
+    assertEquals(
+      formatEvalMetricLabel("ops.cost", { maxCredits: 0.5 }),
+      "Cost stayed under 0.5 credits",
+    );
     assertEquals(formatEvalMetricLabel("ops.cost", { maxUsd: 0.05 }), "Cost stayed under $0.05");
   });
 

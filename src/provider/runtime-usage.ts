@@ -117,22 +117,16 @@ export function readRuntimeCost(value: unknown): number | undefined {
 }
 
 const GATEWAY_USAGE_COST_FIELDS = [
-  ["costUsd", "cost_usd"],
-  ["providerInputCostUsd", "provider_input_cost_usd"],
-  ["providerOutputCostUsd", "provider_output_cost_usd"],
-  ["providerCostUsd", "provider_cost_usd"],
-  ["veryfrontInputChargeUsd", "veryfront_input_charge_usd"],
-  ["veryfrontOutputChargeUsd", "veryfront_output_charge_usd"],
-  ["veryfrontChargeUsd", "veryfront_charge_usd"],
-  ["veryfrontBilledUsd", "veryfront_billed_usd"],
   ["costCredits", "cost_credits"],
 ] as const satisfies readonly (readonly [keyof RuntimeUsage, string])[];
 
 /**
- * Read the cost and credit amounts of a gateway `veryfront` usage envelope.
+ * Read the credit amount of a gateway `veryfront` usage envelope.
  *
- * The result is a null-prototype data record so a polluted `Object.prototype`
- * can neither intercept the writes nor surface absent fields.
+ * Credits are the unit of account; the envelope's USD keys are provider-cost
+ * facts the runtime does not surface. The result is a null-prototype data
+ * record so a polluted `Object.prototype` can neither intercept the writes nor
+ * surface absent fields.
  */
 export function readGatewayUsageCosts(
   envelope: Record<string, unknown> | undefined,

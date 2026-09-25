@@ -6,6 +6,17 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: eval cost budgets and gateway usage are measured in credits
+
+`metrics.ops.cost` takes `maxCredits` and reads the gateway `costCredits` of a
+record; its evidence carries `costCredits` and `maxCredits`. `maxUsd` still
+reads the USD amounts of older gateway usage but is deprecated and leaves with
+the next release. Gateway usage envelopes and AG-UI run metadata contribute
+`costCredits` only: `cost_usd`, `provider_*_cost_usd`, `veryfront_*_charge_usd`
+and `veryfront_billed_usd` are no longer copied into runtime or eval usage, and
+eval billing finalization parses `charged_credits`, `target_credits` and
+`adjustment_credits` without requiring the USD keys the API stops sending.
+
 ### Fixed: streamed Gemini tool continuations retain thought signatures
 
 Google tool turns now wait for the provider's final stream metadata under the

@@ -390,12 +390,13 @@ metrics.agent.toolCallCount("orders_lookup", { exact: 1 }).gate();
 metrics.agent.noFailedTools().gate();
 metrics.ops.latency({ maxMs: 10_000 }).budget();
 metrics.ops.tokens({ maxTotal: 4_000 }).budget();
-metrics.ops.cost({ maxUsd: 0.05 }).budget();
+metrics.ops.cost({ maxCredits: 0.5 }).budget();
 ```
 
-`metrics.ops.cost` uses gateway `veryfrontBilledUsd` first, then
-`veryfrontChargeUsd`, legacy `costUsd`, and finally `providerCostUsd`. It does
-not maintain a separate pricing table inside the framework. Token and cost
+`metrics.ops.cost` budgets the gateway `costCredits` of a record. A credit is
+the unit of account; the framework keeps no pricing table and does not convert
+credits to a currency. `maxUsd` still reads the USD amounts of older gateway
+usage but is deprecated and leaves with the next release. Token and cost
 budgets fail when the measurement required by their configured limit is
 missing; absent usage evidence never passes a budget.
 

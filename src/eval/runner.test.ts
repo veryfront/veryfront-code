@@ -205,7 +205,7 @@ describe("eval/runner", () => {
         { id: "soft-only", input: "Germany capital?", reference: "Berlin" },
       ]),
       metrics: [
-        metrics.ops.cost({ maxUsd: 0.0001 }).budget(),
+        metrics.ops.cost({ maxCredits: 0.001 }).budget(),
         metrics.answer.exactMatch().soft(),
       ],
     });
@@ -214,7 +214,7 @@ describe("eval/runner", () => {
       adapters: {
         agent: async ({ example }) => ({
           text: "Wrong answer.",
-          usage: { costUsd: example.id === "over-budget" ? 0.5 : 0 },
+          usage: { costCredits: example.id === "over-budget" ? 5 : 0 },
         }),
       },
     });

@@ -91,9 +91,6 @@ type GatewayBillingGroupFinalization = {
   charged_credits: number;
   target_credits: number;
   adjustment_credits: number;
-  provider_cost_usd: number;
-  veryfront_charge_usd: number;
-  veryfront_billed_usd: number;
 };
 
 type GatewayBillingFinalizeError = {
@@ -250,17 +247,11 @@ function parseGatewayBillingGroupFinalization(
   const chargedCredits = readRuntimeAmount(payload.charged_credits);
   const targetCredits = readRuntimeAmount(payload.target_credits);
   const adjustmentCredits = readRuntimeAmount(payload.adjustment_credits);
-  const providerCostUsd = readRuntimeAmount(payload.provider_cost_usd);
-  const veryfrontChargeUsd = readRuntimeAmount(payload.veryfront_charge_usd);
-  const veryfrontBilledUsd = readRuntimeAmount(payload.veryfront_billed_usd);
 
   if (
     chargedCredits === undefined ||
     targetCredits === undefined ||
-    adjustmentCredits === undefined ||
-    providerCostUsd === undefined ||
-    veryfrontChargeUsd === undefined ||
-    veryfrontBilledUsd === undefined
+    adjustmentCredits === undefined
   ) {
     return undefined;
   }
@@ -270,9 +261,6 @@ function parseGatewayBillingGroupFinalization(
     charged_credits: chargedCredits,
     target_credits: targetCredits,
     adjustment_credits: adjustmentCredits,
-    provider_cost_usd: providerCostUsd,
-    veryfront_charge_usd: veryfrontChargeUsd,
-    veryfront_billed_usd: veryfrontBilledUsd,
   };
 }
 
@@ -342,9 +330,6 @@ export function applyGatewayBillingGroupFinalization(
       ...report.summary,
       usage: {
         ...(report.summary.usage ?? {}),
-        providerCostUsd: finalization.provider_cost_usd,
-        veryfrontChargeUsd: finalization.veryfront_charge_usd,
-        veryfrontBilledUsd: finalization.veryfront_billed_usd,
         costCredits: finalization.target_credits,
         costSource: "gateway",
         billingMode: "direct",
@@ -357,9 +342,7 @@ export function applyGatewayBillingGroupFinalization(
 function hasGatewayUsage(report: EvalReport): boolean {
   const usage = report.summary.usage;
   return Boolean(
-    usage?.costSource === "gateway" ||
-      usage?.veryfrontChargeUsd !== undefined ||
-      usage?.veryfrontBilledUsd !== undefined,
+    usage?.costSource === "gateway" || usage?.costCredits !== undefined,
   );
 }
 

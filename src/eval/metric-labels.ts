@@ -91,6 +91,8 @@ export function formatEvalMetricLabel(
         : `Latency stayed under ${maxMs}ms`;
     }
     case "ops.cost": {
+      const maxCredits = readNumber(config, "maxCredits");
+      if (maxCredits !== undefined) return `Cost stayed under ${maxCredits} credits`;
       const maxUsd = readNumber(config, "maxUsd");
       return maxUsd === undefined ? "Cost stayed within budget" : `Cost stayed under $${maxUsd}`;
     }
