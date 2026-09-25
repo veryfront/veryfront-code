@@ -840,6 +840,37 @@ Deno.test("strict dedicated assignment resolution", async (t) => {
       await api.close();
     }
   });
+  await t.step("strict running assignment is rechecked before the next request", async () => {
+    let available = true;
+    let calls = 0;
+    const api = createMockApi(() => {
+      calls++;
+      return available
+        ? Response.json({
+          assignment: "running",
+          server: {
+            id: "srv-current",
+            short_id: "4281039506",
+            hostname: "veryfront-server-4281039506.owned.svc.cluster.local",
+            status: "running",
+          },
+        })
+        : Response.json({ server: null, assignment: "unavailable" });
+    });
+    const resolver = new ServerResolver(api.url, "", "", 30_000, strict);
+    try {
+      assertEquals(
+        await resolver.resolve("env-current"),
+        "http://veryfront-server-4281039506.owned.svc.cluster.local",
+      );
+      available = false;
+      await assertRejects(() => resolver.resolve("env-current"), Error);
+      assertEquals(calls, 2);
+    } finally {
+      resolver.close();
+      await api.close();
+    }
+  });
   await t.step("strict lookup capacity refuses instead of sharing", async () => {
     const gate = Promise.withResolvers<Response>();
     const resolver = new ServerResolver("https://api.example.com", "", "", 0, {

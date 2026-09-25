@@ -70,7 +70,12 @@ import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
 import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
 import { DedicatedServerLookupUnavailable, ServerResolver } from "./server-resolver.ts";
-import { parseRequiredDedicatedRouting, retryDedicatedTarget } from "./dedicated-routing-policy.ts";
+import {
+  hasDedicatedAssignmentContext,
+  parseRequiredDedicatedRouting,
+  retryDedicatedTarget,
+  websocketRendererOrigin,
+} from "./dedicated-routing-policy.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
@@ -310,11 +315,36 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
   const scope = context.environment;
   const projectSlug = context.projectSlug;
 
+  let dedicatedWebSocketUrl: string | null = null;
+  if (requireDedicatedRouting) {
+    try {
+      if (
+        !hasDedicatedAssignmentContext(
+          context.projectSlug,
+          context.environmentId,
+          requireDedicatedRouting,
+        )
+      ) {
+        throw new DedicatedServerLookupUnavailable();
+      }
+      dedicatedWebSocketUrl = await serverResolver.resolve(context.environmentId);
+    } catch {
+      // Refuse before the WebSocket upgrade; never bridge an unknown assignment
+      // to the shared renderer or reveal the private control-plane error.
+      proxyLogger.warn("503 WebSocket dedicated assignment unavailable");
+      return jsonErrorResponse(503, { error: "Dedicated Runtime Unavailable" });
+    }
+  }
+
   const { url: targetUrl, headers: bridgeHeaders } = buildRendererBridgeRequest(
     req,
     url,
     context,
-    PRODUCTION_SERVER_URL,
+    websocketRendererOrigin(
+      PRODUCTION_SERVER_URL,
+      dedicatedWebSocketUrl,
+      requireDedicatedRouting,
+    ),
   );
 
   proxyLogger.info("[WebSocket] Upgrade request received", {
@@ -493,6 +523,15 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             url.pathname,
             VERYFRONT_SERVER_RETRY_COUNT,
           );
+          if (
+            !hasDedicatedAssignmentContext(
+              ctx.projectSlug,
+              ctx.environmentId,
+              requireDedicatedRouting,
+            )
+          ) {
+            throw new DedicatedServerLookupUnavailable();
+          }
           const upstreamBodies = getReplayableRequestBodies(req, maxRetries);
           let lastError: Error | null = null;
           // Strict mode pins the first assigned endpoint for this request. A

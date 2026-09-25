@@ -392,14 +392,18 @@ export class ServerResolver {
       throw new TypeError("Dedicated server environment ID is invalid");
     }
 
-    const cached = this.cache.get(environmentId);
-    if (cached) {
-      if (this.readClock() < cached.expiresAt) {
+    // Strict routing observes the current assignment on every new request.
+    // A cached positive target could outlive a server deletion or reassignment.
+    if (!this.requireAssignment) {
+      const cached = this.cache.get(environmentId);
+      if (cached) {
+        if (this.readClock() < cached.expiresAt) {
+          this.cache.delete(environmentId);
+          this.cache.set(environmentId, cached);
+          return cached.targetUrl;
+        }
         this.cache.delete(environmentId);
-        this.cache.set(environmentId, cached);
-        return cached.targetUrl;
       }
-      this.cache.delete(environmentId);
     }
 
     const existing = this.pending.get(environmentId);
@@ -466,7 +470,7 @@ export class ServerResolver {
         if (this.requireAssignment) throw new DedicatedServerLookupUnavailable();
         return null;
       }
-      if (!this.requireAssignment || targetUrl !== null) this.remember(environmentId, targetUrl);
+      if (!this.requireAssignment) this.remember(environmentId, targetUrl);
       return targetUrl;
     } catch (error) {
       if (this.closed || generation !== this.generation) {

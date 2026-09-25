@@ -16,3 +16,21 @@ export function retryDedicatedTarget(
     ? { pinnedDedicatedUrl: assignedUrl, skipDedicated: false }
     : { pinnedDedicatedUrl: null, skipDedicated: true };
 }
+
+/** A resolved project cannot silently lose its assignment lookup identity. */
+export function hasDedicatedAssignmentContext(
+  projectSlug: string | undefined,
+  environmentId: string | undefined,
+  requireDedicatedRouting: boolean,
+): boolean {
+  return !requireDedicatedRouting || !projectSlug || Boolean(environmentId);
+}
+
+/** In strict mode a verified assignment selects the renderer WebSocket hop. */
+export function websocketRendererOrigin(
+  sharedOrigin: string,
+  assignedOrigin: string | null,
+  requireDedicatedRouting: boolean,
+): string {
+  return requireDedicatedRouting && assignedOrigin ? assignedOrigin : sharedOrigin;
+}
