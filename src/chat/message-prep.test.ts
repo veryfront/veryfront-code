@@ -760,42 +760,44 @@ Deno.test("maskOldToolOutputs preserves a preceding readFile result while maskin
   );
 });
 
-Deno.test("maskOldToolOutputs preserves a preceding Veryfront file read and masks it after another turn", () => {
-  const marker = `VERYFRONT_FILE_READ_MARKER:${"x".repeat(600)}`;
-  const precedingTurn = [
-    { role: "user", content: "Read src/app.ts." },
-    {
-      role: "assistant",
-      content: [{
-        type: "tool-call",
-        toolCallId: "call-veryfront-read",
-        toolName: "veryfront__get_file",
-        input: { path: "src/app.ts" },
-      }],
-    },
-    {
-      role: "tool",
-      content: [{
-        type: "tool-result",
-        toolCallId: "call-veryfront-read",
-        toolName: "veryfront__get_file",
-        output: { type: "json", value: { content: marker } },
-      }],
-    },
-    { role: "user", content: "Apply the change." },
-  ] satisfies ProviderModelMessage[];
+for (const toolName of ["veryfront__get_file", "veryfront__readFile"]) {
+  Deno.test(`maskOldToolOutputs preserves preceding ${toolName} and masks it after another turn`, () => {
+    const marker = `VERYFRONT_FILE_READ_MARKER:${"x".repeat(600)}`;
+    const precedingTurn = [
+      { role: "user", content: "Read src/app.ts." },
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "call-veryfront-read",
+          toolName,
+          input: { path: "src/app.ts" },
+        }],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "call-veryfront-read",
+          toolName,
+          output: { type: "json", value: { content: marker } },
+        }],
+      },
+      { role: "user", content: "Apply the change." },
+    ] satisfies ProviderModelMessage[];
 
-  assertStringIncludes(JSON.stringify(maskOldToolOutputs(precedingTurn)), marker);
+    assertStringIncludes(JSON.stringify(maskOldToolOutputs(precedingTurn)), marker);
 
-  const older = maskOldToolOutputs([
-    ...precedingTurn,
-    { role: "assistant", content: "I applied the change." },
-    { role: "user", content: "Now explain it." },
-  ]);
-  const serializedOlder = JSON.stringify(older);
-  assertEquals(serializedOlder.includes(marker), false);
-  assertStringIncludes(serializedOlder, "[File read: src/app.ts");
-});
+    const older = maskOldToolOutputs([
+      ...precedingTurn,
+      { role: "assistant", content: "I applied the change." },
+      { role: "user", content: "Now explain it." },
+    ]);
+    const serializedOlder = JSON.stringify(older);
+    assertEquals(serializedOlder.includes(marker), false);
+    assertStringIncludes(serializedOlder, "[File read: src/app.ts");
+  });
+}
 
 Deno.test("maskOldToolOutputs does not preserve an older file read with a reused tool call id", () => {
   const oldMarker = `OLD_REUSED_FILE_READ:${"o".repeat(600)}`;

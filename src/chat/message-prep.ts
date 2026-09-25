@@ -345,6 +345,7 @@ const PRECEDING_TURN_FILE_READ_TOOL_NAMES = new Set([
   "get_file",
   "veryfront__get_file",
   "readFile",
+  "veryfront__readFile",
 ]);
 const WRITE_TOOL_INPUT_NAMES = new Set([
   "create_file",
@@ -1379,6 +1380,7 @@ export function maskOldToolOutputs(
           case "readFile":
           case "get_file":
           case "veryfront__get_file":
+          case "veryfront__readFile":
             masked = maskReadFile(input, charCount);
             break;
           case "bash":
