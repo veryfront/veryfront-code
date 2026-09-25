@@ -5,14 +5,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 const root = "verified-0924.127.0.0.1.sslip.io";
 const origin = `https://${root}:58443`;
 
-async function runWithOperatorOrigin(code: string): Promise<Record<string, unknown>> {
+async function runWithOperatorOrigin<T = Record<string, unknown>>(code: string): Promise<T> {
   const result = await new Deno.Command(Deno.execPath(), {
     args: ["eval", "--no-check", code],
     cwd: Deno.cwd(),
     env: { PLATFORM_DOMAIN_SUFFIXES: root, PLATFORM_STUDIO_ORIGIN: origin },
   }).output();
   assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
-  return JSON.parse(new TextDecoder().decode(result.stdout));
+  return JSON.parse(new TextDecoder().decode(result.stdout)) as T;
 }
 
 function frameAncestors(policy: string): string[] {
@@ -84,5 +84,62 @@ describe("host-owned Studio origin", () => {
       tenantRefused: true,
       wrongPortRefused: true,
     });
+  });
+
+  it("delivers preview HMR and error-page messages to the operator Studio parent", async () => {
+    const observed = await runWithOperatorOrigin<
+      Array<{
+        action: string;
+        targetOrigin: string;
+        initial: boolean;
+      }>
+    >(`
+      import { JSDOM } from "npm:jsdom@28.0.0";
+      import { getPreviewHMRScript } from "#veryfront/server/handlers/dev/scripts/hmr-scripts.ts";
+      import { generateErrorHtml } from "#veryfront/server/utils/error-html.ts";
+      const calls = [];
+      const preview = "https://app.preview.${root}:58443/page";
+      const studio = ${JSON.stringify(origin)};
+      const options = {
+        url: preview,
+        referrer: studio + "/project",
+        runScripts: "dangerously",
+        beforeParse(window) {
+          Object.defineProperty(window, "parent", {
+            configurable: true,
+            value: {postMessage(message, targetOrigin) {
+              calls.push({action: message.action, targetOrigin,
+                initial: message.isInitialLoad === true});
+            }},
+          });
+        },
+      };
+      const dom = new JSDOM(
+        '<!doctype html><link rel="stylesheet" href="/styles.css">', options);
+      class FakeWebSocket {
+        constructor() { FakeWebSocket.instance = this; }
+        close() {}
+        send() {}
+      }
+      dom.window.WebSocket = FakeWebSocket;
+      dom.window.eval(getPreviewHMRScript());
+      FakeWebSocket.instance.onmessage({data: JSON.stringify({
+        type: "update", path: "styles.css",
+      })});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      dom.window.close();
+
+      const errorHtml = generateErrorHtml({
+        statusCode: 500, title: "Error", message: "failure",
+      });
+      const errorDom = new JSDOM(errorHtml, options);
+      errorDom.window.close();
+      console.log(JSON.stringify(calls));
+    `);
+    assertEquals(observed, [
+      { action: "appUpdated", targetOrigin: origin, initial: true },
+      { action: "appUpdated", targetOrigin: origin, initial: false },
+      { action: "appUpdated", targetOrigin: origin, initial: true },
+    ]);
   });
 });
