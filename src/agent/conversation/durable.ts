@@ -1,4 +1,5 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { createInstrumentedFetch } from "#veryfront/observability/auto-instrument/http-instrumentation.ts";
 import { isVeryfrontError, NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import {
   AppendConversationRunEventsResponseSchema,
@@ -77,6 +78,15 @@ export type {
 
 const AGENT_RUN_API_TIMEOUT_MS = 15_000;
 type ConversationRunApiFetch = typeof globalThis.fetch;
+
+/**
+ * Keep durable run API calls in the same distributed trace as the execution
+ * span. The host deliberately does not replace globalThis.fetch, so callers
+ * that do not inject a transport must opt into the framework's HTTP wrapper.
+ */
+function resolveConversationRunFetch(fetch?: ConversationRunApiFetch): ConversationRunApiFetch {
+  return fetch ?? createInstrumentedFetch(globalThis.fetch);
+}
 
 function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
   const controller = new AbortController();
@@ -1073,7 +1083,7 @@ async function controlPlaneJson<T>(input: {
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
-    const response = await (input.fetch ?? globalThis.fetch)(input.url, {
+    const response = await resolveConversationRunFetch(input.fetch)(input.url, {
       method: input.method ?? "GET",
       headers: {
         Authorization: `Bearer ${input.authToken}`,
@@ -1238,7 +1248,7 @@ export async function appendConversationRunEvents(input: {
         "Run event append request exceeds the supported payload size",
       );
     }
-    const response = await (input.fetch ?? globalThis.fetch)(
+    const response = await resolveConversationRunFetch(input.fetch)(
       `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}/events`,
       {
         method: "POST",
