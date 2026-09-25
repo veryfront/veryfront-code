@@ -45,11 +45,12 @@ describe("selected readiness client", () => {
       "stale",
       "provider-claim",
       "inconsistent-stale",
+      "blocked-empty-blockers",
     ] as const
   ) {
     it(scenario, async () => {
       let reads = 0;
-      await withMockFetch(async (url, init) => {
+      await withMockFetch((url, init) => {
         const path = new URL(String(url));
         if (path.pathname.endsWith("/tools/list")) {
           return Response.json({ tools: [] }, {
@@ -75,6 +76,10 @@ describe("selected readiness client", () => {
           data.local_eligibility.blockers = ["connection_stale"];
         }
         if (scenario === "inconsistent-stale") data.selection.state = "stale";
+        if (scenario === "blocked-empty-blockers") {
+          data.local_eligibility.state = "blocked";
+          data.local_eligibility.blockers = [];
+        }
         if (scenario === "provider-claim") data.provider_verification.state = "verified";
         return Response.json(scenario === "absent" ? {} : { selected_readiness: data });
       }, async () => {

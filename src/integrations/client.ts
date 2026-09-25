@@ -49,6 +49,7 @@ import type {
   IntegrationDetails,
   IntegrationJsonObject,
   IntegrationOAuthHandoff,
+  IntegrationSelectionOptions,
   IntegrationToolResult,
 } from "./client-types.ts";
 
@@ -418,7 +419,7 @@ export async function createIntegrationClient(
     getIntegration: getDetails,
     async readiness(
       toolName: string,
-      options: IntegrationCallOptions = {},
+      options: IntegrationSelectionOptions = {},
     ): Promise<IntegrationSelectedReadiness> {
       const identity =
         typeof toolName === "string" && toolName.length <= MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH

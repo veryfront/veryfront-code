@@ -116,6 +116,7 @@ export function isSelectedReadiness(value: unknown, expected: {
     (l.state !== "blocked" || !strings(l.blockers) || !l.blockers.includes("connection_stale"))
   ) return false;
   if (l.state === "eligible" && (!strings(l.blockers) || l.blockers.length > 0)) return false;
+  if (l.state === "blocked" && (!strings(l.blockers) || l.blockers.length === 0)) return false;
   return oneOf(c.state, [
     "connected",
     "expired",

@@ -106,6 +106,7 @@ export type {
   IntegrationDetails,
   IntegrationJsonObject,
   IntegrationOAuthHandoff,
+  IntegrationSelectionOptions,
   IntegrationToolResult,
 } from "./client-types.ts";
 export type {
