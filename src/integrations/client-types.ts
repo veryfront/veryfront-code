@@ -126,7 +126,7 @@ export interface IntegrationClient {
   /** Read fresh selected-tool metadata. This neither executes a tool nor verifies provider access. */
   readiness(
     toolName: string,
-    options?: IntegrationCallOptions,
+    options?: IntegrationSelectionOptions,
   ): Promise<IntegrationSelectedReadiness>;
   discover(
     options?: { search?: string; sortOrder?: "asc" | "desc" },

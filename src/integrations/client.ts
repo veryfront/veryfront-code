@@ -421,6 +421,7 @@ export async function createIntegrationClient(
       toolName: string,
       options: IntegrationSelectionOptions = {},
     ): Promise<IntegrationSelectedReadiness> {
+      const { connectionId, expectedConnectionGenerationId, abortSignal } = options;
       const identity =
         typeof toolName === "string" && toolName.length <= MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH
           ? parseIntegrationToolIdentity(toolName)
@@ -428,12 +429,12 @@ export async function createIntegrationClient(
       if (!identity) {
         throw new TypeError("Tool name must use canonical integration__tool_id format");
       }
-      if (options.connectionId !== undefined && !uuid(options.connectionId)) {
+      if (connectionId !== undefined && !uuid(connectionId)) {
         throw new TypeError("connectionId must be a UUID");
       }
       if (
-        options.expectedConnectionGenerationId !== undefined &&
-        (!options.connectionId || !uuid(options.expectedConnectionGenerationId))
+        expectedConnectionGenerationId !== undefined &&
+        (!connectionId || !uuid(expectedConnectionGenerationId))
       ) {
         throw new TypeError(
           "expectedConnectionGenerationId requires connectionId and both must be UUIDs",
@@ -441,16 +442,16 @@ export async function createIntegrationClient(
       }
       const params = new URLSearchParams({
         tool_name: toolName,
-        ...(options.connectionId ? { connection_id: options.connectionId } : {}),
-        ...(options.expectedConnectionGenerationId
-          ? { expected_connection_generation_id: options.expectedConnectionGenerationId }
+        ...(connectionId ? { connection_id: connectionId } : {}),
+        ...(expectedConnectionGenerationId
+          ? { expected_connection_generation_id: expectedConnectionGenerationId }
           : {}),
       });
       const body = await request(
         `/projects/${selectedProject.id}/integrations/${
           encodeURIComponent(identity.integration)
         }?${params}`,
-        { signal: options.abortSignal },
+        { signal: abortSignal },
       );
       const value = body.selected_readiness;
       if (
@@ -458,10 +459,8 @@ export async function createIntegrationClient(
           projectId: selectedProject.id,
           integration: identity.integration,
           toolName,
-          ...(options.connectionId ? { connectionId: options.connectionId } : {}),
-          ...(options.expectedConnectionGenerationId
-            ? { generation: options.expectedConnectionGenerationId }
-            : {}),
+          ...(connectionId ? { connectionId: connectionId } : {}),
+          ...(expectedConnectionGenerationId ? { generation: expectedConnectionGenerationId } : {}),
         })
       ) throw new IntegrationApiError("invalid_response", 200, false);
       return value;

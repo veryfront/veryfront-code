@@ -167,3 +167,35 @@ it("keeps out-of-order readiness reads isolated by project and credential", asyn
     assertEquals(seen, [second.id, project.id]);
   });
 });
+
+it("validates the selection sent even when caller options change during the request", async () => {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const options = { connectionId, expectedConnectionGenerationId: generation };
+  await withMockFetch(async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/tools/list")) {
+      return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
+    }
+    if (!url.pathname.includes("/integrations/")) return Response.json(project);
+    assertEquals(url.searchParams.get("connection_id"), connectionId);
+    assertEquals(url.searchParams.get("expected_connection_generation_id"), generation);
+    started.resolve();
+    await release.promise;
+    return Response.json({ selected_readiness: response() });
+  }, async () => {
+    const client = await createIntegrationClient({
+      apiBaseUrl: "https://api.example.test",
+      authToken: "synthetic-token",
+      projectReference: project.id,
+    });
+    const pending = client.readiness("github__get_current_user", options);
+    await started.promise;
+    options.connectionId = "44444444-4444-4444-8444-444444444444";
+    options.expectedConnectionGenerationId = "55555555-5555-4555-8555-555555555555";
+    release.resolve();
+    const result = await pending;
+    assertEquals(result.selection.connection_id, connectionId);
+    assertEquals(result.selection.connection_generation_id, generation);
+  });
+});
