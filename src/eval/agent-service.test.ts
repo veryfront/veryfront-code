@@ -633,6 +633,56 @@ describe("eval/agent-service", () => {
     assertEquals(requestBody?.forwardedProps, undefined);
   });
 
+  it("reads usage amounts sent as decimal strings", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          { event: "TextMessageContent", data: { delta: "Done" } },
+          {
+            event: "RunFinished",
+            data: {
+              metadata: {
+                inputTokens: 12,
+                outputTokens: 8,
+                totalTokens: 20,
+                providerCostUsd: "0.0010000000",
+                veryfrontChargeUsd: "0.0025000000",
+                veryfrontBilledUsd: "0.1000000000",
+                costCredits: "1.0000000000",
+                costSource: "gateway",
+              },
+            },
+          },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-decimal-usage",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "List files" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(result.usage, {
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+      costUsd: 0.001,
+      providerCostUsd: 0.001,
+      veryfrontChargeUsd: 0.0025,
+      veryfrontBilledUsd: 0.1,
+      costCredits: 1,
+      costSource: "gateway",
+    });
+  });
+
   it("marks a non-ok AG-UI response as an incomplete run", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",

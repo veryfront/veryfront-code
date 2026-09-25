@@ -11,7 +11,8 @@ export type RuntimeUsageCaptureStatus = "complete" | "partial" | "missing";
  * Canonical provider-neutral usage reported by text-generation runtimes.
  *
  * Token counters are non-negative safe integers. Cost and credit counters are
- * non-negative finite numbers. Use {@link sanitizeRuntimeUsage} or
+ * non-negative finite numbers; the gateway may send them as decimal strings,
+ * which {@link readRuntimeCost} converts. Use {@link sanitizeRuntimeUsage} or
  * {@link mergeRuntimeUsage} when values originate outside the process.
  * Normalized usage is a data-only record and may have a null prototype so an
  * absent field cannot resolve through a polluted global prototype. Use
@@ -98,9 +99,51 @@ export function sumRuntimeTokenCounts(
   return readRuntimeTokenCount((first ?? 0) + (second ?? 0));
 }
 
+/** Decimal amount as the Veryfront API sends money: digits and an optional fraction. */
+const DECIMAL_AMOUNT_PATTERN = /^-?\d+(?:\.\d+)?$/;
+
+/** Read a finite cost or credit amount sent as a number or a decimal string. */
+export function readRuntimeAmount(value: unknown): number | undefined {
+  const amount = typeof value === "string" && DECIMAL_AMOUNT_PATTERN.test(value)
+    ? Number(value)
+    : value;
+  return typeof amount === "number" && Number.isFinite(amount) ? amount : undefined;
+}
+
 /** Read a non-negative finite cost or credit value. */
 export function readRuntimeCost(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+  const amount = readRuntimeAmount(value);
+  return amount !== undefined && amount >= 0 ? amount : undefined;
+}
+
+const GATEWAY_USAGE_COST_FIELDS = [
+  ["costUsd", "cost_usd"],
+  ["providerInputCostUsd", "provider_input_cost_usd"],
+  ["providerOutputCostUsd", "provider_output_cost_usd"],
+  ["providerCostUsd", "provider_cost_usd"],
+  ["veryfrontInputChargeUsd", "veryfront_input_charge_usd"],
+  ["veryfrontOutputChargeUsd", "veryfront_output_charge_usd"],
+  ["veryfrontChargeUsd", "veryfront_charge_usd"],
+  ["veryfrontBilledUsd", "veryfront_billed_usd"],
+  ["costCredits", "cost_credits"],
+] as const satisfies readonly (readonly [keyof RuntimeUsage, string])[];
+
+/**
+ * Read the cost and credit amounts of a gateway `veryfront` usage envelope.
+ *
+ * The result is a null-prototype data record so a polluted `Object.prototype`
+ * can neither intercept the writes nor surface absent fields.
+ */
+export function readGatewayUsageCosts(
+  envelope: Record<string, unknown> | undefined,
+): RuntimeUsage {
+  const costs = Object.create(null) as RuntimeUsage;
+  if (!envelope) return costs;
+  for (const [field, key] of GATEWAY_USAGE_COST_FIELDS) {
+    const amount = readRuntimeCost(Object.hasOwn(envelope, key) ? envelope[key] : undefined);
+    if (amount !== undefined) defineRuntimeUsageDataProperty(costs, field, amount);
+  }
+  return costs;
 }
 
 /** Read a trusted gateway billing mode from provider metadata. */

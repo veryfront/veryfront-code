@@ -9,6 +9,7 @@ import { readRecord } from "./provider-records.ts";
 export {
   mergeRuntimeUsage,
   readGatewayBillingMode,
+  readGatewayUsageCosts,
   sanitizeRuntimeUsage,
 } from "../runtime-usage.ts";
 export type { GatewayBillingMode, RuntimeUsage } from "../runtime-usage.ts";

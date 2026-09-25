@@ -2,6 +2,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProviderRequestError } from "veryfront/provider/shared";
 import {
+  extractOpenAIResponsesUsage,
   MAX_OPENAI_RESPONSES_STREAM_CONTENT_PARTS,
   MAX_OPENAI_RESPONSES_STREAM_OUTPUT_ITEMS,
   MAX_OPENAI_STREAM_MESSAGE_SNAPSHOT_BYTES,
@@ -63,6 +64,35 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-responses-stream", () => {
+  it("reads gateway amounts sent as decimal strings from Responses usage", () => {
+    assertEquals(
+      extractOpenAIResponsesUsage({
+        response: {
+          usage: {
+            input_tokens: 8,
+            output_tokens: 2,
+            total_tokens: 10,
+            veryfront: {
+              provider_cost_usd: "0.0010000000",
+              veryfront_billed_usd: "0.1000000000",
+              cost_credits: "1.0000000000",
+              cost_source: "gateway",
+            },
+          },
+        },
+      }),
+      {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+        providerCostUsd: 0.001,
+        veryfrontBilledUsd: 0.1,
+        costCredits: 1,
+        costSource: "gateway",
+      },
+    );
+  });
+
   // Retention is bounded by bytes, not by how finely the provider chunks the
   // stream: a per-delta count is a wall-clock limit for long generations.
   it("accepts reasoning, tool arguments, and text streamed as 20,000 small deltas each", async () => {

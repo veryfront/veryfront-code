@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mergeUsage, type RuntimeUsage, sanitizeRuntimeUsage } from "./provider-usage.ts";
+import { readGatewayUsageCosts, readRuntimeAmount, readRuntimeCost } from "../runtime-usage.ts";
 
 describe("provider/runtime-loader/provider-usage mergeUsage", () => {
   it("preserves a provider-reported totalTokens that exceeds input + output (reasoning tokens)", () => {
@@ -514,5 +515,125 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
 
       assertEquals(getterCalls, 0);
     }
+  });
+});
+
+describe("provider/runtime-usage amount readers", () => {
+  it("reads amounts sent as numbers or decimal strings", () => {
+    assertEquals(readRuntimeAmount(0.25), 0.25);
+    assertEquals(readRuntimeAmount("0.2500000000"), 0.25);
+    assertEquals(readRuntimeAmount("12"), 12);
+    assertEquals(readRuntimeAmount("-3.5"), -3.5);
+    for (
+      const value of [
+        "",
+        " 1",
+        "1e3",
+        "0x10",
+        "1.",
+        ".5",
+        "1,250",
+        "abc",
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        null,
+        true,
+        ["1"],
+      ]
+    ) {
+      assertEquals(readRuntimeAmount(value), undefined, String(value));
+    }
+  });
+
+  it("rejects negative costs in either shape", () => {
+    assertEquals(readRuntimeCost("0.0000000000"), 0);
+    assertEquals(readRuntimeCost("57.2500000000"), 57.25);
+    assertEquals(readRuntimeCost(-1), undefined);
+    assertEquals(readRuntimeCost("-0.0000000001"), undefined);
+  });
+
+  it("reads a gateway usage envelope in either shape and skips invalid amounts", () => {
+    assertEquals(readGatewayUsageCosts(undefined), {});
+    assertEquals(
+      readGatewayUsageCosts({
+        cost_usd: 0.002,
+        provider_input_cost_usd: "0.0004000000",
+        provider_output_cost_usd: "0.0006000000",
+        provider_cost_usd: "0.0010000000",
+        veryfront_input_charge_usd: 0.001,
+        veryfront_output_charge_usd: "0.0015000000",
+        veryfront_charge_usd: "0.0025000000",
+        veryfront_billed_usd: "0.1000000000",
+        cost_credits: "1.0000000000",
+        billable_input_tokens: "8",
+        pricing_source: "catalog",
+      }),
+      {
+        costUsd: 0.002,
+        providerInputCostUsd: 0.0004,
+        providerOutputCostUsd: 0.0006,
+        providerCostUsd: 0.001,
+        veryfrontInputChargeUsd: 0.001,
+        veryfrontOutputChargeUsd: 0.0015,
+        veryfrontChargeUsd: 0.0025,
+        veryfrontBilledUsd: 0.1,
+        costCredits: 1,
+      },
+    );
+    assertEquals(
+      readGatewayUsageCosts({
+        provider_cost_usd: "-1",
+        cost_credits: "1 credit",
+        veryfront_billed_usd: Number.NaN,
+      }),
+      {},
+    );
+  });
+
+  it("defines gateway costs as own data without consulting a polluted prototype", () => {
+    let setterCalls = 0;
+    let getterCalls = 0;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "providerCostUsd",
+    );
+    Object.defineProperty(Object.prototype, "providerCostUsd", {
+      configurable: true,
+      get() {
+        getterCalls++;
+        return 99;
+      },
+      set() {
+        setterCalls++;
+      },
+    });
+    Object.defineProperty(Object.prototype, "cost_usd", {
+      configurable: true,
+      get() {
+        getterCalls++;
+        return "0.5";
+      },
+    });
+
+    try {
+      const costs = readGatewayUsageCosts({ provider_cost_usd: "0.0010000000" });
+
+      assertEquals(Object.getPrototypeOf(costs), null);
+      assertEquals(Object.hasOwn(costs, "providerCostUsd"), true);
+      assertEquals(costs.providerCostUsd, 0.001);
+      assertEquals(costs.costUsd, undefined);
+      assertEquals(JSON.stringify(costs), '{"providerCostUsd":0.001}');
+      assertEquals(Object.getPrototypeOf(readGatewayUsageCosts(undefined)), null);
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Object.prototype, "providerCostUsd", originalDescriptor);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).providerCostUsd;
+      }
+      delete (Object.prototype as Record<string, unknown>).cost_usd;
+    }
+
+    assertEquals(setterCalls, 0);
+    assertEquals(getterCalls, 0);
   });
 });

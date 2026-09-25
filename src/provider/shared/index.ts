@@ -69,6 +69,7 @@ export {
   ProviderRateLimitError,
   ProviderRequestError,
   readGatewayBillingMode,
+  readGatewayUsageCosts,
   readProviderOptions,
   readRecord,
   readTextParts,

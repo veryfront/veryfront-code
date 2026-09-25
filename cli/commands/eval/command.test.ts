@@ -2804,6 +2804,44 @@ describe("eval CLI command helpers", () => {
     assertEquals(warnings, 1);
   });
 
+  it("accepts decimal-string amounts in gateway billing finalization", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            billing_group_id: "evalrun_test_model",
+            already_finalized: false,
+            request_count: 1,
+            charged_credits: "4.0000000000",
+            target_credits: "1.0000000000",
+            adjustment_credits: "3.0000000000",
+            adjustment: "refund",
+            provider_cost_usd: "0.0100000000",
+            veryfront_charge_usd: "0.0300000000",
+            veryfront_billed_usd: "0.4000000000",
+            usage_capture_status: "complete",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+
+    const finalization = await finalizeGatewayBillingGroup("evalrun_test_model");
+
+    assertEquals(finalization, {
+      billing_group_id: "evalrun_test_model",
+      charged_credits: 4,
+      target_credits: 1,
+      adjustment_credits: 3,
+      provider_cost_usd: 0.01,
+      veryfront_charge_usd: 0.03,
+      veryfront_billed_usd: 0.4,
+    });
+  });
+
   it("retries gateway billing finalization while usage capture is not ready", async () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");

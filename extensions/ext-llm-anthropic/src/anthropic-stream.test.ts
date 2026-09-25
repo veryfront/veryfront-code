@@ -190,6 +190,32 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     );
   });
 
+  it("reads gateway amounts sent as decimal strings at the extraction boundary", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          veryfront: {
+            provider_cost_usd: "0.0010000000",
+            veryfront_billed_usd: "0.1000000000",
+            cost_credits: "1.0000000000",
+            cost_source: "gateway",
+          },
+        },
+      }),
+      {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+        providerCostUsd: 0.001,
+        veryfrontBilledUsd: 0.1,
+        costCredits: 1,
+        costSource: "gateway",
+      },
+    );
+  });
+
   it("rejects invalid trailing-usage timers without locking the body", async () => {
     for (const invalidTimeout of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       const stream = streamFromText("");

@@ -43,6 +43,7 @@ import {
   getCurrentVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
+import { readRuntimeAmount } from "../../../src/provider/runtime-usage.ts";
 import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { getEnv } from "#cli/process-env";
 import { brand, dim } from "#cli/ui";
@@ -242,24 +243,16 @@ function joinApiUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
-function readFiniteNumber(
-  record: Record<string, unknown>,
-  field: keyof GatewayBillingGroupFinalization,
-): number | undefined {
-  const value = record[field];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 function parseGatewayBillingGroupFinalization(
   payload: unknown,
 ): GatewayBillingGroupFinalization | undefined {
   if (!isRecord(payload) || typeof payload.billing_group_id !== "string") return undefined;
-  const chargedCredits = readFiniteNumber(payload, "charged_credits");
-  const targetCredits = readFiniteNumber(payload, "target_credits");
-  const adjustmentCredits = readFiniteNumber(payload, "adjustment_credits");
-  const providerCostUsd = readFiniteNumber(payload, "provider_cost_usd");
-  const veryfrontChargeUsd = readFiniteNumber(payload, "veryfront_charge_usd");
-  const veryfrontBilledUsd = readFiniteNumber(payload, "veryfront_billed_usd");
+  const chargedCredits = readRuntimeAmount(payload.charged_credits);
+  const targetCredits = readRuntimeAmount(payload.target_credits);
+  const adjustmentCredits = readRuntimeAmount(payload.adjustment_credits);
+  const providerCostUsd = readRuntimeAmount(payload.provider_cost_usd);
+  const veryfrontChargeUsd = readRuntimeAmount(payload.veryfront_charge_usd);
+  const veryfrontBilledUsd = readRuntimeAmount(payload.veryfront_billed_usd);
 
   if (
     chargedCredits === undefined ||

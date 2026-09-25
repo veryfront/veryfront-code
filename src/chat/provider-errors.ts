@@ -5,6 +5,7 @@ import {
   ProviderOverloadedError,
   ProviderQuotaError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import {
   AI_PROVIDER_BILLING_ERROR,
   AI_PROVIDER_SPEND_LIMIT_ERROR,
@@ -150,16 +151,15 @@ function formatCreditProblemMessage(
   const suggestion = isRunLimit
     ? "Start a new reviewed run or reduce the scope of this run."
     : "Purchase additional credits or upgrade your subscription plan.";
-  if (
-    typeof balance !== "number" || !Number.isFinite(balance) || balance < 0 ||
-    typeof required !== "number" || !Number.isFinite(required) || required < 0
-  ) {
+  const availableCredits = readRuntimeCost(balance);
+  const requiredCredits = readRuntimeCost(required);
+  if (availableCredits === undefined || requiredCredits === undefined) {
     return hasSuggestion ? `${fallback}. ${suggestion}` : fallback;
   }
 
   const summary = error === "AI credit limit exceeded" ? "AI credit limit exceeded" : fallback;
   const availability = isRunLimit ? "remaining" : "available";
-  return `${summary}: ${required} credits required, ${balance} ${availability}.${
+  return `${summary}: ${requiredCredits} credits required, ${availableCredits} ${availability}.${
     hasSuggestion ? ` ${suggestion}` : ""
   }`;
 }
