@@ -341,6 +341,11 @@ const TOKENS_PER_TOOL = 250;
 
 const MASK_THRESHOLD = DEFAULT_MESSAGE_PREP_LIMITS.historicalToolOutputMaskChars;
 const HISTORICAL_TOOL_INPUT_SUMMARY_KIND = "historical_tool_input_summary";
+const PRECEDING_TURN_FILE_READ_TOOL_NAMES = new Set([
+  "get_file",
+  "veryfront__get_file",
+  "readFile",
+]);
 const WRITE_TOOL_INPUT_NAMES = new Set([
   "create_file",
   "createfile",
@@ -1295,7 +1300,7 @@ function wrapToolResultOutput(
   return original;
 }
 
-/** Mask old tool outputs. */
+/** Mask old tool outputs while retaining preceding-turn file evidence for follow-up edits. */
 export function maskOldToolOutputs(
   messages: ProviderModelMessage[],
   options: Pick<HistoricalToolInputRetentionOptions, "preserveSourceMessageIds"> = {},
@@ -1310,6 +1315,14 @@ export function maskOldToolOutputs(
   }
 
   if (lastUserIdx <= 0) return messages;
+
+  let previousUserIdx = -1;
+  for (let index = lastUserIdx - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user") {
+      previousUserIdx = index;
+      break;
+    }
+  }
 
   const toolCallMap = buildToolCallMap(messages);
   const preservedSourceMessageIds = new Set(options.preserveSourceMessageIds ?? []);
@@ -1339,14 +1352,20 @@ export function maskOldToolOutputs(
       if (part.type !== "tool-result") {
         return part;
       }
+      const callInfo = toolCallMap.get(part.toolCallId);
+      const toolName = part.toolName || callInfo?.toolName || "unknown";
+      if (
+        previousUserIdx >= 0 && idx > previousUserIdx && idx < lastUserIdx &&
+        PRECEDING_TURN_FILE_READ_TOOL_NAMES.has(toolName)
+      ) {
+        return part;
+      }
 
       const rawValue = getOutputValue(part.output);
       const charCount = serializedLength(rawValue);
 
       if (charCount < MASK_THRESHOLD) return part;
 
-      const callInfo = toolCallMap.get(part.toolCallId);
-      const toolName = part.toolName || callInfo?.toolName || "unknown";
       const input = callInfo?.input;
 
       let masked: unknown;
@@ -1359,6 +1378,7 @@ export function maskOldToolOutputs(
         switch (toolName) {
           case "readFile":
           case "get_file":
+          case "veryfront__get_file":
             masked = maskReadFile(input, charCount);
             break;
           case "bash":

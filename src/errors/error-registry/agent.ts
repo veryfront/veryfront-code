@@ -32,6 +32,14 @@ export const AGENT_INTENT_ERROR = defineError({
   suggestion: "Rephrase the request more clearly",
 });
 
+export const AGENT_EMPTY_RESPONSE = defineError({
+  slug: "agent-empty-response",
+  category: "AGENT",
+  status: 500,
+  title: "Assistant completed without producing a response",
+  suggestion: "Retry the request or choose a different model",
+});
+
 export const ORCHESTRATION_ERROR = defineError({
   slug: "orchestration-error",
   category: "AGENT",
@@ -223,6 +231,7 @@ export const AGENT_REGISTRY = {
   "agent-not-found": AGENT_NOT_FOUND,
   "agent-timeout": AGENT_TIMEOUT,
   "agent-intent-error": AGENT_INTENT_ERROR,
+  "agent-empty-response": AGENT_EMPTY_RESPONSE,
   "orchestration-error": ORCHESTRATION_ERROR,
   "cost-limit-exceeded": COST_LIMIT_EXCEEDED,
   "tool-id-conflict": TOOL_ID_CONFLICT,

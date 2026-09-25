@@ -142,6 +142,11 @@ values.
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
 
+File-read results from the immediately preceding user turn retain their content
+and version metadata so follow-up edits can use the file evidence. Older reads
+and large non-file results are compacted normally. Under context pressure, the
+existing best-effort token budget can still summarize the preceding turn.
+
 If a provider stops without producing assistant text or a new tool call after
 a completed tool, the runtime uses one remaining step to ask it to continue
 from the existing tool results. It preserves those results rather than
