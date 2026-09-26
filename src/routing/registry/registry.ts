@@ -36,12 +36,14 @@ export function buildRouteRegistrySpanAttributes(
   }
 
   if (projectSlug || projectId) {
-    if (ctx.resolvedEnvironment === "production") {
-      if (ctx.releaseId) attributes["release.id"] = ctx.releaseId;
-    } else {
+    const signedBranchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;
+    if (ctx.branchId || signedBranchName) {
       if (ctx.branchId) attributes["branch.id"] = ctx.branchId;
-      const branchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;
-      if (branchName) attributes["branch.name"] = branchName;
+      if (signedBranchName) attributes["branch.name"] = signedBranchName;
+    } else if (ctx.resolvedEnvironment === "production") {
+      if (ctx.releaseId) attributes["release.id"] = ctx.releaseId;
+    } else if (ctx.requestContext?.branch) {
+      attributes["branch.name"] = ctx.requestContext.branch;
     }
   }
 

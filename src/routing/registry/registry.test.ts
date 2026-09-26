@@ -141,7 +141,7 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(attributes["release.id"], "rel-123");
     });
 
-    it("tags a production request with the release it serves, not a branch", () => {
+    it("tags a production request with the release it serves", () => {
       const req = makeReq();
       const url = new URL(req.url);
       const attributes = buildRouteRegistrySpanAttributes(req, url, {
@@ -149,8 +149,6 @@ describe("routing/registry/RouteRegistry", () => {
         projectId: "proj-123",
         resolvedEnvironment: "production",
         releaseId: "rel-123",
-        branchId: "branch-123",
-        branchName: "feature/intake",
       });
 
       assertEquals(attributes["release.id"], "rel-123");
@@ -158,7 +156,23 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals("branch.name" in attributes, false);
     });
 
-    it("tags a preview request with the branch it serves, not a release header", () => {
+    it("tags a signed default-branch run on a production domain with the branch, not the release", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "production",
+        releaseId: "rel-123",
+        defaultBranchName: "main",
+      });
+
+      assertEquals("release.id" in attributes, false);
+      assertEquals("branch.id" in attributes, false);
+      assertEquals(attributes["branch.name"], "main");
+    });
+
+    it("tags a signed preview-branch run with the branch, not a release header", () => {
       const req = makeReq();
       const url = new URL(req.url);
       const attributes = buildRouteRegistrySpanAttributes(req, url, {
@@ -175,19 +189,20 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(attributes["branch.name"], "feature/intake");
     });
 
-    it("tags a preview request on the default branch with its branch name", () => {
+    it("tags an ordinary preview request with the branch its host resolved", () => {
       const req = makeReq();
       const url = new URL(req.url);
       const attributes = buildRouteRegistrySpanAttributes(req, url, {
         ...makeCtx(),
-        projectId: "proj-123",
+        projectSlug: "intake-demo",
         resolvedEnvironment: "preview",
-        defaultBranchName: "main",
+        releaseId: "rel-browser-preview-test",
+        requestContext: { token: "", slug: "intake-demo", branch: "feature", mode: "preview" },
       });
 
       assertEquals("release.id" in attributes, false);
       assertEquals("branch.id" in attributes, false);
-      assertEquals(attributes["branch.name"], "main");
+      assertEquals(attributes["branch.name"], "feature");
     });
 
     it("records the routing span with the trusted project identity", async () => {
