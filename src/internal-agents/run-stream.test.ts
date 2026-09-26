@@ -4199,7 +4199,10 @@ describe("internal-agents/run-stream", () => {
       threadId: crypto.randomUUID(),
       runId: "run_recovered_child_failure",
       messages: [],
-      tools: [],
+      tools: [
+        { name: "invoke_agent", parameters: { type: "object", properties: {} } },
+        { name: "veryfront__invoke_agent", parameters: { type: "object", properties: {} } },
+      ],
       context: [],
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
 
@@ -4255,6 +4258,69 @@ describe("internal-agents/run-stream", () => {
     assertEquals(finalizedEntry?.level, "info");
     assertEquals(finalizedEntry?.context?.toolErrorCount, 2);
     assertEquals(finalizedEntry?.context?.childRunErrorCount, 1);
+  });
+
+  it("does not count a custom tool that shares the invoke_agent name as a child run", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "custom-invoke-agent",
+      config: {
+        id: "custom-invoke-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          invoke_agent: {
+            id: "invoke_agent",
+            type: "function",
+            description: "Project tool that happens to share the name",
+            inputSchema: { type: "object", properties: {} },
+            execute: () => ({ ok: true }),
+          },
+        },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_custom_invoke_agent_error",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  [
+                    'data: {"type":"message-start","messageId":"assistant-1"}',
+                    'data: {"type":"tool-input-start","toolCallId":"custom-1","toolName":"invoke_agent"}',
+                    'data: {"type":"tool-input-available","toolCallId":"custom-1","toolName":"invoke_agent","input":{}}',
+                    'data: {"type":"tool-output-error","toolCallId":"custom-1","errorText":"custom tool failed"}',
+                    'data: {"type":"text-start","id":"text-1"}',
+                    'data: {"type":"text-delta","id":"text-1","delta":"handled"}',
+                    'data: {"type":"text-end","id":"text-1"}',
+                    "",
+                    "",
+                  ].join("\n\n"),
+                ),
+              );
+              controller.close();
+            },
+          }),
+      }),
+    });
+    await response.text();
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+    assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 1);
+    assertEquals(runSpan?.attributes["agent.run.child_run_error_count"], 0);
   });
 
   it("records usage accumulated before a terminal runtime error on the agent.run span", async () => {

@@ -227,6 +227,8 @@ function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | un
   return runtimeInferenceCredentials.get(input);
 }
 
+const controlPlaneInjectedTools = new WeakSet<Tool>();
+
 function createInjectedStudioTool(
   runId: string,
   toolName: string,
@@ -259,6 +261,7 @@ function createInjectedStudioTool(
       return waitResult.result;
     },
   };
+  controlPlaneInjectedTools.add(tool);
   return controlPlaneNames.some((name) => toolName === `veryfront__${name}`)
     ? markTrustedHostToolProvenance(tool)
     : tool;
@@ -272,8 +275,23 @@ const controlPlaneNames = [
   "studio_todo_write",
 ];
 
-function isInvokeAgentToolName(toolName: unknown): boolean {
-  return toolName === INVOKE_AGENT_TOOL_ID || toolName === `veryfront__${INVOKE_AGENT_TOOL_ID}`;
+/**
+ * Tool names whose calls run a child agent: control-plane delegation or the
+ * framework's own invoke_agent. A custom tool that merely shares the name is not one.
+ */
+function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<string> {
+  const names = new Set<string>();
+  if (!mergedTools) return names;
+  for (const toolName of [INVOKE_AGENT_TOOL_ID, `veryfront__${INVOKE_AGENT_TOOL_ID}`]) {
+    const entry = mergedTools === true ? true : mergedTools[toolName];
+    if (
+      entry === true || isFrameworkInvokeAgentTool(entry) ||
+      (isRecord(entry) && controlPlaneInjectedTools.has(entry as Tool))
+    ) {
+      names.add(toolName);
+    }
+  }
+  return names;
 }
 
 function isExplicitlyDeniedToolName(
@@ -1064,6 +1082,7 @@ export async function createRuntimeAgentStreamResponse(
   const modelCallContextRelay = createModelCallContextRelay(timing);
   const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
   let shouldEmitProviderReplayCheckpoints = false;
+  let childRunToolNames = new Set<string>();
   try {
     const executionModel = getAgentExecutionConfig(agent.config).model ??
       resolveConfiguredAgentModel();
@@ -1164,6 +1183,7 @@ export async function createRuntimeAgentStreamResponse(
       modelSupportedProviderToolNames.has(toolName) &&
       !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName, deps.localTools)
     );
+    childRunToolNames = resolveChildRunToolNames(mergedTools);
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
     const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
     const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
@@ -1378,7 +1398,8 @@ export async function createRuntimeAgentStreamResponse(
           const observeRunOutcomeEvent = (event: string, payload: Record<string, unknown>) => {
             if (
               event === "ToolCallStart" && typeof payload.toolCallId === "string" &&
-              isInvokeAgentToolName(payload.toolCallName)
+              typeof payload.toolCallName === "string" &&
+              childRunToolNames.has(payload.toolCallName)
             ) {
               childRunToolCallIds.add(payload.toolCallId);
             }
