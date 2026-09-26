@@ -311,9 +311,9 @@ Result: \`1/1 passed (100%)\`
 
 ## Examples
 
-| Example | Result | Duration | Tokens | Billed USD | Credits |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| \`eval:answers/example-1/1\` | PASS | 1.000s | 12 | - | - |
+| Example | Result | Duration | Tokens | Credits |
+| --- | ---: | ---: | ---: | ---: |
+| \`eval:answers/example-1/1\` | PASS | 1.000s | 12 | - |
 
 ## Baseline
 

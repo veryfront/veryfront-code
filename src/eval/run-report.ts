@@ -503,19 +503,15 @@ function createEvalMarkdownReport(
     "",
     "## Examples",
     "",
-    "| Example | Result | Duration | Tokens | Billed USD | Credits |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |",
+    "| Example | Result | Duration | Tokens | Credits |",
+    "| --- | ---: | ---: | ---: | ---: |",
   );
 
   for (const record of report.records) {
     lines.push(
       `| \`${markdownCell(record.id)}\` | ${examplePassed(record) ? "PASS" : "FAIL"} | ${
         durationCell(record.durationMs)
-      } | ${numberCell(record.usage.totalTokens)} | ${
-        record.usage.veryfrontBilledUsd === undefined
-          ? "-"
-          : `\`${usdCell(record.usage.veryfrontBilledUsd)}\``
-      } | ${decimalCell(record.usage.costCredits)} |`,
+      } | ${numberCell(record.usage.totalTokens)} | ${decimalCell(record.usage.costCredits)} |`,
     );
   }
 

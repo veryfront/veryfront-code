@@ -2390,16 +2390,10 @@ describe("eval CLI command helpers", () => {
       charged_credits: 16,
       target_credits: 1,
       adjustment_credits: 15,
-      provider_cost_usd: 0.02465,
-      veryfront_charge_usd: 0.07395,
-      veryfront_billed_usd: 0.1,
     });
 
     assertEquals(finalized.summary.usage, {
       ...report.summary.usage,
-      providerCostUsd: 0.02465,
-      veryfrontChargeUsd: 0.07395,
-      veryfrontBilledUsd: 0.1,
       costCredits: 1,
       costSource: "gateway",
       billingMode: "direct",
@@ -2425,9 +2419,6 @@ describe("eval CLI command helpers", () => {
             target_credits: 1,
             adjustment_credits: 3,
             adjustment: "refund",
-            provider_cost_usd: 0.01,
-            veryfront_charge_usd: 0.03,
-            veryfront_billed_usd: 0.4,
             usage_capture_status: "complete",
           }),
           {
@@ -2804,7 +2795,7 @@ describe("eval CLI command helpers", () => {
     assertEquals(warnings, 1);
   });
 
-  it("accepts decimal-string amounts in gateway billing finalization", async () => {
+  it("accepts decimal-string credits and ignores USD facts in gateway billing finalization", async () => {
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
     installMockFetch(() =>
@@ -2836,10 +2827,38 @@ describe("eval CLI command helpers", () => {
       charged_credits: 4,
       target_credits: 1,
       adjustment_credits: 3,
-      provider_cost_usd: 0.01,
-      veryfront_charge_usd: 0.03,
-      veryfront_billed_usd: 0.4,
     });
+  });
+
+  it("skips gateway billing finalization with a warning when a credit amount is missing", async () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.test");
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            billing_group_id: "evalrun_test_model",
+            charged_credits: 4,
+            target_credits: 1,
+            provider_cost_usd: 0.01,
+            veryfront_charge_usd: 0.03,
+            veryfront_billed_usd: 0.4,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+    );
+    let warnings = 0;
+
+    const finalization = await finalizeGatewayBillingGroup("evalrun_test_model", {
+      beforeWarning: () => {
+        warnings += 1;
+      },
+    });
+
+    assertEquals(finalization, undefined);
+    assertEquals(warnings, 1);
   });
 
   it("retries gateway billing finalization while usage capture is not ready", async () => {
@@ -2876,9 +2895,6 @@ describe("eval CLI command helpers", () => {
             target_credits: 1,
             adjustment_credits: 3,
             adjustment: "refund",
-            provider_cost_usd: 0.01,
-            veryfront_charge_usd: 0.03,
-            veryfront_billed_usd: 0.4,
             usage_capture_status: "complete",
           }),
           {
@@ -2900,7 +2916,7 @@ describe("eval CLI command helpers", () => {
     assertEquals(requests.length, 2);
     assertEquals(sleeps, [25]);
     assertEquals(finalization?.target_credits, 1);
-    assertEquals(finalization?.veryfront_billed_usd, 0.4);
+    assertEquals(finalization?.charged_credits, 4);
   });
 
   it("retries default gateway billing finalization long enough for delayed usage capture", async () => {
@@ -2937,9 +2953,6 @@ describe("eval CLI command helpers", () => {
             target_credits: 1,
             adjustment_credits: 3,
             adjustment: "refund",
-            provider_cost_usd: 0.01,
-            veryfront_charge_usd: 0.03,
-            veryfront_billed_usd: 0.4,
             usage_capture_status: "complete",
           }),
           {
@@ -2960,7 +2973,7 @@ describe("eval CLI command helpers", () => {
     assertEquals(requests.length, 7);
     assertEquals(sleeps.length, 6);
     assertEquals(finalization?.target_credits, 1);
-    assertEquals(finalization?.veryfront_billed_usd, 0.4);
+    assertEquals(finalization?.charged_credits, 4);
   });
 
   it("exports CLI eval reports after gateway billing finalization", async () => {
@@ -2970,9 +2983,6 @@ describe("eval CLI command helpers", () => {
       charged_credits: 4,
       target_credits: 1,
       adjustment_credits: 3,
-      provider_cost_usd: 0.02465,
-      veryfront_charge_usd: 0.07395,
-      veryfront_billed_usd: 0.4,
     });
     let exportedUsage: EvalReport["summary"]["usage"] | undefined;
 
