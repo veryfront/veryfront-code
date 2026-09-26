@@ -2042,7 +2042,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
 
-        const response = await withSpan(
+        return await withSpan(
           "project_run.execute",
           async () => {
             const startedAt = this.deps.now();
@@ -2061,10 +2061,15 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                 ? await executeEvalRun(request, ctx, req, this.deps)
                 : await executeWorkflowRun(request, ctx, this.deps);
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
-              return response;
+              return this.respond(builder.json(response, 200));
             } catch (error) {
               setActiveSpanErrorStatus(error);
-              return createExecutionFailure(error, Math.max(0, this.deps.now() - startedAt));
+              return this.respond(
+                builder.json(
+                  createExecutionFailure(error, Math.max(0, this.deps.now() - startedAt)),
+                  200,
+                ),
+              );
             }
           },
           {
@@ -2073,7 +2078,6 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             "project.id": request.projectId,
           },
         );
-        return this.respond(builder.json(response, 200));
       } catch (error) {
         if (error instanceof InternalAgentRequestBodyTooLargeError) {
           return this.respond(builder.json({ error: error.message }, error.status));

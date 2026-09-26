@@ -2527,7 +2527,10 @@ describe("project run execution span", () => {
 
   async function executeTracedTask(
     runTask: ProjectRunExecuteHandlerDeps["runTask"],
-  ): Promise<ReturnType<InMemorySpanExporter["getFinishedSpans"]>> {
+  ): Promise<{
+    spans: ReturnType<InMemorySpanExporter["getFinishedSpans"]>;
+    body: Record<string, unknown>;
+  }> {
     const exporter = new InMemorySpanExporter();
     const provider = new BasicTracerProvider({
       spanProcessors: [new SimpleSpanProcessor(exporter)],
@@ -2554,7 +2557,7 @@ describe("project run execution span", () => {
 
       const result = await handler.handle(request, createCtx(publicKeyPem));
       assertEquals(result.response?.status, 200);
-      return exporter.getFinishedSpans();
+      return { spans: exporter.getFinishedSpans(), body: await result.response!.json() };
     } finally {
       _resetShimForTests();
       contextManager.disable();
@@ -2564,7 +2567,7 @@ describe("project run execution span", () => {
   }
 
   it("identifies the run on the execution span", async () => {
-    const spans = await executeTracedTask(async () => ({
+    const { spans } = await executeTracedTask(async () => ({
       success: true,
       result: { synced: 1 },
       durationMs: 5,
@@ -2579,7 +2582,7 @@ describe("project run execution span", () => {
   });
 
   it("marks the execution span as failed when the run fails", async () => {
-    const spans = await executeTracedTask(async () => ({
+    const { spans } = await executeTracedTask(async () => ({
       success: false,
       error: "Exactly one style artifact selector is required",
       durationMs: 5,
@@ -2591,8 +2594,21 @@ describe("project run execution span", () => {
   });
 
   it("marks the execution span as failed when the run throws", async () => {
-    const spans = await executeTracedTask(() => Promise.reject(new Error("task crashed")));
+    const { spans } = await executeTracedTask(() => Promise.reject(new Error("task crashed")));
 
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.status.code, SpanStatusCode.ERROR);
+  });
+
+  it("reports an unserializable run result as a failed execution", async () => {
+    const { spans, body } = await executeTracedTask(async () => ({
+      success: true,
+      result: { total: 1n },
+      durationMs: 5,
+    }));
+
+    assertEquals(body.success, false);
     const span = spans.find((candidate) => candidate.name === "project_run.execute");
     assertExists(span);
     assertEquals(span.status.code, SpanStatusCode.ERROR);
