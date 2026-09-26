@@ -768,7 +768,10 @@ Deno.test("strict dedicated assignment resolution", async (t) => {
   const strict = { requireAssignment: true };
   await t.step("strict assignment option must be boolean", () => {
     assertThrows(
-      () => new ServerResolver("https://api.example.com", "", "", 0, { requireAssignment: "yes" as never }),
+      () =>
+        new ServerResolver("https://api.example.com", "", "", 0, {
+          requireAssignment: "yes" as never,
+        }),
       TypeError,
     );
   });
