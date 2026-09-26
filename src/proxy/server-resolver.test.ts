@@ -766,6 +766,12 @@ Deno.test("ServerResolver", async (t) => {
 
 Deno.test("strict dedicated assignment resolution", async (t) => {
   const strict = { requireAssignment: true };
+  await t.step("strict assignment option must be boolean", () => {
+    assertThrows(
+      () => new ServerResolver("https://api.example.com", "", "", 0, { requireAssignment: "yes" as never }),
+      TypeError,
+    );
+  });
   await t.step("explicitly unassigned environment uses shared routing", async () => {
     const api = createMockApi(() => Response.json({ server: null, assignment: "none" }));
     const resolver = new ServerResolver(api.url, "", "", 30_000, strict);
@@ -912,6 +918,22 @@ Deno.test("strict dedicated assignment resolution", async (t) => {
       await assertRejects(() => pending, Error);
     } finally {
       gate.resolve(Response.json({ server: null, assignment: "none" }));
+      resolver.close();
+    }
+  });
+  await t.step("strict close converts a late lookup failure to unavailable", async () => {
+    const gate = Promise.withResolvers<Response>();
+    const resolver = new ServerResolver("https://api.example.com", "", "", 0, {
+      ...strict,
+      fetchImpl: () => gate.promise,
+    });
+    try {
+      const pending = resolver.resolve("env-closing-error");
+      await Promise.resolve();
+      resolver.close();
+      gate.reject(new Error("late transport failure"));
+      await assertRejects(() => pending, Error);
+    } finally {
       resolver.close();
     }
   });
