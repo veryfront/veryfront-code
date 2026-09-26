@@ -36,4 +36,24 @@ describe("proxy JSON log line", () => {
     assertEquals("projectId" in entry, false);
     assertEquals("request_id" in entry, false);
   });
+
+  it("stamps the run a signed control-plane request addresses as run_id", () => {
+    const entry = JSON.parse(runWithProxyRequestContext(
+      { requestId: "req-1", projectId: "project-1", runId: "run_1" },
+      () => formatProxyJsonLine("info", "200 POST /api/control-plane/runs/run_1/stream"),
+    ));
+
+    assertEquals(entry.run_id, "run_1");
+    assertEquals("runId" in entry, false);
+  });
+
+  it("keeps the caller context and serialized error on the line", () => {
+    const entry = JSON.parse(
+      formatProxyJsonLine("error", "Upstream failed", { ms: 12 }, new Error("connection reset")),
+    );
+
+    assertEquals(entry.context, { ms: 12 });
+    assertEquals(entry.error.message, "connection reset");
+    assertEquals("run_id" in entry, false);
+  });
 });

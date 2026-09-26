@@ -27,6 +27,7 @@ interface ProxyRequestContext {
   releaseId?: string;
   branchId?: string;
   branchName?: string;
+  runId?: string;
   domain?: string;
   environment?: string;
 }
@@ -137,6 +138,7 @@ interface LogEntry {
   release_id?: string;
   branch_id?: string;
   branch_name?: string;
+  run_id?: string;
   domain?: string;
   environment?: string;
   context?: Record<string, unknown>;
@@ -197,6 +199,7 @@ export function formatProxyJsonLine(
     ...(reqCtx?.releaseId && { releaseId: reqCtx.releaseId, release_id: reqCtx.releaseId }),
     ...(reqCtx?.branchId && { branchId: reqCtx.branchId, branch_id: reqCtx.branchId }),
     ...(reqCtx?.branchName && { branchName: reqCtx.branchName, branch_name: reqCtx.branchName }),
+    ...(reqCtx?.runId && { run_id: reqCtx.runId }),
     ...(reqCtx?.domain && { domain: reqCtx.domain }),
     ...(reqCtx?.environment && { environment: reqCtx.environment }),
   };
