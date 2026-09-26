@@ -120,6 +120,16 @@ body::before {
 `;
 }
 
+/**
+ * Project scopes (and configured stylesheet paths) already warned about a
+ * missing stylesheet. Keyed by the scans' canonical partition, which carries
+ * the project ID in shared proxy mode, so tenants sharing one `projectDir`,
+ * or one slug during a reassignment, are each reported once. Bounded so a
+ * long-lived multi-project process cannot grow it without limit.
+ */
+const missingStylesheetWarned = new Set<string>();
+const MISSING_STYLESHEET_WARNING_LIMIT = 256;
+
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "StylesCSSHandler",
@@ -168,7 +178,10 @@ export class StylesCSSHandler extends BaseHandler {
         const projectScope = scanIdentity.scope;
         const styleProfile = scanIdentity.styleProfile;
         const contentContext = this.getContentContext(ctx);
-        let rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx));
+        let rawCss = await profilePhase(
+          "css.load_stylesheet",
+          () => this.loadStylesheet(ctx, scanIdentity.partition),
+        );
         // Production SSR merges CSS imported by modules (`import "./styles.css"`
         // in a layout) into the page stylesheet during module loading. This
         // route has no module-loading pass, so discover those imports from the
@@ -372,7 +385,10 @@ export class StylesCSSHandler extends BaseHandler {
    * path-shaped filesystem read, which is not how sources arrive when they are
    * served from the control plane rather than local disk.
    */
-  private async loadStylesheet(ctx: HandlerContext): Promise<string | undefined> {
+  private async loadStylesheet(
+    ctx: HandlerContext,
+    projectPartition: string,
+  ): Promise<string | undefined> {
     const configuredPath = ctx.config?.tailwind?.stylesheet;
 
     const files = await this.getSourceFiles(ctx);
@@ -397,11 +413,23 @@ export class StylesCSSHandler extends BaseHandler {
     }
 
     // Worth a warning rather than a debug line: the page still renders, but
-    // without the project's theme, which looks like a broken site.
-    logger.warn("No project stylesheet found; provider default will be used", {
-      projectDir: ctx.projectDir,
-      configuredPath: configuredPath ?? null,
-    });
+    // without the project's theme, which looks like a broken site. The
+    // stylesheet is resolved again on every request, so warn once per project
+    // and configured path and keep the repeats at debug.
+    const warningKey = `${projectPartition}\u0000${configuredPath ?? ""}`;
+    const details = { projectDir: ctx.projectDir, configuredPath: configuredPath ?? null };
+    if (missingStylesheetWarned.has(warningKey)) {
+      logger.debug("No project stylesheet found; provider default will be used", details);
+    } else {
+      // Evict the oldest key rather than clearing, so reaching the bound does
+      // not make every project already reported warn again.
+      if (missingStylesheetWarned.size >= MISSING_STYLESHEET_WARNING_LIMIT) {
+        const oldest = missingStylesheetWarned.values().next().value;
+        if (oldest !== undefined) missingStylesheetWarned.delete(oldest);
+      }
+      missingStylesheetWarned.add(warningKey);
+      logger.warn("No project stylesheet found; provider default will be used", details);
+    }
     return undefined;
   }
 
