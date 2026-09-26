@@ -272,6 +272,10 @@ const controlPlaneNames = [
   "studio_todo_write",
 ];
 
+function isInvokeAgentToolName(toolName: unknown): boolean {
+  return toolName === INVOKE_AGENT_TOOL_ID || toolName === `veryfront__${INVOKE_AGENT_TOOL_ID}`;
+}
+
 function isExplicitlyDeniedToolName(
   agent: Agent,
   deniedToolNames: ReadonlySet<string>,
@@ -1367,17 +1371,28 @@ export async function createRuntimeAgentStreamResponse(
             "Internal agent runtime stream stopped before EOF",
           );
           let readerCancellation: Promise<void> | undefined;
-          let terminalRunError: { code?: string; message?: string } | undefined;
+          let terminalRunErrorCode: string | undefined;
           let toolErrorCount = 0;
+          let childRunErrorCount = 0;
+          const childRunToolCallIds = new Set<string>();
           const observeRunOutcomeEvent = (event: string, payload: Record<string, unknown>) => {
+            if (
+              event === "ToolCallStart" && typeof payload.toolCallId === "string" &&
+              isInvokeAgentToolName(payload.toolCallName)
+            ) {
+              childRunToolCallIds.add(payload.toolCallId);
+            }
             if (event === "ToolCallResult" && payload.isError === true) {
               toolErrorCount++;
+              if (
+                typeof payload.toolCallId === "string" &&
+                childRunToolCallIds.has(payload.toolCallId)
+              ) {
+                childRunErrorCount++;
+              }
             }
-            if (event === "RunError" && !terminalRunError) {
-              terminalRunError = {
-                ...(typeof payload.code === "string" ? { code: payload.code } : {}),
-                ...(typeof payload.message === "string" ? { message: payload.message } : {}),
-              };
+            if (event === "RunError" && typeof payload.code === "string") {
+              terminalRunErrorCode ??= payload.code;
             }
           };
           let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -1588,7 +1603,7 @@ export async function createRuntimeAgentStreamResponse(
             }
             const finalStatus = state.sawTerminalError ? "failed" : "completed";
             const terminalErrorCode = state.sawTerminalError
-              ? terminalRunError?.code ?? "AgentRunTerminalError"
+              ? terminalRunErrorCode ?? "AgentRunTerminalError"
               : undefined;
             if (state.sawTerminalError) {
               deps.sessionManager.failRun(input.runId);
@@ -1606,10 +1621,10 @@ export async function createRuntimeAgentStreamResponse(
               "agent.run.saw_visible_output": state.sawVisibleOutput,
               "agent.run.saw_terminal_error": state.sawTerminalError,
               "agent.run.tool_error_count": toolErrorCount,
+              "agent.run.child_run_error_count": childRunErrorCount,
+              // The RunError message can carry unclassified framework error text, so only
+              // the stable code leaves the process.
               ...(terminalErrorCode ? { "error.type": terminalErrorCode } : {}),
-              ...(terminalErrorCode && terminalRunError?.message
-                ? { "error.message": terminalRunError.message }
-                : {}),
               // Carries `agent.run.usage_is_floor` when the run never delivered a final
               // response, which is not the same question as whether it ended in error:
               // an empty assistant turn reaches here with an exact total and
@@ -1626,18 +1641,21 @@ export async function createRuntimeAgentStreamResponse(
             const finalizedLogContext = {
               runId: input.runId,
               threadId: input.threadId,
+              parentRunId: input.parentRunId,
+              projectId: deps.projectAgentSandbox?.projectId ?? undefined,
               agentId: agent.id,
               status: finalStatus,
               sawVisibleOutput: state.sawVisibleOutput,
               sawTerminalError: state.sawTerminalError,
               finishReason: state.metadata.finishReason,
+              toolErrorCount,
+              childRunErrorCount,
             };
             if (terminalErrorCode) {
               markSpanFailed(runSpan, terminalErrorCode);
               logger.warn("Internal agent runtime stream finalized", {
                 ...finalizedLogContext,
                 errorCode: terminalErrorCode,
-                error: terminalRunError?.message,
               });
             } else {
               logger.info("Internal agent runtime stream finalized", finalizedLogContext);
@@ -1655,6 +1673,7 @@ export async function createRuntimeAgentStreamResponse(
                 }),
                 "agent.run.final_status": "cancelled",
                 "agent.run.tool_error_count": toolErrorCount,
+                "agent.run.child_run_error_count": childRunErrorCount,
                 "error.type": "AgentRunCancelledError",
                 "error.message": error.message,
                 // The model call in flight at the abort may have been billed without
@@ -1687,7 +1706,9 @@ export async function createRuntimeAgentStreamResponse(
                 }),
                 "agent.run.final_status": "failed",
                 "agent.run.tool_error_count": toolErrorCount,
-                "error.type": error instanceof Error ? error.name : "Error",
+                "agent.run.child_run_error_count": childRunErrorCount,
+                "error.type": runErrorCode,
+                "error.cause.type": error instanceof Error ? error.name : "Error",
                 "error.message": errorMessage,
                 // The model call in flight at the failure may have been billed without
                 // ever reporting usage, so an accumulator total is marked a floor.
@@ -1698,6 +1719,8 @@ export async function createRuntimeAgentStreamResponse(
               logger.error("Internal agent runtime stream failed", {
                 runId: input.runId,
                 threadId: input.threadId,
+                parentRunId: input.parentRunId,
+                projectId: deps.projectAgentSandbox?.projectId ?? undefined,
                 agentId: agent.id,
                 errorCode: runErrorCode,
                 error: errorMessage,

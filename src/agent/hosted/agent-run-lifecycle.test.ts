@@ -20,6 +20,7 @@ class RecordingSpan implements HostedAgentRunSpan {
   attributes: Record<string, unknown> = {};
   finished = 0;
   withContextCalls = 0;
+  failedWith: string[] = [];
 
   setAttributes(attributes: Record<string, unknown>): void {
     this.attributes = { ...this.attributes, ...attributes };
@@ -27,6 +28,10 @@ class RecordingSpan implements HostedAgentRunSpan {
 
   finish(): void {
     this.finished += 1;
+  }
+
+  markFailed(errorCode: string): void {
+    this.failedWith.push(errorCode);
   }
 
   withContext<T>(fn: () => T): T {
@@ -146,6 +151,7 @@ describe("hosted-agent-run-lifecycle", () => {
     controller.finalize({ status: "failed", terminalErrorCode: "LATE" });
 
     assertEquals(span.finished, 1);
+    assertEquals(span.failedWith, []);
     assertEquals(span.attributes["message.id"], "message-2");
     assertEquals(span.attributes["agent.run.final_status"], "completed");
     assertEquals(span.attributes["gen_ai.provider.name"], "anthropic");
@@ -158,6 +164,61 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["gen_ai.usage.total_tokens"], 15);
     assertEquals(span.attributes["gen_ai.usage.cache_read.input_tokens"], 2);
     assertEquals(span.attributes["gen_ai.usage.reasoning.output_tokens"], 1);
+  });
+
+  it("marks a failed hosted run span failed with its terminal error code before finishing", () => {
+    const span = new RecordingSpan();
+    const finishedAfterFailure: number[] = [];
+    span.markFailed = (errorCode) => {
+      span.failedWith.push(errorCode);
+      finishedAfterFailure.push(span.finished);
+    };
+    const controller = createHostedAgentRunSpanController({
+      tracer: { startSpan: () => span },
+      operationName: "invoke_agent",
+      projectId: "project-1",
+      userId: "user-1",
+      agentId: "agent-1",
+    });
+
+    controller.finalize({ status: "failed", terminalErrorCode: "insufficient-credits" });
+
+    assertEquals(span.failedWith, ["insufficient-credits"]);
+    assertEquals(finishedAfterFailure, [0]);
+    assertEquals(span.finished, 1);
+    assertEquals(span.attributes["error.type"], "insufficient-credits");
+  });
+
+  it("marks a failed hosted run span without a terminal error code as STREAM_ERROR", () => {
+    const span = new RecordingSpan();
+    const controller = createHostedAgentRunSpanController({
+      tracer: { startSpan: () => span },
+      operationName: "chat",
+      projectId: "project-1",
+      userId: "user-1",
+      agentId: "agent-1",
+    });
+
+    controller.finalize({ status: "failed" });
+
+    assertEquals(span.failedWith, ["STREAM_ERROR"]);
+    assertEquals(span.attributes["error.type"], "STREAM_ERROR");
+  });
+
+  it("leaves a cancelled hosted run span unmarked", () => {
+    const span = new RecordingSpan();
+    const controller = createHostedAgentRunSpanController({
+      tracer: { startSpan: () => span },
+      operationName: "chat",
+      projectId: "project-1",
+      userId: "user-1",
+      agentId: "agent-1",
+    });
+
+    controller.finalize({ status: "cancelled" });
+
+    assertEquals(span.failedWith, []);
+    assertEquals(span.finished, 1);
   });
 
   // veryfront/veryfront-issue-inbox#1500: the hosted run span reported token counts

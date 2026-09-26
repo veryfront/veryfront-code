@@ -287,6 +287,11 @@ export function buildInvokeAgentTraceAttributes(input: {
   });
 }
 
+/** Stable `error.type` of a failed agent run, also used as its span status message. */
+export function resolveAgentRunErrorType(terminalErrorCode?: string | null): string {
+  return terminalErrorCode ?? "STREAM_ERROR";
+}
+
 /** Builds finalized agent run trace attributes. */
 export function buildFinalizedAgentRunTraceAttributes(input: {
   status: "completed" | "failed" | "cancelled";
@@ -309,7 +314,7 @@ export function buildFinalizedAgentRunTraceAttributes(input: {
     ...(finishReason ? { "gen_ai.response.finish_reasons": [finishReason] } : {}),
     ...(input.status === "failed"
       ? {
-        "error.type": input.terminalErrorCode ?? "STREAM_ERROR",
+        "error.type": resolveAgentRunErrorType(input.terminalErrorCode),
         "error.message": input.terminalErrorMessage,
       }
       : {}),

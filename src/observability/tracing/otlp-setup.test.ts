@@ -209,14 +209,21 @@ describe("observability/tracing/otlp-setup", () => {
 
   it("markSpanFailed ignores a missing span and survives a failing provider", async () => {
     const { markSpanFailed } = await import("./otlp-setup.ts");
+    const recordedMessages: string[] = [];
     const span = createTestSpan({
       setStatus: () => {
         throw new Error("telemetry status failed");
       },
+      recordException: (exception) => {
+        recordedMessages.push((exception as Error).message);
+      },
     });
 
     markSpanFailed(null, "RUNTIME_ERROR");
+    assertEquals(recordedMessages, []);
+
     markSpanFailed(span, "RUNTIME_ERROR");
+    assertEquals(recordedMessages, ["RUNTIME_ERROR"]);
   });
 
   it("withSpan preserves callback outcomes when span completion fails", async () => {

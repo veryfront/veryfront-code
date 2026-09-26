@@ -21,7 +21,7 @@ type FakeSpanOptions = {
 class FakeSpan {
   readonly context: { traceId: string; spanId: string };
   readonly attributes: Record<string, unknown> = {};
-  status: { code: number } | null = null;
+  status: { code: number; message?: string } | null = null;
   exceptions: unknown[] = [];
   ended = false;
   throwOnSetAttribute = false;
@@ -47,7 +47,7 @@ class FakeSpan {
     return this;
   }
 
-  setStatus(status: { code: number }): FakeSpan {
+  setStatus(status: { code: number; message?: string }): FakeSpan {
     this.status = status;
     return this;
   }
@@ -569,6 +569,24 @@ describe("observability/tracing/service-tracer", () => {
     });
   });
 
+  it("marks a manual span failed with its error code as the status message", () => {
+    const harness = createHarness();
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+
+    const span = serviceTracer.tracer.startSpan("manual-operation");
+    span.markFailed("STREAM_ERROR");
+
+    const otelSpan = harness.startedSpans[0];
+    assertEquals(otelSpan?.status, { code: 2, message: "STREAM_ERROR" });
+    assertEquals(otelSpan?.exceptions.length, 1);
+    assertEquals((otelSpan?.exceptions[0] as Error).message, "STREAM_ERROR");
+  });
+
   it("starts a childOf span in its declared parent's context", () => {
     const harness = createHarness();
     const serviceTracer = createOpenTelemetryServiceTracer({
@@ -782,8 +800,14 @@ describe("observability/tracing/service-tracer", () => {
     otelSpan.throwOnSetAttribute = true;
     otelSpan.throwOnEnd = true;
 
+    otelSpan.setStatus = () => {
+      throw new Error("telemetry status failure");
+    };
+
     span.setTag("safe", "value");
     span.setAttributes({ another: "value" });
+    span.markFailed("STREAM_ERROR");
     span.finish();
+    assertEquals(otelSpan.exceptions.length, 1);
   });
 });

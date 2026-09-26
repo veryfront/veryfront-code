@@ -4039,6 +4039,7 @@ describe("internal-agents/run-stream", () => {
       agentId: agent.id,
       threadId: crypto.randomUUID(),
       runId: "run_terminal_error_code",
+      parentRunId: "run_parent_of_terminal_error",
       messages: [],
       tools: [],
       context: [],
@@ -4073,15 +4074,17 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.status?.message, "insufficient-credits");
     assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
     assertEquals(runSpan?.attributes["error.type"], "insufficient-credits");
-    assertEquals(runSpan?.attributes["error.message"], "AI credit limit exceeded");
+    assertEquals(runSpan?.attributes["error.message"], undefined);
 
     const finalizedEntry = logs.getEntries().find((entry) =>
       entry.message === "Internal agent runtime stream finalized"
     );
     assertEquals(finalizedEntry?.level, "warn");
     assertEquals(finalizedEntry?.context?.status, "failed");
+    assertEquals(finalizedEntry?.context?.parentRunId, "run_parent_of_terminal_error");
     assertEquals(finalizedEntry?.context?.errorCode, "insufficient-credits");
-    assertEquals(finalizedEntry?.context?.error, "AI credit limit exceeded");
+    assertEquals(finalizedEntry?.context?.error, undefined);
+    assertEquals(JSON.stringify(finalizedEntry).includes("AI credit limit exceeded"), false);
   });
 
   it("marks a run whose runtime stream throws as an ERROR span with the run error code", async () => {
@@ -4122,6 +4125,8 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
     assertEquals(runSpan?.status?.code, SpanStatusCode.ERROR);
     assertEquals(runSpan?.status?.message, "RUNTIME_ERROR");
+    assertEquals(runSpan?.attributes["error.type"], "RUNTIME_ERROR");
+    assertEquals(runSpan?.attributes["error.cause.type"], "Error");
   });
 
   it("keeps a completed run that recovered from a tool error out of ERROR status", async () => {
@@ -4175,6 +4180,81 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
     assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 1);
     assertEquals(runSpan?.status, undefined);
+  });
+
+  it("counts failed child agent runs apart from other tool errors on a recovered run", async () => {
+    const spans = installRecordingTracer();
+    const logs = captureConsoleJsonLogs();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "delegating-agent",
+      config: {
+        id: "delegating-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_recovered_child_failure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      [
+                        'data: {"type":"message-start","messageId":"assistant-1"}',
+                        'data: {"type":"tool-input-start","toolCallId":"child-1","toolName":"invoke_agent"}',
+                        'data: {"type":"tool-input-available","toolCallId":"child-1","toolName":"invoke_agent","input":{}}',
+                        'data: {"type":"tool-output-error","toolCallId":"child-1","errorText":"child run failed"}',
+                        'data: {"type":"tool-input-start","toolCallId":"child-2","toolName":"veryfront__invoke_agent"}',
+                        'data: {"type":"tool-input-available","toolCallId":"child-2","toolName":"veryfront__invoke_agent","input":{}}',
+                        'data: {"type":"tool-output-available","toolCallId":"child-2","output":"ok"}',
+                        'data: {"type":"tool-input-start","toolCallId":"fetch-1","toolName":"web_fetch"}',
+                        'data: {"type":"tool-input-available","toolCallId":"fetch-1","toolName":"web_fetch","input":{}}',
+                        'data: {"type":"tool-output-error","toolCallId":"fetch-1","errorText":"404"}',
+                        'data: {"type":"text-start","id":"text-1"}',
+                        'data: {"type":"text-delta","id":"text-1","delta":"handled"}',
+                        'data: {"type":"text-end","id":"text-1"}',
+                        "",
+                        "",
+                      ].join("\n\n"),
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+    assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 2);
+    assertEquals(runSpan?.attributes["agent.run.child_run_error_count"], 1);
+    assertEquals(runSpan?.status, undefined);
+
+    const finalizedEntry = logs.getEntries().find((entry) =>
+      entry.message === "Internal agent runtime stream finalized"
+    );
+    assertEquals(finalizedEntry?.level, "info");
+    assertEquals(finalizedEntry?.context?.toolErrorCount, 2);
+    assertEquals(finalizedEntry?.context?.childRunErrorCount, 1);
   });
 
   it("records usage accumulated before a terminal runtime error on the agent.run span", async () => {
