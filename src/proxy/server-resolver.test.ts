@@ -890,6 +890,31 @@ Deno.test("strict dedicated assignment resolution", async (t) => {
       resolver.close();
     }
   });
+  await t.step("strict close rejects an in-flight assignment lookup", async () => {
+    const gate = Promise.withResolvers<Response>();
+    const resolver = new ServerResolver("https://api.example.com", "", "", 0, {
+      ...strict,
+      fetchImpl: () => gate.promise,
+    });
+    try {
+      const pending = resolver.resolve("env-closing");
+      await Promise.resolve();
+      resolver.close();
+      gate.resolve(Response.json({
+        assignment: "running",
+        server: {
+          id: "srv-closing",
+          short_id: "4281039506",
+          hostname: "veryfront-server-4281039506.owned.svc.cluster.local",
+          status: "running",
+        },
+      }));
+      await assertRejects(() => pending, Error);
+    } finally {
+      gate.resolve(Response.json({ server: null, assignment: "none" }));
+      resolver.close();
+    }
+  });
   await t.step("running assignment resolves only the dedicated URL", async () => {
     const api = createMockApi(() =>
       Response.json({
