@@ -277,7 +277,7 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
       modelId: "mistral/mistral-small-2503",
       provider: "mistral",
       name: "Mistral Small 3.1",
-      description: "Open-weight Mistral model served in the EU",
+      description: "Compact open-weight Mistral model",
     }),
     Object.freeze({
       id: "kimi-k2.6",
@@ -300,7 +300,7 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
       modelId: "openai/gpt-5-nano",
       provider: "openai",
       name: "GPT-5 Nano",
-      description: "Lowest-cost OpenAI model served from the EU Data Zone",
+      description: "Previous-generation OpenAI model for lightweight work",
       thinking: true,
     }),
   ],
