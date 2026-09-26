@@ -277,15 +277,18 @@ const controlPlaneNames = [
 
 /**
  * Tool names whose calls run a child agent: control-plane delegation or the
- * framework's own invoke_agent. A custom tool that merely shares the name is not one.
+ * framework's own invoke_agent. A custom or registry tool that merely shares the
+ * name is not one.
  */
 function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<string> {
   const names = new Set<string>();
   if (!mergedTools) return names;
   for (const toolName of [INVOKE_AGENT_TOOL_ID, `veryfront__${INVOKE_AGENT_TOOL_ID}`]) {
-    const entry = mergedTools === true ? true : mergedTools[toolName];
+    const entry = mergedTools === true || mergedTools[toolName] === true
+      ? toolRegistry.get(toolName)
+      : mergedTools[toolName];
     if (
-      entry === true || isFrameworkInvokeAgentTool(entry) ||
+      isFrameworkInvokeAgentTool(entry) ||
       (isRecord(entry) && controlPlaneInjectedTools.has(entry as Tool))
     ) {
       names.add(toolName);
