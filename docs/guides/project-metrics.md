@@ -84,7 +84,33 @@ Metric labels become query dimensions. Keep them low-cardinality and safe:
 
 Use a small allowlist per metric. Do not put tenant identity, project identity,
 credentials, or personally identifiable data into user-supplied labels.
-Project, environment, and preview branch labels are injected by the platform.
+Project, environment, and preview branch labels are injected by the platform;
+values that project code passes for them are ignored.
+
+In Veryfront runtimes, the SDK drops a sample instead of exporting it when:
+
+- the metric name does not match `[A-Za-z_][A-Za-z0-9_.:]*` or is longer than
+  128 characters
+- it carries more than 16 labels of its own, or a label value longer than 256
+  characters
+- it would start a new name and label combination after the project has created
+  500 in the current runtime process
+
+## Query sparse counters
+
+Each runtime process exports its own cumulative totals and is identified by the
+`service.instance.id` resource attribute, so sum across instances after taking
+per-series differences. When a counter series is new, or has been idle for more
+than five minutes, the SDK exports its previous total just before the new one.
+That keeps counters from scheduled jobs countable: for events emitted once a day,
+`max_over_time(...) - min_over_time(...)` over the window counts every increment,
+where `increase()` extrapolates from too few samples:
+
+```promql
+sum by (outcome) (
+  max_over_time(vf_job_items_total[1d]) - min_over_time(vf_job_items_total[1d])
+)
+```
 
 ## Relationship to OpenTelemetry
 
