@@ -30,7 +30,7 @@ export type OpenTelemetrySpan = {
       ServiceTracerAttributePrimitive | readonly ServiceTracerAttributePrimitive[]
     >,
   ): unknown;
-  setStatus(status: { code: number }): unknown;
+  setStatus(status: { code: number; message?: string }): unknown;
   recordException(error: unknown): unknown;
   end(): unknown;
   spanContext(): OpenTelemetrySpanContext;
@@ -80,6 +80,8 @@ export type ServiceTracerSpan<
 > = {
   setTag(key: string, value: ServiceTracerAttributeInput): TSpan;
   setAttributes(attributes: Record<string, ServiceTracerAttributeInput>): TSpan;
+  /** Sets ERROR status with a stable error code, for work that settles its failure without throwing. */
+  markFailed(errorCode: string): void;
   finish(): void;
   withContext<T>(fn: () => T): T;
   context(): ServiceTracerSpanContext | undefined;
@@ -185,6 +187,7 @@ function createTracerSpan<TContext, TSpan extends OpenTelemetrySpan>(
   contextApi: OpenTelemetryContextApi<TContext>,
   span: TSpan,
   context: TContext,
+  errorStatusCode: number,
 ): ServiceTracerSpan<TContext, TSpan> {
   return {
     setTag: (key, value) => {
@@ -201,6 +204,9 @@ function createTracerSpan<TContext, TSpan extends OpenTelemetrySpan>(
         /* expected: hostile attribute containers fail closed */
       }
       return span;
+    },
+    markFailed: (errorCode) => {
+      setSpanErrorStatus(span, errorStatusCode, new Error(errorCode), errorCode);
     },
     finish: () => {
       endSpan(span);
@@ -230,9 +236,10 @@ function setSpanErrorStatus<TSpan extends OpenTelemetrySpan>(
   span: TSpan,
   errorStatusCode: number,
   error: unknown,
+  message?: string,
 ): void {
   try {
-    span.setStatus({ code: errorStatusCode });
+    span.setStatus(message ? { code: errorStatusCode, message } : { code: errorStatusCode });
   } catch (_) {
     /* expected: telemetry failures must not replace application failures */
   }
@@ -540,7 +547,7 @@ export function createOpenTelemetryServiceTracer<
 
       const span = startSpan(name, startOptions, parentContext);
       const spanContext = setSpanOnContext(parentContext, span);
-      return createTracerSpan(options.context, span, spanContext);
+      return createTracerSpan(options.context, span, spanContext, options.errorStatusCode);
     },
     scope: () => ({
       active: () => {
@@ -548,7 +555,12 @@ export function createOpenTelemetryServiceTracer<
         const activeSpan = getSpanFromContext(activeContext);
         if (!activeSpan) return null;
 
-        return createTracerSpan(options.context, activeSpan, activeContext);
+        return createTracerSpan(
+          options.context,
+          activeSpan,
+          activeContext,
+          options.errorStatusCode,
+        );
       },
     }),
     wrap,

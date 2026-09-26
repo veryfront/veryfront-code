@@ -11,11 +11,13 @@ import {
   type AgentTraceUsage,
   buildAgentRunTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
+  resolveAgentRunErrorType,
 } from "./trace-attributes.ts";
 
 /** Public API contract for hosted agent run span. */
 export interface HostedAgentRunSpan {
   setAttributes: (attributes: AgentTraceAttributes) => void;
+  markFailed?: (errorCode: string) => void;
   finish: () => void;
   withContext: <T>(fn: () => T) => T;
 }
@@ -126,6 +128,9 @@ export function createHostedAgentRunSpanController(
 
       finalized = true;
       span.setAttributes(buildFinalizedAgentRunTraceAttributes(finalState));
+      if (finalState.status === "failed") {
+        span.markFailed?.(resolveAgentRunErrorType(finalState.terminalErrorCode));
+      }
       span.finish();
     },
   };
