@@ -614,6 +614,19 @@ export function setActiveSpanErrorStatus(error: unknown): void {
   setSpanErrorStatus(span, error, "withoutStack");
 }
 
+/**
+ * Marks a span as failed with a stable error code.
+ *
+ * For work that settles its failure itself instead of throwing through the span,
+ * so `withSpan` never sees it. The code becomes the status message, so it must be
+ * a bounded classification rather than free text.
+ */
+export function markSpanFailed(span: unknown, errorCode: string): void {
+  if (!span) return;
+
+  setSpanErrorStatus(unwrapPublicSpan(span as Span), new Error(errorCode), "withoutStack");
+}
+
 /** Context for with. */
 export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>): Promise<T> {
   return await runAsyncWithContextFallback(

@@ -21,6 +21,7 @@ import {
   setGlobalTracerProvider,
   type Span,
   type SpanContext,
+  SpanStatusCode,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type {
@@ -4022,6 +4023,160 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.events.some((event) => event.name === "agent.run.completed"), false);
   });
 
+  it("marks a run that ends on a terminal runtime error as an ERROR span with its error code", async () => {
+    const spans = installRecordingTracer();
+    const logs = captureConsoleJsonLogs();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "credit-limited-agent",
+      config: {
+        id: "credit-limited-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_terminal_error_code",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"error","code":"insufficient-credits","error":"AI credit limit exceeded"}\n\n',
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.status?.code, SpanStatusCode.ERROR);
+    assertEquals(runSpan?.status?.message, "insufficient-credits");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.attributes["error.type"], "insufficient-credits");
+    assertEquals(runSpan?.attributes["error.message"], "AI credit limit exceeded");
+
+    const finalizedEntry = logs.getEntries().find((entry) =>
+      entry.message === "Internal agent runtime stream finalized"
+    );
+    assertEquals(finalizedEntry?.level, "warn");
+    assertEquals(finalizedEntry?.context?.status, "failed");
+    assertEquals(finalizedEntry?.context?.errorCode, "insufficient-credits");
+    assertEquals(finalizedEntry?.context?.error, "AI credit limit exceeded");
+  });
+
+  it("marks a run whose runtime stream throws as an ERROR span with the run error code", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "throwing-agent",
+      config: {
+        id: "throwing-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_stream_throws",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.error(new Error("socket hang up"));
+            },
+          }),
+      }),
+    });
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.status?.code, SpanStatusCode.ERROR);
+    assertEquals(runSpan?.status?.message, "RUNTIME_ERROR");
+  });
+
+  it("keeps a completed run that recovered from a tool error out of ERROR status", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "recovering-agent",
+      config: {
+        id: "recovering-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_recovered_tool_error",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  [
+                    'data: {"type":"message-start","messageId":"assistant-1"}',
+                    'data: {"type":"tool-input-available","toolCallId":"tool-1","toolName":"lookup","input":{}}',
+                    'data: {"type":"tool-output-error","toolCallId":"tool-1","errorText":"lookup timed out"}',
+                    'data: {"type":"text-start","id":"text-1"}',
+                    'data: {"type":"text-delta","id":"text-1","delta":"done anyway"}',
+                    'data: {"type":"text-end","id":"text-1"}',
+                    "",
+                    "",
+                  ].join("\n\n"),
+                ),
+              );
+              controller.close();
+            },
+          }),
+      }),
+    });
+    await response.text();
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+    assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 1);
+    assertEquals(runSpan?.status, undefined);
+  });
+
   it("records usage accumulated before a terminal runtime error on the agent.run span", async () => {
     const spans = installRecordingTracer();
     const sessionManager = new AgentRunSessionManager();
@@ -4120,6 +4275,7 @@ describe("internal-agents/run-stream", () => {
 
     const runSpan = spans.find((span) => span.name === "agent.run");
     assertEquals(runSpan?.attributes["agent.run.final_status"], "cancelled");
+    assertEquals(runSpan?.status, undefined);
     assertEquals(runSpan?.attributes["agent.usage.cost_credits"], 8.5);
     assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 60);
     assertEquals(runSpan?.attributes["agent.run.usage_is_floor"], true);
