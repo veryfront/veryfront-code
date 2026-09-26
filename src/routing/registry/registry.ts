@@ -35,8 +35,14 @@ export function buildRouteRegistrySpanAttributes(
     attributes["veryfront.environment_name"] = ctx.environmentName;
   }
 
-  if ((projectSlug || projectId) && ctx.releaseId) {
-    attributes["release.id"] = ctx.releaseId;
+  if (projectSlug || projectId) {
+    if (ctx.resolvedEnvironment === "production") {
+      if (ctx.releaseId) attributes["release.id"] = ctx.releaseId;
+    } else {
+      if (ctx.branchId) attributes["branch.id"] = ctx.branchId;
+      const branchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;
+      if (branchName) attributes["branch.name"] = branchName;
+    }
   }
 
   return attributes;

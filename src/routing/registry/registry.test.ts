@@ -141,6 +141,55 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(attributes["release.id"], "rel-123");
     });
 
+    it("tags a production request with the release it serves, not a branch", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "production",
+        releaseId: "rel-123",
+        branchId: "branch-123",
+        branchName: "feature/intake",
+      });
+
+      assertEquals(attributes["release.id"], "rel-123");
+      assertEquals("branch.id" in attributes, false);
+      assertEquals("branch.name" in attributes, false);
+    });
+
+    it("tags a preview request with the branch it serves, not a release header", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "preview",
+        releaseId: "rel-browser-preview-test",
+        branchId: "branch-123",
+        branchName: "feature/intake",
+      });
+
+      assertEquals("release.id" in attributes, false);
+      assertEquals(attributes["branch.id"], "branch-123");
+      assertEquals(attributes["branch.name"], "feature/intake");
+    });
+
+    it("tags a preview request on the default branch with its branch name", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "preview",
+        defaultBranchName: "main",
+      });
+
+      assertEquals("release.id" in attributes, false);
+      assertEquals("branch.id" in attributes, false);
+      assertEquals(attributes["branch.name"], "main");
+    });
+
     it("records the routing span with the trusted project identity", async () => {
       const exporter = new InMemorySpanExporter();
       const provider = new BasicTracerProvider({
@@ -224,7 +273,9 @@ describe("routing/registry/RouteRegistry", () => {
       const url = new URL(req.url);
       const attributes = buildRouteRegistrySpanAttributes(req, url, {
         ...makeCtx(),
+        resolvedEnvironment: "production",
         releaseId: "rel-123",
+        branchId: "branch-123",
       });
 
       assertEquals(attributes["http.method"], "GET");
@@ -236,6 +287,7 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals("veryfront.environment" in attributes, false);
       assertEquals("veryfront.environment_name" in attributes, false);
       assertEquals("release.id" in attributes, false);
+      assertEquals("branch.id" in attributes, false);
     });
 
     it("does not emit slug fallbacks as project id attributes", () => {
