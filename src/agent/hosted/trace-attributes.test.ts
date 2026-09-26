@@ -234,4 +234,21 @@ describe("agent/agent-trace-attributes", () => {
       },
     );
   });
+
+  it("keeps only classification-shaped terminal error codes as the failed run error type", () => {
+    assertEquals(
+      buildFinalizedAgentRunTraceAttributes({
+        status: "failed",
+        terminalErrorCode: "insufficient-credits",
+      })["error.type"],
+      "insufficient-credits",
+    );
+    assertEquals(
+      buildFinalizedAgentRunTraceAttributes({
+        status: "failed",
+        terminalErrorCode: "postgres://app:secret@db.internal/prod",
+      })["error.type"],
+      "STREAM_ERROR",
+    );
+  });
 });

@@ -189,7 +189,7 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["error.type"], "insufficient-credits");
   });
 
-  it("marks a failed hosted run span without a terminal error code as STREAM_ERROR", () => {
+  it("marks a failed hosted run span without a stable terminal error code as STREAM_ERROR", () => {
     const span = new RecordingSpan();
     const controller = createHostedAgentRunSpanController({
       tracer: { startSpan: () => span },
@@ -199,7 +199,7 @@ describe("hosted-agent-run-lifecycle", () => {
       agentId: "agent-1",
     });
 
-    controller.finalize({ status: "failed" });
+    controller.finalize({ status: "failed", terminalErrorCode: "/srv/app/secret.env" });
 
     assertEquals(span.failedWith, ["STREAM_ERROR"]);
     assertEquals(span.attributes["error.type"], "STREAM_ERROR");

@@ -53,6 +53,7 @@ import {
   SandboxShellToolsProviderName,
 } from "#veryfront/extensions/sandbox/index.ts";
 import { resolveHostedRuntimeAllowedToolNames } from "#veryfront/agent/hosted/runtime-essential-tools.ts";
+import { toStableRunErrorCode } from "#veryfront/agent/hosted/trace-attributes.ts";
 import {
   createToolsFromHostDefinitions,
   isToolVisibleTo,
@@ -301,16 +302,6 @@ function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<st
     }
   }
   return names;
-}
-
-const STABLE_RUN_ERROR_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
-
-/**
- * Keeps a RunError code only when it has the shape of a classification. A runtime
- * can put any string there, and it becomes the span status message and a log field.
- */
-function toStableRunErrorCode(code: unknown): string | undefined {
-  return typeof code === "string" && STABLE_RUN_ERROR_CODE_PATTERN.test(code) ? code : undefined;
 }
 
 function isExplicitlyDeniedToolName(
