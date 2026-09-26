@@ -34,6 +34,7 @@ import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-na
 import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
 import {
   INVOKE_AGENT_TOOL_ID,
+  isFrameworkChildRunTool,
   isFrameworkInvokeAgentTool,
 } from "#veryfront/agent/runtime/agent-delegation.ts";
 import {
@@ -275,26 +276,41 @@ const controlPlaneNames = [
   "studio_todo_write",
 ];
 
+const CHILD_RUN_CONTROL_PLANE_TOOL_NAMES = new Set([
+  INVOKE_AGENT_TOOL_ID,
+  `veryfront__${INVOKE_AGENT_TOOL_ID}`,
+]);
+
 /**
- * Tool names whose calls run a child agent: control-plane delegation or the
- * framework's own invoke_agent. A custom or registry tool that merely shares the
- * name is not one.
+ * Tool names whose calls run a child agent: control-plane delegation, or the
+ * framework's invoke_agent and `agent_{id}` delegate tools. A custom or registry
+ * tool that merely shares such a name is not one.
  */
 function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<string> {
   const names = new Set<string>();
   if (!mergedTools) return names;
-  for (const toolName of [INVOKE_AGENT_TOOL_ID, `veryfront__${INVOKE_AGENT_TOOL_ID}`]) {
-    const entry = mergedTools === true || mergedTools[toolName] === true
-      ? toolRegistry.get(toolName)
-      : mergedTools[toolName];
+  const entries = mergedTools === true ? toolRegistry.getAll() : Object.entries(mergedTools);
+  for (const [toolName, entry] of entries) {
+    const tool = entry === true ? toolRegistry.get(toolName) : entry;
     if (
-      isFrameworkInvokeAgentTool(entry) ||
-      (isRecord(entry) && controlPlaneInjectedTools.has(entry as Tool))
+      isFrameworkChildRunTool(tool) ||
+      (CHILD_RUN_CONTROL_PLANE_TOOL_NAMES.has(toolName) && isRecord(tool) &&
+        controlPlaneInjectedTools.has(tool as Tool))
     ) {
       names.add(toolName);
     }
   }
   return names;
+}
+
+const STABLE_RUN_ERROR_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
+
+/**
+ * Keeps a RunError code only when it has the shape of a classification. A runtime
+ * can put any string there, and it becomes the span status message and a log field.
+ */
+function toStableRunErrorCode(code: unknown): string | undefined {
+  return typeof code === "string" && STABLE_RUN_ERROR_CODE_PATTERN.test(code) ? code : undefined;
 }
 
 function isExplicitlyDeniedToolName(
@@ -1415,8 +1431,8 @@ export async function createRuntimeAgentStreamResponse(
                 childRunErrorCount++;
               }
             }
-            if (event === "RunError" && typeof payload.code === "string") {
-              terminalRunErrorCode ??= payload.code;
+            if (event === "RunError") {
+              terminalRunErrorCode ??= toStableRunErrorCode(payload.code);
             }
           };
           let heartbeatTimer: ReturnType<typeof setInterval> | undefined;

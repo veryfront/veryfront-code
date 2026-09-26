@@ -9,6 +9,7 @@ import {
   sanitizeErrorForTelemetry,
   sanitizeTelemetryAttributeValue,
   sanitizeTelemetryText,
+  type TelemetryErrorDetail,
 } from "../telemetry-error.ts";
 import { runSyncWithContextFallback } from "./context-callback.ts";
 
@@ -81,7 +82,7 @@ export type ServiceTracerSpan<
   setTag(key: string, value: ServiceTracerAttributeInput): TSpan;
   setAttributes(attributes: Record<string, ServiceTracerAttributeInput>): TSpan;
   /** Sets ERROR status with a stable error code, for work that settles its failure without throwing. */
-  markFailed(errorCode: string): void;
+  markFailed?(errorCode: string): void;
   finish(): void;
   withContext<T>(fn: () => T): T;
   context(): ServiceTracerSpanContext | undefined;
@@ -206,7 +207,7 @@ function createTracerSpan<TContext, TSpan extends OpenTelemetrySpan>(
       return span;
     },
     markFailed: (errorCode) => {
-      setSpanErrorStatus(span, errorStatusCode, new Error(errorCode), errorCode);
+      setSpanErrorStatus(span, errorStatusCode, new Error(errorCode), "withoutStack", errorCode);
     },
     finish: () => {
       endSpan(span);
@@ -236,6 +237,7 @@ function setSpanErrorStatus<TSpan extends OpenTelemetrySpan>(
   span: TSpan,
   errorStatusCode: number,
   error: unknown,
+  detail: TelemetryErrorDetail = "withStack",
   message?: string,
 ): void {
   try {
@@ -244,7 +246,7 @@ function setSpanErrorStatus<TSpan extends OpenTelemetrySpan>(
     /* expected: telemetry failures must not replace application failures */
   }
   try {
-    span.recordException(sanitizeErrorForTelemetry(error));
+    span.recordException(sanitizeErrorForTelemetry(error, detail));
   } catch (_) {
     /* expected: telemetry failures must not replace application failures */
   }

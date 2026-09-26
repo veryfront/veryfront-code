@@ -12,6 +12,7 @@ import {
   DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,
 } from "#veryfront/agent";
 import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
+import { buildAgentDelegateTools } from "#veryfront/agent/runtime/agent-delegation.ts";
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
@@ -4087,6 +4088,61 @@ describe("internal-agents/run-stream", () => {
     assertEquals(JSON.stringify(finalizedEntry).includes("AI credit limit exceeded"), false);
   });
 
+  it("replaces a terminal error code that is not a stable classification", async () => {
+    const spans = installRecordingTracer();
+    const logs = captureConsoleJsonLogs();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "unsafe-code-agent",
+      config: {
+        id: "unsafe-code-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_unsafe_terminal_code",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"error","code":"postgres://app:secret@db.internal/prod","error":"boom"}\n\n',
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.status?.message, "AgentRunTerminalError");
+    assertEquals(runSpan?.attributes["error.type"], "AgentRunTerminalError");
+    const finalizedEntry = logs.getEntries().find((entry) =>
+      entry.message === "Internal agent runtime stream finalized"
+    );
+    assertEquals(finalizedEntry?.context?.errorCode, "AgentRunTerminalError");
+    assertEquals(JSON.stringify(finalizedEntry).includes("secret"), false);
+  });
+
   it("marks a run whose runtime stream throws as an ERROR span with the run error code", async () => {
     const spans = installRecordingTracer();
     const sessionManager = new AgentRunSessionManager();
@@ -4192,6 +4248,10 @@ describe("internal-agents/run-stream", () => {
         id: "delegating-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
+        tools: buildAgentDelegateTools({
+          delegates: ["researcher"],
+          resolveAgent: () => undefined,
+        }),
       },
     } as unknown as Agent;
     const input = {
@@ -4224,6 +4284,9 @@ describe("internal-agents/run-stream", () => {
                         'data: {"type":"tool-input-start","toolCallId":"child-2","toolName":"veryfront__invoke_agent"}',
                         'data: {"type":"tool-input-available","toolCallId":"child-2","toolName":"veryfront__invoke_agent","input":{}}',
                         'data: {"type":"tool-output-available","toolCallId":"child-2","output":"ok"}',
+                        'data: {"type":"tool-input-start","toolCallId":"delegate-1","toolName":"agent_researcher"}',
+                        'data: {"type":"tool-input-available","toolCallId":"delegate-1","toolName":"agent_researcher","input":{}}',
+                        'data: {"type":"tool-output-error","toolCallId":"delegate-1","errorText":"delegate failed"}',
                         'data: {"type":"tool-input-start","toolCallId":"fetch-1","toolName":"web_fetch"}',
                         'data: {"type":"tool-input-available","toolCallId":"fetch-1","toolName":"web_fetch","input":{}}',
                         'data: {"type":"tool-output-error","toolCallId":"fetch-1","errorText":"404"}',
@@ -4248,16 +4311,16 @@ describe("internal-agents/run-stream", () => {
 
     const runSpan = spans.find((span) => span.name === "agent.run");
     assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
-    assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 2);
-    assertEquals(runSpan?.attributes["agent.run.child_run_error_count"], 1);
+    assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 3);
+    assertEquals(runSpan?.attributes["agent.run.child_run_error_count"], 2);
     assertEquals(runSpan?.status, undefined);
 
     const finalizedEntry = logs.getEntries().find((entry) =>
       entry.message === "Internal agent runtime stream finalized"
     );
     assertEquals(finalizedEntry?.level, "info");
-    assertEquals(finalizedEntry?.context?.toolErrorCount, 2);
-    assertEquals(finalizedEntry?.context?.childRunErrorCount, 1);
+    assertEquals(finalizedEntry?.context?.toolErrorCount, 3);
+    assertEquals(finalizedEntry?.context?.childRunErrorCount, 2);
   });
 
   for (

@@ -579,12 +579,13 @@ describe("observability/tracing/service-tracer", () => {
     });
 
     const span = serviceTracer.tracer.startSpan("manual-operation");
-    span.markFailed("STREAM_ERROR");
+    span.markFailed?.("STREAM_ERROR");
 
     const otelSpan = harness.startedSpans[0];
     assertEquals(otelSpan?.status, { code: 2, message: "STREAM_ERROR" });
     assertEquals(otelSpan?.exceptions.length, 1);
     assertEquals((otelSpan?.exceptions[0] as Error).message, "STREAM_ERROR");
+    assertEquals((otelSpan?.exceptions[0] as Error).stack, undefined);
   });
 
   it("starts a childOf span in its declared parent's context", () => {
@@ -806,7 +807,7 @@ describe("observability/tracing/service-tracer", () => {
 
     span.setTag("safe", "value");
     span.setAttributes({ another: "value" });
-    span.markFailed("STREAM_ERROR");
+    span.markFailed?.("STREAM_ERROR");
     span.finish();
     assertEquals(otelSpan.exceptions.length, 1);
   });
