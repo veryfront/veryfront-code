@@ -1861,6 +1861,7 @@ describe("metrics public SDK", () => {
             () => {
               metrics.counter("vf_many_labels_total", 1, tooManyLabels);
               metrics.counter("vf_long_label_total", 1, { subject: "x".repeat(257) });
+              metrics.counter("vf_long_key_total", 1, { ["k".repeat(129)]: "v" });
               metrics.counter("Invoice from supplier@example.com", 1);
               metrics.gauge("vf_long_name_" + "x".repeat(128), 1);
               metrics.counter("vf_bounded_total", 1, { subject_kind: "x".repeat(256) });
@@ -1877,7 +1878,7 @@ describe("metrics public SDK", () => {
       ) => entry.name),
       ["vf_bounded_total"],
     );
-    assertEquals(metrics.__getDroppedDirectSampleCountForTests(), 4);
+    assertEquals(metrics.__getDroppedDirectSampleCountForTests(), 5);
   });
 
   it("caps the distinct series one tenant can create", async () => {

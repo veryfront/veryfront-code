@@ -110,6 +110,7 @@ const DIRECT_MAX_TENANT_ATTRIBUTES = 16;
 const DIRECT_MAX_ATTRIBUTE_VALUE_LENGTH = 256;
 const DIRECT_MAX_SERIES_PER_SCOPE = 500;
 const DIRECT_METRIC_NAME = /^[A-Za-z_][A-Za-z0-9_.:]{0,127}$/;
+const DIRECT_LABEL_KEY = /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/;
 // Prometheus treats a series as stale after five minutes without a sample, so
 // a cumulative point after a longer gap is restated next to its previous total.
 const DIRECT_RESTATE_AFTER_NS = 5n * 60n * 1_000_000_000n;
@@ -1119,6 +1120,7 @@ function isBoundedTenantSample(
     if (entry === undefined) continue;
     if (apply(arrayIncludes, PROJECT_LABEL_KEYS, [entry[0]])) continue;
     projectAttributes++;
+    if (!apply(regExpTest, DIRECT_LABEL_KEY, [entry[0]])) return false;
     if (typeof entry[1] === "string" && entry[1].length > DIRECT_MAX_ATTRIBUTE_VALUE_LENGTH) {
       return false;
     }

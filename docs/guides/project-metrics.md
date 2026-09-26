@@ -91,8 +91,9 @@ In Veryfront runtimes, the SDK drops a sample instead of exporting it when:
 
 - the metric name does not match `[A-Za-z_][A-Za-z0-9_.:]*` or is longer than
   128 characters
-- it carries more than 16 labels of its own, or a label value longer than 256
-  characters
+- it carries more than 16 labels of its own, a label name that does not match
+  `[A-Za-z_][A-Za-z0-9_.]*` or is longer than 128 characters, or a label value
+  longer than 256 characters
 - it would start a new name and label combination after the project has created
   500 in the current runtime process
 
