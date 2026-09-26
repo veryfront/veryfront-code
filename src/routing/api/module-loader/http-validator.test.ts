@@ -487,6 +487,72 @@ describe("routing/api/module-loader/http-validator", () => {
   });
 
   describe("validateHTTPImports", () => {
+    it("does not bundle a parsed module for slashes alone", async () => {
+      // Regular expressions and division no longer force bundling: with an AST
+      // the import edges are exact, so the textual slash ambiguity is moot.
+      const parsed = await validateHTTPImports(
+        `const pattern = /import\\("https:\\/\\/evil.example\\/x.js"\\)/;` +
+          ` export const GET = (req: Request) => new Response(String(4 / 2), { status: 200 });`,
+        [],
+      );
+      assertEquals(parsed.parserBacked, true);
+      assertEquals(parsed.specifiers, []);
+      assertEquals(parsed.requiresBundling, false);
+      assertEquals(parsed.hasUnconstrainedDynamicImport, false);
+    });
+
+    it("bundles a parsed module that contains a literal dynamic import", async () => {
+      // A literal dynamic import can execute after validation, so the bundler
+      // must capture its local dependency immutably.
+      const dynamic = await validateHTTPImports(
+        `export const GET = async () => { const mod = await import("./helper.ts"); return mod.run(); };`,
+        [],
+      );
+      assertEquals(dynamic.specifiers, ["./helper.ts"]);
+      assertEquals(dynamic.requiresBundling, true);
+    });
+
+    it("bundles a parsed module that contains JSX", async () => {
+      // JSX compiles to an implicit runtime import that `moduleSpecifiers`
+      // never records, and a pragma can point it at any origin. Only the
+      // bundling pipeline validates that import against the allow-list.
+      for (
+        const source of [
+          `/** @jsxImportSource https://blocked.example */ export const GET = () => <div />;`,
+          `export const GET = () => <><p>ok</p></>;`,
+        ]
+      ) {
+        const scan = await validateHTTPImports(source, []);
+        assertEquals(scan.requiresBundling, true, source);
+      }
+    });
+
+    it("bundles a parsed module that reads import.meta", async () => {
+      // `import.meta` locations are rewritten and validated by the bundling pipeline.
+      const meta = await validateHTTPImports(
+        `export const GET = () => new Response(import.meta.resolve("./asset.txt"));`,
+        [],
+      );
+      assertEquals(meta.requiresBundling, true);
+    });
+
+    it("keeps the textual fallback contract when the parser is unavailable", async () => {
+      __setSourceCapabilityParserLoaderForTests(() =>
+        Promise.reject(new Error("parser unavailable"))
+      );
+      try {
+        const scan = await validateHTTPImports(
+          `export const GET = () => new Response(String(4 / 2));`,
+          [],
+        );
+        assertEquals(scan.parserBacked, false);
+        // Without a parser a slash may hide an import, so the bundler must parse it.
+        assertEquals(scan.requiresBundling, true);
+      } finally {
+        __setSourceCapabilityParserLoaderForTests();
+      }
+    });
+
     it("should block all remote imports when allowedHosts is empty", async () => {
       await assertRejects(
         async () => await validateHTTPImports('import foo from "https://evil.com/lib.js";', []),

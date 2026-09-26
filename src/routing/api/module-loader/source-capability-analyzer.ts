@@ -98,6 +98,25 @@ export interface SourceCapabilityAnalysis {
   readonly workers: readonly WorkerUrlClassification[];
   readonly moduleSpecifiers: readonly string[];
   readonly hasUnconstrainedDynamicImport: boolean;
+  /**
+   * The module contains a dynamic `import()`. A literal one can execute after
+   * validation, so the loader bundles the module to capture every local
+   * dependency immutably instead of reading it from disk later.
+   */
+  readonly hasDynamicImport: boolean;
+  /**
+   * The module reads `import.meta`. Its locations (`url`, `resolve`, ...) are
+   * rewritten and validated against the project's import maps by the bundling
+   * pipeline, so such a module must not be loaded directly.
+   */
+  readonly usesImportMeta: boolean;
+  /**
+   * The module contains JSX. It compiles to an implicit import of a JSX
+   * runtime whose origin a `@jsxImportSource` pragma can set to any URL, and
+   * that import never appears in `moduleSpecifiers`. Only the bundling
+   * pipeline validates it against the allow-list.
+   */
+  readonly usesJsx: boolean;
 }
 
 const COMMENT_KEYS = new Set([
@@ -4308,6 +4327,9 @@ interface MutableSourceCapabilityAnalysis {
   workers: WorkerUrlClassification[];
   moduleSpecifiers: string[];
   hasUnconstrainedDynamicImport: boolean;
+  hasDynamicImport: boolean;
+  usesImportMeta: boolean;
+  usesJsx: boolean;
 }
 
 function recordModuleSpecifier(
@@ -4364,7 +4386,10 @@ function applyModuleSpecifierCapability(
   if (tsSpecifier !== undefined) recordModuleSpecifier(analysis, tsSpecifier);
 
   const importSpecifier = dynamicImportSpecifier(node);
-  if (importSpecifier !== undefined) recordModuleSpecifier(analysis, importSpecifier);
+  if (importSpecifier !== undefined) {
+    analysis.hasDynamicImport = true;
+    recordModuleSpecifier(analysis, importSpecifier);
+  }
 }
 
 function applyIdentifierCapability(
@@ -5619,6 +5644,9 @@ export async function analyzeSourceCapabilities(
     workers: [],
     moduleSpecifiers: [],
     hasUnconstrainedDynamicImport: false,
+    hasDynamicImport: false,
+    usesImportMeta: false,
+    usesJsx: false,
   };
 
   const visit = (node: ASTNode): void => {
@@ -5643,6 +5671,8 @@ export async function analyzeSourceCapabilities(
     );
     applyInheritedClassCapability(node, scope, nodeScopes, analysis);
     applyExportedCapabilityAlias(node, scope, nodeScopes, analysis);
+    if (isImportMeta(node)) analysis.usesImportMeta = true;
+    if (node.type === "JSXElement" || node.type === "JSXFragment") analysis.usesJsx = true;
 
     forEachChild(node, visit);
   };
@@ -5653,6 +5683,9 @@ export async function analyzeSourceCapabilities(
     workers: analysis.workers,
     moduleSpecifiers: analysis.moduleSpecifiers,
     hasUnconstrainedDynamicImport: analysis.hasUnconstrainedDynamicImport,
+    hasDynamicImport: analysis.hasDynamicImport,
+    usesImportMeta: analysis.usesImportMeta,
+    usesJsx: analysis.usesJsx,
   };
 }
 

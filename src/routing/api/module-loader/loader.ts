@@ -24,7 +24,7 @@ import { createError, toError } from "#veryfront/errors";
 import { tryResolve as tryResolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import { parseExtensionManifest } from "#veryfront/extensions/manifest-reader.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import * as pathHelper from "#veryfront/compat/path";
@@ -525,8 +525,9 @@ function loadTSModuleDirect(modulePath: string, revision: string): Promise<APIRo
   return import(url);
 }
 
-function loadJSModule(modulePath: string): Promise<APIRoute> {
-  return import(`file://${modulePath}`);
+/** Directly import a JavaScript route, keyed by revision so an edit is not served from the module cache. */
+function loadJSModule(modulePath: string, revision: string): Promise<APIRoute> {
+  return import(`file://${modulePath}?v=${revision}`);
 }
 
 /**
@@ -541,6 +542,44 @@ function loadJSModule(modulePath: string): Promise<APIRoute> {
  * resolves outside the project, or a file that cannot be read. Those loads
  * must bundle instead. Throws when a walked file names a disallowed host.
  */
+/**
+ * Revisions of local dependencies at the time a graph containing them was
+ * loaded directly, and the dependencies that have changed since.
+ *
+ * A direct import cache-busts only the entry URL; Deno keys every other
+ * module by its unchanged URL, so once a dependency has been loaded directly
+ * its first revision is the one the process keeps serving. Unchanged graphs
+ * keep sharing that module (local routes must share one Deno module graph),
+ * and a graph containing a dependency that has since changed bundles instead,
+ * so each reload after an edit sees the current sources.
+ */
+const directDependencyRevisions = new Map<string, string>();
+const staleDirectDependencies = new Set<string>();
+
+async function hasStaleDirectDependency(
+  fs: FileSystem,
+  routeModulePath: string,
+  visited: ReadonlySet<string>,
+  entryIsDependency: boolean,
+): Promise<boolean> {
+  let stale = false;
+  for (const filePath of visited) {
+    // The entry itself is versioned on every load. It is also cached under
+    // its unversioned URL when a dependency imports it back, and then counts
+    // like any other dependency.
+    if (filePath === routeModulePath && !entryIsDependency) continue;
+    const revision = await moduleRevision(fs, filePath);
+    const known = directDependencyRevisions.get(filePath);
+    if (known === undefined) {
+      directDependencyRevisions.set(filePath, revision);
+    } else if (known !== revision) {
+      staleDirectDependencies.add(filePath);
+    }
+    if (staleDirectDependencies.has(filePath)) stale = true;
+  }
+  return stale;
+}
+
 async function canDirectImportModuleGraph(args: {
   modulePath: string;
   projectDir: string;
@@ -549,19 +588,24 @@ async function canDirectImportModuleGraph(args: {
 }): Promise<boolean> {
   const { projectDir, fs, allowedHosts } = args;
   const projectRoot = pathHelper.resolve(projectDir);
+  const canonicalProjectRoot = await canonicalDirectGraphPath(projectRoot);
+  if (canonicalProjectRoot === null) return false;
   const routeModulePath = pathHelper.resolve(args.modulePath);
   const pending = [routeModulePath];
   const visited = new Set<string>();
   const importMap = await readDenoImportMap(fs, projectRoot);
   let canDirectImport = true;
+  let entryIsDependency = false;
 
   while (pending.length > 0) {
     const filePath = pending.pop() as string;
     if (markDirectGraphVisit(visited, filePath)) {
+      const queued = pending.length;
       const moduleResult = await inspectDirectGraphModule({
         filePath,
         routeModulePath,
         projectRoot,
+        canonicalProjectRoot,
         fs,
         allowedHosts,
         importMap,
@@ -569,10 +613,14 @@ async function canDirectImportModuleGraph(args: {
       });
       if (moduleResult === "reject") return false;
       if (moduleResult === "bundle") canDirectImport = false;
+      // Any edge back to the entry, including a self-import, loads the entry
+      // a second time under its unversioned URL.
+      if (pending.slice(queued).includes(routeModulePath)) entryIsDependency = true;
     }
   }
+  if (!canDirectImport) return false;
 
-  return canDirectImport;
+  return !(await hasStaleDirectDependency(fs, routeModulePath, visited, entryIsDependency));
 }
 
 function markDirectGraphVisit(visited: Set<string>, filePath: string): boolean {
@@ -585,6 +633,7 @@ async function inspectDirectGraphModule(options: {
   filePath: string;
   routeModulePath: string;
   projectRoot: string;
+  canonicalProjectRoot: string;
   fs: FileSystem;
   allowedHosts: string[];
   importMap: DenoImportMap | null;
@@ -592,8 +641,16 @@ async function inspectDirectGraphModule(options: {
 }): Promise<DirectSpecifierResult> {
   const { filePath, routeModulePath, projectRoot, fs, allowedHosts, importMap, pending } = options;
   if (!isWithinDirectory(projectRoot, filePath)) return "reject";
-  // JSON is data, so it cannot execute or introduce another module edge.
-  if (isJSONModulePath(filePath)) return "direct";
+  // Deno executes the file the path resolves to, so a symlink inside the
+  // project is judged by its target, as the bundling path's snapshot does.
+  const canonicalPath = await canonicalDirectGraphPath(filePath);
+  if (canonicalPath === null || !isWithinDirectory(options.canonicalProjectRoot, canonicalPath)) {
+    return "reject";
+  }
+  // JSON is data, so it cannot execute or introduce another module edge, but
+  // Deno's direct loader requires a `with { type: "json" }` attribute the
+  // bundler does not; bundle so an attribute-less import keeps working.
+  if (isJSONModulePath(filePath)) return "bundle";
 
   const source = await readDirectGraphSource(fs, filePath);
   if (source === null) return "reject";
@@ -631,6 +688,14 @@ async function inspectDirectGraphModule(options: {
   // route through the bundled path, which rejects mutable Worker files after
   // validating their graph, instead of handing the original path to Deno.
   return scan.localWorkerSpecifiers.length > 0 ? "bundle" : specifierResult;
+}
+
+async function canonicalDirectGraphPath(path: string): Promise<string | null> {
+  try {
+    return pathHelper.resolve(await realPath(path));
+  } catch {
+    return null;
+  }
 }
 
 async function readDirectGraphSource(fs: FileSystem, filePath: string): Promise<string | null> {
@@ -726,8 +791,11 @@ function inspectDirectMappedTarget(
     );
   }
   if (pathHelper.isAbsolute(target)) {
+    // Walk the mapped target so its graph is validated, but bundle: a direct
+    // import lets Deno resolve the literal specifier under whatever map the
+    // process runs with, which need not be the project's.
     pending.push(resolveContainedLocalModule(projectRoot, filePath, target));
-    return "direct";
+    return "bundle";
   }
   if (canDirectImportSpecifier(target)) return "direct";
   validateModuleSpecifierHosts([target], allowedHosts);
@@ -1174,7 +1242,7 @@ async function loadValidatedJSModule(
 ): Promise<APIRoute> {
   const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
   if (await canDirectImportModuleGraph({ modulePath, projectDir, fs, allowedHosts })) {
-    return loadJSModule(modulePath);
+    return loadJSModule(modulePath, await moduleRevision(fs, modulePath));
   }
   return loadAndTranspileModule(
     modulePath,
