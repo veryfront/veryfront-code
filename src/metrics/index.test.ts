@@ -19,6 +19,7 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { FakeTime } from "#std/testing/time";
 import { metrics } from "./index.ts";
 
 describe("metrics public SDK", () => {
@@ -302,9 +303,11 @@ describe("metrics public SDK", () => {
     const metric = body.resourceMetrics[0].scopeMetrics[0].metrics[0];
     assertEquals(metric.name, "vf_eval_result_total");
     assertEquals(metric.sum.isMonotonic, true);
-    assertEquals(metric.sum.dataPoints[0].asDouble, 1);
+    assertEquals(metric.sum.dataPoints.at(-1).asDouble, 1);
     assertEquals(
-      metric.sum.dataPoints[0].attributes.find((attr: { key: string }) => attr.key === "project_id")
+      metric.sum.dataPoints.at(-1).attributes.find((attr: { key: string }) =>
+        attr.key === "project_id"
+      )
         .value.stringValue,
       "project-123",
     );
@@ -1397,12 +1400,12 @@ describe("metrics public SDK", () => {
     const exported = JSON.parse(String(requests[1]?.body))
       .resourceMetrics[0].scopeMetrics[0].metrics;
     assertEquals(
-      exported[0].sum.dataPoints[0].asDouble,
+      exported[0].sum.dataPoints.at(-1).asDouble,
       1,
       "a counter total must not carry another target's accumulated value",
     );
     assertEquals(
-      exported[1].histogram.dataPoints[0].count,
+      exported[1].histogram.dataPoints.at(-1).count,
       1,
       "a histogram total must not carry another target's accumulated count",
     );
@@ -1685,6 +1688,314 @@ describe("metrics public SDK", () => {
       records.some((record) => record.message === "metrics: direct OTLP sample dropped"),
       true,
       "an over-quota drop must be observable in the logs",
+    );
+  });
+  it("names the exporting process so replicas never write the same series", async () => {
+    const bodies: string[] = [];
+
+    await withEnv({
+      OTEL_METRICS_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          bodies[bodies.length] = String(init?.body);
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          metrics.counter("vf_first_total", 1);
+          await metrics.__flushForTests();
+          metrics.counter("vf_second_total", 1);
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    const instanceIds = bodies.map((body) =>
+      JSON.parse(body).resourceMetrics[0].resource.attributes.find(
+        (attribute: { key: string }) => attribute.key === "service.instance.id",
+      )?.value.stringValue
+    );
+    assertEquals(instanceIds.length, 2);
+    assertEquals(typeof instanceIds[0], "string");
+    assertEquals(instanceIds[0].length > 0, true);
+    assertEquals(instanceIds[1], instanceIds[0], "one process keeps one instance id");
+  });
+
+  it("restates a cumulative total before a point that follows an idle gap", async () => {
+    const bodies: string[] = [];
+    const time = new FakeTime(Date.UTC(2026, 8, 26, 7));
+    const start = BigInt(Date.UTC(2026, 8, 26, 7)) * 1_000_000n;
+    const ms = 1_000_000n;
+
+    try {
+      await withEnv({
+        OTEL_METRICS_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+      }, async () => {
+        await withMockFetch(
+          ((_url: string | URL | Request, init?: RequestInit) => {
+            bodies[bodies.length] = String(init?.body);
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          }) as typeof fetch,
+          async () => {
+            metrics.counter("vf_daily_total", 1, { outcome: "failed" });
+            metrics.histogram("vf_daily_ms", 42);
+            await metrics.__flushForTests();
+            time.tick(1_000);
+            metrics.counter("vf_daily_total", 1, { outcome: "failed" });
+            await metrics.__flushForTests();
+            time.tick(24 * 60 * 60 * 1_000);
+            metrics.counter("vf_daily_total", 1, { outcome: "failed" });
+            metrics.histogram("vf_daily_ms", 120);
+            await metrics.__flushForTests();
+          },
+        );
+      });
+    } finally {
+      time.restore();
+    }
+
+    const exported = bodies.map((body) =>
+      JSON.parse(body).resourceMetrics[0].scopeMetrics[0].metrics
+    );
+    const counterPoints = (
+      metric: { sum: { dataPoints: Array<{ timeUnixNano: string; asDouble: number }> } },
+    ) => metric.sum.dataPoints.map((point) => [BigInt(point.timeUnixNano) - start, point.asDouble]);
+    assertEquals(
+      counterPoints(exported[0][0]),
+      [[-ms, 0], [0n, 1]],
+      "a new series starts from zero so its first increment is countable",
+    );
+    assertEquals(counterPoints(exported[1][0]), [[1_000n * ms, 2]]);
+    const dayLater = (24n * 60n * 60n * 1_000n + 1_000n) * ms;
+    assertEquals(
+      counterPoints(exported[2][0]),
+      [[dayLater - ms, 2], [dayLater, 3]],
+      "an idle series restates its previous total next to the new one",
+    );
+    assertEquals(exported[0][0].sum.dataPoints[0].startTimeUnixNano, String(start - ms));
+    assertEquals(
+      exported[0][1].histogram.dataPoints.map((
+        point: { count: number; sum: number },
+      ) => [point.count, point.sum]),
+      [[0, 0], [1, 42]],
+    );
+    assertEquals(
+      exported[2][1].histogram.dataPoints.map((
+        point: { count: number; sum: number },
+      ) => [point.count, point.sum]),
+      [[1, 42], [2, 162]],
+    );
+  });
+
+  it("takes project labels from the trusted identity, never from project code", async () => {
+    const bodies: string[] = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          bodies[bodies.length] = String(init?.body);
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          runWithTrustedProjectEnv(
+            {
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant.example/v1/metrics",
+            },
+            { projectId: "project-a", projectSlug: "tenant-a", environmentId: "env-a" },
+            () =>
+              metrics.counter("vf_forged_total", 1, {
+                project_id: "victim-project",
+                project_slug: "victim",
+                environment: "production",
+                branch: "main",
+                stage: "ingested",
+              }),
+          );
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    const point = JSON.parse(String(bodies[0])).resourceMetrics[0].scopeMetrics[0].metrics[0]
+      .sum.dataPoints.at(-1);
+    assertEquals(
+      Object.fromEntries(
+        point.attributes.map((attribute: { key: string; value: { stringValue: string } }) => [
+          attribute.key,
+          attribute.value.stringValue,
+        ]),
+      ),
+      { stage: "ingested", project_id: "project-a", project_slug: "tenant-a" },
+    );
+  });
+
+  it("drops tenant samples with unbounded names or labels", async () => {
+    const bodies: string[] = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          bodies[bodies.length] = String(init?.body);
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          const tooManyLabels: Record<string, string> = {};
+          for (let index = 0; index < 17; index++) tooManyLabels[`label_${index}`] = "value";
+          runWithTrustedProjectEnv(
+            {
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant.example/v1/metrics",
+            },
+            { projectId: "project-a", environmentId: "env-a" },
+            () => {
+              metrics.counter("vf_many_labels_total", 1, tooManyLabels);
+              metrics.counter("vf_long_label_total", 1, { subject: "x".repeat(257) });
+              metrics.counter("vf_long_key_total", 1, { ["k".repeat(129)]: "v" });
+              metrics.counter("Invoice from supplier@example.com", 1);
+              metrics.gauge("vf_long_name_" + "x".repeat(128), 1);
+              metrics.counter("vf_bounded_total", 1, { subject_kind: "x".repeat(256) });
+            },
+          );
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(
+      JSON.parse(String(bodies[0])).resourceMetrics[0].scopeMetrics[0].metrics.map((
+        entry: { name: string },
+      ) => entry.name),
+      ["vf_bounded_total"],
+    );
+    assertEquals(metrics.__getDroppedDirectSampleCountForTests(), 5);
+  });
+
+  it("caps the distinct series one tenant can create", async () => {
+    const names: string[] = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          const exported =
+            JSON.parse(String(init?.body)).resourceMetrics[0].scopeMetrics[0].metrics;
+          for (const metric of exported) names[names.length] = metric.name;
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          const emit = (projectId: string, id: number) =>
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant.example/v1/metrics",
+              },
+              { projectId, environmentId: `env-${projectId}` },
+              () => metrics.gauge("vf_item_gauge", 1, { item: String(id) }),
+            );
+          for (let id = 0; id < 501; id++) {
+            emit("project-a", id);
+            if (id % 50 === 49) await metrics.__flushForTests();
+          }
+          emit("project-a", 0);
+          emit("project-b", 0);
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(
+      names.length,
+      502,
+      "the 501st series is dropped; known series and other tenants still export",
+    );
+    assertEquals(metrics.__getDroppedDirectSampleCountForTests(), 1);
+  });
+  it("reserves a series only for samples that enter the queue", async () => {
+    let exported = 0;
+    const stalled = Promise.withResolvers<Response>();
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          exported += JSON.parse(String(init?.body)).resourceMetrics[0].scopeMetrics[0].metrics
+            .length;
+          return stalled.promise;
+        }) as typeof fetch,
+        async () => {
+          metrics.__setDirectExportTimeoutForTests(5_000);
+          const emit = (id: number) =>
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant.example/v1/metrics",
+              },
+              { projectId: "project-a", environmentId: "env-a" },
+              () => metrics.gauge("vf_item_gauge", 1, { item: String(id) }),
+            );
+          // The stalled endpoint holds two batches in flight and one queued;
+          // every later sample is dropped for capacity.
+          for (let id = 0; id < 800; id++) emit(id);
+          stalled.resolve(new Response("{}", { status: 200 }));
+          await metrics.__flushForTests();
+          const accepted = exported;
+          for (let id = 800; id < 800 + 500 - accepted; id++) {
+            emit(id);
+            if (id % 50 === 49) await metrics.__flushForTests();
+          }
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(exported, 500, "samples dropped for capacity must not use up the series budget");
+  });
+
+  it("forgets an evicted tenant's series registry", async () => {
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-project",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
+        async () => {
+          for (let tenant = 0; tenant < 120; tenant++) {
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+              },
+              { projectId: `project-${tenant}`, environmentId: `env-${tenant}` },
+              () => metrics.counter("vf_project_metric_total", 1),
+            );
+            await metrics.__flushForTests();
+          }
+        },
+      );
+    });
+
+    assertEquals(
+      metrics.__getTenantSeriesScopeCountForTests(),
+      metrics.__getDirectTargetCountForTests(),
+      "series registries must not outlive their tenant's targets",
     );
   });
 });
