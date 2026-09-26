@@ -17,6 +17,7 @@ const schema = defineSchema((v) =>
     expectedConnectionGenerationId: v.string().uuid().optional(),
     argumentsJson: v.string().optional(),
     search: v.string().optional(),
+    toolName: v.string().min(1).optional(),
     noBrowser: v.boolean().default(false),
     redirectUri: v.string().optional(),
     timeout: v.number().int().min(1).max(3600).default(300),
@@ -33,6 +34,7 @@ export const parseIntegrationArgs = createArgParser(lazySchema(schema), {
   expectedConnectionGenerationId: { keys: ["expected-generation"], type: "string" },
   argumentsJson: { keys: ["args"], type: "string" },
   search: { keys: ["search"], type: "string" },
+  toolName: { keys: ["tool"], type: "string" },
   noBrowser: { keys: ["no-browser"], type: "boolean" },
   redirectUri: { keys: ["redirect-uri"], type: "string" },
   timeout: { keys: ["timeout"], type: "number" },
@@ -79,6 +81,16 @@ export async function runIntegrationOperation(
         tools: await collectIntegrationRows(client.listTools(target, { name: options.search })),
       };
     case "status": {
+      if (options.toolName) {
+        return {
+          selected_readiness: await client.readiness(options.toolName, {
+            ...(options.connectionId ? { connectionId: options.connectionId } : {}),
+            ...(options.expectedConnectionGenerationId
+              ? { expectedConnectionGenerationId: options.expectedConnectionGenerationId }
+              : {}),
+          }),
+        };
+      }
       const status = await client.status(target, options.scope);
       const connections = await collectIntegrationRows(client.listConnections(target));
       const selected = options.connectionId

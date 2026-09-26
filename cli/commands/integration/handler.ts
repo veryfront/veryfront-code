@@ -1,3 +1,5 @@
+import { MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH } from "#veryfront/integrations/limits.ts";
+import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import { createIntegrationErrorContext } from "#veryfront/integrations/error-context.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 import { parseArgsOrThrow } from "#cli/shared/args";
@@ -59,7 +61,28 @@ export async function handleIntegrationCommand(
     }
   };
   allowed(options.connectionId !== undefined, ["call", "status"], "--connection");
-  allowed(options.expectedConnectionGenerationId !== undefined, ["call"], "--expected-generation");
+  allowed(options.toolName !== undefined, ["status"], "--tool");
+  allowed(
+    options.expectedConnectionGenerationId !== undefined,
+    options.toolName ? ["call", "status"] : ["call"],
+    "--expected-generation",
+  );
+  if (options.toolName) {
+    const identity = options.toolName.length <= MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH
+      ? parseIntegrationToolIdentity(options.toolName)
+      : null;
+    if (!identity || identity.integration !== options.target) {
+      throw INVALID_ARGUMENT.create({
+        detail: "--tool must use the selected integration namespace.",
+      });
+    }
+    if (args.scope !== undefined) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          "Use --connection to select an account with --tool; scope comes from the selected connection.",
+      });
+    }
+  }
   if (options.expectedConnectionGenerationId !== undefined && options.connectionId === undefined) {
     throw INVALID_ARGUMENT.create({ detail: "--expected-generation requires --connection." });
   }

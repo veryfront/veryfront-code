@@ -107,6 +107,29 @@ describe("integration CLI envelopes", () => {
     }
     assertEquals(resolutions, 0);
   });
+  it("rejects mismatched readiness tool and scope selectors before credentials", async () => {
+    let resolutions = 0;
+    for (
+      const args of [
+        { _: ["integration", "status", "github"], tool: "jira__get_issue" },
+        {
+          _: ["integration", "status", "github"],
+          tool: "github__get_current_user",
+          scope: "project",
+        },
+        { _: ["integration", "list"], tool: "github__get_current_user" },
+      ]
+    ) {
+      await assertRejects(() =>
+        handleIntegrationCommand(args, {
+          resolveConfig: () => {
+            resolutions++;
+            throw new Error("unexpected");
+          },
+        }), Error);
+    }
+    assertEquals(resolutions, 0);
+  });
   it("does not construct a client after trusted configuration fails", async () => {
     let clients = 0, disposed = 0;
     await assertRejects(

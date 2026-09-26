@@ -106,9 +106,12 @@ export type {
   IntegrationDetails,
   IntegrationJsonObject,
   IntegrationOAuthHandoff,
+  IntegrationSelectionOptions,
   IntegrationToolResult,
 } from "./client-types.ts";
 export type {
   IntegrationFailureCondition,
   IntegrationHttpProblem,
 } from "./integration-condition.ts";
+
+export type { IntegrationSelectedReadiness } from "./readiness.ts";
