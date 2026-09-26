@@ -69,7 +69,13 @@ import {
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
 import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
-import { ServerResolver } from "./server-resolver.ts";
+import { DedicatedServerLookupUnavailable, ServerResolver } from "./server-resolver.ts";
+import {
+  hasDedicatedAssignmentContext,
+  parseRequiredDedicatedRouting,
+  retryDedicatedTarget,
+  websocketRendererOrigin,
+} from "./dedicated-routing-policy.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
@@ -167,7 +173,16 @@ const rendererRouter = createRendererRouterFromEnvironment(PRODUCTION_SERVER_URL
 const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;
 const apiInternalUser = getEnv("VERYFRONT_API_INTERNAL_USER") || "";
 const apiInternalPass = getEnv("VERYFRONT_API_INTERNAL_PASS") || "";
-const serverResolver = new ServerResolver(apiInternalUrl, apiInternalUser, apiInternalPass);
+const requireDedicatedRouting = parseRequiredDedicatedRouting(
+  getEnv("VERYFRONT_REQUIRE_DEDICATED_ROUTING"),
+);
+const serverResolver = new ServerResolver(
+  apiInternalUrl,
+  apiInternalUser,
+  apiInternalPass,
+  undefined,
+  { requireAssignment: requireDedicatedRouting },
+);
 
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
 const WS_CONNECT_TIMEOUT_MS = 30_000;
@@ -300,11 +315,36 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
   const scope = context.environment;
   const projectSlug = context.projectSlug;
 
+  let dedicatedWebSocketUrl: string | null = null;
+  if (requireDedicatedRouting) {
+    try {
+      if (
+        !hasDedicatedAssignmentContext(
+          context.projectSlug,
+          context.environmentId,
+          requireDedicatedRouting,
+        )
+      ) {
+        throw new DedicatedServerLookupUnavailable();
+      }
+      dedicatedWebSocketUrl = await serverResolver.resolve(context.environmentId);
+    } catch {
+      // Refuse before the WebSocket upgrade; never bridge an unknown assignment
+      // to the shared renderer or reveal the private control-plane error.
+      proxyLogger.warn("503 WebSocket dedicated assignment unavailable");
+      return jsonErrorResponse(503, { error: "Dedicated Runtime Unavailable" });
+    }
+  }
+
   const { url: targetUrl, headers: bridgeHeaders } = buildRendererBridgeRequest(
     req,
     url,
     context,
-    PRODUCTION_SERVER_URL,
+    websocketRendererOrigin(
+      PRODUCTION_SERVER_URL,
+      dedicatedWebSocketUrl,
+      requireDedicatedRouting,
+    ),
   );
 
   proxyLogger.info("[WebSocket] Upgrade request received", {
@@ -483,18 +523,29 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             url.pathname,
             VERYFRONT_SERVER_RETRY_COUNT,
           );
+          if (
+            !hasDedicatedAssignmentContext(
+              ctx.projectSlug,
+              ctx.environmentId,
+              requireDedicatedRouting,
+            )
+          ) {
+            throw new DedicatedServerLookupUnavailable();
+          }
           const upstreamBodies = getReplayableRequestBodies(req, maxRetries);
           let lastError: Error | null = null;
-          // After a retryable connection error to a dedicated server, fall back to shared pool
+          // Strict mode pins the first assigned endpoint for this request. A
+          // connection failure may retry that same endpoint, never shared code.
           let skipDedicated = false;
+          let pinnedDedicatedUrl: string | null = null;
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            // Resolve dedicated server per attempt so retries can fall back to shared pool
-            const dedicatedServerUrl = skipDedicated ? null : await profileProxyServerTimingPhase(
-              proxyTiming,
-              "proxy.resolve_server",
-              () => serverResolver.resolve(ctx.environmentId),
-            );
+            const dedicatedServerUrl = pinnedDedicatedUrl ??
+              (skipDedicated ? null : await profileProxyServerTimingPhase(
+                proxyTiming,
+                "proxy.resolve_server",
+                () => serverResolver.resolve(ctx.environmentId),
+              ));
             const baseUrl = dedicatedServerUrl ??
               rendererRouter?.resolve(ctx.projectSlug) ??
               PRODUCTION_SERVER_URL;
@@ -597,11 +648,17 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                 shouldRetryUpstreamRequest(req, url.pathname, error) &&
                 attempt < maxRetries
               ) {
-                // If we were targeting a dedicated server, fall back to shared pool on retry
                 if (dedicatedServerUrl) {
-                  skipDedicated = true;
+                  const retryTarget = retryDedicatedTarget(
+                    dedicatedServerUrl,
+                    requireDedicatedRouting,
+                  );
+                  pinnedDedicatedUrl = retryTarget.pinnedDedicatedUrl;
+                  skipDedicated = retryTarget.skipDedicated;
                   proxyLogger.warn(
-                    `[Retry] Dedicated server unreachable, falling back to shared pool`,
+                    requireDedicatedRouting
+                      ? `[Retry] Dedicated server unreachable, retrying same endpoint`
+                      : `[Retry] Dedicated server unreachable, falling back to shared pool`,
                     {
                       pathname: url.pathname,
                       dedicatedServerUrl,
@@ -643,6 +700,13 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
       );
     } catch (error) {
       const ms = Math.round(performance.now() - startTime);
+      if (error instanceof DedicatedServerLookupUnavailable) {
+        proxyLogger.warn(`503 ${req.method} ${url.pathname}`, { ms });
+        lifecycle.end(503, error);
+        return withProxyTiming(jsonErrorResponse(503, {
+          error: "Dedicated Runtime Unavailable",
+        }));
+      }
       captureApplicationError(error, {
         boundary: "proxy.request",
         method: req.method,
