@@ -18,6 +18,7 @@ import {
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
+import { setActiveSpanErrorStatus, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type { StyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
@@ -2041,30 +2042,42 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
 
-        const startedAt = this.deps.now();
-        try {
-          const response = request.kind === "task" && request.target === "task:knowledge-ingest"
-            ? await this.deps.executeKnowledgeIngest({ request, ctx, req })
-            : request.kind === "task" && request.target === "task:release-asset-build"
-            ? await this.deps.executeReleaseAssetBuild({ request, ctx, req })
-            : request.kind === "task" && request.target === "task:dependency-artifact-build"
-            ? await this.deps.executeDependencyArtifactBuild({ request, ctx, req })
-            : request.kind === "task" && request.target === "task:style-artifact-build"
-            ? await this.deps.executeStyleArtifactBuild({ request, ctx, req })
-            : request.kind === "task"
-            ? await executeTaskRun(request, ctx, this.deps)
-            : request.kind === "eval"
-            ? await executeEvalRun(request, ctx, req, this.deps)
-            : await executeWorkflowRun(request, ctx, this.deps);
-          return this.respond(builder.json(response, 200));
-        } catch (error) {
-          return this.respond(
-            builder.json(
-              createExecutionFailure(error, Math.max(0, this.deps.now() - startedAt)),
-              200,
-            ),
-          );
-        }
+        return await withSpan(
+          "project_run.execute",
+          async () => {
+            const startedAt = this.deps.now();
+            try {
+              const response = request.kind === "task" && request.target === "task:knowledge-ingest"
+                ? await this.deps.executeKnowledgeIngest({ request, ctx, req })
+                : request.kind === "task" && request.target === "task:release-asset-build"
+                ? await this.deps.executeReleaseAssetBuild({ request, ctx, req })
+                : request.kind === "task" && request.target === "task:dependency-artifact-build"
+                ? await this.deps.executeDependencyArtifactBuild({ request, ctx, req })
+                : request.kind === "task" && request.target === "task:style-artifact-build"
+                ? await this.deps.executeStyleArtifactBuild({ request, ctx, req })
+                : request.kind === "task"
+                ? await executeTaskRun(request, ctx, this.deps)
+                : request.kind === "eval"
+                ? await executeEvalRun(request, ctx, req, this.deps)
+                : await executeWorkflowRun(request, ctx, this.deps);
+              if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
+              return this.respond(builder.json(response, 200));
+            } catch (error) {
+              setActiveSpanErrorStatus(error);
+              return this.respond(
+                builder.json(
+                  createExecutionFailure(error, Math.max(0, this.deps.now() - startedAt)),
+                  200,
+                ),
+              );
+            }
+          },
+          {
+            "run.id": request.runId,
+            "run.kind": request.kind,
+            "project.id": request.projectId,
+          },
+        );
       } catch (error) {
         if (error instanceof InternalAgentRequestBodyTooLargeError) {
           return this.respond(builder.json({ error: error.message }, error.status));
