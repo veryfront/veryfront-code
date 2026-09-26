@@ -33,6 +33,20 @@ import {
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import * as otelApi from "npm:@opentelemetry/api@1.9.1";
+import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
+import {
+  _resetShimForTests,
+  setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
+  setGlobalTracerProvider,
+  SpanStatusCode,
+} from "#veryfront/observability/tracing/api-shim.ts";
 
 const encoder = new TextEncoder();
 
@@ -2503,5 +2517,84 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 400);
     }
+  });
+});
+
+describe("project run execution span", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  async function executeTracedTask(
+    runTask: ProjectRunExecuteHandlerDeps["runTask"],
+  ): Promise<ReturnType<InMemorySpanExporter["getFinishedSpans"]>> {
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    const contextManager = new AsyncLocalStorageContextManager();
+    contextManager.enable();
+    otelApi.context.setGlobalContextManager(contextManager);
+    setGlobalTracerProvider(provider as never);
+    setGlobalActiveSpanAccessor(otelApi.trace as never);
+    setGlobalContextAccessor(otelApi.context as never);
+
+    try {
+      const handler = new ProjectRunExecuteHandler(createDeps({ runTask }));
+      const body = {
+        runId: "run_task_traced",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_task_traced/execute",
+        body,
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertEquals(result.response?.status, 200);
+      return exporter.getFinishedSpans();
+    } finally {
+      _resetShimForTests();
+      contextManager.disable();
+      otelApi.context.disable();
+      await provider.shutdown();
+    }
+  }
+
+  it("identifies the run on the execution span", async () => {
+    const spans = await executeTracedTask(async () => ({
+      success: true,
+      result: { synced: 1 },
+      durationMs: 5,
+    }));
+
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.attributes["run.id"], "run_task_traced");
+    assertEquals(span.attributes["run.kind"], "task");
+    assertEquals(span.attributes["project.id"], "proj-1");
+    assertEquals(span.status.code === SpanStatusCode.ERROR, false);
+  });
+
+  it("marks the execution span as failed when the run fails", async () => {
+    const spans = await executeTracedTask(async () => ({
+      success: false,
+      error: "Exactly one style artifact selector is required",
+      durationMs: 5,
+    }));
+
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.status.code, SpanStatusCode.ERROR);
+  });
+
+  it("marks the execution span as failed when the run throws", async () => {
+    const spans = await executeTracedTask(() => Promise.reject(new Error("task crashed")));
+
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.status.code, SpanStatusCode.ERROR);
   });
 });
