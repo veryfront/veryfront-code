@@ -12,6 +12,7 @@ import {
   DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,
 } from "#veryfront/agent";
 import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
+import { buildAgentDelegateTools } from "#veryfront/agent/runtime/agent-delegation.ts";
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
@@ -21,6 +22,7 @@ import {
   setGlobalTracerProvider,
   type Span,
   type SpanContext,
+  SpanStatusCode,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type {
@@ -4022,6 +4024,392 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.events.some((event) => event.name === "agent.run.completed"), false);
   });
 
+  it("marks a run that ends on a terminal runtime error as an ERROR span with its error code", async () => {
+    const spans = installRecordingTracer();
+    const logs = captureConsoleJsonLogs();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "credit-limited-agent",
+      config: {
+        id: "credit-limited-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_terminal_error_code",
+      parentRunId: "run_parent_of_terminal_error",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"error","code":"insufficient-credits","error":"AI credit limit exceeded"}\n\n',
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.status?.code, SpanStatusCode.ERROR);
+    assertEquals(runSpan?.status?.message, "insufficient-credits");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.attributes["error.type"], "insufficient-credits");
+    assertEquals(runSpan?.attributes["error.message"], undefined);
+
+    const finalizedEntry = logs.getEntries().find((entry) =>
+      entry.message === "Internal agent runtime stream finalized"
+    );
+    assertEquals(finalizedEntry?.level, "warn");
+    assertEquals(finalizedEntry?.context?.status, "failed");
+    assertEquals(finalizedEntry?.context?.parentRunId, "run_parent_of_terminal_error");
+    assertEquals(finalizedEntry?.context?.errorCode, "insufficient-credits");
+    assertEquals(finalizedEntry?.context?.error, undefined);
+    assertEquals(JSON.stringify(finalizedEntry).includes("AI credit limit exceeded"), false);
+  });
+
+  it("replaces a terminal error code that is not a stable classification", async () => {
+    const spans = installRecordingTracer();
+    const logs = captureConsoleJsonLogs();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "unsafe-code-agent",
+      config: {
+        id: "unsafe-code-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_unsafe_terminal_code",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"error","code":"postgres://app:secret@db.internal/prod","error":"boom"}\n\n',
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.status?.message, "AgentRunTerminalError");
+    assertEquals(runSpan?.attributes["error.type"], "AgentRunTerminalError");
+    const finalizedEntry = logs.getEntries().find((entry) =>
+      entry.message === "Internal agent runtime stream finalized"
+    );
+    assertEquals(finalizedEntry?.context?.errorCode, "AgentRunTerminalError");
+    assertEquals(JSON.stringify(finalizedEntry).includes("secret"), false);
+  });
+
+  it("marks a run whose runtime stream throws as an ERROR span with the run error code", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "throwing-agent",
+      config: {
+        id: "throwing-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_stream_throws",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.error(new Error("socket hang up"));
+            },
+          }),
+      }),
+    });
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.status?.code, SpanStatusCode.ERROR);
+    assertEquals(runSpan?.status?.message, "RUNTIME_ERROR");
+    assertEquals(runSpan?.attributes["error.type"], "RUNTIME_ERROR");
+    assertEquals(runSpan?.attributes["error.cause.type"], "Error");
+  });
+
+  it("keeps a completed run that recovered from a tool error out of ERROR status", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "recovering-agent",
+      config: {
+        id: "recovering-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_recovered_tool_error",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  [
+                    'data: {"type":"message-start","messageId":"assistant-1"}',
+                    'data: {"type":"tool-input-available","toolCallId":"tool-1","toolName":"lookup","input":{}}',
+                    'data: {"type":"tool-output-error","toolCallId":"tool-1","errorText":"lookup timed out"}',
+                    'data: {"type":"text-start","id":"text-1"}',
+                    'data: {"type":"text-delta","id":"text-1","delta":"done anyway"}',
+                    'data: {"type":"text-end","id":"text-1"}',
+                    "",
+                    "",
+                  ].join("\n\n"),
+                ),
+              );
+              controller.close();
+            },
+          }),
+      }),
+    });
+    await response.text();
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+    assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 1);
+    assertEquals(runSpan?.status, undefined);
+  });
+
+  it("counts failed child agent runs apart from other tool errors on a recovered run", async () => {
+    const spans = installRecordingTracer();
+    const logs = captureConsoleJsonLogs();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "delegating-agent",
+      config: {
+        id: "delegating-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: buildAgentDelegateTools({
+          delegates: ["researcher"],
+          resolveAgent: () => undefined,
+        }),
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_recovered_child_failure",
+      messages: [],
+      tools: [
+        { name: "invoke_agent", parameters: { type: "object", properties: {} } },
+        { name: "veryfront__invoke_agent", parameters: { type: "object", properties: {} } },
+      ],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      [
+                        'data: {"type":"message-start","messageId":"assistant-1"}',
+                        'data: {"type":"tool-input-start","toolCallId":"child-1","toolName":"invoke_agent"}',
+                        'data: {"type":"tool-input-available","toolCallId":"child-1","toolName":"invoke_agent","input":{}}',
+                        'data: {"type":"tool-output-error","toolCallId":"child-1","errorText":"child run failed"}',
+                        'data: {"type":"tool-input-start","toolCallId":"child-2","toolName":"veryfront__invoke_agent"}',
+                        'data: {"type":"tool-input-available","toolCallId":"child-2","toolName":"veryfront__invoke_agent","input":{}}',
+                        'data: {"type":"tool-output-available","toolCallId":"child-2","output":"ok"}',
+                        'data: {"type":"tool-input-start","toolCallId":"delegate-1","toolName":"agent_researcher"}',
+                        'data: {"type":"tool-input-available","toolCallId":"delegate-1","toolName":"agent_researcher","input":{}}',
+                        'data: {"type":"tool-output-error","toolCallId":"delegate-1","errorText":"delegate failed"}',
+                        'data: {"type":"tool-input-start","toolCallId":"fetch-1","toolName":"web_fetch"}',
+                        'data: {"type":"tool-input-available","toolCallId":"fetch-1","toolName":"web_fetch","input":{}}',
+                        'data: {"type":"tool-output-error","toolCallId":"fetch-1","errorText":"404"}',
+                        'data: {"type":"text-start","id":"text-1"}',
+                        'data: {"type":"text-delta","id":"text-1","delta":"handled"}',
+                        'data: {"type":"text-end","id":"text-1"}',
+                        "",
+                        "",
+                      ].join("\n\n"),
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+    assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 3);
+    assertEquals(runSpan?.attributes["agent.run.child_run_error_count"], 2);
+    assertEquals(runSpan?.status, undefined);
+
+    const finalizedEntry = logs.getEntries().find((entry) =>
+      entry.message === "Internal agent runtime stream finalized"
+    );
+    assertEquals(finalizedEntry?.level, "info");
+    assertEquals(finalizedEntry?.context?.toolErrorCount, 3);
+    assertEquals(finalizedEntry?.context?.childRunErrorCount, 2);
+  });
+
+  for (
+    const { label, tools, registerSameNameTool } of [
+      {
+        label: "an inline custom tool",
+        tools: {
+          invoke_agent: {
+            id: "invoke_agent",
+            type: "function",
+            description: "Project tool that happens to share the name",
+            inputSchema: { type: "object", properties: {} },
+            execute: () => ({ ok: true }),
+          },
+        },
+        registerSameNameTool: false,
+      },
+      { label: "a registry tool granted by tools: true", tools: true, registerSameNameTool: true },
+    ]
+  ) {
+    it(`does not count ${label} that shares the invoke_agent name as a child run`, async () => {
+      const spans = installRecordingTracer();
+      const sessionManager = new AgentRunSessionManager();
+      if (registerSameNameTool) {
+        toolRegistryInternal.register("invoke_agent", {
+          id: "invoke_agent",
+          type: "function",
+          description: "Project tool that happens to share the name",
+          inputSchema: {} as never,
+          execute: () => ({ ok: true }),
+        } as unknown as Tool);
+      }
+      const agent = {
+        id: "custom-invoke-agent",
+        config: {
+          id: "custom-invoke-agent",
+          model: "anthropic/claude-opus-4-6",
+          system: "test",
+          tools,
+        },
+      } as unknown as Agent;
+      const input = {
+        agentId: agent.id,
+        threadId: crypto.randomUUID(),
+        runId: "run_custom_invoke_agent_error",
+        messages: [],
+        tools: [],
+        context: [],
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+      try {
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      [
+                        'data: {"type":"message-start","messageId":"assistant-1"}',
+                        'data: {"type":"tool-input-start","toolCallId":"custom-1","toolName":"invoke_agent"}',
+                        'data: {"type":"tool-input-available","toolCallId":"custom-1","toolName":"invoke_agent","input":{}}',
+                        'data: {"type":"tool-output-error","toolCallId":"custom-1","errorText":"custom tool failed"}',
+                        'data: {"type":"text-start","id":"text-1"}',
+                        'data: {"type":"text-delta","id":"text-1","delta":"handled"}',
+                        'data: {"type":"text-end","id":"text-1"}',
+                        "",
+                        "",
+                      ].join("\n\n"),
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+          }),
+        });
+        await response.text();
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+
+      const runSpan = spans.find((span) => span.name === "agent.run");
+      assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+      assertEquals(runSpan?.attributes["agent.run.tool_error_count"], 1);
+      assertEquals(runSpan?.attributes["agent.run.child_run_error_count"], 0);
+    });
+  }
+
   it("records usage accumulated before a terminal runtime error on the agent.run span", async () => {
     const spans = installRecordingTracer();
     const sessionManager = new AgentRunSessionManager();
@@ -4120,6 +4508,7 @@ describe("internal-agents/run-stream", () => {
 
     const runSpan = spans.find((span) => span.name === "agent.run");
     assertEquals(runSpan?.attributes["agent.run.final_status"], "cancelled");
+    assertEquals(runSpan?.status, undefined);
     assertEquals(runSpan?.attributes["agent.usage.cost_credits"], 8.5);
     assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 60);
     assertEquals(runSpan?.attributes["agent.run.usage_is_floor"], true);

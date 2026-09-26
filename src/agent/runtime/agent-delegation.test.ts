@@ -5,6 +5,7 @@ import {
   AGENT_DELEGATE_TOOL_PREFIX,
   buildAgentDelegateTools,
   createInvokeAgentTool,
+  isFrameworkChildRunTool,
   isProviderSafeDelegateId,
 } from "./agent-delegation.ts";
 import type { Agent } from "../types.ts";
@@ -351,4 +352,19 @@ it("delegate agent execution preserves an explicit process-boundary restriction"
 
   assertEquals(observedPolicy, policy);
   assertEquals(observedDuringStreamConsumption, policy);
+});
+
+it("isFrameworkChildRunTool recognizes framework invoke_agent and delegate tools only", () => {
+  const delegateTools = buildAgentDelegateTools({
+    delegates: ["researcher"],
+    resolveAgent: () => undefined,
+  });
+
+  assertEquals(isFrameworkChildRunTool(createInvokeAgentTool()), true);
+  assertEquals(isFrameworkChildRunTool(delegateTools.agent_researcher), true);
+  assertEquals(
+    isFrameworkChildRunTool({ id: "agent_researcher", type: "function", execute: () => ({}) }),
+    false,
+  );
+  assertEquals(isFrameworkChildRunTool(true), false);
 });

@@ -34,6 +34,7 @@ import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-na
 import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
 import {
   INVOKE_AGENT_TOOL_ID,
+  isFrameworkChildRunTool,
   isFrameworkInvokeAgentTool,
 } from "#veryfront/agent/runtime/agent-delegation.ts";
 import {
@@ -52,6 +53,7 @@ import {
   SandboxShellToolsProviderName,
 } from "#veryfront/extensions/sandbox/index.ts";
 import { resolveHostedRuntimeAllowedToolNames } from "#veryfront/agent/hosted/runtime-essential-tools.ts";
+import { toStableRunErrorCode } from "#veryfront/agent/hosted/trace-attributes.ts";
 import {
   createToolsFromHostDefinitions,
   isToolVisibleTo,
@@ -62,6 +64,7 @@ import {
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import {
   addSpanEvent,
+  markSpanFailed,
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -226,6 +229,8 @@ function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | un
   return runtimeInferenceCredentials.get(input);
 }
 
+const controlPlaneInjectedTools = new WeakSet<Tool>();
+
 function createInjectedStudioTool(
   runId: string,
   toolName: string,
@@ -258,6 +263,7 @@ function createInjectedStudioTool(
       return waitResult.result;
     },
   };
+  controlPlaneInjectedTools.add(tool);
   return controlPlaneNames.some((name) => toolName === `veryfront__${name}`)
     ? markTrustedHostToolProvenance(tool)
     : tool;
@@ -270,6 +276,33 @@ const controlPlaneNames = [
   "web_fetch",
   "studio_todo_write",
 ];
+
+const CHILD_RUN_CONTROL_PLANE_TOOL_NAMES = new Set([
+  INVOKE_AGENT_TOOL_ID,
+  `veryfront__${INVOKE_AGENT_TOOL_ID}`,
+]);
+
+/**
+ * Tool names whose calls run a child agent: control-plane delegation, or the
+ * framework's invoke_agent and `agent_{id}` delegate tools. A custom or registry
+ * tool that merely shares such a name is not one.
+ */
+function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<string> {
+  const names = new Set<string>();
+  if (!mergedTools) return names;
+  const entries = mergedTools === true ? toolRegistry.getAll() : Object.entries(mergedTools);
+  for (const [toolName, entry] of entries) {
+    const tool = entry === true ? toolRegistry.get(toolName) : entry;
+    if (
+      isFrameworkChildRunTool(tool) ||
+      (CHILD_RUN_CONTROL_PLANE_TOOL_NAMES.has(toolName) && isRecord(tool) &&
+        controlPlaneInjectedTools.has(tool as Tool))
+    ) {
+      names.add(toolName);
+    }
+  }
+  return names;
+}
 
 function isExplicitlyDeniedToolName(
   agent: Agent,
@@ -1059,6 +1092,7 @@ export async function createRuntimeAgentStreamResponse(
   const modelCallContextRelay = createModelCallContextRelay(timing);
   const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
   let shouldEmitProviderReplayCheckpoints = false;
+  let childRunToolNames = new Set<string>();
   try {
     const executionModel = getAgentExecutionConfig(agent.config).model ??
       resolveConfiguredAgentModel();
@@ -1159,6 +1193,7 @@ export async function createRuntimeAgentStreamResponse(
       modelSupportedProviderToolNames.has(toolName) &&
       !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName, deps.localTools)
     );
+    childRunToolNames = resolveChildRunToolNames(mergedTools);
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
     const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
     const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
@@ -1366,6 +1401,31 @@ export async function createRuntimeAgentStreamResponse(
             "Internal agent runtime stream stopped before EOF",
           );
           let readerCancellation: Promise<void> | undefined;
+          let terminalRunErrorCode: string | undefined;
+          let toolErrorCount = 0;
+          let childRunErrorCount = 0;
+          const childRunToolCallIds = new Set<string>();
+          const observeRunOutcomeEvent = (event: string, payload: Record<string, unknown>) => {
+            if (
+              event === "ToolCallStart" && typeof payload.toolCallId === "string" &&
+              typeof payload.toolCallName === "string" &&
+              childRunToolNames.has(payload.toolCallName)
+            ) {
+              childRunToolCallIds.add(payload.toolCallId);
+            }
+            if (event === "ToolCallResult" && payload.isError === true) {
+              toolErrorCount++;
+              if (
+                typeof payload.toolCallId === "string" &&
+                childRunToolCallIds.has(payload.toolCallId)
+              ) {
+                childRunErrorCount++;
+              }
+            }
+            if (event === "RunError") {
+              terminalRunErrorCode ??= toStableRunErrorCode(payload.code);
+            }
+          };
           let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
           stopHeartbeat = () => {
             if (heartbeatTimer) {
@@ -1510,6 +1570,7 @@ export async function createRuntimeAgentStreamResponse(
                 providerReplayStepOpen = false;
               }
               prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
+              observeRunOutcomeEvent(mappedEvent.event, mappedEvent.payload);
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             };
             heartbeatTimer = setInterval(
@@ -1568,9 +1629,13 @@ export async function createRuntimeAgentStreamResponse(
             }
 
             for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
+              observeRunOutcomeEvent(mappedEvent.event, mappedEvent.payload);
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             }
             const finalStatus = state.sawTerminalError ? "failed" : "completed";
+            const terminalErrorCode = state.sawTerminalError
+              ? terminalRunErrorCode ?? "AgentRunTerminalError"
+              : undefined;
             if (state.sawTerminalError) {
               deps.sessionManager.failRun(input.runId);
             } else {
@@ -1586,7 +1651,11 @@ export async function createRuntimeAgentStreamResponse(
               "agent.run.final_status": finalStatus,
               "agent.run.saw_visible_output": state.sawVisibleOutput,
               "agent.run.saw_terminal_error": state.sawTerminalError,
-              ...(state.sawTerminalError ? { "error.type": "AgentRunTerminalError" } : {}),
+              "agent.run.tool_error_count": toolErrorCount,
+              "agent.run.child_run_error_count": childRunErrorCount,
+              // The RunError message can carry unclassified framework error text, so only
+              // the stable code leaves the process.
+              ...(terminalErrorCode ? { "error.type": terminalErrorCode } : {}),
               // Carries `agent.run.usage_is_floor` when the run never delivered a final
               // response, which is not the same question as whether it ended in error:
               // an empty assistant turn reaches here with an exact total and
@@ -1600,15 +1669,28 @@ export async function createRuntimeAgentStreamResponse(
               runSpan,
               state.sawTerminalError ? "agent.run.failed" : "agent.run.completed",
             );
-            logger.info("Internal agent runtime stream finalized", {
+            const finalizedLogContext = {
               runId: input.runId,
               threadId: input.threadId,
+              parentRunId: input.parentRunId,
+              projectId: deps.projectAgentSandbox?.projectId ?? undefined,
               agentId: agent.id,
               status: finalStatus,
               sawVisibleOutput: state.sawVisibleOutput,
               sawTerminalError: state.sawTerminalError,
               finishReason: state.metadata.finishReason,
-            });
+              toolErrorCount,
+              childRunErrorCount,
+            };
+            if (terminalErrorCode) {
+              markSpanFailed(runSpan, terminalErrorCode);
+              logger.warn("Internal agent runtime stream finalized", {
+                ...finalizedLogContext,
+                errorCode: terminalErrorCode,
+              });
+            } else {
+              logger.info("Internal agent runtime stream finalized", finalizedLogContext);
+            }
           } catch (error) {
             readerExitReason = error;
             if (error instanceof AgentRunCancelledError) {
@@ -1621,6 +1703,8 @@ export async function createRuntimeAgentStreamResponse(
                   status: "cancelled",
                 }),
                 "agent.run.final_status": "cancelled",
+                "agent.run.tool_error_count": toolErrorCount,
+                "agent.run.child_run_error_count": childRunErrorCount,
                 "error.type": "AgentRunCancelledError",
                 "error.message": error.message,
                 // The model call in flight at the abort may have been billed without
@@ -1643,6 +1727,7 @@ export async function createRuntimeAgentStreamResponse(
             } else {
               deps.sessionManager.failRun(input.runId);
               const errorMessage = error instanceof Error ? error.message : String(error);
+              const runErrorCode = readProviderReplayTurnErrorCode(error) ?? "RUNTIME_ERROR";
               setSpanAttributes(runSpan, {
                 ...buildInternalAgentRunTraceAttributes({
                   runInput: input,
@@ -1651,21 +1736,28 @@ export async function createRuntimeAgentStreamResponse(
                   status: "failed",
                 }),
                 "agent.run.final_status": "failed",
-                "error.type": error instanceof Error ? error.name : "Error",
+                "agent.run.tool_error_count": toolErrorCount,
+                "agent.run.child_run_error_count": childRunErrorCount,
+                "error.type": runErrorCode,
+                "error.cause.type": error instanceof Error ? error.name : "Error",
                 "error.message": errorMessage,
                 // The model call in flight at the failure may have been billed without
                 // ever reporting usage, so an accumulator total is marked a floor.
                 ...resolveRunUsageAttributes(),
               });
               addSpanEvent(runSpan, "agent.run.failed");
+              markSpanFailed(runSpan, runErrorCode);
               logger.error("Internal agent runtime stream failed", {
                 runId: input.runId,
                 threadId: input.threadId,
+                parentRunId: input.parentRunId,
+                projectId: deps.projectAgentSandbox?.projectId ?? undefined,
                 agentId: agent.id,
+                errorCode: runErrorCode,
                 error: errorMessage,
               });
               enqueueIfAttached("RunError", {
-                code: readProviderReplayTurnErrorCode(error) ?? "RUNTIME_ERROR",
+                code: runErrorCode,
                 message: errorMessage,
               });
             }

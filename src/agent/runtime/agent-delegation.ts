@@ -13,10 +13,17 @@ export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
 const frameworkInvokeAgentTools = new WeakSet<object>();
+const frameworkDelegateTools = new WeakSet<object>();
 
 /** Whether a tool is the framework-created invoke_agent from {@link createInvokeAgentTool}. */
 export function isFrameworkInvokeAgentTool(value: unknown): boolean {
   return value !== null && typeof value === "object" && frameworkInvokeAgentTools.has(value);
+}
+
+/** Whether a tool is a framework tool whose calls run a child agent (invoke_agent or `agent_{id}`). */
+export function isFrameworkChildRunTool(value: unknown): boolean {
+  return value !== null && typeof value === "object" &&
+    (frameworkInvokeAgentTools.has(value) || frameworkDelegateTools.has(value));
 }
 
 const getInvokeAgentInputSchema = defineSchema((v) =>
@@ -122,7 +129,7 @@ function createLazyDelegateTool(
   resolveAgent: DelegateAgentResolver,
   executeDelegate?: DelegateAgentExecutor,
 ): Tool {
-  return markRuntimeLocalTool({
+  const tool = markRuntimeLocalTool({
     id: `${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`,
     type: "function",
     description: `Delegate a self-contained subtask to the "${delegateId}" specialist agent, ` +
@@ -150,6 +157,8 @@ function createLazyDelegateTool(
       return agentAsTool(target, `Delegate to ${delegateId}`).execute(input, context);
     },
   });
+  frameworkDelegateTools.add(tool);
+  return tool;
 }
 
 /**

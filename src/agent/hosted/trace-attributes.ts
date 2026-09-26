@@ -287,6 +287,21 @@ export function buildInvokeAgentTraceAttributes(input: {
   });
 }
 
+const STABLE_RUN_ERROR_CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
+
+/**
+ * Keeps a run error code only when it has the shape of a classification. A runtime
+ * can put any string there, and it becomes a span status message and a log field.
+ */
+export function toStableRunErrorCode(code: unknown): string | undefined {
+  return typeof code === "string" && STABLE_RUN_ERROR_CODE_PATTERN.test(code) ? code : undefined;
+}
+
+/** Stable `error.type` of a failed agent run, also used as its span status message. */
+export function resolveAgentRunErrorType(terminalErrorCode?: string | null): string {
+  return toStableRunErrorCode(terminalErrorCode) ?? "STREAM_ERROR";
+}
+
 /** Builds finalized agent run trace attributes. */
 export function buildFinalizedAgentRunTraceAttributes(input: {
   status: "completed" | "failed" | "cancelled";
@@ -309,7 +324,7 @@ export function buildFinalizedAgentRunTraceAttributes(input: {
     ...(finishReason ? { "gen_ai.response.finish_reasons": [finishReason] } : {}),
     ...(input.status === "failed"
       ? {
-        "error.type": input.terminalErrorCode ?? "STREAM_ERROR",
+        "error.type": resolveAgentRunErrorType(input.terminalErrorCode),
         "error.message": input.terminalErrorMessage,
       }
       : {}),
