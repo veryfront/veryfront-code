@@ -1671,6 +1671,36 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     }
   });
 
+  it("passes an error body larger than the refusal read limit through untouched", async () => {
+    // Refusal-shaped, but padded past the bounded read: it must not be buffered and rewritten.
+    const body = JSON.stringify({
+      error: {
+        message: "AI credit limit exceeded",
+        type: "insufficient_quota",
+        param: null,
+        code: "insufficient-credits",
+        padding: "x".repeat(20_000),
+      },
+    });
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(body, { status: 402, headers: { "content-type": "application/json" } }),
+      )
+    );
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://api.veryfront.com/ai/v1",
+      undefined,
+      { wireModelProvider: "openai" },
+    );
+    const response = await wrappedFetch("https://api.veryfront.com/ai/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({ model: "gpt-5.5" }),
+    });
+    restoreMockFetch();
+    assertEquals([response.status, await response.text()], [402, body]);
+  });
+
   it("forwards upstream errors and successes from a neutral route untouched", async () => {
     const upstreamBodies: ReadonlyArray<readonly [number, string]> = [
       [

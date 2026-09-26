@@ -5,6 +5,7 @@ import {
   resolveVeryfrontPublicApiBaseUrlFromHostEnv,
 } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
@@ -56,7 +57,6 @@ const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype
 const RequestPrototypeText = NativeRequest.prototype.text;
 const ResponseHeadersGet = Object.getOwnPropertyDescriptor(Response.prototype, "headers")?.get;
 const ResponsePrototypeClone = Response.prototype.clone;
-const ResponsePrototypeText = Response.prototype.text;
 const ResponseStatusGet = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
 const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(Response.prototype, "statusText")
   ?.get;
@@ -532,6 +532,9 @@ function toVendorRouteRefusal(body: unknown): Record<string, unknown> | undefine
   return refusal;
 }
 
+/** Largest neutral error body inspected for a Veryfront refusal. */
+const NEUTRAL_REFUSAL_MAX_BYTES = 8 * 1024;
+
 /**
  * Give a Veryfront refusal from a neutral surface the vendor route's body, so
  * credit, project and policy refusals classify exactly as before the move.
@@ -554,8 +557,12 @@ async function normalizeNeutralGatewayRefusal(response: Response): Promise<Respo
 
   let refusal: Record<string, unknown> | undefined;
   try {
+    // A Veryfront refusal is small. Read a bounded prefix of a copy and cancel
+    // the rest, so a large upstream error is never buffered here; anything that
+    // does not fit is not a refusal and passes through untouched.
     const copy = IntrinsicReflectApply(ResponsePrototypeClone, response, []) as Response;
-    const text = await (IntrinsicReflectApply(ResponsePrototypeText, copy, []) as Promise<string>);
+    const { text, truncated } = await readResponseTextPrefix(copy, NEUTRAL_REFUSAL_MAX_BYTES);
+    if (truncated) return response;
     refusal = toVendorRouteRefusal(JSONParse(text));
   } catch {
     return response;

@@ -285,7 +285,14 @@ describe("eval/model-access", () => {
       );
     }
     // Look-alike paths on the API origin are not gateway routes.
-    for (const path of ["/ai/v1beta/models", "/ai/anthropicx/v1/messages", "/ai/other/v1"]) {
+    for (
+      const path of [
+        "/ai/v1beta/models",
+        "/ai/anthropicx/v1/messages",
+        "/ai/anthropic/v2/messages",
+        "/ai/other/v1",
+      ]
+    ) {
       assertEquals(
         classifyEvalModelAccessDenial(await rejectedRequest(veryfrontApiOrigin(), 401, { path })),
         undefined,
