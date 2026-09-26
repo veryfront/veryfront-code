@@ -15,3 +15,17 @@ export const CONTROL_PLANE_RUN_OPERATION_PATH =
 
 /** Matches the bare run route, which only DELETE addresses. */
 export const CONTROL_PLANE_RUN_PATH = /^\/api\/control-plane\/runs\/[^/]+$/u;
+
+/**
+ * The run id a control-plane run route addresses, or `undefined` when the
+ * method and path pair is not one a run handler serves.
+ */
+export function controlPlaneRunIdFromPath(method: string, pathname: string): string | undefined {
+  const normalizedMethod = method.toUpperCase();
+  const route = normalizedMethod === "POST"
+    ? CONTROL_PLANE_RUN_OPERATION_PATH
+    : normalizedMethod === "DELETE"
+    ? CONTROL_PLANE_RUN_PATH
+    : undefined;
+  return route?.test(pathname) ? pathname.split("/")[4] : undefined;
+}

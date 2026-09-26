@@ -461,6 +461,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
           releaseId: ctx.releaseId,
           branchId: ctx.branchId,
           branchName: ctx.branchName,
+          runId: ctx.runId,
           domain: ctx.host || host,
           environment: ctx.environment,
         },
