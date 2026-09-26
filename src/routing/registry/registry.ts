@@ -35,6 +35,18 @@ export function buildRouteRegistrySpanAttributes(
     attributes["veryfront.environment_name"] = ctx.environmentName;
   }
 
+  if (projectSlug || projectId) {
+    const signedBranchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;
+    if (ctx.branchId || signedBranchName) {
+      if (ctx.branchId) attributes["branch.id"] = ctx.branchId;
+      if (signedBranchName) attributes["branch.name"] = signedBranchName;
+    } else if (ctx.resolvedEnvironment === "production") {
+      if (ctx.releaseId) attributes["release.id"] = ctx.releaseId;
+    } else if (ctx.requestContext?.branch) {
+      attributes["branch.name"] = ctx.requestContext.branch;
+    }
+  }
+
   return attributes;
 }
 
