@@ -7,6 +7,38 @@ import {
 } from "./studio-origin-policy.ts";
 
 describe("security/http/studio-origin-policy", () => {
+  it("admits only an exact HTTPS Studio origin at the configured platform root", async () => {
+    const policy = await import("./studio-origin-policy.ts") as Record<string, unknown>;
+    const parseOperatorStudioOrigin = policy.parseOperatorStudioOrigin as
+      | ((raw: string, roots: readonly string[]) => string | null)
+      | undefined;
+    assertEquals(typeof parseOperatorStudioOrigin, "function");
+    if (!parseOperatorStudioOrigin) return;
+    const root = "verified-0924.127.0.0.1.sslip.io";
+    const expected = `https://${root}:58443`;
+    assertEquals(parseOperatorStudioOrigin(expected, [root]), expected);
+    for (
+      const value of [
+        `http://${root}:58443`,
+        `https://app.preview.${root}:58443`,
+        `https://${root}.evil.example:58443`,
+        `https://*.${root}:58443`,
+        `https://${root}:58443/path`,
+        `https://${root}:58443?x=1`,
+        `https://user@${root}:58443`,
+        `https://${root}:58443; frame-ancestors *`,
+      ]
+    ) {
+      let refused = false;
+      try {
+        parseOperatorStudioOrigin(value, [root]);
+      } catch {
+        refused = true;
+      }
+      assertEquals(refused, true, value);
+    }
+  });
+
   it("accepts only the exact HTTPS hosted Studio origins", () => {
     assertEquals(resolveTrustedStudioOrigin("https://veryfront.com"), "https://veryfront.com");
     assertEquals(resolveTrustedStudioOrigin("https://veryfront.org"), "https://veryfront.org");
@@ -69,6 +101,22 @@ describe("security/http/studio-origin-policy", () => {
       resolveTarget({ referrer: "https://localhost.attacker.com/project" }, window),
       window.location.origin,
       "the generated helper must match the localhost hostname exactly, never by prefix",
+    );
+  });
+
+  it("generates an error-overlay target helper with one exact operator origin", () => {
+    const origin = "https://verified-0924.127.0.0.1.sslip.io:58443";
+    const source = studioTargetOriginHelperSource(origin);
+    const resolveTarget = new Function(
+      "document",
+      "window",
+      `${source}\nreturn vfStudioTargetOrigin();`,
+    ) as (document: { referrer: string }, window: { location: { origin: string } }) => string;
+    const window = { location: { origin: "https://app.preview.example.test" } };
+    assertEquals(resolveTarget({ referrer: `${origin}/project` }, window), origin);
+    assertEquals(
+      resolveTarget({ referrer: "https://other.127.0.0.1.sslip.io:58443/project" }, window),
+      window.location.origin,
     );
   });
 });

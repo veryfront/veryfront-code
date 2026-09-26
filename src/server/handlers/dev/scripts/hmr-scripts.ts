@@ -8,6 +8,7 @@
  */
 
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
+import { getOperatorStudioOrigin } from "#veryfront/security/http/studio-operator-origin.ts";
 import { PROJECT_STYLESHEET_IDS } from "#veryfront/html";
 
 interface HMRScriptOptions {
@@ -213,7 +214,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 // Veryfront HMR Client (${logPrefix})
 (function() {${debugPreamble}
 
-  ${studioTargetOriginHelperSource()}
+  ${studioTargetOriginHelperSource(getOperatorStudioOrigin())}
 
   // Notify Studio that the app is ready (clears loading indicator)
   if (window.parent !== window) {
