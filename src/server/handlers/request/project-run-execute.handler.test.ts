@@ -2527,6 +2527,7 @@ describe("project run execution span", () => {
 
   async function executeTracedTask(
     runTask: ProjectRunExecuteHandlerDeps["runTask"],
+    callerSpanContext?: otelApi.SpanContext,
   ): Promise<{
     spans: ReturnType<InMemorySpanExporter["getFinishedSpans"]>;
     body: Record<string, unknown>;
@@ -2555,7 +2556,13 @@ describe("project run execution span", () => {
         body,
       );
 
-      const result = await handler.handle(request, createCtx(publicKeyPem));
+      const callerContext = callerSpanContext
+        ? otelApi.trace.setSpanContext(otelApi.context.active(), callerSpanContext)
+        : otelApi.context.active();
+      const result = await otelApi.context.with(
+        callerContext,
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
       assertEquals(result.response?.status, 200);
       return { spans: exporter.getFinishedSpans(), body: await result.response!.json() };
     } finally {
@@ -2612,5 +2619,24 @@ describe("project run execution span", () => {
     const span = spans.find((candidate) => candidate.name === "project_run.execute");
     assertExists(span);
     assertEquals(span.status.code, SpanStatusCode.ERROR);
+  });
+
+  it("records the execution span as its own trace linked to a sampled-out caller", async () => {
+    const caller = {
+      traceId: "0af7651916cd43dd8448eb211c80319c",
+      spanId: "b7ad6b7169203331",
+      traceFlags: otelApi.TraceFlags.NONE,
+      isRemote: true,
+    };
+    const { spans } = await executeTracedTask(async () => ({
+      success: true,
+      result: { synced: 1 },
+      durationMs: 5,
+    }), caller);
+
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.parentSpanContext, undefined);
+    assertEquals(span.links.map((link) => link.context.traceId), [caller.traceId]);
   });
 });

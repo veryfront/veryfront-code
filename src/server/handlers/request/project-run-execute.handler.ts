@@ -18,7 +18,11 @@ import {
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
-import { setActiveSpanErrorStatus, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  activeSpanLink,
+  setActiveSpanErrorStatus,
+  withSpan,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type { StyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
@@ -2077,6 +2081,9 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             "run.kind": request.kind,
             "project.id": request.projectId,
           },
+          // A run must stay findable by run.id when the control-plane request was
+          // sampled out, so it roots its own trace and links back to the request.
+          { root: true, links: [activeSpanLink()].filter((link) => link !== undefined) },
         );
       } catch (error) {
         if (error instanceof InternalAgentRequestBodyTooLargeError) {
