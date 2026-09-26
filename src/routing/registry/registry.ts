@@ -31,20 +31,18 @@ export function buildRouteRegistrySpanAttributes(
     attributes["project.id"] = projectId;
   }
 
-  if ((projectSlug || projectId) && ctx.environmentName) {
-    attributes["veryfront.environment_name"] = ctx.environmentName;
-  }
+  if (!projectSlug && !projectId) return attributes;
 
-  if (projectSlug || projectId) {
-    const signedBranchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;
-    if (ctx.branchId || signedBranchName) {
-      if (ctx.branchId) attributes["branch.id"] = ctx.branchId;
-      if (signedBranchName) attributes["branch.name"] = signedBranchName;
-    } else if (ctx.resolvedEnvironment === "production") {
-      if (ctx.releaseId) attributes["release.id"] = ctx.releaseId;
-    } else if (ctx.requestContext?.branch) {
-      attributes["branch.name"] = ctx.requestContext.branch;
-    }
+  if (ctx.environmentName) attributes["veryfront.environment_name"] = ctx.environmentName;
+
+  const signedBranchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;
+  if (ctx.branchId || signedBranchName) {
+    if (ctx.branchId) attributes["branch.id"] = ctx.branchId;
+    if (signedBranchName) attributes["branch.name"] = signedBranchName;
+  } else if (ctx.resolvedEnvironment === "production") {
+    if (ctx.releaseId) attributes["release.id"] = ctx.releaseId;
+  } else if (ctx.requestContext?.branch) {
+    attributes["branch.name"] = ctx.requestContext.branch;
   }
 
   return attributes;

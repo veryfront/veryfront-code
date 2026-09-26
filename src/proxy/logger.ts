@@ -111,22 +111,23 @@ interface LogEntry {
   service: string;
   veryfrontVersion: string;
   message: string;
-  /** @deprecated Use `trace_id` instead. Kept for Grafana dashboard transition. */
+  // camelCase aliases of the snake_case fields below. Remove each one once no
+  // Grafana dashboard, alert rule or saved Loki query filters on it.
+  /** @deprecated Use `trace_id`. */
   traceId?: string;
-  /** @deprecated Use `span_id` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `span_id`. */
   spanId?: string;
-  // Request context fields (at top level for Grafana filtering)
-  /** @deprecated Use `request_id` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `request_id`. */
   requestId?: string;
-  /** @deprecated Use `project_slug` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `project_slug`. */
   projectSlug?: string;
-  /** @deprecated Use `project_id` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `project_id`. */
   projectId?: string;
-  /** @deprecated Use `release_id` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `release_id`. */
   releaseId?: string;
-  /** @deprecated Use `branch_id` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `branch_id`. */
   branchId?: string;
-  /** @deprecated Use `branch_name` instead. Kept for Grafana dashboard transition. */
+  /** @deprecated Use `branch_name`. */
   branchName?: string;
   // Standard snake_case fields shared with the runtime logger and the API, so
   // one Loki filter scopes lines from every service to a project.

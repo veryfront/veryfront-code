@@ -1114,18 +1114,18 @@ function isBoundedTenantSample(
 ): boolean {
   if (!apply(regExpTest, DIRECT_METRIC_NAME, [name])) return false;
   const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
-  let projectAttributes = 0;
+  let ownAttributes = 0;
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     if (entry === undefined) continue;
     if (apply(arrayIncludes, PROJECT_LABEL_KEYS, [entry[0]])) continue;
-    projectAttributes++;
+    ownAttributes++;
     if (!apply(regExpTest, DIRECT_LABEL_KEY, [entry[0]])) return false;
     if (typeof entry[1] === "string" && entry[1].length > DIRECT_MAX_ATTRIBUTE_VALUE_LENGTH) {
       return false;
     }
   }
-  return projectAttributes <= DIRECT_MAX_TENANT_ATTRIBUTES;
+  return ownAttributes <= DIRECT_MAX_TENANT_ATTRIBUTES;
 }
 
 // Bounds what one tenant can add to the shared metrics backend from one
