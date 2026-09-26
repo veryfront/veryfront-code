@@ -20,6 +20,19 @@ For finish-required streams in the active lifecycle, a completed turn containing
 only unavailable tool calls now permits the same recovery turn as the legacy lifecycle. Rejected tools are
 not executed, and malformed or empty handoff requests still fail.
 
+### Changed: Veryfront Cloud models call the vendor-neutral endpoints
+
+`veryfront-cloud/*` models that speak the OpenAI protocol now send requests to
+`<api>/ai/v1`, and models that speak the Anthropic protocol send them to
+`<api>/ai/anthropic/v1`. The request body names the model as
+`<provider>/<model>`. Google models keep their existing route. Authentication,
+project and billing headers are unchanged, and platform refusals such as
+insufficient credits or a missing project are reported as before.
+
+To keep the previous per-provider routes and request bodies for one release,
+set `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor` in the environment. The opt-out is
+temporary and a later release removes it.
+
 ### Changed: model IDs naming a provider this package does not list now route through Veryfront Cloud
 
 `resolveVeryfrontCloudGatewayModelId` and its alias

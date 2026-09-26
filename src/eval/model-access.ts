@@ -73,11 +73,18 @@ function statusDenial(status: number): EvalModelAccessDenial | undefined {
 }
 
 /**
+ * Model gateway routes under a Veryfront API base URL: the vendor-neutral
+ * OpenAI- and Anthropic-protocol routes, and the vendor-scoped route.
+ */
+const GATEWAY_ROUTE_PREFIXES: readonly string[] = ["/ai/v1/", "/ai/anthropic/v1/", "/ai/gateway/"];
+
+/**
  * Gateway provenance for a 401, 403, or project-required 400, whose bodies do
- * not prove where they came from: the failed request targeted the model
- * gateway route (`<api base>/ai/gateway/`) under a configured Veryfront API
- * base URL. A direct or BYOK provider, even one behind a reverse proxy that
- * shares the API origin, uses a different route and stays a record failure.
+ * not prove where they came from: the failed request targeted a model gateway
+ * route (`<api base>/ai/v1/`, `<api base>/ai/anthropic/v1/` or
+ * `<api base>/ai/gateway/`) under a configured Veryfront API base URL. A
+ * direct or BYOK provider, even one behind a reverse proxy that shares the API
+ * origin, uses a different route and stays a record failure.
  */
 function isVeryfrontGatewayRoute(requestUrl: string | undefined): boolean {
   if (requestUrl === undefined) return false;
@@ -89,8 +96,10 @@ function isVeryfrontGatewayRoute(requestUrl: string | undefined): boolean {
     if (baseUrl === undefined) continue;
     try {
       const base = new URL(baseUrl);
-      const gatewayPrefix = `${base.origin}${base.pathname.replace(/\/+$/, "")}/ai/gateway/`;
-      if (requestUrl.startsWith(gatewayPrefix)) return true;
+      const apiRoot = `${base.origin}${base.pathname.replace(/\/+$/, "")}`;
+      for (const routePrefix of GATEWAY_ROUTE_PREFIXES) {
+        if (requestUrl.startsWith(`${apiRoot}${routePrefix}`)) return true;
+      }
     } catch {
       // An unparseable configured base URL matches nothing.
     }

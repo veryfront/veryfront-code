@@ -74,7 +74,7 @@ describe("provider/veryfront-cloud/shared", () => {
     );
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "mistral"),
-      "https://api.veryfront.com/ai/gateway/mistral/v1",
+      "https://api.veryfront.com/ai/v1",
     );
   });
 
@@ -111,10 +111,10 @@ describe("provider/veryfront-cloud/shared", () => {
   it("preserves base URL query parameters and removes fragments", () => {
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl(
-        "https://api.veryfront.com/base/?region=eu#private-fragment",
+        "https://api.veryfront.com/base/?tenant=acme#private-fragment",
         "openai",
       ),
-      "https://api.veryfront.com/base/ai/gateway/openai/v1?region=eu",
+      "https://api.veryfront.com/base/ai/v1?tenant=acme",
     );
   });
 

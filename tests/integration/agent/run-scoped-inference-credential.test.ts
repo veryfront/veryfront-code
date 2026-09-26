@@ -900,7 +900,7 @@ describe("run-scoped inference credential", () => {
     assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
     assertEquals(
       capturedUrl,
-      "https://public-api.example.test/api/ai/gateway/openai/v1/chat/completions",
+      "https://public-api.example.test/api/ai/v1/chat/completions",
     );
   });
 

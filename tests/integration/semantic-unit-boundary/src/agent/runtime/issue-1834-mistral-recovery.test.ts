@@ -66,7 +66,7 @@ it("recovers the recorded Mistral tool-search then empty-stop sequence", async (
   ];
   installMockFetch(async (input, init) => {
     const request = new Request(input, init);
-    if (!request.url.includes("/ai/gateway/mistral/v1/chat/completions")) {
+    if (!request.url.includes("/ai/v1/chat/completions")) {
       return new Response('{"tools":[]}', {
         headers: { "content-type": "application/json" },
       });
@@ -244,7 +244,7 @@ it("retains the preceding file evidence through preparation and the Mistral edit
   ];
   installMockFetch(async (input, init) => {
     const request = new Request(input, init);
-    if (!request.url.includes("/ai/gateway/mistral/v1/chat/completions")) {
+    if (!request.url.includes("/ai/v1/chat/completions")) {
       return new Response('{"tools":[]}', {
         headers: { "content-type": "application/json" },
       });
