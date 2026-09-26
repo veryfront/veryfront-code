@@ -1923,4 +1923,78 @@ describe("metrics public SDK", () => {
     );
     assertEquals(metrics.__getDroppedDirectSampleCountForTests(), 1);
   });
+  it("reserves a series only for samples that enter the queue", async () => {
+    let exported = 0;
+    const stalled = Promise.withResolvers<Response>();
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          exported += JSON.parse(String(init?.body)).resourceMetrics[0].scopeMetrics[0].metrics
+            .length;
+          return stalled.promise;
+        }) as typeof fetch,
+        async () => {
+          metrics.__setDirectExportTimeoutForTests(5_000);
+          const emit = (id: number) =>
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://tenant.example/v1/metrics",
+              },
+              { projectId: "project-a", environmentId: "env-a" },
+              () => metrics.gauge("vf_item_gauge", 1, { item: String(id) }),
+            );
+          // The stalled endpoint holds two batches in flight and one queued;
+          // every later sample is dropped for capacity.
+          for (let id = 0; id < 800; id++) emit(id);
+          stalled.resolve(new Response("{}", { status: 200 }));
+          await metrics.__flushForTests();
+          const accepted = exported;
+          for (let id = 800; id < 800 + 500 - accepted; id++) {
+            emit(id);
+            if (id % 50 === 49) await metrics.__flushForTests();
+          }
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(exported, 500, "samples dropped for capacity must not use up the series budget");
+  });
+
+  it("forgets an evicted tenant's series registry", async () => {
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-project",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
+        async () => {
+          for (let tenant = 0; tenant < 120; tenant++) {
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+              },
+              { projectId: `project-${tenant}`, environmentId: `env-${tenant}` },
+              () => metrics.counter("vf_project_metric_total", 1),
+            );
+            await metrics.__flushForTests();
+          }
+        },
+      );
+    });
+
+    assertEquals(
+      metrics.__getTenantSeriesScopeCountForTests(),
+      metrics.__getDirectTargetCountForTests(),
+      "series registries must not outlive their tenant's targets",
+    );
+  });
 });

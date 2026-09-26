@@ -584,8 +584,14 @@ function evictUnusedDirectTarget(
     }
   }
   if (candidateIndex === -1) return false;
-  const evicted = removeArrayRange(internedTargets, candidateIndex, 1);
-  if (evicted[0]) deleteDirectTotalsForTarget(evicted[0].key);
+  const evicted = removeArrayRange(internedTargets, candidateIndex, 1)[0];
+  if (evicted) {
+    deleteDirectTotalsForTarget(evicted.key);
+    const scope = evicted.target.capacityScope;
+    if (countDirectTargets((target) => target.capacityScope === scope) === 0) {
+      apply(mapDelete, directScopeSeries, [scope]);
+    }
+  }
   return true;
 }
 
@@ -1122,22 +1128,21 @@ function isBoundedTenantSample(
 
 // Bounds what one tenant can add to the shared metrics backend from one
 // process: a new name/label combination beyond the budget is dropped, while
-// series already exported keep flowing.
-function retainTenantSeries(
-  capacityScope: string,
-  name: string,
-  attributes: Record<string, AttributeValue>,
-): boolean {
-  const seriesKey = `${name}:${attributesKey(attributes)}`;
+// series already exported keep flowing. A series is reserved only once its
+// sample is queued, so samples dropped for capacity never use up the budget.
+function hasTenantSeriesCapacity(capacityScope: string, seriesKey: string): boolean {
+  const series = apply(mapGet, directScopeSeries, [capacityScope]) as Set<string> | undefined;
+  return series === undefined || series.size < DIRECT_MAX_SERIES_PER_SCOPE ||
+    apply(setHas, series, [seriesKey]) as boolean;
+}
+
+function retainTenantSeries(capacityScope: string, seriesKey: string): void {
   let series = apply(mapGet, directScopeSeries, [capacityScope]) as Set<string> | undefined;
   if (series === undefined) {
     series = new Set<string>();
     apply(mapSet, directScopeSeries, [capacityScope, series]);
   }
-  if (apply(setHas, series, [seriesKey])) return true;
-  if (series.size >= DIRECT_MAX_SERIES_PER_SCOPE) return false;
   apply(setAdd, series, [seriesKey]);
-  return true;
 }
 
 function enqueueDirectMetric(
@@ -1152,7 +1157,8 @@ function enqueueDirectMetric(
     recordDirectSampleDrop("label-bounds");
     return;
   }
-  if (target.tenantScoped && !retainTenantSeries(target.capacityScope, name, attributes)) {
+  const seriesKey = `${name}:${attributesKey(attributes)}`;
+  if (target.tenantScoped && !hasTenantSeriesCapacity(target.capacityScope, seriesKey)) {
     recordDirectSampleDrop("series-quota");
     return;
   }
@@ -1169,6 +1175,7 @@ function enqueueDirectMetric(
     recordDirectSampleDrop("target-quota");
     return;
   }
+  if (target.tenantScoped) retainTenantSeries(target.capacityScope, seriesKey);
   const sample: DirectMetricSample = {
     kind,
     name,
@@ -1248,6 +1255,9 @@ export const metrics = {
   },
   __getDroppedDirectSampleCountForTests(): number {
     return droppedDirectSamples;
+  },
+  __getTenantSeriesScopeCountForTests(): number {
+    return directScopeSeries.size;
   },
   __resetForTests(): void {
     counters.clear();
