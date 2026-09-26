@@ -2608,6 +2608,18 @@ describe("project run execution span", () => {
     assertEquals(span.status.code, SpanStatusCode.ERROR);
   });
 
+  it("keeps thrown run error text out of the execution span", async () => {
+    const { spans } = await executeTracedTask(() =>
+      Promise.reject(new Error("Invoice INV-4471 for jordan@example.test failed"))
+    );
+
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.status.code, SpanStatusCode.ERROR);
+    assertEquals(span.status.message, "Error");
+    assertEquals(JSON.stringify(span.events).includes("INV-4471"), false);
+  });
+
   it("reports an unserializable run result as a failed execution", async () => {
     const { spans, body } = await executeTracedTask(async () => ({
       success: true,

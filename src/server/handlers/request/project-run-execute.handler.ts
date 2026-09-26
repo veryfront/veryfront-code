@@ -18,6 +18,7 @@ import {
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
+import { telemetryErrorType } from "#veryfront/observability/telemetry-error.ts";
 import {
   activeSpanLink,
   setActiveSpanErrorStatus,
@@ -2067,7 +2068,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
               return this.respond(builder.json(response, 200));
             } catch (error) {
-              setActiveSpanErrorStatus(error);
+              setActiveSpanErrorStatus(new Error(telemetryErrorType(error)));
               return this.respond(
                 builder.json(
                   createExecutionFailure(error, Math.max(0, this.deps.now() - startedAt)),
