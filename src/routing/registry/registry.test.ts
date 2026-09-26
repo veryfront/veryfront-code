@@ -127,6 +127,7 @@ describe("routing/registry/RouteRegistry", () => {
         projectId: "proj-123",
         resolvedEnvironment: "production",
         environmentName: "Production",
+        releaseId: "rel-123",
       });
 
       assertEquals(attributes["http.method"], "GET");
@@ -137,6 +138,7 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(attributes["project.id"], "proj-123");
       assertEquals(attributes["veryfront.environment"], "production");
       assertEquals(attributes["veryfront.environment_name"], "Production");
+      assertEquals(attributes["release.id"], "rel-123");
     });
 
     it("records the routing span with the trusted project identity", async () => {
@@ -220,7 +222,10 @@ describe("routing/registry/RouteRegistry", () => {
     it("omits project attributes when no trusted project identity exists", () => {
       const req = makeReq();
       const url = new URL(req.url);
-      const attributes = buildRouteRegistrySpanAttributes(req, url, makeCtx());
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        releaseId: "rel-123",
+      });
 
       assertEquals(attributes["http.method"], "GET");
       assertEquals(attributes["http.path"], "/test");
@@ -230,6 +235,7 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals("project.id" in attributes, false);
       assertEquals("veryfront.environment" in attributes, false);
       assertEquals("veryfront.environment_name" in attributes, false);
+      assertEquals("release.id" in attributes, false);
     });
 
     it("does not emit slug fallbacks as project id attributes", () => {

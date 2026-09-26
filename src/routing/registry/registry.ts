@@ -35,6 +35,10 @@ export function buildRouteRegistrySpanAttributes(
     attributes["veryfront.environment_name"] = ctx.environmentName;
   }
 
+  if ((projectSlug || projectId) && ctx.releaseId) {
+    attributes["release.id"] = ctx.releaseId;
+  }
+
   return attributes;
 }
 
