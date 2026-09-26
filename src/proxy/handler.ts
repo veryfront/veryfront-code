@@ -28,6 +28,7 @@ import {
   isVerifiedInternalControlPlaneRequest,
   resolveVerifiedControlPlaneBranchBinding,
 } from "./control-plane-signature.ts";
+import { controlPlaneRunIdFromPath } from "#veryfront/channels/control-plane-routes.ts";
 import { encodeIdentityHeaderValue } from "#veryfront/utils/header-identity.ts";
 import {
   createProjectMetadataClient,
@@ -126,6 +127,8 @@ export interface ProxyContext {
   branchId?: string;
   branchName?: string;
   defaultBranchName?: string;
+  /** Run addressed by a signed control-plane run route; the signature covers the path. */
+  runId?: string;
   environmentId?: string;
   environmentName?: string;
   environment: "preview" | "production";
@@ -1305,6 +1308,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       parsedDomain.branch,
       releaseId,
     );
+    const runId = signedInternalControlPlaneRequest
+      ? controlPlaneRunIdFromPath(req.method, url.pathname)
+      : undefined;
 
     return {
       token,
@@ -1314,6 +1320,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       branchId,
       branchName,
       defaultBranchName,
+      ...(runId && { runId }),
       environmentId,
       environmentName,
       contentSourceId,
