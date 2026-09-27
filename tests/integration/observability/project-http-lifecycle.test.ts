@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -23,6 +23,76 @@ async function settings(token: string) {
 }
 
 describe("project HTTP exporter lifecycle", () => {
+  for (const outcome of ["close", "error", "cancel", "abort"] as const) {
+    it(`retains project tracing until a response stream settles by ${outcome}`, async () => {
+      const owner = new OtlpTracingExporter();
+      register("TracingExporter", owner);
+      const bodies: string[] = [];
+      const abort = new AbortController();
+      let pulls = 0;
+      try {
+        await withMockFetch(async (input, init) => {
+          bodies.push(await new Request(input, init).text());
+          return Response.json({});
+        }, async () => {
+          const response = await runProjectHttpTracing(
+            await settings("stream"),
+            identity,
+            new Request(request.url, { signal: abort.signal }),
+            async () =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  pull(controller) {
+                    pulls++;
+                    trace.getTracer("app").startSpan("stream.pull").end();
+                    if (outcome === "error") throw new Error("source failed");
+                    controller.enqueue(new TextEncoder().encode("data: hello\n\n"));
+                    if (outcome === "close") controller.close();
+                  },
+                  cancel() {
+                    trace.getTracer("app").startSpan("stream.cancel").end();
+                  },
+                }, { highWaterMark: 0 }),
+                { headers: { "content-type": "text/event-stream" } },
+              ),
+          );
+          await flushProjectHttpTracing();
+          assertEquals(pulls, 0);
+          assertEquals(bodies.some((body) => body.includes("http.server.request")), false);
+          if (outcome === "close") assertEquals(await response.text(), "data: hello\n\n");
+          else if (outcome === "error") {
+            await assertRejects(() => response.text(), Error, "source failed");
+          } else if (outcome === "cancel") await response.body!.cancel("disconnected");
+          else {
+            abort.abort("disconnected");
+            await response.text();
+          }
+          await flushProjectHttpTracing();
+          const spans = bodies.flatMap((body) =>
+            JSON.parse(body).resourceSpans.flatMap(
+              (
+                resource: {
+                  scopeSpans: {
+                    spans: { name: string; spanId: string; parentSpanId?: string }[];
+                  }[];
+                },
+              ) => resource.scopeSpans.flatMap((scope) => scope.spans),
+            )
+          );
+          const roots = spans.filter((span) => span.name === "http.server.request");
+          assertEquals(roots.length, 1);
+          const children = spans.filter((span) => span.name.startsWith("stream."));
+          assertEquals(children.length, 1);
+          assertEquals(children[0].parentSpanId, roots[0].spanId);
+        });
+      } finally {
+        await shutdownProjectHttpTracing();
+        await owner.shutdown();
+        unregister("TracingExporter");
+      }
+    });
+  }
+
   it("preserves queued application spans when a control-plane request defers config", async () => {
     const owner = new OtlpTracingExporter();
     register("TracingExporter", owner);

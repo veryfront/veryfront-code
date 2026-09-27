@@ -1,3 +1,4 @@
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type {
   ProjectTraceProvider,
@@ -97,27 +98,45 @@ export async function runProjectHttpTracing<T extends Response | undefined>(
     return runWithProjectTraceProvider(undefined, operation);
   }
 
-  try {
-    const response = await runWithProjectTraceProvider(
+  let completed = false;
+  const complete = () => {
+    if (completed) return;
+    completed = true;
+    try {
+      span.end();
+    } catch { /* Release even if a third-party provider fails. */ }
+    lease.release();
+  };
+  const runInProject = <R>(operation: () => Promise<R>): Promise<R> =>
+    runWithProjectTraceProvider(
       lease.session,
       () => lease.session.getContextAPI().with(parent, operation),
     );
+
+  try {
+    const response = await runInProject(operation);
     try {
       span.setAttribute("http.response.status_code", response?.status ?? 404);
       if (response && response.status >= 500) {
         span.setStatus({ code: 2, message: "Application request failed" });
       }
     } catch { /* Telemetry must not change the response. */ }
-    return response;
+    if (!response) {
+      complete();
+      return response;
+    }
+    return completeOnResponseBodyConsumption(
+      response,
+      complete,
+      request.signal,
+      { highWaterMark: 0 },
+      runInProject,
+    ) as T;
   } catch (error) {
     try {
       span.setStatus({ code: 2, message: "Application request failed" });
     } catch { /* Preserve the application's original error. */ }
+    complete();
     throw error;
-  } finally {
-    try {
-      span.end();
-    } catch { /* Release even if a third-party provider fails. */ }
-    lease.release();
   }
 }

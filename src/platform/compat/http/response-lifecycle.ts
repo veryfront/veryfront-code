@@ -16,12 +16,14 @@ export function isEventStreamResponse(response: Response): boolean {
  * or its inbound request is aborted. Bodyless responses are already settled
  * and are returned unchanged so transport-specific response identity survives.
  * `strategy` controls wrapper buffering; omitted preserves the stream default.
+ * `runDeferredOperation` restores request context for source reads and cancellation.
  */
 export function completeOnResponseBodyConsumption(
   response: Response,
   onComplete: () => void,
   signal?: AbortSignal,
   strategy?: QueuingStrategy<Uint8Array>,
+  runDeferredOperation: <T>(operation: () => Promise<T>) => Promise<T> = (operation) => operation(),
 ): Response {
   if (!response.body) {
     onComplete();
@@ -50,7 +52,7 @@ export function completeOnResponseBodyConsumption(
   const cancelBody = (reason: unknown): Promise<void> => {
     if (cancellationPromise) return cancellationPromise;
     cancellationPending = true;
-    cancellationPromise = reader.cancel(reason).then(
+    cancellationPromise = runDeferredOperation(() => reader.cancel(reason)).then(
       () => complete(),
       (error) => {
         complete();
@@ -85,7 +87,7 @@ export function completeOnResponseBodyConsumption(
     body = new ReadableStream<Uint8Array>({
       async pull(controller) {
         try {
-          const result = await reader.read();
+          const result = await runDeferredOperation(() => reader.read());
           if (result.done) {
             if (!cancellationPending) complete();
             controller.close();
