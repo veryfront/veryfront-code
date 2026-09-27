@@ -40,6 +40,14 @@ unchanged.
   call.
 - A model keeps the facts it settled with for its lifetime. A catalog refreshed
   later applies to models constructed after the refresh.
+- Agents resolve a short alias or a provider the platform added after this
+  release through Veryfront Cloud once the catalog has loaded, after the
+  built-in aliases, so a bare vendor model name keeps its meaning for your own
+  provider key.
+- A model the catalog does not list is refused only against a catalog loaded
+  within the last five minutes, or the shipped list before any has loaded. A
+  model enabled since the catalog was cached is not refused; the catalog is
+  refreshed first.
 - `loadVeryfrontCloudModelCatalog()` loads the catalog for the Veryfront Cloud
   credentials in effect, so synchronous helpers such as
   `resolveVeryfrontCloudModelId("opus")` and
