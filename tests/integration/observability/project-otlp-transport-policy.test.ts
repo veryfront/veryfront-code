@@ -7,7 +7,7 @@ import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/htt
 import {
   createProjectOtlpTransport,
   PROJECT_OTLP_MAX_REQUEST_BYTES,
-} from "./project-otlp-transport.ts";
+} from "#veryfront/observability/tracing/project-otlp-transport.ts";
 
 const endpoint = "https://collector.example/v1/traces";
 const bytes = new TextEncoder().encode('{"resourceSpans":[]}');
