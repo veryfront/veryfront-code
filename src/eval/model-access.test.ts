@@ -267,6 +267,9 @@ describe("eval/model-access", () => {
         "/ai/v1/chat/completions",
         "/ai/v1/responses",
         "/ai/v1/embeddings",
+        "/ai/v1/messages",
+        "/ai/v1/messages/count_tokens",
+        // The earlier Anthropic-protocol prefix, still carried by recorded failures.
         "/ai/anthropic/v1/messages",
       ]
     ) {

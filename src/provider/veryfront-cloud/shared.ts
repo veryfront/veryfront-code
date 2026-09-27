@@ -320,7 +320,7 @@ export const VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV = "VERYFRONT_CLOUD_GATEWAY_ROUTE
  */
 const NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL: ReadonlyMap<string, string> = new Map([
   ["openai", "ai/v1"],
-  ["anthropic", "ai/anthropic/v1"],
+  ["anthropic", "ai/v1"],
 ]);
 
 /** Where a Veryfront Cloud model's requests go, and how the body names the model. */
@@ -358,8 +358,8 @@ function getVeryfrontCloudVendorGatewayBaseUrl(
 }
 
 /**
- * Gateway route for a provider. OpenAI-protocol providers use `<api>/ai/v1`,
- * Anthropic-protocol providers use `<api>/ai/anthropic/v1`, and Google keeps
+ * Gateway route for a provider. OpenAI- and Anthropic-protocol providers both
+ * use `<api>/ai/v1` (`/chat/completions`, `/responses` or `/messages`), and Google keeps
  * its vendor-scoped path. {@link VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV} set to
  * `vendor` restores the vendor-scoped path for every provider.
  */
