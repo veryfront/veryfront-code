@@ -161,6 +161,83 @@ caller-observed generation check. See the
 [integration API reference](../api-reference/veryfront/integrations.md) for the
 public types.
 
+## Use the hosted flow
+
+Use one of these surfaces after OAuth returns a connected account. Every call
+uses the same four parts: catalog, connection, tool, and transport. Replace
+`<PROJECT_SLUG>` with the project selector and keep tokens server-side.
+
+### REST
+
+Discover tools, inspect connections, then call the tool. A call can select a
+specific account with `connection_id`.
+
+```bash
+API=https://api.veryfront.com
+AUTH="Authorization: Bearer $VERYFRONT_API_TOKEN"
+PROJECT="x-veryfront-project-slug: <PROJECT_SLUG>"
+
+curl -sS "$API/integrations/gmail/tools" -H "$AUTH" -H "$PROJECT"
+curl -sS "$API/projects/<PROJECT_REFERENCE>/integrations/gmail/connections?limit=100" \
+  -H "$AUTH"
+curl -sS -X POST "$API/integrations/gmail/tools/list_emails/call" \
+  -H "$AUTH" -H "$PROJECT" -H 'Content-Type: application/json' \
+  -d '{"arguments":{"q":"in:inbox","maxResults":10},"connection_id":"<CONNECTION_ID>"}'
+```
+
+Omit `connection_id` when the project has one usable connection. The call
+returns `authentication_required` and a `connectUrl` when OAuth is needed.
+Open that URL, finish provider consent, wait for the connection to become
+`connected`, and retry the call.
+
+### GraphQL
+
+Use the served GraphQL schema for integration catalog and project-configuration
+queries. Tool execution is documented through REST, MCP, the TypeScript runtime,
+and the CLI because this release does not expose a verified GraphQL tool-call
+field.
+
+### MCP
+
+Connect an MCP client to `https://api.veryfront.com/mcp` with the same bearer
+token and project context. Call the standard `tools/list` method, select the
+returned integration tool name, then call `tools/call` with its arguments. MCP
+handles discovery and execution; OAuth still follows the same connect URL flow.
+
+### TypeScript
+
+The hosted TypeScript path uses the same REST contract, so it is easy to test
+without an SDK-specific wrapper:
+
+```ts
+const headers = {
+  Authorization: `Bearer ${process.env.VERYFRONT_API_TOKEN}`,
+  "x-veryfront-project-slug": process.env.VERYFRONT_PROJECT_SLUG!,
+};
+const response = await fetch(
+  "https://api.veryfront.com/integrations/gmail/tools/list_emails/call",
+  {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ arguments: { q: "in:inbox", maxResults: 10 } }),
+  },
+);
+console.log(await response.json());
+```
+
+### CLI
+
+```bash
+veryfront integration tools gmail --project <PROJECT_SLUG> --json
+veryfront integration connections gmail --project <PROJECT_SLUG> --json
+veryfront integration call gmail__list_emails --project <PROJECT_SLUG> \
+  --args '{"q":"in:inbox","maxResults":10}' --json
+```
+
+Use `veryfront integration connect gmail --project <PROJECT_SLUG>` to start
+OAuth. The `call` command executes an already connected account. Use
+`--connection <CONNECTION_ID>` when more than one account is available.
+
 ## Run account-free local integration tools
 
 Use the catalog-backed local source to call supported REST integrations from a
@@ -340,6 +417,12 @@ PERSONIO_CLIENT_SECRET=<PERSONIO_CLIENT_SECRET>
 No OAuth connect step is shown for these connectors. The integration runtime
 resolves their credentials during tool execution; agents do not receive raw
 secrets.
+
+## Test without provider access
+
+Keep local tests and evals provider-free by supplying explicit mock tools. The
+mock map replaces the live integration for that run; it does not create a
+connection or change hosted behavior. See [mock tools for local evals](./evals.md#mock-tools-for-local-agent-evals).
 
 ## Set up a provider
 
