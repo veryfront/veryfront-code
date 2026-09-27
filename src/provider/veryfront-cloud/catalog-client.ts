@@ -235,7 +235,7 @@ function cacheKey(scope: VeryfrontCloudCatalogScope): string {
 
 /**
  * The catalog URL under an API base URL. Like the gateway URLs, it keeps the
- * base URL's query, which some deployments use to scope or sign requests.
+ * base URL's query, which a setup can use to scope or sign requests.
  */
 function catalogUrl(apiBaseUrl: string): string {
   const url = new URL(apiBaseUrl);
