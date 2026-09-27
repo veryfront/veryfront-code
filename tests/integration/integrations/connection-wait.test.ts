@@ -64,6 +64,18 @@ describe("bounded connection wait", () => {
     );
   });
 
+  it("does not treat a disconnected baseline that reconnects unchanged as new consent", async () => {
+    const { client } = fakeClient(() => "old");
+    assertEquals(
+      (await waitForIntegrationConnection(client, "github", {
+        scope: "user",
+        before: { ...before, connected: false },
+        timeoutMs: 300,
+      })).status,
+      "timed_out",
+    );
+  });
+
   it("does not accept a new generation from another scope", async () => {
     const { client } = fakeClient(() => "new", "project");
     assertEquals(

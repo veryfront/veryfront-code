@@ -50,7 +50,8 @@ export async function waitForIntegrationConnection(
     );
   }
   abortSignal?.throwIfAborted();
-  const previous = before?.connected ? identity(before) : undefined;
+  // A disconnected baseline still names its row; the same id and generation is not new consent.
+  const previous = before ? identity(before) : undefined;
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), timeoutMs);
   const signal = abortSignal ? AbortSignal.any([abortSignal, deadline.signal]) : deadline.signal;
@@ -61,7 +62,7 @@ export async function waitForIntegrationConnection(
       try {
         const status = await client.status(integration, scope, { abortSignal: signal });
         const current = identity(status);
-        const replaced = !previous ||
+        const replaced = !previous?.id || !previous.generation ||
           current.id !== previous.id || current.generation !== previous.generation;
         if (status.connected && current.id && current.generation && replaced) {
           for await (
