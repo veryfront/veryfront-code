@@ -51,14 +51,18 @@ screen.
 
 ## Wait for a new connection
 
-Confirm a new connection from inventory. Record the connections you already
-had, start the handoff, show its one-time URL to the person, then poll at a
-fixed interval and stop at a deadline you choose before you start. The redirect
+Confirm a new connection from status and inventory. Record the current status
+for the scope, start the handoff, show its one-time URL to the person, then poll
+at a fixed interval and stop at a deadline you choose before you start. The redirect
 URI is where the browser returns after consent, such as your application's
 integration page:
 
 ```ts
-import { createIntegrationClient, type IntegrationClientConnection } from "veryfront/integrations";
+import {
+  createIntegrationClient,
+  type IntegrationClientConnection,
+  type IntegrationConnectionStatus,
+} from "veryfront/integrations";
 
 const client = await createIntegrationClient({
   apiBaseUrl: "<API_BASE_URL>",
@@ -73,36 +77,37 @@ async function presentConnectUrl(url: string, expiresAt: string): Promise<void> 
   void expiresAt;
 }
 
-async function connectedRows(): Promise<IntegrationClientConnection[]> {
-  const rows: IntegrationClientConnection[] = [];
-  for await (const row of client.listConnections("gmail")) {
-    if (row.status === "connected") rows.push(row);
-  }
-  return rows;
+function identity(status: IntegrationConnectionStatus): string | undefined {
+  const id = status.connection_id ?? status.connectionId;
+  const generation = status.connection_generation_id ?? status.connectionGenerationId;
+  return status.connected && id && generation ? `${id}:${generation}` : undefined;
 }
 
-const known = new Set(
-  (await connectedRows()).map((row) => `${row.id}:${row.connection_generation_id}`),
-);
-const handoff = await client.connect("gmail", { redirectUri: "<REDIRECT_URI>" });
+const scope = "user";
+const deadline = AbortSignal.timeout(5 * 60 * 1000);
+const before = identity(await client.status("gmail", scope, { abortSignal: deadline }));
+const handoff = await client.connect("gmail", { scope, redirectUri: "<REDIRECT_URI>" });
 if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
 await presentConnectUrl(handoff.connect_url, handoff.expires_at);
 
-const deadline = Date.now() + 5 * 60 * 1000;
 let observed: IntegrationClientConnection | undefined;
-while (!observed && Date.now() < deadline) {
+while (!observed) {
   await new Promise((resolve) => setTimeout(resolve, 3000));
-  observed = (await connectedRows()).find((row) =>
-    !known.has(`${row.id}:${row.connection_generation_id}`)
-  );
-}
-if (!observed) {
-  throw new Error("No new Gmail connection before the deadline. Start a new connect operation.");
+  deadline.throwIfAborted();
+  const current = identity(await client.status("gmail", scope, { abortSignal: deadline }));
+  if (!current || current === before) continue;
+  for await (const row of client.listConnections("gmail", { abortSignal: deadline })) {
+    const matches = `${row.id}:${row.connection_generation_id}` === current;
+    if (matches && row.scope === scope && row.status === "connected") observed = row;
+  }
 }
 console.log(observed.id, observed.scope);
 ```
 
-A new `connection_generation_id` on an existing `id` means the same account was
+The example correlates the scope's OAuth status with an inventory row, so a
+connection that someone else adds at the same time is not mistaken for this
+one. The abort signal ends every request at the deadline. A new
+`connection_generation_id` on an existing `id` means the same account was
 reconnected. `veryfront integration connect` performs the same check for you and
 returns `connection_observed` with the confirmed row. If the callback arrives
 but inventory does not show a new generation within its short confirmation
