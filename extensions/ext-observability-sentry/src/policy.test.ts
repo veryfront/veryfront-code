@@ -1047,7 +1047,19 @@ it("policy keeps flush bounded and isolates SDK flush failures", async () => {
   );
 });
 
-for (const parameter of ["key", "KEY", "%6bey", "k%65y", "ke%79"]) {
+for (
+  const parameter of [
+    "key",
+    "KEY",
+    "%6bey",
+    "k%65y",
+    "ke%79",
+    "%4Bey",
+    "k%45y",
+    "ke%59",
+    "%4B%45%59",
+  ]
+) {
   it(`policy redacts Gemini ${parameter} query credentials in errors`, () => {
     const input =
       `https://api.example.test/ai/v1beta/models?${parameter}=vf_test_query_0001&alt=sse`;
