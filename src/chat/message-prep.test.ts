@@ -639,7 +639,7 @@ Deno.test("maskOldToolOutputs preserves checkpointed historical provider tool ou
   assertEquals(preserved[2], messages[2]);
 });
 
-Deno.test("maskOldToolOutputs masks historical web_search, readFile, web_fetch and task results per tool", () => {
+Deno.test("maskOldToolOutputs preserves a preceding readFile result while masking other tool results", () => {
   const messages = [
     { role: "user", content: "gather context" },
     {
@@ -741,8 +741,8 @@ Deno.test("maskOldToolOutputs masks historical web_search, readFile, web_fetch a
   );
   assertEquals(
     outputValue(1),
-    "[File read: src/app.ts — content omitted (602 chars)]",
-    "readFile results must collapse to a path-only placeholder",
+    "f".repeat(600),
+    "the preceding turn's readFile result must remain available for a follow-up edit",
   );
   assertEquals(
     outputValue(2),
@@ -758,6 +758,158 @@ Deno.test("maskOldToolOutputs masks historical web_search, readFile, web_fetch a
     },
     "task results must keep success, description and a truncated result and drop everything else",
   );
+});
+
+for (const toolName of ["veryfront__get_file", "veryfront__readFile"]) {
+  Deno.test(`maskOldToolOutputs preserves preceding ${toolName} and masks it after another turn`, () => {
+    const marker = `VERYFRONT_FILE_READ_MARKER:${"x".repeat(600)}`;
+    const precedingTurn = [
+      { role: "user", content: "Read src/app.ts." },
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "call-veryfront-read",
+          toolName,
+          input: { path: "src/app.ts" },
+        }],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "call-veryfront-read",
+          toolName,
+          output: { type: "json", value: { content: marker } },
+        }],
+      },
+      { role: "user", content: "Apply the change." },
+    ] satisfies ProviderModelMessage[];
+
+    assertStringIncludes(JSON.stringify(maskOldToolOutputs(precedingTurn)), marker);
+
+    const older = maskOldToolOutputs([
+      ...precedingTurn,
+      { role: "assistant", content: "I applied the change." },
+      { role: "user", content: "Now explain it." },
+    ]);
+    const serializedOlder = JSON.stringify(older);
+    assertEquals(serializedOlder.includes(marker), false);
+    assertStringIncludes(serializedOlder, "[File read: src/app.ts");
+  });
+}
+
+Deno.test("maskOldToolOutputs does not preserve an older file read with a reused tool call id", () => {
+  const oldMarker = `OLD_REUSED_FILE_READ:${"o".repeat(600)}`;
+  const recentMarker = `RECENT_REUSED_FILE_READ:${"r".repeat(600)}`;
+  const masked = maskOldToolOutputs([
+    { role: "user", content: "Read the old file." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "reused-read-id",
+        toolName: "get_file",
+        input: { path: "src/old.ts" },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused-read-id",
+        toolName: "get_file",
+        output: { type: "json", value: { content: oldMarker } },
+      }],
+    },
+    { role: "user", content: "Read the current file." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "reused-read-id",
+        toolName: "get_file",
+        input: { path: "src/current.ts" },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused-read-id",
+        toolName: "get_file",
+        output: { type: "json", value: { content: recentMarker } },
+      }],
+    },
+    { role: "user", content: "Apply the current-file edit." },
+  ]);
+
+  const serialized = JSON.stringify(masked);
+  assertEquals(serialized.includes(oldMarker), false);
+  assertStringIncludes(serialized, recentMarker);
+});
+
+Deno.test("maskOldToolOutputs masks an orphan file read before the first user message", () => {
+  const orphanMarker = `ORPHAN_FILE_READ:${"x".repeat(600)}`;
+  const masked = maskOldToolOutputs([
+    { role: "system", content: "System instructions." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "orphan-read",
+        toolName: "get_file",
+        input: { path: "src/orphan.ts" },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "orphan-read",
+        toolName: "get_file",
+        output: { type: "json", value: { content: orphanMarker } },
+      }],
+    },
+    { role: "user", content: "Start the conversation." },
+  ]);
+
+  const serialized = JSON.stringify(masked);
+  assertEquals(serialized.includes(orphanMarker), false);
+  assertStringIncludes(serialized, "[File read: src/orphan.ts");
+});
+
+Deno.test("enforceTokenBudget can compress a large preceding-turn file read after masking", () => {
+  const fileMarker = `BUDGETED_PRECEDING_FILE_READ:${"x".repeat(8_000)}`;
+  const masked = maskOldToolOutputs([
+    { role: "user", content: "Set up the task." },
+    { role: "assistant", content: "Ready." },
+    { role: "user", content: "Read src/app.ts." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "budgeted-read",
+        toolName: "get_file",
+        input: { path: "src/app.ts" },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "budgeted-read",
+        toolName: "get_file",
+        output: { type: "json", value: { content: fileMarker } },
+      }],
+    },
+    { role: "user", content: "Apply the edit." },
+  ]);
+
+  assertStringIncludes(JSON.stringify(masked), fileMarker);
+  const compacted = enforceTokenBudget(masked, 100);
+  assertEquals(JSON.stringify(compacted).includes(fileMarker), false);
+  assertStringIncludes(JSON.stringify(compacted), "[Compressed:");
 });
 
 Deno.test("maskOldToolOutputs keeps compact email metadata for historical email list results", () => {
@@ -2176,6 +2328,52 @@ Deno.test("prepareProviderModelMessagesFromUiMessages preserves replay across em
       ],
     },
   ]);
+});
+
+Deno.test("prepareProviderModelMessagesFromUiMessages retains the preceding turn's file read for a follow-up edit", () => {
+  const fileBodyMarker = "PRECEDING_FILE_READ_BODY_MARKER";
+  const fileBody = `${fileBodyMarker}\n${"export const value = 1;\n".repeat(40)}`;
+  const prepared = prepareProviderModelMessagesFromUiMessages([
+    {
+      id: "user-read",
+      role: "user",
+      parts: [{ type: "text", text: "Review src/app.ts and suggest an optimization." }],
+    },
+    {
+      id: "assistant-read",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "get_file",
+          toolCallId: "tool-read-app",
+          state: "output-available",
+          input: { path: "src/app.ts" },
+          output: {
+            path: "src/app.ts",
+            content: fileBody,
+            checksum: "checksum-app-v1",
+            version_id: "version-app-v1",
+          },
+        },
+        {
+          type: "text",
+          text: "I would simplify the exported value without changing the module interface.",
+        },
+      ],
+    },
+    {
+      id: "user-edit",
+      role: "user",
+      parts: [{ type: "text", text: "Apply that optimization to the project file." }],
+    },
+  ]);
+
+  const serialized = JSON.stringify(prepared);
+  assertStringIncludes(serialized, fileBodyMarker);
+  assertStringIncludes(serialized, "checksum-app-v1");
+  assertStringIncludes(serialized, "version-app-v1");
+  assertEquals(serialized.includes("[File read: src/app.ts"), false);
 });
 
 Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool output over superseded stopped errors", () => {

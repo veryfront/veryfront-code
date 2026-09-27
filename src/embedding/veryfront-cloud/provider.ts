@@ -7,9 +7,9 @@ import type { LLMProviderRegistry } from "#veryfront/extensions/llm/index.ts";
 import { LLMProviderRegistryName } from "#veryfront/extensions/llm/index.ts";
 import {
   createVeryfrontCloudFetch,
-  getVeryfrontCloudGatewayBaseUrl,
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
+  resolveVeryfrontCloudGatewayRoute,
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { createVeryfrontCloudOpenAIEmbeddingModel } from "#veryfront/provider/veryfront-cloud/openai.ts";
 
@@ -18,8 +18,13 @@ const randomUUID = crypto.randomUUID.bind(crypto);
 export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
   const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
-  const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
-  const fetch = createVeryfrontCloudFetch(apiToken, baseURL);
+  const { baseURL, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(apiBaseUrl, provider);
+  const fetch = createVeryfrontCloudFetch(
+    apiToken,
+    baseURL,
+    undefined,
+    wireModelProvider ? { wireModelProvider } : undefined,
+  );
   const usesHostPrivateCredential = getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
   const providerCredential = usesHostPrivateCredential
     ? `vf-placeholder-${randomUUID()}`

@@ -30,7 +30,7 @@ Set the API key in the terminal where you run Veryfront:
 export OPENAI_API_KEY="<API_KEY>"
 ```
 
-The starter uses `openai/gpt-5.4-nano`. Veryfront sends the requests directly
+The starter uses `openai/gpt-5-nano`. Veryfront sends the requests directly
 to OpenAI.
 
 ## Run the app

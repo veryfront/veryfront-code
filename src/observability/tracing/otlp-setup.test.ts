@@ -174,6 +174,58 @@ describe("observability/tracing/otlp-setup", () => {
     }
   });
 
+  it("markSpanFailed sets ERROR status with the error code on a settled span", async () => {
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setGlobalContextAccessor({
+      active: () => createTestContext(),
+      with: (_context, fn) => fn(),
+    });
+    setGlobalTracerProvider({
+      getTracer(name, version) {
+        return provider.getTracer(name, version) as unknown as Tracer;
+      },
+    });
+    const { markSpanFailed, withSpan } = await import("./otlp-setup.ts");
+
+    try {
+      await withSpan("agent.run", async (span) => {
+        markSpanFailed(span, "insufficient-credits");
+      });
+      await provider.forceFlush();
+
+      const [finishedSpan] = exporter.getFinishedSpans();
+      assertExists(finishedSpan);
+      assertEquals(finishedSpan.status.code, SpanStatusCode.ERROR);
+      assertEquals(finishedSpan.status.message, "insufficient-credits");
+      assertEquals(finishedSpan.events[0]?.attributes?.["exception.stacktrace"], undefined);
+    } finally {
+      _resetShimForTests();
+      await provider.shutdown();
+    }
+  });
+
+  it("markSpanFailed ignores a missing span and survives a failing provider", async () => {
+    const { markSpanFailed } = await import("./otlp-setup.ts");
+    const recordedMessages: string[] = [];
+    const span = createTestSpan({
+      setStatus: () => {
+        throw new Error("telemetry status failed");
+      },
+      recordException: (exception) => {
+        recordedMessages.push((exception as Error).message);
+      },
+    });
+
+    markSpanFailed(null, "RUNTIME_ERROR");
+    assertEquals(recordedMessages, []);
+
+    markSpanFailed(span, "RUNTIME_ERROR");
+    assertEquals(recordedMessages, ["RUNTIME_ERROR"]);
+  });
+
   it("withSpan preserves callback outcomes when span completion fails", async () => {
     const { withSpan } = await import("./otlp-setup.ts");
     const applicationError = new Error("application failed");

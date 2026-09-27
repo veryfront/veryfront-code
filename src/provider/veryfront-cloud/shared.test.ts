@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "./catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
@@ -15,6 +17,8 @@ import {
 } from "./shared.ts";
 
 describe("provider/veryfront-cloud/shared", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("normalizes provider aliases when parsing model IDs", () => {
     assertEquals(
       parseVeryfrontCloudModelId("google-ai-studio/gemini-2.0-flash", "embedding"),
@@ -23,9 +27,9 @@ describe("provider/veryfront-cloud/shared", () => {
         modelId: "gemini-2.0-flash",
       },
     );
-    assertEquals(parseVeryfrontCloudModelId("mistral/mistral-large-2512", "language"), {
+    assertEquals(parseVeryfrontCloudModelId("mistral/mistral-small-2503", "language"), {
       provider: "mistral",
-      modelId: "mistral-large-2512",
+      modelId: "mistral-small-2503",
     });
   });
 
@@ -67,6 +71,22 @@ describe("provider/veryfront-cloud/shared", () => {
     );
   });
 
+  it("rejects gateway-retired model IDs at the provider boundary", () => {
+    for (
+      const modelId of [
+        "openai/gpt-5.4-nano",
+        "google/gemini-3.1-pro-preview",
+        "google-ai-studio/gemini-3.1-pro-preview",
+      ]
+    ) {
+      assertThrows(
+        () => parseVeryfrontCloudModelId(modelId, "language"),
+        Error,
+        `Model "${modelId}" is no longer available through Veryfront Cloud`,
+      );
+    }
+  });
+
   it("builds gateway base URLs without duplicate slashes", () => {
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "google"),
@@ -74,7 +94,7 @@ describe("provider/veryfront-cloud/shared", () => {
     );
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "mistral"),
-      "https://api.veryfront.com/ai/gateway/mistral/v1",
+      "https://api.veryfront.com/ai/v1",
     );
   });
 
@@ -111,10 +131,10 @@ describe("provider/veryfront-cloud/shared", () => {
   it("preserves base URL query parameters and removes fragments", () => {
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl(
-        "https://api.veryfront.com/base/?region=eu#private-fragment",
+        "https://api.veryfront.com/base/?tenant=acme#private-fragment",
         "openai",
       ),
-      "https://api.veryfront.com/base/ai/gateway/openai/v1?region=eu",
+      "https://api.veryfront.com/base/ai/v1?tenant=acme",
     );
   });
 

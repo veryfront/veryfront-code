@@ -8,6 +8,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -465,6 +466,7 @@ it("applies refreshed structured system messages in hosted chat", async () => {
 });
 
 Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime", async () => {
+  using _catalog = useServedCatalogForTests();
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
   let capturedCapability: unknown;
   const runEventWriterCapability = createHostedRunEventWriterCapability({
@@ -994,7 +996,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
       await withMockFetch(
         async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
-          if (new URL(request.url).pathname.includes("/ai/gateway/")) {
+          if (/\/ai\/(?:gateway|anthropic|v1)\//.test(new URL(request.url).pathname)) {
             capturedProviderBody = await request.clone().json();
           }
           return Response.json({ content: [], stop_reason: "end_turn", usage: {} });
@@ -1027,6 +1029,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
 });
 
 Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integration discovery", async () => {
+  using _catalog = useServedCatalogForTests();
   const previousApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
   const previousApiToken = getEnv("VERYFRONT_API_TOKEN");
   const previousProjectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
@@ -1106,6 +1109,7 @@ Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integr
 });
 
 Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the global registry", async () => {
+  using _catalog = useServedCatalogForTests();
   try {
     const createRuntime = (description: string) =>
       createDefaultHostedChatRuntime({
@@ -1151,7 +1155,7 @@ Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes 
       projectId: "project-1",
       authToken: "token-1",
       instructions: "Base instructions",
-      model: "openai/gpt-5.4-nano",
+      model: "openai/gpt-5-nano",
       allowedTools: ["bash"],
     },
     config: {
@@ -1188,7 +1192,7 @@ Deno.test("createDefaultHostedChatRuntime cleans up after partial per-run tool s
           projectId: "project-1",
           authToken: "token-1",
           instructions: "Base instructions",
-          model: "openai/gpt-5.4-nano",
+          model: "openai/gpt-5-nano",
           allowedTools: ["bash"],
         },
         config: {
@@ -1222,7 +1226,7 @@ Deno.test("createDefaultHostedChatRuntime preserves setup errors when cleanup al
           projectId: "project-1",
           authToken: "token-1",
           instructions: "Base instructions",
-          model: "openai/gpt-5.4-nano",
+          model: "openai/gpt-5-nano",
           allowedTools: ["bash"],
         },
         config: {

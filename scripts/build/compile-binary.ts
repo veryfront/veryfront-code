@@ -108,6 +108,7 @@ export const PROXY_INCLUDES = [
 export type CompileBinaryProfile = "full" | "proxy";
 
 interface CompileBinaryOptions {
+  cachedOnly?: boolean;
   entrypoint?: string;
   extraIncludes: string[];
   output: string;
@@ -127,6 +128,11 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
     "--unstable-net",
     "--unstable-worker-options",
   ];
+
+  if (options.cachedOnly) {
+    args.push("--cached-only");
+    if (profile === "full") args.push("--frozen");
+  }
 
   if (profile === "full") {
     // See FULL_PROFILE_V8_FLAGS: runtime DENO_V8_FLAGS is ignored by compiled
@@ -359,6 +365,7 @@ function normalizeOutputPath(path: string): string {
 
 if (import.meta.main) {
   const args = parseArgs(Deno.args, {
+    boolean: ["cached-only"],
     string: ["entrypoint", "include", "output", "profile", "target"],
     collect: ["include"],
   });
@@ -375,6 +382,7 @@ if (import.meta.main) {
 
   try {
     await compileBinary({
+      cachedOnly: args["cached-only"] === true,
       entrypoint: typeof args.entrypoint === "string" ? args.entrypoint : undefined,
       extraIncludes,
       output: normalizeOutputPath(args.output),

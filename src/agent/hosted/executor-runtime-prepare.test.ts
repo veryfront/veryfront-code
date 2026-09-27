@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { PERMISSION_DENIED } from "#veryfront/errors";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForTests,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -166,6 +171,8 @@ async function prepare(
 }
 
 describe("executor runtime preparation", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("extracts inline tools under the source policy in the full-runtime profile", async () => {
     const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
     const observed: unknown[] = [];
@@ -423,15 +430,16 @@ describe("executor runtime preparation", () => {
             visible.push(
               (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
             );
-            return finishStream(visible.length === 1 ? "load_skill" : undefined, {
-              skillId: "example",
-            });
+            return visible.length === 1
+              ? finishStream("load_skill", { skillId: "example" })
+              : finishStream(undefined, {}, "Synthetic answer");
           },
         }),
       },
     });
     try {
-      await Array.fromAsync(await preparedStream(f));
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
       assertEquals(visible, [["load_skill"], ["load_skill"]]);
     } finally {
       await f.owner.close();
@@ -797,12 +805,19 @@ async function preparedStream(
   });
 }
 
-function finishStream(toolName?: string, input: Record<string, unknown> = {}) {
+function finishStream(
+  toolName?: string,
+  input: Record<string, unknown> = {},
+  text: string | undefined = toolName ? undefined : "Synthetic answer",
+) {
   return Promise.resolve({
     stream: new ReadableStream<unknown>({
       start(controller) {
         if (toolName) {
           controller.enqueue({ type: "tool-call", toolCallId: "synthetic-call", toolName, input });
+        }
+        if (text) {
+          controller.enqueue({ type: "text-delta", id: "text-1", delta: text });
         }
         controller.enqueue({
           type: "finish",
@@ -813,6 +828,17 @@ function finishStream(toolName?: string, input: Record<string, unknown> = {}) {
       },
     }),
   });
+}
+
+function assertCleanCompletion(events: readonly unknown[]): void {
+  assertEquals(
+    events.some((event) =>
+      event !== null && typeof event === "object" && !Array.isArray(event) &&
+      (event as { type?: unknown }).type === "error"
+    ),
+    false,
+  );
+  assertEquals(events.at(-1), { type: "complete" });
 }
 
 function syntheticHostTool() {
@@ -828,6 +854,8 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   const outputCases: {
     name: string;
     request: Record<string, JsonValue>;
@@ -1117,12 +1145,16 @@ describe("executor runtime preparation review regressions", () => {
         publishParentRunEvents: () => Promise.resolve(),
         resolveModelRuntime: () => ({
           ...model,
-          doStream: () => finishStream(calls++ === 0 ? "visible" : undefined),
+          doStream: () =>
+            calls++ === 0
+              ? finishStream("visible")
+              : finishStream(undefined, {}, "Synthetic answer"),
         }),
       },
     });
     try {
-      await Array.fromAsync(await preparedStream(f));
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
       assertEquals(inheritedReads, 0);
       assertEquals(calls, 2);
     } finally {
@@ -1373,6 +1405,7 @@ describe("executor runtime preparation review regressions", () => {
     });
     try {
       const frames = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(frames);
       const serialized = JSON.stringify(frames);
       assertEquals(serialized.includes(privateDetail), false);
       assertEquals(serialized.includes("Hosted project tool execution failed"), true);
@@ -1491,12 +1524,13 @@ describe("executor runtime preparation review regressions", () => {
       },
     });
     try {
-      await Array.fromAsync(
+      const events = await Array.fromAsync(
         await preparedStream(f, {
           agentId: "coder",
           allowedToolNames: ["update_file"],
         }),
       );
+      assertCleanCompletion(events);
       assertEquals(executions, [{
         name: "update_file",
         args: { project_reference: "project-one" },
@@ -1581,12 +1615,13 @@ Synthetic source instructions.`,
         },
       });
       try {
-        await Array.fromAsync(
+        const events = await Array.fromAsync(
           await preparedStream(f, {
             agentId: "coder",
             ...(selection.requested === undefined ? {} : { allowedToolNames: selection.requested }),
           }),
         );
+        assertCleanCompletion(events);
         assertEquals([...visible].sort(), [...selection.expected].sort());
         assertEquals(
           executions,
@@ -1895,7 +1930,8 @@ Synthetic source instructions.`,
       },
     });
     try {
-      await Array.fromAsync(await preparedStream(f));
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
       assertEquals(executions, ["allowed"]);
     } finally {
       await f.owner.close();
@@ -2057,12 +2093,13 @@ Synthetic source instructions.`,
         },
       });
       try {
-        await Array.fromAsync(
+        const events = await Array.fromAsync(
           await preparedStream(f, {
             agentId: "coder",
             allowedToolNames: selection.requested,
           }),
         );
+        assertCleanCompletion(events);
         assertEquals(visible, selection.expected);
         assertEquals(executions, selection.expected);
       } finally {
@@ -2117,13 +2154,16 @@ Synthetic source instructions.`,
             ...model,
             doStream: (options) => {
               systems.push(JSON.stringify((options as ModelRuntimeCallOptions).prompt));
-              return finishStream(calls++ === 0 ? "update_file" : undefined, { path });
+              return calls++ === 0
+                ? finishStream("update_file", { path })
+                : finishStream(undefined, {}, "Synthetic answer");
             },
           }),
         },
       });
       try {
-        await Array.fromAsync(await preparedStream(f));
+        const events = await Array.fromAsync(await preparedStream(f));
+        assertCleanCompletion(events);
         assertEquals(calls, 2);
         assertEquals(refreshes, expectedRefreshes);
         assertEquals(refreshedTools, expectedRefreshes === 1 ? ["update_file"] : undefined);
@@ -2178,15 +2218,16 @@ Synthetic source instructions.`,
               visible.push(
                 (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
               );
-              return finishStream(visible.length === 1 ? "update_file" : undefined, {
-                path: "AGENTS.md",
-              });
+              return visible.length === 1
+                ? finishStream("update_file", { path: "AGENTS.md" })
+                : finishStream(undefined, {}, "Synthetic answer");
             },
           }),
         },
       });
       try {
-        await Array.fromAsync(await preparedStream(f));
+        const events = await Array.fromAsync(await preparedStream(f));
+        assertCleanCompletion(events);
         assertEquals(visible.length, 2);
         assertEquals(visible[0]!.length, Math.min(extraToolCount + 2, 128));
         assert(visible[0]!.includes("web_search"));
@@ -2197,6 +2238,110 @@ Synthetic source instructions.`,
       }
     });
   }
+
+  it("reads thinking defaults from the catalog the loadModelCatalog facade loads", async () => {
+    __setVeryfrontCloudCatalogForTests(undefined);
+    const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+    let captured: ModelRuntimeCallOptions | undefined;
+    let catalogLoads = 0;
+    const f = fixture({
+      grant: {
+        ...grant,
+        defaultModelId: selectedModel,
+        models: new Map([[selectedModel, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+      },
+      facades: {
+        loadModelCatalog: () => {
+          catalogLoads++;
+          __setVeryfrontCloudCatalogForTests({
+            models: [{
+              id: "claude-sonnet-4-6",
+              modelId: "anthropic/claude-sonnet-4-6",
+              provider: "anthropic",
+              surface: "anthropic",
+              operations: ["messages"],
+              capabilities: {
+                thinking: true,
+                reasoning_mode: "budget",
+                reasoning_budget_tokens: 1024,
+              },
+            }],
+          });
+          return Promise.resolve();
+        },
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream: (options) => {
+            captured = options as ModelRuntimeCallOptions;
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assert(captured);
+      assertEquals(catalogLoads, 1);
+      assertEquals(captured.reasoning, { enabled: true, budgetTokens: 1024 });
+      assertEquals(captured.maxOutputTokens, 7168);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("calls loadModelCatalog only after every grant check passes", async () => {
+    let catalogLoads = 0;
+    const f = fixture({
+      facades: {
+        loadModelCatalog: () => {
+          catalogLoads++;
+          return Promise.resolve();
+        },
+      },
+    });
+    try {
+      assertEquals(
+        await prepare(
+          f.owner,
+          { agentId: "coder", modelId: "veryfront-cloud/not-granted/x" } as JsonValue,
+        ),
+        { ok: false, code: "EXECUTOR_RUNTIME_NOT_GRANTED" },
+      );
+      assertEquals(catalogLoads, 0);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("prepares with the shipped facts when loadModelCatalog fails", async () => {
+    __setVeryfrontCloudCatalogForTests(undefined);
+    const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+    let captured: ModelRuntimeCallOptions | undefined;
+    const f = fixture({
+      grant: {
+        ...grant,
+        defaultModelId: selectedModel,
+        models: new Map([[selectedModel, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+      },
+      facades: {
+        loadModelCatalog: () => Promise.reject(new Error("catalog unavailable")),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream: (options) => {
+            captured = options as ModelRuntimeCallOptions;
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assert(captured);
+      assertEquals(captured.reasoning, { enabled: true, budgetTokens: 2048 });
+    } finally {
+      await f.owner.close();
+    }
+  });
 
   it("reserves the catalog thinking budget when the request omits thinking and output limits", async () => {
     const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
@@ -2257,14 +2402,14 @@ Synthetic source instructions.`,
     const selectedModel of [
       modelId,
       "veryfront-cloud/anthropic/claude-sonnet-4-6",
-      "veryfront-cloud/anthropic/claude-opus-4-7",
+      "veryfront-cloud/anthropic/claude-opus-4-8",
     ]
   ) {
     for (const thinking of [{ enabled: false }, { enabled: true, budgetTokens: 4096 }]) {
       it(`carries explicit thinking ${thinking.enabled} into ${selectedModel} call data`, async () => {
         let captured: ModelRuntimeCallOptions | undefined;
         let sourceTransportCalls = 0;
-        const adaptive = selectedModel.endsWith("claude-opus-4-7") && thinking.enabled;
+        const adaptive = selectedModel.endsWith("claude-opus-4-8") && thinking.enabled;
         const f = fixture({
           config: {
             thinking: { enabled: !thinking.enabled },
@@ -2439,7 +2584,7 @@ describe("executor runtime preparation artifact and materialization regressions"
         const frames = await Array.fromAsync(
           await preparedStream(f, { agentId: "coder" }, researchRequest),
         );
-        assertEquals(frames.at(-1), { type: "complete" });
+        assertCleanCompletion(frames);
         const expectedCalls = existing === "none"
           ? [["create_file", reportPath], ["create_file", mirrorPath]]
           : existing === "ungranted retry"

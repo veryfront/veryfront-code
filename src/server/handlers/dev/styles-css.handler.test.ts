@@ -23,6 +23,13 @@ import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orches
 import { invalidateProjectCandidateScans } from "./styles-candidate-scanner.ts";
 import { invalidateProjectCssImportScans } from "./styles-css-import-scanner.ts";
 import { StylesCSSHandler } from "./styles-css.handler.ts";
+import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 
 const TEST_STYLESHEET = `@import "tailwindcss";`;
 const PROJECT_SLUG = "dreamy-haven";
@@ -147,6 +154,44 @@ describe("server/handlers/dev/styles-css.handler", () => {
       assertEquals(result.response!.status, 200);
       assertEquals(body.includes("--color-brand"), true);
     } finally {
+      stub.restore();
+    }
+  });
+
+  it("warns once per project when no stylesheet exists, then keeps quiet", async () => {
+    // The stylesheet is resolved on every request; a project without one must
+    // not repeat the warning each time the browser refetches styles.css.
+    const stub = mockTailwindFetch();
+    setLogLevel(LogLevel.DEBUG);
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (String(entry.message).includes("No project stylesheet found")) records.push(entry);
+    });
+    try {
+      const adapter = createHandlerAdapter(
+        [{ path: "pages/index.tsx", content: '<div className="p-4" />' }],
+        null,
+      );
+      adapter.fs.files.delete("/project/globals.css");
+      const projectDir = `/no-stylesheet-${crypto.randomUUID()}`;
+      for (let i = 0; i < 2; i++) {
+        const result = await new StylesCSSHandler().handle(
+          new Request("http://localhost/_vf_styles/styles.css"),
+          makeCtx(adapter, { projectDir }),
+        );
+        assertEquals(result.response!.status, 200);
+        await result.response!.text();
+        invalidateProjectCSS(projectDir);
+        invalidatePreparedProjectCSS(projectDir);
+      }
+      assertEquals(
+        records.map((entry) => entry.level),
+        ["warn", "debug"],
+        "the missing stylesheet is warned about once, then noted at debug",
+      );
+    } finally {
+      unsubscribe();
+      __resetLoggerConfigForTests();
       stub.restore();
     }
   });

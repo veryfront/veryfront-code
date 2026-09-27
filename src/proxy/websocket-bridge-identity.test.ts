@@ -3,7 +3,7 @@
  * actually answers it.
  *
  * `handleWebSocketUpgrade` terminates the browser socket and opens a second
- * socket to the shared renderer. That second request is the one the renderer's
+ * socket to the policy-selected renderer. That second request is the one the renderer's
  * `createProxyGuard` inspects, so these tests build it with the production
  * builder and hand it to the production guard rather than asserting on a
  * header list that could drift from what the guard demands.
@@ -14,6 +14,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { prepareProjectRequest } from "#veryfront/server/runtime-handler/project-runtime-context.ts";
 import type { ProxyContext } from "./handler.ts";
 import { buildRendererBridgeRequest } from "./websocket-bridge.ts";
+import { websocketRendererOrigin } from "./dedicated-routing-policy.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
 /** The internal renderer service. It is not a project domain and carries no slug. */
@@ -104,6 +105,23 @@ describe("proxy renderer WebSocket bridge identity", () => {
       "the platform's own preview HMR bridge is answered 502 by the renderer",
     );
     assertEquals(verdict.projectSlug, "support-agent-agodnc");
+  });
+
+  it("strict assigned WebSocket bridge targets its dedicated renderer", () => {
+    const browserRequest = new Request(
+      "https://support-agent-agodnc.preview.veryfront.com/_ws",
+      { headers: browserUpgradeHeaders("support-agent-agodnc.preview.veryfront.com") },
+    );
+    const assigned = "http://veryfront-server-owned.owned.svc.cluster.local:3001";
+    const bridge = buildRendererBridgeRequest(
+      browserRequest,
+      new URL(browserRequest.url),
+      previewContext({ environmentId: "env-owned", environmentName: "preview" }),
+      websocketRendererOrigin(RENDERER_SERVER_URL, assigned, true),
+    );
+    assertEquals(bridge.url.host, "veryfront-server-owned.owned.svc.cluster.local:3001");
+    assertEquals(bridge.headers.get("x-token"), "vf_proxy_minted_project_token");
+    assertEquals(bridge.headers.get("x-project-slug"), "support-agent-agodnc");
   });
 
   it("carries the proxy-minted project token the renderer needs upstream", () => {

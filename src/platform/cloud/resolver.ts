@@ -1,5 +1,9 @@
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import {
+  peekVeryfrontCloudCatalog,
+  type VeryfrontCloudCatalogScopeKey,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import {
   getHostEnv,
   getHostEnvExcludingEnvFile,
   getHostSecret,
@@ -92,6 +96,7 @@ function resolveHostCredentialApiBaseUrl(): string {
     DEFAULT_API_BASE_URL;
 }
 
+/** Built-in default model, used until the served catalog names one. */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/mistral/mistral-small-2503";
 export const DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL =
   "veryfront-cloud/openai/text-embedding-3-small";
@@ -229,10 +234,27 @@ export function isVeryfrontCloudEnabled(): boolean {
   return Boolean(bootstrap.apiToken && hasProjectContext);
 }
 
+/**
+ * Default Veryfront Cloud model: `VERYFRONT_DEFAULT_MODEL` when set, otherwise
+ * the default the served catalog names once it has loaded for the current
+ * credentials and project, otherwise the built-in default.
+ */
 export function getDefaultVeryfrontCloudModel(): string {
+  const bootstrap = getVeryfrontCloudBootstrap();
+  // A context without credentials may carry the key of the run's catalog.
+  const carriedKey = getCurrentVeryfrontCloudContext()?.catalogScopeKey;
+  const served = (bootstrap.apiToken
+    ? peekVeryfrontCloudCatalog({
+      apiBaseUrl: bootstrap.apiBaseUrl,
+      apiToken: bootstrap.apiToken,
+      ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
+    })
+    : carriedKey
+    ? peekVeryfrontCloudCatalog(carriedKey as VeryfrontCloudCatalogScopeKey)
+    : peekVeryfrontCloudCatalog())?.defaultModelId;
   return normalizeCloudModelString(
     getHostEnv("VERYFRONT_DEFAULT_MODEL"),
-    DEFAULT_VERYFRONT_CLOUD_MODEL,
+    served?.includes("/") ? served : DEFAULT_VERYFRONT_CLOUD_MODEL,
   );
 }
 

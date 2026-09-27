@@ -49,6 +49,7 @@ interface DirectMetricsTarget {
   headers: Record<string, string>;
   serviceName: string;
   serviceVersion: string;
+  deploymentEnvironment: string | undefined;
   capacityScope: string;
   internal: boolean;
   tenantScoped: boolean;
@@ -77,16 +78,23 @@ const gauges = new Map<
 const directQueue: DirectMetricSample[] = [];
 const directSampleTargets = new WeakMap<DirectMetricSample, string>();
 const directTargetExportTails = new Map<string, Promise<void>>();
-const directCounterTotals = new Map<string, { value: number; startTimeUnixNano: string }>();
-const directHistogramTotals = new Map<
-  string,
-  {
-    count: number;
-    sum: number;
-    bucketCounts: number[];
-    startTimeUnixNano: string;
-  }
->();
+interface DirectCounterTotal {
+  value: number;
+  startTimeUnixNano: string;
+  lastTimeUnixNano?: bigint;
+}
+
+interface DirectHistogramTotal {
+  count: number;
+  sum: number;
+  bucketCounts: number[];
+  startTimeUnixNano: string;
+  lastTimeUnixNano?: bigint;
+}
+
+const directCounterTotals = new Map<string, DirectCounterTotal>();
+const directHistogramTotals = new Map<string, DirectHistogramTotal>();
+const directScopeSeries = new Map<string, Set<string>>();
 let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DIRECT_FLUSH_DELAY_MS = 1_000;
@@ -99,6 +107,16 @@ const DIRECT_MAX_QUEUED_SAMPLES = 1_000;
 const DIRECT_MAX_PROJECT_PENDING_SAMPLES = 900;
 const DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE = DIRECT_MAX_BATCH_SIZE;
 const DIRECT_MAX_INFLIGHT_SAMPLES_PER_SCOPE = DIRECT_MAX_BATCH_SIZE * 2;
+const DIRECT_MAX_TENANT_ATTRIBUTES = 16;
+const DIRECT_MAX_ATTRIBUTE_VALUE_LENGTH = 256;
+const DIRECT_MAX_SERIES_PER_SCOPE = 500;
+const DIRECT_METRIC_NAME = /^[A-Za-z_][A-Za-z0-9_.:]{0,127}$/;
+const DIRECT_LABEL_KEY = /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/;
+// Prometheus treats a series as stale after five minutes without a sample, so
+// a cumulative point after a longer gap is restated next to its previous total.
+const DIRECT_RESTATE_AFTER_NS = 5n * 60n * 1_000_000_000n;
+const DIRECT_RESTATE_OFFSET_NS = 1_000_000n;
+const PROJECT_LABEL_KEYS = ["project_id", "project_slug", "environment", "branch"];
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 const apply = Reflect.apply;
 const NativeAbortController = AbortController;
@@ -120,7 +138,14 @@ const mapForEach = Map.prototype.forEach;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapClear = Map.prototype.clear;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
+const regExpTest = RegExp.prototype.test;
+const arrayIncludes = Array.prototype.includes;
 const stringStartsWith = String.prototype.startsWith;
+const stringIndexOf = String.prototype.indexOf;
+const stringSlice = String.prototype.slice;
+const stringTrim = String.prototype.trim;
 const weakMapDelete = WeakMap.prototype.delete;
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
@@ -137,6 +162,8 @@ const typedArrayByteLength = Object.getOwnPropertyDescriptor(
   "byteLength",
 )?.get;
 const utf8Encoder = new NativeTextEncoder();
+// One id per process, so replicas and restarts never write the same cumulative series.
+const serviceInstanceId = crypto.randomUUID();
 const hostClearTimeout = globalThis.clearTimeout.bind(globalThis);
 const hostSetTimeout = globalThis.setTimeout.bind(globalThis);
 // Capture the runtime transport before project code can replace the ambient fetch.
@@ -233,12 +260,15 @@ function normalizeAttributes(attributes?: MetricAttributes): Record<string, Attr
   const entries = apply(objectEntries, Object, [attributes ?? {}]) as Array<
     [string, MetricAttributeValue]
   >;
+  // Project code must not choose which project a tenant sample is filed under.
+  const tenantScoped = hasTenantMetricsScope();
   for (let index = 0; index < entries.length; index++) {
     const entry = entries[index];
     if (entry === undefined) continue;
     const key = entry[0];
     const value = entry[1];
     if (value === null || value === undefined) continue;
+    if (tenantScoped && apply(arrayIncludes, PROJECT_LABEL_KEYS, [key])) continue;
     apply(objectDefineProperty, Object, [normalized, key, dataPropertyDescriptor(value)]);
   }
 
@@ -246,8 +276,11 @@ function normalizeAttributes(attributes?: MetricAttributes): Record<string, Attr
   const addAttribute = (key: string, value: AttributeValue): void => {
     apply(objectDefineProperty, Object, [normalized, key, dataPropertyDescriptor(value)]);
   };
-  if (context?.projectId) addAttribute("project_id", context.projectId);
-  if (context?.projectSlug) addAttribute("project_slug", context.projectSlug);
+  const trustedIdentity = context ? undefined : getTrustedProjectEnvIdentity();
+  const projectId = context?.projectId ?? nonEmptyIdentity(trustedIdentity?.projectId);
+  const projectSlug = context?.projectSlug ?? nonEmptyIdentity(trustedIdentity?.projectSlug);
+  if (projectId) addAttribute("project_id", projectId);
+  if (projectSlug) addAttribute("project_slug", projectSlug);
   if (context) {
     const environmentName = context.environmentName ??
       (!context.productionMode ? "preview" : undefined);
@@ -375,26 +408,46 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
   if (headerInput.startsWith("Authorization=")) {
     return { Authorization: headerInput.slice("Authorization=".length) };
   }
+  return parseKeyValueList(headerInput);
+}
 
-  const result: Record<string, string> = {};
-  for (const part of headerInput.split(",")) {
-    const [key, ...valueParts] = part.split("=");
-    if (key && valueParts.length > 0) {
-      result[key.trim()] = valueParts.join("=").trim();
+/** Parse the OTel `key=value,key=value` env format. */
+function parseKeyValueList(input: string | undefined): Record<string, string> {
+  // Host values are parsed with captured intrinsics into a record without a
+  // prototype, so project code that patched String or Object never sees them.
+  const result = apply(objectCreate, Object, [null]) as Record<string, string>;
+  if (!input) return result;
+  let start = 0;
+  while (start <= input.length) {
+    let end = apply(stringIndexOf, input, [",", start]) as number;
+    if (end === -1) end = input.length;
+    const part = apply(stringSlice, input, [start, end]) as string;
+    const separator = apply(stringIndexOf, part, ["="]) as number;
+    if (separator > 0) {
+      const key = apply(stringTrim, apply(stringSlice, part, [0, separator]), []) as string;
+      result[key] = apply(stringTrim, apply(stringSlice, part, [separator + 1]), []) as string;
     }
+    start = end + 1;
   }
   return result;
 }
 
-function resolveDirectServiceIdentity(): Pick<
-  DirectMetricsTarget,
-  "serviceName" | "serviceVersion"
-> {
+// Shared runtimes read the identity from the host, so hosted project metrics
+// name the platform service, release and deployment that emitted them.
+function resolveDirectServiceIdentity(
+  read: (name: string) => string | undefined,
+): Pick<DirectMetricsTarget, "serviceName" | "serviceVersion" | "deploymentEnvironment"> {
+  const resource = parseKeyValueList(read("OTEL_RESOURCE_ATTRIBUTES"));
   return {
-    serviceName: readEnv("OTEL_SERVICE_NAME") ?? "veryfront",
-    serviceVersion: readEnv("VERYFRONT_VERSION") ??
-      readEnv("RELEASE_VERSION") ??
+    serviceName: read("OTEL_SERVICE_NAME") ?? resource["service.name"] ?? "veryfront",
+    serviceVersion: resource["service.version"] ??
+      read("OTEL_SERVICE_VERSION") ??
+      read("VERYFRONT_VERSION") ??
+      read("RELEASE_VERSION") ??
       "unknown",
+    deploymentEnvironment: resource["deployment.environment.name"] ??
+      resource["deployment.environment"] ??
+      read("OTEL_DEPLOYMENT_ENVIRONMENT"),
   };
 }
 
@@ -438,7 +491,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
         readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
           readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
       ),
-      ...resolveDirectServiceIdentity(),
+      ...resolveDirectServiceIdentity(readEnv),
       capacityScope: resolveDirectCapacityScope(),
       internal: false,
       tenantScoped: true,
@@ -456,7 +509,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
           readHostEnv("VERYFRONT_API_INTERNAL_PASS") ?? "",
         ),
       },
-      ...resolveDirectServiceIdentity(),
+      ...resolveDirectServiceIdentity(readHostEnv),
       capacityScope: tenantScoped ? resolveDirectCapacityScope() : "internal",
       internal: true,
       tenantScoped,
@@ -472,7 +525,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
       readEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
         readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
     ),
-    ...resolveDirectServiceIdentity(),
+    ...resolveDirectServiceIdentity(readEnv),
     capacityScope: tenantScoped ? resolveDirectCapacityScope() : "host",
     internal: false,
     tenantScoped,
@@ -556,8 +609,14 @@ function evictUnusedDirectTarget(
     }
   }
   if (candidateIndex === -1) return false;
-  const evicted = removeArrayRange(internedTargets, candidateIndex, 1);
-  if (evicted[0]) deleteDirectTotalsForTarget(evicted[0].key);
+  const evicted = removeArrayRange(internedTargets, candidateIndex, 1)[0];
+  if (evicted) {
+    deleteDirectTotalsForTarget(evicted.key);
+    const scope = evicted.target.capacityScope;
+    if (countDirectTargets((target) => target.capacityScope === scope) === 0) {
+      apply(mapDelete, directScopeSeries, [scope]);
+    }
+  }
   return true;
 }
 
@@ -634,6 +693,7 @@ function retainDirectTarget(target: DirectMetricsTarget): string | null {
       interned.target.url === target.url &&
       interned.target.serviceName === target.serviceName &&
       interned.target.serviceVersion === target.serviceVersion &&
+      interned.target.deploymentEnvironment === target.deploymentEnvironment &&
       interned.target.capacityScope === target.capacityScope &&
       interned.target.internal === target.internal &&
       interned.target.tenantScoped === target.tenantScoped &&
@@ -744,28 +804,41 @@ function buildHistogramBuckets(value: number): number[] {
   return counts;
 }
 
+// A sparse cumulative series (one point per daily job, say) gives range
+// queries a single sample per window, which counts as no increase. Emitting the
+// previous total just before the new point makes every increment countable. A
+// new series restates zero at its start time.
+function restatesPreviousTotal(lastTimeUnixNano: bigint | undefined, time: bigint): boolean {
+  return lastTimeUnixNano === undefined || time - lastTimeUnixNano > DIRECT_RESTATE_AFTER_NS;
+}
+
 function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
   const attributes = toOtlpAttributes(sample.attributes);
+  const time = BigInt(sample.timestampUnixNano);
+  const restatedTimeUnixNano = NativeString(time - DIRECT_RESTATE_OFFSET_NS);
   if (sample.kind === "counter") {
     const key = `${targetKey}:${sample.name}:${attributesKey(sample.attributes)}`;
-    const total = (apply(mapGet, directCounterTotals, [key]) as
-      | { value: number; startTimeUnixNano: string }
-      | undefined) ?? {
-      value: 0,
-      startTimeUnixNano: sample.timestampUnixNano,
-    };
+    const total: DirectCounterTotal =
+      (apply(mapGet, directCounterTotals, [key]) as DirectCounterTotal | undefined) ??
+        { value: 0, startTimeUnixNano: restatedTimeUnixNano };
+    const point = (timeUnixNano: string) => ({
+      attributes,
+      startTimeUnixNano: total.startTimeUnixNano,
+      timeUnixNano,
+      asDouble: total.value,
+    });
+    const dataPoints = restatesPreviousTotal(total.lastTimeUnixNano, time)
+      ? [point(restatedTimeUnixNano)]
+      : [];
     total.value += sample.value;
+    total.lastTimeUnixNano = time;
     apply(mapSet, directCounterTotals, [key, total]);
+    appendArrayValue(dataPoints, point(sample.timestampUnixNano));
 
     return {
       name: sample.name,
       sum: {
-        dataPoints: [{
-          attributes,
-          startTimeUnixNano: total.startTimeUnixNano,
-          timeUnixNano: sample.timestampUnixNano,
-          asDouble: total.value,
-        }],
+        dataPoints,
         aggregationTemporality: 2,
         isMonotonic: true,
       },
@@ -774,19 +847,25 @@ function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
 
   if (sample.kind === "histogram") {
     const key = `${targetKey}:${sample.name}:${attributesKey(sample.attributes)}`;
-    const total = (apply(mapGet, directHistogramTotals, [key]) as
-      | {
-        count: number;
-        sum: number;
-        bucketCounts: number[];
-        startTimeUnixNano: string;
-      }
-      | undefined) ?? {
-      count: 0,
-      sum: 0,
-      bucketCounts: new Array(HISTOGRAM_BOUNDS.length + 1).fill(0),
-      startTimeUnixNano: sample.timestampUnixNano,
-    };
+    const total: DirectHistogramTotal =
+      (apply(mapGet, directHistogramTotals, [key]) as DirectHistogramTotal | undefined) ?? {
+        count: 0,
+        sum: 0,
+        bucketCounts: new Array(HISTOGRAM_BOUNDS.length + 1).fill(0),
+        startTimeUnixNano: restatedTimeUnixNano,
+      };
+    const point = (timeUnixNano: string) => ({
+      attributes,
+      startTimeUnixNano: total.startTimeUnixNano,
+      timeUnixNano,
+      count: total.count,
+      sum: total.sum,
+      explicitBounds: HISTOGRAM_BOUNDS,
+      bucketCounts: total.bucketCounts,
+    });
+    const dataPoints = restatesPreviousTotal(total.lastTimeUnixNano, time)
+      ? [point(restatedTimeUnixNano)]
+      : [];
     const sampleBuckets = buildHistogramBuckets(sample.value);
     total.count += 1;
     total.sum += sample.value;
@@ -794,20 +873,14 @@ function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
       total.bucketCounts,
       (count, index) => count + (sampleBuckets[index] ?? 0),
     );
+    total.lastTimeUnixNano = time;
     apply(mapSet, directHistogramTotals, [key, total]);
+    appendArrayValue(dataPoints, point(sample.timestampUnixNano));
 
     return {
       name: sample.name,
       histogram: {
-        dataPoints: [{
-          attributes,
-          startTimeUnixNano: total.startTimeUnixNano,
-          timeUnixNano: sample.timestampUnixNano,
-          count: total.count,
-          sum: total.sum,
-          explicitBounds: HISTOGRAM_BOUNDS,
-          bucketCounts: total.bucketCounts,
-        }],
+        dataPoints,
         aggregationTemporality: 2,
       },
     };
@@ -838,6 +911,10 @@ function buildDirectOtlpBody(
         attributes: toOtlpAttributes({
           "service.name": target.serviceName,
           "service.version": target.serviceVersion,
+          "service.instance.id": serviceInstanceId,
+          ...(target.deploymentEnvironment === undefined
+            ? {}
+            : { "deployment.environment": target.deploymentEnvironment }),
         }),
       },
       scopeMetrics: [{
@@ -1059,6 +1136,45 @@ function scheduleDirectFlush(): void {
   }
 }
 
+function isBoundedTenantSample(
+  name: string,
+  attributes: Record<string, AttributeValue>,
+): boolean {
+  if (!apply(regExpTest, DIRECT_METRIC_NAME, [name])) return false;
+  const entries = apply(objectEntries, Object, [attributes]) as Array<[string, AttributeValue]>;
+  let ownAttributes = 0;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    if (apply(arrayIncludes, PROJECT_LABEL_KEYS, [entry[0]])) continue;
+    ownAttributes++;
+    if (!apply(regExpTest, DIRECT_LABEL_KEY, [entry[0]])) return false;
+    if (typeof entry[1] === "string" && entry[1].length > DIRECT_MAX_ATTRIBUTE_VALUE_LENGTH) {
+      return false;
+    }
+  }
+  return ownAttributes <= DIRECT_MAX_TENANT_ATTRIBUTES;
+}
+
+// Bounds what one tenant can add to the shared metrics backend from one
+// process: a new name/label combination beyond the budget is dropped, while
+// series already exported keep flowing. A series is reserved only once its
+// sample is queued, so samples dropped for capacity never use up the budget.
+function hasTenantSeriesCapacity(capacityScope: string, seriesKey: string): boolean {
+  const series = apply(mapGet, directScopeSeries, [capacityScope]) as Set<string> | undefined;
+  return series === undefined || series.size < DIRECT_MAX_SERIES_PER_SCOPE ||
+    apply(setHas, series, [seriesKey]) as boolean;
+}
+
+function retainTenantSeries(capacityScope: string, seriesKey: string): void {
+  let series = apply(mapGet, directScopeSeries, [capacityScope]) as Set<string> | undefined;
+  if (series === undefined) {
+    series = new Set<string>();
+    apply(mapSet, directScopeSeries, [capacityScope, series]);
+  }
+  apply(setAdd, series, [seriesKey]);
+}
+
 function enqueueDirectMetric(
   kind: DirectMetricKind,
   name: string,
@@ -1067,6 +1183,15 @@ function enqueueDirectMetric(
 ): void {
   const target = resolveDirectMetricsTarget();
   if (target === null) return;
+  if (target.tenantScoped && !isBoundedTenantSample(name, attributes)) {
+    recordDirectSampleDrop("label-bounds");
+    return;
+  }
+  const seriesKey = `${name}:${attributesKey(attributes)}`;
+  if (target.tenantScoped && !hasTenantSeriesCapacity(target.capacityScope, seriesKey)) {
+    recordDirectSampleDrop("series-quota");
+    return;
+  }
   if (!hasDirectSampleCapacity(target)) {
     recordDirectSampleDrop("sample-quota");
     return;
@@ -1080,6 +1205,7 @@ function enqueueDirectMetric(
     recordDirectSampleDrop("target-quota");
     return;
   }
+  if (target.tenantScoped) retainTenantSeries(target.capacityScope, seriesKey);
   const sample: DirectMetricSample = {
     kind,
     name,
@@ -1160,6 +1286,9 @@ export const metrics = {
   __getDroppedDirectSampleCountForTests(): number {
     return droppedDirectSamples;
   },
+  __getTenantSeriesScopeCountForTests(): number {
+    return directScopeSeries.size;
+  },
   __resetForTests(): void {
     counters.clear();
     histograms.clear();
@@ -1167,6 +1296,7 @@ export const metrics = {
     directQueue.length = 0;
     directCounterTotals.clear();
     directHistogramTotals.clear();
+    directScopeSeries.clear();
     apply(mapClear, directTargetExportTails, []);
     internedTargets.length = 0;
     nextInternedTargetId = 0;

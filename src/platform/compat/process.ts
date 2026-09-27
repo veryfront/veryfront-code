@@ -8,6 +8,7 @@ export {
   getEnvOverlayStorage,
   getEnvString,
   getHostEnv,
+  getHostEnvExcludingEnvFile,
   setEnv,
 } from "./process/env.ts";
 export {

@@ -24,7 +24,9 @@ import {
 import { parseAgUiJsonBody } from "#veryfront/agent/ag-ui/request-shared.ts";
 import { readBodyWithLimit } from "#veryfront/security/input-validation/limits.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import {
   installMockFetch,
   restoreMockFetch,
@@ -73,6 +75,8 @@ function runtimeAgentInvocation(inferenceAuthToken: string): Record<string, unkn
 }
 
 describe("run-scoped inference credential", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   afterEach(() => {
     restoreMockFetch();
     clearModelProviders();
@@ -900,7 +904,7 @@ describe("run-scoped inference credential", () => {
     assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
     assertEquals(
       capturedUrl,
-      "https://public-api.example.test/api/ai/gateway/openai/v1/chat/completions",
+      "https://public-api.example.test/api/ai/v1/chat/completions",
     );
   });
 

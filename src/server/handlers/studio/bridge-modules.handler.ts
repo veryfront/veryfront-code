@@ -19,6 +19,8 @@ import type {
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { STUDIO_BRIDGE_BUNDLE } from "#veryfront/studio/bridge/bridge-bundle.generated.ts";
 import { computeHash, serverLogger } from "#veryfront/utils";
+import { getOperatorStudioOrigin } from "#veryfront/security/http/studio-operator-origin.ts";
+import { OPERATOR_STUDIO_ORIGIN_MARKER } from "#veryfront/security/http/studio-origin-policy.ts";
 
 const logger = serverLogger.component("studio-bridge-handler");
 
@@ -45,8 +47,9 @@ async function bundleBridge(): Promise<{ js: string; etag: string }> {
 
   // Use pre-bundled output if available (compiled binary / CI builds)
   if (STUDIO_BRIDGE_BUNDLE) {
-    const etag = await computeEtag(STUDIO_BRIDGE_BUNDLE);
-    bundleCache = { js: STUDIO_BRIDGE_BUNDLE, etag };
+    const js = bindOperatorStudioOrigin(STUDIO_BRIDGE_BUNDLE);
+    const etag = await computeEtag(js);
+    bundleCache = { js, etag };
     return bundleCache;
   }
 
@@ -69,10 +72,18 @@ async function bundleBridge(): Promise<{ js: string; etag: string }> {
     },
   });
 
-  const js = outputFiles?.[0]?.text ?? "";
+  const js = bindOperatorStudioOrigin(outputFiles?.[0]?.text ?? "");
   const etag = await computeEtag(js);
   bundleCache = { js, etag };
   return bundleCache;
+}
+
+function bindOperatorStudioOrigin(bundle: string): string {
+  const marker = JSON.stringify(OPERATOR_STUDIO_ORIGIN_MARKER);
+  if (bundle.split(marker).length !== 2) {
+    throw new Error("Studio bridge operator-origin binding marker differs");
+  }
+  return bundle.replace(marker, JSON.stringify(getOperatorStudioOrigin() ?? ""));
 }
 
 export class StudioBridgeModulesHandler extends BaseHandler {

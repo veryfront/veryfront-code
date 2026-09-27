@@ -155,6 +155,10 @@ import {
   markRuntimeGeneratedUserMessage,
 } from "./runtime-message-origin.ts";
 import {
+  EMPTY_RESPONSE_RECOVERY_PROMPT,
+  RuntimeEmptyResponseError,
+} from "./empty-response-recovery.ts";
+import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderReplayCheckpointMessageId,
@@ -2885,6 +2889,7 @@ export class AgentRuntime {
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
       let agentWriteFinalResponseToolGuardEnabled = false;
+      let recoveredEmptyResponse = false;
 
       for (let step = 0; step < maxSteps; step++) {
         throwIfAborted(abortSignal);
@@ -3102,6 +3107,29 @@ export class AgentRuntime {
               continue;
             }
             await persistGeneratedToolResult(generatedToolResult);
+          }
+          const stoppedEmptyAfterCompletedTool = response.finishReason === "stop" &&
+            !hasSubstantiveAssistantText(response.text) &&
+            generatedToolResults.size === 0 &&
+            somePrivateArray(toolCalls, (toolCall) => toolCall.status === "completed");
+          if (stoppedEmptyAfterCompletedTool) {
+            if (recoveredEmptyResponse || step + 1 >= maxSteps) {
+              throw new RuntimeEmptyResponseError();
+            }
+            recoveredEmptyResponse = true;
+            pushPrivateArray(
+              currentMessages,
+              markRuntimeGeneratedUserMessage({
+                id: `runtime_empty_response_${Date.now()}_${step}`,
+                role: "user",
+                parts: [{
+                  type: "text",
+                  text: EMPTY_RESPONSE_RECOVERY_PROMPT,
+                }],
+                timestamp: Date.now(),
+              }),
+            );
+            continue;
           }
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
@@ -3544,6 +3572,7 @@ export class AgentRuntime {
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
     let agentWriteFinalResponseToolGuardEnabled = false;
+    let recoveredEmptyResponse = false;
     // One retry gives the model a chance to reconstruct a transport-truncated
     // batch without allowing a repeatedly broken provider stream to loop.
     let recoveredInterruptedLocalToolBatch = false;
@@ -3939,6 +3968,12 @@ export class AgentRuntime {
       const shouldContinue = shouldContinueAfterStreamStep(state, {
         recoverInterruptedToolCalls: canRecoverInterruptedLocalToolBatch,
       });
+      const stoppedEmptyAfterCompletedTool = state.finishReason === "stop" &&
+        !hasSubstantiveAssistantText(state.accumulatedText) &&
+        state.toolCalls.size === 0 &&
+        finalToolResults.size === 0 &&
+        (state.suppressedToolCalls?.length ?? 0) === 0 &&
+        somePrivateArray(toolCalls, (toolCall) => toolCall.status === "completed");
       const shouldRecoverInterruptedLocalToolBatch = canRecoverInterruptedLocalToolBatch &&
         shouldContinue &&
         somePrivateArray(streamedToolCalls, isInterruptedClientToolCall);
@@ -4053,6 +4088,28 @@ export class AgentRuntime {
         emission: providerReplayCheckpointEmission,
         providerMetadata: readAttachedProviderMetadata(assistantMessage),
       });
+
+      if (stoppedEmptyAfterCompletedTool) {
+        sendSSE(controller, encoder, { type: "step-end" });
+        if (recoveredEmptyResponse || step + 1 >= maxSteps) {
+          throw new RuntimeEmptyResponseError();
+        }
+        recoveredEmptyResponse = true;
+        pushPrivateArray(
+          currentMessages,
+          markRuntimeGeneratedUserMessage({
+            id: `runtime_empty_response_${Date.now()}_${step}`,
+            role: "user",
+            parts: [{
+              type: "text",
+              text: EMPTY_RESPONSE_RECOVERY_PROMPT,
+            }],
+            timestamp: Date.now(),
+          }),
+        );
+        this.status = "thinking";
+        continue;
+      }
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
         if (currentStepToolResults.has(toolResult.toolCallId)) {

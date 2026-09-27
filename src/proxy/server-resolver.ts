@@ -2,8 +2,8 @@
  * Dedicated Server Resolver
  *
  * Resolves an environment ID to a dedicated server origin. Control-plane
- * failures deliberately fall back to the shared renderer pool, but malformed
- * identifiers and construction policy fail at the local boundary.
+ * failures use the shared pool by default. Explicit host-private strict mode
+ * distinguishes no assignment from unavailable/unknown assignments.
  */
 
 import { getErrorMessage } from "#veryfront/errors";
@@ -48,12 +48,20 @@ export interface ServerResolverOptions {
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  requireAssignment?: boolean;
 }
 
 class ServerResolverError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "ServerResolverError";
+  }
+}
+
+export class DedicatedServerLookupUnavailable extends Error {
+  constructor() {
+    super("Dedicated server assignment is unavailable");
+    this.name = "DedicatedServerLookupUnavailable";
   }
 }
 
@@ -84,6 +92,7 @@ function assertPlainOptions(options: ServerResolverOptions): void {
     "requestTimeoutMs",
     "fetchImpl",
     "now",
+    "requireAssignment",
   ]);
   if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
     throw new TypeError("Server resolver options contain an unknown option");
@@ -226,7 +235,7 @@ function parseTargetUrl(value: unknown): string | null {
   return status.toLowerCase() === "running" ? target.origin : null;
 }
 
-function parseResponse(value: unknown): string | null {
+function parseResponse(value: unknown, requireAssignment: boolean): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("Dedicated server API returned an invalid response");
   }
@@ -236,7 +245,19 @@ function parseResponse(value: unknown): string | null {
   } catch {
     throw new TypeError("Dedicated server API returned an unreadable response");
   }
-  return parseTargetUrl(ownDataValue(descriptors, "server"));
+  const server = ownDataValue(descriptors, "server");
+  if (requireAssignment) {
+    const assignment = ownDataValue(descriptors, "assignment");
+    if (assignment === "none" && server === null) return null;
+    if (assignment === "unavailable") throw new DedicatedServerLookupUnavailable();
+    if (assignment !== "running" || server === null) {
+      throw new DedicatedServerLookupUnavailable();
+    }
+    const target = parseTargetUrl(server);
+    if (!target) throw new DedicatedServerLookupUnavailable();
+    return target;
+  }
+  return parseTargetUrl(server);
 }
 
 function abortReason(signal: AbortSignal): Error {
@@ -272,6 +293,7 @@ export class ServerResolver {
   private readonly requestTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
+  private readonly requireAssignment: boolean;
   private readonly cache = new Map<string, CacheEntry>();
   private readonly pending = new Map<string, PendingLookup>();
   private readonly pendingControllers = new Set<AbortController>();
@@ -345,6 +367,11 @@ export class ServerResolver {
     if (now !== undefined && typeof now !== "function") {
       throw new TypeError("Server resolver now must be a function");
     }
+    const requireAssignment = readOwnOption(options, "requireAssignment");
+    if (requireAssignment !== undefined && typeof requireAssignment !== "boolean") {
+      throw new TypeError("Server resolver requireAssignment must be boolean");
+    }
+    this.requireAssignment = requireAssignment === true;
     this.now = (now as (() => number) | undefined) ?? monotonicMilliseconds;
     this.readClock();
 
@@ -365,14 +392,18 @@ export class ServerResolver {
       throw new TypeError("Dedicated server environment ID is invalid");
     }
 
-    const cached = this.cache.get(environmentId);
-    if (cached) {
-      if (this.readClock() < cached.expiresAt) {
+    // Strict routing observes the current assignment on every new request.
+    // A cached positive target could outlive a server deletion or reassignment.
+    if (!this.requireAssignment) {
+      const cached = this.cache.get(environmentId);
+      if (cached) {
+        if (this.readClock() < cached.expiresAt) {
+          this.cache.delete(environmentId);
+          this.cache.set(environmentId, cached);
+          return cached.targetUrl;
+        }
         this.cache.delete(environmentId);
-        this.cache.set(environmentId, cached);
-        return cached.targetUrl;
       }
-      this.cache.delete(environmentId);
     }
 
     const existing = this.pending.get(environmentId);
@@ -380,10 +411,14 @@ export class ServerResolver {
     if (this.isAtCapacity()) {
       if (!this.capacityWarningEmitted) {
         this.capacityWarningEmitted = true;
-        logger.warn("[ServerResolver] Lookup capacity exhausted; using shared pool", {
-          maxInflight: this.maxInflight,
-        });
+        logger.warn(
+          this.requireAssignment
+            ? "[ServerResolver] Lookup capacity exhausted; refusing shared pool"
+            : "[ServerResolver] Lookup capacity exhausted; using shared pool",
+          { maxInflight: this.maxInflight },
+        );
       }
+      if (this.requireAssignment) throw new DedicatedServerLookupUnavailable();
       return null;
     }
 
@@ -431,11 +466,18 @@ export class ServerResolver {
   ): Promise<string | null> {
     try {
       const targetUrl = await this.fetchServer(environmentId, controller);
-      if (this.closed || generation !== this.generation) return null;
-      this.remember(environmentId, targetUrl);
+      if (this.closed || generation !== this.generation) {
+        if (this.requireAssignment) throw new DedicatedServerLookupUnavailable();
+        return null;
+      }
+      if (!this.requireAssignment) this.remember(environmentId, targetUrl);
       return targetUrl;
     } catch (error) {
-      if (this.closed || generation !== this.generation) return null;
+      if (this.closed || generation !== this.generation) {
+        if (this.requireAssignment) throw new DedicatedServerLookupUnavailable();
+        return null;
+      }
+      if (this.requireAssignment) throw new DedicatedServerLookupUnavailable();
       logger.warn("[ServerResolver] Transient error, using shared pool", {
         environmentId,
         error: getErrorMessage(error),
@@ -531,6 +573,7 @@ export class ServerResolver {
           MAX_RESPONSE_BYTES,
           controller.signal,
         ),
+        this.requireAssignment,
       );
     } catch (error) {
       if (controller.signal.aborted) throw abortReason(controller.signal);

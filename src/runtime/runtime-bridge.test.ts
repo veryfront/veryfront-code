@@ -852,8 +852,8 @@ describe("runtime-bridge", () => {
       const [modelId, modelProvider] of [
         ["veryfront-cloud/anthropic/claude-sonnet-4-6", "anthropic"],
         ["veryfront-cloud/openai/gpt-5.4", "openai"],
-        ["veryfront-cloud/google/gemini-3.1-pro-preview", "google"],
-        ["veryfront-cloud/mistral/mistral-large-2512", "mistral"],
+        ["veryfront-cloud/google/gemini-3.5-flash", "google"],
+        ["veryfront-cloud/mistral/mistral-small-2503", "mistral"],
       ] as const
     ) {
       let recorded: AgentRunEvent | undefined;

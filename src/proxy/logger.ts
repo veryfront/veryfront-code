@@ -27,6 +27,7 @@ interface ProxyRequestContext {
   releaseId?: string;
   branchId?: string;
   branchName?: string;
+  runId?: string;
   domain?: string;
   environment?: string;
 }
@@ -110,15 +111,35 @@ interface LogEntry {
   service: string;
   veryfrontVersion: string;
   message: string;
+  // camelCase aliases of the snake_case fields below. Remove each one once no
+  // Grafana dashboard, alert rule or saved Loki query filters on it.
+  /** @deprecated Use `trace_id`. */
   traceId?: string;
+  /** @deprecated Use `span_id`. */
   spanId?: string;
-  // Request context fields (at top level for Grafana filtering)
+  /** @deprecated Use `request_id`. */
   requestId?: string;
+  /** @deprecated Use `project_slug`. */
   projectSlug?: string;
+  /** @deprecated Use `project_id`. */
   projectId?: string;
+  /** @deprecated Use `release_id`. */
   releaseId?: string;
+  /** @deprecated Use `branch_id`. */
   branchId?: string;
+  /** @deprecated Use `branch_name`. */
   branchName?: string;
+  // Standard snake_case fields shared with the runtime logger and the API, so
+  // one Loki filter scopes lines from every service to a project.
+  trace_id?: string;
+  span_id?: string;
+  request_id?: string;
+  project_slug?: string;
+  project_id?: string;
+  release_id?: string;
+  branch_id?: string;
+  branch_name?: string;
+  run_id?: string;
   domain?: string;
   environment?: string;
   context?: Record<string, unknown>;
@@ -149,6 +170,49 @@ function getLogFormat(): "json" | "text" {
   return isProduction() ? "json" : "text";
 }
 
+/** Serialize one proxy log line in the JSON shape Loki ingests. */
+export function formatProxyJsonLine(
+  level: LogLevel,
+  message: string,
+  context?: Record<string, unknown>,
+  error?: unknown,
+): string {
+  const traceCtx = getTraceContext();
+  const reqCtx = getProxyRequestContext();
+
+  const entry: LogEntry = {
+    timestamp: new Date().toISOString(),
+    level,
+    service: "proxy",
+    veryfrontVersion: PROXY_RUNTIME_VERSION,
+    message,
+    ...(traceCtx.traceId && {
+      traceId: traceCtx.traceId,
+      spanId: traceCtx.spanId,
+      trace_id: traceCtx.traceId,
+      span_id: traceCtx.spanId,
+    }),
+    // Include request context fields at top level (like renderer logs)
+    ...(reqCtx?.requestId && { requestId: reqCtx.requestId, request_id: reqCtx.requestId }),
+    ...(reqCtx?.projectSlug &&
+      { projectSlug: reqCtx.projectSlug, project_slug: reqCtx.projectSlug }),
+    ...(reqCtx?.projectId && { projectId: reqCtx.projectId, project_id: reqCtx.projectId }),
+    ...(reqCtx?.releaseId && { releaseId: reqCtx.releaseId, release_id: reqCtx.releaseId }),
+    ...(reqCtx?.branchId && { branchId: reqCtx.branchId, branch_id: reqCtx.branchId }),
+    ...(reqCtx?.branchName && { branchName: reqCtx.branchName, branch_name: reqCtx.branchName }),
+    ...(reqCtx?.runId && { run_id: reqCtx.runId }),
+    ...(reqCtx?.domain && { domain: reqCtx.domain }),
+    ...(reqCtx?.environment && { environment: reqCtx.environment }),
+  };
+
+  if (context && Object.keys(context).length > 0) entry.context = context;
+
+  const serializedError = serializeError(error);
+  if (serializedError) entry.error = serializedError;
+
+  return JSON.stringify(entry);
+}
+
 class ProxyLogger {
   private log(
     level: LogLevel,
@@ -165,33 +229,7 @@ class ProxyLogger {
       return;
     }
 
-    const traceCtx = getTraceContext();
-    const reqCtx = getProxyRequestContext();
-
-    const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
-      level,
-      service: "proxy",
-      veryfrontVersion: PROXY_RUNTIME_VERSION,
-      message,
-      ...(traceCtx.traceId && { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
-      // Include request context fields at top level (like renderer logs)
-      ...(reqCtx?.requestId && { requestId: reqCtx.requestId }),
-      ...(reqCtx?.projectSlug && { projectSlug: reqCtx.projectSlug }),
-      ...(reqCtx?.projectId && { projectId: reqCtx.projectId }),
-      ...(reqCtx?.releaseId && { releaseId: reqCtx.releaseId }),
-      ...(reqCtx?.branchId && { branchId: reqCtx.branchId }),
-      ...(reqCtx?.branchName && { branchName: reqCtx.branchName }),
-      ...(reqCtx?.domain && { domain: reqCtx.domain }),
-      ...(reqCtx?.environment && { environment: reqCtx.environment }),
-    };
-
-    if (context && Object.keys(context).length > 0) entry.context = context;
-
-    const serializedError = serializeError(error);
-    if (serializedError) entry.error = serializedError;
-
-    console.log(JSON.stringify(entry));
+    console.log(formatProxyJsonLine(level, message, context, error));
   }
 
   debug(message: string, context?: Record<string, unknown>): void {

@@ -3,6 +3,10 @@ import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { revokeModelRuntimeResolver } from "../runtime/model-transport.ts";
 import { createHostedApplicationModelResolver } from "./application-model-resolver.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 
 const modelId = "veryfront-cloud/openai/gpt-4o";
 
@@ -149,5 +153,34 @@ describe("hosted application model authority", () => {
       TypeError,
       "authority is revoked",
     );
+  });
+  it("exposes the reconciliation hook of the protocol a model settles on", async () => {
+    const servedId = "veryfront-cloud/acme/acme-gemini";
+    const options = { ...resolverOptions(), allowedModelIds: new Set([servedId]) };
+    try {
+      const model = createHostedApplicationModelResolver(options)(servedId)!;
+      // Cold, an unlisted provider is built as an OpenAI-protocol model.
+      assertEquals(model._reconcileProviderMetadata, undefined);
+
+      __setVeryfrontCloudCatalogForScopeForTests(
+        { apiBaseUrl: options.apiBaseUrl, apiToken: options.authToken },
+        {
+          models: [{
+            id: "acme-gemini",
+            modelId: "acme/acme-gemini",
+            provider: "acme",
+            surface: "google",
+            operations: ["chat-completions"],
+            aliases: [],
+            capabilities: {},
+          }],
+        },
+      );
+      await model.prepare!();
+
+      assert(typeof model._reconcileProviderMetadata === "function");
+    } finally {
+      __resetVeryfrontCloudCatalogForTests();
+    }
   });
 });

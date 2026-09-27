@@ -14,6 +14,12 @@ export interface VeryfrontCloudContext {
   billingGroupRequestAdmitted?: boolean;
   projectSlug?: string;
   serviceLayer?: string;
+  /**
+   * Names the model catalog loaded for credentials this context does not hold,
+   * so synchronous model reads in a credential-free context use the same
+   * catalog as the run. It carries no credential.
+   */
+  catalogScopeKey?: string;
 }
 
 const veryfrontCloudContextStorage = new AsyncLocalStorage<VeryfrontCloudContext>();

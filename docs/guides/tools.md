@@ -164,7 +164,7 @@ persistence is unavailable, and it excludes the checkpoint from public
 messages and replay.
 
 Omit `model` to use the Cloud default (`mistral/mistral-small-2503`) with hosted
-context, or `openai/gpt-5.4-nano` with direct credentials. Set
+context, or `openai/gpt-5-nano` with direct credentials. Set
 `model: "auto"` when you want runtime defaults to choose local or Veryfront
 Cloud inference automatically.
 

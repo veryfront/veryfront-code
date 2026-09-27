@@ -806,6 +806,13 @@ Agent intent parsing error.
 - **HTTP status:** 400
 - **What to do:** Rephrase the request more clearly
 
+### agent-empty-response
+
+Assistant completed without producing a response.
+
+- **HTTP status:** 500
+- **What to do:** Retry the request or choose a different model
+
 ### orchestration-error
 
 Multi-agent orchestration error.

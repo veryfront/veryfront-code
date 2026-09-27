@@ -7,8 +7,14 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import {
+  resolveVeryfrontCloudModelId,
+  VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
+  VERYFRONT_CLOUD_CHAT_MODELS,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   AUTO_AGENT_MODEL,
   DEFAULT_AGENT_MODEL,
@@ -41,6 +47,8 @@ function clearModelEnv(): void {
 }
 
 describe("agent/runtime/model-resolution", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   afterEach(() => {
     clearModelEnv();
   });
@@ -67,7 +75,54 @@ describe("agent/runtime/model-resolution", () => {
   it("keeps self-hosted auto provider precedence when OpenAI and Mistral keys exist", () => {
     setEnv("OPENAI_API_KEY", "sk-test");
     setEnv("MISTRAL_API_KEY", "mistral-test");
-    assertEquals(resolveRuntimeModel("auto"), "openai/gpt-5.4-nano");
+    assertEquals(resolveRuntimeModel("auto"), "openai/gpt-5-nano");
+  });
+
+  it("falls back to the direct Mistral default for auto resolution when only a Mistral key exists", () => {
+    // Regression (#1898, CodeRabbit on #4609): the BYOK auto default must be a
+    // model Mistral's own API still serves, never a gateway-retirement
+    // decision. mistral-large-2512 (Mistral Large 3) is Mistral's current
+    // flagship; mistral-small-2503 looks like a live gateway model (our
+    // catalog still serves it) but Mistral itself deprecated it 2025-11-06
+    // and retired it 2025-11-30, so it 404s on a direct call.
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+    assertEquals(resolveRuntimeModel("auto"), "mistral/mistral-large-2512");
+  });
+
+  it("resolves the direct Mistral BYOK default without hitting the gateway's retired-model guard", () => {
+    // mistral-large-2512 is on #4611's gateway retirement list
+    // (isRetiredVeryfrontCloudModelId), because our own gateway no longer
+    // serves it -- Mistral's own API still does. The direct/BYOK path in
+    // resolveRuntimeModel must never consult that guard, so this must
+    // resolve cleanly rather than throw NOT_SUPPORTED.
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+    let result: string | undefined;
+    try {
+      result = resolveRuntimeModel("auto");
+    } catch (error) {
+      throw new Error(
+        `expected the direct Mistral BYOK default to resolve without throwing, got: ${error}`,
+      );
+    }
+    assertEquals(result, "mistral/mistral-large-2512");
+  });
+
+  it("resolves the direct OpenAI BYOK default without hitting the gateway's retired-model guard", () => {
+    // Same shape as the Mistral case above, for the OpenAI BYOK default.
+    // gpt-5-nano is not on the gateway retirement list, and OpenAI's own API
+    // still serves it (https://developers.openai.com/api/docs/models/gpt-5-nano,
+    // default snapshot gpt-5-nano-2025-08-07), so this is a same-behavior
+    // check rather than a regression for a currently-broken path.
+    setEnv("OPENAI_API_KEY", "sk-test");
+    let result: string | undefined;
+    try {
+      result = resolveRuntimeModel("auto");
+    } catch (error) {
+      throw new Error(
+        `expected the direct OpenAI BYOK default to resolve without throwing, got: ${error}`,
+      );
+    }
+    assertEquals(result, "openai/gpt-5-nano");
   });
 
   it("reports a default-model mismatch when only another provider has a key", () => {
@@ -93,6 +148,26 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(resolveRuntimeModel(), DEFAULT_AGENT_MODEL);
   });
 
+  it("resolves the default agent model through Veryfront Cloud with no vendor key, without hitting NOT_SUPPORTED", () => {
+    // Regression: on main, DEFAULT_AGENT_MODEL was still the gateway-retired
+    // openai/gpt-5.4-nano while #4611's isRetiredVeryfrontCloudModelId guard
+    // rejects gateway-retired ids. A hosted agent with no explicit model and
+    // no direct vendor key falls through resolveConfiguredAgentModel() to
+    // DEFAULT_AGENT_MODEL (see src/internal-agents/run-stream.ts), and that
+    // value then reaches Veryfront Cloud's own resolver
+    // (resolveVeryfrontCloudModelId) as an explicit "provider/model" string --
+    // which used to throw NOT_SUPPORTED for every such run. It must not.
+    let resolved: string | undefined;
+    try {
+      resolved = resolveVeryfrontCloudModelId(DEFAULT_AGENT_MODEL);
+    } catch (error) {
+      throw new Error(
+        `expected the default agent model to resolve through Veryfront Cloud without throwing, got: ${error}`,
+      );
+    }
+    assertEquals(resolved, DEFAULT_AGENT_MODEL);
+  });
+
   it("does not report a mismatch for an explicitly configured model", () => {
     setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
 
@@ -114,7 +189,7 @@ describe("agent/runtime/model-resolution", () => {
   it("resolves omitted and auto model config separately", () => {
     assertEquals(
       resolveConfiguredAgentModel(),
-      "openai/gpt-5.4-nano",
+      "openai/gpt-5-nano",
     );
     assertEquals(
       resolveConfiguredAgentModel("auto"),
@@ -154,10 +229,6 @@ describe("agent/runtime/model-resolution", () => {
       "openai/gpt-5.4-mini",
     );
     assertEquals(
-      resolveConfiguredAgentModel("gemini-3.1-pro"),
-      "google-ai-studio/gemini-3.1-pro-preview",
-    );
-    assertEquals(
       resolveConfiguredAgentModel("gemini-3.5-flash"),
       "google-ai-studio/gemini-3.5-flash",
     );
@@ -166,12 +237,66 @@ describe("agent/runtime/model-resolution", () => {
       "moonshotai/kimi-k2.6",
     );
     assertEquals(
-      resolveConfiguredAgentModel("mistral-large"),
-      "mistral/mistral-large-2512",
-    );
-    assertEquals(
       resolveConfiguredAgentModel("mistral-small-2503"),
       "mistral/mistral-small-2503",
+    );
+  });
+
+  it("keeps bare aliases of gateway-retired models for direct provider keys", () => {
+    assertEquals(resolveConfiguredAgentModel("gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    assertEquals(
+      resolveConfiguredAgentModel("gemini-3.1-pro"),
+      "google-ai-studio/gemini-3.1-pro-preview",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("gemini-3.1-pro-preview"),
+      "google-ai-studio/gemini-3.1-pro-preview",
+    );
+    assertEquals(resolveConfiguredAgentModel("mistral-large"), "mistral/mistral-large-2512");
+    assertEquals(
+      resolveConfiguredAgentModel("mistral-large-2512"),
+      "mistral/mistral-large-2512",
+    );
+  });
+
+  it("calls gateway-retired models directly when the vendor key is configured", () => {
+    clearModelEnv();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    setEnv("OPENAI_API_KEY", "sk-test");
+    setEnv("GOOGLE_API_KEY", "google-test");
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+
+    assertEquals(resolveRuntimeModel("gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    assertEquals(resolveRuntimeModel("gemini-3.1-pro"), "google/gemini-3.1-pro-preview");
+    assertEquals(resolveRuntimeModel("mistral-large"), "mistral/mistral-large-2512");
+  });
+
+  it("rejects gateway-retired models instead of routing them through Veryfront Cloud", () => {
+    clearModelEnv();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    for (
+      const model of [
+        "gpt-5.4-nano",
+        "openai/gpt-5.4-nano",
+        "veryfront-cloud/openai/gpt-5.4-nano",
+        "gemini-3.1-pro",
+        "google/gemini-3.1-pro-preview",
+        "veryfront-cloud/google-ai-studio/gemini-3.1-pro-preview",
+      ]
+    ) {
+      assertThrows(
+        () => resolveRuntimeModel(model),
+        Error,
+        "is no longer available through Veryfront Cloud",
+      );
+    }
+    assertThrows(
+      () => resolveRuntimeModel("veryfront-cloud/mistral/mistral-large-2512"),
+      Error,
+      'Unsupported Mistral model "veryfront-cloud/mistral/mistral-large-2512"',
     );
   });
 
@@ -229,7 +354,7 @@ describe("agent/runtime/model-resolution", () => {
 
     assertEquals(
       resolveRuntimeModel(),
-      "openai/gpt-5.4-nano",
+      "openai/gpt-5-nano",
     );
   });
 
@@ -274,6 +399,53 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
+  it("routes every catalog provider through veryfront-cloud when only hosted bootstrap is available", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    for (const provider of VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES) {
+      // Mistral model IDs are gated by the catalog, so it needs a listed one.
+      const modelId = provider === "mistral" ? "mistral-small-2503" : "model-x";
+      assertEquals(
+        resolveRuntimeModel(`${provider}/${modelId}`),
+        `veryfront-cloud/${provider}/${modelId}`,
+        provider,
+      );
+    }
+  });
+
+  it("routes every vendor the gateway catalog serves through veryfront-cloud (#1913)", () => {
+    // The vendors GET /ai/models lists. Qwen is served before the catalog
+    // snapshot in this package names it; a vendor missing here fails hosted
+    // runs with `Model provider "<vendor>" not registered`.
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    assertEquals(
+      [
+        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-5-nano",
+        "google/gemini-3.5-flash",
+        "mistral/mistral-small-2503",
+        "deepseek/deepseek-v4-flash",
+        "qwen/qwen3.8-27b",
+      ].map((model) => resolveRuntimeModel(model)),
+      [
+        "veryfront-cloud/anthropic/claude-sonnet-4-6",
+        "veryfront-cloud/openai/gpt-5-nano",
+        "veryfront-cloud/google/gemini-3.5-flash",
+        "veryfront-cloud/mistral/mistral-small-2503",
+        "veryfront-cloud/deepseek/deepseek-v4-flash",
+        "veryfront-cloud/qwen/qwen3.8-27b",
+      ],
+    );
+  });
+
+  it("keeps a gateway-only provider unrouted without hosted bootstrap", () => {
+    setEnv("OPENAI_API_KEY", "sk-test");
+    assertEquals(resolveRuntimeModel("qwen/qwen3.8-27b"), "qwen/qwen3.8-27b");
+  });
+
   it("routes catalog Gemini, Mistral, and Kimi models through veryfront-cloud when only hosted bootstrap is available", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
@@ -288,11 +460,7 @@ describe("agent/runtime/model-resolution", () => {
     );
     assertEquals(
       resolveRuntimeModel("mistral/mistral-large-2512"),
-      "veryfront-cloud/mistral/mistral-large-2512",
-    );
-    assertEquals(
-      resolveRuntimeModel("mistral-large"),
-      "veryfront-cloud/mistral/mistral-large-2512",
+      "mistral/mistral-large-2512",
     );
     assertEquals(
       resolveRuntimeModel("mistral-small-2503"),
@@ -309,10 +477,6 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(
       resolveRuntimeModel("kimi-k2.6"),
       "veryfront-cloud/moonshotai/kimi-k2.6",
-    );
-    assertEquals(
-      resolveRuntimeModel("mistral-large"),
-      "veryfront-cloud/mistral/mistral-large-2512",
     );
   });
 

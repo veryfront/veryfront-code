@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import {
@@ -74,6 +76,8 @@ async function drain(stream: ReadableStream<unknown>) {
 }
 
 describe("hosted ordinary application model resolver", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("audits adaptive Cloud transport for generation and streaming on the same model", async () => {
     const resolver = createHostedApplicationModelResolver(resolverOptions());
     try {
@@ -101,7 +105,7 @@ describe("hosted ordinary application model resolver", () => {
           const request = new Request(input, init);
           assertEquals(
             new URL(request.url).pathname,
-            `/ai/gateway/openai/v1/${useHostedTool ? "responses" : "chat/completions"}`,
+            `/ai/v1/${useHostedTool ? "responses" : "chat/completions"}`,
           );
           const body = await request.json();
           for (
@@ -275,7 +279,7 @@ describe("hosted ordinary application model resolver", () => {
       assertEquals(request.project, null);
       assertEquals(request.billing, null);
       assertEquals(request.scopedToken, appToken);
-      assert(request.url.startsWith("https://example.com/ai/gateway/openai/"));
+      assert(request.url.startsWith("https://example.com/ai/v1/"));
     }
   });
 
@@ -389,7 +393,7 @@ describe("hosted ordinary application model resolver", () => {
       requests++;
       const request = new Request(requestInput, init);
       assertEquals(request.headers.get("authorization"), `Bearer ${appToken}`);
-      assert(request.url.startsWith("https://example.com/ai/gateway/openai/"));
+      assert(request.url.startsWith("https://example.com/ai/v1/"));
       const body = await request.json();
       return response(body.stream === true);
     }, async () => {

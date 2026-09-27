@@ -79,6 +79,10 @@ import {
 } from "#veryfront/tool/result.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { isStatefulTurnCycleError } from "#veryfront/agent/runtime/stateful-turn-lineage.ts";
+import {
+  EMPTY_RESPONSE_ERROR_CODE,
+  isRuntimeEmptyResponseError,
+} from "./empty-response-recovery.ts";
 
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
@@ -220,6 +224,9 @@ function resolveRuntimeFallbackErrorEvent(error: unknown): RuntimeStreamErrorEve
 export function resolveRelayableExecutionFailure(
   error: unknown,
 ): { message: string; code?: string } | undefined {
+  if (isRuntimeEmptyResponseError(error)) {
+    return { message: error.message, code: EMPTY_RESPONSE_ERROR_CODE };
+  }
   const providerFailure = readRuntimeProviderStreamFailureCause(error);
   if (providerFailure.found) {
     const knownProviderError = resolveKnownProviderTerminalError(providerFailure.cause);
@@ -240,6 +247,13 @@ export function resolveRelayableExecutionFailure(
 
 /** Serialize an outer runtime failure without inferring provider provenance. */
 export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStreamErrorEvent {
+  if (isRuntimeEmptyResponseError(error)) {
+    return {
+      type: "error",
+      error: error.message,
+      code: EMPTY_RESPONSE_ERROR_CODE,
+    };
+  }
   const providerFailure = readRuntimeProviderStreamFailureCause(error);
   if (providerFailure.found) {
     const knownProviderError = resolveKnownProviderTerminalError(providerFailure.cause);

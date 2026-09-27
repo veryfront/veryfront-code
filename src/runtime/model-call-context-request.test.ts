@@ -1,5 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { createWarningCollector } from "#veryfront/provider/shared/index.ts";
 import {
@@ -7,6 +9,7 @@ import {
   resolveVeryfrontCloudOpenAITransport,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
+import { registerVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { buildOpenAIChatRequest } from "../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
 import { buildOpenAIResponsesRequest } from "../../extensions/ext-llm-openai/src/openai-responses-request-builder.ts";
 import { buildAnthropicMessagesRequest } from "../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
@@ -34,6 +37,8 @@ const samplingFields = [
 ] as const;
 
 describe("model call request projection", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("matches OpenAI-compatible Cloud controls including Kimi fixed sampling", () => {
     for (
       const [modelProvider, modelId] of [["mistral", "mistral-large"], [
@@ -322,6 +327,30 @@ describe("model call request projection", () => {
     );
     assertEquals(projected?.reasoning, { enabled: true });
     assertEquals((body.output_config as Record<string, unknown>).effort, undefined);
+  });
+
+  it("records native controls by served surface for a newly served provider", () => {
+    const options: ModelRuntimeCallOptions = {
+      prompt,
+      providerOptions: {
+        anthropic: { thinking: { type: "adaptive" }, output_config: { effort: "high" } },
+      },
+    };
+    const project = (modelProvider: string) => {
+      const model = { provider: "veryfront-cloud", modelProvider, modelId: "m1" };
+      registerVeryfrontCloudModelFacts(model as never, () =>
+        ({
+          provider: modelProvider,
+          surface: "anthropic",
+          native: false,
+          transportPlan: "chat-completions",
+        }) as never);
+      return buildModelCallContextRequest(model, options);
+    };
+
+    // A provider served on the Anthropic surface records what anthropic/* records.
+    assertEquals(project("acme"), project("anthropic"));
+    assertEquals(project("acme")?.reasoning?.enabled, true);
   });
 
   for (const modelId of ["gpt-5.4", "gpt-5.5"]) {

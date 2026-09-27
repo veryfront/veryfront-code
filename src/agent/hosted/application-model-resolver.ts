@@ -6,6 +6,10 @@ import {
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createVeryfrontCloudModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
+import {
+  readVeryfrontCloudModelFacts,
+  registerVeryfrontCloudModelFacts,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { requireSecureInferenceApiBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import {
   type AgentModelRuntimeResolver,
@@ -135,15 +139,30 @@ export function createHostedApplicationModelResolver(input: {
         assertCredentialActive: assertActive,
       })
     );
-    const reconcile = model._reconcileProviderMetadata;
+    // Metadata is read from the model on each access: a Veryfront Cloud model
+    // may settle a different protocol and capabilities on its first async step.
     const proxy: ModelRuntime<ModelRuntimeCallOptions> = Object.freeze({
-      specificationVersion: model.specificationVersion,
-      provider: model.provider,
-      modelProvider: model.modelProvider,
-      modelId: model.modelId,
-      executionMode: model.executionMode,
-      runtimeCapabilities: model.runtimeCapabilities,
-      _generateViaStream: model._generateViaStream,
+      get specificationVersion() {
+        return model.specificationVersion;
+      },
+      get provider() {
+        return model.provider;
+      },
+      get modelProvider() {
+        return model.modelProvider;
+      },
+      get modelId() {
+        return model.modelId;
+      },
+      get executionMode() {
+        return model.executionMode;
+      },
+      get runtimeCapabilities() {
+        return model.runtimeCapabilities;
+      },
+      get _generateViaStream() {
+        return model._generateViaStream;
+      },
       async prepare(abortSignal?: AbortSignal) {
         await run(callScope(abortSignal), (signal) => model.prepare?.(signal));
       },
@@ -175,19 +194,24 @@ export function createHostedApplicationModelResolver(input: {
           throw error;
         }
       },
-      ...(typeof reconcile === "function"
-        ? {
-          async _reconcileProviderMetadata(options: {
-            providerMetadata: Record<string, unknown>;
-            suppressedToolCalls: readonly { id: string; name: string }[];
-            abortSignal?: AbortSignal;
-          }) {
-            return await run(callScope(options.abortSignal), (signal) =>
-              reconcile.call(model, { ...options, abortSignal: signal }));
-          },
-        }
-        : {}),
+      // Read when described and when invoked: a model rebuilt onto another
+      // protocol may gain or lose its reconciliation hook.
+      get _reconcileProviderMetadata() {
+        const reconcile = model._reconcileProviderMetadata;
+        if (typeof reconcile !== "function") return undefined;
+        return async (options: {
+          providerMetadata: Record<string, unknown>;
+          suppressedToolCalls: readonly { id: string; name: string }[];
+          abortSignal?: AbortSignal;
+        }) =>
+          await run(
+            callScope(options.abortSignal),
+            (signal) => reconcile.call(model, { ...options, abortSignal: signal }),
+          );
+      },
     });
+    // The proxy reports the facts of the model it calls.
+    registerVeryfrontCloudModelFacts(proxy, () => readVeryfrontCloudModelFacts(model)!);
     models.set(id, proxy);
     return proxy;
   };

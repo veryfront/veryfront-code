@@ -41,7 +41,10 @@ When code runs inside Veryfront, the SDK adds request-scoped labels for
 `project_id`, `project_slug`, `environment`, and `branch` for preview requests.
 Preview requests without an explicit branch use `branch="main"`. User code
 should not provide or trust those labels for isolation; the platform-owned
-request context wins.
+request context wins. In shared Veryfront runtimes, `service_name`,
+`service_version` and `deployment_environment` name the runtime service, its
+release and the platform deployment, such as `staging`, that exported the
+sample.
 
 ## Emit eval metrics
 
@@ -84,7 +87,34 @@ Metric labels become query dimensions. Keep them low-cardinality and safe:
 
 Use a small allowlist per metric. Do not put tenant identity, project identity,
 credentials, or personally identifiable data into user-supplied labels.
-Project, environment, and preview branch labels are injected by the platform.
+Project, environment, and preview branch labels are injected by the platform;
+values that project code passes for them are ignored.
+
+In Veryfront runtimes, the SDK drops a sample instead of exporting it when:
+
+- the metric name does not match `[A-Za-z_][A-Za-z0-9_.:]*` or is longer than
+  128 characters
+- it carries more than 16 labels of its own, a label name that does not match
+  `[A-Za-z_][A-Za-z0-9_.]*` or is longer than 128 characters, or a label value
+  longer than 256 characters
+- it would start a new name and label combination after the project has created
+  500 in the current runtime process
+
+## Query sparse counters
+
+Each runtime process exports its own cumulative totals and is identified by the
+`service.instance.id` resource attribute, so sum across instances after taking
+per-series differences. When a counter series is new, or has been idle for more
+than five minutes, the SDK exports its previous total just before the new one.
+That keeps counters from scheduled jobs countable: for events emitted once a day,
+`max_over_time(...) - min_over_time(...)` over the window counts every increment,
+where `increase()` extrapolates from too few samples:
+
+```promql
+sum by (outcome) (
+  max_over_time(vf_job_items_total[1d]) - min_over_time(vf_job_items_total[1d])
+)
+```
 
 ## Relationship to OpenTelemetry
 

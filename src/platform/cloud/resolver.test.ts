@@ -13,6 +13,10 @@ import {
   createTestConfig,
 } from "#veryfront/config/runtime-config.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForTests,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
@@ -114,6 +118,22 @@ describe("platform/cloud/resolver", () => {
       getDefaultVeryfrontCloudEmbeddingModel(),
       "veryfront-cloud/openai/text-embedding-3-small",
     );
+  });
+
+  it("defaults to the served default model once the catalog loads, unless overridden", () => {
+    assertEquals(getDefaultVeryfrontCloudModel(), "veryfront-cloud/mistral/mistral-small-2503");
+
+    __setVeryfrontCloudCatalogForTests({
+      models: [],
+      defaultModelId: "anthropic/claude-sonnet-4-6",
+    });
+    try {
+      assertEquals(getDefaultVeryfrontCloudModel(), "veryfront-cloud/anthropic/claude-sonnet-4-6");
+      setEnv("VERYFRONT_DEFAULT_MODEL", "openai/gpt-5.2");
+      assertEquals(getDefaultVeryfrontCloudModel(), "veryfront-cloud/openai/gpt-5.2");
+    } finally {
+      __resetVeryfrontCloudCatalogForTests();
+    }
   });
 
   it("lets scoped cloud context override env bootstrap values", () => {

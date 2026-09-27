@@ -1,5 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import {
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
   findVeryfrontCloudModel,
@@ -62,6 +64,8 @@ function runtimeAccepts(modelId: string): boolean {
 }
 
 describe("veryfront-cloud model id rule", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   for (const modelId of MODEL_IDS) {
     it(`agrees with the runtime about ${JSON.stringify(modelId)}`, () => {
       assertEquals(
@@ -134,6 +138,8 @@ function representativePayload(): Record<string, unknown> {
  * new way of producing one is caught here rather than found in the catalog.
  */
 describe("veryfront-cloud catalog round trip", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("resolves every shipped entry back to itself", () => {
     assertEquals(VERYFRONT_CLOUD_CHAT_MODELS.length > 0, true);
 

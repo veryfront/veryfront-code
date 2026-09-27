@@ -2343,6 +2343,7 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.projectId, "proj-123");
         assertEquals(ctx.releaseId, "rel-123");
         assertEquals(ctx.defaultBranchName, "trunk");
+        assertEquals(ctx.runId, "run_1");
         const forwarded = injectContextHeaders(req, ctx);
         const runtimeHeaders = extractRequestHeaders(
           forwarded,
@@ -2374,6 +2375,7 @@ describe("Proxy Handler", () => {
         );
         assertEquals(rejected.error?.status, 401);
         assertEquals(rejected.token, undefined);
+        assertEquals(rejected.runId, undefined);
 
         await handler.close();
         handler = undefined;

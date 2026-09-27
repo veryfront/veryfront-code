@@ -1,20 +1,28 @@
 import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
 import { isOpenAIReasoningModel } from "../shared/openai-reasoning.ts";
+import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import type { ModelRuntime } from "../types.ts";
+import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import {
-  DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION,
-  DEFAULT_VERYFRONT_CLOUD_MODEL_ID as CATALOG_DEFAULT_MODEL_ID,
-  DEFAULT_VERYFRONT_CLOUD_SURFACE,
-  VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES,
-  VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX,
-  VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES,
-  VERYFRONT_CLOUD_PROVIDER_ALIASES,
-  VERYFRONT_CLOUD_PROVIDER_LABELS as PROVIDER_LABELS,
-  VERYFRONT_CLOUD_PROVIDER_ORDER as PROVIDER_ORDER,
-  VERYFRONT_CLOUD_PROVIDER_ROUTING,
-  VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS,
-  type VeryfrontCloudModelTransportCapabilities,
-  type VeryfrontCloudProviderRouting,
-} from "./model-catalog.data.ts";
+  hasActiveVeryfrontCloudCatalogScope,
+  isVeryfrontCloudCatalogFresh,
+  peekVeryfrontCloudCatalog,
+  type VeryfrontCloudCatalog,
+  type VeryfrontCloudCatalogModel,
+  type VeryfrontCloudCatalogScopeKey,
+  veryfrontCloudCatalogScopeKey,
+} from "./catalog-client.ts";
+import { SHIPPED_VERYFRONT_CLOUD_CATALOG } from "./model-catalog.deprecated.ts";
+
+export {
+  DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL,
+  findVeryfrontCloudModel,
+  findVeryfrontCloudModelByModelId,
+  groupVeryfrontCloudModelsByProvider,
+  VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
+  VERYFRONT_CLOUD_CHAT_MODELS,
+} from "./model-catalog.deprecated.ts";
 
 /**
  * Veryfront Cloud providers listed in the catalog of this package.
@@ -43,6 +51,16 @@ export type VeryfrontCloudProviderId =
   | KnownVeryfrontCloudProviderId
   | (string & Record<never, never>);
 
+/**
+ * A provider-qualified Veryfront Cloud model ID, for example
+ * `anthropic/claude-sonnet-4-6`. Any provider and model the platform serves
+ * fits, so a new model needs no release of this package.
+ */
+export type VeryfrontCloudModelId = `${string}/${string}`;
+
+/** A model ID routed through Veryfront Cloud: `veryfront-cloud/<provider>/<model>`. */
+export type VeryfrontCloudRuntimeModelId = `veryfront-cloud/${string}/${string}`;
+
 /** Wire format a Veryfront Cloud gateway endpoint speaks. */
 export type VeryfrontCloudWireSurface = "openai" | "anthropic" | "google";
 
@@ -54,6 +72,24 @@ export type VeryfrontCloudWireSurface = "openai" | "anthropic" | "google";
 export type VeryfrontCloudSurfaceId =
   | VeryfrontCloudWireSurface
   | (string & Record<never, never>);
+
+/**
+ * Gateway routing for one provider: the wire format its endpoint speaks, and
+ * whether it implements that format natively. On the OpenAI surface, only a
+ * native provider can use the Responses transport.
+ */
+export type VeryfrontCloudProviderRouting = {
+  readonly surface: VeryfrontCloudSurfaceId;
+  readonly native?: boolean;
+};
+
+/** Model-specific transport capabilities that cannot be inferred from the provider family. */
+type VeryfrontCloudModelTransportCapabilities = {
+  readonly anthropicThinkingMode?: "adaptive";
+  readonly openAITransport?: "chat-completions" | "responses";
+  readonly openAIChatReasoningWithFunctionTools?: boolean;
+  readonly openAIChatPreserveSystemMessages?: boolean;
+};
 
 /** Configuration used by Veryfront Cloud model thinking. */
 export type VeryfrontCloudModelThinkingConfig = {
@@ -88,32 +124,219 @@ function requireThinkingBudgetTokens(value: unknown): number | undefined {
 }
 
 /**
- * Default Veryfront Cloud model ID used when no model is configured.
- * Update this when the current default is deprecated — otherwise the default
- * path silently breaks for users who have not set an explicit model.
+ * Short ID of the built-in default model, used when no model is configured
+ * and the served catalog has not been loaded.
  */
-export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = CATALOG_DEFAULT_MODEL_ID;
+export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "mistral-small-2503";
 /** Shared Veryfront Cloud model prefix value. */
 export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
+/** Provider-qualified ID of the built-in default model. */
+export const DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID: VeryfrontCloudModelId =
+  "mistral/mistral-small-2503";
+/** Veryfront Cloud runtime ID of the built-in default model. */
+export const DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID: VeryfrontCloudRuntimeModelId =
+  `veryfront-cloud/${DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID}`;
 
-/** Private runtime Map for alias lookups, built from the frozen data entries. */
-const _providerAliasMap = new Map(VERYFRONT_CLOUD_PROVIDER_ALIASES);
-/** Private runtime Map for transport-capability lookups, built from the frozen data entries. */
-const _transportCapabilitiesMap = new Map(
-  VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES,
-);
-/** Private runtime Map for provider routing lookups, built from the frozen data entries. */
-const _providerRoutingMap = new Map(VERYFRONT_CLOUD_PROVIDER_ROUTING);
-/** Private runtime Map for gateway API version lookups, built from the frozen data entries. */
-const _surfaceGatewayApiVersionMap = new Map(
-  VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS,
-);
+/**
+ * Provider-qualified ID of the default model: the one the served catalog
+ * names once it is loaded, otherwise the built-in default.
+ */
+export function resolveVeryfrontCloudDefaultModelId(): VeryfrontCloudModelId {
+  const served = loadedCatalog()?.defaultModelId;
+  return served !== undefined && served.includes("/")
+    ? served as VeryfrontCloudModelId
+    : DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID;
+}
 
-/** Resolve a supported gateway provider alias without consulting object prototypes. */
+/** Leading gateway path segments of a vendor-scoped route, shared by every surface. */
+const VENDOR_GATEWAY_PATH_PREFIX = "ai/gateway";
+/** Vendor-scoped gateway API version per wire protocol. */
+const VENDOR_GATEWAY_API_VERSIONS: ReadonlyMap<string, string> = new Map([
+  ["anthropic", "v1"],
+  ["openai", "v1"],
+  ["google", "v1beta"],
+]);
+/** Vendor-scoped gateway API version for a protocol without its own entry. */
+const DEFAULT_VENDOR_GATEWAY_API_VERSION = "v1";
+/** Surface used for a provider the served catalog does not describe. */
+const DEFAULT_VERYFRONT_CLOUD_SURFACE = "openai";
+/**
+ * Providers named after the wire protocol they implement. When no catalog
+ * describes a provider, one of these speaks its own protocol natively and any
+ * other provider speaks the default surface.
+ */
+const PROTOCOL_NAMED_PROVIDERS: ReadonlySet<string> = new Set(["openai", "anthropic", "google"]);
+/**
+ * Provider spellings that name a protocol-named provider. A protocol fact, not
+ * a model fact: it holds whether or not a catalog has loaded.
+ */
+const PROTOCOL_PROVIDER_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["google-ai-studio", "google"],
+]);
+
+/** Lookups built once per loaded catalog. */
+interface ServedCatalogIndex {
+  /** Provider segment of a served model ID -> the canonical provider it belongs to. */
+  readonly providerAliases: ReadonlyMap<string, string>;
+  /** Canonical provider -> routing derived from its served models. */
+  readonly routing: ReadonlyMap<string, Readonly<VeryfrontCloudProviderRouting>>;
+  /** `<canonical provider>/<model>` -> served model. */
+  readonly byKey: ReadonlyMap<string, VeryfrontCloudCatalogModel>;
+  /** Short ID or bare alias -> served model. */
+  readonly byShortId: ReadonlyMap<string, VeryfrontCloudCatalogModel>;
+  /** Exact provider-qualified model ID -> served model. */
+  readonly byModelId: ReadonlyMap<string, VeryfrontCloudCatalogModel>;
+}
+
+const servedIndexes = new WeakMap<VeryfrontCloudCatalog, ServedCatalogIndex>();
+
+function modelSegment(modelId: string): string {
+  return modelId.slice(modelId.indexOf("/") + 1);
+}
+
+function buildServedIndex(catalog: VeryfrontCloudCatalog): ServedCatalogIndex {
+  const providerAliases = new Map<string, string>();
+  const surfaces = new Map<string, string>();
+  const operationsKnown = new Set<string>();
+  const servesResponses = new Set<string>();
+  const byKey = new Map<string, VeryfrontCloudCatalogModel>();
+  const byShortId = new Map<string, VeryfrontCloudCatalogModel>();
+  const byModelId = new Map<string, VeryfrontCloudCatalogModel>();
+
+  for (const model of catalog.models) {
+    const slashIndex = model.modelId.indexOf("/");
+    if (slashIndex <= 0) continue;
+    const segment = model.modelId.slice(0, slashIndex);
+    if (!providerAliases.has(segment)) providerAliases.set(segment, model.provider);
+    if (!providerAliases.has(model.provider)) providerAliases.set(model.provider, model.provider);
+    if (model.surface !== undefined && !surfaces.has(model.provider)) {
+      surfaces.set(model.provider, model.surface);
+    }
+    if (model.operations !== undefined) {
+      operationsKnown.add(model.provider);
+      if (model.operations.includes("responses")) servesResponses.add(model.provider);
+    }
+    const key = `${model.provider}/${modelSegment(model.modelId)}`;
+    if (!byKey.has(key)) byKey.set(key, model);
+    if (!byModelId.has(model.modelId)) byModelId.set(model.modelId, model);
+    for (const shortId of [model.id, ...model.aliases]) {
+      if (!shortId.includes("/") && !byShortId.has(shortId)) byShortId.set(shortId, model);
+    }
+  }
+
+  const routing = new Map<string, Readonly<VeryfrontCloudProviderRouting>>();
+  for (const [provider, surface] of surfaces) {
+    // A provider is native to the OpenAI surface when the platform serves the
+    // Responses operation for one of its models. An API that serves no
+    // operations yet leaves the protocol-named rule in place.
+    const native = surface !== "openai"
+      ? true
+      : operationsKnown.has(provider)
+      ? servesResponses.has(provider)
+      : PROTOCOL_NAMED_PROVIDERS.has(provider);
+    routing.set(provider, Object.freeze({ surface, native }));
+  }
+
+  return { providerAliases, routing, byKey, byShortId, byModelId };
+}
+
+/**
+ * The scope synchronous reads use: the one a model build names, otherwise the
+ * ambient Veryfront Cloud credentials. Undefined without credentials.
+ */
+function ambientScope():
+  | { apiBaseUrl: string; apiToken: string; projectSlug?: string }
+  | undefined {
+  let bootstrap: ReturnType<typeof getVeryfrontCloudBootstrap>;
+  try {
+    bootstrap = getVeryfrontCloudBootstrap();
+  } catch {
+    return undefined;
+  }
+  if (!bootstrap.apiToken || !bootstrap.apiBaseUrl) return undefined;
+  return {
+    apiBaseUrl: bootstrap.apiBaseUrl,
+    apiToken: bootstrap.apiToken,
+    ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
+  };
+}
+
+/**
+ * @internal The non-secret key of the catalog synchronous reads use outside a
+ * model build: the ambient credentials' scope, or, in a context that does not
+ * hold credentials, the scope key it carries. Undefined when neither applies.
+ */
+export function currentVeryfrontCloudCatalogScopeKey(): VeryfrontCloudCatalogScopeKey | undefined {
+  const scope = ambientScope();
+  if (scope) return veryfrontCloudCatalogScopeKey(scope);
+  const carried = getCurrentVeryfrontCloudContext()?.catalogScopeKey;
+  return carried ? carried as VeryfrontCloudCatalogScopeKey : undefined;
+}
+
+/** The served catalog loaded for the scope reads use, or undefined before it loads. */
+function loadedCatalog(): VeryfrontCloudCatalog | undefined {
+  if (hasActiveVeryfrontCloudCatalogScope()) return peekVeryfrontCloudCatalog();
+  const key = currentVeryfrontCloudCatalogScopeKey();
+  // A scope-less read still sees a catalog fixed by a test hook.
+  return key ? peekVeryfrontCloudCatalog(key) : peekVeryfrontCloudCatalog();
+}
+
+/**
+ * Whether the catalog reads use may refuse a model it does not list: a fresh
+ * served catalog, or the shipped list while none has loaded. A stale served
+ * catalog may miss a model the platform has enabled since, so a refusal waits
+ * until it is refreshed and the platform answers for the model meanwhile.
+ */
+export function canVeryfrontCloudCatalogRefuse(): boolean {
+  if (loadedCatalog() === undefined) return true;
+  if (hasActiveVeryfrontCloudCatalogScope()) return isVeryfrontCloudCatalogFresh();
+  const key = currentVeryfrontCloudCatalogScopeKey();
+  return key ? isVeryfrontCloudCatalogFresh(key) : isVeryfrontCloudCatalogFresh();
+}
+
+/**
+ * Whether the served catalog loaded for the current scope lists this model,
+ * under any accepted spelling. A listed model is a Veryfront Cloud candidate
+ * even when its provider is one this package does not name.
+ */
+export function isListedInServedVeryfrontCloudCatalog(modelId: string): boolean {
+  if (loadedCatalog() === undefined) return false;
+  const model = servedIndex().byKey.get(canonicalVeryfrontCloudModelKey(modelId));
+  return model !== undefined && !isRetiredVeryfrontCloudModelId(model.modelId);
+}
+
+/**
+ * Whether a served catalog has loaded for the scope reads use right now. While
+ * it has not, reads fall back to the shipped list, which cannot know models
+ * the platform added since, so a caller should not refuse a model on it alone.
+ */
+export function isVeryfrontCloudCatalogLoaded(): boolean {
+  return loadedCatalog() !== undefined;
+}
+
+/**
+ * The index reads use: the served catalog loaded for the current scope, or the
+ * shipped list while none has loaded for it.
+ */
+function servedIndex(): ServedCatalogIndex {
+  const catalog = loadedCatalog() ?? SHIPPED_VERYFRONT_CLOUD_CATALOG;
+  let index = servedIndexes.get(catalog);
+  if (!index) {
+    index = buildServedIndex(catalog);
+    servedIndexes.set(catalog, index);
+  }
+  return index;
+}
+
+/**
+ * Canonical provider for a provider segment the catalog spells, for example
+ * `google-ai-studio` for `google`. Undefined when neither the catalog nor the
+ * protocol aliases name the segment.
+ */
 export function normalizeVeryfrontCloudProviderAlias(
   provider: string,
-): KnownVeryfrontCloudProviderId | undefined {
-  return _providerAliasMap.get(provider);
+): VeryfrontCloudProviderId | undefined {
+  return servedIndex().providerAliases.get(provider) ?? PROTOCOL_PROVIDER_ALIASES.get(provider);
 }
 
 /**
@@ -147,18 +370,33 @@ export function resolveVeryfrontCloudProviderId(
     : undefined;
 }
 
-/** Routing used for a provider the catalog data does not list. */
+/** Routing used for a provider the served catalog does not describe. */
 const DEFAULT_PROVIDER_ROUTING: Readonly<VeryfrontCloudProviderRouting> = Object
   .freeze({
     surface: DEFAULT_VERYFRONT_CLOUD_SURFACE,
   });
 
-/** Gateway routing declared for a provider, or the default for an unlisted one. */
+/** Routing of a provider named after its protocol, used until the catalog describes it. */
+const PROTOCOL_NAMED_ROUTING: ReadonlyMap<string, Readonly<VeryfrontCloudProviderRouting>> =
+  new Map(
+    [...PROTOCOL_NAMED_PROVIDERS].map((
+      protocol,
+    ) => [protocol, Object.freeze({ surface: protocol, native: true })]),
+  );
+
+/**
+ * Gateway routing for a provider, as the served catalog describes it. Before
+ * the catalog is loaded, and for a provider it does not describe, a provider
+ * named after a protocol speaks that protocol natively and any other provider
+ * speaks the default surface.
+ */
 export function resolveVeryfrontCloudProviderRouting(
   provider: string,
 ): Readonly<VeryfrontCloudProviderRouting> {
   const canonical = normalizeVeryfrontCloudProviderAlias(provider) ?? provider;
-  return _providerRoutingMap.get(canonical) ?? DEFAULT_PROVIDER_ROUTING;
+  return servedIndex().routing.get(canonical) ??
+    PROTOCOL_NAMED_ROUTING.get(canonical) ??
+    DEFAULT_PROVIDER_ROUTING;
 }
 
 /** Wire format the given provider's gateway endpoint speaks. */
@@ -200,10 +438,10 @@ export function resolveVeryfrontCloudGatewayPath(
 ): string | undefined {
   const providerId = resolveVeryfrontCloudProviderId(provider);
   if (!providerId) return undefined;
-  const apiVersion = _surfaceGatewayApiVersionMap.get(
+  const apiVersion = VENDOR_GATEWAY_API_VERSIONS.get(
     resolveVeryfrontCloudSurface(providerId),
-  ) ?? DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION;
-  return `${VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX}/${providerId}/${apiVersion}`;
+  ) ?? DEFAULT_VENDOR_GATEWAY_API_VERSION;
+  return `${VENDOR_GATEWAY_PATH_PREFIX}/${providerId}/${apiVersion}`;
 }
 
 /**
@@ -241,12 +479,38 @@ export function canonicalVeryfrontCloudModelKey(modelId: string): string {
     : `${provider}/${normalizedModelId.slice(slashIndex + 1)}`;
 }
 
+/**
+ * The served model a model ID names: by provider-qualified ID in any provider
+ * spelling, or by short ID or bare alias. Undefined before the catalog is
+ * loaded, or when the catalog does not list the model.
+ */
+function findServedModel(modelId: string): VeryfrontCloudCatalogModel | undefined {
+  const index = servedIndex();
+  return index.byKey.get(canonicalVeryfrontCloudModelKey(modelId)) ??
+    index.byShortId.get(normalizeVeryfrontCloudModelId(modelId));
+}
+
+function isOpenAITransport(value: string | undefined): value is "chat-completions" | "responses" {
+  return value === "chat-completions" || value === "responses";
+}
+
 function getVeryfrontCloudModelTransportCapabilities(
   modelId: string,
 ): Readonly<VeryfrontCloudModelTransportCapabilities> | undefined {
-  return _transportCapabilitiesMap.get(
-    canonicalVeryfrontCloudModelKey(modelId),
-  );
+  const model = findServedModel(modelId);
+  if (!model) return undefined;
+  return {
+    ...(model.surface === "anthropic" && model.reasoningMode === "adaptive"
+      ? { anthropicThinkingMode: "adaptive" as const }
+      : {}),
+    ...(isOpenAITransport(model.transport) ? { openAITransport: model.transport } : {}),
+    ...(model.chatCompletionsReasoningWithFunctionTools === undefined ? {} : {
+      openAIChatReasoningWithFunctionTools: model.chatCompletionsReasoningWithFunctionTools,
+    }),
+    ...(model.chatCompletionsConsecutiveSystemMessages === undefined ? {} : {
+      openAIChatPreserveSystemMessages: model.chatCompletionsConsecutiveSystemMessages,
+    }),
+  };
 }
 
 /** Resolves a model-specific OpenAI transport override for Veryfront Cloud. */
@@ -324,6 +588,12 @@ export function resolveVeryfrontCloudOpenAITransportPlan(
   if (declared !== undefined) {
     return declared === "responses" ? RESPONSES_PINNED : CHAT_COMPLETIONS_PINNED;
   }
+  // A model the platform does not serve on Responses keeps to chat completions,
+  // even when its provider serves Responses for other models.
+  const operations = findServedModel(catalogModelId)?.operations;
+  if (operations !== undefined && !operations.includes("responses")) {
+    return CHAT_COMPLETIONS_PINNED;
+  }
   if (resolveVeryfrontCloudModelThinking(catalogModelId)?.enabled === true) {
     return RESPONSES_PINNED;
   }
@@ -333,6 +603,41 @@ export function resolveVeryfrontCloudOpenAITransportPlan(
     return RESPONSES_PINNED;
   }
   return CHAT_COMPLETIONS_ADAPTIVE;
+}
+
+/** @internal The catalog facts one built Veryfront Cloud model was built with. */
+export interface VeryfrontCloudModelFacts {
+  readonly provider: string;
+  readonly surface: VeryfrontCloudSurfaceId;
+  readonly native: boolean;
+  readonly transportPlan: VeryfrontCloudOpenAITransportPlan;
+  readonly openAITransport?: "chat-completions" | "responses";
+  readonly openAIChatReasoningWithFunctionTools?: boolean;
+  readonly openAIChatPreserveSystemMessages?: boolean;
+}
+
+const builtModelFacts = createPrivateWeakStore<ModelRuntime, () => VeryfrontCloudModelFacts>();
+
+/** @internal Record where a built model's current facts are read from. */
+export function registerVeryfrontCloudModelFacts(
+  model: ModelRuntime,
+  read: () => VeryfrontCloudModelFacts,
+): void {
+  builtModelFacts.set(model, read);
+}
+
+/**
+ * @internal The facts a Veryfront Cloud model built by this package currently
+ * calls with, so a record of a call describes the request actually sent.
+ * Undefined for any other object.
+ */
+export function readVeryfrontCloudModelFacts(
+  model: unknown,
+): VeryfrontCloudModelFacts | undefined {
+  if (model === null || (typeof model !== "object" && typeof model !== "function")) {
+    return undefined;
+  }
+  return builtModelFacts.get(model as ModelRuntime)?.();
 }
 
 /** Transport one call uses, given whether that call carries a hosted tool. */
@@ -350,13 +655,6 @@ export function resolveVeryfrontCloudOpenAICallTransport(
 }
 
 /**
- * Returns true if the given model ID is a Mistral model in the catalog.
- *
- * Compared by canonical key on both sides, so a catalog entry served under a
- * provider alias and a request spelling the canonical provider (or carrying
- * the gateway prefix) still meet.
- */
-/**
  * Whether an id is a Mistral id under any spelling the runtime accepts: the
  * gateway prefix stripped and the provider segment resolved through the alias
  * table, so an alias of the provider is gated exactly as the canonical one.
@@ -365,52 +663,39 @@ function isMistralModelId(modelId: string): boolean {
   return canonicalVeryfrontCloudModelKey(modelId).startsWith("mistral/");
 }
 
+/**
+ * Model ids the gateway no longer serves, keyed by canonical provider.
+ * Removing them from the catalog is not enough: explicit provider ids pass
+ * through unlisted, and the shipped list still backs reads before the served
+ * catalog loads, so the gateway boundary rejects these by name. They stay
+ * usable with the vendor's own key.
+ */
+const RETIRED_VERYFRONT_CLOUD_MODEL_KEYS: ReadonlySet<string> = new Set([
+  "openai/gpt-5.4-nano",
+  "google/gemini-3.1-pro-preview",
+  "mistral/mistral-large-2512",
+]);
+
+/** Whether the gateway has retired this model id, under any accepted spelling. */
+export function isRetiredVeryfrontCloudModelId(modelId: string): boolean {
+  return RETIRED_VERYFRONT_CLOUD_MODEL_KEYS.has(canonicalVeryfrontCloudModelKey(modelId));
+}
+
+/** Error for a retired model that would otherwise be sent to the gateway. */
+export function createRetiredVeryfrontCloudModelError(modelId: string): Error {
+  return NOT_SUPPORTED.create({
+    detail: `Model "${modelId}" is no longer available through Veryfront Cloud. ` +
+      `Choose another model, or configure the provider's own API key to call it directly.`,
+  });
+}
+
+/**
+ * Whether a Mistral model ID is one the catalog lists: the served catalog once
+ * it has loaded for the current scope, otherwise the shipped list.
+ */
 export function isSupportedMistralModelId(modelId: string): boolean {
-  const key = canonicalVeryfrontCloudModelKey(modelId);
-  return VERYFRONT_CLOUD_CHAT_MODELS.some(
-    (model) =>
-      model.provider === "mistral" &&
-      canonicalVeryfrontCloudModelKey(model.modelId) === key,
-  );
-}
-
-/** Shared Veryfront Cloud chat models value. */
-export const VERYFRONT_CLOUD_CHAT_MODELS: readonly VeryfrontCloudChatModel[] = Object.freeze(
-  VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES.map((model) => {
-    if (
-      model.thinkingBudgetTokens !== undefined &&
-      !isPositiveSafeInteger(model.thinkingBudgetTokens)
-    ) {
-      throw new TypeError(
-        `Veryfront Cloud model "${model.id}" thinkingBudgetTokens must be a positive safe integer`,
-      );
-    }
-    return Object.freeze(model);
-  }),
-);
-
-const defaultVeryfrontCloudChatModel = VERYFRONT_CLOUD_CHAT_MODELS.find(
-  (model) => model.id === DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
-);
-if (!defaultVeryfrontCloudChatModel) {
-  throw new Error(
-    `Veryfront Cloud default model "${DEFAULT_VERYFRONT_CLOUD_MODEL_ID}" is missing from the catalog`,
-  );
-}
-
-/** Catalog-backed default model descriptor. */
-export const DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL = defaultVeryfrontCloudChatModel;
-/** Canonical direct provider/model ID for the default chat model. */
-export const DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID = DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.modelId;
-/** Canonical hosted runtime ID for the default chat model. */
-export const DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID =
-  `${VERYFRONT_CLOUD_MODEL_PREFIX}${DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID}`;
-
-/** Find Veryfront Cloud model. */
-export function findVeryfrontCloudModel(
-  id: string,
-): VeryfrontCloudChatModel | undefined {
-  return VERYFRONT_CLOUD_CHAT_MODELS.find((model) => model.id === id);
+  const index = servedIndex();
+  return index.byKey.get(canonicalVeryfrontCloudModelKey(modelId))?.provider === "mistral";
 }
 
 /** Normalizes Veryfront Cloud model ID. */
@@ -418,19 +703,6 @@ export function normalizeVeryfrontCloudModelId(modelId: string): string {
   return modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)
     ? modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length)
     : modelId;
-}
-
-/** Find Veryfront Cloud model by model ID. */
-export function findVeryfrontCloudModelByModelId(
-  modelId: string,
-): VeryfrontCloudChatModel | undefined {
-  // Compared by canonical key on both sides: the catalog may publish a model
-  // under a provider alias while a caller spells the canonical provider, or
-  // the other way round once the catalog moves on and the alias is retained.
-  const key = canonicalVeryfrontCloudModelKey(modelId);
-  return VERYFRONT_CLOUD_CHAT_MODELS.find(
-    (model) => canonicalVeryfrontCloudModelKey(model.modelId) === key,
-  );
 }
 
 /**
@@ -455,6 +727,16 @@ export function getVeryfrontCloudProviderFromModelId(
 }
 
 /** Return the Veryfront Cloud provider named by a model ID, including one this package does not list, or `undefined` when the ID names none. */
+/**
+ * Whether a Veryfront Cloud model ID speaks the Anthropic protocol: its
+ * provider is served on the Anthropic surface. A newly served provider on that
+ * surface counts, not only `anthropic/*`.
+ */
+export function isVeryfrontCloudAnthropicSurfaceModel(modelId: string): boolean {
+  const provider = tryGetVeryfrontCloudProviderFromModelId(modelId);
+  return provider !== undefined && resolveVeryfrontCloudSurface(provider) === "anthropic";
+}
+
 export function tryGetVeryfrontCloudProviderFromModelId(
   modelId: string,
 ): VeryfrontCloudProviderId | undefined {
@@ -465,13 +747,37 @@ export function tryGetVeryfrontCloudProviderFromModelId(
   }
 }
 
-/** Resolves Veryfront Cloud model ID. */
+/**
+ * Provider-qualified ID of a short alias only the served catalog knows, for
+ * example one the platform added after this release. Reads a catalog loaded
+ * for the current scope, never the shipped list, and never a retired model.
+ * Undefined when no served catalog has loaded or it does not name the alias.
+ */
+export function resolveServedVeryfrontCloudAlias(alias: string): string | undefined {
+  if (alias.includes("/") || loadedCatalog() === undefined) return undefined;
+  const model = servedIndex().byShortId.get(alias);
+  if (!model || isRetiredVeryfrontCloudModelId(model.modelId)) return undefined;
+  return model.modelId;
+}
+
+/**
+ * Resolve a model ID or short alias to a provider-qualified model ID.
+ *
+ * No value resolves to the default model. A provider-qualified ID is returned
+ * as written. A short ID or alias resolves through the served catalog, or
+ * through the shipped list before the catalog has loaded; use
+ * `loadVeryfrontCloudModelCatalog()` first to resolve an alias the platform
+ * added since this release.
+ */
 export function resolveVeryfrontCloudModelId(alias?: string): string {
-  const requestedModel = alias || DEFAULT_VERYFRONT_CLOUD_MODEL_ID;
-  const catalogModel = VERYFRONT_CLOUD_CHAT_MODELS.find((model) =>
-    model.modelId === requestedModel
-  );
+  const requestedModel = alias || resolveVeryfrontCloudDefaultModelId();
+  const index = servedIndex();
+  const catalogModel = index.byModelId.get(requestedModel);
   if (catalogModel) {
+    // A stale served list may still name a model the gateway has retired.
+    if (isRetiredVeryfrontCloudModelId(catalogModel.modelId)) {
+      throw createRetiredVeryfrontCloudModelError(catalogModel.modelId);
+    }
     return catalogModel.modelId;
   }
 
@@ -480,16 +786,20 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
     // list so callers get a clear error rather than a gateway-side failure.
     if (
       isMistralModelId(requestedModel) &&
+      canVeryfrontCloudCatalogRefuse() &&
       !isSupportedMistralModelId(requestedModel)
     ) {
       throw NOT_SUPPORTED.create({
         detail: `Unsupported Mistral model "${requestedModel}"`,
       });
     }
+    if (isRetiredVeryfrontCloudModelId(requestedModel)) {
+      throw createRetiredVeryfrontCloudModelError(requestedModel);
+    }
     return requestedModel;
   }
 
-  const model = findVeryfrontCloudModel(requestedModel);
+  const model = index.byShortId.get(requestedModel);
   if (!model) {
     throw INVALID_ARGUMENT.create({
       detail: `Unknown model alias "${requestedModel}"`,
@@ -532,7 +842,10 @@ export function resolveVeryfrontCloudGatewayModelId(
 
   // Unsupported Mistral ids are passed through unprefixed (not routed through
   // the Veryfront Cloud gateway prefix).
-  if (isMistralModelId(modelId) && !isSupportedMistralModelId(modelId)) {
+  if (
+    isMistralModelId(modelId) && canVeryfrontCloudCatalogRefuse() &&
+    !isSupportedMistralModelId(modelId)
+  ) {
     return modelId;
   }
 
@@ -552,9 +865,8 @@ export function resolveVeryfrontCloudModelThinking(
     return undefined;
   }
 
-  const model = findVeryfrontCloudModelByModelId(modelId) ??
-    findVeryfrontCloudModel(modelId);
-  const budgetTokens = requireThinkingBudgetTokens(model?.thinkingBudgetTokens);
+  const model = findServedModel(modelId);
+  const budgetTokens = requireThinkingBudgetTokens(model?.reasoningBudgetTokens);
   if (model?.thinking !== true && budgetTokens === undefined) {
     return undefined;
   }
@@ -641,21 +953,6 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
       },
     },
   };
-}
-
-/** Group Veryfront Cloud models by provider. */
-export function groupVeryfrontCloudModelsByProvider(): Array<{
-  readonly provider: KnownVeryfrontCloudProviderId;
-  readonly label: string;
-  readonly models: readonly VeryfrontCloudChatModel[];
-}> {
-  return PROVIDER_ORDER.map((provider) => ({
-    provider,
-    label: PROVIDER_LABELS[provider],
-    models: Object.freeze(
-      VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === provider),
-    ),
-  })).filter((group) => group.models.length > 0);
 }
 
 /**

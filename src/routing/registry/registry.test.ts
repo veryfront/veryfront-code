@@ -127,6 +127,7 @@ describe("routing/registry/RouteRegistry", () => {
         projectId: "proj-123",
         resolvedEnvironment: "production",
         environmentName: "Production",
+        releaseId: "rel-123",
       });
 
       assertEquals(attributes["http.method"], "GET");
@@ -137,6 +138,71 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(attributes["project.id"], "proj-123");
       assertEquals(attributes["veryfront.environment"], "production");
       assertEquals(attributes["veryfront.environment_name"], "Production");
+      assertEquals(attributes["release.id"], "rel-123");
+    });
+
+    it("tags a production request with the release it serves", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "production",
+        releaseId: "rel-123",
+      });
+
+      assertEquals(attributes["release.id"], "rel-123");
+      assertEquals("branch.id" in attributes, false);
+      assertEquals("branch.name" in attributes, false);
+    });
+
+    it("tags a signed default-branch run on a production domain with the branch, not the release", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "production",
+        releaseId: "rel-123",
+        defaultBranchName: "main",
+      });
+
+      assertEquals("release.id" in attributes, false);
+      assertEquals("branch.id" in attributes, false);
+      assertEquals(attributes["branch.name"], "main");
+    });
+
+    it("tags a signed preview-branch run with the branch, not a release header", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "preview",
+        releaseId: "rel-browser-preview-test",
+        branchId: "branch-123",
+        branchName: "feature/intake",
+      });
+
+      assertEquals("release.id" in attributes, false);
+      assertEquals(attributes["branch.id"], "branch-123");
+      assertEquals(attributes["branch.name"], "feature/intake");
+    });
+
+    it("tags an ordinary preview request with the branch its host resolved", () => {
+      const req = makeReq();
+      const url = new URL(req.url);
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        projectSlug: "intake-demo",
+        resolvedEnvironment: "preview",
+        releaseId: "rel-browser-preview-test",
+        requestContext: { token: "", slug: "intake-demo", branch: "feature", mode: "preview" },
+      });
+
+      assertEquals("release.id" in attributes, false);
+      assertEquals("branch.id" in attributes, false);
+      assertEquals(attributes["branch.name"], "feature");
     });
 
     it("records the routing span with the trusted project identity", async () => {
@@ -220,7 +286,12 @@ describe("routing/registry/RouteRegistry", () => {
     it("omits project attributes when no trusted project identity exists", () => {
       const req = makeReq();
       const url = new URL(req.url);
-      const attributes = buildRouteRegistrySpanAttributes(req, url, makeCtx());
+      const attributes = buildRouteRegistrySpanAttributes(req, url, {
+        ...makeCtx(),
+        resolvedEnvironment: "production",
+        releaseId: "rel-123",
+        branchId: "branch-123",
+      });
 
       assertEquals(attributes["http.method"], "GET");
       assertEquals(attributes["http.path"], "/test");
@@ -230,6 +301,8 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals("project.id" in attributes, false);
       assertEquals("veryfront.environment" in attributes, false);
       assertEquals("veryfront.environment_name" in attributes, false);
+      assertEquals("release.id" in attributes, false);
+      assertEquals("branch.id" in attributes, false);
     });
 
     it("does not emit slug fallbacks as project id attributes", () => {

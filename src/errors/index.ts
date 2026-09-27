@@ -30,6 +30,7 @@ export type {
 // Slug-based error registry (single source of truth)
 export {
   // AGENT
+  AGENT_EMPTY_RESPONSE,
   AGENT_ERROR,
   AGENT_INTENT_ERROR,
   AGENT_NOT_FOUND,

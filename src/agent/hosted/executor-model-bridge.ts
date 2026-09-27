@@ -1,4 +1,5 @@
 const hasOwn = Object.hasOwn;
+import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { createPrivateReadableStream } from "#veryfront/security/private-stream.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -132,8 +133,14 @@ export function createExecutorModelBroker(options: {
   return new Map<string, ExecutorOperation>([
     ["model.metadata", {
       mode: "unary",
-      handle(input, context) {
+      async handle(input, context) {
         parseExecutorModelData(getExecutorModelEmptySchema(), input);
+        context.signal.throwIfAborted();
+        // A Veryfront Cloud model settles its protocol and capabilities on its
+        // first async step; settle each before describing it to the executor.
+        await Promise.all(
+          [...allowed].map((id) => settleForMetadata(getModel(id), context.signal)),
+        );
         context.signal.throwIfAborted();
         const metadata = [...allowed].map((id) => modelMetadata(id, getModel(id)));
         return executorModelJson(
@@ -267,6 +274,19 @@ export function createExecutorModelBroker(options: {
       },
     }],
   ]);
+}
+
+/**
+ * Settle a Veryfront Cloud model before its metadata is read, so the executor
+ * is never told about a construction a pending rebuild can still replace. The
+ * wait is bounded by the catalog request's own timeout and the caller's signal.
+ * A failed load leaves the model as built; its call surfaces any failure.
+ */
+async function settleForMetadata(model: ModelRuntime, signal: AbortSignal): Promise<void> {
+  if (readVeryfrontCloudModelFacts(model) === undefined || typeof model.prepare !== "function") {
+    return;
+  }
+  await Promise.resolve(model.prepare(signal)).catch(() => {});
 }
 
 function modelMetadata(id: string, model: ModelRuntime) {
