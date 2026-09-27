@@ -3,8 +3,8 @@ import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/
 import { evaluateDeclarativeConfig } from "#veryfront/config/declarative-evaluator.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
-import { filterSharedRuntimeProjectEnv } from "./reserved-env.ts";
-import { resolveProjectTraceConfig } from "./telemetry-config.ts";
+import { filterSharedRuntimeProjectEnv } from "#veryfront/server/project-env/reserved-env.ts";
+import { resolveProjectTraceConfig } from "#veryfront/server/project-env/telemetry-config.ts";
 
 const declarations = [{ name: "ext-observability-opentelemetry" }] as const;
 const scope = { projectId: "project-a", environmentId: "environment-a" };
