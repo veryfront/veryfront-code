@@ -76,7 +76,12 @@ import {
   retryDedicatedTarget,
   websocketRendererOrigin,
 } from "./dedicated-routing-policy.ts";
-import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
+import {
+  exit,
+  getEnv,
+  getHostEnvExcludingEnvFile,
+  onSignal,
+} from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
@@ -174,7 +179,7 @@ const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl
 const apiInternalUser = getEnv("VERYFRONT_API_INTERNAL_USER") || "";
 const apiInternalPass = getEnv("VERYFRONT_API_INTERNAL_PASS") || "";
 const requireDedicatedRouting = parseRequiredDedicatedRouting(
-  getEnv("VERYFRONT_REQUIRE_DEDICATED_ROUTING"),
+  getHostEnvExcludingEnvFile("VERYFRONT_REQUIRE_DEDICATED_ROUTING"),
 );
 const serverResolver = new ServerResolver(
   apiInternalUrl,
