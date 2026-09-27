@@ -917,6 +917,43 @@ describe("resolveProjectRuntimeContext", () => {
     });
   });
 
+  it("resolves project trace settings from the authenticated hosted snapshot", async () => {
+    const adapter = createHostedConfigAdapter(`
+      import extOpenTelemetry from "@veryfront/ext-observability-opentelemetry";
+      export default { extensions: [extOpenTelemetry()] };
+    `);
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      adapter,
+      config: undefined,
+      isProxyMode: true,
+      proxyTrust: { proxyTrusted: true },
+      envVarCache: {
+        get: (scope: ProjectEnvironmentScope) => {
+          assertEquals(scope.projectId, "proj-remote");
+          assertEquals(scope.environmentId, "env-remote");
+          return Promise.resolve({
+            OTEL_TRACES_ENABLED: "true",
+            OTEL_EXPORTER_OTLP_ENDPOINT: "https://project-collector.example",
+            OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer project-test-token",
+          });
+        },
+      },
+    }));
+    assertEquals(result.projectTraceConfig.status, "enabled");
+    if (result.projectTraceConfig.status !== "enabled") return;
+    assertEquals(result.projectTraceConfig.config.projectId, "proj-remote");
+    assertEquals(result.projectTraceConfig.config.environmentId, "env-remote");
+    assertEquals(
+      result.projectTraceConfig.config.endpoint,
+      "https://project-collector.example/v1/traces",
+    );
+    assertEquals(
+      result.projectTraceConfig.config.headers.authorization,
+      "Bearer project-test-token",
+    );
+    assertEquals("projectTraceConfig" in result.handlerContext!, false);
+  });
+
   it("returns handler context, raw env vars, and normalized source policy for remote requests", async () => {
     let envLoadCount = 0;
     const adapter = createMockAdapter();
