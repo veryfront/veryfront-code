@@ -525,7 +525,7 @@ function runWithDefaultHostedRequestContext<TResult>(
   );
 }
 
-/** Longest a hosted run waits for the served catalog before resolving a short alias. */
+/** Longest a run waits for the served catalog before resolving a short model alias. */
 const CATALOG_ALIAS_MAX_WAIT_MS = 3_000;
 
 /** Create default hosted chat runtime. */
