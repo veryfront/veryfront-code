@@ -1542,6 +1542,7 @@ describe("resolveProjectRuntimeContext", () => {
     // A config-less control-plane request is the intended shape, so it must
     // stay distinguishable from a project whose config failed to resolve.
     assertEquals(result.adapter.configOutcome, "deferred");
+    assertEquals(result.projectTraceConfig, { status: "deferred" });
     // And it must stay silent. The exclusion is the whole reason the outcome
     // is threaded through: without it this path would warn on every
     // control-plane request and drown the signal it exists to carry.

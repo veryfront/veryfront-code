@@ -63,7 +63,10 @@ export async function runProjectHttpTracing<T extends Response | undefined>(
 ): Promise<T> {
   const active = getRegistry();
   if (settings.status !== "enabled" || !active || request.signal.aborted) {
-    if (active && settings.status !== "enabled" && identity.projectId && identity.environmentId) {
+    if (
+      active && (settings.status === "disabled" || settings.status === "invalid") &&
+      identity.projectId && identity.environmentId
+    ) {
       void active.disable(identity.projectId, identity.environmentId);
     }
     return runWithProjectTraceProvider(undefined, operation);

@@ -16,6 +16,8 @@ export interface ProjectTraceConfig {
 
 type InvalidReason = "identity" | "signal" | "endpoint" | "headers" | "resource";
 export type ProjectTraceConfigResult =
+  /** The request deliberately did not resolve application configuration. */
+  | { readonly status: "deferred" }
   | { readonly status: "disabled" }
   | { readonly status: "invalid"; readonly reason: InvalidReason }
   | { readonly status: "enabled"; readonly config: ProjectTraceConfig };

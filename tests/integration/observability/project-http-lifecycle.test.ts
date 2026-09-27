@@ -23,6 +23,37 @@ async function settings(token: string) {
 }
 
 describe("project HTTP exporter lifecycle", () => {
+  it("preserves queued application spans when a control-plane request defers config", async () => {
+    const owner = new OtlpTracingExporter();
+    register("TracingExporter", owner);
+    const bodies: string[] = [];
+    try {
+      await withMockFetch(async (input, init) => {
+        bodies.push(await new Request(input, init).text());
+        return Response.json({});
+      }, async () => {
+        await runProjectHttpTracing(await settings("active"), identity, request, async () => {
+          trace.getTracer("app").startSpan("retained.custom").end();
+          return new Response("ok");
+        });
+        await runProjectHttpTracing(
+          { status: "deferred" },
+          identity,
+          new Request("https://application.example/api/control-plane/runs/run-1/stream", {
+            method: "POST",
+          }),
+          () => Promise.resolve(new Response("control plane")),
+        );
+        await flushProjectHttpTracing();
+        assertEquals(bodies.some((body) => body.includes("retained.custom")), true);
+      });
+    } finally {
+      await shutdownProjectHttpTracing();
+      await owner.shutdown();
+      unregister("TracingExporter");
+    }
+  });
+
   it("discards queued records when refreshed settings disable export", async () => {
     const owner = new OtlpTracingExporter();
     register("TracingExporter", owner);
