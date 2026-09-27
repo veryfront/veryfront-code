@@ -43,7 +43,7 @@ describe("project telemetry configuration", () => {
       const result = await resolveProjectTraceConfig(scope, declarations, { ...env, ...metadata });
       assertEquals(result.status, "enabled");
       if (result.status !== "enabled") continue;
-      assertEquals([
+      assertEquals<readonly string[]>([
         result.config.serviceName,
         result.config.serviceVersion,
         result.config.deploymentEnvironment,
