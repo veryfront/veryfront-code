@@ -20,6 +20,7 @@ export {
   findVeryfrontCloudModel,
   findVeryfrontCloudModelByModelId,
   groupVeryfrontCloudModelsByProvider,
+  VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
   VERYFRONT_CLOUD_CHAT_MODELS,
 } from "./model-catalog.deprecated.ts";
 

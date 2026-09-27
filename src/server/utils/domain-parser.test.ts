@@ -7,10 +7,111 @@ import {
   isHostedEnvironmentName,
   isLocalDevHost,
   isVeryfrontDomain,
+  parseConfiguredPlatformRoots,
+  parseConfiguredProjectDomain,
   parseProjectDomain,
 } from "./domain-parser.ts";
 
 describe("domain-parser", () => {
+  describe("admin-configured platform roots", () => {
+    const root = "verified-0924.127.0.0.1.sslip.io";
+
+    it("parses an explicit operator root without changing host state", () => {
+      const parsed = parseConfiguredProjectDomain(`app.preview.${root}`, [root]);
+      assertEquals(parsed?.slug, "app");
+      assertEquals(parsed?.environment, "preview");
+      assertEquals(parsed?.isVeryfrontDomain, true);
+    });
+
+    it("recognizes exact preview, staging and production hosts", () => {
+      const roots = parseConfiguredPlatformRoots(
+        `  ${root.toUpperCase()} , customer.example.test `,
+      );
+      assertEquals(roots, [root, "customer.example.test"]);
+      assertEquals(parseConfiguredProjectDomain(`app--feature.preview.${root}`, roots), {
+        slug: "app",
+        branch: "feature",
+        environment: "preview",
+        isVeryfrontDomain: true,
+        isDraft: true,
+        allowIframeEmbed: true,
+      });
+      assertEquals(
+        parseConfiguredProjectDomain(`app.staging.${root}`, roots)?.environment,
+        "staging",
+      );
+      assertEquals(
+        parseConfiguredProjectDomain(`app.production.${root}`, roots)?.environment,
+        "production",
+      );
+    });
+
+    it("does not claim unconfigured public wildcard DNS or adjacent labels", () => {
+      for (
+        const host of [
+          `app.preview.${root}`,
+          "app.preview.127.0.0.1.sslip.io",
+        ]
+      ) {
+        assertEquals(parseConfiguredProjectDomain(host, []), null);
+      }
+      for (
+        const host of [
+          `app.${root}`,
+          `preview.${root}`,
+          `app.development.${root}`,
+          `app.preview.evil${root}`,
+          `app.preview.${root}.evil.example`,
+          `other.app.preview.${root}`,
+        ]
+      ) {
+        assertEquals(parseConfiguredProjectDomain(host, [root]), null, host);
+      }
+    });
+
+    it("uses the longest configured suffix at a label boundary", () => {
+      const roots = parseConfiguredPlatformRoots("example.test,customer.example.test");
+      assertEquals(roots, ["customer.example.test", "example.test"]);
+      assertEquals(
+        parseConfiguredProjectDomain("app.preview.customer.example.test", roots)?.slug,
+        "app",
+      );
+      assertEquals(
+        parseConfiguredProjectDomain("app.production.example.test", roots)?.environment,
+        "production",
+      );
+      assertEquals(
+        parseConfiguredProjectDomain("app.preview.notcustomer.example.test", roots),
+        null,
+      );
+    });
+
+    it("refuses malformed or wildcard admin roots", () => {
+      for (
+        const value of [
+          "*.sslip.io",
+          ".example.test",
+          "example.test.",
+          "http://example.test",
+          "localhost",
+          "127.0.0.1",
+          "foo..bar",
+          "-foo.example",
+          "foo.example:443",
+          "example.test,,other.test",
+        ]
+      ) {
+        let refused = false;
+        try {
+          parseConfiguredPlatformRoots(value);
+        } catch {
+          refused = true;
+        }
+        assertEquals(refused, true, value);
+      }
+    });
+  });
+
   describe("parseProjectDomain", () => {
     it("localhost preview", () => {
       const result = parseProjectDomain("myproject.preview.localhost:8080");

@@ -1352,6 +1352,44 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(result.text, "Hello");
   });
 
+  it("sends a hosted qwen/qwen3.8-27b run to the vendor-neutral gateway route (#1913)", async () => {
+    setCloudBootstrap();
+    const encoder = new TextEncoder();
+    let captured: { url: string; model: unknown } | undefined;
+
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        captured = { url: request.url, model: JSON.parse(await request.text()).model };
+
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+              );
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const assistant = agent({ model: "qwen/qwen3.8-27b", system: "You are concise." });
+    const result = await assistant.generate({ input: "Hi" });
+
+    assertEquals(captured, {
+      url: "https://api.veryfront.com/ai/v1/chat/completions",
+      model: "qwen/qwen3.8-27b",
+    });
+    assertEquals(result.text, "Hello");
+  });
+
   it("keeps an unlisted provider on chat completions for a reasoning-style model id", async () => {
     // "gpt-5.4" is a reasoning-style ID. Only the provider that implements the
     // OpenAI surface natively serves /responses, so an unlisted provider must

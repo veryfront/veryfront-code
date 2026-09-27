@@ -12,6 +12,7 @@ import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/c
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import {
   resolveVeryfrontCloudModelId,
+  VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
   VERYFRONT_CLOUD_CHAT_MODELS,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
@@ -396,6 +397,53 @@ describe("agent/runtime/model-resolution", () => {
       resolveRuntimeModel("openai/gpt-5.4"),
       "veryfront-cloud/openai/gpt-5.4",
     );
+  });
+
+  it("routes every catalog provider through veryfront-cloud when only hosted bootstrap is available", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    for (const provider of VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES) {
+      // Mistral model IDs are gated by the catalog, so it needs a listed one.
+      const modelId = provider === "mistral" ? "mistral-small-2503" : "model-x";
+      assertEquals(
+        resolveRuntimeModel(`${provider}/${modelId}`),
+        `veryfront-cloud/${provider}/${modelId}`,
+        provider,
+      );
+    }
+  });
+
+  it("routes every vendor the gateway catalog serves through veryfront-cloud (#1913)", () => {
+    // The vendors GET /ai/models lists. Qwen is served before the catalog
+    // snapshot in this package names it; a vendor missing here fails hosted
+    // runs with `Model provider "<vendor>" not registered`.
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    assertEquals(
+      [
+        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-5-nano",
+        "google/gemini-3.5-flash",
+        "mistral/mistral-small-2503",
+        "deepseek/deepseek-v4-flash",
+        "qwen/qwen3.8-27b",
+      ].map((model) => resolveRuntimeModel(model)),
+      [
+        "veryfront-cloud/anthropic/claude-sonnet-4-6",
+        "veryfront-cloud/openai/gpt-5-nano",
+        "veryfront-cloud/google/gemini-3.5-flash",
+        "veryfront-cloud/mistral/mistral-small-2503",
+        "veryfront-cloud/deepseek/deepseek-v4-flash",
+        "veryfront-cloud/qwen/qwen3.8-27b",
+      ],
+    );
+  });
+
+  it("keeps a gateway-only provider unrouted without hosted bootstrap", () => {
+    setEnv("OPENAI_API_KEY", "sk-test");
+    assertEquals(resolveRuntimeModel("qwen/qwen3.8-27b"), "qwen/qwen3.8-27b");
   });
 
   it("routes catalog Gemini, Mistral, and Kimi models through veryfront-cloud when only hosted bootstrap is available", () => {

@@ -21,6 +21,21 @@ import {
 } from "./model-catalog.data.ts";
 
 const MODEL_PREFIX = "veryfront-cloud/";
+
+/**
+ * Every provider name the shipped catalog data routes: accepted aliases,
+ * providers with a routing row, and providers of a listed chat model. Runtime
+ * model resolution sends `<provider>/<model>` for these through the gateway
+ * when no direct provider credential applies; a provider only the served
+ * catalog lists is checked against that catalog instead.
+ */
+export const VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES: readonly string[] = Object.freeze([
+  ...new Set<string>([
+    ...VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([alias]) => alias),
+    ...VERYFRONT_CLOUD_PROVIDER_ROUTING.map(([provider]) => provider),
+    ...VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES.map((model) => model.provider),
+  ]),
+]);
 const providerAliases: ReadonlyMap<string, string> = new Map(VERYFRONT_CLOUD_PROVIDER_ALIASES);
 
 function isPositiveSafeInteger(value: unknown): value is number {
