@@ -2528,6 +2528,7 @@ describe("project run execution span", () => {
   async function executeTracedTask(
     runTask: ProjectRunExecuteHandlerDeps["runTask"],
     callerSpanContext?: otelApi.SpanContext,
+    lineage: { parentRunId?: string; rootRunId?: string } = {},
   ): Promise<{
     spans: ReturnType<InMemorySpanExporter["getFinishedSpans"]>;
     body: Record<string, unknown>;
@@ -2550,6 +2551,7 @@ describe("project run execution span", () => {
         kind: "task",
         target: "task:sync-calendar-events",
         projectId: "proj-1",
+        ...lineage,
       };
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_task_traced/execute",
@@ -2586,6 +2588,19 @@ describe("project run execution span", () => {
     assertEquals(span.attributes["run.kind"], "task");
     assertEquals(span.attributes["project.id"], "proj-1");
     assertEquals(span.status.code === SpanStatusCode.ERROR, false);
+  });
+
+  it("names the parent and root run of a child run on the execution span", async () => {
+    const { spans } = await executeTracedTask(
+      async () => ({ success: true, result: { synced: 1 }, durationMs: 5 }),
+      undefined,
+      { parentRunId: "run_workflow_parent", rootRunId: "run_sched_root" },
+    );
+
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.attributes["parent.run.id"], "run_workflow_parent");
+    assertEquals(span.attributes["root.run.id"], "run_sched_root");
   });
 
   it("marks the execution span as failed when the run fails", async () => {

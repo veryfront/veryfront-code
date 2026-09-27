@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertNotEquals, assertStrictEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   _resetShimForTests,
@@ -10,13 +10,17 @@ import {
   type Meter,
   type MetricsAPI,
   type Span,
+  type TextMapGetter,
+  type TextMapSetter,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   _resetOTLPForTests,
+  extractContext,
   getTraceContext,
   initializeOTLPWithApis,
+  injectContext,
   resolveOtlpGate,
   shutdownOTLP,
   startServerSpan,
@@ -209,6 +213,36 @@ describe("proxy otlp initialization", () => {
       exporterContext,
       "the exporter's context API must back the shim so span context survives async boundaries",
     );
+  });
+
+  it("joins requests to their caller's trace and passes it on through the exporter's propagator", async () => {
+    // Without the propagator the gateway's traceparent is ignored, so every
+    // proxied request roots a trace of its own.
+    setOtelEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const callerContext = { ...shimContext.active() } as Context;
+    const { exporter } = createFakeExporter({
+      getPropagator: () => ({
+        extract: (ctx, carrier, getter) =>
+          (getter as TextMapGetter<unknown>).get(carrier, "traceparent") === traceparent
+            ? callerContext
+            : ctx,
+        inject: (_ctx, carrier, setter) =>
+          (setter as TextMapSetter<unknown>).set(carrier, "traceparent", traceparent),
+        fields: () => ["traceparent"],
+      }),
+    });
+
+    // deno-lint-ignore require-await
+    await initializeOTLPWithApis(async () => exporter);
+
+    assertStrictEquals(extractContext(new Headers({ traceparent })), callerContext);
+    const outgoing = new Headers();
+    injectContext(outgoing);
+    assertEquals(outgoing.get("traceparent"), traceparent);
   });
 
   it("prefers OTEL_EXPORTER_OTLP_TRACES_ENDPOINT as the endpoint gate", async () => {

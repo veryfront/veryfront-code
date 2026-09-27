@@ -34,6 +34,8 @@ import {
   type Tracer,
   type TracerProvider,
 } from "./api-shim.ts";
+import * as otelApi from "npm:@opentelemetry/api@1.9.1";
+import { W3CTraceContextPropagator } from "npm:@opentelemetry/core@2.9.0";
 
 describe("observability/tracing/api-shim", () => {
   afterEach(() => {
@@ -654,6 +656,17 @@ describe("observability/tracing/api-shim", () => {
       propagation.setGlobalPropagator(propagator);
       propagation.inject(ctx, injected);
       assertEquals(injected.traceparent, "abc");
+    });
+
+    it("carries W3C context through the SDK propagator for callers that pass no carrier accessors", () => {
+      const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+      propagation.setGlobalPropagator(new W3CTraceContextPropagator() as TextMapPropagator);
+
+      const extracted = propagation.extract(otelApi.ROOT_CONTEXT as Context, { traceparent });
+      const injected: Record<string, string> = {};
+      propagation.inject(extracted, injected);
+
+      assertEquals(injected.traceparent, traceparent);
     });
   });
 

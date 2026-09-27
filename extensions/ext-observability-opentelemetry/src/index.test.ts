@@ -410,6 +410,37 @@ describe("ext-observability-opentelemetry TracingExporter", () => {
     });
   });
 
+  it("hands the core shim its W3C propagator until it shuts down", async () => {
+    await withOtelSignalsDisabled(async () => {
+      Deno.env.set("OTEL_TRACES_ENABLED", "true");
+      Deno.env.set("OTEL_TRACES_EXPORTER", "otlp");
+      Deno.env.set("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:9/v1/traces");
+      const provided = new Map<string, unknown>();
+      const ext = factory();
+      // deno-lint-ignore no-explicit-any
+      await ext.setup?.(
+        {
+          config: {},
+          logger: noopLogger,
+          provide: (name: string, impl: unknown) => provided.set(name, impl),
+        } as any,
+      );
+      const exporter = provided.get("TracingExporter") as {
+        shutdown: () => Promise<void>;
+        getPropagator: () => { fields(): string[] } | null;
+      };
+
+      try {
+        assertEquals(exporter.getPropagator()?.fields(), ["traceparent", "tracestate"]);
+        await exporter.shutdown();
+        assertEquals(exporter.getPropagator(), null);
+      } finally {
+        Deno.env.delete("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+        await ext.teardown?.();
+      }
+    });
+  });
+
   it("teardown() shuts down without error when called without setup", async () => {
     const ext = factory();
     // Should not throw
