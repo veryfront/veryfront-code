@@ -25,6 +25,7 @@ import {
   type Span,
   SpanKind,
   SpanStatusCode,
+  type TextMapPropagator,
   trace as shimTrace,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
@@ -176,6 +177,8 @@ export async function initializeOTLPWithApis(
         contextApi as Parameters<typeof setGlobalContextAccessor>[0],
       );
     }
+    const propagator = exporterImpl.getPropagator?.();
+    if (propagator) shimPropagation.setGlobalPropagator(propagator as TextMapPropagator);
 
     tracer = shimTrace.getTracer(config.serviceName);
 

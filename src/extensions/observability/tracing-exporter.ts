@@ -89,6 +89,17 @@ export interface TracingExporter {
   } | null;
 
   /**
+   * Return the W3C trace-context propagator so the core shim can join an incoming
+   * request to its caller's trace and pass the context on to outgoing requests.
+   * Returns `null` when tracing is disabled.
+   */
+  getPropagator?(): {
+    inject(ctx: unknown, carrier: unknown, setter?: unknown): void;
+    extract(ctx: unknown, carrier: unknown, getter?: unknown): unknown;
+    fields(): string[];
+  } | null;
+
+  /**
    * Return an emitter that forwards Veryfront structured log records into the
    * active telemetry backend. Returns `null` when log export is disabled.
    */

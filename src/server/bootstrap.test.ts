@@ -227,6 +227,11 @@ describe("wireTracingShim()", () => {
       active: () => ({}),
       with: <T>(_ctx: unknown, fn: () => T) => fn(),
     };
+    const propagator = {
+      inject: () => {},
+      extract: (ctx: unknown) => ctx,
+      fields: () => ["traceparent"],
+    };
     const exporter: TracingExporter = {
       start: () => Promise.resolve(),
       export: () => Promise.resolve(),
@@ -235,6 +240,7 @@ describe("wireTracingShim()", () => {
       getMetricsAPI: () => metricsApi,
       getTraceAPI: () => traceApi,
       getContextAPI: () => contextApi,
+      getPropagator: () => propagator,
       getLogRecordEmitter: () => (record) => emitted.push(record),
     };
 
@@ -262,6 +268,11 @@ describe("wireTracingShim()", () => {
       snapshot.contextAccessor as unknown,
       contextApi,
       "bootstrap installs the exporter's context accessor",
+    );
+    assertStrictEquals(
+      snapshot.propagator as unknown,
+      propagator,
+      "bootstrap installs the exporter's propagator so requests join their caller's trace",
     );
 
     assertEquals(emitted.length, 1);

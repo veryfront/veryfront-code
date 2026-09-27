@@ -27,10 +27,12 @@ import {
   snapshotNodeWebSocketServerProvider,
 } from "#veryfront/extensions/websocket";
 import {
+  propagation,
   setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
   setGlobalMetricsAPI,
   setGlobalTracerProvider,
+  type TextMapPropagator,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import {
   getEnvironmentConfig,
@@ -152,6 +154,8 @@ export function wireTracingShim(): void {
         contextApi as Parameters<typeof setGlobalContextAccessor>[0],
       );
     }
+    const propagator = tracing.getPropagator?.();
+    if (propagator) propagation.setGlobalPropagator(propagator as TextMapPropagator);
     const logRecordEmitter = tracing.getLogRecordEmitter?.();
     __registerLogRecordEmitter(logRecordEmitter ?? null);
     bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
