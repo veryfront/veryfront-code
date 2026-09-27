@@ -205,3 +205,39 @@ it("validates the selection sent even when caller options change during the requ
     assertEquals(result.selection.connection_generation_id, generation);
   });
 });
+
+it("rejects a selected result that drops an explicit connection without a generation", async () => {
+  await withMockFetch((input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/tools/list")) {
+      return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
+    }
+    if (!url.pathname.includes("/integrations/")) return Response.json(project);
+    assertEquals(url.searchParams.get("connection_id"), connectionId);
+    assertEquals(url.searchParams.has("expected_connection_generation_id"), false);
+    const data = response();
+    return Response.json({
+      selected_readiness: {
+        ...data,
+        selection: {
+          ...data.selection,
+          mode: "project_credentials",
+          connection_id: null,
+          connection_generation_id: null,
+        },
+      },
+    });
+  }, async () => {
+    const client = await createIntegrationClient({
+      apiBaseUrl: "https://api.example.test",
+      authToken: "synthetic-token",
+      projectReference: project.id,
+    });
+    const error = await assertRejects(
+      () => client.readiness("github__get_current_user", { connectionId }),
+      IntegrationApiError,
+    );
+    assertEquals(error.kind, "invalid_response");
+    assertEquals(error.outcomeUnknown, false);
+  });
+});

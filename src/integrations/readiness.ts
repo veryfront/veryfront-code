@@ -94,7 +94,7 @@ export function isSelectedReadiness(value: unknown, expected: {
     !nullableUuid(s.connection_generation_id)
   ) return false;
   if (
-    expected.connectionId && s.connection_id !== null &&
+    expected.connectionId && (s.state === "selected" || s.connection_id !== null) &&
     !sameUuid(s.connection_id, expected.connectionId)
   ) return false;
   if (
