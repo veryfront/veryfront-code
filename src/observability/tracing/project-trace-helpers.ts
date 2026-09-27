@@ -19,10 +19,9 @@ const helpers = new WeakMap<
 >();
 
 /** Public application helpers reuse the existing sanitization/finalization behavior. */
-export function getProjectTraceHelpers():
+export function getProjectTraceHelpers(provider = getProjectTraceProvider()):
   | { spans: SpanOperations; context: ContextPropagation }
   | undefined {
-  const provider = getProjectTraceProvider();
   if (!provider) return undefined;
   let cached = helpers.get(provider);
   if (cached) return cached;

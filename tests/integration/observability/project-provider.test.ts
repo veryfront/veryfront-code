@@ -8,7 +8,7 @@ import {
   type TracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { getTraceContext, setActiveSpanAttributes, trace, withSpan } from "veryfront/observability";
-import { endSpan, startSpan } from "veryfront/observability";
+import { createChildSpan, endSpan, startSpan, withActiveSpan } from "veryfront/observability";
 import { runWithProjectTraceProvider } from "#veryfront/observability/tracing/project-trace-scope.ts";
 
 type Payload = {
@@ -27,6 +27,58 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("retains project ownership for explicit parent helpers outside the request scope", async () => {
+    const owner = new OtlpTracingExporter();
+    const received: Payload[] = [];
+    const session = await owner.createProjectProvider({
+      resource: { "service.name": "detached" },
+      createTransport: () => ({
+        send: (data) => {
+          received.push(JSON.parse(new TextDecoder().decode(data)));
+          return Promise.resolve({ status: "success" });
+        },
+        shutdown() {},
+      }),
+    });
+    try {
+      for (const useRawTracer of [false, true]) {
+        const parent = runWithProjectTraceProvider(
+          session,
+          () =>
+            useRawTracer
+              ? trace.getTracer("app").startSpan("retained.parent")
+              : startSpan("retained.parent"),
+        );
+        assertExists(parent);
+        const child = createChildSpan(parent, "detached.child");
+        assertExists(child);
+        endSpan(child);
+        await withActiveSpan(parent, async () => {
+          await Promise.resolve();
+          assertEquals(getTraceContext().spanId, parent.spanContext().spanId);
+          await withSpan("detached.active-child", async (span) => {
+            assertExists(span);
+          });
+        });
+        endSpan(parent);
+      }
+      await session.forceFlush();
+      const spans = received.flatMap((p) =>
+        p.resourceSpans.flatMap((r) => r.scopeSpans.flatMap((s) => s.spans))
+      );
+      assertEquals(spans.length, 6);
+      for (const child of spans.filter((span) => span.name.startsWith("detached."))) {
+        assertExists(
+          spans.find((parent) =>
+            parent.name === "retained.parent" && parent.spanId === child.parentSpanId
+          ),
+        );
+      }
+    } finally {
+      await owner.shutdown();
+    }
+  });
+
   it("ends public helper spans outside their original scope and revokes queued export", async () => {
     const owner = new OtlpTracingExporter();
     const received: Payload[] = [];

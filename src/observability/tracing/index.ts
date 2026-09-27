@@ -13,6 +13,7 @@ import {
 } from "./api-shim.ts";
 import { tracingManager } from "./manager.ts";
 import { getProjectTraceHelpers } from "./project-trace-helpers.ts";
+import { getSpanProjectProvider, runWithProjectTraceProvider } from "./project-trace-scope.ts";
 import type { SpanOperations } from "./span-operations.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 
@@ -91,7 +92,8 @@ export function startSpan(name: string, options: SpanOptions = {}): Span | null 
 /** End an active tracing span. */
 export function endSpan(span: Span | null, ...failure: [] | [error: unknown]): void {
   const raw = restoreSpan(span);
-  (raw ? spanOwners.get(raw) ?? getSpanOps() : getSpanOps())?.endSpan(raw, ...failure);
+  const owned = raw ? getProjectTraceHelpers(getSpanProjectProvider(raw))?.spans : undefined;
+  (owned ?? (raw ? spanOwners.get(raw) ?? getSpanOps() : getSpanOps()))?.endSpan(raw, ...failure);
 }
 
 /** Sets span attributes. */
@@ -117,6 +119,18 @@ export function createChildSpan(
   name: string,
   options: SpanOptions = {},
 ): Span | null {
+  const raw = restoreSpan(parentSpan);
+  const owner = raw ? getSpanProjectProvider(raw) : undefined;
+  if (owner) {
+    return runWithProjectTraceProvider(owner, () =>
+      exposeSpan(
+        getProjectTraceHelpers(owner)!.spans.createChildSpan(
+          raw,
+          name,
+          restoreSpanOptions(options),
+        ),
+      ));
+  }
   return exposeSpan(
     getSpanOps()?.createChildSpan(
       restoreSpan(parentSpan),
@@ -143,6 +157,14 @@ export function getActiveContext(): Context | undefined {
 
 /** Applies active span. */
 export async function withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
+  const raw = restoreSpan(span);
+  const owner = raw ? getSpanProjectProvider(raw) : undefined;
+  if (owner) {
+    return runWithProjectTraceProvider(
+      owner,
+      () => getProjectTraceHelpers(owner)!.context.withActiveSpan(raw, fn),
+    );
+  }
   const contextProp = getContextProp();
   if (!contextProp) return fn();
   return contextProp.withActiveSpan(restoreSpan(span), fn);

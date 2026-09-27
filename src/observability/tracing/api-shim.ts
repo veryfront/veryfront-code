@@ -20,7 +20,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { getProjectTraceProvider } from "./project-trace-scope.ts";
+import { getProjectTraceProvider, rememberProjectSpan } from "./project-trace-scope.ts";
 import { runSyncWithContextFallback } from "./context-callback.ts";
 
 const IntrinsicObjectFreeze = Object.freeze;
@@ -658,6 +658,7 @@ function weakMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): 
 
 /** @internal Wrap a provider-owned span before returning it to project code. */
 export function createPublicSpan(providerSpan: Span): Span {
+  rememberProjectSpan(providerSpan);
   const existing = weakMapGet(publicSpanFacades, providerSpan);
   if (existing) return existing;
 
