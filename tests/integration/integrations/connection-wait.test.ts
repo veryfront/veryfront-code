@@ -76,6 +76,19 @@ describe("bounded connection wait", () => {
     );
   });
 
+  it("does not treat a casing change of the same identity as new consent", async () => {
+    const { client } = fakeClient(() => "OLD");
+    assertEquals(
+      (await waitForIntegrationConnection(client, "github", {
+        scope: "user",
+        before,
+        timeoutMs: 300,
+      }))
+        .status,
+      "timed_out",
+    );
+  });
+
   it("does not accept a new generation from another scope", async () => {
     const { client } = fakeClient(() => "new", "project");
     assertEquals(

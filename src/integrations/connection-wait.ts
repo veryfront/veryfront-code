@@ -10,10 +10,11 @@ export const MAX_INTEGRATION_CONNECTION_WAIT_MS = 15 * 60 * 1000;
 const INITIAL_POLL_DELAY_MS = 250;
 const MAX_POLL_DELAY_MS = 2000;
 
+/** UUIDs compare case-insensitively; the response validators accept either casing. */
 function identity(status: IntegrationConnectionStatus): { id?: string; generation?: string } {
   return {
-    id: status.connection_id ?? status.connectionId,
-    generation: status.connection_generation_id ?? status.connectionGenerationId,
+    id: (status.connection_id ?? status.connectionId)?.toLowerCase(),
+    generation: (status.connection_generation_id ?? status.connectionGenerationId)?.toLowerCase(),
   };
 }
 
@@ -69,8 +70,8 @@ export async function waitForIntegrationConnection(
             const connection of client.listConnections(integration, { abortSignal: signal })
           ) {
             if (
-              connection.id === current.id &&
-              connection.connection_generation_id === current.generation &&
+              connection.id.toLowerCase() === current.id &&
+              connection.connection_generation_id.toLowerCase() === current.generation &&
               connection.scope === scope && connection.status === "connected"
             ) {
               return {
