@@ -9,7 +9,7 @@ Provides distributed tracing, OTLP log export, OTLP metrics export, the OpenTele
 Add the extension to your project's `veryfront.config.ts`:
 
 ```ts
-import { defineConfig } from "veryfront/config";
+import { defineConfig } from "veryfront";
 import extOpenTelemetry from "@veryfront/ext-observability-opentelemetry";
 
 export default defineConfig({
