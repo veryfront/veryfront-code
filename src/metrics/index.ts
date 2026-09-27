@@ -405,9 +405,14 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
   if (headerInput.startsWith("Authorization=")) {
     return { Authorization: headerInput.slice("Authorization=".length) };
   }
+  return parseKeyValueList(headerInput);
+}
 
+/** Parse the OTel `key=value,key=value` env format. */
+function parseKeyValueList(input: string | undefined): Record<string, string> {
+  if (!input) return {};
   const result: Record<string, string> = {};
-  for (const part of headerInput.split(",")) {
+  for (const part of input.split(",")) {
     const [key, ...valueParts] = part.split("=");
     if (key && valueParts.length > 0) {
       result[key.trim()] = valueParts.join("=").trim();
@@ -421,13 +426,17 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
 function resolveDirectServiceIdentity(
   read: (name: string) => string | undefined,
 ): Pick<DirectMetricsTarget, "serviceName" | "serviceVersion" | "deploymentEnvironment"> {
+  const resource = parseKeyValueList(read("OTEL_RESOURCE_ATTRIBUTES"));
   return {
-    serviceName: read("OTEL_SERVICE_NAME") ?? "veryfront",
-    serviceVersion: read("OTEL_SERVICE_VERSION") ??
+    serviceName: read("OTEL_SERVICE_NAME") ?? resource["service.name"] ?? "veryfront",
+    serviceVersion: resource["service.version"] ??
+      read("OTEL_SERVICE_VERSION") ??
       read("VERYFRONT_VERSION") ??
       read("RELEASE_VERSION") ??
       "unknown",
-    deploymentEnvironment: read("OTEL_DEPLOYMENT_ENVIRONMENT"),
+    deploymentEnvironment: resource["deployment.environment.name"] ??
+      resource["deployment.environment"] ??
+      read("OTEL_DEPLOYMENT_ENVIRONMENT"),
   };
 }
 

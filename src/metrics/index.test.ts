@@ -524,6 +524,41 @@ describe("metrics public SDK", () => {
     assertEquals(attributes["deployment.environment"], "staging");
   });
 
+  it("reads the hosted runtime identity from OTEL_RESOURCE_ATTRIBUTES", async () => {
+    const requests: RequestInit[] = [];
+
+    await withEnv({
+      OTEL_METRICS_ENABLED: "true",
+      OTEL_RESOURCE_ATTRIBUTES:
+        "service.name=veryfront-server,service.version=release-1,deployment.environment.name=staging",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          requests.push(init ?? {});
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          metrics.counter("vf_hosted_metric_total", 1);
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    const resource = JSON.parse(String(requests[0]?.body)).resourceMetrics[0].resource;
+    const attributes = Object.fromEntries(
+      resource.attributes.map((attribute: { key: string; value: { stringValue: string } }) => [
+        attribute.key,
+        attribute.value.stringValue,
+      ]),
+    );
+    assertEquals(attributes["service.name"], "veryfront-server");
+    assertEquals(attributes["service.version"], "release-1");
+    assertEquals(attributes["deployment.environment"], "staging");
+  });
+
   it("does not expose internal metrics credentials to a replaced Base64 encoder", async () => {
     const originalBtoa = Object.getOwnPropertyDescriptor(globalThis, "btoa");
     const observedValues: string[] = [];
