@@ -516,7 +516,11 @@ export function rememberReceivedVeryfrontCloudCatalog(
       )),
     }),
   );
-  // Bounded even if a receiver never forgets: the oldest goes first.
+  // Bounded even if a receiver never forgets: the oldest goes first. Unlike the
+  // cache there is no load in flight to protect: each executor session keeps
+  // at most one received catalog and forgets it on cleanup, and a broker pool
+  // admits at most as many sessions as this cap. An evicted catalog only makes
+  // later reads fall back to the shipped facts.
   for (const oldest of received.keys()) {
     if (received.size <= VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES) break;
     received.delete(oldest);
