@@ -110,6 +110,16 @@ describe("project telemetry configuration", () => {
     assertEquals(result.config.endpoint, "https://collector.example/otlp/v1/traces");
   });
 
+  it("normalizes a trailing slash on a base endpoint that already names the trace signal", async () => {
+    const result = await resolveProjectTraceConfig(scope, declarations, {
+      ...env,
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example/otlp/v1/traces/",
+    });
+    assertEquals(result.status, "enabled");
+    if (result.status !== "enabled") return;
+    assertEquals(result.config.endpoint, "https://collector.example/otlp/v1/traces");
+  });
+
   it("rejects invalid settings with bounded diagnostics that contain no supplied values", async () => {
     for (
       const [patch, reason] of [
@@ -125,6 +135,8 @@ describe("project telemetry configuration", () => {
           "headers",
         ],
         [{ OTEL_EXPORTER_OTLP_HEADERS: "Host=other.example" }, "headers"],
+        [{ OTEL_EXPORTER_OTLP_HEADERS: "Content-Encoding=gzip" }, "headers"],
+        [{ OTEL_EXPORTER_OTLP_HEADERS: "Content-Type=text/plain" }, "headers"],
         [{ OTEL_SERVICE_NAME: "x".repeat(257) }, "resource"],
       ] as const
     ) {

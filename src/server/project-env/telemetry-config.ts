@@ -70,10 +70,10 @@ function headers(value: unknown): Record<string, string> | undefined {
       const separator = apply(indexOf, part, ["="]) as number;
       if (separator < 1) return undefined;
       const key = apply(lower, apply(trim, apply(slice, part, [0, separator]), []), []) as string;
-      // Destination and HTTP framing belong to the guarded transport, not project credentials.
+      // The exporter owns destination, framing and JSON encoding. Project headers carry auth/routing.
       if (
         key === "host" || key === "content-length" || key === "connection" ||
-        key === "transfer-encoding"
+        key === "transfer-encoding" || key === "content-encoding" || key === "content-type"
       ) {
         return undefined;
       }
@@ -130,6 +130,8 @@ async function revision(config: Omit<ProjectTraceConfig, "revision">): Promise<s
  * Read only the supplied authenticated project snapshot, never host/process env.
  * Call before filtering reserved OTEL keys from ordinary shared-runtime project env.
  * The caller must establish identity and authorization; this parser does not do so.
+ * Validation returns sanitized diagnostic data instead of throwing so an invalid
+ * telemetry setting need not fail the application request.
  */
 export async function resolveProjectTraceConfig(
   identity: { readonly projectId: string; readonly environmentId: string },
@@ -180,8 +182,11 @@ export async function resolveProjectTraceConfig(
       return invalid("endpoint");
     }
     const pathname = apply(urlGetters.pathname, url, []) as string;
-    if (signalEndpoint === undefined && !apply(endsWith, pathname, ["/v1/traces"])) {
-      apply(setPathname, url, [`${apply(replace, pathname, [/\/$/, ""])}/v1/traces`]);
+    if (signalEndpoint === undefined) {
+      const basePath = apply(replace, pathname, [/\/$/, ""]) as string;
+      apply(setPathname, url, [
+        apply(endsWith, basePath, ["/v1/traces"]) ? basePath : `${basePath}/v1/traces`,
+      ]);
     }
     endpoint = apply(urlGetters.href, url, []) as string;
   } catch {
