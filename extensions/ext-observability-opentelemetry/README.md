@@ -9,12 +9,56 @@ Provides distributed tracing, OTLP log export, OTLP metrics export, the OpenTele
 Add the extension to your project's `veryfront.config.ts`:
 
 ```ts
+import { defineConfig } from "veryfront/config";
 import extOpenTelemetry from "@veryfront/ext-observability-opentelemetry";
 
 export default defineConfig({
   extensions: [extOpenTelemetry()],
 });
 ```
+
+## Local tracing
+
+With an OTLP/HTTP collector listening on port 4318, start your local app with:
+
+```sh
+OTEL_TRACES_ENABLED=true \
+OTEL_SERVICE_NAME=my-application \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+veryfront dev
+```
+
+If your collector requires authentication, set `OTEL_EXPORTER_OTLP_HEADERS` in your
+local environment before starting the app. Its format is `Authorization=Bearer <TOKEN>`
+for a collector using bearer authentication. Do not commit credentials.
+
+You can add custom spans using the public tracing API:
+
+```ts
+import { trace } from "veryfront/observability";
+
+const tracer = trace.getTracer("my-application");
+
+export function GET() {
+  return tracer.startActiveSpan("app.greeting", (span) => {
+    try {
+      return Response.json({ message: "Hello" });
+    } finally {
+      span.end();
+    }
+  });
+}
+```
+
+Place this handler in an API route and request it. Look for the application service
+and `app.greeting` span in your collector. Export is batched, so delivery is not
+synchronous with the HTTP response. Restart with `OTEL_TRACES_ENABLED=false` to
+disable trace export. Settings are read when the extension starts.
+
+The Deno integration test `tests/integration/observability/local-otlp.test.ts`
+checks real OTLP/HTTP delivery, authentication headers, service identity, request/custom
+span correlation, and disabled export. Managed project settings require separate
+runtime integration; this local setup does not configure a shared host's exporter.
 
 ## Environment variables
 
