@@ -7,6 +7,12 @@ import {
   type ChatUiMessageStreamFinishPart,
   createChatUiMessageStreamFromDataStream,
 } from "./chat-ui-message-stream.ts";
+import type { ChatMessageMetadata } from "../../chat/protocol.ts";
+import {
+  buildChatStreamChunkMessageMetadata,
+  extractChatMessageMetadata,
+} from "../../chat/chat-ui-message-helpers.ts";
+import { getAgUiChatUiMessageChunkMetadata } from "../ag-ui/chat-ui-chunk-encoder.ts";
 
 const encoder = new TextEncoder();
 
@@ -493,6 +499,74 @@ describe("createChatUiMessageStreamFromDataStream", () => {
       messageMetadata: expectedMetadata,
     });
     assertEquals(finish?.responseMessage.metadata, expectedMetadata);
+  });
+
+  it("carries the one-hour cache-write share through hosted chat message metadata", async () => {
+    const finishWith = async (cacheUsage: Record<string, number>) => {
+      let finish: ChatUiMessageStreamFinish<ChatMessageMetadata> | undefined;
+      const chunks = await collectChunks(
+        createChatUiMessageStreamFromDataStream(
+          {
+            stream: createSseStream([
+              { type: "message-start", messageId: "framework-message" },
+              { type: "text-start", id: "text-1" },
+              { type: "text-delta", id: "text-1", delta: "Hello" },
+              { type: "text-end", id: "text-1" },
+              {
+                type: "message-finish",
+                finishReason: "stop",
+                totalUsage: { inputTokens: 12, outputTokens: 8, totalTokens: 20, ...cacheUsage },
+              },
+            ]),
+          },
+          {
+            generateMessageId: () => "assistant-message",
+            messageMetadata: ({ part }) =>
+              buildChatStreamChunkMessageMetadata({
+                agentId: "agent-1",
+                modelId: "test/model",
+                part: { type: part.type, totalUsage: part.totalUsage },
+              }),
+            onFinish: (value) => {
+              finish = value;
+            },
+          },
+        ),
+      );
+      const finishChunk = chunks.at(-1) as ChatUiMessageChunk<ChatMessageMetadata>;
+      return {
+        persisted: extractChatMessageMetadata(finish?.responseMessage.metadata)?.usage,
+        runFinished: getAgUiChatUiMessageChunkMetadata(finishChunk),
+      };
+    };
+
+    const withShare = await finishWith({
+      cacheCreationInputTokens: 50,
+      cacheCreation1hInputTokens: 20,
+    });
+    assertEquals(withShare.persisted, {
+      inputTokens: 12,
+      outputTokens: 8,
+      cacheCreationInputTokens: 50,
+      cacheCreation1hInputTokens: 20,
+    });
+    assertEquals(withShare.runFinished?.cacheCreationInputTokens, 50);
+    assertEquals(withShare.runFinished?.cacheCreation1hInputTokens, 20);
+
+    const withoutShare = await finishWith({ cacheCreationInputTokens: 50 });
+    assertEquals(withoutShare.persisted, {
+      inputTokens: 12,
+      outputTokens: 8,
+      cacheCreationInputTokens: 50,
+    });
+    assertEquals(withoutShare.runFinished?.cacheCreationInputTokens, 50);
+    assertEquals(
+      Object.hasOwn(withoutShare.runFinished ?? {}, "cacheCreation1hInputTokens"),
+      false,
+    );
+
+    const shareWithoutTotal = await finishWith({ cacheCreation1hInputTokens: 20 });
+    assertEquals(shareWithoutTotal.persisted, { inputTokens: 12, outputTokens: 8 });
   });
 
   it("surfaces orphaned tool input deltas as tool input errors", async () => {

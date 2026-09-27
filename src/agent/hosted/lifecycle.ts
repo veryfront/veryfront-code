@@ -12,6 +12,7 @@ export interface HostedLifecycleTerminalState {
       outputTokens?: number;
       cachedInputTokens?: number;
       cacheCreationInputTokens?: number;
+      cacheCreation1hInputTokens?: number;
       cacheReadInputTokens?: number;
       reasoningTokens?: number;
     };

@@ -66,6 +66,7 @@ export function getAgUiChatUiMessageUsageMetadata(
   | "totalTokens"
   | "cachedInputTokens"
   | "cacheCreationInputTokens"
+  | "cacheCreation1hInputTokens"
   | "cacheReadInputTokens"
   | "reasoningTokens"
 > {
@@ -73,6 +74,7 @@ export function getAgUiChatUiMessageUsageMetadata(
   const outputTokens = messageMetadata?.usage?.outputTokens;
   const cachedInputTokens = messageMetadata?.usage?.cachedInputTokens;
   const cacheCreationInputTokens = messageMetadata?.usage?.cacheCreationInputTokens;
+  const cacheCreation1hInputTokens = messageMetadata?.usage?.cacheCreation1hInputTokens;
   const cacheReadInputTokens = messageMetadata?.usage?.cacheReadInputTokens;
   const reasoningTokens = messageMetadata?.usage?.reasoningTokens;
 
@@ -84,6 +86,7 @@ export function getAgUiChatUiMessageUsageMetadata(
       : undefined,
     cachedInputTokens,
     cacheCreationInputTokens,
+    cacheCreation1hInputTokens,
     cacheReadInputTokens,
     reasoningTokens,
   };
@@ -173,6 +176,9 @@ export function getAgUiChatUiMessageChunkMetadata(
       : {}),
     ...(typeof usageMetadata.cacheCreationInputTokens === "number"
       ? { cacheCreationInputTokens: usageMetadata.cacheCreationInputTokens }
+      : {}),
+    ...(typeof usageMetadata.cacheCreation1hInputTokens === "number"
+      ? { cacheCreation1hInputTokens: usageMetadata.cacheCreation1hInputTokens }
       : {}),
     ...(typeof usageMetadata.cacheReadInputTokens === "number"
       ? { cacheReadInputTokens: usageMetadata.cacheReadInputTokens }

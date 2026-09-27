@@ -40,6 +40,7 @@ export type ChatUiMessageStreamFinishPart = {
       textTokens?: number;
       reasoningTokens?: number;
     };
+    cacheCreation1hInputTokens?: number;
     billableInputTokens?: number;
     billableOutputTokens?: number;
     costUsd?: number;

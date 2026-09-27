@@ -33,6 +33,7 @@ export type HostedChatRuntimeFinishPart = {
       textTokens?: number;
       reasoningTokens?: number;
     };
+    cacheCreation1hInputTokens?: number;
     billableInputTokens?: number;
     billableOutputTokens?: number;
     costUsd?: number;

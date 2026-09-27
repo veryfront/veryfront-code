@@ -21,6 +21,8 @@ export type AgUiRuntimeChatStreamUsage = {
     textTokens?: number;
     reasoningTokens?: number;
   };
+  /** One-hour-TTL share of `inputTokenDetails.cacheWriteTokens`. */
+  cacheCreation1hInputTokens?: number;
   billableInputTokens?: number;
   billableOutputTokens?: number;
   costUsd?: number;
@@ -171,6 +173,13 @@ function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsa
     getNumberField(usage, "cachedInputTokens");
   const cacheWriteTokens = getNumberField(inputTokenDetails, "cacheWriteTokens") ??
     getNumberField(usage, "cacheCreationInputTokens");
+  const reportedCacheWrite1hTokens = getNumberField(usage, "cacheCreation1hInputTokens");
+  const cacheCreation1hInputTokens = cacheWriteTokens !== undefined &&
+      reportedCacheWrite1hTokens !== undefined &&
+      Number.isSafeInteger(reportedCacheWrite1hTokens) &&
+      reportedCacheWrite1hTokens >= 0
+    ? Math.min(reportedCacheWrite1hTokens, cacheWriteTokens)
+    : undefined;
   const reasoningTokens = getNumberField(outputTokenDetails, "reasoningTokens") ??
     getNumberField(usage, "reasoningTokens");
 
@@ -191,6 +200,7 @@ function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsa
         : {}),
       ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     },
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(getNumberField(usage, "billableInputTokens") !== undefined
       ? { billableInputTokens: getNumberField(usage, "billableInputTokens") }
       : {}),

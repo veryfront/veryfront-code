@@ -141,6 +141,8 @@ export interface ChatMessageMetadataUsage {
   reasoningTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
+  /** One-hour-TTL share of {@link ChatMessageMetadataUsage.cacheCreationInputTokens}. */
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
 }
 

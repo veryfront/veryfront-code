@@ -117,6 +117,12 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
     : isNonNegativeInteger(inputTokenDetails?.cacheWriteTokens)
     ? inputTokenDetails.cacheWriteTokens
     : undefined;
+  // The one-hour share is part of the cache-write total, so it is kept only
+  // next to that total and never above it.
+  const cacheCreation1hInputTokens = cacheCreationInputTokens !== undefined &&
+      isNonNegativeInteger(value.cacheCreation1hInputTokens)
+    ? Math.min(value.cacheCreation1hInputTokens, cacheCreationInputTokens)
+    : undefined;
   const cacheReadInputTokens = isNonNegativeInteger(value.cacheReadInputTokens)
     ? value.cacheReadInputTokens
     : isNonNegativeInteger(inputTokenDetails?.cacheReadTokens)
@@ -137,6 +143,7 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
 
