@@ -8,7 +8,15 @@ import {
   type TracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { getTraceContext, setActiveSpanAttributes, trace, withSpan } from "veryfront/observability";
-import { createChildSpan, endSpan, startSpan, withActiveSpan } from "veryfront/observability";
+import {
+  addSpanEvent,
+  createChildSpan,
+  endSpan,
+  setSpanAttributes,
+  startSpan,
+  withActiveSpan,
+  withSpanSync,
+} from "veryfront/observability";
 import { runWithProjectTraceProvider } from "#veryfront/observability/tracing/project-trace-scope.ts";
 
 type Payload = {
@@ -19,6 +27,7 @@ type Payload = {
         name: string;
         spanId: string;
         parentSpanId?: string;
+        events?: { name: string }[];
         traceId: string;
         attributes: { key: string; value: { stringValue?: string } }[];
       }[];
@@ -50,6 +59,20 @@ describe("project trace SDK provider", () => {
               : startSpan("retained.parent"),
         );
         assertExists(parent);
+        setSpanAttributes(parent, { "application.detached": "updated" });
+        addSpanEvent(parent, "detached.event");
+        const explicit = startSpan("detached.explicit", { parent });
+        assertExists(explicit);
+        endSpan(explicit);
+        await withSpan("detached.async", async (span) => {
+          assertExists(span);
+          await Promise.resolve();
+          assertEquals(getTraceContext().spanId, span.spanContext().spanId);
+        }, { parent });
+        withSpanSync("detached.sync", (span) => {
+          assertExists(span);
+          assertEquals(getTraceContext().spanId, span.spanContext().spanId);
+        }, { parent });
         const child = createChildSpan(parent, "detached.child");
         assertExists(child);
         endSpan(child);
@@ -66,7 +89,14 @@ describe("project trace SDK provider", () => {
       const spans = received.flatMap((p) =>
         p.resourceSpans.flatMap((r) => r.scopeSpans.flatMap((s) => s.spans))
       );
-      assertEquals(spans.length, 6);
+      assertEquals(spans.length, 12);
+      for (const parent of spans.filter((span) => span.name === "retained.parent")) {
+        assertEquals(
+          parent.attributes.find((a) => a.key === "application.detached")?.value.stringValue,
+          "updated",
+        );
+        assertEquals(parent.events?.map((event) => event.name), ["detached.event"]);
+      }
       for (const child of spans.filter((span) => span.name.startsWith("detached."))) {
         assertExists(
           spans.find((parent) =>
