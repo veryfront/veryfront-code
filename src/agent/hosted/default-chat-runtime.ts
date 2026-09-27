@@ -12,6 +12,7 @@ import {
   runWithRequestContext as runWithProjectRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
+  currentVeryfrontCloudCatalogScopeKey,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
@@ -408,12 +409,19 @@ function withoutHostedCredentials<TResult>(input: {
   cloudContext: VeryfrontCloudContext;
   operation: () => Promise<TResult>;
 }): Promise<TResult> {
+  // The run's catalog is named by its non-secret scope key, so model reads in
+  // project code use the catalog the run loaded without holding its credential.
+  const catalogScopeKey = runWithVeryfrontCloudContext(
+    input.cloudContext,
+    currentVeryfrontCloudCatalogScopeKey,
+  );
   const publicCloudContext: VeryfrontCloudContext = {
     apiBaseUrl: input.cloudContext.apiBaseUrl,
     projectSlug: input.cloudContext.projectSlug,
     serviceLayer: input.cloudContext.serviceLayer,
     billingGroupId: input.cloudContext.billingGroupId,
     billingGroupUsed: input.cloudContext.billingGroupUsed,
+    ...(catalogScopeKey ? { catalogScopeKey } : {}),
   };
   const runWithPublicCloudContext = () =>
     runWithVeryfrontCloudContextAsync(publicCloudContext, input.operation);

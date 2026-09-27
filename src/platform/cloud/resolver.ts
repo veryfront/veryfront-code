@@ -1,5 +1,8 @@
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
-import { peekVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import {
+  peekVeryfrontCloudCatalog,
+  type VeryfrontCloudCatalogScopeKey,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import {
   getHostEnv,
   getHostEnvExcludingEnvFile,
@@ -238,12 +241,16 @@ export function isVeryfrontCloudEnabled(): boolean {
  */
 export function getDefaultVeryfrontCloudModel(): string {
   const bootstrap = getVeryfrontCloudBootstrap();
+  // A context without credentials may carry the key of the run's catalog.
+  const carriedKey = getCurrentVeryfrontCloudContext()?.catalogScopeKey;
   const served = (bootstrap.apiToken
     ? peekVeryfrontCloudCatalog({
       apiBaseUrl: bootstrap.apiBaseUrl,
       apiToken: bootstrap.apiToken,
       ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
     })
+    : carriedKey
+    ? peekVeryfrontCloudCatalog(carriedKey as VeryfrontCloudCatalogScopeKey)
     : peekVeryfrontCloudCatalog())?.defaultModelId;
   return normalizeCloudModelString(
     getHostEnv("VERYFRONT_DEFAULT_MODEL"),

@@ -3,12 +3,15 @@ import { isOpenAIReasoningModel } from "../shared/openai-reasoning.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { ModelRuntime } from "../types.ts";
+import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import {
   hasActiveVeryfrontCloudCatalogScope,
   isVeryfrontCloudCatalogFresh,
   peekVeryfrontCloudCatalog,
   type VeryfrontCloudCatalog,
   type VeryfrontCloudCatalogModel,
+  type VeryfrontCloudCatalogScopeKey,
+  veryfrontCloudCatalogScopeKey,
 } from "./catalog-client.ts";
 import { SHIPPED_VERYFRONT_CLOUD_CATALOG } from "./model-catalog.deprecated.ts";
 
@@ -257,12 +260,24 @@ function ambientScope():
   };
 }
 
+/**
+ * @internal The non-secret key of the catalog synchronous reads use outside a
+ * model build: the ambient credentials' scope, or, in a context that does not
+ * hold credentials, the scope key it carries. Undefined when neither applies.
+ */
+export function currentVeryfrontCloudCatalogScopeKey(): VeryfrontCloudCatalogScopeKey | undefined {
+  const scope = ambientScope();
+  if (scope) return veryfrontCloudCatalogScopeKey(scope);
+  const carried = getCurrentVeryfrontCloudContext()?.catalogScopeKey;
+  return carried ? carried as VeryfrontCloudCatalogScopeKey : undefined;
+}
+
 /** The served catalog loaded for the scope reads use, or undefined before it loads. */
 function loadedCatalog(): VeryfrontCloudCatalog | undefined {
   if (hasActiveVeryfrontCloudCatalogScope()) return peekVeryfrontCloudCatalog();
-  const scope = ambientScope();
+  const key = currentVeryfrontCloudCatalogScopeKey();
   // A scope-less read still sees a catalog fixed by a test hook.
-  return scope ? peekVeryfrontCloudCatalog(scope) : peekVeryfrontCloudCatalog();
+  return key ? peekVeryfrontCloudCatalog(key) : peekVeryfrontCloudCatalog();
 }
 
 /**
@@ -274,8 +289,8 @@ function loadedCatalog(): VeryfrontCloudCatalog | undefined {
 export function canVeryfrontCloudCatalogRefuse(): boolean {
   if (loadedCatalog() === undefined) return true;
   if (hasActiveVeryfrontCloudCatalogScope()) return isVeryfrontCloudCatalogFresh();
-  const scope = ambientScope();
-  return scope ? isVeryfrontCloudCatalogFresh(scope) : isVeryfrontCloudCatalogFresh();
+  const key = currentVeryfrontCloudCatalogScopeKey();
+  return key ? isVeryfrontCloudCatalogFresh(key) : isVeryfrontCloudCatalogFresh();
 }
 
 /**

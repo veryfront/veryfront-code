@@ -184,11 +184,21 @@ export function parseVeryfrontCloudCatalog(payload: unknown): VeryfrontCloudCata
  * Non-reversible fingerprint of a credential, so entries for different
  * credentials never share a key and the key never holds the credential.
  */
+/**
+ * Per-process salt for credential fingerprints, so a fingerprint means nothing
+ * outside this process and cannot be matched against a known credential.
+ */
+const FINGERPRINT_SALT = Array.from(
+  crypto.getRandomValues(new Uint8Array(16)),
+  (byte) => byte.toString(16).padStart(2, "0"),
+).join("");
+
 function credentialFingerprint(token: string): string {
   let a = 0x811c9dc5;
   let b = 0x01000193;
-  for (let index = 0; index < token.length; index++) {
-    const code = token.charCodeAt(index);
+  const salted = `${FINGERPRINT_SALT}:${token}`;
+  for (let index = 0; index < salted.length; index++) {
+    const code = salted.charCodeAt(index);
     a = Math.imul(a ^ code, 0x01000193) >>> 0;
     b = Math.imul(b ^ code, 0x85ebca6b) >>> 0;
   }
@@ -225,6 +235,25 @@ function rememberFailure(key: string, at: number): void {
   failedAt.delete(key);
   failedAt.set(key, at);
   evictOldest(failedAt);
+}
+
+/**
+ * A catalog scope key: the cache key for a scope. It carries the API base URL,
+ * the project and a salted credential fingerprint, never the credential, so a
+ * context that must not hold the credential can still name the catalog loaded
+ * for it.
+ */
+export type VeryfrontCloudCatalogScopeKey = string & { readonly __catalogScopeKey: true };
+
+/** The non-secret scope key for a scope. */
+export function veryfrontCloudCatalogScopeKey(
+  scope: VeryfrontCloudCatalogScope,
+): VeryfrontCloudCatalogScopeKey {
+  return cacheKey(scope) as VeryfrontCloudCatalogScopeKey;
+}
+
+function keyOf(scope: VeryfrontCloudCatalogScope | VeryfrontCloudCatalogScopeKey): string {
+  return typeof scope === "string" ? scope : cacheKey(scope);
 }
 
 function cacheKey(scope: VeryfrontCloudCatalogScope): string {
@@ -372,9 +401,11 @@ export function loadVeryfrontCloudCatalog(
  * catalog may miss models the platform has enabled since, so it must not be
  * used to refuse one.
  */
-export function isVeryfrontCloudCatalogFresh(scope?: VeryfrontCloudCatalogScope): boolean {
+export function isVeryfrontCloudCatalogFresh(
+  scope?: VeryfrontCloudCatalogScope | VeryfrontCloudCatalogScopeKey,
+): boolean {
   if (seeded) return true;
-  const key = scope ? cacheKey(scope) : activeKey;
+  const key = scope ? keyOf(scope) : activeKey;
   if (key === undefined) return false;
   const entry = entries.get(key);
   return entry !== undefined && now() - entry.fetchedAt < VERYFRONT_CLOUD_CATALOG_TTL_MS;
@@ -409,10 +440,10 @@ export function hasActiveVeryfrontCloudCatalogScope(): boolean {
  * names, and undefined outside it.
  */
 export function peekVeryfrontCloudCatalog(
-  scope?: VeryfrontCloudCatalogScope,
+  scope?: VeryfrontCloudCatalogScope | VeryfrontCloudCatalogScopeKey,
 ): VeryfrontCloudCatalog | undefined {
   if (seeded) return seeded;
-  const key = scope ? cacheKey(scope) : activeKey;
+  const key = scope ? keyOf(scope) : activeKey;
   if (key === undefined) return undefined;
   const entry = entries.get(key);
   if (!entry) return undefined;

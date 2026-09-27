@@ -1,9 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { clearModelProviders, loadVeryfrontCloudModelCatalog } from "#veryfront/provider";
+import {
+  clearModelProviders,
+  loadVeryfrontCloudModelCatalog,
+  registerModelProvider,
+} from "#veryfront/provider";
+import {
+  getCurrentVeryfrontCloudContext,
+  runWithVeryfrontCloudContext,
+  type VeryfrontCloudContext,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { resolveVeryfrontCloudModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
@@ -223,6 +232,110 @@ describe("served-only models from a cold process", () => {
   });
 
   describe("read in the scope the catalog was loaded for", () => {
+    it("resolves a served-only alias in a credential-free hosted tool context, without the credential", async () => {
+      const captured = installGateway(true);
+      let resolvedInTool: string | undefined;
+      let toolContext: VeryfrontCloudContext | undefined;
+      let modelCalls = 0;
+      registerModelProvider("test", () => ({
+        provider: "test",
+        modelId: "test/stripped-context",
+        doGenerate: () => Promise.reject(new Error("unused")),
+        doStream() {
+          modelCalls++;
+          return Promise.resolve({
+            stream: new ReadableStream<unknown>({
+              start(controller) {
+                if (modelCalls === 1) {
+                  controller.enqueue({
+                    type: "tool-call",
+                    toolCallId: "child-1",
+                    toolName: "invoke_child",
+                    input: {},
+                  });
+                  controller.enqueue({ type: "finish", finishReason: "tool-calls", usage: {} });
+                } else {
+                  controller.enqueue({ type: "text-delta", text: "done" });
+                  controller.enqueue({ type: "finish", finishReason: "stop", usage: {} });
+                }
+                controller.close();
+              },
+            }),
+          });
+        },
+      }));
+
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+        options: {
+          projectId: "project-1",
+          projectSlug: "run-project",
+          authToken: RUN_TOKEN,
+          instructions: "Invoke the child.",
+          model: "test/stripped-context",
+          allowedTools: ["invoke_child"],
+        },
+        config: {
+          apiUrl: "https://api.veryfront.com",
+          apiMcpUrl: "https://api.veryfront.com/mcp",
+        },
+        buildLocalTools: () => ({
+          invoke_child: {
+            description: "Resolve a child model the way invoke_agent does",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => {
+              toolContext = getCurrentVeryfrontCloudContext();
+              // invoke_agent resolves the child's model with this function.
+              resolvedInTool = resolveVeryfrontCloudModelId(SERVED_ONLY_ALIAS);
+              return { ok: true };
+            },
+          },
+        }),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
+      try {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the tool round trip.
+        }
+      } finally {
+        await runtime.cleanup?.();
+      }
+
+      assertEquals(resolvedInTool, SERVED_ONLY_MODEL);
+      assertEquals(toolContext?.apiToken, undefined);
+      assertEquals(typeof toolContext?.catalogScopeKey, "string");
+      assertEquals(toolContext?.catalogScopeKey?.includes(RUN_TOKEN), false);
+      assertEquals(JSON.stringify(toolContext).includes(RUN_TOKEN), false);
+      assertEquals(
+        captured.filter(({ path }) => path === "/ai/models").map(({ authorization }) =>
+          authorization
+        ),
+        [`Bearer ${RUN_TOKEN}`],
+      );
+    });
+
+    it("falls back to the shipped aliases in a credential-free context whose run loaded nothing", () => {
+      const stripped: VeryfrontCloudContext = {
+        apiBaseUrl: "https://api.veryfront.com",
+        projectSlug: "run-project",
+        serviceLayer: "cloud",
+      };
+
+      runWithVeryfrontCloudContext(stripped, () => {
+        assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
+        assertThrows(
+          () => resolveVeryfrontCloudModelId(SERVED_ONLY_ALIAS),
+          Error,
+          "Unknown model alias",
+        );
+      });
+    });
+
     it("resolves a hosted alias from the run's catalog, not the ambient one", async () => {
       setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);
       setEnv("VERYFRONT_PROJECT_SLUG", "ambient-project");
