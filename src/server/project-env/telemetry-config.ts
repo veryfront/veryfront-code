@@ -93,6 +93,29 @@ function headers(value: unknown): Record<string, string> | undefined {
   }
 }
 
+function resourceAttributes(value: unknown): Record<string, string> | undefined {
+  if (value === undefined || value === "") return {};
+  if (!text(value, 8192)) return undefined;
+  const result: Record<string, string> = {};
+  const parts = apply(split, value, [","]) as string[];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    const separator = apply(indexOf, part, ["="]) as number;
+    if (separator < 1) continue;
+    const key = apply(trim, apply(slice, part, [0, separator]), []) as string;
+    if (
+      key !== "service.name" && key !== "service.version" &&
+      key !== "deployment.environment.name" && key !== "deployment.environment"
+    ) continue;
+    defineOwnDataProperty(result, key, apply(trim, apply(slice, part, [separator + 1]), []), {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return result;
+}
+
 async function revision(config: Omit<ProjectTraceConfig, "revision">): Promise<string> {
   // A keyed digest cannot be used to guess low-entropy credentials from a visible revision.
   // The registry is process-local, so revisions need not match across runtime replicas.
@@ -198,10 +221,20 @@ export async function resolveProjectTraceConfig(
     readOwnDataProperty(environment, "OTEL_EXPORTER_OTLP_TRACES_HEADERS"),
   );
   if (!baseHeaders || !traceHeaders) return invalid("headers");
-  const serviceName = readOwnDataProperty(environment, "OTEL_SERVICE_NAME") ?? projectId;
-  const serviceVersion = readOwnDataProperty(environment, "OTEL_SERVICE_VERSION") ?? "";
-  const deploymentEnvironment = readOwnDataProperty(environment, "OTEL_DEPLOYMENT_ENVIRONMENT") ??
-    environmentId;
+  const attributes = resourceAttributes(
+    readOwnDataProperty(environment, "OTEL_RESOURCE_ATTRIBUTES"),
+  );
+  if (!attributes) return invalid("resource");
+  const serviceName = readOwnDataProperty(environment, "OTEL_SERVICE_NAME") ??
+    readOwnDataProperty(attributes, "service.name") ??
+    readOwnDataProperty(environment, "DD_SERVICE") ?? projectId;
+  const serviceVersion = readOwnDataProperty(attributes, "service.version") ??
+    readOwnDataProperty(environment, "OTEL_SERVICE_VERSION") ??
+    readOwnDataProperty(environment, "DD_VERSION") ?? "";
+  const deploymentEnvironment = readOwnDataProperty(attributes, "deployment.environment.name") ??
+    readOwnDataProperty(attributes, "deployment.environment") ??
+    readOwnDataProperty(environment, "OTEL_DEPLOYMENT_ENVIRONMENT") ??
+    readOwnDataProperty(environment, "DD_ENV") ?? environmentId;
   if (
     !text(serviceName, 256) ||
     typeof serviceVersion !== "string" || serviceVersion.length > 256 ||

@@ -12,6 +12,47 @@ const env = {
 };
 
 describe("project telemetry configuration", () => {
+  it("preserves extension resource and Datadog metadata precedence", async () => {
+    const datadog = { DD_SERVICE: "dd-app", DD_VERSION: "dd-version", DD_ENV: "dd-env" };
+    const explicit = {
+      OTEL_SERVICE_NAME: "otel-app",
+      OTEL_SERVICE_VERSION: "otel-version",
+      OTEL_DEPLOYMENT_ENVIRONMENT: "otel-env",
+    };
+    for (
+      const [metadata, expected] of [
+        [datadog, ["dd-app", "dd-version", "dd-env"]],
+        [{ ...datadog, ...explicit }, ["otel-app", "otel-version", "otel-env"]],
+        [{
+          ...datadog,
+          ...explicit,
+          OTEL_RESOURCE_ATTRIBUTES:
+            "service.name=resource-app, service.version=resource-version,deployment.environment=legacy,deployment.environment.name=resource-env",
+        }, ["otel-app", "resource-version", "resource-env"]],
+        [{
+          ...datadog,
+          OTEL_RESOURCE_ATTRIBUTES:
+            "service.name=resource-app,service.version=resource-version,deployment.environment=legacy",
+        }, ["resource-app", "resource-version", "legacy"]],
+        [{
+          OTEL_RESOURCE_ATTRIBUTES:
+            "invalid,service.name=first,service.name=last=part,project.id=spoofed,environment.id=spoofed",
+        }, ["last=part", "", scope.environmentId]],
+      ] as const
+    ) {
+      const result = await resolveProjectTraceConfig(scope, declarations, { ...env, ...metadata });
+      assertEquals(result.status, "enabled");
+      if (result.status !== "enabled") continue;
+      assertEquals([
+        result.config.serviceName,
+        result.config.serviceVersion,
+        result.config.deploymentEnvironment,
+      ], expected);
+      assertEquals(result.config.projectId, scope.projectId);
+      assertEquals(result.config.environmentId, scope.environmentId);
+    }
+  });
+
   it("requires a declaration and a project signal opt-in; disable wins", async () => {
     for (
       const [extensions, variables] of [
@@ -94,6 +135,9 @@ describe("project telemetry configuration", () => {
         [{ OTEL_EXPORTER_OTLP_HEADERS: "Content-Encoding=gzip" }, "headers"],
         [{ OTEL_EXPORTER_OTLP_HEADERS: "Content-Type=text/plain" }, "headers"],
         [{ OTEL_SERVICE_NAME: "x".repeat(257) }, "resource"],
+        [{ OTEL_RESOURCE_ATTRIBUTES: "service.name=" + "x".repeat(257) }, "resource"],
+        [{ OTEL_RESOURCE_ATTRIBUTES: "x".repeat(8193) }, "resource"],
+        [{ DD_ENV: "" }, "resource"],
       ] as const
     ) {
       assertEquals(await resolveProjectTraceConfig(scope, declarations, { ...env, ...patch }), {
