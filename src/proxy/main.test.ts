@@ -105,11 +105,14 @@ describe("proxy main request URL parsing", () => {
     const resolveIndex = source.indexOf(
       "proxyHandler.processRequest(req, { url, timing: proxyTiming })",
     );
-    const stampIndex = source.search(
-      /lifecycle\.setAttributes\(\{\s*"project\.id":\s*ctx\.projectId/,
-    );
+    const stampIndex = source.indexOf("lifecycle.setProjectId(ctx.projectId);");
     assertEquals(resolveIndex >= 0, true);
-    assertEquals(stampIndex > resolveIndex, true, "project.id must be set from the resolved ctx");
+    // The stamp must directly follow the resolution, before any early return.
+    assertEquals(
+      source.slice(resolveIndex, stampIndex).split("\n").length <= 3,
+      true,
+      "project.id must be set from the resolved ctx",
+    );
   });
 
   it("uses an independent request body for every upstream attempt", async () => {

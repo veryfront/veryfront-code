@@ -44,33 +44,35 @@ describe("proxy request lifecycle", () => {
     ]);
   });
 
-  it("sets attributes on the root server span", async () => {
-    const req = new Request("https://example.com/docs");
-    const attributes: Record<string, unknown> = {};
-    const span = {
-      setAttributes(values: Record<string, unknown>) {
-        Object.assign(attributes, values);
-        return span;
-      },
-    } as unknown as Span;
+  it("stamps the resolved project id on the root server span only when it is set", async () => {
+    for (const projectId of ["proj-123", undefined]) {
+      const req = new Request("https://example.com/docs");
+      const attributes: Record<string, unknown> = {};
+      const span = {
+        setAttribute(key: string, value: unknown) {
+          attributes[key] = value;
+          return span;
+        },
+      } as unknown as Span;
 
-    await runProxyRequestLifecycle({
-      req,
-      url: new URL(req.url),
-      extractContext: () => undefined,
-      startServerSpan: () => ({ span, context: {} as Context }),
-      withContext: (_context, fn) => fn(),
-      endSpan: () => {},
-      handle: async (lifecycle) => {
-        lifecycle.setAttributes({ "project.id": "proj-123" });
-        return new Response("ok");
-      },
-    });
+      await runProxyRequestLifecycle({
+        req,
+        url: new URL(req.url),
+        extractContext: () => undefined,
+        startServerSpan: () => ({ span, context: {} as Context }),
+        withContext: (_context, fn) => fn(),
+        endSpan: () => {},
+        handle: async (lifecycle) => {
+          lifecycle.setProjectId(projectId);
+          return new Response("ok");
+        },
+      });
 
-    assertEquals(attributes, { "project.id": "proj-123" });
+      assertEquals(attributes, projectId ? { "project.id": projectId } : {});
+    }
   });
 
-  it("ignores attributes when tracing is disabled", async () => {
+  it("ignores the project id when tracing is disabled", async () => {
     const req = new Request("https://example.com/docs");
 
     const response = await runProxyRequestLifecycle({
@@ -81,7 +83,7 @@ describe("proxy request lifecycle", () => {
       withContext: (_context, fn) => fn(),
       endSpan: () => {},
       handle: async (lifecycle) => {
-        lifecycle.setAttributes({ "project.id": "proj-123" });
+        lifecycle.setProjectId("proj-123");
         return new Response("ok");
       },
     });

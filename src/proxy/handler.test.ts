@@ -3502,6 +3502,67 @@ describe("Proxy Handler", () => {
 
         assertEquals(ctx.error?.status, 401);
         assertEquals(ctx.token, undefined);
+        assertEquals(ctx.projectId, "proj-123");
+        await handler.close();
+      } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
+    it("keeps the resolved projectId on refusals from the full project lookup", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        // No routing/access metadata forces the full domain lookup.
+        if (pathname.startsWith("/projects/-/")) return createNotFoundResponse();
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      try {
+        const { jws, publicKeyPem } = await mintControlPlaneJws({
+          projectId: "another-project",
+        });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        const handler = createHandler(port);
+        const host = "protected-project.preview.veryfront.com";
+
+        const denied = await handler.processRequest(
+          new Request(`http://${host}/page`, { headers: { host } }),
+        );
+        assertEquals(denied.error?.status, 302);
+        assertEquals(denied.projectId, "proj-123");
+
+        const unbound = await handler.processRequest(
+          new Request(`http://${host}/api/control-plane/runs/run_1/stream`, {
+            method: "POST",
+            headers: {
+              host,
+              "x-token": "wrong-project-token",
+              "x-veryfront-control-plane-jws": jws,
+            },
+          }),
+        );
+        assertEquals(unbound.error?.status, 401);
+        assertEquals(unbound.projectId, "proj-123");
+
         await handler.close();
       } finally {
         if (previousKey === undefined) {
