@@ -6,6 +6,7 @@ import {
   type RunServingIdentity,
 } from "#veryfront/internal-agents/session-manager.ts";
 import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
+import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import {
   createControlPlaneSignature as createTestControlPlaneSignature,
@@ -422,14 +423,16 @@ describe("agent-run-resume.handler serving identity", () => {
       result: { ok: true },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    // Through the registry, so the attributes are those of routing.registry.execute.
     const { result, attributes } = await withRecordedActiveSpan(() =>
-      new AgentRunResumeHandler(sessionManager).handle(
+      new RouteRegistry().register(new AgentRunResumeHandler(sessionManager)).execute(
         new Request("https://example.com/api/control-plane/runs/run_1/resume", {
           method: "POST",
           headers: {
             "content-type": "application/json",
             "x-veryfront-control-plane-jws": jws,
             "x-release-id": "rel-untrusted",
+            "x-environment-name": "untrusted",
           },
           body,
         }),
@@ -437,10 +440,11 @@ describe("agent-run-resume.handler serving identity", () => {
           ...createCtx(publicKeyPem),
           resolvedEnvironment: "production",
           releaseId: "rel-untrusted",
+          environmentName: "untrusted",
         },
       )
     );
-    return { status: result.response?.status, attributes };
+    return { status: result?.status, attributes };
   }
 
   function startRun(servingIdentity: RunServingIdentity) {
@@ -458,6 +462,20 @@ describe("agent-run-resume.handler serving identity", () => {
     await pending;
     assertEquals(attributes["release.id"], "rel-1");
     assertEquals(attributes["veryfront.environment_name"], "staging");
+  });
+
+  it("stamps the branch of an owned preview run", async () => {
+    const { sessionManager, pending } = startRun({
+      projectId: "proj-1",
+      spanAttributes: { "branch.id": "branch-1", "branch.name": "feature" },
+    });
+
+    const { status, attributes } = await resume(sessionManager);
+
+    assertEquals(status, 200);
+    await pending;
+    assertEquals(attributes["branch.name"], "feature");
+    assertEquals(attributes["release.id"], undefined);
   });
 
   it("stamps no release for a run this pod does not own", async () => {

@@ -2,17 +2,11 @@ import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { errorToRFC9457Response } from "#veryfront/errors";
+import { isDirectToPodRunRoute } from "#veryfront/channels/control-plane-routes.ts";
 
 const logger = serverLogger.component("route-registry");
 
 type SpanAttributes = Record<string, string | number | boolean>;
-
-/**
- * Cancel (`DELETE /runs/{runId}`) and resume reach the owning pod directly, past the proxy,
- * so their release headers are unverified. Their handlers stamp the identity recorded when
- * the run's stream started instead.
- */
-const DIRECT_TO_POD_RUN_ROUTE = /^\/api\/control-plane\/runs\/[^/]+(?:\/resume)?$/u;
 
 export function buildRouteRegistrySpanAttributes(
   req: Request,
@@ -39,7 +33,8 @@ export function buildRouteRegistrySpanAttributes(
   }
 
   if (!projectSlug && !projectId) return attributes;
-  if (DIRECT_TO_POD_RUN_ROUTE.test(url.pathname)) return attributes;
+  // Cancel and resume handlers stamp the identity recorded when the run's stream started.
+  if (isDirectToPodRunRoute(req.method, url.pathname)) return attributes;
 
   return { ...attributes, ...buildServingSpanAttributes(ctx) };
 }
