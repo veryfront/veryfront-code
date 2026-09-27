@@ -26,6 +26,12 @@ import { logger } from "#veryfront/utils/logger/logger.ts";
 export const VERYFRONT_CLOUD_CATALOG_TTL_MS = 5 * 60_000;
 /** How long a failed load waits before the next attempt for the same key. */
 export const VERYFRONT_CLOUD_CATALOG_RETRY_MS = 30_000;
+/**
+ * Most catalogs kept at once. Run-scoped credentials rotate, so each run can
+ * add a key; the least recently used entry goes first, and a load in flight is
+ * never evicted.
+ */
+export const VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES = 256;
 /** Upper bound on one catalog request. */
 const VERYFRONT_CLOUD_CATALOG_TIMEOUT_MS = 10_000;
 /** Header naming the project a catalog request is scoped to. */
@@ -183,6 +189,38 @@ function credentialFingerprint(token: string): string {
   return `${a.toString(16)}${b.toString(16)}`;
 }
 
+/** Store an entry as the most recently used, evicting the least recently used over the cap. */
+function rememberEntry(key: string, entry: CatalogEntry): void {
+  entries.delete(key);
+  entries.set(key, entry);
+  evictOldest(entries);
+}
+
+/** Mark an entry as just used, so eviction keeps it longest. */
+function touchEntry(key: string, entry: CatalogEntry): void {
+  entries.delete(key);
+  entries.set(key, entry);
+}
+
+/** Drop the oldest keys over the cap, skipping any key with a load in flight. */
+function evictOldest(map: Map<string, unknown>): void {
+  if (map.size <= VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES) return;
+  for (const key of [...map.keys()]) {
+    if (map.size <= VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES) return;
+    if (!inflight.has(key)) map.delete(key);
+  }
+}
+
+/** Record a failed load, forgetting failures whose retry window has passed. */
+function rememberFailure(key: string, at: number): void {
+  for (const [failedKey, failedTime] of failedAt) {
+    if (at - failedTime >= VERYFRONT_CLOUD_CATALOG_RETRY_MS) failedAt.delete(failedKey);
+  }
+  failedAt.delete(key);
+  failedAt.set(key, at);
+  evictOldest(failedAt);
+}
+
 function cacheKey(scope: VeryfrontCloudCatalogScope): string {
   return `${scope.apiBaseUrl}\n${scope.projectSlug ?? ""}\n${
     credentialFingerprint(scope.apiToken)
@@ -242,14 +280,14 @@ function refresh(
   const request = fetchCatalog(options).then(
     (catalog) => {
       if (started !== generation) return catalog;
-      entries.set(key, { catalog, fetchedAt: now() });
+      rememberEntry(key, { catalog, fetchedAt: now() });
       failedAt.delete(key);
       failureLogged = false;
       return catalog;
     },
     (error: unknown) => {
       if (started !== generation) return undefined;
-      failedAt.set(key, now());
+      rememberFailure(key, now());
       if (!failureLogged) {
         failureLogged = true;
         logger.warn(
@@ -302,12 +340,14 @@ export function loadVeryfrontCloudCatalog(
   const entry = entries.get(key);
   const current = now();
   if (entry && current - entry.fetchedAt < VERYFRONT_CLOUD_CATALOG_TTL_MS) {
+    touchEntry(key, entry);
     return Promise.resolve(entry.catalog);
   }
   const lastFailure = failedAt.get(key);
   if (lastFailure !== undefined && current - lastFailure < VERYFRONT_CLOUD_CATALOG_RETRY_MS) {
     return Promise.resolve(entry?.catalog);
   }
+  if (lastFailure !== undefined) failedAt.delete(key);
   const request = refresh(key, {
     apiBaseUrl: options.apiBaseUrl,
     apiToken: options.apiToken,
@@ -358,7 +398,11 @@ export function peekVeryfrontCloudCatalog(
 ): VeryfrontCloudCatalog | undefined {
   if (seeded) return seeded;
   const key = scope ? cacheKey(scope) : activeKey;
-  return key === undefined ? undefined : entries.get(key)?.catalog;
+  if (key === undefined) return undefined;
+  const entry = entries.get(key);
+  if (!entry) return undefined;
+  touchEntry(key, entry);
+  return entry.catalog;
 }
 
 /** @internal Serve a fixed catalog for every key, as if freshly loaded. `undefined` clears it. */
@@ -373,7 +417,12 @@ export function __setVeryfrontCloudCatalogForScopeForTests(
 ): void {
   const catalog = parseVeryfrontCloudCatalog(payload);
   if (!catalog) throw new TypeError("Test catalog payload has no model list");
-  entries.set(cacheKey(scope), { catalog, fetchedAt: now() });
+  rememberEntry(cacheKey(scope), { catalog, fetchedAt: now() });
+}
+
+/** @internal How many catalogs and recorded failures the cache holds. */
+export function __veryfrontCloudCatalogSizesForTests(): { entries: number; failures: number } {
+  return { entries: entries.size, failures: failedAt.size };
 }
 
 /** @internal Forget every loaded catalog, pending load and failure. */

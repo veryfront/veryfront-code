@@ -17,7 +17,7 @@ import {
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { loadVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import { loadVeryfrontCloudModelCatalog } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import {
   runWithVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
@@ -537,20 +537,21 @@ export async function createDefaultHostedChatRuntime(
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
     async () => {
-      // A short model alias resolves through the served catalog.
-      if (input.config.apiUrl && input.options.authToken) {
-        await loadVeryfrontCloudCatalog({
-          apiBaseUrl: input.config.apiUrl,
-          apiToken: input.options.authToken,
-          ...(input.options.projectSlug ? { projectSlug: input.options.projectSlug } : {}),
-          maxWaitMs: CATALOG_ALIAS_MAX_WAIT_MS,
-        });
-      }
-      const modelId = resolveVeryfrontCloudModelId(input.options.model);
       const cloudContext = createCloudContext({
         config: input.config,
         options: input.options,
       });
+      // A short model alias resolves through the served catalog. It is loaded
+      // and read under the run's own credentials and project, the same scope
+      // the run's later model reads use.
+      await runWithVeryfrontCloudContextAsync(
+        cloudContext,
+        () => loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_ALIAS_MAX_WAIT_MS }),
+      );
+      const modelId = runWithVeryfrontCloudContext(
+        cloudContext,
+        () => resolveVeryfrontCloudModelId(input.options.model),
+      );
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
         : createDefaultTaskContext({ options: input.options, modelId });

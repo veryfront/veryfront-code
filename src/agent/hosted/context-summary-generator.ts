@@ -4,7 +4,12 @@ import {
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
 } from "../../provider/index.ts";
-import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
+  runWithVeryfrontCloudContext,
+  runWithVeryfrontCloudContextAsync,
+  type VeryfrontCloudContext,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
+import { loadVeryfrontCloudModelCatalog } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
 import { redactSensitive, sanitizeUrlCredentials } from "#veryfront/utils";
 import type { TextGenerationRuntimeMessage } from "../runtime/text-generation-runtime-message-types.ts";
@@ -168,12 +173,7 @@ async function summarizeSegment(input: {
   const generate = input.options.generateText ?? generateText;
   const resolve = input.options.resolveModel ?? resolveModel;
   const result = await runWithVeryfrontCloudContextAsync(
-    {
-      apiBaseUrl: input.options.apiUrl.toString(),
-      apiToken: input.options.authToken,
-      projectSlug: input.options.projectSlug ?? undefined,
-      serviceLayer: "cloud",
-    },
+    summaryCloudContext(input.options),
     () =>
       Promise.resolve(generate({
         model: resolve(input.modelId),
@@ -192,6 +192,20 @@ async function summarizeSegment(input: {
   return result.text.trim();
 }
 
+function summaryCloudContext(
+  options: VeryfrontCloudContextSummaryGeneratorOptions,
+): VeryfrontCloudContext {
+  return {
+    apiBaseUrl: options.apiUrl.toString(),
+    apiToken: options.authToken,
+    projectSlug: options.projectSlug ?? undefined,
+    serviceLayer: "cloud",
+  };
+}
+
+/** Longest summary generation waits for the served catalog before resolving its model. */
+const CATALOG_MAX_WAIT_MS = 3_000;
+
 function resolveSummaryModelId(model: string | undefined): string {
   const cloudModelId = resolveVeryfrontCloudModelId(model);
   return resolveVeryfrontCloudGatewayModelId(cloudModelId) ?? cloudModelId;
@@ -202,7 +216,17 @@ export function createVeryfrontCloudContextSummaryGenerator(
   options: VeryfrontCloudContextSummaryGeneratorOptions,
 ): ContextSummaryGenerator {
   return async ({ messagesToSummarize, retainedMessages, customInstructions }) => {
-    const modelId = resolveSummaryModelId(options.model);
+    // The model resolves against the served catalog loaded for the same
+    // credentials and project the summary calls use.
+    const cloudContext = summaryCloudContext(options);
+    await runWithVeryfrontCloudContextAsync(
+      cloudContext,
+      () => loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_MAX_WAIT_MS }),
+    );
+    const modelId = runWithVeryfrontCloudContext(
+      cloudContext,
+      () => resolveSummaryModelId(options.model),
+    );
     const chunks = chunkSerializedMessages(messagesToSummarize, options.maxInputTokens);
     let summary = "";
 

@@ -213,6 +213,14 @@ function createInvalidModelIdError(modelId: string): Error {
 export function parseVeryfrontCloudModelId(
   modelId: string,
   kind: "language" | "embedding",
+  options: {
+    /**
+     * Also refuse a model the catalog in effect does not list (the Mistral
+     * check). A model built before its catalog loaded passes `false` and runs
+     * the check once the catalog for its own credentials is known.
+     */
+    catalogChecks?: boolean;
+  } = {},
 ): ParsedVeryfrontCloudModelId {
   const slashIndex = modelId.indexOf("/");
   if (slashIndex === -1) {
@@ -243,16 +251,8 @@ export function parseVeryfrontCloudModelId(
     );
   }
 
-  if (
-    kind === "language" && normalizedProvider === "mistral" &&
-    !isSupportedMistralModelId(`mistral/${upstreamModelId}`)
-  ) {
-    throw toError(
-      createError({
-        type: "config",
-        message: `Unsupported Mistral model "mistral/${upstreamModelId}"`,
-      }),
-    );
+  if (kind === "language" && options.catalogChecks !== false) {
+    assertVeryfrontCloudModelListed(normalizedProvider, upstreamModelId);
   }
 
   if (kind === "language" && isRetiredVeryfrontCloudModelId(modelId)) {
@@ -263,6 +263,21 @@ export function parseVeryfrontCloudModelId(
     provider: normalizedProvider,
     modelId: upstreamModelId,
   };
+}
+
+/**
+ * Refuse a Mistral model the catalog in effect does not list, so a caller gets
+ * a clear error rather than a gateway-side failure.
+ */
+export function assertVeryfrontCloudModelListed(provider: string, upstreamModelId: string): void {
+  if (provider === "mistral" && !isSupportedMistralModelId(`mistral/${upstreamModelId}`)) {
+    throw toError(
+      createError({
+        type: "config",
+        message: `Unsupported Mistral model "mistral/${upstreamModelId}"`,
+      }),
+    );
+  }
 }
 
 export function requireVeryfrontCloudBootstrap(

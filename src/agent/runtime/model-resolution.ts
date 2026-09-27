@@ -8,6 +8,7 @@ import {
   createRetiredVeryfrontCloudModelError,
   isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
+  isVeryfrontCloudCatalogLoaded,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
@@ -142,7 +143,11 @@ function isSupportedHostedMistralModel(modelId: string): boolean {
 }
 
 function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
-  return modelId.startsWith("veryfront-cloud/mistral/") && !isSupportedMistralModelId(modelId);
+  // An explicit Veryfront Cloud id is refused only against a served catalog:
+  // the shipped list cannot know a model the platform added since, and the
+  // model checks its own catalog once that has loaded.
+  return modelId.startsWith("veryfront-cloud/mistral/") && isVeryfrontCloudCatalogLoaded() &&
+    !isSupportedMistralModelId(modelId);
 }
 
 function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {

@@ -1,5 +1,12 @@
 import { resolveRuntimeModel } from "#veryfront/agent/runtime/model-resolution.ts";
-import { type ModelRuntime, resolveModel } from "#veryfront/provider";
+import {
+  loadVeryfrontCloudModelCatalog,
+  type ModelRuntime,
+  resolveModel,
+} from "#veryfront/provider";
+
+/** Longest a judge waits for the served catalog before resolving its model. */
+const CATALOG_MAX_WAIT_MS = 3_000;
 import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
 
 import { classifyEvalModelAccessDenial, isEvalModelAccessDeniedError } from "./model-access.ts";
@@ -83,8 +90,12 @@ function clampScore(score: number): number {
   return Math.max(0, Math.min(1, score));
 }
 
-function resolveJudgeModel(model: string | ModelRuntime | undefined): ModelRuntime {
+async function resolveJudgeModel(
+  model: string | ModelRuntime | undefined,
+): Promise<ModelRuntime> {
   if (model && typeof model === "object") return model;
+  // Whether the judge model routes through Veryfront Cloud reads the served catalog.
+  await loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_MAX_WAIT_MS });
   return resolveModel(resolveRuntimeModel(model ?? DEFAULT_JUDGE_MODEL));
 }
 
@@ -369,7 +380,7 @@ function createLlmRubricJudge(
 
   return async (input) => {
     try {
-      const model = resolveJudgeModel(options.model);
+      const model = await resolveJudgeModel(options.model);
       const response = await generateText({
         model,
         messages: [
@@ -434,7 +445,7 @@ function createLlmGroundednessJudge(
 
   return async (input) => {
     try {
-      const model = resolveJudgeModel(validatedOptions.model);
+      const model = await resolveJudgeModel(validatedOptions.model);
       const response = await generateText({
         model,
         messages: [{

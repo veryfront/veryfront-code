@@ -265,6 +265,15 @@ function loadedCatalog(): VeryfrontCloudCatalog | undefined {
 }
 
 /**
+ * Whether a served catalog has loaded for the scope reads use right now. While
+ * it has not, reads fall back to the shipped list, which cannot know models
+ * the platform added since, so a caller should not refuse a model on it alone.
+ */
+export function isVeryfrontCloudCatalogLoaded(): boolean {
+  return loadedCatalog() !== undefined;
+}
+
+/**
  * The index reads use: the served catalog loaded for the current scope, or the
  * shipped list while none has loaded for it.
  */

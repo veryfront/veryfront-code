@@ -8,6 +8,7 @@ import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import type { ModelRuntime } from "../types.ts";
 import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import {
+  assertVeryfrontCloudModelListed,
   createVeryfrontCloudFetch,
   loadVeryfrontCloudModelCatalog,
   parseVeryfrontCloudModelId,
@@ -31,6 +32,7 @@ import {
 import {
   isVeryfrontCloudCatalogFresh,
   loadVeryfrontCloudCatalog,
+  peekVeryfrontCloudCatalog,
   withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
 
@@ -194,9 +196,10 @@ function createVeryfrontCloudModelInternal(
   inferenceCredential?: string,
   options: VeryfrontCloudModelOptions = {},
 ): ModelRuntime {
-  // Parsed here so a malformed ID fails at construction; the provider is
-  // resolved again at build time, once the served catalog may name its alias.
-  parseVeryfrontCloudModelId(modelId, "language");
+  // Parsed here so a malformed or retired ID fails at construction. Whether the
+  // catalog lists the model is checked against this model's own catalog: now
+  // when it has loaded, otherwise once the first async step has loaded it.
+  parseVeryfrontCloudModelId(modelId, "language", { catalogChecks: false });
   const { apiBaseUrl, apiToken, projectSlug } = options.credentialSource === "application"
     ? requireApplicationBootstrap()
     : requireVeryfrontCloudBootstrap(inferenceCredential, options.apiBaseUrl);
@@ -226,6 +229,7 @@ function createVeryfrontCloudModelInternal(
       const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(
         modelId,
         "language",
+        { catalogChecks: false },
       );
       const catalogModelId = `${provider}/${upstreamModelId}`;
       const routing = resolveVeryfrontCloudProviderRouting(provider);
@@ -275,6 +279,14 @@ function createVeryfrontCloudModelInternal(
         registry,
         useFirstPartyTransport,
       }));
+  // The listing check runs in this model's own scope, against a catalog
+  // actually loaded for it; before that, the platform answers for the model.
+  const assertListed = (): void =>
+    withVeryfrontCloudCatalogScope(catalogScope, () => {
+      const parsed = parseVeryfrontCloudModelId(modelId, "language", { catalogChecks: false });
+      assertVeryfrontCloudModelListed(parsed.provider, parsed.modelId);
+    });
+  if (peekVeryfrontCloudCatalog(catalogScope) !== undefined) assertListed();
   let facts = readFacts();
   const built = build();
   let current = built;
@@ -282,6 +294,7 @@ function createVeryfrontCloudModelInternal(
   let isSettled = false;
   const rebuildIfChanged = (settle: boolean): ModelRuntime => {
     const next = readFacts();
+    if (settle) assertListed();
     if (factsKey(next) !== factsKey(facts)) current = build();
     facts = next;
     // Only a catalog actually obtained settles the model: after a failed or
@@ -344,7 +357,9 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
     registry,
     useFirstPartyTransport,
   } = build;
-  const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
+  const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language", {
+    catalogChecks: false,
+  });
   // Builders keep the upstream model id; on a vendor-neutral route the fetch
   // wrapper sends it as `<provider>/<id>`.
   const { baseURL, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(apiBaseUrl, provider);

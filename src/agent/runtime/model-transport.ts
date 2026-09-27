@@ -8,6 +8,7 @@ import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
+import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
   resolveConfiguredAgentModel,
@@ -213,27 +214,24 @@ export async function resolveAgentModelTransport(
   const configuredModel = input.modelOverride || input.config.model;
   const startsWithCloudPrefix = (model: string): boolean =>
     IntrinsicReflectApply(StringStartsWith, model, [VERYFRONT_CLOUD_MODEL_PREFIX]) as boolean;
-  let requestedModel = resolveConfiguredAgentModel(configuredModel);
-  let resolvedModelString = resolveRuntimeModel(configuredModel);
-  // The default model and the thinking defaults read the served catalog, so an
-  // ambient run loads it before either is resolved and resolves both again. A
-  // privately resolved model's run was prepared from the catalog as it stood
-  // then, and its call must keep what that preparation reserved, so a run
-  // with a private resolver keeps its first resolution.
-  let warmed = false;
-  if (startsWithCloudPrefix(resolvedModelString) && !input.resolveModelRuntime) {
+  // Every decision below reads the served catalog: which model an omitted or
+  // `auto` model means, whether an explicit provider model is served through
+  // Veryfront Cloud, and the thinking defaults. An ambient run that can reach
+  // Veryfront Cloud loads the catalog before any of them. A run with a private
+  // model resolver was prepared from the catalog as it stood then, and its call
+  // must keep what that preparation reserved, so it does not load it here.
+  if (
+    !input.resolveModelRuntime && isVeryfrontCloudEnabled() &&
+    !(typeof configuredModel === "string" && configuredModel.startsWith("local/"))
+  ) {
     await warmVeryfrontCloudCatalog();
-    warmed = true;
-    requestedModel = resolveConfiguredAgentModel(configuredModel);
-    resolvedModelString = resolveRuntimeModel(configuredModel);
   }
+  const requestedModel = resolveConfiguredAgentModel(configuredModel);
+  const resolvedModelString = resolveRuntimeModel(configuredModel);
   const usesVeryfrontCloud = startsWithCloudPrefix(resolvedModelString);
   const privatelyResolvedModel = input.resolveModelRuntime && usesVeryfrontCloud
     ? input.resolveModelRuntime(resolvedModelString)
     : undefined;
-  if (usesVeryfrontCloud && !privatelyResolvedModel && !warmed) {
-    await warmVeryfrontCloudCatalog();
-  }
   const transport = privatelyResolvedModel
     ? undefined
     : await input.config.resolveModelTransport?.({

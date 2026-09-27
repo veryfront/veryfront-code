@@ -5,9 +5,12 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
   __setVeryfrontCloudCatalogClockForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
+  __veryfrontCloudCatalogSizesForTests,
   loadVeryfrontCloudCatalog,
   parseVeryfrontCloudCatalog,
   peekVeryfrontCloudCatalog,
+  VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES,
   VERYFRONT_CLOUD_CATALOG_RETRY_MS,
   VERYFRONT_CLOUD_CATALOG_TTL_MS,
 } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
@@ -168,6 +171,47 @@ describe("provider/veryfront-cloud/catalog-client", () => {
 
       assertEquals(stub.requests.length, 1);
       assertEquals(first, second);
+    });
+
+    it("evicts the least recently used catalog over the cap and keeps the newest", () => {
+      const scopeFor = (index: number) => ({ ...LOAD, apiToken: `vf_rotating_${index}` });
+      const payload = { models: [], defaultModelId: "mistral/mistral-small-2503" };
+      for (let index = 0; index < VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES; index++) {
+        __setVeryfrontCloudCatalogForScopeForTests(scopeFor(index), payload);
+      }
+      // Reading the second entry makes it recent, so the first is evicted instead.
+      assertEquals(peekVeryfrontCloudCatalog(scopeFor(1)) !== undefined, true);
+
+      __setVeryfrontCloudCatalogForScopeForTests(
+        scopeFor(VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES),
+        payload,
+      );
+
+      assertEquals(
+        __veryfrontCloudCatalogSizesForTests().entries,
+        VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES,
+      );
+      assertEquals(peekVeryfrontCloudCatalog(scopeFor(0)), undefined);
+      assertEquals(peekVeryfrontCloudCatalog(scopeFor(1)) !== undefined, true);
+      assertEquals(
+        peekVeryfrontCloudCatalog(scopeFor(VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES)) !== undefined,
+        true,
+      );
+    });
+
+    it("forgets a failure once its retry window has passed", async () => {
+      const clock = useClock();
+      const stub = recordingFetch(() => jsonResponse({}, 503));
+
+      await withMockFetch(stub.fetch, async () => {
+        await loadVeryfrontCloudCatalog(LOAD);
+        assertEquals(__veryfrontCloudCatalogSizesForTests().failures, 1);
+        clock.advance(VERYFRONT_CLOUD_CATALOG_RETRY_MS);
+        await loadVeryfrontCloudCatalog({ ...LOAD, apiToken: "vf_other_credential" });
+      });
+
+      // The first failure's window passed, so only the new one is kept.
+      assertEquals(__veryfrontCloudCatalogSizesForTests().failures, 1);
     });
 
     it("keeps a separate entry per credential for the same project", async () => {
