@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { PERMISSION_DENIED } from "#veryfront/errors";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -166,6 +168,8 @@ async function prepare(
 }
 
 describe("executor runtime preparation", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("extracts inline tools under the source policy in the full-runtime profile", async () => {
     const policy = { schemaVersion: 1 as const, mode: "allowlist" as const, integrations: {} };
     const observed: unknown[] = [];
@@ -847,6 +851,8 @@ function syntheticRemoteTool(name: string): ToolDefinition {
 }
 
 describe("executor runtime preparation review regressions", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   const outputCases: {
     name: string;
     request: Record<string, JsonValue>;
@@ -2289,14 +2295,14 @@ Synthetic source instructions.`,
     const selectedModel of [
       modelId,
       "veryfront-cloud/anthropic/claude-sonnet-4-6",
-      "veryfront-cloud/anthropic/claude-opus-4-7",
+      "veryfront-cloud/anthropic/claude-opus-4-8",
     ]
   ) {
     for (const thinking of [{ enabled: false }, { enabled: true, budgetTokens: 4096 }]) {
       it(`carries explicit thinking ${thinking.enabled} into ${selectedModel} call data`, async () => {
         let captured: ModelRuntimeCallOptions | undefined;
         let sourceTransportCalls = 0;
-        const adaptive = selectedModel.endsWith("claude-opus-4-7") && thinking.enabled;
+        const adaptive = selectedModel.endsWith("claude-opus-4-8") && thinking.enabled;
         const f = fixture({
           config: {
             thinking: { enabled: !thinking.enabled },

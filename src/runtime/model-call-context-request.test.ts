@@ -1,5 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { createWarningCollector } from "#veryfront/provider/shared/index.ts";
 import {
@@ -34,6 +36,8 @@ const samplingFields = [
 ] as const;
 
 describe("model call request projection", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("matches OpenAI-compatible Cloud controls including Kimi fixed sampling", () => {
     for (
       const [modelProvider, modelId] of [["mistral", "mistral-large"], [

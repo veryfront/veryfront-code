@@ -17,6 +17,7 @@ import {
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { loadVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import {
   runWithVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
@@ -533,6 +534,14 @@ export async function createDefaultHostedChatRuntime(
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
     async () => {
+      // A short model alias resolves through the served catalog.
+      if (input.config.apiUrl && input.options.authToken) {
+        await loadVeryfrontCloudCatalog({
+          apiBaseUrl: input.config.apiUrl,
+          apiToken: input.options.authToken,
+          ...(input.options.projectSlug ? { projectSlug: input.options.projectSlug } : {}),
+        });
+      }
       const modelId = resolveVeryfrontCloudModelId(input.options.model);
       const cloudContext = createCloudContext({
         config: input.config,

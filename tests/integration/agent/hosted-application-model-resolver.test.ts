@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import {
@@ -74,6 +76,8 @@ async function drain(stream: ReadableStream<unknown>) {
 }
 
 describe("hosted ordinary application model resolver", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("audits adaptive Cloud transport for generation and streaming on the same model", async () => {
     const resolver = createHostedApplicationModelResolver(resolverOptions());
     try {

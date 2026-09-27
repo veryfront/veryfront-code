@@ -4,7 +4,7 @@ import {
   getMistralEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
-import { findVeryfrontCloudModelByModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { isSupportedMistralModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
   getDefaultVeryfrontCloudModel,
@@ -132,12 +132,11 @@ function listAvailableDirectProviders(): string[] {
 }
 
 function isSupportedHostedMistralModel(modelId: string): boolean {
-  return Boolean(findVeryfrontCloudModelByModelId(`mistral/${modelId}`));
+  return isSupportedMistralModelId(`mistral/${modelId}`);
 }
 
 function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
-  return modelId.startsWith("veryfront-cloud/mistral/") &&
-    !findVeryfrontCloudModelByModelId(modelId);
+  return modelId.startsWith("veryfront-cloud/mistral/") && !isSupportedMistralModelId(modelId);
 }
 
 function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {

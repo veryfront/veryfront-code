@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 
 describe("resolveProviderOptionsWithDefaults", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("enables Anthropic thinking by default for Anthropic models", () => {
     const result = resolveProviderOptionsWithDefaults(
       "anthropic/claude-sonnet-4-6",

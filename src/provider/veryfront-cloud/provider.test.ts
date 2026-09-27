@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests, servedCatalogPayload } from "./catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import { agent } from "#veryfront/agent";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embedding/index.ts";
@@ -9,7 +11,12 @@ import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensi
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
-import { createVeryfrontCloudInferenceModel, createVeryfrontCloudModel } from "./provider.ts";
+import {
+  createVeryfrontCloudInferenceModel,
+  createVeryfrontCloudModel,
+  warmVeryfrontCloudCatalog,
+} from "./provider.ts";
+import { resolveVeryfrontCloudModelThinking } from "./model-catalog.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -113,6 +120,8 @@ function setCloudBootstrap(): void {
 }
 
 describe("provider/veryfront-cloud", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   afterEach(() => {
     restoreMockFetch();
     clearCloudEnv();
@@ -1383,6 +1392,8 @@ describe("provider/veryfront-cloud", () => {
 });
 
 describe("provider/veryfront-cloud vendor-neutral routes", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   afterEach(() => {
     restoreMockFetch();
     clearCloudEnv();
@@ -1749,5 +1760,121 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     }
     restoreMockFetch();
     assertEquals(sent, ['{"input":"x"}', "[1,2]", "not json", '{"model":7}']);
+  });
+});
+
+describe("provider/veryfront-cloud served catalog loading", () => {
+  beforeEach(__resetVeryfrontCloudCatalogForTests);
+  afterEach(() => {
+    __resetVeryfrontCloudCatalogForTests();
+    restoreMockFetch();
+    clearCloudEnv();
+    clearModelProviders();
+  });
+
+  type CapturedRequest = {
+    method: string;
+    url: string;
+    authorization: string | null;
+    projectSlug: string | null;
+  };
+
+  /** Answer the catalog request from `catalog` and every other request with a finished chat stream. */
+  function installGateway(catalog: () => Response): CapturedRequest[] {
+    const requests: CapturedRequest[] = [];
+    const encoder = new TextEncoder();
+    installMockFetch(
+      ((input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        requests.push({
+          method: request.method,
+          url: request.url,
+          authorization: request.headers.get("authorization"),
+          projectSlug: request.headers.get("x-veryfront-project-slug"),
+        });
+        if (request.url.endsWith("/ai/models")) return Promise.resolve(catalog());
+        return Promise.resolve(
+          new Response(
+            readableStreamFrom([
+              encoder.encode('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'),
+              encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
+    return requests;
+  }
+
+  async function streamOnce(model: ModelRuntime): Promise<void> {
+    const result = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    } as never);
+    await drainStream(result.stream);
+  }
+
+  it("builds synchronously, then loads the catalog on the first call and follows it", async () => {
+    setCloudBootstrap();
+    const requests = installGateway(() => Response.json(servedCatalogPayload()));
+
+    // Before the catalog loads, a reasoning-style OpenAI id would use Responses.
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.5") as ModelRuntime;
+    assertEquals(requests.length, 0);
+    await streamOnce(model);
+    await streamOnce(model);
+
+    assertEquals(requests.map(({ method, url }) => `${method} ${url}`), [
+      "GET https://api.veryfront.com/ai/models",
+      "POST https://api.veryfront.com/ai/v1/chat/completions",
+      "POST https://api.veryfront.com/ai/v1/chat/completions",
+    ]);
+    assertEquals(requests[0]?.authorization, "Bearer vf_test_provider");
+    assertEquals(requests[0]?.projectSlug, "provider-test-project");
+  });
+
+  it("loads the catalog in prepare, before the first call", async () => {
+    setCloudBootstrap();
+    const requests = installGateway(() => Response.json(servedCatalogPayload()));
+
+    const model = resolveModel("veryfront-cloud/mistral/mistral-small-2503") as ModelRuntime;
+    await model.prepare?.();
+
+    assertEquals(requests.map(({ url }) => url), ["https://api.veryfront.com/ai/models"]);
+  });
+
+  it("still calls the model when the catalog cannot be loaded", async () => {
+    setCloudBootstrap();
+    const requests = installGateway(() => Response.json({ error: "unavailable" }, { status: 503 }));
+
+    await streamOnce(resolveModel("veryfront-cloud/mistral/mistral-small-2503") as ModelRuntime);
+
+    assertEquals(requests.map(({ method, url }) => `${method} ${url}`), [
+      "GET https://api.veryfront.com/ai/models",
+      "POST https://api.veryfront.com/ai/v1/chat/completions",
+    ]);
+  });
+
+  it("loads the catalog with the ambient credentials before thinking defaults are read", async () => {
+    setCloudBootstrap();
+    const requests = installGateway(() => Response.json(servedCatalogPayload()));
+    assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"), undefined);
+
+    await warmVeryfrontCloudCatalog();
+
+    assertEquals(requests.map(({ url }) => url), ["https://api.veryfront.com/ai/models"]);
+    assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"), {
+      enabled: true,
+      budgetTokens: 2048,
+    });
+  });
+
+  it("skips the ambient load without credentials", async () => {
+    const requests = installGateway(() => Response.json(servedCatalogPayload()));
+
+    await warmVeryfrontCloudCatalog();
+
+    assertEquals(requests, []);
   });
 });

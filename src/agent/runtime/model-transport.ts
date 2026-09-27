@@ -7,6 +7,7 @@
 import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
   resolveConfiguredAgentModel,
@@ -211,10 +212,16 @@ export async function resolveAgentModelTransport(
 ): Promise<ResolvedModelTransport> {
   const requestedModel = resolveConfiguredAgentModel(input.modelOverride || input.config.model);
   const resolvedModelString = resolveRuntimeModel(input.modelOverride || input.config.model);
-  const privatelyResolvedModel = input.resolveModelRuntime &&
-      IntrinsicReflectApply(StringStartsWith, resolvedModelString, [VERYFRONT_CLOUD_MODEL_PREFIX])
+  const usesVeryfrontCloud = IntrinsicReflectApply(StringStartsWith, resolvedModelString, [
+    VERYFRONT_CLOUD_MODEL_PREFIX,
+  ]) as boolean;
+  const privatelyResolvedModel = input.resolveModelRuntime && usesVeryfrontCloud
     ? input.resolveModelRuntime(resolvedModelString)
     : undefined;
+  // Thinking defaults below read the served catalog. A privately resolved
+  // model's run was prepared from the catalog as it stood then, and its call
+  // must keep what that preparation reserved, so only ambient runs load it here.
+  if (usesVeryfrontCloud && !privatelyResolvedModel) await warmVeryfrontCloudCatalog();
   const transport = privatelyResolvedModel
     ? undefined
     : await input.config.resolveModelTransport?.({

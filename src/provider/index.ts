@@ -21,7 +21,11 @@ export {
 } from "./model-registry.ts";
 export type { ModelProviderFactory, ModelProviderRegistrationDisposer } from "./model-registry.ts";
 export type { ModelRuntime } from "./types.ts";
-export type { VeryfrontCloudProviderId } from "./veryfront-cloud/model-catalog.ts";
+export type {
+  VeryfrontCloudModelId,
+  VeryfrontCloudProviderId,
+  VeryfrontCloudRuntimeModelId,
+} from "./veryfront-cloud/model-catalog.ts";
 export {
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
   findVeryfrontCloudModel,
@@ -30,6 +34,7 @@ export {
   groupVeryfrontCloudModelsByProvider,
   normalizeVeryfrontCloudModelId,
   resolveHostedVeryfrontCloudModelId,
+  resolveVeryfrontCloudDefaultModelId,
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,

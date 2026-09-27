@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "./catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
@@ -15,6 +17,8 @@ import {
 } from "./shared.ts";
 
 describe("provider/veryfront-cloud/shared", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("normalizes provider aliases when parsing model IDs", () => {
     assertEquals(
       parseVeryfrontCloudModelId("google-ai-studio/gemini-2.0-flash", "embedding"),

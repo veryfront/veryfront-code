@@ -8,6 +8,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -465,6 +466,7 @@ it("applies refreshed structured system messages in hosted chat", async () => {
 });
 
 Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime", async () => {
+  using _catalog = useServedCatalogForTests();
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
   let capturedCapability: unknown;
   const runEventWriterCapability = createHostedRunEventWriterCapability({
@@ -1027,6 +1029,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
 });
 
 Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integration discovery", async () => {
+  using _catalog = useServedCatalogForTests();
   const previousApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
   const previousApiToken = getEnv("VERYFRONT_API_TOKEN");
   const previousProjectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
@@ -1106,6 +1109,7 @@ Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integr
 });
 
 Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the global registry", async () => {
+  using _catalog = useServedCatalogForTests();
   try {
     const createRuntime = (description: string) =>
       createDefaultHostedChatRuntime({

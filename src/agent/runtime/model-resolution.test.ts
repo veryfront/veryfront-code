@@ -7,7 +7,9 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   AUTO_AGENT_MODEL,
@@ -41,6 +43,8 @@ function clearModelEnv(): void {
 }
 
 describe("agent/runtime/model-resolution", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   afterEach(() => {
     clearModelEnv();
   });

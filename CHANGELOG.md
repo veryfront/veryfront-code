@@ -20,6 +20,35 @@ For finish-required streams in the active lifecycle, a completed turn containing
 only unavailable tool calls now permits the same recovery turn as the legacy lifecycle. Rejected tools are
 not executed, and malformed or empty handoff requests still fail.
 
+### Changed: Veryfront Cloud model facts come from the served model catalog
+
+`veryfront-cloud/*` models now read their facts from the model catalog your
+Veryfront API serves at `<api>/ai/models`, instead of from a table shipped in
+this package. The facts are the wire protocol, whether the Responses operation
+is served, the default thinking budget, the two chat completions capability
+flags, short model aliases such as `opus`, and the default model. For the
+models this package listed, the served facts are the same, so requests are
+unchanged.
+
+- Model construction stays synchronous and makes no network call. The catalog
+  loads on the first async step of a model (`prepare`, `doGenerate` or
+  `doStream`), with the same credentials and project as inference, and is
+  cached for five minutes.
+- When the catalog cannot be loaded, calls still go out. Each model then uses
+  its protocol defaults: a provider named `openai`, `anthropic` or `google`
+  speaks its own protocol, any other provider speaks the OpenAI protocol, and
+  no thinking defaults apply. A short alias such as `opus` resolves only once
+  the catalog is loaded.
+- A Mistral model ID the catalog does not list is refused only once the
+  catalog is loaded. Before that, the platform answers for it.
+- `resolveVeryfrontCloudDefaultModelId()` returns the default model the
+  catalog names, or the built-in default before it loads.
+  `VeryfrontCloudModelId` types a model ID as `<provider>/<model>`.
+- `VERYFRONT_CLOUD_CHAT_MODELS`, `findVeryfrontCloudModel`,
+  `findVeryfrontCloudModelByModelId` and `groupVeryfrontCloudModelsByProvider`
+  are deprecated. They still return the list shipped with this package, and a
+  later release removes them.
+
 ### Changed: Veryfront Cloud models call the vendor-neutral endpoints
 
 `veryfront-cloud/*` models that speak the OpenAI protocol now send requests to
