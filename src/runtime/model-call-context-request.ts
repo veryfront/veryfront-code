@@ -53,7 +53,8 @@ function readProviderControl(
 ): PropertyDescriptor | undefined {
   const provider = resolveModelCallProvider(model);
   let selected: PropertyDescriptor | undefined;
-  for (const name of [provider, model.provider ?? provider]) {
+  // The protocol's bucket first, so a provider-named bucket still takes precedence.
+  for (const name of [resolveModelCallProtocol(model), provider, model.provider ?? provider]) {
     if (!name) continue;
     const bucket = readOwnEnumerableDataDescriptor(options.providerOptions, name)?.value;
     if (Array.isArray(bucket)) continue;
@@ -130,9 +131,9 @@ function resolvePersistedControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): ModelCallRequestSource {
-  const provider = resolveModelCallProvider(model);
-  if (provider === "anthropic") return resolveAnthropicControls(model, options);
-  if (provider === "google") return resolveGoogleControls(model, options);
+  const protocol = resolveModelCallProtocol(model);
+  if (protocol === "anthropic") return resolveAnthropicControls(model, options);
+  if (protocol === "google") return resolveGoogleControls(model, options);
   if (!usesOpenAIBuilder(model)) {
     return options;
   }
@@ -278,6 +279,18 @@ function buildModelCallRequest(
 }
 
 /** Resolve the canonical provider recorded by the existing durable contract. */
+/**
+ * The wire protocol a model's request is built for. A Veryfront Cloud model
+ * speaks the surface it settled on, so a newly served provider on the Anthropic
+ * or Google surface records the same native controls as `anthropic/*` or
+ * `google/*`. Other models are identified by their provider name.
+ */
+function resolveModelCallProtocol(model: ModelCallRuntimeMetadata): string | undefined {
+  const surface = readVeryfrontCloudModelFacts(model)?.surface;
+  if (surface === "anthropic" || surface === "google") return surface;
+  return resolveModelCallProvider(model);
+}
+
 export function resolveModelCallProvider(model: ModelCallRuntimeMetadata): string | undefined {
   if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
     return model.modelProvider;
@@ -289,8 +302,7 @@ function resolvePersistedReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): RuntimeReasoningOption | undefined {
-  const modelProvider = resolveModelCallProvider(model);
-  if (modelProvider === "google") return resolveGoogleReasoning(model, options);
+  if (resolveModelCallProtocol(model) === "google") return resolveGoogleReasoning(model, options);
   if (usesOpenAIBuilder(model) && typeof model.modelId === "string") {
     const neutral = resolveOpenAINeutralReasoning(model, options);
     const transport = managedOpenAITransport(model, options);
@@ -366,10 +378,9 @@ function resolveNonOpenAIReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): RuntimeReasoningOption | undefined {
-  const modelProvider = resolveModelCallProvider(model);
   // The Anthropic request builder only gives neutral reasoning precedence when
   // it enables thinking; otherwise a raw provider thinking config remains effective.
-  if (modelProvider !== "anthropic" || options.reasoning?.enabled === true) {
+  if (resolveModelCallProtocol(model) !== "anthropic" || options.reasoning?.enabled === true) {
     return options.reasoning;
   }
 
