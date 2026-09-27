@@ -3,6 +3,7 @@
   "displayName": "GitHub",
   "icon": "github.svg",
   "description": "Manage repositories, issues, and pull requests",
+  "category": "development",
   "auth": {
     "type": "oauth2",
     "provider": "github",

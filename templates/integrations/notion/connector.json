@@ -3,6 +3,7 @@
   "displayName": "Notion",
   "icon": "notion.svg",
   "description": "Search, read, and create pages in Notion workspaces",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "notion",

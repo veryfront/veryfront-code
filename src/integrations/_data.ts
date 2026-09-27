@@ -269,6 +269,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["shopify", "stripe", "slack"],
+    "category": "marketing",
     "setupGuide": {
       "title": "ActiveCampaign API Setup",
       "steps": [{
@@ -1010,6 +1011,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "document",
     }],
     "suggestedWith": ["gmail", "slack", "notion"],
+    "category": "data",
   },
   {
     "name": "algolia",
@@ -3035,6 +3037,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["slack", "notion", "calendar"],
+    "category": "productivity",
   },
   {
     "name": "ashby",
@@ -9111,6 +9114,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "calendar",
     }],
     "suggestedWith": ["gmail", "slack"],
+    "category": "scheduling",
   },
   {
     "name": "calendly",
@@ -12400,6 +12404,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "edit",
     }],
     "suggestedWith": ["jira", "slack", "notion"],
+    "category": "productivity",
   },
   {
     "name": "customer-io",
@@ -15188,6 +15193,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "edit",
     }],
     "suggestedWith": ["gmail", "calendar", "drive", "sheets"],
+    "category": "productivity",
     "setupGuide": {
       "title": "Google Docs Integration Setup",
       "steps": [{
@@ -15944,6 +15950,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "upload",
     }],
     "suggestedWith": ["gmail", "calendar", "sheets"],
+    "category": "files",
     "setupGuide": {
       "title": "Google Drive Integration Setup",
       "steps": [{
@@ -17459,6 +17466,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["linear", "slack", "notion"],
+    "category": "productivity",
   },
   {
     "name": "finapi",
@@ -20863,6 +20871,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "git-commit",
     }],
     "suggestedWith": ["jira", "slack"],
+    "category": "development",
   },
   {
     "name": "gitlab",
@@ -21204,6 +21213,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["github", "jira", "slack"],
+    "category": "development",
   },
   {
     "name": "gmail",
@@ -22034,6 +22044,45 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["calendar", "slack"],
+    "category": "communication",
+    "setupGuide": {
+      "title": "Gmail setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
+        "description":
+          "On hosted Veryfront, Gmail uses the Veryfront-managed Google OAuth app: connect Gmail from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Enable the Gmail API",
+        "description":
+          "In the Google Cloud project that owns your OAuth app, enable the Gmail API.",
+        "url": "https://console.cloud.google.com/apis/library/gmail.googleapis.com",
+      }, {
+        "step": 3,
+        "title": "Configure the OAuth consent screen",
+        "description":
+          "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. Publishing an app that requests Gmail's restricted scopes to external users requires Google's OAuth app verification.",
+        "docsUrl": "https://developers.google.com/workspace/gmail/api/auth/scopes",
+      }, {
+        "step": 4,
+        "title": "Create an OAuth client",
+        "description":
+          "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/gmail for hosted Veryfront, or your app origin followed by /api/auth/gmail/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the client.",
+        "url": "https://console.cloud.google.com/apis/credentials",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run List Emails (read-only). It returns message summaries for the connected mailbox without changing it.",
+      }],
+      "notes": [
+        "The connection requests gmail.readonly, gmail.send, gmail.modify, gmail.labels, gmail.compose and the full-access https://mail.google.com/ scope. The full-access scope is what allows the permanent delete tools; the read tools only need gmail.readonly.",
+        "Every list, get and search tool is read-only. Tools that send, draft, label, archive, trash or delete mail are marked as writes and need write authority.",
+        "Each Gmail connection belongs to the Google account that approved consent; the tools act on that mailbox only.",
+      ],
+      "documentation": "https://developers.google.com/workspace/gmail/api/guides",
+    },
   },
   {
     "name": "gocardless",
@@ -27460,6 +27509,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "users",
     }],
     "suggestedWith": ["github", "jira", "slack"],
+    "category": "productivity",
   },
   {
     "name": "help-scout",
@@ -30513,6 +30563,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "check",
     }],
     "suggestedWith": ["github", "slack", "confluence"],
+    "category": "development",
   },
   {
     "name": "jotform",
@@ -33021,6 +33072,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "list",
     }],
     "suggestedWith": ["github", "slack", "figma"],
+    "category": "development",
   },
   {
     "name": "mailchimp",
@@ -35241,7 +35293,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
       "description":
-        "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows; use for lookups, traversals, and GraphRAG retrieval. Note: the Query API does not enforce read-only access, so only submit read statements here (use a read-only database user to guarantee no writes)",
+        "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows; use for lookups, traversals, and GraphRAG retrieval. The request runs in the Query API read access mode, so Neo4j rejects write statements; use Run Cypher Write to change the graph",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -35264,6 +35316,13 @@ export const connectors: IntegrationConfig[] = [
           "parameters": {
             "type": "object",
             "description": 'Values for $placeholders in the statement, e.g. { "name": "Alice" }',
+          },
+          "accessMode": {
+            "type": "string",
+            "description":
+              "Neo4j Query API access mode, pinned to Read so the server rejects write statements.",
+            "default": "Read",
+            "fixed": true,
           },
         },
         "response": { "transform": "data" },
@@ -35349,7 +35408,7 @@ export const connectors: IntegrationConfig[] = [
         "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https://. Include the port in NEO4J_HOST, e.g. my-server:7473",
         "Always pass Cypher values via the parameters object ($placeholders) rather than string-concatenating them into the statement; this enables plan caching and prevents Cypher injection",
         "Both tools run implicit (auto-commit) transactions; explicit multi-request transactions are not exposed",
-        "The Query API has no server-side read-only mode: Run Cypher Query is read-only by convention only, and write statements sent through it would execute. Connect with a read-only database user if you need a hard guarantee",
+        "Run Cypher Query sends accessMode Read, so Neo4j rejects write statements sent through it (Neo.ClientError.Statement.AccessMode); use Run Cypher Write for CREATE, MERGE, SET and DELETE",
       ],
       "documentation": "https://neo4j.com/docs/query-api/current/",
     },
@@ -36658,6 +36717,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "plus",
     }],
     "suggestedWith": ["gmail", "slack", "calendar"],
+    "category": "productivity",
   },
   {
     "name": "onedrive",
@@ -36888,6 +36948,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "upload",
     }],
     "suggestedWith": ["outlook", "teams", "sharepoint"],
+    "category": "files",
   },
   {
     "name": "openai",
@@ -39506,6 +39567,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "compose",
     }],
     "suggestedWith": ["teams", "calendar", "gmail"],
+    "category": "communication",
   },
   {
     "name": "paddle",
@@ -47222,6 +47284,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "chart",
     }],
     "suggestedWith": ["gmail", "slack", "calendar"],
+    "category": "sales",
     "setupGuide": {
       "title": "Salesforce Connected App Setup",
       "steps": [{
@@ -47255,6 +47318,7 @@ export const connectors: IntegrationConfig[] = [
         "Staging callback: https://api.veryfront.org/oauth/callback/salesforce",
         "Production callback: https://api.veryfront.com/oauth/callback/salesforce",
         "Write tools should be explicitly enabled for an agent or project; read tools are the default demo surface.",
+        "Non-interactive runs can use a service account instead of a user connection: set SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID, SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET and SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL (the My Domain origin) from an External Client App that uses the Client Credentials Flow with a dedicated Run As user. All three are required; see https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account",
       ],
       "documentation":
         "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_rest.htm",
@@ -49691,6 +49755,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "folder",
     }],
     "suggestedWith": ["outlook", "teams", "onedrive"],
+    "category": "files",
   },
   {
     "name": "sheets",
@@ -50215,6 +50280,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "edit",
     }],
     "suggestedWith": ["gmail", "calendar", "notion"],
+    "category": "data",
   },
   {
     "name": "shopify",
@@ -51134,6 +51200,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "message",
     }],
     "suggestedWith": ["gmail", "calendar", "jira"],
+    "category": "communication",
   },
   {
     "name": "snowflake",
@@ -54047,6 +54114,7 @@ export const connectors: IntegrationConfig[] = [
       "icon": "search",
     }],
     "suggestedWith": ["outlook", "slack", "calendar"],
+    "category": "communication",
   },
   {
     "name": "telegram",
@@ -55039,8 +55107,9 @@ export const connectors: IntegrationConfig[] = [
       "docsUrl": "https://console.twilio.com/",
     }, {
       "name": "TWILIO_PHONE_NUMBER",
-      "description": "Your Twilio phone number (E.164 format: +1234567890)",
-      "required": true,
+      "description":
+        "Your Twilio phone number (E.164 format: +1234567890). Used as the sender by Send SMS and Send WhatsApp; the read tools do not need it",
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://console.twilio.com/us1/develop/phone-numbers/manage/incoming",
     }],

@@ -3,6 +3,7 @@
   "displayName": "Microsoft Teams",
   "icon": "teams.svg",
   "description": "Send messages and manage Teams chats and channels",
+  "category": "communication",
   "auth": {
     "type": "oauth2",
     "provider": "microsoft",

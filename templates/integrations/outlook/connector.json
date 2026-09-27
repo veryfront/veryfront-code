@@ -3,6 +3,7 @@
   "displayName": "Microsoft Outlook",
   "icon": "outlook.svg",
   "description": "Read, send, schedule, and manage Outlook mail and calendars",
+  "category": "communication",
   "auth": {
     "type": "oauth2",
     "provider": "microsoft",
