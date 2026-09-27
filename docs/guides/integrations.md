@@ -605,7 +605,7 @@ For credential types, scopes, and recovery that apply to every provider, see
 
 ## Available integrations
 
-The built-in connector catalog contains 204 connectors. Whether you can use one
+The built-in connector catalog contains 205 connectors. Whether you can use one
 depends on three availability states. Each state narrows the one before it.
 
 | State                   | Meaning                                                                                 | Decided by                                        |
