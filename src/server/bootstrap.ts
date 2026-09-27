@@ -154,12 +154,14 @@ export function wireTracingShim(): void {
         contextApi as Parameters<typeof setGlobalContextAccessor>[0],
       );
     }
-    const propagator = tracing.getPropagator?.();
-    if (propagator) propagation.setGlobalPropagator(propagator as TextMapPropagator);
+    propagation.setGlobalPropagator(
+      (tracing.getPropagator?.() ?? null) as TextMapPropagator | null,
+    );
     const logRecordEmitter = tracing.getLogRecordEmitter?.();
     __registerLogRecordEmitter(logRecordEmitter ?? null);
     bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
   } else {
+    propagation.setGlobalPropagator(null);
     __registerLogRecordEmitter(null);
     bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
   }

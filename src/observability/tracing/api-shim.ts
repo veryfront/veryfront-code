@@ -845,7 +845,7 @@ export const publicTrace: Readonly<
 // ---------------------------------------------------------------------------
 
 export const propagation = {
-  setGlobalPropagator(p: TextMapPropagator): void {
+  setGlobalPropagator(p: TextMapPropagator | null): void {
     updateTelemetryState({ propagator: p });
   },
   // Like the OTel API, a record carrier needs no accessors: SDK propagators require them.

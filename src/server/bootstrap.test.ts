@@ -283,6 +283,11 @@ describe("wireTracingShim()", () => {
     logger.info("after bridge clear");
 
     assertEquals(emitted.length, 1);
+    assertStrictEquals(
+      getGlobalTelemetryAPISnapshot().propagator,
+      null,
+      "a bootstrap without the exporter drops the previous generation's propagator",
+    );
     _resetShimForTests();
     __resetLogRecordEmitterForTests();
   });
