@@ -1,3 +1,4 @@
+import { resolveVeryfrontCloudModelSurface } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import type { JsonSchema } from "#veryfront/tool/schema";
@@ -99,6 +100,15 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
 
   if (provider === "moonshot" || provider === "moonshotai" || modelName?.startsWith("kimi-")) {
     return { provider: "moonshot", sanitizeSchema: true };
+  }
+
+  // A Veryfront Cloud provider this list does not name takes the schema rules
+  // of the wire protocol it is served on: Google and Anthropic constrain tool
+  // schemas by protocol, not by vendor.
+  if (parts[0] === "veryfront-cloud") {
+    const surface = resolveVeryfrontCloudModelSurface(normalized);
+    if (surface === "google") return { provider: "google", sanitizeSchema: true };
+    if (surface === "anthropic") return { provider: "anthropic", sanitizeSchema: true };
   }
 
   return { provider: "unknown", sanitizeSchema: false };

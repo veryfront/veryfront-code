@@ -726,17 +726,28 @@ export function getVeryfrontCloudProviderFromModelId(
   });
 }
 
-/** Return the Veryfront Cloud provider named by a model ID, including one this package does not list, or `undefined` when the ID names none. */
+/**
+ * The wire surface a Veryfront Cloud model ID's provider is served on, or
+ * `undefined` when the ID names no provider. A newly served provider reports
+ * the surface the served catalog gives it, not only the protocol-named ones.
+ */
+export function resolveVeryfrontCloudModelSurface(
+  modelId: string,
+): VeryfrontCloudSurfaceId | undefined {
+  const provider = tryGetVeryfrontCloudProviderFromModelId(modelId);
+  return provider === undefined ? undefined : resolveVeryfrontCloudSurface(provider);
+}
+
 /**
  * Whether a Veryfront Cloud model ID speaks the Anthropic protocol: its
  * provider is served on the Anthropic surface. A newly served provider on that
  * surface counts, not only `anthropic/*`.
  */
 export function isVeryfrontCloudAnthropicSurfaceModel(modelId: string): boolean {
-  const provider = tryGetVeryfrontCloudProviderFromModelId(modelId);
-  return provider !== undefined && resolveVeryfrontCloudSurface(provider) === "anthropic";
+  return resolveVeryfrontCloudModelSurface(modelId) === "anthropic";
 }
 
+/** Return the Veryfront Cloud provider named by a model ID, including one this package does not list, or `undefined` when the ID names none. */
 export function tryGetVeryfrontCloudProviderFromModelId(
   modelId: string,
 ): VeryfrontCloudProviderId | undefined {
