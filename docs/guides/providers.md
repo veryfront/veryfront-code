@@ -61,6 +61,74 @@ export default agent({
 `VERYFRONT_DEFAULT_MODEL` can select another gateway default for omitted
 models and `model: "auto"`. It is optional.
 
+### Call the AI Gateway from other clients
+
+Code outside Veryfront can use the AI Gateway through the official OpenAI and
+Anthropic clients. Create a project API key with the Write permission in Studio
+under **Settings > API Keys**. Inference requests are writes, so a Read-only key
+is refused. The key starts with `vf_` and is bound to its project.
+
+Name the model as `<provider>/<model>`. List the models your key can use:
+
+```bash
+curl https://api.veryfront.com/ai/v1/models \
+  -H "Authorization: Bearer $VERYFRONT_API_KEY"
+```
+
+Every listed model works on the OpenAI protocol at
+`https://api.veryfront.com/ai/v1`, including vendors this SDK has no built-in
+entry for:
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "https://api.veryfront.com/ai/v1",
+  apiKey: process.env.VERYFRONT_API_KEY,
+});
+
+const completion = await client.chat.completions.create({
+  model: "mistral/mistral-small-2503",
+  messages: [{ role: "user", content: "Say hello." }],
+});
+```
+
+```bash
+curl https://api.veryfront.com/ai/v1/chat/completions \
+  -H "Authorization: Bearer $VERYFRONT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mistral/mistral-small-2503","messages":[{"role":"user","content":"Say hello."}]}'
+```
+
+Anthropic models also speak the Anthropic Messages protocol. The Anthropic
+client adds `/v1/messages` to its base URL:
+
+```ts
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic({
+  baseURL: "https://api.veryfront.com/ai/anthropic",
+  apiKey: process.env.VERYFRONT_API_KEY,
+});
+
+const message = await client.messages.create({
+  model: "anthropic/claude-sonnet-4-6",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "Say hello." }],
+});
+```
+
+```bash
+curl https://api.veryfront.com/ai/anthropic/v1/messages \
+  -H "x-api-key: $VERYFRONT_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"anthropic/claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"Say hello."}]}'
+```
+
+Inside a Veryfront agent, use a `veryfront-cloud/<provider>/<model>` string
+instead. The SDK picks the same endpoints for you.
+
 ## Runtime conventions (recommended)
 
 For most projects, omit `model` to use the default for your inference path. Set

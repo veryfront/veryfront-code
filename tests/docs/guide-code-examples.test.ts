@@ -77,6 +77,7 @@ import { parsePushArgs } from "../../cli/commands/push/command.ts";
 import { parseCliArgs } from "../../cli/shared/args.ts";
 import { AUTH_PRESETS } from "../../cli/scaffold/engine.ts";
 import { getTemplate } from "../../templates/index.ts";
+import { getVeryfrontCloudGatewayBaseUrl } from "../../src/provider/veryfront-cloud/shared.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
   "agents.md",
@@ -201,6 +202,44 @@ describe("Guide code example coverage", () => {
     const guideFiles = new Set(await guideFilesWithCodeFences());
     const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) => !guideFiles.has(name));
     assertEquals(stale, []);
+  });
+});
+
+describe("Guide: providers.md", () => {
+  const api = "https://api.veryfront.com";
+
+  async function gatewayClientSection(): Promise<string> {
+    const guide = await readGuide("providers.md");
+    const start = guide.indexOf("### Call the AI Gateway from other clients");
+    assert(start !== -1, "providers.md documents calling the AI Gateway from other clients");
+    const end = guide.indexOf("\n## ", start);
+    return guide.slice(start, end === -1 ? undefined : end);
+  }
+
+  it("gives the OpenAI client the base URL the SDK sends OpenAI-protocol models to", async () => {
+    const section = await gatewayClientSection();
+    const base = getVeryfrontCloudGatewayBaseUrl(api, "openai");
+
+    assertStringIncludes(section, `baseURL: "${base}"`);
+    assertStringIncludes(section, `curl ${base}/chat/completions`);
+  });
+
+  it("gives the Anthropic client the base URL the SDK sends Anthropic-protocol models to", async () => {
+    const section = await gatewayClientSection();
+    const base = getVeryfrontCloudGatewayBaseUrl(api, "anthropic");
+
+    // The Anthropic client appends /v1/messages to its base URL.
+    assertEquals(base.endsWith("/v1"), true);
+    assertStringIncludes(section, `baseURL: "${base.slice(0, -"/v1".length)}"`);
+    assertStringIncludes(section, `curl ${base}/messages`);
+  });
+
+  it("sends a vendor the SDK does not know over the OpenAI protocol", async () => {
+    const section = await gatewayClientSection();
+
+    assertEquals(getVeryfrontCloudGatewayBaseUrl(api, "acme-labs"), `${api}/ai/v1`);
+    assertStringIncludes(section, "`<provider>/<model>`");
+    assertStringIncludes(section, `curl ${api}/ai/v1/models`);
   });
 });
 
