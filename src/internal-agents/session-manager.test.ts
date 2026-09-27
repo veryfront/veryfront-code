@@ -254,6 +254,34 @@ describe("internal-agents/session-manager", () => {
     assertEquals(sessionManager.getServingSpanAttributes("run_1", "proj-1"), undefined);
   });
 
+  it("releases serving identities when session or waiting TTLs cancel runs", () => {
+    const timerCallbacks: Array<() => void> = [];
+    const sessionManager = new AgentRunSessionManager({
+      sessionTtlMs: 1,
+      waitingForToolTtlMs: 1,
+      setTimeoutFn: ((callback: () => void) => {
+        timerCallbacks.push(callback);
+        return timerCallbacks.length as unknown as number;
+      }) as typeof setTimeout,
+      clearTimeoutFn: (() => {}) as typeof clearTimeout,
+    });
+    const retainedIdentities = () =>
+      (sessionManager as unknown as { servingIdentities: Map<string, unknown> })
+        .servingIdentities.size;
+    const servingIdentity = { projectId: "proj-1", spanAttributes: { "release.id": "rel-1" } };
+
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), servingIdentity });
+    timerCallbacks.at(-1)?.();
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertEquals(retainedIdentities(), 0);
+
+    sessionManager.startRun({ runId: "run_2", threadId: crypto.randomUUID(), servingIdentity });
+    sessionManager.waitForToolResult("run_2", "tool_1").catch(() => {});
+    timerCallbacks.at(-1)?.();
+    assertEquals(sessionManager.getRunStatus("run_2"), null);
+    assertEquals(retainedIdentities(), 0);
+  });
+
   it("reuses the global session manager across duplicate module evaluations", async () => {
     _resetGlobalAgentRunSessionManagerForTesting();
 

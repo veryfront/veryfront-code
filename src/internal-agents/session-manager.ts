@@ -115,8 +115,19 @@ export class AgentRunSessionManager {
   ): AbortSignal {
     try {
       const signal = this.sessions.startRun(input);
-      if (input.servingIdentity) this.servingIdentities.set(input.runId, input.servingIdentity);
-      else this.servingIdentities.delete(input.runId);
+      const identity = input.servingIdentity;
+      if (identity) {
+        this.servingIdentities.set(input.runId, identity);
+        // Session and waiting TTLs cancel inside `sessions`, bypassing this wrapper; every
+        // cancel aborts the run's signal, so drop the identity then, unless a newer run owns it.
+        signal.addEventListener("abort", () => {
+          if (this.servingIdentities.get(input.runId) === identity) {
+            this.servingIdentities.delete(input.runId);
+          }
+        }, { once: true });
+      } else {
+        this.servingIdentities.delete(input.runId);
+      }
       return signal;
     } catch (error) {
       if (error instanceof RunAlreadyExistsError) {
@@ -180,12 +191,7 @@ export class AgentRunSessionManager {
     projectId: string | undefined,
   ): RunServingIdentity["spanAttributes"] | undefined {
     const identity = this.servingIdentities.get(runId);
-    if (!identity) return undefined;
-    // Timeouts end sessions inside `sessions`, bypassing this wrapper; drop those entries here.
-    if (!this.sessions.getRunStatus(runId)) {
-      this.servingIdentities.delete(runId);
-      return undefined;
-    }
+    if (!identity || !this.sessions.getRunStatus(runId)) return undefined;
     return identity.projectId === projectId ? identity.spanAttributes : undefined;
   }
 
