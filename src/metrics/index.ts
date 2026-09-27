@@ -410,8 +410,9 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
 
 /** Parse the OTel `key=value,key=value` env format. */
 function parseKeyValueList(input: string | undefined): Record<string, string> {
-  if (!input) return {};
-  const result: Record<string, string> = {};
+  // No prototype, so a value project code plants on Object.prototype is never read as a host key.
+  const result = apply(objectCreate, Object, [null]) as Record<string, string>;
+  if (!input) return result;
   for (const part of input.split(",")) {
     const [key, ...valueParts] = part.split("=");
     if (key && valueParts.length > 0) {
