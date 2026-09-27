@@ -4,7 +4,11 @@ import {
   getMistralEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
-import { findVeryfrontCloudModelByModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  createRetiredVeryfrontCloudModelError,
+  findVeryfrontCloudModelByModelId,
+  isRetiredVeryfrontCloudModelId,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
   getDefaultVeryfrontCloudModel,
@@ -32,6 +36,8 @@ const DIRECT_CREDENTIAL_PROVIDER_ALIASES = new Map<string, string>([
 const DIRECT_RUNTIME_PROVIDER_ALIASES = new Map<string, string>([
   ["google-ai-studio", "google"],
 ]);
+// Called with the user's own provider key against the vendor's API, never the
+// gateway, so these follow each vendor's catalog rather than the gateway's.
 const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> = [
   { provider: "openai", modelId: "gpt-5.4-nano" },
   { provider: "anthropic", modelId: "claude-sonnet-4-6" },
@@ -143,6 +149,9 @@ function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
 function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {
   if (isUnsupportedVeryfrontCloudMistralModel(modelId)) {
     throw NOT_SUPPORTED.create({ detail: `Unsupported Mistral model "${modelId}"` });
+  }
+  if (isRetiredVeryfrontCloudModelId(modelId)) {
+    throw createRetiredVeryfrontCloudModelError(modelId);
   }
   return modelId;
 }
@@ -259,6 +268,10 @@ export function resolveRuntimeModel(model?: string): string {
       }
     }
     return toDirectRuntimeModel(provider, modelId);
+  }
+
+  if (isRetiredVeryfrontCloudModelId(configuredModel)) {
+    throw createRetiredVeryfrontCloudModelError(configuredModel);
   }
 
   return `veryfront-cloud/${provider}/${modelId}`;
