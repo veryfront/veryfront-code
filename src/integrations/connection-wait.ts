@@ -50,9 +50,16 @@ export async function waitForIntegrationConnection(
       `timeoutMs must be an integer between 1 and ${MAX_INTEGRATION_CONNECTION_WAIT_MS}`,
     );
   }
+  if (before && before.integration !== integration) {
+    throw new TypeError("The baseline status must describe the same integration");
+  }
+  const baseline = before ? identity(before) : undefined;
+  if (before?.connected && (!baseline?.id || !baseline.generation)) {
+    throw new TypeError("A connected baseline must include its connection id and generation");
+  }
   abortSignal?.throwIfAborted();
   // A disconnected baseline still names its row; the same id and generation is not new consent.
-  const previous = before ? identity(before) : undefined;
+  const previous = baseline;
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), timeoutMs);
   const signal = abortSignal ? AbortSignal.any([abortSignal, deadline.signal]) : deadline.signal;

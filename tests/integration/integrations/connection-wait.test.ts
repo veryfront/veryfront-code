@@ -119,7 +119,7 @@ describe("bounded connection wait", () => {
     );
   });
 
-  it("rejects unbounded or implicit waits before any read", async () => {
+  it("rejects unbounded, implicit or mismatched waits before any read", async () => {
     const { client, reads } = fakeClient(() => "new");
     for (const timeoutMs of [0, 1.5, MAX_INTEGRATION_CONNECTION_WAIT_MS + 1]) {
       await assertRejects(
@@ -135,6 +135,22 @@ describe("bounded connection wait", () => {
         }),
       TypeError,
     );
+    for (
+      const baseline of [
+        { ...before, integration: "gitlab" },
+        { ...before, connection_generation_id: undefined },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          waitForIntegrationConnection(client, "github", {
+            scope: "user",
+            before: baseline,
+            timeoutMs: 100,
+          }),
+        TypeError,
+      );
+    }
     assertEquals(reads(), 0);
   });
 
