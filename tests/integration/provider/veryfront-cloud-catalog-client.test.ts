@@ -200,6 +200,32 @@ describe("provider/veryfront-cloud/catalog-client", () => {
       );
     });
 
+    it("stays within the cap after more concurrent scopes than it holds all settle", async () => {
+      const count = VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES + 8;
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => release = resolve);
+      // Every load is in flight at once, so none can be evicted while it lands.
+      const stub = recordingFetch(async () => {
+        await gate;
+        return jsonResponse(servedCatalogPayload());
+      });
+
+      await withMockFetch(stub.fetch, async () => {
+        const loads = Array.from(
+          { length: count },
+          (_, index) => loadVeryfrontCloudCatalog({ ...LOAD, apiToken: `vf_burst_${index}` }),
+        );
+        release();
+        await Promise.all(loads);
+      });
+
+      assertEquals(stub.requests.length, count);
+      assertEquals(
+        __veryfrontCloudCatalogSizesForTests().entries,
+        VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES,
+      );
+    });
+
     it("forgets a failure once its retry window has passed", async () => {
       const clock = useClock();
       const stub = recordingFetch(() => jsonResponse({}, 503));

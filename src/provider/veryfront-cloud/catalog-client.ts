@@ -343,7 +343,12 @@ function refresh(
       return stale;
     },
   ).finally(() => {
-    if (started === generation) inflight.delete(key);
+    if (started !== generation) return;
+    inflight.delete(key);
+    // Eviction skips keys with a load in flight; retry now that this one has
+    // settled, so a burst of concurrent scopes cannot leave the maps over the cap.
+    evictOldest(entries);
+    evictOldest(failedAt);
   });
   inflight.set(key, request);
   return request;
