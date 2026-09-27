@@ -909,6 +909,57 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
   });
 
+  it("records the stream's serving identity on the run session", async () => {
+    const started: Parameters<AgentRunSessionManager["startRun"]>[0][] = [];
+    class RecordingSessionManager extends AgentRunSessionManager {
+      override startRun(input: Parameters<AgentRunSessionManager["startRun"]>[0]) {
+        started.push(input);
+        return super.startRun(input);
+      }
+    }
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new RecordingSessionManager(),
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+      }),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = { ...createCtx(publicKeyPem), environmentName: "preview" };
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 200);
+    await result.response?.body?.cancel();
+    assertEquals(started[0]?.servingIdentity, {
+      projectId: ctx.projectId!,
+      spanAttributes: {
+        "veryfront.environment_name": "preview",
+        "branch.id": ctx.branchId!,
+        "branch.name": "main",
+      },
+    });
+  });
+
   it("selects a requested agent and its local tools from a multi-agent runtime", async () => {
     const agents = new Map([
       ["assistant-1", createAgent("assistant-1")],

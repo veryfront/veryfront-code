@@ -12,6 +12,7 @@ import {
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
@@ -64,6 +65,12 @@ export class AgentRunCancelHandler extends BaseHandler {
           expectedSurface: "studio",
         });
 
+        // This request bypasses the proxy, so its own release headers are untrusted.
+        // Only the pod running the run knows which release or branch served it. A pod
+        // that does not own the run (the 204 path) stamps nothing: platform-scoped.
+        setActiveSpanAttributes(
+          this.sessionManager.getServingSpanAttributes(runId, ctx.projectId) ?? {},
+        );
         const accepted = this.sessionManager.cancelRun(runId);
         if (accepted) {
           return this.respond(builder.json({ accepted: true }, 202));

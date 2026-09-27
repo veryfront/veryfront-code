@@ -32,3 +32,16 @@ export function controlPlaneRunIdFromPath(method: string, pathname: string): str
     : undefined;
   return route?.exec(pathname)?.[1];
 }
+
+/**
+ * True for the run routes the platform sends straight to the owning pod, past the proxy:
+ * cancel (`DELETE /runs/{runId}`) and `POST /runs/{runId}/resume`. Their release headers
+ * are unverified. On a pod that does not own the run, the call is platform-scoped, with no
+ * release.
+ */
+export function isDirectToPodRunRoute(method: string, pathname: string): boolean {
+  const normalizedMethod = method.toUpperCase();
+  if (normalizedMethod === "DELETE") return CONTROL_PLANE_RUN_PATH.test(pathname);
+  return normalizedMethod === "POST" && pathname.endsWith("/resume") &&
+    CONTROL_PLANE_RUN_OPERATION_PATH.test(pathname);
+}
