@@ -13,6 +13,7 @@ import {
   createChildSpan,
   endSpan,
   getActiveContext,
+  injectContext,
   setSpanAttributes,
   startSpan,
   withActiveSpan,
@@ -98,6 +99,13 @@ describe("project trace SDK provider", () => {
           ]
         ) {
           assertEquals(trace.getSpan(context)?.spanContext().spanId, parent.spanContext().spanId);
+          const headers = new Headers();
+          injectContext(context, headers);
+          const parentIds = parent.spanContext();
+          assertEquals(
+            headers.get("traceparent"),
+            `00-${parentIds.traceId}-${parentIds.spanId}-01`,
+          );
           const cached = trace.getTracer("detached");
           cached.startSpan("detached.tracer-context", {}, context).end();
           await cached.startActiveSpan("detached.tracer-active", {}, context, async (span) => {

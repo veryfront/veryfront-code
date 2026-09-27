@@ -60,7 +60,11 @@ function getSpanOps(span?: Span | null): ReturnType<typeof tracingManager.getSpa
     getProjectTraceHelpers()?.spans ?? tracingManager.getSpanOperations();
 }
 
-function getContextProp(): ReturnType<typeof tracingManager.getContextPropagation> {
+function getContextProp(
+  context?: Context,
+): ReturnType<typeof tracingManager.getContextPropagation> {
+  const owner = context ? getContextProjectProvider(context) : undefined;
+  if (owner) return getProjectTraceHelpers(owner)!.context;
   return getProjectTraceHelpers()?.context ?? tracingManager.getContextPropagation();
 }
 
@@ -166,7 +170,8 @@ export function extractContext(headers: Headers): Context | undefined {
 
 /** Context for inject. */
 export function injectContext(context: Context, headers: Headers): void {
-  getContextProp()?.injectContext(restoreContext(context), headers);
+  const raw = restoreContext(context);
+  getContextProp(raw)?.injectContext(raw, headers);
 }
 
 /** Context for get active. */
