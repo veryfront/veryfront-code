@@ -276,27 +276,17 @@ export function createExecutorModelBroker(options: {
   ]);
 }
 
-/** Longest describing a model waits for it to settle before describing it as built. */
-const METADATA_SETTLE_MAX_WAIT_MS = 3_000;
-
 /**
- * Settle a Veryfront Cloud model before its metadata is read, waiting a bounded
- * time. A failure or a slow catalog leaves the model as built; its call
- * surfaces any failure.
+ * Settle a Veryfront Cloud model before its metadata is read, so the executor
+ * is never told about a construction a pending rebuild can still replace. The
+ * wait is bounded by the catalog request's own timeout and the caller's signal.
+ * A failed load leaves the model as built; its call surfaces any failure.
  */
 async function settleForMetadata(model: ModelRuntime, signal: AbortSignal): Promise<void> {
   if (readVeryfrontCloudModelFacts(model) === undefined || typeof model.prepare !== "function") {
     return;
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      Promise.resolve(model.prepare(signal)).catch(() => {}),
-      new Promise<void>((resolve) => timer = setTimeout(resolve, METADATA_SETTLE_MAX_WAIT_MS)),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+  await Promise.resolve(model.prepare(signal)).catch(() => {});
 }
 
 function modelMetadata(id: string, model: ModelRuntime) {
