@@ -25,6 +25,23 @@ describe("runtime trace usage attributes", () => {
     );
   });
 
+  it("maps the one-hour cache-write share only when reported", () => {
+    assertEquals(
+      buildRuntimeUsageTraceAttributes({
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      }),
+      {
+        "gen_ai.usage.cache_creation.input_tokens": 50,
+        "agent.usage.cache_creation_1h_input_tokens": 20,
+      },
+    );
+    assertEquals(
+      buildRuntimeUsageTraceAttributes({ cacheCreationInputTokens: 50 }),
+      { "gen_ai.usage.cache_creation.input_tokens": 50 },
+    );
+  });
+
   it("accepts accumulated runtime usage aliases", () => {
     assertEquals(
       buildRuntimeUsageTraceAttributes({

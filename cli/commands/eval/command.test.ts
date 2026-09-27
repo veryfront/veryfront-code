@@ -816,6 +816,43 @@ describe("eval CLI command helpers", () => {
     });
   });
 
+  it("keeps the one-hour cache-write share in eval usage only when reported", () => {
+    const responseWith = (usage: AgentResponse["usage"]) =>
+      ({
+        text: "done",
+        messages: [],
+        status: "completed",
+        toolCalls: [],
+        usage,
+      }) satisfies AgentResponse;
+
+    assertEquals(
+      normalizeUsage(responseWith({
+        promptTokens: 12,
+        completionTokens: 5,
+        totalTokens: 17,
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      })),
+      {
+        inputTokens: 12,
+        outputTokens: 5,
+        totalTokens: 17,
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      },
+    );
+    assertEquals(
+      normalizeUsage(responseWith({
+        promptTokens: 12,
+        completionTokens: 5,
+        totalTokens: 17,
+        cacheCreationInputTokens: 50,
+      })),
+      { inputTokens: 12, outputTokens: 5, totalTokens: 17, cacheCreationInputTokens: 50 },
+    );
+  });
+
   it("preserves agent tool input and output in eval traces", () => {
     const response = {
       text: "done",

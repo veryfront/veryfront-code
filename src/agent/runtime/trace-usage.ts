@@ -7,6 +7,7 @@ export type RuntimeUsageTraceInput = {
   completionTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
@@ -65,6 +66,10 @@ export function buildRuntimeUsageTraceAttributes(
         usage?.cacheCreationInputTokens,
       ),
       "gen_ai.usage.cache_read.input_tokens": cacheReadInputTokens,
+      // No GenAI semantic name exists for the lifetime split of cache writes.
+      "agent.usage.cache_creation_1h_input_tokens": usageNumber(
+        usage?.cacheCreation1hInputTokens,
+      ),
       "gen_ai.usage.reasoning.output_tokens": usageNumber(usage?.reasoningTokens),
       "agent.usage.billable_input_tokens": usageNumber(usage?.billableInputTokens),
       "agent.usage.billable_output_tokens": usageNumber(usage?.billableOutputTokens),
