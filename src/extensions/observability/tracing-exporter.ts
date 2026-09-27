@@ -29,6 +29,7 @@ export interface ProjectTraceProvider {
   shutdown(discard: boolean): Promise<void>;
 }
 
+/** Runtime-owned resource identity and guarded transport for a project trace provider. */
 export interface ProjectTraceProviderOptions {
   resource: Readonly<Record<string, string>>;
   createTransport(
