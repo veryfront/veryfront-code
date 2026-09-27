@@ -17,7 +17,10 @@ the Veryfront token in prompts, tool arguments, files, or logs.
 ## Procedure
 
 Always pass the project explicitly. Never let Veryfront or yourself pick a
-different project or account.
+different project or account. This procedure is for OAuth connectors
+(`credential_requirement.mode` is `oauth_connection` in
+`veryfront integration get "<NAME>" --project "<PROJECT_SLUG>" --json`). For
+project-credentials connectors, see [Non-OAuth connectors](#non-oauth-connectors).
 
 ```bash
 veryfront integration tools gmail --project "<PROJECT_SLUG>" --json

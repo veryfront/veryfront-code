@@ -175,13 +175,18 @@ vf_run_tests()                            → run the test suite
 Provider tools such as `gmail__list_emails` run through a connected account.
 `veryfront login` signs you in to Veryfront; `veryfront integration connect`
 authorizes a provider account and needs a person in a browser. Always pass the
-project, and select the connection from inventory:
+project. Check `credential_requirement.mode` with
+`veryfront integration get "<NAME>" --project "<PROJECT_SLUG>" --json` first. For
+`oauth_connection`, select the connection from inventory:
 
 ```
 veryfront integration tools gmail --project "<PROJECT_SLUG>" --json
 veryfront integration connections gmail --project "<PROJECT_SLUG>" --json
 veryfront integration call gmail__list_emails --project "<PROJECT_SLUG>" --connection "<CONNECTION_ID>" --expected-generation "<CONNECTION_GENERATION_ID>" --args '{"q":"in:inbox","maxResults":1}' --json
 ```
+
+For `project_credentials` connectors (API key, Basic, client credentials), call
+with `--project` only; they have no connection inventory.
 
 Call once. Never repeat a write whose outcome is unknown, never switch accounts,
 and never handle provider secrets in chat. See
