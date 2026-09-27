@@ -530,6 +530,12 @@ describe("metrics public SDK", () => {
       assertEquals(headersOf(requests[0])["x-token"], "project-token");
     });
 
+    it("refuses redirects, so the token never follows one to another host", async () => {
+      const requests = await exportedRequests(() => emitAsProject("project-token", "orders_total"));
+
+      assertEquals(requests[0]?.redirect, "error");
+    });
+
     it("sends the latest token and keeps counting the same series when the token rotates", async () => {
       const requests = await exportedRequests(async () => {
         await emitAsProject("token-before-rotation", "orders_total");

@@ -1030,6 +1030,7 @@ async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
           ...projectTokenHeader(group.target),
           "Content-Type": "application/json",
         },
+        redirect: group.target.internal ? "error" : "follow",
         body: jsonStringify(
           toHookFreeJsonValue(buildDirectOtlpBody(group.samples, group.target, group.key)),
         ),
