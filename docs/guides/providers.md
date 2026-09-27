@@ -16,7 +16,7 @@ is developed or deployed.
 
 An agent's `model` is a `"provider/model"` string. Omit it to use the default
 `mistral/mistral-small-2503` through Veryfront Cloud. Without Cloud context,
-the default remains `openai/gpt-5.4-nano` with your direct provider key.
+the default remains `openai/gpt-5-nano` with your direct provider key.
 
 ## Prerequisites
 
@@ -150,7 +150,7 @@ export default agent({
   model: "openai/gpt-5.5", // OpenAI
   // model: "anthropic/claude-sonnet-4-6", // Anthropic
   // model: "google/gemini-3.5-flash",     // Google
-  // model: "veryfront-cloud/mistral/mistral-large-2512", // Mistral through AI Gateway
+  // model: "veryfront-cloud/mistral/mistral-small-2503", // Mistral through AI Gateway
   system: "You are a helpful assistant.",
 });
 ```
@@ -246,7 +246,7 @@ Agents reference models as `"provider/model"`. The framework splits on the first
 ```ts
 // Veryfront Cloud explicit override
 agent({ model: "veryfront-cloud/openai/gpt-5.5" });
-agent({ model: "veryfront-cloud/mistral/mistral-large-2512" });
+agent({ model: "veryfront-cloud/mistral/mistral-small-2503" });
 
 // Direct provider override
 agent({ model: "openai/gpt-5.5" });

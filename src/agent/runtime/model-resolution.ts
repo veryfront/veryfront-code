@@ -15,7 +15,7 @@ import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getModelRuntimeProvider } from "#veryfront/provider/runtime-inspection.ts";
 
 export const AUTO_AGENT_MODEL = "auto";
-export const DEFAULT_AGENT_MODEL = "openai/gpt-5.4-nano";
+export const DEFAULT_AGENT_MODEL = "openai/gpt-5-nano";
 
 const HOSTED_PROVIDER_NAMES = new Set([
   "deepseek",
@@ -33,10 +33,10 @@ const DIRECT_RUNTIME_PROVIDER_ALIASES = new Map<string, string>([
   ["google-ai-studio", "google"],
 ]);
 const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> = [
-  { provider: "openai", modelId: "gpt-5.4-nano" },
+  { provider: "openai", modelId: "gpt-5-nano" },
   { provider: "anthropic", modelId: "claude-sonnet-4-6" },
   { provider: "google-ai-studio", modelId: "gemini-3.5-flash" },
-  { provider: "mistral", modelId: "mistral-large-2512" },
+  { provider: "mistral", modelId: "mistral-small-2503" },
 ];
 const LEGACY_MODEL_ALIASES = new Map<string, string>([
   ["opus", "anthropic/claude-opus-4-8"],

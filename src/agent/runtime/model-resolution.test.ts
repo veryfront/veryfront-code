@@ -67,7 +67,14 @@ describe("agent/runtime/model-resolution", () => {
   it("keeps self-hosted auto provider precedence when OpenAI and Mistral keys exist", () => {
     setEnv("OPENAI_API_KEY", "sk-test");
     setEnv("MISTRAL_API_KEY", "mistral-test");
-    assertEquals(resolveRuntimeModel("auto"), "openai/gpt-5.4-nano");
+    assertEquals(resolveRuntimeModel("auto"), "openai/gpt-5-nano");
+  });
+
+  it("falls back to the direct Mistral default for auto resolution when only a Mistral key exists", () => {
+    // Regression (#1898): the BYOK auto default for Mistral was the retired
+    // mistral-large-2512; it must fall through to the served successor.
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+    assertEquals(resolveRuntimeModel("auto"), "mistral/mistral-small-2503");
   });
 
   it("reports a default-model mismatch when only another provider has a key", () => {
@@ -114,7 +121,7 @@ describe("agent/runtime/model-resolution", () => {
   it("resolves omitted and auto model config separately", () => {
     assertEquals(
       resolveConfiguredAgentModel(),
-      "openai/gpt-5.4-nano",
+      "openai/gpt-5-nano",
     );
     assertEquals(
       resolveConfiguredAgentModel("auto"),
@@ -229,7 +236,7 @@ describe("agent/runtime/model-resolution", () => {
 
     assertEquals(
       resolveRuntimeModel(),
-      "openai/gpt-5.4-nano",
+      "openai/gpt-5-nano",
     );
   });
 
