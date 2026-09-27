@@ -83,9 +83,9 @@ logs, or URLs.
   `isError: true` with `structuredContent.error` set to `missing_credentials`
   and the missing variable names in `missingEnvVars`. No provider request is
   sent.
-- The hosted catalog lists every connector the API can run. The framework's
-  local catalog hides feature-gated connectors unless
-  `VERYFRONT_EXPERIMENTAL_INTEGRATIONS` names them.
+- Which connectors each environment publishes, and which have been qualified
+  against a real provider, is listed in
+  [Hosted and local limits](../integrations.md#hosted-and-local-limits).
 
 ### Local execution limits
 
