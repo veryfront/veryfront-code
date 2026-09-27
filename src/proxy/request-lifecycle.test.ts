@@ -44,6 +44,51 @@ describe("proxy request lifecycle", () => {
     ]);
   });
 
+  it("sets attributes on the root server span", async () => {
+    const req = new Request("https://example.com/docs");
+    const attributes: Record<string, unknown> = {};
+    const span = {
+      setAttributes(values: Record<string, unknown>) {
+        Object.assign(attributes, values);
+        return span;
+      },
+    } as unknown as Span;
+
+    await runProxyRequestLifecycle({
+      req,
+      url: new URL(req.url),
+      extractContext: () => undefined,
+      startServerSpan: () => ({ span, context: {} as Context }),
+      withContext: (_context, fn) => fn(),
+      endSpan: () => {},
+      handle: async (lifecycle) => {
+        lifecycle.setAttributes({ "project.id": "proj-123" });
+        return new Response("ok");
+      },
+    });
+
+    assertEquals(attributes, { "project.id": "proj-123" });
+  });
+
+  it("ignores attributes when tracing is disabled", async () => {
+    const req = new Request("https://example.com/docs");
+
+    const response = await runProxyRequestLifecycle({
+      req,
+      url: new URL(req.url),
+      extractContext: () => undefined,
+      startServerSpan: () => null,
+      withContext: (_context, fn) => fn(),
+      endSpan: () => {},
+      handle: async (lifecycle) => {
+        lifecycle.setAttributes({ "project.id": "proj-123" });
+        return new Response("ok");
+      },
+    });
+
+    assertEquals(response.status, 200);
+  });
+
   it("honors an explicit lifecycle end and does not end the span twice", async () => {
     const req = new Request("https://example.com/protected");
     const span = {} as Span;

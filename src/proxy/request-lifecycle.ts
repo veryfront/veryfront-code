@@ -1,8 +1,9 @@
-import type { Context, Span } from "#veryfront/observability";
+import type { AttributeValue, Context, Span } from "#veryfront/observability";
 import { ensureError } from "#veryfront/errors";
 
 export interface ProxyRequestLifecycle {
   end(statusCode: number, error?: Error): void;
+  setAttributes(attributes: Record<string, AttributeValue>): void;
 }
 
 export interface RunProxyRequestLifecycleOptions {
@@ -32,6 +33,9 @@ export async function runProxyRequestLifecycle(
       if (ended) return;
       ended = true;
       options.endSpan(spanInfo?.span, statusCode, error);
+    },
+    setAttributes(attributes) {
+      spanInfo?.span.setAttributes(attributes);
     },
   };
 

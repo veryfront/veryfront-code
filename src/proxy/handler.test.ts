@@ -441,6 +441,47 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("takes projectId from the domain lookup, never from client headers or query params", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/")) return createNotFoundResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+
+        const req = new Request("http://example.com/page?vf_project_id=proj-attacker", {
+          headers: { host: "example.com", "x-project-id": "proj-attacker" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectId, "proj-123");
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("fails closed when routing metadata has an operational failure", async () => {
       const { entries, logger } = createRecordingLogger();
       let fullProjectLookups = 0;
