@@ -290,7 +290,6 @@ function createVeryfrontCloudModelInternal(
   let facts = readFacts();
   const built = build();
   let current = built;
-  let preparing: Promise<ModelRuntime> | undefined;
   let isSettled = false;
   const rebuildIfChanged = (settle: boolean): ModelRuntime => {
     const next = readFacts();
@@ -308,24 +307,15 @@ function createVeryfrontCloudModelInternal(
     if (!isVeryfrontCloudCatalogFresh(catalogScope)) return undefined;
     return rebuildIfChanged(true);
   };
-  const prepare = async (abortSignal?: AbortSignal): Promise<ModelRuntime> => {
+  // Each caller waits on its own signal. Concurrent callers share only the
+  // underlying catalog request (one per credentials and project, in the
+  // catalog client), so one caller giving up never decides for another.
+  const ready = async (abortSignal?: AbortSignal): Promise<ModelRuntime> => {
     const catalog = await loadVeryfrontCloudCatalog({
       ...catalogScope,
       ...(abortSignal ? { signal: abortSignal } : {}),
     });
     return rebuildIfChanged(catalog !== undefined);
-  };
-  const ready = async (abortSignal?: AbortSignal): Promise<ModelRuntime> => {
-    preparing ??= prepare(abortSignal);
-    try {
-      return await preparing;
-    } catch (error) {
-      // A failed build is retried on the next call rather than cached.
-      preparing = undefined;
-      throw error;
-    } finally {
-      if (!isSettled) preparing = undefined;
-    }
   };
   const wrapped = withServedCatalog(built, () => current, settled, ready);
   registerVeryfrontCloudModelFacts(wrapped, () => facts);

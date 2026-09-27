@@ -9,6 +9,7 @@ import {
   isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
   isVeryfrontCloudCatalogLoaded,
+  resolveServedVeryfrontCloudAlias,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
@@ -96,7 +97,11 @@ export function resolveConfiguredAgentModel(model?: string): string {
     return normalized;
   }
 
-  return LEGACY_MODEL_ALIASES.get(normalized) ?? normalized;
+  // Known aliases first, so a bare vendor name keeps its direct-key meaning;
+  // then an alias only the loaded served catalog knows.
+  return LEGACY_MODEL_ALIASES.get(normalized) ??
+    resolveServedVeryfrontCloudAlias(normalized) ??
+    normalized;
 }
 
 /** Resolve the provider-options key used by the effective model runtime. */

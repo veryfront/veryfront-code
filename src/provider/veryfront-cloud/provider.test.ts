@@ -1941,6 +1941,25 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/chat/completions"]);
   });
 
+  it("lets one caller give up without deciding for a concurrent caller", async () => {
+    setCloudBootstrap();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => release = resolve);
+    const requests = installGateway(chatOnlyCatalog, gate);
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.9-chat") as ModelRuntime;
+
+    const controller = new AbortController();
+    const abandoned = model.prepare?.(controller.signal);
+    const waiting = streamOnce(model);
+    controller.abort();
+    await abandoned;
+    release?.();
+    await waiting;
+
+    // The waiting caller used the served catalog, fetched once for both.
+    assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/chat/completions"]);
+  });
+
   it("forwards metadata to the model rebuilt from the catalog", async () => {
     setCloudBootstrap();
     installGateway(() =>

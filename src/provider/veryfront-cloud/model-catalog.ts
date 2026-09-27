@@ -697,6 +697,19 @@ export function tryGetVeryfrontCloudProviderFromModelId(
 }
 
 /**
+ * Provider-qualified ID of a short alias only the served catalog knows, for
+ * example one the platform added after this release. Reads a catalog loaded
+ * for the current scope, never the shipped list, and never a retired model.
+ * Undefined when no served catalog has loaded or it does not name the alias.
+ */
+export function resolveServedVeryfrontCloudAlias(alias: string): string | undefined {
+  if (alias.includes("/") || loadedCatalog() === undefined) return undefined;
+  const model = servedIndex().byShortId.get(alias);
+  if (!model || isRetiredVeryfrontCloudModelId(model.modelId)) return undefined;
+  return model.modelId;
+}
+
+/**
  * Resolve a model ID or short alias to a provider-qualified model ID.
  *
  * No value resolves to the default model. A provider-qualified ID is returned

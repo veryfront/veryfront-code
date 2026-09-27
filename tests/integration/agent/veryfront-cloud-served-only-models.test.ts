@@ -9,6 +9,7 @@ import { resolveVeryfrontCloudModelId } from "#veryfront/provider/veryfront-clou
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { resolveAgentModelTransport } from "#veryfront/agent/runtime/model-transport.ts";
+import { resolveRuntimeModel } from "#veryfront/agent/runtime/model-resolution.ts";
 import { createDefaultHostedChatRuntime } from "#veryfront/agent/hosted/default-chat-runtime.ts";
 import type {
   RemoteMCPToolSourceConfig,
@@ -123,6 +124,37 @@ describe("served-only models from a cold process", () => {
 
       assertEquals(transport.resolvedModelString, `veryfront-cloud/${SERVED_ONLY_MODEL}`);
       assertEquals(captured.map(({ path }) => path), ["/ai/models"]);
+    });
+
+    it("routes a served-only short alias through Veryfront Cloud from the agent transport", async () => {
+      setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);
+      setEnv("VERYFRONT_PROJECT_SLUG", "cold-project");
+      const captured = installGateway();
+
+      const transport = await resolveAgentModelTransport({
+        agentId: "agent-1",
+        config: { model: SERVED_ONLY_ALIAS, system: "You are concise." },
+        context: undefined,
+        modelOverride: undefined,
+        mode: "stream",
+      });
+
+      assertEquals(transport.resolvedModelString, `veryfront-cloud/${SERVED_ONLY_MODEL}`);
+      assertEquals(transport.requestedModel, SERVED_ONLY_MODEL);
+      assertEquals(captured.map(({ path }) => path), ["/ai/models"]);
+    });
+
+    it("resolves a served-only alias in runtime model resolution only once a catalog loaded", async () => {
+      setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);
+      setEnv("VERYFRONT_PROJECT_SLUG", "cold-project");
+      installGateway();
+
+      // Cold: nothing names the alias, so it is left as written.
+      assertEquals(resolveRuntimeModel(SERVED_ONLY_ALIAS), SERVED_ONLY_ALIAS);
+      await loadVeryfrontCloudModelCatalog();
+      assertEquals(resolveRuntimeModel(SERVED_ONLY_ALIAS), `veryfront-cloud/${SERVED_ONLY_MODEL}`);
+      // A known alias keeps its meaning.
+      assertEquals(resolveRuntimeModel("sonnet"), "veryfront-cloud/anthropic/claude-sonnet-4-6");
     });
 
     it("resolves a served-only alias once the ambient catalog is loaded", async () => {
