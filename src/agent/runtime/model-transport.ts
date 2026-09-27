@@ -210,18 +210,30 @@ function resolveReasoningWithDefaults(
 export async function resolveAgentModelTransport(
   input: ResolveAgentModelTransportInput,
 ): Promise<ResolvedModelTransport> {
-  const requestedModel = resolveConfiguredAgentModel(input.modelOverride || input.config.model);
-  const resolvedModelString = resolveRuntimeModel(input.modelOverride || input.config.model);
-  const usesVeryfrontCloud = IntrinsicReflectApply(StringStartsWith, resolvedModelString, [
-    VERYFRONT_CLOUD_MODEL_PREFIX,
-  ]) as boolean;
+  const configuredModel = input.modelOverride || input.config.model;
+  const startsWithCloudPrefix = (model: string): boolean =>
+    IntrinsicReflectApply(StringStartsWith, model, [VERYFRONT_CLOUD_MODEL_PREFIX]) as boolean;
+  let requestedModel = resolveConfiguredAgentModel(configuredModel);
+  let resolvedModelString = resolveRuntimeModel(configuredModel);
+  // The default model and the thinking defaults read the served catalog, so an
+  // ambient run loads it before either is resolved and resolves both again. A
+  // privately resolved model's run was prepared from the catalog as it stood
+  // then, and its call must keep what that preparation reserved, so a run
+  // with a private resolver keeps its first resolution.
+  let warmed = false;
+  if (startsWithCloudPrefix(resolvedModelString) && !input.resolveModelRuntime) {
+    await warmVeryfrontCloudCatalog();
+    warmed = true;
+    requestedModel = resolveConfiguredAgentModel(configuredModel);
+    resolvedModelString = resolveRuntimeModel(configuredModel);
+  }
+  const usesVeryfrontCloud = startsWithCloudPrefix(resolvedModelString);
   const privatelyResolvedModel = input.resolveModelRuntime && usesVeryfrontCloud
     ? input.resolveModelRuntime(resolvedModelString)
     : undefined;
-  // Thinking defaults below read the served catalog. A privately resolved
-  // model's run was prepared from the catalog as it stood then, and its call
-  // must keep what that preparation reserved, so only ambient runs load it here.
-  if (usesVeryfrontCloud && !privatelyResolvedModel) await warmVeryfrontCloudCatalog();
+  if (usesVeryfrontCloud && !privatelyResolvedModel && !warmed) {
+    await warmVeryfrontCloudCatalog();
+  }
   const transport = privatelyResolvedModel
     ? undefined
     : await input.config.resolveModelTransport?.({

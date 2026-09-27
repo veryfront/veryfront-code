@@ -189,11 +189,14 @@ function cacheKey(scope: VeryfrontCloudCatalogScope): string {
   }`;
 }
 
+/**
+ * The catalog URL under an API base URL. Like the gateway URLs, it keeps the
+ * base URL's query, which some deployments use to scope or sign requests.
+ */
 function catalogUrl(apiBaseUrl: string): string {
   const url = new URL(apiBaseUrl);
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/${VERYFRONT_CLOUD_CATALOG_PATH}`;
   url.hash = "";
-  url.search = "";
   return url.toString();
 }
 

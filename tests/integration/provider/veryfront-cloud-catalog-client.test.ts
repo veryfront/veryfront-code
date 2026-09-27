@@ -140,6 +140,24 @@ describe("provider/veryfront-cloud/catalog-client", () => {
       assertEquals(request?.headers.get("x-veryfront-project-slug"), "catalog-test");
     });
 
+    it("keeps the API base URL's path and query on the catalog request", async () => {
+      const stub = recordingFetch(() => jsonResponse(servedCatalogPayload()));
+
+      await withMockFetch(
+        stub.fetch,
+        () =>
+          loadVeryfrontCloudCatalog({
+            ...LOAD,
+            apiBaseUrl: "https://api.veryfront.com/tenant/?scope=signed-value",
+          }),
+      );
+
+      assertEquals(
+        stub.requests[0]?.url,
+        "https://api.veryfront.com/tenant/ai/models?scope=signed-value",
+      );
+    });
+
     it("shares one request between concurrent loads for the same key", async () => {
       const stub = recordingFetch(() => jsonResponse(servedCatalogPayload()));
 
