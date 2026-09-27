@@ -55,8 +55,7 @@ and `app.greeting` span in your collector. Export is batched, so delivery is not
 synchronous with the HTTP response. Restart with `OTEL_TRACES_ENABLED=false` to
 disable trace export. Settings are read when the extension starts.
 
-The Deno integration test `tests/integration/observability/local-otlp.test.ts`
-checks real OTLP/HTTP delivery, authentication headers, service identity, request/custom
+Deno integration coverage verifies real OTLP/HTTP delivery, authentication headers, service identity, request/custom
 span correlation, and disabled export. Managed project settings require separate
 runtime integration; this local setup does not configure a shared host's exporter.
 
