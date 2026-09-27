@@ -19,6 +19,7 @@
     "jsr:@std/testing@1.0.17": "1.0.17",
     "jsr:@std/yaml@*": "1.1.0",
     "jsr:@std/yaml@1.1.0": "1.1.0",
+    "npm:@anthropic-ai/sdk@0.128.0": "0.128.0_zod@4.3.6",
     "npm:@aws-sdk/client-s3@3.980.0": "3.980.0",
     "npm:@aws-sdk/lib-storage@3.980.0": "3.980.0_@aws-sdk+client-s3@3.980.0",
     "npm:@babel/generator@7.29.1": "7.29.1",
@@ -90,6 +91,7 @@
     "npm:micromark-util-combine-extensions@2.0.1": "2.0.1",
     "npm:micromark-util-types@2.0.2": "2.0.2",
     "npm:micromark@4.0.2": "4.0.2",
+    "npm:openai@7.23.0": "7.23.0_ws@8.21.1_zod@4.3.6",
     "npm:parse5@7.3.0": "7.3.0",
     "npm:pdf-lib@1.17.1": "1.17.1",
     "npm:playwright@*": "1.60.0",
@@ -234,6 +236,18 @@
       "dependencies": [
         "json-schema"
       ]
+    },
+    "@anthropic-ai/sdk@0.128.0_zod@4.3.6": {
+      "integrity": "sha512-tl5cBFZC1jVFrTuQyvQObA4WmuNgcYVeXfriqOumgtLAHUm4gPUj18YnszBW60v0PrjDB8nBDOC6wd9CmHQFlA==",
+      "dependencies": [
+        "json-schema-to-ts",
+        "standardwebhooks",
+        "zod@4.3.6"
+      ],
+      "optionalPeers": [
+        "zod@4.3.6"
+      ],
+      "bin": true
     },
     "@apm-js-collab/code-transformer-bundler-plugins@0.7.1": {
       "integrity": "sha512-Yidf5GOl60db80UxUtNdKK3pnY7obU/gs0xOfA0SCdnvVLMCvfYIer/egC3TqpPiT0Jg22eg3RlzcO+zKfPMcA==",
@@ -741,6 +755,9 @@
         "@babel/types@7.29.7"
       ],
       "bin": true
+    },
+    "@babel/runtime@7.29.7": {
+      "integrity": "sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw=="
     },
     "@babel/template@7.29.7": {
       "integrity": "sha512-puq+Gf35oI24FeN11LkoUQFqv9uwNeWpxXZi/Ji3rRIoKAzKnxRaZ+Gkj0vKS9ZCiTESfng1N9LyOyXvo+m+Gg==",
@@ -2694,6 +2711,9 @@
         "tslib@2.8.1"
       ]
     },
+    "@stablelib/base64@1.0.1": {
+      "integrity": "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ=="
+    },
     "@standard-schema/spec@1.1.0": {
       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="
     },
@@ -3352,6 +3372,9 @@
         "micromatch"
       ]
     },
+    "fast-sha256@1.3.0": {
+      "integrity": "sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ=="
+    },
     "fast-uri@3.1.7": {
       "integrity": "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg=="
     },
@@ -3795,6 +3818,13 @@
       "integrity": "sha512-SiPv/8VpZuWbvLSMtTDU8hEfrZWg/mH/nV/b4o0CYbSxu1UIQPLdwKOCIyLQX+VIPO5vrLX3i8qtqFyhdPSUSQ==",
       "dependencies": [
         "bignumber.js"
+      ]
+    },
+    "json-schema-to-ts@3.1.1": {
+      "integrity": "sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==",
+      "dependencies": [
+        "@babel/runtime",
+        "ts-algebra"
       ]
     },
     "json-schema-traverse@1.0.0": {
@@ -4613,6 +4643,17 @@
         "protobufjs"
       ]
     },
+    "openai@7.23.0_ws@8.21.1_zod@4.3.6": {
+      "integrity": "sha512-0ecOXnFSMNWZq6cUBcTV6Lf93y+fm8BH/+QzFvpoP1UGNOE5pnytRa6HAPGCw+3IS9SIAW7rc1M8yyzN1PiBAQ==",
+      "dependencies": [
+        "ws",
+        "zod@4.3.6"
+      ],
+      "optionalPeers": [
+        "ws",
+        "zod@4.3.6"
+      ]
+    },
     "pako@1.0.11": {
       "integrity": "sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw=="
     },
@@ -5242,6 +5283,13 @@
     "sql.js@1.14.1": {
       "integrity": "sha512-gcj8zBWU5cFsi9WUP+4bFNXAyF1iRpA3LLyS/DP5xlrNzGmPIizUeBggKa8DbDwdqaKwUcTEnChtd2grWo/x/A=="
     },
+    "standardwebhooks@1.1.1": {
+      "integrity": "sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==",
+      "dependencies": [
+        "@stablelib/base64",
+        "fast-sha256"
+      ]
+    },
     "stream-browserify@3.0.0": {
       "integrity": "sha512-H73RAHsVBapbim0tU2JwwOiXUj+fikfiaoYAKHF3VJfA0pe2BCzkhAHBlLG6REzE+2WNZcxOXjK7lkso+9euLA==",
       "dependencies": [
@@ -5392,6 +5440,9 @@
     },
     "trough@2.2.0": {
       "integrity": "sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw=="
+    },
+    "ts-algebra@2.0.0": {
+      "integrity": "sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw=="
     },
     "tslib@1.14.1": {
       "integrity": "sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg=="

@@ -77,9 +77,10 @@ curl https://api.veryfront.com/ai/v1/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
 
-Every listed model works on the OpenAI protocol at
-`https://api.veryfront.com/ai/v1`, including vendors this SDK has no built-in
-entry for:
+Use a model that supports Chat Completions with the OpenAI client at
+`https://api.veryfront.com/ai/v1`. Models supporting other operations use their
+corresponding endpoints. Model identifiers can include vendors this SDK has no
+built-in entry for:
 
 ```ts
 import OpenAI from "openai";
