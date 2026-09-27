@@ -66,6 +66,13 @@ const client = await createIntegrationClient({
   projectReference: "<PROJECT_SLUG>",
 });
 
+async function presentConnectUrl(url: string, expiresAt: string): Promise<void> {
+  // Show the link to the signed-in person in your UI until expiresAt.
+  // The URL carries a one-time handoff token: never log it.
+  void url;
+  void expiresAt;
+}
+
 async function connectedRows(): Promise<IntegrationClientConnection[]> {
   const rows: IntegrationClientConnection[] = [];
   for await (const row of client.listConnections("gmail")) {
@@ -79,7 +86,7 @@ const known = new Set(
 );
 const handoff = await client.connect("gmail", { redirectUri: "<REDIRECT_URI>" });
 if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
-console.log(`Open before ${handoff.expires_at}: ${handoff.connect_url}`);
+await presentConnectUrl(handoff.connect_url, handoff.expires_at);
 
 const deadline = Date.now() + 5 * 60 * 1000;
 let observed: IntegrationClientConnection | undefined;

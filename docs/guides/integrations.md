@@ -73,15 +73,20 @@ them. Project environment variables cannot set it.
 ### Discover the tool
 
 Tool discovery works before any connection exists. The response lists each
-tool's `name`, `description`, and `inputSchema`:
+tool's `name`, `description`, and `inputSchema`. Its `x-veryfront-project-id`
+header carries the project UUID that Veryfront resolved from the slug; the
+second command keeps it for the call precondition:
 
 ```bash
 curl -sS "$VERYFRONT_API_URL/integrations/gmail/tools?name=gmail__list_emails" \
   -H "$AUTH" -H "$PROJECT"
+PROJECT_ID=$(curl -sS -o /dev/null -D - \
+  "$VERYFRONT_API_URL/integrations/gmail/tools?name=gmail__list_emails" \
+  -H "$AUTH" -H "$PROJECT" |
+  awk 'tolower($1) == "x-veryfront-project-id:" { print $2 }' | tr -d '\r')
 ```
 
-The response header `x-veryfront-project-id` carries the project UUID that
-Veryfront resolved from the slug. The CLI equivalent is
+The CLI equivalent is
 `veryfront integration tools gmail --project "$VERYFRONT_PROJECT" --json`.
 
 ### Connect the provider account
@@ -114,13 +119,12 @@ curl -sS "$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/integrations/gmail/conn
   -H "$AUTH"
 ```
 
-Copy the `connected` row you want to use, and the project UUID from the
-discovery response header:
+Copy the `id` and `connection_generation_id` of the `connected` row you want
+to use:
 
 ```bash
 CONNECTION_ID="<CONNECTION_ID>"
 CONNECTION_GENERATION_ID="<CONNECTION_GENERATION_ID>"
-PROJECT_ID="<PROJECT_ID>"
 ```
 
 Readiness reports whether that selection can run the tool. It reads metadata
