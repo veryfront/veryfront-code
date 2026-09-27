@@ -367,7 +367,9 @@ jobs:
             tests/integration/semantic-unit-boundary/src/config/host-api-base.test.ts \
             tests/integration/platform/runtime-request-context.test.ts \
             tests/integration/server/shared-agent-bootstrap.test.ts \
-            tests/integration/observability/project-otlp-transport-policy.test.ts
+            tests/integration/observability/project-otlp-transport-policy.test.ts \
+            tests/integration/observability/project-provider.test.ts \
+            tests/integration/observability/project-http-lifecycle.test.ts
           # The CLI regression changes cwd, so give it a separate process.
           deno task test:file --coverage=coverage-cli \
             tests/integration/cli/merge-preview.integration.test.ts

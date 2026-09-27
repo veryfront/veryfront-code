@@ -4,7 +4,13 @@
  * @module extensions/observability
  */
 
-export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
+export type {
+  ProjectTraceProvider,
+  ProjectTraceProviderOptions,
+  SpanData,
+  TracerProvider,
+  TracingExporter,
+} from "./tracing-exporter.ts";
 export type {
   NodeTelemetryInitializeOptions,
   NodeTelemetryInstrumentationConfig,
