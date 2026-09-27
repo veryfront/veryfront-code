@@ -55,7 +55,8 @@ Confirm a new connection from status and inventory. Record the current status
 for the scope, start the handoff, show its one-time URL to the person, then poll
 at a fixed interval and stop at a deadline you choose before you start. The redirect
 URI is where the browser returns after consent, such as your application's
-integration page:
+integration page. Your application supplies `presentConnectUrl`, which shows the
+link to the signed-in person:
 
 ```ts
 import {
@@ -64,21 +65,8 @@ import {
   type IntegrationConnectionStatus,
 } from "veryfront/integrations";
 
-// One deadline bounds every request this client makes, including connect.
-const deadline = AbortSignal.timeout(5 * 60 * 1000);
-const client = await createIntegrationClient({
-  apiBaseUrl: "<API_BASE_URL>",
-  authToken: "<TOKEN>",
-  projectReference: "<PROJECT_SLUG>",
-  abortSignal: deadline,
-});
-
-async function presentConnectUrl(url: string, expiresAt: string): Promise<void> {
-  // Show the link to the signed-in person in your UI until expiresAt.
-  // The URL carries a one-time handoff token: never log it.
-  void url;
-  void expiresAt;
-}
+/** Shows the one-time URL to the signed-in person, for example in your UI. Never log it. */
+export type PresentConnectUrl = (url: string, expiresAt: string) => Promise<void>;
 
 function identity(status: IntegrationConnectionStatus): string | undefined {
   const id = status.connection_id ?? status.connectionId;
@@ -86,24 +74,34 @@ function identity(status: IntegrationConnectionStatus): string | undefined {
   return status.connected && id && generation ? `${id}:${generation}` : undefined;
 }
 
-const scope = "user";
-const before = identity(await client.status("gmail", scope, { abortSignal: deadline }));
-const handoff = await client.connect("gmail", { scope, redirectUri: "<REDIRECT_URI>" });
-if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
-await presentConnectUrl(handoff.connect_url, handoff.expires_at);
+export async function connectGmail(
+  presentConnectUrl: PresentConnectUrl,
+): Promise<IntegrationClientConnection> {
+  // One deadline bounds every request this client makes, including connect.
+  const deadline = AbortSignal.timeout(5 * 60 * 1000);
+  const client = await createIntegrationClient({
+    apiBaseUrl: "<API_BASE_URL>",
+    authToken: "<TOKEN>",
+    projectReference: "<PROJECT_SLUG>",
+    abortSignal: deadline,
+  });
+  const scope = "user";
+  const before = identity(await client.status("gmail", scope));
+  const handoff = await client.connect("gmail", { scope, redirectUri: "<REDIRECT_URI>" });
+  if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
+  await presentConnectUrl(handoff.connect_url, handoff.expires_at);
 
-let observed: IntegrationClientConnection | undefined;
-while (!observed) {
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-  deadline.throwIfAborted();
-  const current = identity(await client.status("gmail", scope, { abortSignal: deadline }));
-  if (!current || current === before) continue;
-  for await (const row of client.listConnections("gmail", { abortSignal: deadline })) {
-    const matches = `${row.id}:${row.connection_generation_id}` === current;
-    if (matches && row.scope === scope && row.status === "connected") observed = row;
+  while (true) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    deadline.throwIfAborted();
+    const current = identity(await client.status("gmail", scope));
+    if (!current || current === before) continue;
+    for await (const row of client.listConnections("gmail")) {
+      const matches = `${row.id}:${row.connection_generation_id}` === current;
+      if (matches && row.scope === scope && row.status === "connected") return row;
+    }
   }
 }
-console.log(`Observed a connected Gmail account in ${observed.scope} scope.`);
 ```
 
 The example correlates the scope's OAuth status with an inventory row, so a

@@ -73,4 +73,5 @@ different account to make a call succeed.
 `veryfront integration connect "<NAME>" --project "<PROJECT_SLUG>"` returns `setup_required` for connectors
 with `credential_requirement.mode: "project_credentials"`. The person sets the
 variables in `mandatory_env_vars` as project environment variables. Do not
-accept those values in chat.
+accept those values in chat. Call these tools with `--project` only: they have no connection
+inventory, and the API rejects `--connection` for them.
