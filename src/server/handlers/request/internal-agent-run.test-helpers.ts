@@ -41,7 +41,10 @@ export function stubApplicationErrorReporter(): {
   return { captures, restore: () => setApplicationErrorReporter(undefined) };
 }
 
-/** Run `fn` inside an active span, standing in for routing.registry.execute; return its attributes. */
+/**
+ * Run `fn` inside an active span standing in for routing.registry.execute. Returns the
+ * attributes of the first span to finish: the stand-in, or a registry span `fn` opened.
+ */
 export async function withRecordedActiveSpan<T>(
   fn: () => Promise<T>,
 ): Promise<{ result: T; attributes: Record<string, unknown> }> {

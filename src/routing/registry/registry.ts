@@ -7,6 +7,13 @@ const logger = serverLogger.component("route-registry");
 
 type SpanAttributes = Record<string, string | number | boolean>;
 
+/**
+ * Cancel (`DELETE /runs/{runId}`) and resume reach the owning pod directly, past the proxy,
+ * so their release headers are unverified. Their handlers stamp the identity recorded when
+ * the run's stream started instead.
+ */
+const DIRECT_TO_POD_RUN_ROUTE = /^\/api\/control-plane\/runs\/[^/]+(?:\/resume)?$/u;
+
 export function buildRouteRegistrySpanAttributes(
   req: Request,
   url: URL,
@@ -32,6 +39,7 @@ export function buildRouteRegistrySpanAttributes(
   }
 
   if (!projectSlug && !projectId) return attributes;
+  if (DIRECT_TO_POD_RUN_ROUTE.test(url.pathname)) return attributes;
 
   return { ...attributes, ...buildServingSpanAttributes(ctx) };
 }

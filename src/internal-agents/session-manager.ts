@@ -116,6 +116,7 @@ export class AgentRunSessionManager {
     try {
       const signal = this.sessions.startRun(input);
       if (input.servingIdentity) this.servingIdentities.set(input.runId, input.servingIdentity);
+      else this.servingIdentities.delete(input.runId);
       return signal;
     } catch (error) {
       if (error instanceof RunAlreadyExistsError) {
@@ -180,6 +181,7 @@ export class AgentRunSessionManager {
   ): RunServingIdentity["spanAttributes"] | undefined {
     const identity = this.servingIdentities.get(runId);
     if (!identity) return undefined;
+    // Timeouts end sessions inside `sessions`, bypassing this wrapper; drop those entries here.
     if (!this.sessions.getRunStatus(runId)) {
       this.servingIdentities.delete(runId);
       return undefined;

@@ -232,6 +232,28 @@ describe("internal-agents/session-manager", () => {
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
 
+  it("does not carry a timed-out run's serving identity into a restart without one", () => {
+    const timerCallbacks: Array<() => void> = [];
+    const sessionManager = new AgentRunSessionManager({
+      sessionTtlMs: 1,
+      setTimeoutFn: ((callback: () => void) => {
+        timerCallbacks.push(callback);
+        return timerCallbacks.length as unknown as number;
+      }) as typeof setTimeout,
+      clearTimeoutFn: (() => {}) as typeof clearTimeout,
+    });
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      servingIdentity: { projectId: "proj-1", spanAttributes: { "release.id": "rel-1" } },
+    });
+
+    timerCallbacks[0]?.();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    assertEquals(sessionManager.getServingSpanAttributes("run_1", "proj-1"), undefined);
+  });
+
   it("reuses the global session manager across duplicate module evaluations", async () => {
     _resetGlobalAgentRunSessionManagerForTesting();
 

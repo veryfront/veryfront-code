@@ -70,7 +70,8 @@ export class AgentRunResumeHandler extends BaseHandler {
         });
 
         // This request bypasses the proxy, so its own release headers are untrusted.
-        // Only the pod running the run knows which release or branch served it.
+        // Only the pod running the run knows which release or branch served it. A pod
+        // that does not own the run stamps nothing: platform-scoped.
         setActiveSpanAttributes(
           this.sessionManager.getServingSpanAttributes(runId, ctx.projectId) ?? {},
         );

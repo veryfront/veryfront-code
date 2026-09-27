@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { AgentRunCancelHandler } from "./agent-run-cancel.handler.ts";
 import {
   createControlPlaneSignature,
@@ -246,18 +247,17 @@ describe("agent-run-cancel.handler serving identity", () => {
     spanAttributes: { "veryfront.environment_name": "staging", "release.id": "rel-1" },
   };
 
-  async function cancel(
-    sessionManager: AgentRunSessionManager,
-    ctxOverrides: Record<string, unknown> = {},
-  ) {
+  // The request carries release headers the proxy never set; none may reach the span.
+  async function cancel(sessionManager: AgentRunSessionManager) {
     const body = JSON.stringify({ runId: "run_1" });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
       requestId: "run_1",
       requestMethod: "DELETE",
       requestPath: "/api/control-plane/runs/run_1",
     });
+    // Through the registry, so the attributes are those of routing.registry.execute.
     const { result, attributes } = await withRecordedActiveSpan(() =>
-      new AgentRunCancelHandler(sessionManager).handle(
+      new RouteRegistry().register(new AgentRunCancelHandler(sessionManager)).execute(
         new Request("https://example.com/api/control-plane/runs/run_1", {
           method: "DELETE",
           headers: {
@@ -268,10 +268,15 @@ describe("agent-run-cancel.handler serving identity", () => {
           },
           body,
         }),
-        { ...createCtx(publicKeyPem), ...ctxOverrides },
+        {
+          ...createCtx(publicKeyPem),
+          resolvedEnvironment: "production",
+          releaseId: "rel-untrusted",
+          environmentName: "untrusted",
+        },
       )
     );
-    return { status: result.response?.status, attributes };
+    return { status: result?.status, attributes };
   }
 
   it("stamps the release the owned run's stream was served from", async () => {
@@ -282,11 +287,7 @@ describe("agent-run-cancel.handler serving identity", () => {
       servingIdentity: productionIdentity,
     });
 
-    const { status, attributes } = await cancel(sessionManager, {
-      resolvedEnvironment: "production",
-      releaseId: "rel-untrusted",
-      environmentName: "untrusted",
-    });
+    const { status, attributes } = await cancel(sessionManager);
 
     assertEquals(status, 202);
     assertEquals(attributes["release.id"], "rel-1");
@@ -312,10 +313,7 @@ describe("agent-run-cancel.handler serving identity", () => {
   });
 
   it("stamps no release for a run this pod does not own", async () => {
-    const { status, attributes } = await cancel(new AgentRunSessionManager(), {
-      resolvedEnvironment: "production",
-      releaseId: "rel-untrusted",
-    });
+    const { status, attributes } = await cancel(new AgentRunSessionManager());
 
     assertEquals(status, 204);
     assertEquals(attributes["release.id"], undefined);
@@ -333,5 +331,6 @@ describe("agent-run-cancel.handler serving identity", () => {
     const { attributes } = await cancel(sessionManager);
 
     assertEquals(attributes["release.id"], undefined);
+    assertEquals(attributes["veryfront.environment_name"], undefined);
   });
 });
