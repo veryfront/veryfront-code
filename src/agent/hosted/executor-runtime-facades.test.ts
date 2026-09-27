@@ -11,6 +11,8 @@ import type { ExecutorRuntimeInstall } from "./executor-runtime-install-schema.t
 import { createExecutorRuntimeFacades } from "./executor-runtime-facades.ts";
 import { createExecutorPersistenceBroker } from "./executor-persistence-bridge.ts";
 import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
+import { peekVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import type { VeryfrontCloudCatalogScopeKey } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 
 const binding = {
   allocationId: "facade-allocation",
@@ -340,6 +342,70 @@ it("restores only installation-authorized platform provenance across the executo
     assertEquals(hasTrustedHostToolProvenance(facades.hostTools.get("host")!.read), true);
     assertEquals(hasTrustedPlatformSource(facades.remoteToolSources.get("remote")!), true);
     assertEquals(await facades.hostTools.get("host")!.read!.execute!({}), "synthetic-result");
+    await facades.cleanup();
+  } finally {
+    await pair.close();
+  }
+});
+
+it("loads served catalog facts only on request and forgets them on cleanup", async () => {
+  const catalogRequests: JsonValue[] = [];
+  const pair = channels(
+    [],
+    new Map<string, ExecutorOperation>([["model.catalog", {
+      mode: "unary",
+      handle(input) {
+        catalogRequests.push(input);
+        return [{
+          id: modelId,
+          model: {
+            id: "synthetic-model",
+            modelId: "openai/synthetic-model",
+            provider: "openai",
+            aliases: [],
+            surface: "openai",
+            thinking: true,
+            reasoningBudgetTokens: 4096,
+          },
+        }];
+      },
+    }]]),
+  );
+  const input = installation();
+  input.grant.hostToolFacadeIds = [];
+  input.grant.remoteToolSourceIds = [];
+  try {
+    const facades = await createExecutorRuntimeFacades({
+      input,
+      channel: pair.executor,
+      signal: pair.executor.signal,
+    });
+    // Construction alone never asks for the catalog.
+    assertEquals(catalogRequests, []);
+    const key = await facades.loadModelCatalog!(new AbortController().signal);
+    assert(typeof key === "string");
+    assertEquals(catalogRequests, [{}]);
+    const catalog = peekVeryfrontCloudCatalog(key as VeryfrontCloudCatalogScopeKey);
+    assertEquals(catalog?.models.map((model) => model.reasoningBudgetTokens), [4096]);
+    await facades.cleanup();
+    assertEquals(peekVeryfrontCloudCatalog(key as VeryfrontCloudCatalogScopeKey), undefined);
+  } finally {
+    await pair.close();
+  }
+});
+
+it("rejects the catalog load when the broker does not serve it, so preparation uses shipped facts", async () => {
+  const pair = channels([]);
+  const input = installation();
+  input.grant.hostToolFacadeIds = [];
+  input.grant.remoteToolSourceIds = [];
+  try {
+    const facades = await createExecutorRuntimeFacades({
+      input,
+      channel: pair.executor,
+      signal: pair.executor.signal,
+    });
+    await assertRejects(() => facades.loadModelCatalog!(new AbortController().signal));
     await facades.cleanup();
   } finally {
     await pair.close();

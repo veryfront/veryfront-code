@@ -12,6 +12,7 @@ import {
   type VeryfrontCloudCatalogModel,
   type VeryfrontCloudCatalogScopeKey,
   veryfrontCloudCatalogScopeKey,
+  withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
 import { SHIPPED_VERYFRONT_CLOUD_CATALOG } from "./model-catalog.deprecated.ts";
 
@@ -267,9 +268,15 @@ function ambientScope():
  * hold credentials, the scope key it carries. Undefined when neither applies.
  */
 export function currentVeryfrontCloudCatalogScopeKey(): VeryfrontCloudCatalogScopeKey | undefined {
+  const context = getCurrentVeryfrontCloudContext();
+  // A context that names a catalog and holds no credential of its own reads
+  // that catalog, whatever credentials the host holds.
+  if (context?.catalogScopeKey && !context.apiToken) {
+    return context.catalogScopeKey as VeryfrontCloudCatalogScopeKey;
+  }
   const scope = ambientScope();
   if (scope) return veryfrontCloudCatalogScopeKey(scope);
-  const carried = getCurrentVeryfrontCloudContext()?.catalogScopeKey;
+  const carried = context?.catalogScopeKey;
   return carried ? carried as VeryfrontCloudCatalogScopeKey : undefined;
 }
 
@@ -607,6 +614,11 @@ export function resolveVeryfrontCloudOpenAITransportPlan(
 
 /** @internal The catalog facts one built Veryfront Cloud model was built with. */
 export interface VeryfrontCloudModelFacts {
+  /**
+   * Non-secret key of the catalog this model reads: the one loaded for its own
+   * credentials and project. It names the catalog without holding the credential.
+   */
+  readonly catalogScopeKey?: VeryfrontCloudCatalogScopeKey;
   readonly provider: string;
   readonly surface: VeryfrontCloudSurfaceId;
   readonly native: boolean;
@@ -855,6 +867,22 @@ export function resolveVeryfrontCloudGatewayModelId(
   return resolveVeryfrontCloudProviderFromModelId(modelId) !== undefined
     ? `${VERYFRONT_CLOUD_MODEL_PREFIX}${modelId}`
     : modelId;
+}
+
+/**
+ * @internal The served catalog row for a model, read from the catalog loaded
+ * for one scope key. Undefined before a served catalog has loaded for it, for
+ * a model it does not list, and for a retired model; never the shipped list.
+ */
+export function readServedVeryfrontCloudCatalogModel(
+  scopeKey: VeryfrontCloudCatalogScopeKey,
+  modelId: string,
+): VeryfrontCloudCatalogModel | undefined {
+  return withVeryfrontCloudCatalogScope(scopeKey, () => {
+    if (loadedCatalog() === undefined) return undefined;
+    const model = servedIndex().byKey.get(canonicalVeryfrontCloudModelKey(modelId));
+    return model && !isRetiredVeryfrontCloudModelId(model.modelId) ? model : undefined;
+  });
 }
 
 /** Resolves Veryfront Cloud model thinking. */

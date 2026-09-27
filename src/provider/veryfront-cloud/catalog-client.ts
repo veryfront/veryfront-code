@@ -103,6 +103,14 @@ interface CatalogEntry {
 const entries = new Map<string, CatalogEntry>();
 const inflight = new Map<string, Promise<VeryfrontCloudCatalog | undefined>>();
 const failedAt = new Map<string, number>();
+/**
+ * Catalogs a trusted peer loaded and handed over, keyed by a random key that
+ * names no credential. Kept apart from the cache so eviction never drops one
+ * while the run it was received for still reads it; the receiver forgets it.
+ */
+const received = new Map<string, VeryfrontCloudCatalog>();
+/** Prefix of every received catalog key. A cache key has line breaks, a received key none. */
+const RECEIVED_KEY_PREFIX = "received:";
 /** Key of the scope a synchronous read uses, while {@link withVeryfrontCloudCatalogScope} runs. */
 let activeKey: string | undefined;
 let seeded: VeryfrontCloudCatalog | undefined;
@@ -437,7 +445,9 @@ export function isVeryfrontCloudCatalogFresh(
 ): boolean {
   if (seeded) return true;
   const key = scope ? keyOf(scope) : activeKey;
-  if (key === undefined) return false;
+  // A received catalog lists only the models it was received for, so it is
+  // never fresh enough to refuse a model on its own.
+  if (key === undefined || received.has(key)) return false;
   const entry = entries.get(key);
   return entry !== undefined && now() - entry.fetchedAt < VERYFRONT_CLOUD_CATALOG_TTL_MS;
 }
@@ -448,11 +458,11 @@ export function isVeryfrontCloudCatalogFresh(
  * credential whatever the ambient request carries.
  */
 export function withVeryfrontCloudCatalogScope<T>(
-  scope: VeryfrontCloudCatalogScope,
+  scope: VeryfrontCloudCatalogScope | VeryfrontCloudCatalogScopeKey,
   fn: () => T,
 ): T {
   const previous = activeKey;
-  activeKey = cacheKey(scope);
+  activeKey = keyOf(scope);
   try {
     return fn();
   } finally {
@@ -476,10 +486,47 @@ export function peekVeryfrontCloudCatalog(
   if (seeded) return seeded;
   const key = scope ? keyOf(scope) : activeKey;
   if (key === undefined) return undefined;
+  const handedOver = received.get(key);
+  if (handedOver) return handedOver;
   const entry = entries.get(key);
   if (!entry) return undefined;
   touchEntry(key, entry);
   return entry.catalog;
+}
+
+/**
+ * @internal Keep catalog rows a trusted peer loaded for credentials this
+ * process does not hold, and return the key that names them. The key is
+ * random and names no credential; reads under it see these rows until
+ * {@link forgetReceivedVeryfrontCloudCatalog}.
+ */
+export function rememberReceivedVeryfrontCloudCatalog(
+  models: readonly VeryfrontCloudCatalogModel[],
+): VeryfrontCloudCatalogScopeKey {
+  const key = `${RECEIVED_KEY_PREFIX}${crypto.randomUUID()}`;
+  received.set(
+    key,
+    Object.freeze({
+      models: Object.freeze(models.map((model) =>
+        Object.freeze({
+          ...model,
+          aliases: Object.freeze([...model.aliases]),
+          ...(model.operations ? { operations: Object.freeze([...model.operations]) } : {}),
+        })
+      )),
+    }),
+  );
+  // Bounded even if a receiver never forgets: the oldest goes first.
+  for (const oldest of received.keys()) {
+    if (received.size <= VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES) break;
+    received.delete(oldest);
+  }
+  return key as VeryfrontCloudCatalogScopeKey;
+}
+
+/** @internal Drop a catalog kept by {@link rememberReceivedVeryfrontCloudCatalog}. */
+export function forgetReceivedVeryfrontCloudCatalog(key: VeryfrontCloudCatalogScopeKey): void {
+  received.delete(key);
 }
 
 /** @internal Serve a fixed catalog for every key, as if freshly loaded. `undefined` clears it. */
@@ -508,6 +555,7 @@ export function __resetVeryfrontCloudCatalogForTests(): void {
   entries.clear();
   inflight.clear();
   failedAt.clear();
+  received.clear();
   activeKey = undefined;
   seeded = undefined;
   loggedFailures.clear();

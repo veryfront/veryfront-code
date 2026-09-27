@@ -10,6 +10,8 @@ import {
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { loadVeryfrontCloudModelCatalog } from "#veryfront/provider/veryfront-cloud/shared.ts";
+import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
 import { redactSensitive, sanitizeUrlCredentials } from "#veryfront/utils";
 import type { TextGenerationRuntimeMessage } from "../runtime/text-generation-runtime-message-types.ts";
@@ -164,6 +166,7 @@ function createCompactionMessages(input: {
 
 async function summarizeSegment(input: {
   options: VeryfrontCloudContextSummaryGeneratorOptions;
+  cloudContext: VeryfrontCloudContext;
   modelId: string;
   segment: string;
   priorSummary?: string;
@@ -173,7 +176,7 @@ async function summarizeSegment(input: {
   const generate = input.options.generateText ?? generateText;
   const resolve = input.options.resolveModel ?? resolveModel;
   const result = await runWithVeryfrontCloudContextAsync(
-    summaryCloudContext(input.options),
+    input.cloudContext,
     () =>
       Promise.resolve(generate({
         model: resolve(input.modelId),
@@ -215,34 +218,85 @@ function resolveSummaryModelId(model: string | undefined): string {
 export function createVeryfrontCloudContextSummaryGenerator(
   options: VeryfrontCloudContextSummaryGeneratorOptions,
 ): ContextSummaryGenerator {
-  return async ({ messagesToSummarize, retainedMessages, customInstructions }) => {
-    // The model resolves against the served catalog loaded for the same
-    // credentials and project the summary calls use.
-    const cloudContext = summaryCloudContext(options);
+  return (input) => generateSummary(options, input);
+}
+
+async function generateSummary(
+  options: VeryfrontCloudContextSummaryGeneratorOptions,
+  { messagesToSummarize, retainedMessages, customInstructions }: Parameters<
+    ContextSummaryGenerator
+  >[0],
+  loadRunScopedCatalog?: () => Promise<string | undefined>,
+): Promise<{ text: string }> {
+  // The model resolves against the served catalog loaded for the same
+  // credentials and project the summary calls use.
+  let cloudContext = summaryCloudContext(options);
+  if (loadRunScopedCatalog) {
+    // The run-scoped credential stays inside the model resolver; the context
+    // names its catalog by a key that holds no credential.
+    const catalogScopeKey = await loadRunScopedCatalog();
+    if (catalogScopeKey) cloudContext = { ...cloudContext, catalogScopeKey };
+  } else {
     await runWithVeryfrontCloudContextAsync(
       cloudContext,
       () => loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_MAX_WAIT_MS }),
     );
-    const modelId = runWithVeryfrontCloudContext(
+  }
+  const modelId = runWithVeryfrontCloudContext(
+    cloudContext,
+    () => resolveSummaryModelId(options.model),
+  );
+  const chunks = chunkSerializedMessages(messagesToSummarize, options.maxInputTokens);
+  let summary = "";
+
+  for (const chunk of chunks) {
+    summary = await summarizeSegment({
+      options,
       cloudContext,
-      () => resolveSummaryModelId(options.model),
-    );
-    const chunks = chunkSerializedMessages(messagesToSummarize, options.maxInputTokens);
-    let summary = "";
+      modelId,
+      segment: chunk,
+      priorSummary: summary || undefined,
+      retainedMessageCount: retainedMessages.length,
+      customInstructions,
+    });
+  }
 
-    for (const chunk of chunks) {
-      summary = await summarizeSegment({
-        options,
-        modelId,
-        segment: chunk,
-        priorSummary: summary || undefined,
-        retainedMessageCount: retainedMessages.length,
-        customInstructions,
-      });
+  return { text: summary };
+}
+
+/**
+ * Load the served catalog for a run-scoped credential through a model its
+ * resolver builds, and return the non-secret key naming it. The probe model is
+ * only prepared, never called. Undefined when nothing could be loaded.
+ */
+async function loadResolverCatalogScopeKey(
+  resolveModel: (modelId: string) => ModelRuntime,
+  model: string | undefined,
+  context: VeryfrontCloudContext,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  try {
+    const probeId = runWithVeryfrontCloudContext(context, () => {
+      try {
+        return resolveSummaryModelId(model);
+      } catch {
+        // An alias only the served catalog knows: any model of the same
+        // credential names the same catalog.
+        return resolveSummaryModelId(undefined);
+      }
+    });
+    const probe = resolveModel(probeId);
+    const wait = new AbortController();
+    const timer = setTimeout(() => wait.abort(), CATALOG_MAX_WAIT_MS);
+    try {
+      await probe.prepare?.(AbortSignal.any([signal, wait.signal]));
+    } finally {
+      clearTimeout(timer);
     }
-
-    return { text: summary };
-  };
+    return readVeryfrontCloudModelFacts(probe)?.catalogScopeKey;
+  } catch {
+    return undefined;
+  }
 }
 
 /** @internal Bind context-compaction inference authority to one generator invocation. */
@@ -264,23 +318,36 @@ export function createRunScopedVeryfrontCloudContextSummaryGenerator(
       abortSignal,
     );
     try {
-      return await createVeryfrontCloudContextSummaryGenerator({
+      // The model the catalog probe prepared is the one the summary calls.
+      const resolved = new Map<string, ModelRuntime>();
+      const resolveModel = (modelId: string) => {
+        const model = resolved.get(modelId) ?? resolveModelRuntime?.(modelId);
+        if (!model) {
+          throw new TypeError(
+            `Context compaction requires a Veryfront Cloud model, received "${modelId}"`,
+          );
+        }
+        resolved.set(modelId, model);
+        return model;
+      };
+      const summaryOptions: VeryfrontCloudContextSummaryGeneratorOptions = {
         ...baseOptions,
         abortSignal: abortScope.signal,
-        ...(resolveModelRuntime
-          ? {
-            resolveModel: (modelId: string) => {
-              const model = resolveModelRuntime(modelId);
-              if (!model) {
-                throw new TypeError(
-                  `Context compaction requires a Veryfront Cloud model, received "${modelId}"`,
-                );
-              }
-              return model;
-            },
-          }
-          : { authToken }),
-      })(input);
+        ...(resolveModelRuntime ? { resolveModel } : { authToken }),
+      };
+      return await generateSummary(
+        summaryOptions,
+        input,
+        resolveModelRuntime
+          ? () =>
+            loadResolverCatalogScopeKey(
+              resolveModel,
+              summaryOptions.model,
+              summaryCloudContext(summaryOptions),
+              abortScope.signal,
+            )
+          : undefined,
+      );
     } finally {
       abortScope.dispose();
     }
