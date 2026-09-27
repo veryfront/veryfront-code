@@ -268,6 +268,7 @@ describe("eval/model-access", () => {
         "/ai/v1/responses",
         "/ai/v1/embeddings",
         "/ai/anthropic/v1/messages",
+        "/ai/google/v1beta/models/gemini-3.5-flash:streamGenerateContent",
       ]
     ) {
       assertEquals(

@@ -49,9 +49,9 @@ const BASE_URL_ENV = "VERYFRONT_CATALOG_API_BASE_URL";
  *
  * The catalog is served at `<origin>/ai/models`, alongside the gateway paths
  * the package itself builds: see the URLs pinned in
- * `src/provider/veryfront-cloud/gateway-routing.test.ts`, which are
- * `https://api.veryfront.com/ai/gateway/<provider>/<version>`. There is no
- * `/api` path prefix, and adding one gets a 404.
+ * `src/provider/veryfront-cloud/gateway-routing.test.ts`, such as
+ * `https://api.veryfront.com/ai/v1` and `https://api.veryfront.com/ai/google/v1beta`.
+ * There is no `/api` path prefix, and adding one gets a 404.
  */
 const DEFAULT_BASE_URL = "https://api.veryfront.com";
 /** Catalog path appended to the API base. */
