@@ -6,6 +6,17 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: API handlers that cannot be parsed are rejected
+
+Veryfront validates every API handler module with its parser
+(`@veryfront/ext-parser-babel`, a dependency of the `veryfront` package). A
+module that parses under neither the TypeScript nor the TSX grammar is now
+rejected with "Veryfront could not parse this module as TypeScript or
+JavaScript", and a missing parser extension is reported as a broken install.
+Previously such a module was validated by a textual scan of its source, which
+could accept a handler that later failed to build or run. Handlers written in
+the syntax the parser supports are unaffected.
+
 ### Fixed: streamed Gemini tool continuations retain thought signatures
 
 Google tool turns now wait for the provider's final stream metadata under the
@@ -19,6 +30,47 @@ Explicit provider limit and filter reasons remain unchanged.
 For finish-required streams in the active lifecycle, a completed turn containing
 only unavailable tool calls now permits the same recovery turn as the legacy lifecycle. Rejected tools are
 not executed, and malformed or empty handoff requests still fail.
+
+### Changed: Veryfront Cloud model facts come from the served model catalog
+
+`veryfront-cloud/*` models now read their facts from the model catalog your
+Veryfront API serves at `<api>/ai/models`, instead of from a table shipped in
+this package. The facts are the wire protocol, whether the Responses operation
+is served, the default thinking budget, the two chat completions capability
+flags, short model aliases such as `opus`, and the default model. For the
+models this package listed, the served facts are the same, so requests are
+unchanged.
+
+- Model construction stays synchronous and makes no network call. The catalog
+  loads on the first async step of a model (`prepare`, `doGenerate` or
+  `doStream`), with the same credentials and project as inference, and is
+  cached for five minutes per API, project and credential.
+- Until the catalog has loaded for the credentials in use, and whenever it
+  cannot be loaded, the facts shipped with this package apply, as in the
+  previous release. A model whose first load failed tries again on a later
+  call.
+- A model keeps the facts it settled with for its lifetime. A catalog refreshed
+  later applies to models constructed after the refresh.
+- Agents resolve a short alias or a provider the platform added after this
+  release through Veryfront Cloud once the catalog has loaded, after the
+  built-in aliases, so a bare vendor model name keeps its meaning for your own
+  provider key.
+- A model the catalog does not list is refused only against a catalog loaded
+  within the last five minutes, or the shipped list before any has loaded. A
+  model enabled since the catalog was cached is not refused; the catalog is
+  refreshed first.
+- `loadVeryfrontCloudModelCatalog()` loads the catalog for the Veryfront Cloud
+  credentials in effect, so synchronous helpers such as
+  `resolveVeryfrontCloudModelId("opus")` and
+  `resolveVeryfrontCloudModelThinking()` read served facts, including models
+  the platform added after this release.
+- `resolveVeryfrontCloudDefaultModelId()` returns the default model the
+  catalog names, or the built-in default before it loads.
+  `VeryfrontCloudModelId` types a model ID as `<provider>/<model>`.
+- `VERYFRONT_CLOUD_CHAT_MODELS`, `findVeryfrontCloudModel`,
+  `findVeryfrontCloudModelByModelId` and `groupVeryfrontCloudModelsByProvider`
+  are deprecated. They still return the list shipped with this package, and a
+  later release removes them.
 
 ### Changed: Veryfront Cloud models call the vendor-neutral endpoints
 

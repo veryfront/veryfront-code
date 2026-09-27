@@ -17,6 +17,11 @@ import {
 } from "#veryfront/agent/runtime/provider-replay-limits.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import {
+  _resetShimForTests,
+  setGlobalTracerProvider,
+  type Span,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { createRunScopedProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 
 const RUN_ID = "run_checkpoint_1";
@@ -46,6 +51,58 @@ function nestedChain(levels: number): Record<string, unknown> {
 }
 
 describe("run-scoped provider replay checkpoint persistence", () => {
+  it("keeps checkpoint appends in the active execution trace", async () => {
+    const span: Span = {
+      setAttribute: () => span,
+      setAttributes: () => span,
+      setStatus: () => span,
+      recordException: () => undefined,
+      addEvent: () => span,
+      end: () => undefined,
+      spanContext: () => ({ traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 }),
+      updateName: () => undefined,
+    };
+    setGlobalTracerProvider({
+      getTracer: () => ({
+        startSpan: () => span,
+        startActiveSpan: ((...args: unknown[]) => {
+          const callback = args.find((arg) => typeof arg === "function") as
+            | ((activeSpan: Span) => unknown)
+            | undefined;
+          if (!callback) throw new Error("Expected tracing callback");
+          return callback(span);
+        }) as never,
+      }),
+    });
+    const requests: Array<{ url: string; headers: Headers }> = [];
+    try {
+      const persist = createRunScopedProviderReplayCheckpointPersister({
+        apiUrl: "https://api.example.test/api",
+        runId: RUN_ID,
+        runEventAppendToken: "<TOKEN>",
+        fetch: (input, init) => {
+          requests.push({ url: String(input), headers: new Headers(init?.headers) });
+          return Promise.resolve(
+            Response.json({ latestEventId: 1, appendedCount: 1, run: { runId: RUN_ID } }),
+          );
+        },
+      });
+      if (!persist) throw new Error("Expected a run-scoped checkpoint persister");
+      await persist(checkpoint());
+    } finally {
+      _resetShimForTests();
+    }
+
+    assertEquals(requests.map((request) => request.url), [
+      `https://api.example.test/api/runs/${RUN_ID}/events`,
+    ]);
+    assertEquals(requests[0]?.headers.get("Authorization"), "Bearer <TOKEN>");
+    assertEquals(
+      requests[0]?.headers.get("traceparent"),
+      "00-11111111111111111111111111111111-2222222222222222-01",
+    );
+  });
+
   it("keeps persistence pending until the exact-run append is acknowledged", async () => {
     let capturedUrl: string | undefined;
     let capturedInit: RequestInit | undefined;

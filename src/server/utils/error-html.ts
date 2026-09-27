@@ -1,5 +1,6 @@
 import { escapeHTML } from "#veryfront/html/html-escape.ts";
 import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
+import { getOperatorStudioOrigin } from "#veryfront/security/http/studio-operator-origin.ts";
 
 interface ErrorHtmlOptions {
   statusCode: number;
@@ -86,7 +87,7 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
     <p class="message">${escapeHTML(message)}</p>
   </div>
   <script>
-    ${studioTargetOriginHelperSource()}
+    ${studioTargetOriginHelperSource(getOperatorStudioOrigin())}
     if (window.parent !== window) {
       try {
         window.parent.postMessage({

@@ -8,6 +8,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
@@ -83,6 +84,7 @@ Deno.test("public agent service options expose deployment-owned remote MCP compo
 });
 
 Deno.test("root and child runtimes use the deployment-owned remote MCP factory", async () => {
+  using _catalog = useServedCatalogForTests();
   const createdConfigs: RemoteMCPToolSourceConfig[] = [];
   let failStudioListing = false;
   let modelCallCount = 0;

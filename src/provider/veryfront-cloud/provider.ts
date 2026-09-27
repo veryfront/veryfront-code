@@ -8,7 +8,9 @@ import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import type { ModelRuntime } from "../types.ts";
 import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import {
+  assertVeryfrontCloudModelListed,
   createVeryfrontCloudFetch,
+  loadVeryfrontCloudModelCatalog,
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
   resolveVeryfrontCloudGatewayRoute,
@@ -18,12 +20,20 @@ import {
   createVeryfrontCloudOpenAIResponsesModel,
 } from "./openai.ts";
 import {
+  registerVeryfrontCloudModelFacts,
   requireVeryfrontCloudWireSurface,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAIChatSystemMessages,
+  resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudOpenAITransportPlan,
   resolveVeryfrontCloudProviderRouting,
+  type VeryfrontCloudModelFacts,
 } from "./model-catalog.ts";
+import {
+  isVeryfrontCloudCatalogFresh,
+  loadVeryfrontCloudCatalog,
+  withVeryfrontCloudCatalogScope,
+} from "./catalog-client.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const HostCrypto = globalThis.crypto;
@@ -37,6 +47,7 @@ const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
+const ReflectGet = Reflect.get;
 
 function bindModelMethod<T extends (...args: never[]) => unknown>(
   method: T,
@@ -82,21 +93,283 @@ function wrapVeryfrontCloudModel(
   return wrapped;
 }
 
+/** Upper bound on how long a warm-up before a model call waits for the catalog. */
+const CATALOG_WARM_UP_MAX_WAIT_MS = 3_000;
+
+/**
+ * @internal Load the catalog with the ambient credentials before a model call
+ * reads facts synchronously, waiting at most a few seconds.
+ */
+export async function warmVeryfrontCloudCatalog(abortSignal?: AbortSignal): Promise<void> {
+  await loadVeryfrontCloudModelCatalog({
+    ...(abortSignal ? { signal: abortSignal } : {}),
+    maxWaitMs: CATALOG_WARM_UP_MAX_WAIT_MS,
+  });
+}
+
+/** Metadata keys a wrapped model forwards to the model it currently calls. */
+const NON_FORWARDED_KEYS: ReadonlySet<PropertyKey> = new Set([
+  "prepare",
+  "doGenerate",
+  "doStream",
+  "constructor",
+]);
+
+/**
+ * Optional members a model rebuilt onto another protocol can gain even when
+ * the model it was first built as lacks them (the Google protocol adds
+ * `_reconcileProviderMetadata`), so the wrapper forwards them regardless.
+ */
+const OPTIONAL_FORWARDED_KEYS: readonly PropertyKey[] = [
+  "_reconcileProviderMetadata",
+  "_generateViaStream",
+  "runtimeCapabilities",
+  "executionMode",
+  "modelProvider",
+  "specificationVersion",
+];
+
+/**
+ * Wrap a built model so its first async step loads the served catalog. When
+ * the catalog changes how the model is built, calls and metadata go to the
+ * model rebuilt from it. Once the catalog is settled, calls go straight to the
+ * current model.
+ *
+ * A settled model keeps the facts it settled with for its lifetime: a catalog
+ * refreshed later applies to models constructed after the refresh.
+ */
+function withServedCatalog(
+  model: ModelRuntime,
+  current: () => ModelRuntime,
+  settled: () => ModelRuntime | undefined,
+  ready: (abortSignal?: AbortSignal) => Promise<ModelRuntime>,
+): ModelRuntime {
+  const readSignal = (options: unknown): AbortSignal | undefined =>
+    options !== null && typeof options === "object"
+      ? (options as { abortSignal?: AbortSignal }).abortSignal
+      : undefined;
+  const wrapped = ObjectCreate(model, {
+    prepare: {
+      value: async (abortSignal?: AbortSignal): Promise<void> => {
+        const target = settled() ?? await ready(abortSignal);
+        if (target.prepare) await target.prepare(abortSignal);
+      },
+    },
+    doGenerate: {
+      value: (options: unknown) => {
+        const target = settled();
+        if (target) return target.doGenerate(options);
+        return (async () => await (await ready(readSignal(options))).doGenerate(options))();
+      },
+    },
+    doStream: {
+      value: (options: unknown) => {
+        const target = settled();
+        if (target) return target.doStream(options);
+        return (async () => await (await ready(readSignal(options))).doStream(options))();
+      },
+    },
+  });
+
+  // Metadata (provider attribution, capabilities, model ID) follows the model
+  // the calls go to, so a rebuild never leaves the construction-time values.
+  const forwarded = new Set<PropertyKey>();
+  const forward = (key: PropertyKey): void => {
+    if (forwarded.has(key) || NON_FORWARDED_KEYS.has(key)) return;
+    forwarded.add(key);
+    ObjectDefineProperty(wrapped, key, {
+      configurable: false,
+      enumerable: true,
+      get: () => {
+        const target = current();
+        const value: unknown = IntrinsicReflectApply(ReflectGet, undefined, [target, key]);
+        return typeof value === "function"
+          ? IntrinsicReflectApply(FunctionBind, value, [target])
+          : value;
+      },
+    });
+  };
+  let source: object | null = model;
+  while (source && source !== ObjectPrototype) {
+    for (const key of ReflectOwnKeys(source)) forward(key);
+    source = ObjectGetPrototypeOf(source);
+  }
+  for (const key of OPTIONAL_FORWARDED_KEYS) forward(key);
+  return wrapped;
+}
+
+type VeryfrontCloudModelOptions = {
+  apiBaseUrl?: string;
+  assertInferenceCredentialActive?: () => void;
+  credentialSource?: "application";
+  providerSelection?: "first-party";
+  assertCredentialActive?: () => void;
+};
+
 function createVeryfrontCloudModelInternal(
   modelId: string,
   inferenceCredential?: string,
-  options: {
-    apiBaseUrl?: string;
-    assertInferenceCredentialActive?: () => void;
-    credentialSource?: "application";
-    providerSelection?: "first-party";
-    assertCredentialActive?: () => void;
-  } = {},
+  options: VeryfrontCloudModelOptions = {},
 ): ModelRuntime {
-  const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
+  // Parsed here so a malformed or retired ID fails at construction. Whether the
+  // catalog lists the model is checked against this model's own catalog: now
+  // when it has loaded, otherwise once the first async step has loaded it.
+  parseVeryfrontCloudModelId(modelId, "language", { catalogChecks: false });
   const { apiBaseUrl, apiToken, projectSlug } = options.credentialSource === "application"
     ? requireApplicationBootstrap()
     : requireVeryfrontCloudBootstrap(inferenceCredential, options.apiBaseUrl);
+  const usesHostPrivateCredential = inferenceCredential === undefined &&
+    options.credentialSource !== "application" && getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
+  const usesPrivateCredential = inferenceCredential !== undefined || usesHostPrivateCredential ||
+    options.credentialSource === "application";
+  const useFirstPartyTransport = usesPrivateCredential ||
+    options.providerSelection === "first-party";
+  // Native provider request builders require a credential, but the guarded
+  // gateway fetch owns the real authority token and replaces native auth.
+  const providerCredential = usesPrivateCredential
+    ? `vf-placeholder-${IntrinsicReflectApply(CryptoRandomUuid, HostCrypto, []) as string}`
+    : apiToken;
+  // Project extensions may replace registry providers. A signed inference
+  // credential therefore uses only first-party transports that project code
+  // cannot replace; ordinary project credentials retain extension behavior.
+  const registry = useFirstPartyTransport ? undefined : ensureBuiltinLLMProviders();
+
+  const catalogScope = { apiBaseUrl, apiToken, ...(projectSlug ? { projectSlug } : {}) };
+
+  // The catalog facts a build reads, from this model's own credentials and
+  // project. A model built before the catalog loaded is rebuilt at its first
+  // async step when these differ.
+  function readFacts(): VeryfrontCloudModelFacts {
+    return withVeryfrontCloudCatalogScope(catalogScope, () => {
+      const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(
+        modelId,
+        "language",
+        { catalogChecks: false },
+      );
+      const catalogModelId = `${provider}/${upstreamModelId}`;
+      const routing = resolveVeryfrontCloudProviderRouting(provider);
+      const openAIChatReasoningWithFunctionTools =
+        resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogModelId);
+      const openAIChatPreserveSystemMessages = resolveVeryfrontCloudOpenAIChatSystemMessages(
+        catalogModelId,
+      );
+      const openAITransport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
+      return Object.freeze({
+        provider,
+        surface: routing.surface,
+        native: routing.native === true,
+        transportPlan: resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId),
+        ...(openAITransport === undefined ? {} : { openAITransport }),
+        ...(openAIChatReasoningWithFunctionTools === undefined
+          ? {}
+          : { openAIChatReasoningWithFunctionTools }),
+        ...(openAIChatPreserveSystemMessages === undefined
+          ? {}
+          : { openAIChatPreserveSystemMessages }),
+      });
+    });
+  }
+  const factsKey = (value: VeryfrontCloudModelFacts): string =>
+    [
+      value.provider,
+      value.surface,
+      String(value.native),
+      value.transportPlan.transport,
+      String(value.transportPlan.pinned),
+      String(value.openAITransport),
+      String(value.openAIChatReasoningWithFunctionTools),
+      String(value.openAIChatPreserveSystemMessages),
+    ].join("\n");
+
+  const build = (): ModelRuntime =>
+    withVeryfrontCloudCatalogScope(catalogScope, () =>
+      buildVeryfrontCloudModel({
+        modelId,
+        inferenceCredential,
+        options,
+        apiBaseUrl,
+        apiToken,
+        projectSlug,
+        providerCredential,
+        registry,
+        useFirstPartyTransport,
+      }));
+  // The listing check runs in this model's own scope, against a catalog
+  // actually loaded for it; before that, the platform answers for the model.
+  const assertListed = (): void =>
+    withVeryfrontCloudCatalogScope(catalogScope, () => {
+      const parsed = parseVeryfrontCloudModelId(modelId, "language", { catalogChecks: false });
+      assertVeryfrontCloudModelListed(parsed.provider, parsed.modelId);
+    });
+  // Refuse at construction only against a fresh catalog: a stale one may miss a
+  // model enabled since, so the check waits for the refresh on the first call.
+  if (isVeryfrontCloudCatalogFresh(catalogScope)) assertListed();
+  let facts = readFacts();
+  const built = build();
+  let current = built;
+  let isSettled = false;
+  const rebuildIfChanged = (settle: boolean): ModelRuntime => {
+    const next = readFacts();
+    if (settle) assertListed();
+    if (factsKey(next) !== factsKey(facts)) current = build();
+    facts = next;
+    // Only a catalog actually obtained settles the model: after a failed or
+    // abandoned load, the next call tries again.
+    if (settle) isSettled = true;
+    return current;
+  };
+  // A fresh cached catalog settles the model without waiting on anything.
+  const settled = (): ModelRuntime | undefined => {
+    if (isSettled) return current;
+    if (!isVeryfrontCloudCatalogFresh(catalogScope)) return undefined;
+    return rebuildIfChanged(true);
+  };
+  // Each caller waits on its own signal. Concurrent callers share only the
+  // underlying catalog request (one per credentials and project, in the
+  // catalog client), so one caller giving up never decides for another.
+  const ready = async (abortSignal?: AbortSignal): Promise<ModelRuntime> => {
+    const catalog = await loadVeryfrontCloudCatalog({
+      ...catalogScope,
+      fresh: true,
+      ...(abortSignal ? { signal: abortSignal } : {}),
+    });
+    // Settle (and run the listing check) only on a fresh catalog. A stale one
+    // answers this call, and a later call tries the refresh again.
+    return rebuildIfChanged(catalog !== undefined && isVeryfrontCloudCatalogFresh(catalogScope));
+  };
+  const wrapped = withServedCatalog(built, () => current, settled, ready);
+  registerVeryfrontCloudModelFacts(wrapped, () => facts);
+  return wrapped;
+}
+
+interface VeryfrontCloudModelBuild {
+  readonly modelId: string;
+  readonly inferenceCredential: string | undefined;
+  readonly options: VeryfrontCloudModelOptions;
+  readonly apiBaseUrl: string;
+  readonly apiToken: string;
+  readonly projectSlug: string | undefined;
+  readonly providerCredential: string;
+  readonly registry: ReturnType<typeof ensureBuiltinLLMProviders> | undefined;
+  readonly useFirstPartyTransport: boolean;
+}
+
+/** Build a model from the served facts as they stand now. */
+function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime {
+  const {
+    modelId,
+    inferenceCredential,
+    options,
+    apiBaseUrl,
+    apiToken,
+    projectSlug,
+    providerCredential,
+    registry,
+    useFirstPartyTransport,
+  } = build;
+  const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language", {
+    catalogChecks: false,
+  });
   // Builders keep the upstream model id; on a vendor-neutral route the fetch
   // wrapper sends it as `<provider>/<id>`.
   const { baseURL, neutral, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(
@@ -114,21 +387,6 @@ function createVeryfrontCloudModelInternal(
       }
       : {}),
   });
-  const usesHostPrivateCredential = inferenceCredential === undefined &&
-    options.credentialSource !== "application" && getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
-  const usesPrivateCredential = inferenceCredential !== undefined || usesHostPrivateCredential ||
-    options.credentialSource === "application";
-  const useFirstPartyTransport = usesPrivateCredential ||
-    options.providerSelection === "first-party";
-  // Native provider request builders require a credential, but the guarded
-  // gateway fetch owns the real authority token and replaces native auth.
-  const providerCredential = usesPrivateCredential
-    ? `vf-placeholder-${IntrinsicReflectApply(CryptoRandomUuid, HostCrypto, []) as string}`
-    : apiToken;
-  // Project extensions may replace registry providers. A signed inference
-  // credential therefore uses only first-party transports that project code
-  // cannot replace; ordinary project credentials retain extension behavior.
-  const registry = useFirstPartyTransport ? undefined : ensureBuiltinLLMProviders();
   const routing = resolveVeryfrontCloudProviderRouting(provider);
 
   // A provider that only speaks the OpenAI wire format is promised the chat

@@ -18,6 +18,7 @@ import {
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "./context.ts";
 import {
+  canVeryfrontCloudCatalogRefuse,
   createRetiredVeryfrontCloudModelError,
   isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
@@ -26,6 +27,7 @@ import {
   resolveVeryfrontCloudSurface,
   type VeryfrontCloudProviderId,
 } from "./model-catalog.ts";
+import { loadVeryfrontCloudCatalog } from "./catalog-client.ts";
 import {
   requireInferenceProviderCredential,
   requireProviderCredential,
@@ -213,6 +215,14 @@ function createInvalidModelIdError(modelId: string): Error {
 export function parseVeryfrontCloudModelId(
   modelId: string,
   kind: "language" | "embedding",
+  options: {
+    /**
+     * Also refuse a model the catalog in effect does not list (the Mistral
+     * check). A model built before its catalog loaded passes `false` and runs
+     * the check once the catalog for its own credentials is known.
+     */
+    catalogChecks?: boolean;
+  } = {},
 ): ParsedVeryfrontCloudModelId {
   const slashIndex = modelId.indexOf("/");
   if (slashIndex === -1) {
@@ -243,16 +253,8 @@ export function parseVeryfrontCloudModelId(
     );
   }
 
-  if (
-    kind === "language" && normalizedProvider === "mistral" &&
-    !isSupportedMistralModelId(`mistral/${upstreamModelId}`)
-  ) {
-    throw toError(
-      createError({
-        type: "config",
-        message: `Unsupported Mistral model "mistral/${upstreamModelId}"`,
-      }),
-    );
+  if (kind === "language" && options.catalogChecks !== false) {
+    assertVeryfrontCloudModelListed(normalizedProvider, upstreamModelId);
   }
 
   if (kind === "language" && isRetiredVeryfrontCloudModelId(modelId)) {
@@ -263,6 +265,24 @@ export function parseVeryfrontCloudModelId(
     provider: normalizedProvider,
     modelId: upstreamModelId,
   };
+}
+
+/**
+ * Refuse a Mistral model the catalog in effect does not list, so a caller gets
+ * a clear error rather than a gateway-side failure.
+ */
+export function assertVeryfrontCloudModelListed(provider: string, upstreamModelId: string): void {
+  if (
+    provider === "mistral" && canVeryfrontCloudCatalogRefuse() &&
+    !isSupportedMistralModelId(`mistral/${upstreamModelId}`)
+  ) {
+    throw toError(
+      createError({
+        type: "config",
+        message: `Unsupported Mistral model "mistral/${upstreamModelId}"`,
+      }),
+    );
+  }
 }
 
 export function requireVeryfrontCloudBootstrap(
@@ -303,6 +323,35 @@ export function requireVeryfrontCloudBootstrap(
     apiToken,
     projectSlug: bootstrap.projectSlug,
   };
+}
+
+/**
+ * Load the model catalog Veryfront Cloud serves, with the Veryfront Cloud
+ * credentials and project in effect, so model facts read synchronously
+ * afterward (thinking defaults, short aliases such as `opus`, the default
+ * model) come from it. Resolves to whether a catalog is available. Never
+ * throws. When a refresh fails, the last catalog loaded for these credentials
+ * stays in use; only when none has loaded (no credentials, or no load has
+ * succeeded yet) do the facts shipped with this package apply.
+ */
+export async function loadVeryfrontCloudModelCatalog(
+  options: { signal?: AbortSignal; maxWaitMs?: number } = {},
+): Promise<boolean> {
+  let bootstrap: ReturnType<typeof requireVeryfrontCloudBootstrap>;
+  try {
+    bootstrap = requireVeryfrontCloudBootstrap();
+  } catch {
+    return false;
+  }
+  const catalog = await loadVeryfrontCloudCatalog({
+    fresh: true,
+    apiBaseUrl: bootstrap.apiBaseUrl,
+    apiToken: bootstrap.apiToken,
+    ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.maxWaitMs === undefined ? {} : { maxWaitMs: options.maxWaitMs }),
+  });
+  return catalog !== undefined;
 }
 
 /**

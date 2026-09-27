@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "./catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import {
   canonicalVeryfrontCloudModelKey,
   DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL,
@@ -29,6 +31,8 @@ import {
 import { VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES } from "./model-catalog.data.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("retires DeepSeek from managed selections while retaining Mistral as default", () => {
     assertEquals(findVeryfrontCloudModelByModelId("deepseek/deepseek-v4-flash"), undefined);
     assertEquals(
@@ -669,7 +673,6 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   it("keeps adaptive Anthropic thinking out of provider-neutral reasoning", () => {
     for (
       const modelId of [
-        "anthropic/claude-opus-4-7",
         "anthropic/claude-opus-4-8",
         "veryfront-cloud/anthropic/claude-opus-4-8",
       ]

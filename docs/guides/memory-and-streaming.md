@@ -13,7 +13,7 @@ use `createAgUiHandler` to stream the response back.
 
 Memory configuration is independent of model selection, so these examples omit
 `model` to use the Cloud default (`mistral/mistral-small-2503`) with hosted context,
-or `openai/gpt-5.4-nano` with direct credentials.
+or `openai/gpt-5-nano` with direct credentials.
 
 ## Prerequisites
 

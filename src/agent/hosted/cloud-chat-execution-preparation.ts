@@ -1,5 +1,12 @@
 import { resolveVeryfrontCloudModelThinking } from "#veryfront/provider";
-import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
+  runWithVeryfrontCloudContext,
+  runWithVeryfrontCloudContextAsync,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
+import { loadVeryfrontCloudModelCatalog } from "#veryfront/provider/veryfront-cloud/shared.ts";
+
+/** Longest preparation waits for the served catalog before resolving the model. */
+const CATALOG_MAX_WAIT_MS = 3_000;
 import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import type { HostedChatRuntimeCreationResult } from "./chat-runtime-contract.ts";
 import {
@@ -88,16 +95,25 @@ export async function prepareVeryfrontCloudHostedChatExecution<
   HostedChatExecutionPreparationResult<TRuntimeAgentDefinition, TRuntimeResult>
 > {
   const { logger, rootRun, ...preparationInput } = input;
+  const cloudContext = {
+    apiBaseUrl: String(input.apiUrl),
+    apiToken: input.request.authToken,
+    projectSlug: input.request.projectSlug,
+    serviceLayer: "cloud" as const,
+  };
+  // Model ids and thinking defaults resolve against the served catalog, loaded
+  // and read under the request's own credentials and project.
+  await runWithVeryfrontCloudContextAsync(
+    cloudContext,
+    () => loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_MAX_WAIT_MS }),
+  );
   const resolveModelId = (modelId: string | undefined): string | undefined =>
     runWithVeryfrontCloudContext(
-      {
-        apiBaseUrl: String(input.apiUrl),
-        apiToken: input.request.authToken,
-        projectSlug: input.request.projectSlug,
-        serviceLayer: "cloud",
-      },
+      cloudContext,
       () => modelId === undefined ? undefined : resolveRuntimeModel(modelId),
     );
+  const resolveModelThinking: typeof resolveVeryfrontCloudModelThinking = (modelId) =>
+    runWithVeryfrontCloudContext(cloudContext, () => resolveVeryfrontCloudModelThinking(modelId));
 
   return await prepareHostedChatExecution({
     ...preparationInput,
@@ -106,6 +122,6 @@ export async function prepareVeryfrontCloudHostedChatExecution<
       logger,
     }),
     resolveModelId,
-    resolveModelThinking: resolveVeryfrontCloudModelThinking,
+    resolveModelThinking,
   });
 }

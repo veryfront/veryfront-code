@@ -8,6 +8,7 @@
  */
 
 import {
+  isVeryfrontCloudAnthropicSurfaceModel,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudThinkingProviderOptions,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
@@ -15,11 +16,16 @@ import {
 const VERYFRONT_CLOUD_PREFIX = "veryfront-cloud/";
 const ANTHROPIC_PREFIX = "anthropic/";
 
+/**
+ * Whether a model speaks the Anthropic protocol. A Veryfront Cloud model
+ * speaks the surface the served catalog gives its provider, so a newly served
+ * provider on the Anthropic surface gets the same defaults as `anthropic/*`.
+ */
 function isAnthropicModel(modelString: string): boolean {
-  const normalized = modelString.startsWith(VERYFRONT_CLOUD_PREFIX)
-    ? modelString.slice(VERYFRONT_CLOUD_PREFIX.length)
-    : modelString;
-  return normalized.startsWith(ANTHROPIC_PREFIX);
+  if (modelString.startsWith(VERYFRONT_CLOUD_PREFIX)) {
+    return isVeryfrontCloudAnthropicSurfaceModel(modelString);
+  }
+  return modelString.startsWith(ANTHROPIC_PREFIX);
 }
 
 function hasAnthropicThinkingConfig(existing: Record<string, unknown> | undefined): boolean {

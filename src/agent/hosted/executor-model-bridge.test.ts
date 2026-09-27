@@ -14,6 +14,7 @@ import {
   createExecutorModelBroker,
   createExecutorModelRuntimeResolver,
 } from "./executor-model-bridge.ts";
+import { registerVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic-model";
 const allowedModelIds = new Set([modelId]);
@@ -976,5 +977,34 @@ describe("executor managed model bridge", () => {
         await channels.close();
       }
     }
+  });
+
+  it("describes a served model only after its preparation settles, however long it takes", async () => {
+    // Longer than any fixed wait the broker might apply before describing.
+    const settleMs = 3_200;
+    let settledProvider = "openai";
+    const model = stubModel({
+      async prepare() {
+        await new Promise((resolve) => setTimeout(resolve, settleMs));
+        settledProvider = "anthropic";
+      },
+    });
+    Object.defineProperty(model, "modelProvider", { get: () => settledProvider });
+    registerVeryfrontCloudModelFacts(model, () =>
+      ({
+        surface: settledProvider,
+        nativeProtocol: false,
+      }) as never);
+    const broker = createExecutorModelBroker({
+      allowedModelIds,
+      resolveModelRuntime: () => model,
+    });
+    const metadata = await broker.get("model.metadata")!.handle!({}, {
+      binding: { allocationId: "allocation-test", generation: 1, invocationId: "invocation-test" },
+      signal: new AbortController().signal,
+      deadline: Date.now() + 60_000,
+    }) as { modelProvider?: string }[];
+
+    assertEquals(metadata.map((entry) => entry.modelProvider), ["anthropic"]);
   });
 });
