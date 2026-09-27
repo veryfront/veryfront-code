@@ -1,5 +1,9 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForTests,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import {
   createMoonshotSchemaExpansionBudget,
@@ -569,5 +573,60 @@ describe("provider-tool-compat", () => {
         required: ["fallback"],
       },
     });
+  });
+});
+
+describe("getProviderToolProfile for providers only the served catalog lists", () => {
+  afterEach(__resetVeryfrontCloudCatalogForTests);
+
+  const served = (surface: string) =>
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "m1",
+        modelId: "acme-labs/m1",
+        provider: "acme-labs",
+        surface,
+        operations: [surface === "anthropic" ? "messages" : "chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+
+  it("applies the schema rules of the surface the provider is served on", () => {
+    served("google");
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/m1"), {
+      provider: "google",
+      sanitizeSchema: true,
+    });
+    served("anthropic");
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/m1"), {
+      provider: "anthropic",
+      sanitizeSchema: true,
+    });
+  });
+
+  it("applies the served surface before the kimi- model-name heuristic", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "kimi-1",
+        modelId: "acme-labs/kimi-1",
+        provider: "acme-labs",
+        surface: "google",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/kimi-1").provider, "google");
+    // The heuristic still applies where no served surface decides.
+    assertEquals(getProviderToolProfile("kimi-k2.6").provider, "moonshot");
+    assertEquals(getProviderToolProfile("moonshotai/kimi-k2.6").provider, "moonshot");
+  });
+
+  it("keeps an unlisted provider on the OpenAI surface, and a direct id, unknown", () => {
+    served("openai");
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/m1").provider, "unknown");
+    served("anthropic");
+    assertEquals(getProviderToolProfile("acme-labs/m1").provider, "unknown");
   });
 });
