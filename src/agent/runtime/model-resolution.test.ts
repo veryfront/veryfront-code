@@ -154,10 +154,6 @@ describe("agent/runtime/model-resolution", () => {
       "openai/gpt-5.4-mini",
     );
     assertEquals(
-      resolveConfiguredAgentModel("gemini-3.1-pro"),
-      "google-ai-studio/gemini-3.1-pro-preview",
-    );
-    assertEquals(
       resolveConfiguredAgentModel("gemini-3.5-flash"),
       "google-ai-studio/gemini-3.5-flash",
     );
@@ -166,13 +162,23 @@ describe("agent/runtime/model-resolution", () => {
       "moonshotai/kimi-k2.6",
     );
     assertEquals(
-      resolveConfiguredAgentModel("mistral-large"),
-      "mistral/mistral-large-2512",
-    );
-    assertEquals(
       resolveConfiguredAgentModel("mistral-small-2503"),
       "mistral/mistral-small-2503",
     );
+  });
+
+  it("does not alias bare ids of models the gateway has retired", () => {
+    for (
+      const retired of [
+        "gpt-5.4-nano",
+        "gemini-3.1-pro",
+        "gemini-3.1-pro-preview",
+        "mistral-large",
+        "mistral-large-2512",
+      ]
+    ) {
+      assertEquals(resolveConfiguredAgentModel(retired), retired);
+    }
   });
 
   it("aliases every Veryfront Cloud catalog model id to its provider model", () => {
@@ -288,11 +294,7 @@ describe("agent/runtime/model-resolution", () => {
     );
     assertEquals(
       resolveRuntimeModel("mistral/mistral-large-2512"),
-      "veryfront-cloud/mistral/mistral-large-2512",
-    );
-    assertEquals(
-      resolveRuntimeModel("mistral-large"),
-      "veryfront-cloud/mistral/mistral-large-2512",
+      "mistral/mistral-large-2512",
     );
     assertEquals(
       resolveRuntimeModel("mistral-small-2503"),
@@ -310,10 +312,6 @@ describe("agent/runtime/model-resolution", () => {
       resolveRuntimeModel("kimi-k2.6"),
       "veryfront-cloud/moonshotai/kimi-k2.6",
     );
-    assertEquals(
-      resolveRuntimeModel("mistral-large"),
-      "veryfront-cloud/mistral/mistral-large-2512",
-    );
   });
 
   it("routes explicit Mistral models through the direct provider when native credentials are configured", () => {
@@ -322,7 +320,7 @@ describe("agent/runtime/model-resolution", () => {
     setEnv("MISTRAL_API_KEY", "mistral-test");
 
     assertEquals(
-      resolveRuntimeModel("mistral-large"),
+      resolveRuntimeModel("mistral/mistral-large-2512"),
       "mistral/mistral-large-2512",
     );
   });

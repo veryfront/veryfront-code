@@ -178,7 +178,7 @@ describe("provider/veryfront-cloud", () => {
   it("resolves veryfront-cloud openai models without project ext-llm-openai installed", () => {
     setCloudBootstrap();
 
-    const model = resolveModel("veryfront-cloud/openai/gpt-5.4-nano") as Record<string, unknown>;
+    const model = resolveModel("veryfront-cloud/openai/gpt-5-nano") as Record<string, unknown>;
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
@@ -202,7 +202,7 @@ describe("provider/veryfront-cloud", () => {
     });
 
     try {
-      const model = resolveModel("veryfront-cloud/openai/gpt-5.4-nano");
+      const model = resolveModel("veryfront-cloud/openai/gpt-5-nano");
       assertEquals(typeof model.doStream, "function");
       assertEquals(extensionCalled, false);
     } finally {
@@ -831,7 +831,7 @@ describe("provider/veryfront-cloud", () => {
     );
 
     const assistant = agent({
-      model: "veryfront-cloud/openai/gpt-5.4-nano",
+      model: "veryfront-cloud/openai/gpt-5-nano",
       system: "You are concise.",
     });
 
@@ -860,7 +860,7 @@ describe("provider/veryfront-cloud", () => {
   it("resolves veryfront-cloud mistral models without project ext-llm-openai installed", () => {
     setCloudBootstrap();
 
-    const model = resolveModel("veryfront-cloud/mistral/mistral-large-2512") as Record<
+    const model = resolveModel("veryfront-cloud/mistral/mistral-small-2503") as Record<
       string,
       unknown
     >;
@@ -905,7 +905,6 @@ describe("provider/veryfront-cloud", () => {
     for (
       const [modelId, expectedSystems] of [
         ["mistral/mistral-small-2503", 4],
-        ["mistral/mistral-large-2512", 1],
         ["moonshotai/kimi-k2.6", 1],
       ] as const
     ) {
@@ -1223,9 +1222,9 @@ describe("provider/veryfront-cloud", () => {
       const modelId of [
         "anthropic/claude-sonnet-4-6",
         "openai/gpt-5.5",
-        "openai/gpt-5.4-nano",
+        "openai/gpt-5-nano",
         "google-ai-studio/gemini-3.5-flash",
-        "mistral/mistral-large-2512",
+        "mistral/mistral-small-2503",
         "moonshotai/kimi-k2.6",
       ]
     ) {
@@ -1249,7 +1248,7 @@ describe("provider/veryfront-cloud", () => {
         "openai",
       ],
       [
-        "openai/gpt-5.4-nano",
+        "openai/gpt-5-nano",
         "https://api.veryfront.com/ai/v1/responses",
         "openai",
       ],
@@ -1259,7 +1258,7 @@ describe("provider/veryfront-cloud", () => {
         "google",
       ],
       [
-        "mistral/mistral-large-2512",
+        "mistral/mistral-small-2503",
         "https://api.veryfront.com/ai/v1/chat/completions",
         "mistral",
       ],
@@ -1352,7 +1351,7 @@ describe("provider/veryfront-cloud", () => {
     // path instead.
     setCloudBootstrap();
 
-    for (const modelId of ["mistral/mistral-large-2512", "moonshotai/kimi-k2.6", "acme-labs/x"]) {
+    for (const modelId of ["mistral/mistral-small-2503", "moonshotai/kimi-k2.6", "acme-labs/x"]) {
       let requestCount = 0;
       installMockFetch(
         (() => {
@@ -1446,16 +1445,16 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
       "gpt-5.5",
     ],
     [
-      "openai/gpt-5.4-nano",
+      "openai/gpt-5-nano",
       "https://api.veryfront.com/ai/v1/responses",
       "https://api.veryfront.com/ai/gateway/openai/v1/responses",
-      "gpt-5.4-nano",
+      "gpt-5-nano",
     ],
     [
-      "mistral/mistral-large-2512",
+      "mistral/mistral-small-2503",
       "https://api.veryfront.com/ai/v1/chat/completions",
       "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
-      "mistral-large-2512",
+      "mistral-small-2503",
     ],
     [
       "acme-labs/mystery-1",

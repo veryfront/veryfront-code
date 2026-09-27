@@ -32,6 +32,8 @@ const DIRECT_CREDENTIAL_PROVIDER_ALIASES = new Map<string, string>([
 const DIRECT_RUNTIME_PROVIDER_ALIASES = new Map<string, string>([
   ["google-ai-studio", "google"],
 ]);
+// Called with the user's own provider key against the vendor's API, never the
+// gateway, so these follow each vendor's catalog rather than the gateway's.
 const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> = [
   { provider: "openai", modelId: "gpt-5.4-nano" },
   { provider: "anthropic", modelId: "claude-sonnet-4-6" },
@@ -50,20 +52,15 @@ const LEGACY_MODEL_ALIASES = new Map<string, string>([
   ["gpt-5.2", "openai/gpt-5.2"],
   ["gpt-5.4", "openai/gpt-5.4"],
   ["gpt-5.4-mini", "openai/gpt-5.4-mini"],
-  ["gpt-5.4-nano", "openai/gpt-5.4-nano"],
   ["gpt-5-nano", "openai/gpt-5-nano"],
   ["deepseek-v4-flash", "deepseek/deepseek-v4-flash"],
   ["o3-pro", "openai/o3-pro"],
   ["o4-mini", "openai/o4-mini"],
-  ["gemini-3.1-pro", "google-ai-studio/gemini-3.1-pro-preview"],
-  ["gemini-3.1-pro-preview", "google-ai-studio/gemini-3.1-pro-preview"],
   ["gemini-3.5-flash", "google-ai-studio/gemini-3.5-flash"],
   ["gemini-3-flash-preview", "google-ai-studio/gemini-3-flash-preview"],
   ["gemini-3.1-flash-lite", "google-ai-studio/gemini-3.1-flash-lite"],
   ["gemini-2.5-pro", "google-ai-studio/gemini-2.5-pro"],
   ["gemini-2.5-flash", "google-ai-studio/gemini-2.5-flash"],
-  ["mistral-large", "mistral/mistral-large-2512"],
-  ["mistral-large-2512", "mistral/mistral-large-2512"],
   ["mistral-small-2503", "mistral/mistral-small-2503"],
   ["kimi-k2.6", "moonshotai/kimi-k2.6"],
   ["kimi-k2.5", "moonshotai/kimi-k2.5"],

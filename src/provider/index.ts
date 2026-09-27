@@ -7,7 +7,7 @@
  * ```ts
  * import { resolveModel } from "veryfront/provider";
  *
- * const model = resolveModel("veryfront-cloud/openai/gpt-5.4-nano");
+ * const model = resolveModel("veryfront-cloud/openai/gpt-5-nano");
  * ```
  */
 

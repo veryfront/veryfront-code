@@ -147,8 +147,8 @@ it("canonicalizes direct model input and parses exactly model/output", () => {
 it("rejects cloud, automatic, local, non-direct, malformed, and extra arguments", () => {
   const invalidModels = [
     "auto",
-    "veryfront-cloud/openai/gpt-5.4-nano",
-    "  veryfront-cloud/openai/gpt-5.4-nano  ",
+    "veryfront-cloud/openai/gpt-5-nano",
+    "  veryfront-cloud/openai/gpt-5-nano  ",
     "local/qwen",
     "google/gemini-2.5-pro",
     "openai/",
