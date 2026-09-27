@@ -739,6 +739,11 @@ describe("Proxy Handler", () => {
           "release-not-found",
           "the slug is what selects the branded HTML 404 page in error-response.ts",
         );
+        assertEquals(
+          beforeActivation.projectId,
+          "proj-123",
+          "a resolved project keeps its id on errors so the trace stays searchable",
+        );
         assertEquals(afterActivation.error, undefined);
         assertEquals(afterActivation.releaseId, "rel-456");
         assertEquals(afterActivation.environmentId, "env-1");
@@ -1761,6 +1766,7 @@ describe("Proxy Handler", () => {
         const ctx = await handler.processRequest(req);
 
         assertEquals(ctx.projectSlug, undefined);
+        assertEquals(ctx.projectId, undefined);
         assertEquals(ctx.error?.status, 404);
         assertEquals(
           ctx.error?.message,
@@ -2503,6 +2509,7 @@ describe("Proxy Handler", () => {
 
         assertEquals(ctx.error?.status, 400);
         assertEquals(ctx.error?.message, "Invalid control-plane environment source");
+        assertEquals(ctx.projectId, "proj-123");
 
         const rejectionWarnings = entries.filter((entry) =>
           entry.level === "warn" &&

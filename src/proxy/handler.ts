@@ -1255,8 +1255,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
     }
 
+    // Errors past this point still belong to the resolved project's traces.
+    const resolvedBase = { ...base, projectId };
+
     if (signedInternalControlPlaneCandidate && !signedInternalControlPlaneRequest) {
-      return createProxyErrorContext(base, {
+      return createProxyErrorContext(resolvedBase, {
         status: 401,
         message: "Control-plane project binding failed",
       });
@@ -1283,7 +1286,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             host,
             pathname: "/api/control-plane/runs/<RUN_ID>/stream",
           });
-          return createProxyErrorContext(base, {
+          return createProxyErrorContext(resolvedBase, {
             status: error.status,
             message: error.message,
           });
@@ -1299,7 +1302,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         host,
         environment: scope,
       });
-      return createReleaseNotFoundProxyContext(base, token);
+      return createReleaseNotFoundProxyContext(resolvedBase, token);
     }
 
     const contentSourceId = computeContentSourceId(

@@ -12,6 +12,8 @@ export interface ProxyErrorContextBase {
   host: string;
   requestAuthority?: string;
   parsedDomain: ParsedDomain;
+  /** Set only once the proxy has resolved the project itself. */
+  projectId?: string;
 }
 
 export interface ProxyErrorContextOptions {
@@ -29,7 +31,7 @@ export function createProxyErrorContext(
   return {
     token: options.token,
     projectSlug: undefined,
-    projectId: undefined,
+    projectId: base.projectId,
     environment: base.scope,
     contentSourceId: "error",
     localPath: undefined,

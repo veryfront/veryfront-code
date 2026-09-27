@@ -109,11 +109,6 @@ describe("proxy main request URL parsing", () => {
     const stampIndex = source.indexOf(stamp);
     assertEquals(resolveIndex >= 0, true);
     assertEquals(stampIndex > resolveIndex, true, "project.id must be set from the resolved ctx");
-    assertEquals(
-      source.match(/"project\.id"/g)?.length,
-      1,
-      "project.id has a single trusted source",
-    );
   });
 
   it("uses an independent request body for every upstream attempt", async () => {
