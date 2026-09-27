@@ -484,6 +484,46 @@ describe("metrics public SDK", () => {
     );
   });
 
+  it("labels hosted project metrics with the runtime's service, release and deployment", async () => {
+    const requests: RequestInit[] = [];
+
+    await withEnv({
+      OTEL_METRICS_ENABLED: "true",
+      OTEL_SERVICE_NAME: "veryfront-server",
+      OTEL_SERVICE_VERSION: "20260927085934-9420d79fc0e2",
+      OTEL_DEPLOYMENT_ENVIRONMENT: "staging",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          requests.push(init ?? {});
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          runWithTrustedProjectEnv(
+            { OTEL_SERVICE_NAME: "project-chosen", OTEL_DEPLOYMENT_ENVIRONMENT: "production" },
+            { projectId: "project-123", environmentId: "env-1" },
+            () => metrics.counter("vf_hosted_metric_total", 1),
+          );
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    const resource = JSON.parse(String(requests[0]?.body)).resourceMetrics[0].resource;
+    const attributes = Object.fromEntries(
+      resource.attributes.map((attribute: { key: string; value: { stringValue: string } }) => [
+        attribute.key,
+        attribute.value.stringValue,
+      ]),
+    );
+    assertEquals(attributes["service.name"], "veryfront-server");
+    assertEquals(attributes["service.version"], "20260927085934-9420d79fc0e2");
+    assertEquals(attributes["deployment.environment"], "staging");
+  });
+
   it("does not expose internal metrics credentials to a replaced Base64 encoder", async () => {
     const originalBtoa = Object.getOwnPropertyDescriptor(globalThis, "btoa");
     const observedValues: string[] = [];
@@ -1018,7 +1058,7 @@ describe("metrics public SDK", () => {
     assertEquals(metrics.__getDirectTargetCountForTests(), 17);
   });
 
-  it("applies tenant target quotas to metrics routed through the internal proxy", async () => {
+  it("keeps one internal proxy target per project whatever telemetry env the project sets", async () => {
     await withEnv({
       SERVER_ID: "server-1",
       ENVIRONMENT_IDS: "env-project",
@@ -1054,7 +1094,7 @@ describe("metrics public SDK", () => {
       );
     });
 
-    assertEquals(metrics.__getDirectTargetCountForTests(), 17);
+    assertEquals(metrics.__getDirectTargetCountForTests(), 2);
   });
 
   it("evicts credential-bearing targets without consulting Array species", async () => {
@@ -1071,10 +1111,10 @@ describe("metrics public SDK", () => {
       await withMockFetch(
         (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
         async () => {
-          for (let index = 0; index < 16; index++) {
+          for (let index = 0; index < 90; index++) {
             runWithTrustedProjectEnv(
-              { OTEL_METRICS_ENABLED: "true", OTEL_SERVICE_NAME: `project-${index}` },
-              { projectId: "project-a", environmentId: "env-a" },
+              { OTEL_METRICS_ENABLED: "true" },
+              { projectId: `project-${index}`, environmentId: `env-${index}` },
               () => metrics.counter("vf_project_metric_total", 1),
             );
           }
@@ -1089,8 +1129,8 @@ describe("metrics public SDK", () => {
           });
           try {
             runWithTrustedProjectEnv(
-              { OTEL_METRICS_ENABLED: "true", OTEL_SERVICE_NAME: "project-new" },
-              { projectId: "project-a", environmentId: "env-a" },
+              { OTEL_METRICS_ENABLED: "true" },
+              { projectId: "project-new", environmentId: "env-new" },
               () => metrics.counter("vf_project_metric_total", 1),
             );
           } finally {
@@ -1101,6 +1141,7 @@ describe("metrics public SDK", () => {
     });
 
     assertEquals(speciesCalls, 0);
+    assertEquals(metrics.__getDirectTargetCountForTests(), 90, "the oldest target was evicted");
   });
 
   it("dispatches every target without consulting Promise species", async () => {

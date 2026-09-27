@@ -49,6 +49,7 @@ interface DirectMetricsTarget {
   headers: Record<string, string>;
   serviceName: string;
   serviceVersion: string;
+  deploymentEnvironment: string | undefined;
   capacityScope: string;
   internal: boolean;
   tenantScoped: boolean;
@@ -415,15 +416,18 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
   return result;
 }
 
-function resolveDirectServiceIdentity(): Pick<
-  DirectMetricsTarget,
-  "serviceName" | "serviceVersion"
-> {
+// Shared runtimes read the identity from the host, so hosted project metrics
+// name the platform service, release and deployment that emitted them.
+function resolveDirectServiceIdentity(
+  read: (name: string) => string | undefined,
+): Pick<DirectMetricsTarget, "serviceName" | "serviceVersion" | "deploymentEnvironment"> {
   return {
-    serviceName: readEnv("OTEL_SERVICE_NAME") ?? "veryfront",
-    serviceVersion: readEnv("VERYFRONT_VERSION") ??
-      readEnv("RELEASE_VERSION") ??
+    serviceName: read("OTEL_SERVICE_NAME") ?? "veryfront",
+    serviceVersion: read("OTEL_SERVICE_VERSION") ??
+      read("VERYFRONT_VERSION") ??
+      read("RELEASE_VERSION") ??
       "unknown",
+    deploymentEnvironment: read("OTEL_DEPLOYMENT_ENVIRONMENT"),
   };
 }
 
@@ -467,7 +471,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
         readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
           readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
       ),
-      ...resolveDirectServiceIdentity(),
+      ...resolveDirectServiceIdentity(readEnv),
       capacityScope: resolveDirectCapacityScope(),
       internal: false,
       tenantScoped: true,
@@ -485,7 +489,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
           readHostEnv("VERYFRONT_API_INTERNAL_PASS") ?? "",
         ),
       },
-      ...resolveDirectServiceIdentity(),
+      ...resolveDirectServiceIdentity(readHostEnv),
       capacityScope: tenantScoped ? resolveDirectCapacityScope() : "internal",
       internal: true,
       tenantScoped,
@@ -501,7 +505,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
       readEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
         readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
     ),
-    ...resolveDirectServiceIdentity(),
+    ...resolveDirectServiceIdentity(readEnv),
     capacityScope: tenantScoped ? resolveDirectCapacityScope() : "host",
     internal: false,
     tenantScoped,
@@ -669,6 +673,7 @@ function retainDirectTarget(target: DirectMetricsTarget): string | null {
       interned.target.url === target.url &&
       interned.target.serviceName === target.serviceName &&
       interned.target.serviceVersion === target.serviceVersion &&
+      interned.target.deploymentEnvironment === target.deploymentEnvironment &&
       interned.target.capacityScope === target.capacityScope &&
       interned.target.internal === target.internal &&
       interned.target.tenantScoped === target.tenantScoped &&
@@ -887,6 +892,9 @@ function buildDirectOtlpBody(
           "service.name": target.serviceName,
           "service.version": target.serviceVersion,
           "service.instance.id": serviceInstanceId,
+          ...(target.deploymentEnvironment === undefined
+            ? {}
+            : { "deployment.environment": target.deploymentEnvironment }),
         }),
       },
       scopeMetrics: [{
