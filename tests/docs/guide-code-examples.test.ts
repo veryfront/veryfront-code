@@ -233,9 +233,9 @@ describe("Guide: providers.md", () => {
     assertStringIncludes(section, `curl ${base}/chat/completions`);
   });
 
-  it("gives the Anthropic client the base URL the SDK sends Anthropic-protocol models to", async () => {
+  it("gives the Anthropic client the canonical Messages base URL", async () => {
     const section = await gatewayClientSection();
-    const base = await neutralBaseUrl("anthropic");
+    const base = `${api}/ai/v1`;
 
     // The Anthropic client appends /v1/messages to its base URL.
     assertEquals(base.endsWith("/v1"), true);

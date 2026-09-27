@@ -110,7 +110,7 @@ client adds `/v1/messages` to its base URL:
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
-  baseURL: "https://api.veryfront.com/ai/anthropic",
+  baseURL: "https://api.veryfront.com/ai",
   apiKey: process.env.VERYFRONT_API_KEY,
 });
 
@@ -122,7 +122,7 @@ const message = await client.messages.create({
 ```
 
 ```bash
-curl https://api.veryfront.com/ai/anthropic/v1/messages \
+curl https://api.veryfront.com/ai/v1/messages \
   -H "x-api-key: $VERYFRONT_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \

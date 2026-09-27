@@ -13,6 +13,10 @@ Deno.test("provider guide client snippets send their documented requests", async
     .split("\n## ")[0]!;
   const snippets = [...section.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1]!);
   assertEquals(snippets.length, 2);
+  assertEquals(snippets.map((snippet) => snippet.split("\n")[0]), [
+    'import OpenAI from "openai";',
+    'import Anthropic from "@anthropic-ai/sdk";',
+  ]);
   const requests: Request[] = [];
   const clientFetch: typeof fetch = (input, init) => {
     requests.push(new Request(input, init));
@@ -45,7 +49,7 @@ Deno.test("provider guide client snippets send their documented requests", async
   assertEquals(requests.map((request) => request.method), ["POST", "POST"]);
   assertEquals(requests.map((request) => request.url), [
     "https://api.veryfront.com/ai/v1/chat/completions",
-    "https://api.veryfront.com/ai/anthropic/v1/messages",
+    "https://api.veryfront.com/ai/v1/messages",
   ]);
   assertEquals(
     requests[0]!.headers.get("authorization"),
