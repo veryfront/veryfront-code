@@ -1,4 +1,4 @@
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
 
 export interface ParsedDomain {
   slug: string | null;
@@ -68,7 +68,7 @@ export function parseConfiguredPlatformRoots(raw: string | undefined): readonly 
 // can be installed. An invalid administrator setting refuses startup rather
 // than treating its hosts as custom domains or broadening a public DNS root.
 const CONFIGURED_PLATFORM_ROOTS = parseConfiguredPlatformRoots(
-  getHostEnv("PLATFORM_DOMAIN_SUFFIXES"),
+  getHostEnvExcludingEnvFile("PLATFORM_DOMAIN_SUFFIXES"),
 );
 
 // Domains that allow iframe embedding but aren't veryfront domains
