@@ -106,7 +106,8 @@ const failedAt = new Map<string, number>();
 /** Key of the scope a synchronous read uses, while {@link withVeryfrontCloudCatalogScope} runs. */
 let activeKey: string | undefined;
 let seeded: VeryfrontCloudCatalog | undefined;
-let failureLogged = false;
+/** Scopes whose current failure has been logged, so each scope logs once per outage. */
+const loggedFailures = new Set<string>();
 let now: () => number = Date.now;
 /** Bumped by a test reset, so a load that settles afterwards changes nothing. */
 let generation = 0;
@@ -317,20 +318,29 @@ function refresh(
       if (started !== generation) return catalog;
       rememberEntry(key, { catalog, fetchedAt: now() });
       failedAt.delete(key);
-      failureLogged = false;
+      loggedFailures.delete(key);
       return catalog;
     },
     (error: unknown) => {
       if (started !== generation) return undefined;
       rememberFailure(key, now());
-      if (!failureLogged) {
-        failureLogged = true;
+      const stale = entries.get(key)?.catalog;
+      if (!loggedFailures.has(key)) {
+        if (loggedFailures.size >= VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES) loggedFailures.clear();
+        loggedFailures.add(key);
+        // Names the scope, never the credential.
         logger.warn(
-          "Veryfront Cloud model catalog is unavailable; model facts fall back to the built-in list",
-          { error: error instanceof Error ? error.message : String(error) },
+          stale
+            ? "Veryfront Cloud model catalog refresh failed; the last loaded catalog stays in use"
+            : "Veryfront Cloud model catalog is unavailable; model facts fall back to the built-in list",
+          {
+            apiBaseUrl: options.apiBaseUrl,
+            projectSlug: options.projectSlug,
+            error: error instanceof Error ? error.message : String(error),
+          },
         );
       }
-      return entries.get(key)?.catalog;
+      return stale;
     },
   ).finally(() => {
     if (started === generation) inflight.delete(key);
@@ -479,7 +489,7 @@ export function __resetVeryfrontCloudCatalogForTests(): void {
   failedAt.clear();
   activeKey = undefined;
   seeded = undefined;
-  failureLogged = false;
+  loggedFailures.clear();
   now = Date.now;
 }
 

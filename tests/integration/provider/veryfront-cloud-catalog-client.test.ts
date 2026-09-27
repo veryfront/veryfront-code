@@ -15,6 +15,7 @@ import {
   VERYFRONT_CLOUD_CATALOG_TTL_MS,
 } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { servedCatalogPayload } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 
 const API_BASE_URL = "https://api.veryfront.com";
 const LOAD = { apiBaseUrl: API_BASE_URL, apiToken: "vf_catalog_test", projectSlug: "catalog-test" };
@@ -371,6 +372,28 @@ describe("provider/veryfront-cloud/catalog-client", () => {
         assertEquals(afterFailure, loaded);
         assertEquals(peekVeryfrontCloudCatalog(LOAD), loaded);
       });
+    });
+
+    it("logs one warning per failing scope, naming the scope but never the credential", async () => {
+      const warnings: { message: string; fields: unknown }[] = [];
+      const originalWarn = logger.warn;
+      logger.warn = (message: string, fields?: unknown) => warnings.push({ message, fields });
+      const other = { ...LOAD, apiToken: "vf_catalog_other", projectSlug: "catalog-other" };
+      const stub = recordingFetch(() => Promise.reject(new TypeError("network down")));
+      try {
+        await withMockFetch(stub.fetch, async () => {
+          await loadVeryfrontCloudCatalog(LOAD);
+          await loadVeryfrontCloudCatalog(other);
+        });
+      } finally {
+        logger.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.map((warning) => (warning.fields as { projectSlug?: string }).projectSlug),
+        ["catalog-test", "catalog-other"],
+      );
+      assertEquals(JSON.stringify(warnings).includes("vf_catalog_"), false);
     });
   });
 });

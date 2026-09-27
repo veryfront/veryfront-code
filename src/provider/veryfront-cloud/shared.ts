@@ -327,10 +327,11 @@ export function requireVeryfrontCloudBootstrap(
 /**
  * Load the model catalog Veryfront Cloud serves, with the Veryfront Cloud
  * credentials and project in effect, so model facts read synchronously
- * afterwards (thinking defaults, short aliases such as `opus`, the default
+ * afterward (thinking defaults, short aliases such as `opus`, the default
  * model) come from it. Resolves to whether a catalog is available. Never
- * throws: without credentials or a reachable catalog, the facts shipped with
- * this package apply.
+ * throws. When a refresh fails, the last catalog loaded for these credentials
+ * stays in use; only when none has loaded (no credentials, or no load has
+ * succeeded yet) do the facts shipped with this package apply.
  */
 export async function loadVeryfrontCloudModelCatalog(
   options: { signal?: AbortSignal; maxWaitMs?: number } = {},
