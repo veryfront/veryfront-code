@@ -8,6 +8,7 @@ import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
+import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
@@ -259,6 +260,16 @@ export async function resolveAgentModelTransport(
     : resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions);
   const languageModel = privatelyResolvedModel ?? transport?.model ??
     resolveModel(resolvedModelString);
+  // A Veryfront Cloud model settles its protocol and capabilities on its first
+  // async step. Settle it here, before anything reads them: the provider option
+  // key below and the runtime's tool-calling, structured-output and replay
+  // checks. A failure surfaces again when the model is called.
+  if (
+    readVeryfrontCloudModelFacts(languageModel) !== undefined &&
+    typeof languageModel.prepare === "function"
+  ) {
+    await Promise.resolve(languageModel.prepare()).catch(() => {});
+  }
   const providerOptionKey = resolveModelProviderOptionKey(resolvedModelString, languageModel);
 
   return {

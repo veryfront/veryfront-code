@@ -732,20 +732,27 @@ function buildDirectModelOptions(
   };
 }
 
-async function emitModelCallContextEvent(
-  options: DirectTextOptions,
-  directOptions: DirectModelOptions,
-): Promise<void> {
-  const sinks = getActiveRunEventSinks();
-  if (!sinks.mandatory && !sinks.public) return;
-  // A Veryfront Cloud model settles how it is built on its first async step.
-  // It does so here, so the recorded request describes the request then sent.
+/**
+ * Settle a Veryfront Cloud model before anything reads its protocol or
+ * capabilities: it settles how it is built on its first async step, so the
+ * options validated and built for it, and the request recorded for it, match
+ * the request then sent.
+ */
+async function settleVeryfrontCloudModel(options: DirectTextOptions): Promise<void> {
   if (
     readVeryfrontCloudModelFacts(options.model) !== undefined &&
     typeof options.model.prepare === "function"
   ) {
     await options.model.prepare(options.abortSignal);
   }
+}
+
+async function emitModelCallContextEvent(
+  options: DirectTextOptions,
+  directOptions: DirectModelOptions,
+): Promise<void> {
+  const sinks = getActiveRunEventSinks();
+  if (!sinks.mandatory && !sinks.public) return;
   const request = buildModelCallContextRequest(options.model, directOptions);
 
   const event: AgentRunModelCallContextEvent = {
@@ -1257,6 +1264,7 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then(async (tools) => {
+    await settleVeryfrontCloudModel(options);
     const directOptions = buildDirectModelOptions(options, tools);
     await emitModelCallContextEvent(options, directOptions);
     if (shouldGenerateViaStream(options.model)) {
@@ -1271,6 +1279,7 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
+    await settleVeryfrontCloudModel(options);
     const directOptions = buildDirectModelOptions(options, tools);
     await emitModelCallContextEvent(options, directOptions);
     return options.model.doStream(directOptions);

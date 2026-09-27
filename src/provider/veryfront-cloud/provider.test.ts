@@ -2022,6 +2022,40 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     );
   });
 
+  it("validates a response format against the protocol the served catalog settles", async () => {
+    setCloudBootstrap();
+    const requests = installGateway(() =>
+      Response.json({
+        models: [{
+          id: "acme-claude",
+          modelId: "acme/acme-claude",
+          provider: "acme",
+          surface: "anthropic",
+          operations: ["messages"],
+          aliases: [],
+          capabilities: {},
+        }],
+      })
+    );
+    const call = (model: ModelRuntime) =>
+      generateText({
+        model,
+        messages: [{ role: "user", content: "Hi" }],
+        responseFormat: { type: "json" },
+      });
+
+    // Cold, the unlisted provider would look like an OpenAI-protocol model.
+    const cold = resolveModel("veryfront-cloud/acme/acme-claude") as ModelRuntime;
+    const coldError = await call(cold).then(() => undefined, (error: unknown) => error);
+    const warm = resolveModel("veryfront-cloud/acme/acme-claude") as ModelRuntime;
+    const warmError = await call(warm).then(() => undefined, (error: unknown) => error);
+
+    assertEquals(warmError instanceof Error, true);
+    assertEquals((coldError as Error | undefined)?.message, (warmError as Error).message);
+    // Refused before any inference request.
+    assertEquals(calls(requests), ["GET /ai/models"]);
+  });
+
   it("forwards metadata to the model rebuilt from the catalog", async () => {
     setCloudBootstrap();
     installGateway(() =>
