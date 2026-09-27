@@ -334,6 +334,10 @@ export const getIntegrationEndpointBodyFieldSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // Sends `default` on every call, ignores caller input and stays out of the
+    // model-facing schema. Pins provider safety switches such as a read-only
+    // access mode on a tool published as read-only.
+    fixed: v.boolean().optional(),
     // "base64": the string value is base64-decoded before sending. With
     // bodyMode "form-data" the field becomes a binary part; with "raw" the
     // decoded bytes become the request body.

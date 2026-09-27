@@ -32,6 +32,7 @@ import {
 import {
   isVeryfrontCloudCatalogFresh,
   loadVeryfrontCloudCatalog,
+  veryfrontCloudCatalogScopeKey,
   withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
 
@@ -235,6 +236,7 @@ function createVeryfrontCloudModelInternal(
   const registry = useFirstPartyTransport ? undefined : ensureBuiltinLLMProviders();
 
   const catalogScope = { apiBaseUrl, apiToken, ...(projectSlug ? { projectSlug } : {}) };
+  const catalogScopeKey = veryfrontCloudCatalogScopeKey(catalogScope);
 
   // The catalog facts a build reads, from this model's own credentials and
   // project. A model built before the catalog loaded is rebuilt at its first
@@ -255,6 +257,7 @@ function createVeryfrontCloudModelInternal(
       );
       const openAITransport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
       return Object.freeze({
+        catalogScopeKey,
         provider,
         surface: routing.surface,
         native: routing.native === true,

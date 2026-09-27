@@ -3,6 +3,7 @@
   "displayName": "Figma",
   "icon": "figma.svg",
   "description": "Access Figma designs, files, comments, and collaborate on design projects",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "figma",

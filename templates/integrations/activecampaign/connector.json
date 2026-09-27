@@ -3,6 +3,7 @@
   "displayName": "ActiveCampaign",
   "icon": "activecampaign.svg",
   "description": "Manage contacts, deals, and accounts in ActiveCampaign",
+  "category": "marketing",
   "auth": {
     "type": "api-key",
     "keyName": "ACTIVECAMPAIGN_API_KEY",

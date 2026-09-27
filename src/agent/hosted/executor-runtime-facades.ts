@@ -6,7 +6,14 @@ import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/typ
 import { revokeModelRuntimeResolver } from "../runtime/model-transport.ts";
 import type { ExecutorRuntimeFacades } from "./executor-runtime-prepare.ts";
 import type { ExecutorRuntimeInstall } from "./executor-runtime-install-schema.ts";
-import { createExecutorModelRuntimeResolver } from "./executor-model-bridge.ts";
+import {
+  createExecutorModelRuntimeResolver,
+  loadExecutorModelCatalog,
+} from "./executor-model-bridge.ts";
+import {
+  forgetReceivedVeryfrontCloudCatalog,
+  type VeryfrontCloudCatalogScopeKey,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { createExecutorRemoteToolSources } from "./executor-tool-remote-facade.ts";
 import { createExecutorPersistenceFacades } from "./executor-persistence-bridge.ts";
 import { readExecutorInitialCheckpoints } from "./executor-checkpoint-state.ts";
@@ -29,14 +36,38 @@ export async function createExecutorRuntimeFacades(options: {
     : createPrivateSet<string>();
   const lifetime = new AbortController();
   const signal = AbortSignal.any([options.signal, channel.signal, lifetime.signal]);
+  const allowedModelIds = new Set(input.grant.models.map((model) => model.id));
   const resolveModelRuntime = await createExecutorModelRuntimeResolver({
     channel,
-    allowedModelIds: new Set(input.grant.models.map((model) => model.id)),
+    allowedModelIds,
     signal,
   });
+  let catalogScopeKey: VeryfrontCloudCatalogScopeKey | undefined;
+  const forgetCatalog = () => {
+    if (catalogScopeKey) forgetReceivedVeryfrontCloudCatalog(catalogScopeKey);
+    catalogScopeKey = undefined;
+  };
+  // The broker loads the served catalog with the run's credentials and returns
+  // only the granted models' facts; this executor never holds the credential.
+  async function loadModelCatalog(callSignal: AbortSignal) {
+    signal.throwIfAborted();
+    const key = await loadExecutorModelCatalog({
+      channel,
+      allowedModelIds,
+      signal: AbortSignal.any([signal, callSignal]),
+    });
+    forgetCatalog();
+    if (signal.aborted) {
+      if (key) forgetReceivedVeryfrontCloudCatalog(key);
+      signal.throwIfAborted();
+    }
+    catalogScopeKey = key;
+    return key;
+  }
   function cleanup(): Promise<void> {
     revokeModelRuntimeResolver(resolveModelRuntime);
     lifetime.abort();
+    forgetCatalog();
     return Promise.resolve();
   }
   try {
@@ -126,7 +157,15 @@ export async function createExecutorRuntimeFacades(options: {
       })
       : {};
     signal.throwIfAborted();
-    return { resolveModelRuntime, hostTools, remoteToolSources, ...persistence, ...state, cleanup };
+    return {
+      resolveModelRuntime,
+      loadModelCatalog,
+      hostTools,
+      remoteToolSources,
+      ...persistence,
+      ...state,
+      cleanup,
+    };
   } catch (error) {
     await cleanup();
     throw error;

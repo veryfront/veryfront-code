@@ -86,7 +86,7 @@ async function twilioFetch<T>(
   const credentials = getTwilioCredentials();
   if (!credentials) {
     throw new Error(
-      "Twilio not configured. Please set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER environment variables.",
+      "Twilio not configured. Please set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN environment variables.",
     );
   }
 

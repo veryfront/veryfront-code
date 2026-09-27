@@ -6,6 +6,7 @@ import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/c
 import {
   __resetVeryfrontCloudCatalogForTests,
   __setVeryfrontCloudCatalogForTests,
+  rememberReceivedVeryfrontCloudCatalog,
 } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
@@ -2290,28 +2291,103 @@ Synthetic source instructions.`,
   });
 
   it("calls loadModelCatalog only after every grant check passes", async () => {
-    let catalogLoads = 0;
-    const f = fixture({
-      facades: {
-        loadModelCatalog: () => {
-          catalogLoads++;
-          return Promise.resolve();
+    for (
+      const refused of [
+        { agentId: "coder", modelId: "veryfront-cloud/not-granted/x" } as JsonValue,
+        { agentId: "other-agent" } as JsonValue,
+        { agentId: "coder", maxSteps: grant.maxSteps + 1 } as JsonValue,
+        { agentId: "coder", maxOutputTokens: Number.MAX_SAFE_INTEGER } as JsonValue,
+      ]
+    ) {
+      let catalogLoads = 0;
+      const f = fixture({
+        facades: {
+          loadModelCatalog: () => {
+            catalogLoads++;
+            return Promise.resolve();
+          },
         },
-      },
-    });
-    try {
-      assertEquals(
-        await prepare(
-          f.owner,
-          { agentId: "coder", modelId: "veryfront-cloud/not-granted/x" } as JsonValue,
-        ),
-        { ok: false, code: "EXECUTOR_RUNTIME_NOT_GRANTED" },
-      );
-      assertEquals(catalogLoads, 0);
-    } finally {
-      await f.owner.close();
+      });
+      try {
+        assertEquals(
+          await prepare(f.owner, refused),
+          { ok: false, code: "EXECUTOR_RUNTIME_NOT_GRANTED" },
+        );
+        assertEquals(catalogLoads, 0);
+      } finally {
+        await f.owner.close();
+      }
     }
   });
+
+  for (
+    const served of [
+      {
+        mode: "budget",
+        capabilities: { thinking: true, reasoning_mode: "budget", reasoning_budget_tokens: 1024 },
+        reasoning: { enabled: true, budgetTokens: 1024 },
+        thinking: undefined,
+        maxOutputTokens: 7168,
+      },
+      {
+        mode: "adaptive",
+        capabilities: { thinking: true, reasoning_mode: "adaptive" },
+        reasoning: undefined,
+        thinking: { type: "adaptive", display: "summarized" },
+        maxOutputTokens: 8192,
+      },
+    ]
+  ) {
+    it(`prepares and runs the first run of a fresh executor from served ${served.mode} facts`, async () => {
+      // No catalog is loaded in this process: without the facade the shipped
+      // facts (a 2048 token budget) would apply.
+      __setVeryfrontCloudCatalogForTests(undefined);
+      const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+      let captured: ModelRuntimeCallOptions | undefined;
+      const f = fixture({
+        grant: {
+          ...grant,
+          defaultModelId: selectedModel,
+          models: new Map([[selectedModel, { maxOutputTokens: 8192, providerToolNames: [] }]]),
+        },
+        facades: {
+          loadModelCatalog: () =>
+            Promise.resolve(rememberReceivedVeryfrontCloudCatalog([{
+              id: "claude-sonnet-4-6",
+              modelId: "anthropic/claude-sonnet-4-6",
+              provider: "anthropic",
+              aliases: [],
+              surface: "anthropic",
+              operations: ["messages"],
+              thinking: served.capabilities.thinking,
+              reasoningMode: served.capabilities.reasoning_mode,
+              ...(served.capabilities.reasoning_budget_tokens
+                ? { reasoningBudgetTokens: served.capabilities.reasoning_budget_tokens }
+                : {}),
+            }])),
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream: (options) => {
+              captured = options as ModelRuntimeCallOptions;
+              return finishStream();
+            },
+          }),
+        },
+      });
+      try {
+        await Array.fromAsync(await preparedStream(f));
+        assert(captured);
+        assertEquals(captured.reasoning, served.reasoning);
+        assertEquals(
+          (captured.providerOptions?.anthropic as { thinking?: unknown } | undefined)?.thinking,
+          served.thinking,
+        );
+        assertEquals(captured.maxOutputTokens, served.maxOutputTokens);
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
 
   it("prepares with the shipped facts when loadModelCatalog fails", async () => {
     __setVeryfrontCloudCatalogForTests(undefined);

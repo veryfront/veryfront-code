@@ -3,6 +3,7 @@
   "displayName": "Jira",
   "icon": "jira.svg",
   "description": "Search, create, and manage Jira issues and projects",
+  "category": "development",
   "auth": {
     "type": "oauth2",
     "provider": "atlassian",

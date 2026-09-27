@@ -137,6 +137,20 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(serialized.includes(TEST_CREDENTIAL), false);
   });
 
+  it("keeps fixed body fields such as the Neo4j read access mode out of model-facing schemas", async () => {
+    setEnv(EXPERIMENTAL_INTEGRATIONS_ENV, "neo4j");
+    const source = createLocalIntegrationToolSource({
+      tools: ["neo4j__run_cypher_query"],
+      credentialProvider: (name) => name === "NEO4J_HOST" ? "graph.example.test" : TEST_CREDENTIAL,
+    });
+
+    const [definition] = await source.listTools();
+    const properties =
+      (definition?.parameters as { properties?: Record<string, unknown> }).properties ?? {};
+
+    assertEquals(Object.keys(properties).sort(), ["databaseName", "parameters", "statement"]);
+  });
+
   it("removes credential variable names from model-facing catalog descriptions", async () => {
     const source = createLocalIntegrationToolSource({
       tools: ["openai__get_costs"],

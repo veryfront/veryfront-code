@@ -891,6 +891,8 @@ function toolDefinition(
   const bodyEntries = objectEntries(endpoint.body ?? {});
   for (let index = 0; index < bodyEntries.length; index++) {
     const [name, field] = bodyEntries[index]!;
+    // A fixed field is sent as its catalog default; the caller cannot set it.
+    if (getOwnPropertyDescriptor(field, "fixed")?.value === true) continue;
     if (properties[name]) {
       configurationError(`Local integration tool "${tool.id}" declares duplicate input "${name}"`);
     }

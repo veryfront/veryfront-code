@@ -605,23 +605,72 @@ For credential types, scopes, and recovery that apply to every provider, see
 
 ## Available integrations
 
-The built-in connector catalog contains 204 connectors. The supported set is
-visible by default in the CLI, MCP catalog tools, and runtime connector list:
+The built-in connector catalog contains 204 connectors. Whether you can use one
+depends on three availability states. Each state narrows the one before it.
 
-`airtable`, `asana`, `calendar`, `confluence`, `docs-google`, `drive`, `figma`,
-`github`, `gitlab`, `gmail`, `harvest`, `hubspot`, `jira`, `linear`, `notion`,
-`onedrive`, `outlook`, `sentry`, `sharepoint`, `sheets`, `slack`, and `teams`.
+| State                   | Meaning                                                                                 | Decided by                                        |
+| ----------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| Package-declared        | The package ships the connector template and lists its name.                            | The `veryfront` package version                   |
+| Environment-enabled     | The running process publishes the connector in its catalog, CLI, and MCP catalog tools. | Environment variables of that process             |
+| Operationally qualified | A representative read has executed against the real provider on a recorded release.     | The [qualification record](#qualification-record) |
 
-The rest of the catalog ships as feature-gated integrations: the connector
-templates are in the source tree but stay hidden until you expose them with the
-`VERYFRONT_EXPERIMENTAL_INTEGRATIONS` environment variable. Set it to a
-comma-separated list of connector names such as `salesforce,stripe` (to expose
-Salesforce and Stripe), or to `all` for local experimentation.
+### Package-declared
 
-The supported and feature-gated name lists are defined in
-`src/integrations/feature-flags.ts` (`SUPPORTED_INTEGRATION_NAMES` and
-`DECLARED_INTEGRATION_NAMES`). Use the generated integration metadata reference
-when you need exact exported names or icon metadata:
+Each `veryfront` release declares a fixed set of connector names. A declared
+name is not visible until the environment enables it.
+
+### Environment-enabled
+
+A declared connector is enabled in one of three ways:
+
+- **Default.** The supported set is enabled everywhere:
+  `airtable`, `asana`, `calendar`, `confluence`, `docs-google`, `drive`,
+  `figma`, `github`, `gitlab`, `gmail`, `harvest`, `hubspot`, `jira`, `linear`,
+  `notion`, `onedrive`, `outlook`, `sentry`, `sharepoint`, `sheets`, `slack`,
+  and `teams`.
+- **Experimental.** `VERYFRONT_EXPERIMENTAL_INTEGRATIONS` enables other
+  declared connectors. Set it to a comma-separated list such as `stripe,adyen`,
+  or to `all`.
+- **Host adapter.** `box`, `clickup`, `freshdesk`, `intercom`, `mailchimp`,
+  `monday`, `pipedrive`, `quickbooks`, `salesforce`, `shopify`, `trello`, and
+  `xero` need a provider adapter.
+  The experimental flag never enables them, including `all`. A host that drives
+  one with its own client names it in `VERYFRONT_HOST_ADAPTER_INTEGRATIONS`,
+  which exposes the connector definitions for catalog lookup only. Scaffolding
+  still refuses them, because generated routes run on the generic runtime.
+
+### Hosted and local limits
+
+| Connector or auth family                                    | Hosted Veryfront API                                                                                        | Local or self-hosted Veryfront Code                                                                         |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Default connectors                                          | Published                                                                                                   | Published                                                                                                   |
+| `activecampaign`, `persona`, `sap`, `servicenow`, `zendesk` | Published by default                                                                                        | Experimental: enable with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`                                             |
+| `salesforce`                                                | Published; the API drives it as a host adapter                                                              | Not scaffolded; use [`createSalesforceServiceAccountToolSource`](./integrations/salesforce.md)              |
+| Other host-adapter connectors                               | Not published                                                                                               | Not scaffolded                                                                                              |
+| Other experimental connectors                               | Published only where the deployment enables them with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`                 | Enable with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`                                                           |
+| OAuth authorization code                                    | Per-user or project connection; a managed OAuth app where Veryfront provides one, otherwise your own client | Not supported by the local source; use managed execution                                                    |
+| OAuth client credentials, API key, Basic                    | Project environment variables, resolved at execution                                                        | [Local integration tools](#run-account-free-local-integration-tools) with a host-approved credential source |
+
+### Qualification record
+
+Unit tests exercise the header, Basic, and client-credential wiring against
+fixtures. Fixture coverage shows the request is built correctly; it does not
+qualify a provider. A connector counts as operationally qualified only when a
+representative read has run against the real provider on a recorded release.
+
+| Representative   | Auth family                                | Evidence kind                                                 |
+| ---------------- | ------------------------------------------ | ------------------------------------------------------------- |
+| `gmail`          | OAuth authorization code (managed)         | Real provider read on a hosted release (`gmail__list_emails`) |
+| `activecampaign` | API key                                    | Fixture and published metadata only                           |
+| `twilio`         | Basic                                      | Fixture and published metadata only                           |
+| `personio`       | OAuth client credentials                   | Fixture and published metadata only                           |
+| `salesforce`     | OAuth client credentials (service account) | Fixture and published metadata only                           |
+
+Every other connector is package-declared and, where enabled, environment-enabled,
+but not operationally qualified.
+
+Use the generated integration metadata reference when you need exact exported
+names or icon metadata:
 
 - [`veryfront/integrations`](../api-reference/veryfront/integrations.md)
 
