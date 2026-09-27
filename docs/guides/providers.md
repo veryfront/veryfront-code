@@ -16,7 +16,7 @@ is developed or deployed.
 
 An agent's `model` is a `"provider/model"` string. Omit it to use the default
 `mistral/mistral-small-2503` through Veryfront Cloud. Without Cloud context,
-the default remains `openai/gpt-5.4-nano` with your direct provider key.
+the default remains `openai/gpt-5-nano` with your direct provider key.
 
 ## Prerequisites
 

@@ -8,7 +8,10 @@ import {
 import { VeryfrontError } from "#veryfront/errors";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  resolveVeryfrontCloudModelId,
+  VERYFRONT_CLOUD_CHAT_MODELS,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   AUTO_AGENT_MODEL,
   DEFAULT_AGENT_MODEL,
@@ -67,7 +70,54 @@ describe("agent/runtime/model-resolution", () => {
   it("keeps self-hosted auto provider precedence when OpenAI and Mistral keys exist", () => {
     setEnv("OPENAI_API_KEY", "sk-test");
     setEnv("MISTRAL_API_KEY", "mistral-test");
-    assertEquals(resolveRuntimeModel("auto"), "openai/gpt-5.4-nano");
+    assertEquals(resolveRuntimeModel("auto"), "openai/gpt-5-nano");
+  });
+
+  it("falls back to the direct Mistral default for auto resolution when only a Mistral key exists", () => {
+    // Regression (#1898, CodeRabbit on #4609): the BYOK auto default must be a
+    // model Mistral's own API still serves, never a gateway-retirement
+    // decision. mistral-large-2512 (Mistral Large 3) is Mistral's current
+    // flagship; mistral-small-2503 looks like a live gateway model (our
+    // catalog still serves it) but Mistral itself deprecated it 2025-11-06
+    // and retired it 2025-11-30, so it 404s on a direct call.
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+    assertEquals(resolveRuntimeModel("auto"), "mistral/mistral-large-2512");
+  });
+
+  it("resolves the direct Mistral BYOK default without hitting the gateway's retired-model guard", () => {
+    // mistral-large-2512 is on #4611's gateway retirement list
+    // (isRetiredVeryfrontCloudModelId), because our own gateway no longer
+    // serves it -- Mistral's own API still does. The direct/BYOK path in
+    // resolveRuntimeModel must never consult that guard, so this must
+    // resolve cleanly rather than throw NOT_SUPPORTED.
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+    let result: string | undefined;
+    try {
+      result = resolveRuntimeModel("auto");
+    } catch (error) {
+      throw new Error(
+        `expected the direct Mistral BYOK default to resolve without throwing, got: ${error}`,
+      );
+    }
+    assertEquals(result, "mistral/mistral-large-2512");
+  });
+
+  it("resolves the direct OpenAI BYOK default without hitting the gateway's retired-model guard", () => {
+    // Same shape as the Mistral case above, for the OpenAI BYOK default.
+    // gpt-5-nano is not on the gateway retirement list, and OpenAI's own API
+    // still serves it (https://developers.openai.com/api/docs/models/gpt-5-nano,
+    // default snapshot gpt-5-nano-2025-08-07), so this is a same-behavior
+    // check rather than a regression for a currently-broken path.
+    setEnv("OPENAI_API_KEY", "sk-test");
+    let result: string | undefined;
+    try {
+      result = resolveRuntimeModel("auto");
+    } catch (error) {
+      throw new Error(
+        `expected the direct OpenAI BYOK default to resolve without throwing, got: ${error}`,
+      );
+    }
+    assertEquals(result, "openai/gpt-5-nano");
   });
 
   it("reports a default-model mismatch when only another provider has a key", () => {
@@ -93,6 +143,26 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(resolveRuntimeModel(), DEFAULT_AGENT_MODEL);
   });
 
+  it("resolves the default agent model through Veryfront Cloud with no vendor key, without hitting NOT_SUPPORTED", () => {
+    // Regression: on main, DEFAULT_AGENT_MODEL was still the gateway-retired
+    // openai/gpt-5.4-nano while #4611's isRetiredVeryfrontCloudModelId guard
+    // rejects gateway-retired ids. A hosted agent with no explicit model and
+    // no direct vendor key falls through resolveConfiguredAgentModel() to
+    // DEFAULT_AGENT_MODEL (see src/internal-agents/run-stream.ts), and that
+    // value then reaches Veryfront Cloud's own resolver
+    // (resolveVeryfrontCloudModelId) as an explicit "provider/model" string --
+    // which used to throw NOT_SUPPORTED for every such run. It must not.
+    let resolved: string | undefined;
+    try {
+      resolved = resolveVeryfrontCloudModelId(DEFAULT_AGENT_MODEL);
+    } catch (error) {
+      throw new Error(
+        `expected the default agent model to resolve through Veryfront Cloud without throwing, got: ${error}`,
+      );
+    }
+    assertEquals(resolved, DEFAULT_AGENT_MODEL);
+  });
+
   it("does not report a mismatch for an explicitly configured model", () => {
     setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
 
@@ -114,7 +184,7 @@ describe("agent/runtime/model-resolution", () => {
   it("resolves omitted and auto model config separately", () => {
     assertEquals(
       resolveConfiguredAgentModel(),
-      "openai/gpt-5.4-nano",
+      "openai/gpt-5-nano",
     );
     assertEquals(
       resolveConfiguredAgentModel("auto"),
@@ -279,7 +349,7 @@ describe("agent/runtime/model-resolution", () => {
 
     assertEquals(
       resolveRuntimeModel(),
-      "openai/gpt-5.4-nano",
+      "openai/gpt-5-nano",
     );
   });
 
