@@ -12,6 +12,7 @@ import {
   addSpanEvent,
   createChildSpan,
   endSpan,
+  getActiveContext,
   setSpanAttributes,
   startSpan,
   withActiveSpan,
@@ -50,6 +51,9 @@ describe("project trace SDK provider", () => {
       }),
     });
     try {
+      const emptyContext = runWithProjectTraceProvider(session, () => getActiveContext());
+      assertExists(emptyContext);
+      assertEquals(startSpan("unowned.root", { parent: emptyContext }), null);
       for (const useRawTracer of [false, true]) {
         const parent = runWithProjectTraceProvider(
           session,
@@ -83,13 +87,42 @@ describe("project trace SDK provider", () => {
             assertExists(span);
           });
         });
+        const savedContext = await withActiveSpan(parent, async () => getActiveContext());
+        assertExists(savedContext);
+        const key = Symbol("application.context");
+        for (
+          const context of [
+            savedContext,
+            savedContext.setValue(key, true).deleteValue(key),
+            trace.setSpan(emptyContext, parent),
+          ]
+        ) {
+          assertEquals(trace.getSpan(context)?.spanContext().spanId, parent.spanContext().spanId);
+          const cached = trace.getTracer("detached");
+          cached.startSpan("detached.tracer-context", {}, context).end();
+          await cached.startActiveSpan("detached.tracer-active", {}, context, async (span) => {
+            assertEquals(getTraceContext().spanId, span.spanContext().spanId);
+            span.end();
+          });
+          const contextChild = startSpan("detached.context", { parent: context });
+          assertExists(contextChild);
+          endSpan(contextChild);
+          await withSpan("detached.context-async", async (span) => {
+            assertExists(span);
+            assertEquals(getTraceContext().spanId, span.spanContext().spanId);
+          }, { parent: context });
+          withSpanSync("detached.context-sync", (span) => {
+            assertExists(span);
+            assertEquals(getTraceContext().spanId, span.spanContext().spanId);
+          }, { parent: context });
+        }
         endSpan(parent);
       }
       await session.forceFlush();
       const spans = received.flatMap((p) =>
         p.resourceSpans.flatMap((r) => r.scopeSpans.flatMap((s) => s.spans))
       );
-      assertEquals(spans.length, 12);
+      assertEquals(spans.length, 42);
       for (const parent of spans.filter((span) => span.name === "retained.parent")) {
         assertEquals(
           parent.attributes.find((a) => a.key === "application.detached")?.value.stringValue,

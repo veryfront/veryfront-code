@@ -13,7 +13,11 @@ import {
 } from "./api-shim.ts";
 import { tracingManager } from "./manager.ts";
 import { getProjectTraceHelpers } from "./project-trace-helpers.ts";
-import { getSpanProjectProvider, runWithProjectTraceProvider } from "./project-trace-scope.ts";
+import {
+  getContextProjectProvider,
+  getSpanProjectProvider,
+  runWithProjectTraceProvider,
+} from "./project-trace-scope.ts";
 import type { SpanOperations } from "./span-operations.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 
@@ -89,7 +93,9 @@ function restoreSpanOptions(options: SpanOptions): SpanOptions {
 
 function withParentProvider<T>(options: SpanOptions, operation: () => T): T {
   const parent = restoreSpanOptions(options).parent;
-  const owner = parent ? getSpanProjectProvider(parent) : undefined;
+  const owner = parent
+    ? getSpanProjectProvider(parent) ?? getContextProjectProvider(parent)
+    : undefined;
   return owner ? runWithProjectTraceProvider(owner, operation) : operation();
 }
 
