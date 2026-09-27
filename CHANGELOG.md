@@ -6,6 +6,17 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: API handlers that cannot be parsed are rejected
+
+Veryfront validates every API handler module with its parser
+(`@veryfront/ext-parser-babel`, a dependency of the `veryfront` package). A
+module that parses under neither the TypeScript nor the TSX grammar is now
+rejected with "Veryfront could not parse this module as TypeScript or
+JavaScript", and a missing parser extension is reported as a broken install.
+Previously such a module was validated by a textual scan of its source, which
+could accept a handler that later failed to build or run. Handlers written in
+the syntax the parser supports are unaffected.
+
 ### Fixed: streamed Gemini tool continuations retain thought signatures
 
 Google tool turns now wait for the provider's final stream metadata under the
