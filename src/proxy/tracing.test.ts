@@ -10,6 +10,8 @@ import {
   type Meter,
   type MetricsAPI,
   type Span,
+  type TextMapGetter,
+  type TextMapSetter,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
@@ -225,8 +227,11 @@ describe("proxy otlp initialization", () => {
     const { exporter } = createFakeExporter({
       getPropagator: () => ({
         extract: (ctx, carrier, getter) =>
-          getter?.get(carrier, "traceparent") === traceparent ? callerContext : ctx,
-        inject: (_ctx, carrier, setter) => setter?.set(carrier, "traceparent", traceparent),
+          (getter as TextMapGetter<unknown>).get(carrier, "traceparent") === traceparent
+            ? callerContext
+            : ctx,
+        inject: (_ctx, carrier, setter) =>
+          (setter as TextMapSetter<unknown>).set(carrier, "traceparent", traceparent),
         fields: () => ["traceparent"],
       }),
     });
