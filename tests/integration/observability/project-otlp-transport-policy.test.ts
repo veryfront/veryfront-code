@@ -15,6 +15,36 @@ const suppression = new AsyncLocalStorage<boolean>();
 const withSuppressedTracing = <T>(operation: () => Promise<T>) => suppression.run(true, operation);
 
 describe("project OTLP transport", () => {
+  it("copies payloads without calling a tenant-replaced byte-array constructor", async () => {
+    await withMockFetch(() => Promise.resolve(Response.json({})), async () => {
+      const transport = createProjectOtlpTransport({
+        endpoint,
+        headers: {},
+        withSuppressedTracing,
+      });
+      const NativeUint8Array = globalThis.Uint8Array;
+      let exposed = false;
+      let pending: ReturnType<typeof transport.send>;
+      try {
+        globalThis.Uint8Array = new Proxy(NativeUint8Array, {
+          construct(target, args) {
+            if (args[0] === bytes) exposed = true;
+            return Reflect.construct(target, args);
+          },
+        });
+        pending = transport.send(bytes, 1000);
+      } finally {
+        globalThis.Uint8Array = NativeUint8Array;
+      }
+      try {
+        assertEquals(await pending, { status: "success" });
+        assertEquals(exposed, false);
+      } finally {
+        transport.shutdown();
+      }
+    });
+  });
+
   it("owns the JSON content type even when supplied headers use different casing", async () => {
     await withMockFetch((input, init) => {
       const request = new Request(input, init);

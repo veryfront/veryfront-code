@@ -24,6 +24,7 @@ interface ProjectOtlpTransportOptions {
 }
 
 const NativeAbortController = AbortController;
+const NativeUint8Array = Uint8Array;
 const freeze = Object.freeze;
 const entries = Object.entries;
 const apply = Reflect.apply;
@@ -64,7 +65,7 @@ export function createProjectOtlpTransport(
         !Number.isFinite(timeoutMillis) || timeoutMillis <= 0
       ) return Promise.resolve(failed());
 
-      const body = new Uint8Array(data);
+      const body = new NativeUint8Array(data);
       const controller = new NativeAbortController();
       return new Promise((resolve) => {
         let settled = false;
