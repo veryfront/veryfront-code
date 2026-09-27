@@ -984,6 +984,23 @@ describe("provider/veryfront-cloud", () => {
     );
   });
 
+  it("rejects pre-prefixed veryfront-cloud models the gateway has retired", () => {
+    setCloudBootstrap();
+
+    for (
+      const modelId of [
+        "veryfront-cloud/openai/gpt-5.4-nano",
+        "veryfront-cloud/google-ai-studio/gemini-3.1-pro-preview",
+      ]
+    ) {
+      assertThrows(
+        () => resolveModel(modelId),
+        Error,
+        "is no longer available through Veryfront Cloud",
+      );
+    }
+  });
+
   it("resolves veryfront-cloud anthropic models without project ext-llm-anthropic installed", () => {
     setCloudBootstrap();
 

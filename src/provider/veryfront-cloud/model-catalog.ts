@@ -365,6 +365,32 @@ function isMistralModelId(modelId: string): boolean {
   return canonicalVeryfrontCloudModelKey(modelId).startsWith("mistral/");
 }
 
+/**
+ * Model ids the gateway no longer serves. Removing them from the catalog is not
+ * enough: explicit provider ids pass through unlisted, so the gateway boundary
+ * rejects these by name. They stay usable with the vendor's own key.
+ */
+const RETIRED_VERYFRONT_CLOUD_MODEL_KEYS: ReadonlySet<string> = new Set(
+  [
+    "openai/gpt-5.4-nano",
+    "google-ai-studio/gemini-3.1-pro-preview",
+    "mistral/mistral-large-2512",
+  ].map(canonicalVeryfrontCloudModelKey),
+);
+
+/** Whether the gateway has retired this model id, under any accepted spelling. */
+export function isRetiredVeryfrontCloudModelId(modelId: string): boolean {
+  return RETIRED_VERYFRONT_CLOUD_MODEL_KEYS.has(canonicalVeryfrontCloudModelKey(modelId));
+}
+
+/** Error for a retired model that would otherwise be sent to the gateway. */
+export function createRetiredVeryfrontCloudModelError(modelId: string): Error {
+  return NOT_SUPPORTED.create({
+    detail: `Model "${modelId}" is no longer available through Veryfront Cloud. ` +
+      `Choose another model, or configure the provider's own API key to call it directly.`,
+  });
+}
+
 export function isSupportedMistralModelId(modelId: string): boolean {
   const key = canonicalVeryfrontCloudModelKey(modelId);
   return VERYFRONT_CLOUD_CHAT_MODELS.some(
@@ -485,6 +511,9 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
       throw NOT_SUPPORTED.create({
         detail: `Unsupported Mistral model "${requestedModel}"`,
       });
+    }
+    if (isRetiredVeryfrontCloudModelId(requestedModel)) {
+      throw createRetiredVeryfrontCloudModelError(requestedModel);
     }
     return requestedModel;
   }

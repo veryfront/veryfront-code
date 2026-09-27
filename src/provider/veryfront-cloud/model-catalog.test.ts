@@ -11,6 +11,7 @@ import {
   findVeryfrontCloudModelByModelId,
   getVeryfrontCloudProviderFromModelId,
   groupVeryfrontCloudModelsByProvider,
+  isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
   resolveHostedVeryfrontCloudModelId,
   resolveVeryfrontCloudGatewayModelId,
@@ -57,6 +58,16 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       Error,
       'Unsupported Mistral model "mistral/mistral-large-2512"',
     );
+    for (const modelId of ["openai/gpt-5.4-nano", "google/gemini-3.1-pro-preview"]) {
+      assertEquals(isRetiredVeryfrontCloudModelId(modelId), true);
+      assertEquals(isRetiredVeryfrontCloudModelId(`veryfront-cloud/${modelId}`), true);
+      assertThrows(
+        () => resolveVeryfrontCloudModelId(modelId),
+        Error,
+        "is no longer available through Veryfront Cloud",
+      );
+    }
+    assertEquals(isRetiredVeryfrontCloudModelId("openai/gpt-5-nano"), false);
   });
 
   it("preserves system layers only for the verified Mistral transport", () => {

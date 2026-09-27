@@ -1151,7 +1151,7 @@ Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes 
       projectId: "project-1",
       authToken: "token-1",
       instructions: "Base instructions",
-      model: "openai/gpt-5.4-nano",
+      model: "openai/gpt-5-nano",
       allowedTools: ["bash"],
     },
     config: {
@@ -1188,7 +1188,7 @@ Deno.test("createDefaultHostedChatRuntime cleans up after partial per-run tool s
           projectId: "project-1",
           authToken: "token-1",
           instructions: "Base instructions",
-          model: "openai/gpt-5.4-nano",
+          model: "openai/gpt-5-nano",
           allowedTools: ["bash"],
         },
         config: {
@@ -1222,7 +1222,7 @@ Deno.test("createDefaultHostedChatRuntime preserves setup errors when cleanup al
           projectId: "project-1",
           authToken: "token-1",
           instructions: "Base instructions",
-          model: "openai/gpt-5.4-nano",
+          model: "openai/gpt-5-nano",
           allowedTools: ["bash"],
         },
         config: {

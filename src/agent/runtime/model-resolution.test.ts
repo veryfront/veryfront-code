@@ -203,19 +203,19 @@ describe("agent/runtime/model-resolution", () => {
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
 
     for (
-      const [model, provider] of [
-        ["gpt-5.4-nano", "openai"],
-        ["openai/gpt-5.4-nano", "openai"],
-        ["veryfront-cloud/openai/gpt-5.4-nano", "openai"],
-        ["gemini-3.1-pro", "google"],
-        ["google/gemini-3.1-pro-preview", "google"],
-        ["veryfront-cloud/google-ai-studio/gemini-3.1-pro-preview", "google"],
+      const model of [
+        "gpt-5.4-nano",
+        "openai/gpt-5.4-nano",
+        "veryfront-cloud/openai/gpt-5.4-nano",
+        "gemini-3.1-pro",
+        "google/gemini-3.1-pro-preview",
+        "veryfront-cloud/google-ai-studio/gemini-3.1-pro-preview",
       ]
     ) {
       assertThrows(
         () => resolveRuntimeModel(model),
         Error,
-        `no longer available through Veryfront Cloud. Choose another model, or configure a ${provider} API key`,
+        "is no longer available through Veryfront Cloud",
       );
     }
     assertThrows(

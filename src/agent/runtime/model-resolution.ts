@@ -5,8 +5,9 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import {
-  canonicalVeryfrontCloudModelKey,
+  createRetiredVeryfrontCloudModelError,
   findVeryfrontCloudModelByModelId,
+  isRetiredVeryfrontCloudModelId,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
@@ -43,15 +44,6 @@ const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> =
   { provider: "google-ai-studio", modelId: "gemini-3.5-flash" },
   { provider: "mistral", modelId: "mistral-large-2512" },
 ];
-// The gateway no longer serves these. They stay reachable with the user's own
-// vendor key, but must never be routed through Veryfront Cloud.
-const RETIRED_VERYFRONT_CLOUD_MODEL_KEYS = new Set(
-  [
-    "openai/gpt-5.4-nano",
-    "google-ai-studio/gemini-3.1-pro-preview",
-    "mistral/mistral-large-2512",
-  ].map(canonicalVeryfrontCloudModelKey),
-);
 const LEGACY_MODEL_ALIASES = new Map<string, string>([
   ["opus", "anthropic/claude-opus-4-8"],
   ["sonnet", "anthropic/claude-sonnet-4-6"],
@@ -154,32 +146,14 @@ function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
     !findVeryfrontCloudModelByModelId(modelId);
 }
 
-function isRetiredVeryfrontCloudModel(modelId: string): boolean {
-  return RETIRED_VERYFRONT_CLOUD_MODEL_KEYS.has(canonicalVeryfrontCloudModelKey(modelId));
-}
-
-function retiredVeryfrontCloudModelError(modelId: string, provider: string) {
-  return NOT_SUPPORTED.create({
-    detail: `Model "${modelId}" is no longer available through Veryfront Cloud. ` +
-      `Choose another model, or configure a ${provider} API key to call it directly.`,
-  });
-}
-
 function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {
   if (isUnsupportedVeryfrontCloudMistralModel(modelId)) {
     throw NOT_SUPPORTED.create({ detail: `Unsupported Mistral model "${modelId}"` });
   }
-  if (isRetiredVeryfrontCloudModel(modelId)) {
-    const provider = normalizeVeryfrontCloudModelProvider(modelId);
-    throw retiredVeryfrontCloudModelError(modelId, provider);
+  if (isRetiredVeryfrontCloudModelId(modelId)) {
+    throw createRetiredVeryfrontCloudModelError(modelId);
   }
   return modelId;
-}
-
-function normalizeVeryfrontCloudModelProvider(modelId: string): string {
-  const unprefixed = modelId.slice("veryfront-cloud/".length);
-  const provider = unprefixed.slice(0, unprefixed.indexOf("/"));
-  return DIRECT_CREDENTIAL_PROVIDER_ALIASES.get(provider) ?? provider;
 }
 
 function toDirectRuntimeModel(provider: string, modelId: string): string {
@@ -296,11 +270,8 @@ export function resolveRuntimeModel(model?: string): string {
     return toDirectRuntimeModel(provider, modelId);
   }
 
-  if (isRetiredVeryfrontCloudModel(configuredModel)) {
-    throw retiredVeryfrontCloudModelError(
-      configuredModel,
-      DIRECT_CREDENTIAL_PROVIDER_ALIASES.get(provider) ?? provider,
-    );
+  if (isRetiredVeryfrontCloudModelId(configuredModel)) {
+    throw createRetiredVeryfrontCloudModelError(configuredModel);
   }
 
   return `veryfront-cloud/${provider}/${modelId}`;
