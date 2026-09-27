@@ -15,6 +15,42 @@ const suppression = new AsyncLocalStorage<boolean>();
 const withSuppressedTracing = <T>(operation: () => Promise<T>) => suppression.run(true, operation);
 
 describe("project OTLP transport", () => {
+  it("checks payload size without invoking replaced byte-length getters", async () => {
+    await withMockFetch(() => Promise.resolve(Response.json({})), async () => {
+      const transport = createProjectOtlpTransport({
+        endpoint,
+        headers: {},
+        withSuppressedTracing,
+      });
+      const oversized = new Uint8Array(PROJECT_OTLP_MAX_REQUEST_BYTES + 1);
+      const original = Object.getOwnPropertyDescriptor(Uint8Array.prototype, "byteLength");
+      let exposed = false;
+      let normal: ReturnType<typeof transport.send>;
+      let large: ReturnType<typeof transport.send>;
+      try {
+        Object.defineProperty(Uint8Array.prototype, "byteLength", {
+          configurable: true,
+          get() {
+            if (this === bytes || this === oversized) exposed = true;
+            return 0;
+          },
+        });
+        normal = transport.send(bytes, 1000);
+        large = transport.send(oversized, 1000);
+      } finally {
+        if (original) Object.defineProperty(Uint8Array.prototype, "byteLength", original);
+        else Reflect.deleteProperty(Uint8Array.prototype, "byteLength");
+      }
+      try {
+        assertEquals((await normal).status, "success");
+        assertEquals((await large).status, "failure");
+        assertEquals(exposed, false);
+      } finally {
+        transport.shutdown();
+      }
+    });
+  });
+
   it("copies payloads without calling a tenant-replaced byte-array constructor", async () => {
     await withMockFetch(() => Promise.resolve(Response.json({})), async () => {
       const transport = createProjectOtlpTransport({
