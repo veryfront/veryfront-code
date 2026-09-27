@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("managed project trace export", () => {
-  for (const mode of ["shared", "dedicated"]) {
+  for (const mode of ["shared", "dedicated", "shared-auth", "dedicated-auth"]) {
     it(`exports isolated HTTP/custom traces through the ${mode} settings path`, async () => {
       const output = await new Deno.Command(Deno.execPath(), {
         args: [

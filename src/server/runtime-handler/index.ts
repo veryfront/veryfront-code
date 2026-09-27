@@ -830,123 +830,126 @@ export function createVeryfrontHandler(
             requestMetricsIncremented = true;
           }
 
-          // This parser-only inspection intentionally precedes application
-          // auth: it never evaluates project code and keeps framework-owned
-          // automatic preflight public without widening authored-route access.
-          const isFrameworkOwnedPreflight = await apiHandler.prepareFrameworkOwnedPreflight(
+          return runProjectHttpTracing(
+            runtimeContext.projectTraceConfig,
+            { projectId: ctx.projectId, environmentId: ctx.environmentId },
             request,
-            ctx,
-          );
-          isFrameworkOwnedPreflightForRetry = isFrameworkOwnedPreflight;
-          const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
-          const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
-          let skipProjectMiddleware = false;
-          if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
-            const authResult = await runInFilesystemContext(
-              () =>
-                runWithRetainedPreviewDocumentSourceSnapshot(
-                  ctx,
-                  async () => {
-                    const result = await runInRequestProjectEnv(() =>
-                      handleApplicationAuthRequest(request, ctx)
-                    );
-                    if (result?.response) {
-                      const terminalResponse = result.response;
-                      const response = await runInRequestProjectEnv(() =>
-                        applyCORSHeaders({
-                          request,
-                          response: terminalResponse,
-                          config: ctx.securityConfig?.cors,
-                        })
-                      );
-                      return response ?? terminalResponse;
-                    }
-                    return result;
-                  },
-                  {
-                    retainAfterOperation: (result) => !(result instanceof Response),
-                    runDeferredOperation: runInFilesystemContext,
-                  },
-                ),
-            );
-            const authOutcome = applyApplicationAuthResult(
-              authResult,
-              ctx,
-              isOptionsRequest,
-              isBrowserPreflight,
-            );
-            if (authOutcome.response) return authOutcome.response;
-            skipProjectMiddleware = authOutcome.skipProjectMiddleware;
-          }
-
-          const optionsAdmission = isFrameworkOwnedPreflight
-            ? "not-applicable"
-            : await prepareOptionsBeforeProjectMiddleware({
-              request,
-              ctx,
-              sourceIntegrationPolicy,
-              runInFilesystemContext,
-              runInRequestProjectEnv,
-            });
-
-          const executeRegistry = async () => (await registry.execute(request, ctx)) ?? undefined;
-          const executeRegistryWithRetainedSnapshot = () =>
-            runInFilesystemContext(() =>
-              runWithRetainedPreviewDocumentSourceSnapshot(
+            async () => {
+              // This parser-only inspection intentionally precedes application
+              // auth: it never evaluates project code and keeps framework-owned
+              // automatic preflight public without widening authored-route access.
+              const isFrameworkOwnedPreflight = await apiHandler.prepareFrameworkOwnedPreflight(
+                request,
                 ctx,
-                executeRegistry,
-                { runDeferredOperation: runInFilesystemContext },
-              )
-            );
-          const executeProjectRoute = () => {
-            if (optionsAdmission === "bypass-middleware") return executeRegistry();
-            if (optionsAdmission === "bypass-middleware-retained") {
-              return executeRegistryWithRetainedSnapshot();
-            }
-            return projectMiddlewareRuntime.execute({
-              request,
-              handlerContext: ctx,
-              isSharedProxy: isProxyMode,
-              isFrameworkOwnedPreflight,
-              skipProjectMiddleware,
-              next: executeRegistry,
-              onMiddlewareStart: markProjectMiddlewareStarted,
-            });
-          };
-          const executeRoute = () =>
-            runWithExactSourceIntegrationPolicy(
-              sourceIntegrationPolicy,
-              executeProjectRoute,
-            );
-          const response = await withSpan(
-            SpanNames.HANDLER_EXECUTE,
-            () =>
-              profilePhase("handler.execute", () => {
-                return runProjectHttpTracing(
-                  runtimeContext.projectTraceConfig,
-                  { projectId: ctx.projectId, environmentId: ctx.environmentId },
-                  request,
-                  () => runInRequestProjectEnv(executeRoute),
+              );
+              isFrameworkOwnedPreflightForRetry = isFrameworkOwnedPreflight;
+              const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
+              const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
+              let skipProjectMiddleware = false;
+              if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
+                const authResult = await runInFilesystemContext(
+                  () =>
+                    runWithRetainedPreviewDocumentSourceSnapshot(
+                      ctx,
+                      async () => {
+                        const result = await runInRequestProjectEnv(() =>
+                          handleApplicationAuthRequest(request, ctx)
+                        );
+                        if (result?.response) {
+                          const terminalResponse = result.response;
+                          const response = await runInRequestProjectEnv(() =>
+                            applyCORSHeaders({
+                              request,
+                              response: terminalResponse,
+                              config: ctx.securityConfig?.cors,
+                            })
+                          );
+                          return response ?? terminalResponse;
+                        }
+                        return result;
+                      },
+                      {
+                        retainAfterOperation: (result) => !(result instanceof Response),
+                        runDeferredOperation: runInFilesystemContext,
+                      },
+                    ),
                 );
-              }),
-            {
-              "handler.project_slug": projectRes.projectSlug || "unknown",
-              "handler.path": url.pathname,
-              "handler.method": request.method,
+                const authOutcome = applyApplicationAuthResult(
+                  authResult,
+                  ctx,
+                  isOptionsRequest,
+                  isBrowserPreflight,
+                );
+                if (authOutcome.response) return authOutcome.response;
+                skipProjectMiddleware = authOutcome.skipProjectMiddleware;
+              }
+
+              const optionsAdmission = isFrameworkOwnedPreflight
+                ? "not-applicable"
+                : await prepareOptionsBeforeProjectMiddleware({
+                  request,
+                  ctx,
+                  sourceIntegrationPolicy,
+                  runInFilesystemContext,
+                  runInRequestProjectEnv,
+                });
+
+              const executeRegistry = async () =>
+                (await registry.execute(request, ctx)) ?? undefined;
+              const executeRegistryWithRetainedSnapshot = () =>
+                runInFilesystemContext(() =>
+                  runWithRetainedPreviewDocumentSourceSnapshot(
+                    ctx,
+                    executeRegistry,
+                    { runDeferredOperation: runInFilesystemContext },
+                  )
+                );
+              const executeProjectRoute = () => {
+                if (optionsAdmission === "bypass-middleware") return executeRegistry();
+                if (optionsAdmission === "bypass-middleware-retained") {
+                  return executeRegistryWithRetainedSnapshot();
+                }
+                return projectMiddlewareRuntime.execute({
+                  request,
+                  handlerContext: ctx,
+                  isSharedProxy: isProxyMode,
+                  isFrameworkOwnedPreflight,
+                  skipProjectMiddleware,
+                  next: executeRegistry,
+                  onMiddlewareStart: markProjectMiddlewareStarted,
+                });
+              };
+              const executeRoute = () =>
+                runWithExactSourceIntegrationPolicy(
+                  sourceIntegrationPolicy,
+                  executeProjectRoute,
+                );
+              const response = await withSpan(
+                SpanNames.HANDLER_EXECUTE,
+                () =>
+                  profilePhase("handler.execute", () => {
+                    return runInRequestProjectEnv(executeRoute);
+                  }),
+                {
+                  "handler.project_slug": projectRes.projectSlug || "unknown",
+                  "handler.path": url.pathname,
+                  "handler.method": request.method,
+                },
+              );
+
+              if (response) return response;
+
+              logDebug("[runtime-handler] No handler produced response (unexpected)", {
+                path: url.pathname,
+              });
+              // RFC 9457 error response for no handler case (env-aware filtering)
+              const noHandlerError = UNKNOWN_ERROR.create({
+                detail: "No handler available to process this request",
+                instance: url.pathname,
+              });
+              return errorToRFC9457Response(noHandlerError, ctx, request);
             },
           );
-
-          if (response) return response;
-
-          logDebug("[runtime-handler] No handler produced response (unexpected)", {
-            path: url.pathname,
-          });
-          // RFC 9457 error response for no handler case (env-aware filtering)
-          const noHandlerError = UNKNOWN_ERROR.create({
-            detail: "No handler available to process this request",
-            instance: url.pathname,
-          });
-          return errorToRFC9457Response(noHandlerError, ctx, request);
         };
 
         const executeHandler = async (request: Request): Promise<Response> => {
