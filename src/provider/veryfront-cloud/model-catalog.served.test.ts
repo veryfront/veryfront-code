@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
@@ -12,9 +12,11 @@ import {
   seedServedCatalogForTests,
   SERVED_MODEL_ROWS,
   servedCatalogPayload,
+  UNSERVED_TABLE_MODEL_ROWS,
 } from "./catalog-client.test-helpers.ts";
 import {
   DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
+  isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
   resolveVeryfrontCloudDefaultModelId,
   resolveVeryfrontCloudModelId,
@@ -286,6 +288,55 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
 
       assertEquals(isSupportedMistralModelId("mistral/mistral-small-2503"), true);
       assertEquals(isSupportedMistralModelId("mistral/not-served"), false);
+    });
+  });
+
+  describe("retired models", () => {
+    const retired = [
+      "openai/gpt-5.4-nano",
+      "mistral/mistral-large-2512",
+      "google-ai-studio/gemini-3.1-pro-preview",
+      "google/gemini-3.1-pro-preview",
+    ];
+
+    it("refuses a retired model through Veryfront Cloud before the catalog loads", () => {
+      for (const modelId of retired) {
+        assertEquals(isRetiredVeryfrontCloudModelId(modelId), true, modelId);
+        assertEquals(isRetiredVeryfrontCloudModelId(`veryfront-cloud/${modelId}`), true, modelId);
+        // Mistral ids the list does not carry keep the Mistral refusal first.
+        assertThrows(() => resolveVeryfrontCloudModelId(modelId), Error);
+      }
+      assertThrows(
+        () => resolveVeryfrontCloudModelId("openai/gpt-5.4-nano"),
+        Error,
+        "no longer available",
+      );
+    });
+
+    it("refuses a retired model even when a loaded catalog still lists it", () => {
+      __setVeryfrontCloudCatalogForTests(payload([
+        row("openai/gpt-5.4-nano", { surface: "openai", operations: ["chat-completions"] }),
+      ]));
+
+      assertThrows(
+        () => resolveVeryfrontCloudModelId("openai/gpt-5.4-nano"),
+        Error,
+        "no longer available",
+      );
+    });
+
+    it("keeps retired models out of the shipped fallback and the parity fixtures", () => {
+      const fixtureIds: string[] = [...SERVED_MODEL_ROWS, ...UNSERVED_TABLE_MODEL_ROWS].map((
+        model,
+      ) => model.modelId);
+      for (const modelId of retired) {
+        assertEquals(fixtureIds.includes(modelId), false, modelId);
+      }
+      assertThrows(
+        () => resolveVeryfrontCloudModelId("gpt-5.4-nano"),
+        Error,
+        "Unknown model alias",
+      );
     });
   });
 

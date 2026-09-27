@@ -304,6 +304,41 @@ function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<st
   return names;
 }
 
+/**
+ * Counts failed tool calls, and those that ran a child agent, and keeps the
+ * first stable RunError code from a run's AG-UI events.
+ */
+function createRunOutcomeTracker(childRunToolNames: ReadonlySet<string>) {
+  const childRunToolCallIds = new Set<string>();
+  let terminalErrorCode: string | undefined;
+  let toolErrorCount = 0;
+  let childRunErrorCount = 0;
+  return {
+    observe(event: string, payload: Record<string, unknown>): void {
+      const { toolCallId } = payload;
+      if (
+        event === "ToolCallStart" && typeof toolCallId === "string" &&
+        typeof payload.toolCallName === "string" && childRunToolNames.has(payload.toolCallName)
+      ) {
+        childRunToolCallIds.add(toolCallId);
+      } else if (event === "ToolCallResult" && payload.isError === true) {
+        toolErrorCount++;
+        if (typeof toolCallId === "string" && childRunToolCallIds.has(toolCallId)) {
+          childRunErrorCount++;
+        }
+      } else if (event === "RunError") {
+        terminalErrorCode ??= toStableRunErrorCode(payload.code);
+      }
+    },
+    terminalErrorCode: () => terminalErrorCode,
+    spanAttributes: () => ({
+      "agent.run.tool_error_count": toolErrorCount,
+      "agent.run.child_run_error_count": childRunErrorCount,
+    }),
+    logFields: () => ({ toolErrorCount, childRunErrorCount }),
+  };
+}
+
 function isExplicitlyDeniedToolName(
   agent: Agent,
   deniedToolNames: ReadonlySet<string>,
@@ -1401,31 +1436,7 @@ export async function createRuntimeAgentStreamResponse(
             "Internal agent runtime stream stopped before EOF",
           );
           let readerCancellation: Promise<void> | undefined;
-          let terminalRunErrorCode: string | undefined;
-          let toolErrorCount = 0;
-          let childRunErrorCount = 0;
-          const childRunToolCallIds = new Set<string>();
-          const observeRunOutcomeEvent = (event: string, payload: Record<string, unknown>) => {
-            if (
-              event === "ToolCallStart" && typeof payload.toolCallId === "string" &&
-              typeof payload.toolCallName === "string" &&
-              childRunToolNames.has(payload.toolCallName)
-            ) {
-              childRunToolCallIds.add(payload.toolCallId);
-            }
-            if (event === "ToolCallResult" && payload.isError === true) {
-              toolErrorCount++;
-              if (
-                typeof payload.toolCallId === "string" &&
-                childRunToolCallIds.has(payload.toolCallId)
-              ) {
-                childRunErrorCount++;
-              }
-            }
-            if (event === "RunError") {
-              terminalRunErrorCode ??= toStableRunErrorCode(payload.code);
-            }
-          };
+          const runOutcome = createRunOutcomeTracker(childRunToolNames);
           let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
           stopHeartbeat = () => {
             if (heartbeatTimer) {
@@ -1570,7 +1581,7 @@ export async function createRuntimeAgentStreamResponse(
                 providerReplayStepOpen = false;
               }
               prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
-              observeRunOutcomeEvent(mappedEvent.event, mappedEvent.payload);
+              runOutcome.observe(mappedEvent.event, mappedEvent.payload);
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             };
             heartbeatTimer = setInterval(
@@ -1629,12 +1640,12 @@ export async function createRuntimeAgentStreamResponse(
             }
 
             for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
-              observeRunOutcomeEvent(mappedEvent.event, mappedEvent.payload);
+              runOutcome.observe(mappedEvent.event, mappedEvent.payload);
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             }
             const finalStatus = state.sawTerminalError ? "failed" : "completed";
             const terminalErrorCode = state.sawTerminalError
-              ? terminalRunErrorCode ?? "AgentRunTerminalError"
+              ? runOutcome.terminalErrorCode() ?? "AgentRunTerminalError"
               : undefined;
             if (state.sawTerminalError) {
               deps.sessionManager.failRun(input.runId);
@@ -1651,8 +1662,7 @@ export async function createRuntimeAgentStreamResponse(
               "agent.run.final_status": finalStatus,
               "agent.run.saw_visible_output": state.sawVisibleOutput,
               "agent.run.saw_terminal_error": state.sawTerminalError,
-              "agent.run.tool_error_count": toolErrorCount,
-              "agent.run.child_run_error_count": childRunErrorCount,
+              ...runOutcome.spanAttributes(),
               // The RunError message can carry unclassified framework error text, so only
               // the stable code leaves the process.
               ...(terminalErrorCode ? { "error.type": terminalErrorCode } : {}),
@@ -1679,8 +1689,7 @@ export async function createRuntimeAgentStreamResponse(
               sawVisibleOutput: state.sawVisibleOutput,
               sawTerminalError: state.sawTerminalError,
               finishReason: state.metadata.finishReason,
-              toolErrorCount,
-              childRunErrorCount,
+              ...runOutcome.logFields(),
             };
             if (terminalErrorCode) {
               markSpanFailed(runSpan, terminalErrorCode);
@@ -1703,8 +1712,7 @@ export async function createRuntimeAgentStreamResponse(
                   status: "cancelled",
                 }),
                 "agent.run.final_status": "cancelled",
-                "agent.run.tool_error_count": toolErrorCount,
-                "agent.run.child_run_error_count": childRunErrorCount,
+                ...runOutcome.spanAttributes(),
                 "error.type": "AgentRunCancelledError",
                 "error.message": error.message,
                 // The model call in flight at the abort may have been billed without
@@ -1736,8 +1744,7 @@ export async function createRuntimeAgentStreamResponse(
                   status: "failed",
                 }),
                 "agent.run.final_status": "failed",
-                "agent.run.tool_error_count": toolErrorCount,
-                "agent.run.child_run_error_count": childRunErrorCount,
+                ...runOutcome.spanAttributes(),
                 "error.type": runErrorCode,
                 "error.cause.type": error instanceof Error ? error.name : "Error",
                 "error.message": errorMessage,

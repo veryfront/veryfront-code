@@ -6,6 +6,7 @@
  * the catalog client reads. `UNSERVED_TABLE_MODEL_ROWS` describes the models
  * the shipped table still lists but the platform no longer serves, with the
  * facts the table carries, so tests written against those IDs keep working.
+ * Models the gateway has retired are not listed here: they are refused.
  */
 import {
   __resetVeryfrontCloudCatalogForTests,
@@ -281,23 +282,6 @@ export const SERVED_MODEL_ROWS = [
 /** Rows for models the shipped table lists that the platform no longer serves. */
 export const UNSERVED_TABLE_MODEL_ROWS = [
   {
-    "id": "gpt-5.4-nano",
-    "modelId": "openai/gpt-5.4-nano",
-    "provider": "openai",
-    "surface": "openai",
-    "operations": [
-      "responses",
-      "chat-completions",
-    ],
-    "aliases": [
-      "openai/gpt-5.4-nano",
-    ],
-    "capabilities": {
-      "thinking": true,
-      "reasoning": true,
-    },
-  },
-  {
     "id": "gpt-5.2",
     "modelId": "openai/gpt-5.2",
     "provider": "openai",
@@ -312,41 +296,6 @@ export const UNSERVED_TABLE_MODEL_ROWS = [
     "capabilities": {
       "thinking": true,
       "reasoning": true,
-    },
-  },
-  {
-    "id": "gemini-3.1-pro-preview",
-    "modelId": "google-ai-studio/gemini-3.1-pro-preview",
-    "provider": "google",
-    "surface": "google",
-    "operations": [
-      "generate-content",
-      "stream-generate-content",
-      "openai-responses",
-      "openai-chat-completions",
-    ],
-    "aliases": [
-      "google-ai-studio/gemini-3.1-pro-preview",
-    ],
-    "capabilities": {
-      "thinking": true,
-      "reasoning": true,
-    },
-  },
-  {
-    "id": "mistral-large-2512",
-    "modelId": "mistral/mistral-large-2512",
-    "provider": "mistral",
-    "surface": "openai",
-    "operations": [
-      "chat-completions",
-    ],
-    "aliases": [
-      "mistral/mistral-large-2512",
-    ],
-    "capabilities": {
-      "thinking": false,
-      "reasoning": false,
     },
   },
 ] as const;

@@ -18,6 +18,8 @@ import {
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "./context.ts";
 import {
+  createRetiredVeryfrontCloudModelError,
+  isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
   resolveVeryfrontCloudGatewayPath,
   resolveVeryfrontCloudProviderId,
@@ -251,6 +253,10 @@ export function parseVeryfrontCloudModelId(
         message: `Unsupported Mistral model "mistral/${upstreamModelId}"`,
       }),
     );
+  }
+
+  if (kind === "language" && isRetiredVeryfrontCloudModelId(modelId)) {
+    throw createRetiredVeryfrontCloudModelError(modelId);
   }
 
   return {

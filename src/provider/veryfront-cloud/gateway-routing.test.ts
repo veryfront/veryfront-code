@@ -104,25 +104,11 @@ describe("provider/veryfront-cloud gateway routing", () => {
         toolProfile: "openai",
       },
       {
-        model: "openai/gpt-5.4-nano",
-        provider: "openai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "openai",
-        toolProfile: "openai",
-      },
-      {
         model: "openai/gpt-5.2",
         provider: "openai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
         genAiSystem: "openai",
         toolProfile: "openai",
-      },
-      {
-        model: "google-ai-studio/gemini-3.1-pro-preview",
-        provider: "google",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/google/v1beta",
-        genAiSystem: "gcp.gen_ai",
-        toolProfile: "google",
       },
       {
         model: "google-ai-studio/gemini-3.5-flash",
@@ -144,13 +130,6 @@ describe("provider/veryfront-cloud gateway routing", () => {
         gatewayBaseUrl: "https://api.veryfront.com/ai/gateway/google/v1beta",
         genAiSystem: "gcp.gen_ai",
         toolProfile: "google",
-      },
-      {
-        model: "mistral/mistral-large-2512",
-        provider: "mistral",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: null,
-        toolProfile: "unknown",
       },
       {
         model: "mistral/mistral-small-2503",
@@ -191,7 +170,7 @@ describe("provider/veryfront-cloud gateway routing", () => {
       ["openai", "model-x"],
       ["google", "model-x"],
       ["google-ai-studio", "model-x"],
-      ["mistral", "mistral-large-2512"],
+      ["mistral", "mistral-small-2503"],
       ["moonshotai", "model-x"],
     ];
 

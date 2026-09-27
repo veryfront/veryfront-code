@@ -158,10 +158,6 @@ describe("agent/runtime/model-resolution", () => {
       "openai/gpt-5.4-mini",
     );
     assertEquals(
-      resolveConfiguredAgentModel("gemini-3.1-pro"),
-      "google-ai-studio/gemini-3.1-pro-preview",
-    );
-    assertEquals(
       resolveConfiguredAgentModel("gemini-3.5-flash"),
       "google-ai-studio/gemini-3.5-flash",
     );
@@ -170,12 +166,66 @@ describe("agent/runtime/model-resolution", () => {
       "moonshotai/kimi-k2.6",
     );
     assertEquals(
-      resolveConfiguredAgentModel("mistral-large"),
-      "mistral/mistral-large-2512",
-    );
-    assertEquals(
       resolveConfiguredAgentModel("mistral-small-2503"),
       "mistral/mistral-small-2503",
+    );
+  });
+
+  it("keeps bare aliases of gateway-retired models for direct provider keys", () => {
+    assertEquals(resolveConfiguredAgentModel("gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    assertEquals(
+      resolveConfiguredAgentModel("gemini-3.1-pro"),
+      "google-ai-studio/gemini-3.1-pro-preview",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("gemini-3.1-pro-preview"),
+      "google-ai-studio/gemini-3.1-pro-preview",
+    );
+    assertEquals(resolveConfiguredAgentModel("mistral-large"), "mistral/mistral-large-2512");
+    assertEquals(
+      resolveConfiguredAgentModel("mistral-large-2512"),
+      "mistral/mistral-large-2512",
+    );
+  });
+
+  it("calls gateway-retired models directly when the vendor key is configured", () => {
+    clearModelEnv();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    setEnv("OPENAI_API_KEY", "sk-test");
+    setEnv("GOOGLE_API_KEY", "google-test");
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+
+    assertEquals(resolveRuntimeModel("gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    assertEquals(resolveRuntimeModel("gemini-3.1-pro"), "google/gemini-3.1-pro-preview");
+    assertEquals(resolveRuntimeModel("mistral-large"), "mistral/mistral-large-2512");
+  });
+
+  it("rejects gateway-retired models instead of routing them through Veryfront Cloud", () => {
+    clearModelEnv();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    for (
+      const model of [
+        "gpt-5.4-nano",
+        "openai/gpt-5.4-nano",
+        "veryfront-cloud/openai/gpt-5.4-nano",
+        "gemini-3.1-pro",
+        "google/gemini-3.1-pro-preview",
+        "veryfront-cloud/google-ai-studio/gemini-3.1-pro-preview",
+      ]
+    ) {
+      assertThrows(
+        () => resolveRuntimeModel(model),
+        Error,
+        "is no longer available through Veryfront Cloud",
+      );
+    }
+    assertThrows(
+      () => resolveRuntimeModel("veryfront-cloud/mistral/mistral-large-2512"),
+      Error,
+      'Unsupported Mistral model "veryfront-cloud/mistral/mistral-large-2512"',
     );
   });
 
@@ -292,11 +342,7 @@ describe("agent/runtime/model-resolution", () => {
     );
     assertEquals(
       resolveRuntimeModel("mistral/mistral-large-2512"),
-      "veryfront-cloud/mistral/mistral-large-2512",
-    );
-    assertEquals(
-      resolveRuntimeModel("mistral-large"),
-      "veryfront-cloud/mistral/mistral-large-2512",
+      "mistral/mistral-large-2512",
     );
     assertEquals(
       resolveRuntimeModel("mistral-small-2503"),
@@ -313,10 +359,6 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(
       resolveRuntimeModel("kimi-k2.6"),
       "veryfront-cloud/moonshotai/kimi-k2.6",
-    );
-    assertEquals(
-      resolveRuntimeModel("mistral-large"),
-      "veryfront-cloud/mistral/mistral-large-2512",
     );
   });
 

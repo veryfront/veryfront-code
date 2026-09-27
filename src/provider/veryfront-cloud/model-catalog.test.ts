@@ -13,6 +13,7 @@ import {
   findVeryfrontCloudModelByModelId,
   getVeryfrontCloudProviderFromModelId,
   groupVeryfrontCloudModelsByProvider,
+  isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
   resolveHostedVeryfrontCloudModelId,
   resolveVeryfrontCloudGatewayModelId,
@@ -42,6 +43,37 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertThrows(() => resolveVeryfrontCloudModelId("deepseek-v4-flash"));
   });
 
+  it("drops the models the gateway has retired from the catalog", () => {
+    for (
+      const modelId of [
+        "openai/gpt-5.4-nano",
+        "google-ai-studio/gemini-3.1-pro-preview",
+        "mistral/mistral-large-2512",
+      ]
+    ) {
+      assertEquals(findVeryfrontCloudModelByModelId(modelId), undefined);
+    }
+    for (const alias of ["gpt-5.4-nano", "gemini-3.1-pro-preview", "mistral-large-2512"]) {
+      assertEquals(findVeryfrontCloudModel(alias), undefined);
+      assertThrows(() => resolveVeryfrontCloudModelId(alias));
+    }
+    assertThrows(
+      () => resolveVeryfrontCloudModelId("mistral/mistral-large-2512"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-large-2512"',
+    );
+    for (const modelId of ["openai/gpt-5.4-nano", "google/gemini-3.1-pro-preview"]) {
+      assertEquals(isRetiredVeryfrontCloudModelId(modelId), true);
+      assertEquals(isRetiredVeryfrontCloudModelId(`veryfront-cloud/${modelId}`), true);
+      assertThrows(
+        () => resolveVeryfrontCloudModelId(modelId),
+        Error,
+        "is no longer available through Veryfront Cloud",
+      );
+    }
+    assertEquals(isRetiredVeryfrontCloudModelId("openai/gpt-5-nano"), false);
+  });
+
   it("preserves system layers only for the verified Mistral transport", () => {
     assertEquals(resolveVeryfrontCloudOpenAIChatSystemMessages("mistral/mistral-small-2503"), true);
     assertEquals(
@@ -62,7 +94,6 @@ describe("provider/veryfront-cloud/model-catalog", () => {
 
   it("keeps the EU Nano and DeepSeek identities distinct with their gateway transports", () => {
     assertEquals(resolveVeryfrontCloudModelId("gpt-5-nano"), "openai/gpt-5-nano");
-    assertEquals(resolveVeryfrontCloudModelId("gpt-5.4-nano"), "openai/gpt-5.4-nano");
     assertEquals(
       resolveVeryfrontCloudModelId("deepseek/deepseek-v4-flash"),
       "deepseek/deepseek-v4-flash",
@@ -170,12 +201,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(findVeryfrontCloudModel("gpt-5.5")?.provider, "openai");
     assertEquals(findVeryfrontCloudModel("gpt-5.4-mini")?.provider, "openai");
     assertEquals(findVeryfrontCloudModel("gpt-5.4")?.provider, "openai");
-    assertEquals(findVeryfrontCloudModel("gpt-5.4-nano")?.provider, "openai");
     assertEquals(findVeryfrontCloudModel("gpt-5.2")?.provider, "openai");
-    assertEquals(
-      findVeryfrontCloudModel("gemini-3.1-pro-preview")?.provider,
-      "google",
-    );
     assertEquals(
       findVeryfrontCloudModel("gemini-3.5-flash")?.provider,
       "google",
@@ -186,7 +212,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "google",
     );
     assertEquals(
-      findVeryfrontCloudModel("mistral-large-2512")?.provider,
+      findVeryfrontCloudModel("mistral-small-2503")?.provider,
       "mistral",
     );
     assertEquals(findVeryfrontCloudModel("kimi-k2.6")?.provider, "moonshotai");
@@ -361,14 +387,10 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "openai/gpt-5.4-mini",
     );
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.4"), "openai/gpt-5.4");
-    assertEquals(
-      resolveVeryfrontCloudModelId("gpt-5.4-nano"),
-      "openai/gpt-5.4-nano",
-    );
     assertEquals(resolveVeryfrontCloudModelId("gpt-5.2"), "openai/gpt-5.2");
     assertEquals(
-      resolveVeryfrontCloudModelId("mistral-large-2512"),
-      "mistral/mistral-large-2512",
+      resolveVeryfrontCloudModelId("mistral-small-2503"),
+      "mistral/mistral-small-2503",
     );
     assertEquals(
       resolveVeryfrontCloudModelId("openai/gpt-5.5"),
@@ -412,9 +434,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "openai/gpt-5.5",
       "openai/gpt-5.4-mini",
       "openai/gpt-5.4",
-      "openai/gpt-5.4-nano",
       "openai/gpt-5.2",
-      "google-ai-studio/gemini-3.1-pro-preview",
       "google-ai-studio/gemini-2.5-pro",
       "moonshotai/kimi-k2.6",
       "moonshotai/kimi-k2.5",
@@ -443,7 +463,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       undefined,
     );
     assertEquals(
-      resolveVeryfrontCloudModelThinking("mistral/mistral-large-2512"),
+      resolveVeryfrontCloudModelThinking("mistral/mistral-small-2503"),
       undefined,
     );
     for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
@@ -556,8 +576,8 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "veryfront-cloud/google/gemini-3.5-flash",
     );
     assertEquals(
-      resolveVeryfrontCloudGatewayModelId("mistral/mistral-large-2512"),
-      "veryfront-cloud/mistral/mistral-large-2512",
+      resolveVeryfrontCloudGatewayModelId("mistral/mistral-small-2503"),
+      "veryfront-cloud/mistral/mistral-small-2503",
     );
     assertEquals(
       resolveVeryfrontCloudGatewayModelId("mistral/mistral-small-2603"),
@@ -601,8 +621,8 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "veryfront-cloud/openai/gpt-5.5",
     );
     assertEquals(
-      resolveHostedVeryfrontCloudModelId("mistral/mistral-large-2512"),
-      "veryfront-cloud/mistral/mistral-large-2512",
+      resolveHostedVeryfrontCloudModelId("mistral/mistral-small-2503"),
+      "veryfront-cloud/mistral/mistral-small-2503",
     );
   });
 

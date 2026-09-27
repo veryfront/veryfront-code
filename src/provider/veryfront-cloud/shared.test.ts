@@ -27,9 +27,9 @@ describe("provider/veryfront-cloud/shared", () => {
         modelId: "gemini-2.0-flash",
       },
     );
-    assertEquals(parseVeryfrontCloudModelId("mistral/mistral-large-2512", "language"), {
+    assertEquals(parseVeryfrontCloudModelId("mistral/mistral-small-2503", "language"), {
       provider: "mistral",
-      modelId: "mistral-large-2512",
+      modelId: "mistral-small-2503",
     });
   });
 
@@ -69,6 +69,22 @@ describe("provider/veryfront-cloud/shared", () => {
       Error,
       'Unsupported Mistral model "mistral/mistral-medium-3-5"',
     );
+  });
+
+  it("rejects gateway-retired model IDs at the provider boundary", () => {
+    for (
+      const modelId of [
+        "openai/gpt-5.4-nano",
+        "google/gemini-3.1-pro-preview",
+        "google-ai-studio/gemini-3.1-pro-preview",
+      ]
+    ) {
+      assertThrows(
+        () => parseVeryfrontCloudModelId(modelId, "language"),
+        Error,
+        `Model "${modelId}" is no longer available through Veryfront Cloud`,
+      );
+    }
   });
 
   it("builds gateway base URLs without duplicate slashes", () => {
