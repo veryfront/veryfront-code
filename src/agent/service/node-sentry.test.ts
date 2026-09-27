@@ -194,7 +194,6 @@ describe("agent/service/node-sentry", () => {
         level: "error",
         service: "agent",
         component: "runtime",
-        service_version: "0.0.0",
         veryfrontVersion: "0.0.0",
         message: "runtime failed",
         error,
@@ -257,7 +256,6 @@ describe("agent/service/node-sentry", () => {
           timestamp: "2026-07-29T00:00:00.000Z",
           level: "error",
           service: "agent",
-          service_version: "0.0.0",
           veryfrontVersion: "0.0.0",
           message: "expected",
           ...entry,
@@ -276,7 +274,6 @@ describe("agent/service/node-sentry", () => {
           timestamp: "2026-07-29T00:00:00.000Z",
           level: "error",
           service: "agent",
-          service_version: "0.0.0",
           veryfrontVersion: "0.0.0",
           ...entry,
         });
@@ -309,7 +306,6 @@ describe("agent/service/node-sentry", () => {
         timestamp: "2026-07-29T00:00:00.000Z",
         level: "error",
         service: "agent",
-        service_version: "0.0.0",
         veryfrontVersion: "0.0.0",
         message: "runtime failed without an error object",
       });

@@ -70,7 +70,7 @@ export interface LogEntry {
   level: LogLevelName;
   service: string;
   /** Deployed artifact tag (OTEL_SERVICE_VERSION), or the runtime version when unset. */
-  service_version: string;
+  service_version?: string;
   /** @deprecated Use `service_version`. Framework version, kept for saved Loki queries. */
   veryfrontVersion: string;
   message: string;
