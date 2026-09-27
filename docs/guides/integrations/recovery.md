@@ -103,15 +103,16 @@ while (!observed) {
     if (matches && row.scope === scope && row.status === "connected") observed = row;
   }
 }
-console.log(`Gmail connected in ${observed.scope} scope.`);
+console.log(`Observed a connected Gmail account in ${observed.scope} scope.`);
 ```
 
 The example correlates the scope's OAuth status with an inventory row, so a
-connection that someone else adds at the same time is not mistaken for this
-one. The client-level abort signal ends every request, including `connect`, at the
-deadline. A new
-`connection_generation_id` on an existing `id` means the same account was
-reconnected. `veryfront integration connect` performs the same check for you and
+row from another scope is never accepted. The result is an observed connected
+identity in that scope, not proof that this particular handoff succeeded: a
+concurrent connect in the same scope can produce it too. Confirm the account
+with the person before relying on it. The client-level abort signal ends every
+request, including `connect`, at the deadline. A new `connection_generation_id`
+on an existing `id` means the same account was reconnected. `veryfront integration connect` performs the same check for you and
 returns `connection_observed` with the confirmed row. If the callback arrives
 but inventory does not show a new generation within its short confirmation
 window, it returns `integration-connect-unconfirmed`. Inspect
