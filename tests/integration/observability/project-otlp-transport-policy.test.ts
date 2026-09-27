@@ -15,6 +15,88 @@ const suppression = new AsyncLocalStorage<boolean>();
 const withSuppressedTracing = <T>(operation: () => Promise<T>) => suppression.run(true, operation);
 
 describe("project OTLP transport", () => {
+  it("keeps the send cap when Set tracking methods are replaced", async () => {
+    const release = Promise.withResolvers<Response>();
+    let calls = 0;
+    await withMockFetch(() => {
+      calls++;
+      return release.promise;
+    }, async () => {
+      const transport = createProjectOtlpTransport({
+        endpoint,
+        headers: {},
+        withSuppressedTracing,
+      });
+      const size = Object.getOwnPropertyDescriptor(Set.prototype, "size")!;
+      const add = Set.prototype.add;
+      let pending: Promise<unknown>[] = [];
+      try {
+        Object.defineProperty(Set.prototype, "size", { configurable: true, get: () => 0 });
+        Set.prototype.add = function () {
+          return this;
+        };
+        pending = [
+          transport.send(bytes, 1000),
+          transport.send(bytes, 1000),
+          transport.send(bytes, 1000),
+        ];
+      } finally {
+        Object.defineProperty(Set.prototype, "size", size);
+        Set.prototype.add = add;
+      }
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertEquals(calls, 2);
+      } finally {
+        transport.shutdown();
+        release.resolve(Response.json({}));
+        await Promise.all(pending);
+      }
+    });
+  });
+
+  it("aborts requests through the native method after prototype replacement", async () => {
+    const release = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<void>();
+    let signal: AbortSignal | null | undefined;
+    await withMockFetch((_input, init) => {
+      signal = init?.signal;
+      started.resolve();
+      return release.promise;
+    }, async () => {
+      const transport = createProjectOtlpTransport({
+        endpoint,
+        headers: {},
+        withSuppressedTracing,
+      });
+      const pending = transport.send(bytes, 1000);
+      await started.promise;
+      const abort = AbortController.prototype.abort;
+      const deleteEntry = Set.prototype.delete;
+      const iterator = Set.prototype[Symbol.iterator];
+      const forEach = Set.prototype.forEach;
+      try {
+        AbortController.prototype.abort = () => {};
+        Set.prototype.delete = () => false;
+        Set.prototype[Symbol.iterator] = () => new Set().values();
+        Set.prototype.forEach = () => {};
+        transport.shutdown();
+      } finally {
+        AbortController.prototype.abort = abort;
+        Set.prototype.delete = deleteEntry;
+        Set.prototype[Symbol.iterator] = iterator;
+        Set.prototype.forEach = forEach;
+      }
+      try {
+        assertEquals(signal?.aborted, true);
+      } finally {
+        transport.shutdown();
+        release.resolve(Response.json({}));
+        await pending;
+      }
+    });
+  });
+
   it("checks payload size without invoking replaced byte-length getters", async () => {
     await withMockFetch(() => Promise.resolve(Response.json({})), async () => {
       const transport = createProjectOtlpTransport({

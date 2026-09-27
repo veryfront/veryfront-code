@@ -25,6 +25,14 @@ interface ProjectOtlpTransportOptions {
 }
 
 const NativeAbortController = AbortController;
+const abortController = AbortController.prototype.abort;
+const getSignal = Object.getOwnPropertyDescriptor(AbortController.prototype, "signal")!.get!;
+const getAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
+const NativeSet = Set;
+const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+const setAdd = Set.prototype.add;
+const setDelete = Set.prototype.delete;
+const setForEach = Set.prototype.forEach;
 const freeze = Object.freeze;
 const entries = Object.entries;
 const apply = Reflect.apply;
@@ -54,44 +62,45 @@ export function createProjectOtlpTransport(
   defineOwnDataProperty(headerSnapshot, "content-type", "application/json", { enumerable: true });
   const headers = freeze(headerSnapshot);
   const suppress = options.withSuppressedTracing;
-  const active = new Set<() => void>();
+  const active = new NativeSet<() => void>();
   let closed = false;
 
   return freeze({
     send(data: Uint8Array, timeoutMillis: number): Promise<ProjectOtlpSendResult> {
       if (
-        closed || active.size >= MAX_CONCURRENT_SENDS ||
+        closed || apply(setSize, active, []) >= MAX_CONCURRENT_SENDS ||
         privateByteLength(data) > PROJECT_OTLP_MAX_REQUEST_BYTES ||
         !Number.isFinite(timeoutMillis) || timeoutMillis <= 0
       ) return Promise.resolve(failed());
 
       const body = new PrivateUint8Array(data);
       const controller = new NativeAbortController();
+      const signal = apply(getSignal, controller, []) as AbortSignal;
       return new Promise((resolve) => {
         let settled = false;
         const finish = (result: ProjectOtlpSendResult) => {
           if (settled) return;
           settled = true;
           cancelTimer(timer);
-          active.delete(cancel);
+          apply(setDelete, active, [cancel]);
           resolve(result);
         };
         const cancel = () => {
-          controller.abort();
+          apply(abortController, controller, []);
           finish(failed());
         };
-        active.add(cancel);
+        apply(setAdd, active, [cancel]);
         const timer = schedule(cancel, Math.min(timeoutMillis, MAX_TIMEOUT_MS));
 
         // A separate completion path enforces the deadline even if a transport ignores abort.
         Promise.resolve().then(() =>
           suppress(async () => {
-            if (controller.signal.aborted) return failed();
+            if (apply(getAborted, signal, [])) return failed();
             const response = await fetch(endpoint, {
               method: "POST",
               headers,
               body,
-              signal: controller.signal,
+              signal,
               redirect: "error",
             });
             // Delivery is best effort. Never retain/log an untrusted collector response body.
@@ -104,7 +113,7 @@ export function createProjectOtlpTransport(
     },
     shutdown(): void {
       closed = true;
-      for (const cancel of active) cancel();
+      apply(setForEach, active, [(cancel: () => void) => cancel()]);
     },
   });
 }
