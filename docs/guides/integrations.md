@@ -52,7 +52,9 @@ You need three things. None of them is created implicitly:
 - **A project.** Pass the project slug or UUID on every request. Veryfront never
   picks a project for you.
 - **The API origin.** Use `https://api.veryfront.com`, or your own API origin
-  for a self-hosted or non-production deployment.
+  for a self-hosted or non-production deployment. Every request carries the
+  platform credential, so use an `https://` origin; plain `http://` is only
+  safe for a loopback address such as `http://localhost`.
 
 The shell examples use `curl` and `jq` and share these variables. The first line
 keeps an API origin you already exported:
@@ -100,9 +102,24 @@ a separate login to Gmail and always needs a person in a browser:
   It opens the browser, waits at most `--timeout` seconds (default 300), and
   confirms the new connection from inventory. Add `--scope project` to create a
   shared connection instead of a personal one.
-- **REST:** Open `connectUrl` in a browser that is signed in to Veryfront.
+- **REST:** Call the tool without a connection selector, as shown below, and
+  open `connectUrl` in a browser that is signed in to Veryfront.
 - **Studio:** Use the connect card that appears in the run, or the project's
   integration settings.
+
+The REST call below keeps `connectUrl` only when the result is
+`authentication_required`. If an accessible account is already connected, the
+call runs the read instead and `CONNECT_URL` stays empty. The URL is single-use
+and expires, so do not log or share it:
+
+```bash
+CONNECT_URL=$(curl -sS -X POST "$VERYFRONT_API_URL/integrations/gmail/tools/list_emails/call" \
+  -H "$AUTH" -H "$PROJECT" -H "x-veryfront-expected-project-id: $PROJECT_ID" \
+  -H "Content-Type: application/json" \
+  --data '{"arguments":{"q":"in:inbox","maxResults":1}}' |
+  jq -r 'if .structuredContent.error == "authentication_required"
+    then .structuredContent.connectUrl else empty end')
+```
 
 The call is not retried for you. After consent, read the connection inventory
 and call again. If consent is denied, cancelled, or expires, see
