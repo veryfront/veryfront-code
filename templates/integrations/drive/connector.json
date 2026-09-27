@@ -3,6 +3,7 @@
   "displayName": "Google Drive",
   "icon": "drive.svg",
   "description": "Access, search, and manage files and folders in Google Drive",
+  "category": "files",
   "auth": {
     "type": "oauth2",
     "provider": "google",

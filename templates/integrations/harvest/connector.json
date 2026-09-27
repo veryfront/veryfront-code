@@ -3,6 +3,7 @@
   "displayName": "Harvest",
   "icon": "harvest.svg",
   "description": "Track time, manage projects, and control invoices with Harvest \u2014 trusted by 70,000+ businesses",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "harvest",

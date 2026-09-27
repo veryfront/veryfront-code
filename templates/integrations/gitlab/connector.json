@@ -3,6 +3,7 @@
   "displayName": "GitLab",
   "icon": "gitlab.svg",
   "description": "Search and manage GitLab issues, merge requests, and projects",
+  "category": "development",
   "auth": {
     "type": "oauth2",
     "provider": "gitlab",

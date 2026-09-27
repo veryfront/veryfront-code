@@ -119,7 +119,7 @@ export default tool({
     } catch (error) {
       if (error instanceof Error && error.message.includes("not configured")) {
         return {
-          error: "Twilio not configured. Please set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.",
+          error: "Twilio not configured. Please set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.",
           setupUrl: "https://console.twilio.com/",
         };
       }

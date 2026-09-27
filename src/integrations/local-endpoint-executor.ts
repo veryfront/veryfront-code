@@ -263,7 +263,9 @@ function fieldValue(
   name: string,
   field: IntegrationEndpointParam | IntegrationEndpointBodyField,
 ): { present: boolean; value: unknown } {
-  const supplied = ownValue(args, name);
+  const supplied = fieldIsFixed(field)
+    ? { present: false, value: undefined }
+    : ownValue(args, name);
   const value = supplied.present ? supplied.value : field.default;
   const present = supplied.present || field.default !== undefined;
   if (!present) {
@@ -280,6 +282,12 @@ function fieldValue(
     assertPattern(value, pattern, name);
   }
   return { present: true, value };
+}
+
+/** A fixed body field always sends its catalog default; only an own `fixed: true` counts. */
+function fieldIsFixed(field: IntegrationEndpointParam | IntegrationEndpointBodyField): boolean {
+  const descriptor = getOwnPropertyDescriptor(field, "fixed");
+  return descriptor !== undefined && "value" in descriptor && descriptor.value === true;
 }
 
 /**

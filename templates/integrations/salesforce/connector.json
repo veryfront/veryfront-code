@@ -3,6 +3,7 @@
   "displayName": "Salesforce",
   "icon": "salesforce.svg",
   "description": "Connect Salesforce Service Cloud and Sales Cloud for customer support and CRM workflows",
+  "category": "sales",
   "auth": {
     "type": "oauth2",
     "provider": "salesforce",
@@ -543,7 +544,8 @@
     "notes": [
       "Staging callback: https://api.veryfront.org/oauth/callback/salesforce",
       "Production callback: https://api.veryfront.com/oauth/callback/salesforce",
-      "Write tools should be explicitly enabled for an agent or project; read tools are the default demo surface."
+      "Write tools should be explicitly enabled for an agent or project; read tools are the default demo surface.",
+      "Non-interactive runs can use a service account instead of a user connection: set SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID, SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET and SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL (the My Domain origin) from an External Client App that uses the Client Credentials Flow with a dedicated Run As user. All three are required; see https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account"
     ],
     "documentation": "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_rest.htm"
   }
