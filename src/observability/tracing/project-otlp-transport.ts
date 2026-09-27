@@ -1,3 +1,4 @@
+import { privateByteLength, PrivateUint8Array } from "#veryfront/security/private-bytes.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
@@ -24,7 +25,6 @@ interface ProjectOtlpTransportOptions {
 }
 
 const NativeAbortController = AbortController;
-const NativeUint8Array = Uint8Array;
 const freeze = Object.freeze;
 const entries = Object.entries;
 const apply = Reflect.apply;
@@ -61,11 +61,11 @@ export function createProjectOtlpTransport(
     send(data: Uint8Array, timeoutMillis: number): Promise<ProjectOtlpSendResult> {
       if (
         closed || active.size >= MAX_CONCURRENT_SENDS ||
-        data.byteLength > PROJECT_OTLP_MAX_REQUEST_BYTES ||
+        privateByteLength(data) > PROJECT_OTLP_MAX_REQUEST_BYTES ||
         !Number.isFinite(timeoutMillis) || timeoutMillis <= 0
       ) return Promise.resolve(failed());
 
-      const body = new NativeUint8Array(data);
+      const body = new PrivateUint8Array(data);
       const controller = new NativeAbortController();
       return new Promise((resolve) => {
         let settled = false;
