@@ -41,6 +41,28 @@ export function extractFences(markdown: string): GuideFence[] {
 }
 
 const PLACEHOLDER = /<[A-Z][A-Z0-9_]*>/g;
+const HEREDOC_START = /<<-?\s*['"]?(\w+)['"]?/;
+
+/** Blank quoted spans and drop a trailing comment, keeping character offsets. */
+function unquotedText(line: string): string {
+  let result = "";
+  let quote: string | undefined;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]!;
+    if (quote) {
+      const escaped = char === "\\" && quote === '"';
+      if (escaped) i++;
+      if (char === quote) quote = undefined;
+      result += escaped ? "  " : " ";
+    } else if (char === "#" && (i === 0 || /\s/.test(line[i - 1]!))) {
+      break;
+    } else {
+      if (char === "'" || char === '"') quote = char;
+      result += quote ? " " : char;
+    }
+  }
+  return result;
+}
 
 /**
  * Report `<PLACEHOLDER>` tokens that the shell would parse as redirections.
@@ -54,31 +76,13 @@ export function findUnquotedPlaceholders(script: string): SnippetIssue[] {
       if (text.trim() === heredocEnd) heredocEnd = undefined;
       return;
     }
-    const heredoc = /<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/.exec(text);
-    let quote: string | undefined;
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i]!;
-      if (quote) {
-        if (char === "\\" && quote === '"') i++;
-        else if (char === quote) quote = undefined;
-        continue;
-      }
-      if (char === "#" && (i === 0 || /\s/.test(text[i - 1]!))) break;
-      if (char === "'" || char === '"') {
-        quote = char;
-        continue;
-      }
-      PLACEHOLDER.lastIndex = i;
-      const match = PLACEHOLDER.exec(text);
-      if (match && match.index === i) {
-        issues.push({
-          line: index + 1,
-          message: `Quote ${match[0]}; unquoted it is a shell redirection`,
-        });
-        i += match[0].length - 1;
-      }
+    for (const match of unquotedText(text).matchAll(PLACEHOLDER)) {
+      issues.push({
+        line: index + 1,
+        message: `Quote ${match[0]}; unquoted it is a shell redirection`,
+      });
     }
-    if (heredoc) heredocEnd = heredoc[1];
+    heredocEnd = HEREDOC_START.exec(text)?.[1];
   });
   return issues;
 }
@@ -106,34 +110,188 @@ export type GraphqlSchemaSnapshot = Readonly<Record<string, GraphqlSchemaType>>;
 
 type Token = {
   readonly value: string;
-  readonly kind: "name" | "punct" | "variable";
+  readonly kind: "name" | "punct" | "variable" | "literal" | "skip";
 };
+
+const TOKEN_PATTERNS: ReadonlyArray<readonly [Token["kind"], RegExp]> = [
+  ["skip", /\s+|,|#.*/y],
+  ["variable", /\$\w+/y],
+  ["name", /[A-Z_a-z]\w*/y],
+  ["punct", /\.\.\.|[{}():!=@[\]]/y],
+  ["literal", /"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?/y],
+];
 
 function tokenize(document: string): Token[] {
   const tokens: Token[] = [];
-  const pattern =
-    /\s+|#[^\n]*|(\$[_A-Za-z][_0-9A-Za-z]*)|([_A-Za-z][_0-9A-Za-z]*)|(\.\.\.|[{}():!\[\]=@,])|("(?:[^"\\]|\\.)*")|(-?\d+(?:\.\d+)?)/y;
   let index = 0;
   while (index < document.length) {
-    pattern.lastIndex = index;
-    const match = pattern.exec(document);
-    if (!match) {
+    const found = TOKEN_PATTERNS.map(([kind, pattern]) => {
+      pattern.lastIndex = index;
+      const match = pattern.exec(document);
+      return match ? { kind, value: match[0] } : undefined;
+    }).find((token) => token !== undefined);
+    if (!found) {
       throw new Error(`Unexpected GraphQL character ${document[index]}`);
     }
-    index = pattern.lastIndex;
-    if (match[1]) tokens.push({ kind: "variable", value: match[1] });
-    else if (match[2]) tokens.push({ kind: "name", value: match[2] });
-    else if (match[3] && match[3] !== ",") {
-      tokens.push({ kind: "punct", value: match[3] });
-    } else if (match[4] || match[5]) {
-      tokens.push({ kind: "name", value: "<literal>" });
-    }
+    index += found.value.length;
+    if (found.kind !== "skip") tokens.push(found);
   }
   return tokens;
 }
 
 function namedType(type: string): string {
-  return type.replaceAll(/[\[\]!]/g, "");
+  return type.replaceAll(/[[\]!]/g, "");
+}
+
+/** Recursive-descent reader for one operation over the supported GraphQL subset. */
+class GraphqlOperationValidator {
+  readonly issues: string[] = [];
+  private position = 0;
+  private readonly variables = new Map<string, string>();
+
+  constructor(
+    private readonly tokens: readonly Token[],
+    private readonly schema: GraphqlSchemaSnapshot,
+  ) {}
+
+  validate(): void {
+    const operation = this.next()?.value;
+    if (operation !== "query" && operation !== "mutation") {
+      throw new Error("Use a named query or mutation operation");
+    }
+    if (this.peek()?.kind === "name") this.next();
+    if (this.peek()?.value === "(") this.readVariableDefinitions();
+    this.readSelection(operation === "query" ? "Query" : "Mutation", operation);
+    if (this.position !== this.tokens.length) {
+      throw new Error("Unexpected content after the operation");
+    }
+  }
+
+  private peek(): Token | undefined {
+    return this.tokens[this.position];
+  }
+
+  private next(): Token | undefined {
+    return this.tokens[this.position++];
+  }
+
+  private expect(value: string): void {
+    const token = this.next();
+    if (token?.value !== value) {
+      throw new Error(
+        `Expected "${value}" but found "${token?.value ?? "end of document"}"`,
+      );
+    }
+  }
+
+  private until(end: string): boolean {
+    const token = this.peek();
+    return token !== undefined && token.value !== end;
+  }
+
+  private readType(): string {
+    let type: string;
+    if (this.peek()?.value === "[") {
+      this.next();
+      type = `[${this.readType()}]`;
+      this.expect("]");
+    } else {
+      type = this.next()?.value ?? "";
+    }
+    if (this.peek()?.value !== "!") return type;
+    this.next();
+    return `${type}!`;
+  }
+
+  private readVariableDefinitions(): void {
+    this.expect("(");
+    while (this.until(")")) {
+      const variable = this.next()!;
+      if (variable.kind !== "variable") {
+        throw new Error(`Expected a variable, found ${variable.value}`);
+      }
+      this.expect(":");
+      const type = this.readType();
+      if (!this.schema[namedType(type)]) {
+        this.issues.push(`Variable ${variable.value} has unknown type ${type}`);
+      }
+      this.variables.set(variable.value.slice(1), type);
+    }
+    this.expect(")");
+  }
+
+  private readArguments(
+    field: GraphqlSchemaField | undefined,
+    path: string,
+  ): void {
+    this.expect("(");
+    while (this.until(")")) {
+      const arg = this.next()!.value;
+      this.expect(":");
+      const value = this.next()!;
+      const argType = field?.args[arg];
+      if (field && !argType) {
+        this.issues.push(`${path}: unknown argument "${arg}"`);
+      }
+      if (value.kind === "variable") {
+        this.checkVariable(value.value, arg, argType, path);
+      }
+    }
+    this.expect(")");
+  }
+
+  private checkVariable(
+    name: string,
+    arg: string,
+    argType: string | undefined,
+    path: string,
+  ) {
+    const declared = this.variables.get(name.slice(1));
+    if (!declared) {
+      this.issues.push(`${path}: undeclared variable ${name}`);
+    } else if (argType && declared !== argType) {
+      this.issues.push(
+        `${path}: ${name} is ${declared} but "${arg}" expects ${argType}`,
+      );
+    }
+  }
+
+  private readSelection(typeName: string, path: string): void {
+    const type = this.schema[typeName];
+    this.expect("{");
+    while (this.until("}")) {
+      const name = this.next()!.value;
+      if (name === "..." || name === "@") {
+        throw new Error(
+          `${path}: fragments and directives are not supported by this check`,
+        );
+      }
+      const field = type?.fields?.[name];
+      if (!field) {
+        this.issues.push(`${path}: ${typeName} has no field "${name}"`);
+      }
+      const fieldPath = `${path}.${name}`;
+      if (this.peek()?.value === "(") this.readArguments(field, fieldPath);
+      this.readFieldSelection(field, fieldPath);
+    }
+    this.expect("}");
+  }
+
+  private readFieldSelection(
+    field: GraphqlSchemaField | undefined,
+    path: string,
+  ): void {
+    const target = field ? namedType(field.type) : "";
+    const kind = this.schema[target]?.kind;
+    const hasSelection = this.peek()?.value === "{";
+    if (hasSelection && (kind === "SCALAR" || kind === "ENUM")) {
+      this.issues.push(`${path}: scalar field cannot have a selection`);
+    }
+    if (hasSelection) this.readSelection(target, path);
+    else if (kind === "OBJECT") {
+      this.issues.push(`${path}: object field needs a selection`);
+    }
+  }
 }
 
 /**
@@ -145,126 +303,18 @@ export function validateGraphqlOperation(
   document: string,
   schema: GraphqlSchemaSnapshot,
 ): string[] {
-  const issues: string[] = [];
-  let tokens: Token[];
+  let validator: GraphqlOperationValidator;
   try {
-    tokens = tokenize(document);
+    validator = new GraphqlOperationValidator(tokenize(document), schema);
   } catch (error) {
     return [(error as Error).message];
   }
-  let position = 0;
-  const peek = () => tokens[position];
-  const next = () => tokens[position++];
-  const expect = (value: string) => {
-    const token = next();
-    if (token?.value !== value) {
-      throw new Error(
-        `Expected "${value}" but found "${token?.value ?? "end of document"}"`,
-      );
-    }
-  };
-  const readType = (): string => {
-    let type = "";
-    if (peek()?.value === "[") {
-      next();
-      type = `[${readType()}]`;
-      expect("]");
-    } else {
-      type = next()?.value ?? "";
-    }
-    if (peek()?.value === "!") {
-      next();
-      type += "!";
-    }
-    return type;
-  };
-  const variables = new Map<string, string>();
-
-  const readSelection = (typeName: string, path: string) => {
-    const type = schema[typeName];
-    expect("{");
-    while (peek() && peek()!.value !== "}") {
-      const token = next()!;
-      if (token.value === "..." || token.value === "@") {
-        throw new Error(
-          `${path}: fragments and directives are not supported by this check`,
-        );
-      }
-      const field = type?.fields?.[token.value];
-      if (!field) {
-        issues.push(`${path}: ${typeName} has no field "${token.value}"`);
-      }
-      if (peek()?.value === "(") {
-        next();
-        while (peek() && peek()!.value !== ")") {
-          const arg = next()!.value;
-          expect(":");
-          const value = next()!;
-          const argType = field?.args[arg];
-          if (field && !argType) {
-            issues.push(`${path}.${token.value}: unknown argument "${arg}"`);
-          }
-          if (value.kind === "variable") {
-            const declared = variables.get(value.value.slice(1));
-            if (!declared) {
-              issues.push(
-                `${path}.${token.value}: undeclared variable ${value.value}`,
-              );
-            } else if (argType && declared !== argType) {
-              issues.push(
-                `${path}.${token.value}: ${value.value} is ${declared} but "${arg}" expects ${argType}`,
-              );
-            }
-          }
-        }
-        expect(")");
-      }
-      const target = field ? namedType(field.type) : undefined;
-      const targetKind = target ? schema[target]?.kind : undefined;
-      if (peek()?.value === "{") {
-        if (field && (targetKind === "SCALAR" || targetKind === "ENUM")) {
-          issues.push(
-            `${path}.${token.value}: scalar field cannot have a selection`,
-          );
-        }
-        readSelection(target ?? "", `${path}.${token.value}`);
-      } else if (field && targetKind === "OBJECT") {
-        issues.push(`${path}.${token.value}: object field needs a selection`);
-      }
-    }
-    expect("}");
-  };
-
   try {
-    const operation = next()?.value;
-    if (operation !== "query" && operation !== "mutation") {
-      throw new Error("Use a named query or mutation operation");
-    }
-    if (peek()?.kind === "name") next();
-    if (peek()?.value === "(") {
-      next();
-      while (peek() && peek()!.value !== ")") {
-        const variable = next()!;
-        if (variable.kind !== "variable") {
-          throw new Error(`Expected a variable, found ${variable.value}`);
-        }
-        expect(":");
-        const type = readType();
-        if (!schema[namedType(type)]) {
-          issues.push(`Variable ${variable.value} has unknown type ${type}`);
-        }
-        variables.set(variable.value.slice(1), type);
-      }
-      expect(")");
-    }
-    readSelection(operation === "query" ? "Query" : "Mutation", operation);
-    if (position !== tokens.length) {
-      throw new Error("Unexpected content after the operation");
-    }
+    validator.validate();
   } catch (error) {
-    issues.push((error as Error).message);
+    validator.issues.push((error as Error).message);
   }
-  return issues;
+  return validator.issues;
 }
 
 const SECRET_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
@@ -275,7 +325,7 @@ const SECRET_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   ["AWS access key", /\bAKIA[0-9A-Z]{16}\b/],
   ["Google API key", /\bAIza[0-9A-Za-z_-]{35}\b/],
   ["Private key", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
-  ["Literal bearer credential", /Bearer (?![<$])[A-Za-z0-9._~+\/-]{24,}/],
+  ["Literal bearer credential", /Bearer (?![<$])[\w.~+/-]{24,}/],
 ];
 
 /** Report credential-shaped literals. Placeholders such as `<TOKEN>` pass. */

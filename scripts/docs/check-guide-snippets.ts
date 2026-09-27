@@ -70,7 +70,7 @@ async function listMarkdown(dir: string): Promise<string[]> {
     if (entry.isDirectory) files.push(...await listMarkdown(path));
     else if (entry.name.endsWith(".md")) files.push(path);
   }
-  return files.sort();
+  return files.sort((a, b) => a.localeCompare(b));
 }
 
 const denoConfig = JSON.parse(
@@ -90,7 +90,7 @@ try {
     for (const fence of fences) {
       if (fence.lang === "ts") {
         const path = `${tempDir}/${
-          guide.replaceAll(/[\/.]/g, "_")
+          guide.replaceAll(/[/.]/g, "_")
         }_${fence.line}.ts`;
         await Deno.writeTextFile(
           path,
