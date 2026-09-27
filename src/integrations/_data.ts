@@ -55108,7 +55108,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "TWILIO_PHONE_NUMBER",
       "description":
-        "Your Twilio phone number (E.164 format: +1234567890). Used as the sender by Send SMS and Send WhatsApp; the read tools do not need it",
+        "Your Twilio phone number (E.164 format: +1234567890). Used as the sender by Send SMS, and by Send WhatsApp, which adds the whatsapp: prefix and needs the number to be a WhatsApp-enabled Twilio sender. The read tools do not need it",
       "required": false,
       "sensitive": false,
       "docsUrl": "https://console.twilio.com/us1/develop/phone-numbers/manage/incoming",

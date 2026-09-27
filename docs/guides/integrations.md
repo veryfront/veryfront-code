@@ -390,15 +390,15 @@ A declared connector is enabled in one of three ways:
 
 ### Hosted and local limits
 
-| Connector or auth family                                    | Hosted Veryfront API                                                                                            | Local or self-hosted Veryfront Code                                                                         |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Default connectors                                          | Published                                                                                                       | Published                                                                                                   |
-| `activecampaign`, `persona`, `sap`, `servicenow`, `zendesk` | Published by default                                                                                            | Experimental: enable with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`                                             |
-| `salesforce`                                                | Published; the API drives it as a host adapter                                                                  | Not scaffolded; use [`createSalesforceServiceAccountToolSource`](./integrations/salesforce.md)              |
-| Other host-adapter connectors                               | Not published                                                                                                   | Not scaffolded                                                                                              |
-| Other experimental connectors                               | Published only where the deployment sets the experimental flag (staging sets `all`; production does not set it) | Enable with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`                                                           |
-| OAuth authorization code                                    | Per-user or project connection; a managed OAuth app where Veryfront provides one, otherwise your own client     | Not supported by the local source; use managed execution                                                    |
-| OAuth client credentials, API key, Basic                    | Project environment variables, resolved at execution                                                            | [Local integration tools](#run-account-free-local-integration-tools) with a host-approved credential source |
+| Connector or auth family                                    | Hosted Veryfront API                                                                                        | Local or self-hosted Veryfront Code                                                                         |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Default connectors                                          | Published                                                                                                   | Published                                                                                                   |
+| `activecampaign`, `persona`, `sap`, `servicenow`, `zendesk` | Published by default                                                                                        | Experimental: enable with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`                                             |
+| `salesforce`                                                | Published; the API drives it as a host adapter                                                              | Not scaffolded; use [`createSalesforceServiceAccountToolSource`](./integrations/salesforce.md)              |
+| Other host-adapter connectors                               | Not published                                                                                               | Not scaffolded                                                                                              |
+| Other experimental connectors                               | Published only where the deployment enables them with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`                 | Enable with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`                                                           |
+| OAuth authorization code                                    | Per-user or project connection; a managed OAuth app where Veryfront provides one, otherwise your own client | Not supported by the local source; use managed execution                                                    |
+| OAuth client credentials, API key, Basic                    | Project environment variables, resolved at execution                                                        | [Local integration tools](#run-account-free-local-integration-tools) with a host-approved credential source |
 
 ### Qualification record
 
@@ -407,13 +407,13 @@ fixtures. Fixture coverage shows the request is built correctly; it does not
 qualify a provider. A connector counts as operationally qualified only when a
 representative read has run against the real provider on a recorded release.
 
-| Representative   | Auth family                                | Evidence kind                                        |
-| ---------------- | ------------------------------------------ | ---------------------------------------------------- |
-| `gmail`          | OAuth authorization code (managed)         | Real provider read on staging (`gmail__list_emails`) |
-| `activecampaign` | API key                                    | Fixture and published metadata only                  |
-| `twilio`         | Basic                                      | Fixture and published metadata only                  |
-| `personio`       | OAuth client credentials                   | Fixture and published metadata only                  |
-| `salesforce`     | OAuth client credentials (service account) | Fixture and published metadata only                  |
+| Representative   | Auth family                                | Evidence kind                                                 |
+| ---------------- | ------------------------------------------ | ------------------------------------------------------------- |
+| `gmail`          | OAuth authorization code (managed)         | Real provider read on a hosted release (`gmail__list_emails`) |
+| `activecampaign` | API key                                    | Fixture and published metadata only                           |
+| `twilio`         | Basic                                      | Fixture and published metadata only                           |
+| `personio`       | OAuth client credentials                   | Fixture and published metadata only                           |
+| `salesforce`     | OAuth client credentials (service account) | Fixture and published metadata only                           |
 
 Every other connector is package-declared and, where enabled, environment-enabled,
 but not operationally qualified.
