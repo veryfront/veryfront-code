@@ -37,12 +37,18 @@ const DIRECT_RUNTIME_PROVIDER_ALIASES = new Map<string, string>([
   ["google-ai-studio", "google"],
 ]);
 // Called with the user's own provider key against the vendor's API, never the
-// gateway, so these follow each vendor's catalog rather than the gateway's.
+// gateway, so these follow each vendor's own catalog rather than our
+// gateway's retirement list (isRetiredVeryfrontCloudModelId is gateway-only
+// and never runs on this path). mistral-large-2512 (Mistral Large 3) is
+// Mistral's current flagship; mistral-small-2503 (Mistral Small 3.1) is not
+// a safe substitute here even though our gateway still serves it under that
+// name -- Mistral itself deprecated it 2025-11-06 and retired it 2025-11-30,
+// so a direct call with the user's own key now 404s.
 const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> = [
   { provider: "openai", modelId: "gpt-5-nano" },
   { provider: "anthropic", modelId: "claude-sonnet-4-6" },
   { provider: "google-ai-studio", modelId: "gemini-3.5-flash" },
-  { provider: "mistral", modelId: "mistral-small-2503" },
+  { provider: "mistral", modelId: "mistral-large-2512" },
 ];
 const LEGACY_MODEL_ALIASES = new Map<string, string>([
   ["opus", "anthropic/claude-opus-4-8"],
