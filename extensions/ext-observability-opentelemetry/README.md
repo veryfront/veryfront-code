@@ -81,7 +81,29 @@ The extension reads the standard OpenTelemetry env vars at setup time:
 | `OTEL_METRIC_EXPORT_INTERVAL`                             | No               | Metric export interval in milliseconds                            |
 | `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` | No               | Metrics temporality. Dedicated service defaults to `delta`.       |
 
-Configuration is read from process `OTEL_*` environment variables. In shared Veryfront runtimes these are platform-owned host env vars. The extension does not accept `ctx.config.otel` exporter endpoint, header, service name, or enable-flag overrides because project config is tenant controlled in shared runtimes.
+Platform export reads process `OTEL_*` environment variables. Hosted application trace export uses a separate authenticated project environment snapshot, as described below. The extension does not accept `ctx.config.otel` overrides for the platform exporter.
+
+## Hosted application traces
+
+Declare `extOpenTelemetry()` in your app configuration and set these project environment variables:
+
+```dotenv
+OTEL_TRACES_ENABLED=true
+OTEL_SERVICE_NAME=my-application
+OTEL_EXPORTER_OTLP_ENDPOINT=https://<COLLECTOR_HOST>/otlp
+```
+
+Store `OTEL_EXPORTER_OTLP_HEADERS` as a project secret when the collector requires authentication. Signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` take precedence. A trace-specific URL is used as supplied; a base URL receives `/v1/traces`.
+
+On hosted runtimes containing project trace export support, dedicated and shared apps use these project settings without replacing platform telemetry. Each project environment has separate credentials, resources and export buffers. HTTP request spans and custom spans created through `trace` or the tracing helpers from `veryfront/observability` use the active project. You do not install another global OpenTelemetry SDK.
+
+The request span starts a project trace and can link to the platform request. Project recording does not depend on the platform sampling decision. Internal framework spans are not automatically copied to the project collector. Raw third-party SDK installation, automatic instrumentation, background execution, logs and metrics are outside this hosted project export path.
+
+Set `OTEL_TRACES_ENABLED=false` or disable the extension declaration to stop project export. Updated settings take effect after the existing project environment cache refreshes (normally up to 60 seconds). A refreshed disable revokes queued/in-flight delivery. Credential rotation gives active requests a bounded drain period; it does not restart other projects. Removing the project trace settings rolls back this feature without changing platform telemetry.
+
+Export is best effort: requests do not wait for collector delivery, retries are bounded, and queue overflow or process termination can lose spans. At most 32 exporter generations are retained per process, with a 1 MiB queued serialized-span budget per generation. Collector requests must pass the runtime's existing outbound policy; redirects are rejected. Private collectors require explicit operator authorization.
+
+The hosted integration fixtures exercise the runtime HTTP handler, project authorization/settings fetch, and real collectors for shared and dedicated configurations on Deno 2.7.7. They are repository evidence, not proof that a particular managed deployment already runs this version. Verify your deployed runtime version before relying on this behavior.
 
 ## Factory configuration
 
@@ -89,7 +111,7 @@ Configuration is read from process `OTEL_*` environment variables. In shared Ver
 extOpenTelemetry();
 ```
 
-Exporter configuration is process-level. Dedicated runtimes can use project-specific collector endpoints by running the project in its own process with its own process environment.
+Standalone export uses process settings. Hosted application export uses project settings and the runtime-owned execution context; factory options do not configure it.
 
 ## Metrics
 

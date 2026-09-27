@@ -48,6 +48,7 @@ import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { isPlatformLivenessProbe } from "#veryfront/security/http/platform-liveness-probe.ts";
 import { isServerShuttingDown } from "../shutdown-state.ts";
+import { runProjectHttpTracing } from "#veryfront/observability/tracing/project-http-tracing.ts";
 import { buildRuntimeShuttingDownResponse } from "../handlers/request/runtime-shutdown-response.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
@@ -921,7 +922,12 @@ export function createVeryfrontHandler(
             SpanNames.HANDLER_EXECUTE,
             () =>
               profilePhase("handler.execute", () => {
-                return runInRequestProjectEnv(executeRoute);
+                return runProjectHttpTracing(
+                  runtimeContext.projectTraceConfig,
+                  { projectId: ctx.projectId, environmentId: ctx.environmentId },
+                  request,
+                  () => runInRequestProjectEnv(executeRoute),
+                );
               }),
             {
               "handler.project_slug": projectRes.projectSlug || "unknown",

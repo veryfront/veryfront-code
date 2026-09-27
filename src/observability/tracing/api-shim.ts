@@ -20,6 +20,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { getProjectTraceProvider } from "./project-trace-scope.ts";
 import { runSyncWithContextFallback } from "./context-callback.ts";
 
 const IntrinsicObjectFreeze = Object.freeze;
@@ -781,13 +782,17 @@ export const publicTrace: Readonly<
   Pick<typeof trace, "getActiveSpan" | "getSpan" | "getTracer" | "setSpan">
 > = IntrinsicObjectFreeze({
   getTracer(name: string, version?: string): Tracer {
-    const providerTracer = telemetryState.tracerProvider.getTracer(name, version);
+    const platformTracer = telemetryState.tracerProvider.getTracer(name, version);
+    const selectTracer = (): Tracer =>
+      (getProjectTraceProvider()?.getProvider().getTracer(name, version) as Tracer | undefined) ??
+        platformTracer;
     const startActiveSpan = ((
       spanName: string,
       second: unknown,
       third?: unknown,
       fourth?: unknown,
     ): unknown => {
+      const providerTracer = selectTracer();
       if (fourth !== undefined) {
         const callback = fourth as (span: Span) => unknown;
         return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
@@ -814,6 +819,7 @@ export const publicTrace: Readonly<
 
     return IntrinsicObjectFreeze({
       startSpan(spanName: string, options?: SpanStartOptions, activeContext?: Context): Span {
+        const providerTracer = selectTracer();
         return createPublicSpan(
           IntrinsicReflectApply(providerTracer.startSpan, providerTracer, [
             spanName,
@@ -827,15 +833,22 @@ export const publicTrace: Readonly<
   },
   setSpan(ctx: Context, span: Span): Context {
     return createPublicContext(
-      trace.setSpan(unwrapPublicContext(ctx), unwrapPublicSpan(span)),
+      (getProjectTraceProvider()?.getTraceAPI() ?? trace).setSpan(
+        unwrapPublicContext(ctx),
+        unwrapPublicSpan(span),
+      ) as Context,
     );
   },
   getSpan(ctx: Context): Span | undefined {
-    const span = trace.getSpan(unwrapPublicContext(ctx));
+    const span = (getProjectTraceProvider()?.getTraceAPI() ?? trace).getSpan(
+      unwrapPublicContext(ctx),
+    ) as Span | undefined;
     return span ? createPublicSpan(span) : undefined;
   },
   getActiveSpan(): Span | undefined {
-    const span = trace.getActiveSpan();
+    const span = (getProjectTraceProvider()?.getTraceAPI() ?? trace).getActiveSpan() as
+      | Span
+      | undefined;
     return span ? createPublicSpan(span) : undefined;
   },
 });

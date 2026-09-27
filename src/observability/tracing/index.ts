@@ -12,6 +12,8 @@ import {
   unwrapPublicSpan,
 } from "./api-shim.ts";
 import { tracingManager } from "./manager.ts";
+import { getProjectTraceHelpers } from "./project-trace-helpers.ts";
+import type { SpanOperations } from "./span-operations.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 
 export type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
@@ -30,7 +32,7 @@ export async function initTracing(
 
 /** Check whether tracing is enabled. */
 export function isTracingEnabled(): boolean {
-  return tracingManager.isEnabled();
+  return getProjectTraceHelpers() !== undefined || tracingManager.isEnabled();
 }
 
 export function isTracingDegraded(): boolean {
@@ -47,14 +49,18 @@ export function getTracingState(): ReturnType<typeof tracingManager.getState> {
 }
 
 function getSpanOps(): ReturnType<typeof tracingManager.getSpanOperations> {
-  return tracingManager.getSpanOperations();
+  return getProjectTraceHelpers()?.spans ?? tracingManager.getSpanOperations();
 }
 
 function getContextProp(): ReturnType<typeof tracingManager.getContextPropagation> {
-  return tracingManager.getContextPropagation();
+  return getProjectTraceHelpers()?.context ?? tracingManager.getContextPropagation();
 }
 
+const spanOwners = new WeakMap<Span, SpanOperations>();
+
 function exposeSpan(span: Span | null): Span | null {
+  const operations = getSpanOps();
+  if (span && operations) spanOwners.set(span, operations);
   return span ? createPublicSpan(span) : null;
 }
 
@@ -84,7 +90,8 @@ export function startSpan(name: string, options: SpanOptions = {}): Span | null 
 
 /** End an active tracing span. */
 export function endSpan(span: Span | null, ...failure: [] | [error: unknown]): void {
-  getSpanOps()?.endSpan(restoreSpan(span), ...failure);
+  const raw = restoreSpan(span);
+  (raw ? spanOwners.get(raw) ?? getSpanOps() : getSpanOps())?.endSpan(raw, ...failure);
 }
 
 /** Sets span attributes. */

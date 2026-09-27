@@ -19,6 +19,8 @@ import type {
   NodeTelemetryInitializeOptions,
   NodeTelemetryLogRecord,
   NodeTelemetryProvider,
+  ProjectTraceProvider,
+  ProjectTraceProviderOptions,
   SpanData,
   TracingExporter,
 } from "veryfront/extensions/observability";
@@ -794,6 +796,24 @@ class FilteringSpanExporter {
 }
 
 class OtlpTracingExporter implements TracingExporter {
+  private projectProviders = new Set<ProjectTraceProvider>();
+
+  async createProjectProvider(options: ProjectTraceProviderOptions): Promise<ProjectTraceProvider> {
+    const { createProjectTraceProvider } = await import("./project-provider.ts");
+    const session = createProjectTraceProvider(options);
+    const handle: ProjectTraceProvider = Object.freeze({
+      ...session,
+      shutdown: async (discard: boolean) => {
+        try {
+          await session.shutdown(discard);
+        } finally {
+          this.projectProviders.delete(handle);
+        }
+      },
+    });
+    this.projectProviders.add(handle);
+    return handle;
+  }
   private sdkProvider: SdkTracerProvider | null = null;
   private meterProvider: SdkMeterProvider | null = null;
   private logProvider: SdkLoggerProvider | null = null;
@@ -978,6 +998,7 @@ class OtlpTracingExporter implements TracingExporter {
   }
 
   async shutdown(): Promise<void> {
+    await Promise.allSettled([...this.projectProviders].map((provider) => provider.shutdown(true)));
     if (this.logProvider) {
       try {
         await this.logProvider.shutdown();
