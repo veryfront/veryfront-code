@@ -92,10 +92,13 @@ function clampScore(score: number): number {
 
 async function resolveJudgeModel(
   model: string | ModelRuntime | undefined,
+  signal?: AbortSignal,
 ): Promise<ModelRuntime> {
   if (model && typeof model === "object") return model;
   // Whether the judge model routes through Veryfront Cloud reads the served catalog.
-  await loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_MAX_WAIT_MS });
+  // A cancelled evaluation stops waiting for it at once.
+  await loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_MAX_WAIT_MS, signal });
+  signal?.throwIfAborted();
   return resolveModel(resolveRuntimeModel(model ?? DEFAULT_JUDGE_MODEL));
 }
 
@@ -380,7 +383,7 @@ function createLlmRubricJudge(
 
   return async (input) => {
     try {
-      const model = await resolveJudgeModel(options.model);
+      const model = await resolveJudgeModel(options.model, input.signal);
       const response = await generateText({
         model,
         messages: [
@@ -445,7 +448,7 @@ function createLlmGroundednessJudge(
 
   return async (input) => {
     try {
-      const model = await resolveJudgeModel(validatedOptions.model);
+      const model = await resolveJudgeModel(validatedOptions.model, input.signal);
       const response = await generateText({
         model,
         messages: [{

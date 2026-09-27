@@ -139,7 +139,6 @@ export function createHostedApplicationModelResolver(input: {
         assertCredentialActive: assertActive,
       })
     );
-    const reconcile = model._reconcileProviderMetadata;
     // Metadata is read from the model on each access: a Veryfront Cloud model
     // may settle a different protocol and capabilities on its first async step.
     const proxy: ModelRuntime<ModelRuntimeCallOptions> = Object.freeze({
@@ -195,18 +194,21 @@ export function createHostedApplicationModelResolver(input: {
           throw error;
         }
       },
-      ...(typeof reconcile === "function"
-        ? {
-          async _reconcileProviderMetadata(options: {
-            providerMetadata: Record<string, unknown>;
-            suppressedToolCalls: readonly { id: string; name: string }[];
-            abortSignal?: AbortSignal;
-          }) {
-            return await run(callScope(options.abortSignal), (signal) =>
-              reconcile.call(model, { ...options, abortSignal: signal }));
-          },
-        }
-        : {}),
+      // Read when described and when invoked: a model rebuilt onto another
+      // protocol may gain or lose its reconciliation hook.
+      get _reconcileProviderMetadata() {
+        const reconcile = model._reconcileProviderMetadata;
+        if (typeof reconcile !== "function") return undefined;
+        return async (options: {
+          providerMetadata: Record<string, unknown>;
+          suppressedToolCalls: readonly { id: string; name: string }[];
+          abortSignal?: AbortSignal;
+        }) =>
+          await run(
+            callScope(options.abortSignal),
+            (signal) => reconcile.call(model, { ...options, abortSignal: signal }),
+          );
+      },
     });
     // The proxy reports the facts of the model it calls.
     registerVeryfrontCloudModelFacts(proxy, () => readVeryfrontCloudModelFacts(model)!);

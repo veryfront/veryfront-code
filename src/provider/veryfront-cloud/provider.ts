@@ -116,6 +116,20 @@ const NON_FORWARDED_KEYS: ReadonlySet<PropertyKey> = new Set([
 ]);
 
 /**
+ * Optional members a model rebuilt onto another protocol can gain even when
+ * the model it was first built as lacks them (the Google protocol adds
+ * `_reconcileProviderMetadata`), so the wrapper forwards them regardless.
+ */
+const OPTIONAL_FORWARDED_KEYS: readonly PropertyKey[] = [
+  "_reconcileProviderMetadata",
+  "_generateViaStream",
+  "runtimeCapabilities",
+  "executionMode",
+  "modelProvider",
+  "specificationVersion",
+];
+
+/**
  * Wrap a built model so its first async step loads the served catalog. When
  * the catalog changes how the model is built, calls and metadata go to the
  * model rebuilt from it. Once the catalog is settled, calls go straight to the
@@ -160,25 +174,27 @@ function withServedCatalog(
   // Metadata (provider attribution, capabilities, model ID) follows the model
   // the calls go to, so a rebuild never leaves the construction-time values.
   const forwarded = new Set<PropertyKey>();
+  const forward = (key: PropertyKey): void => {
+    if (forwarded.has(key) || NON_FORWARDED_KEYS.has(key)) return;
+    forwarded.add(key);
+    ObjectDefineProperty(wrapped, key, {
+      configurable: false,
+      enumerable: true,
+      get: () => {
+        const target = current();
+        const value: unknown = IntrinsicReflectApply(ReflectGet, undefined, [target, key]);
+        return typeof value === "function"
+          ? IntrinsicReflectApply(FunctionBind, value, [target])
+          : value;
+      },
+    });
+  };
   let source: object | null = model;
   while (source && source !== ObjectPrototype) {
-    for (const key of ReflectOwnKeys(source)) {
-      if (forwarded.has(key) || NON_FORWARDED_KEYS.has(key)) continue;
-      forwarded.add(key);
-      ObjectDefineProperty(wrapped, key, {
-        configurable: false,
-        enumerable: true,
-        get: () => {
-          const target = current();
-          const value: unknown = IntrinsicReflectApply(ReflectGet, undefined, [target, key]);
-          return typeof value === "function"
-            ? IntrinsicReflectApply(FunctionBind, value, [target])
-            : value;
-        },
-      });
-    }
+    for (const key of ReflectOwnKeys(source)) forward(key);
     source = ObjectGetPrototypeOf(source);
   }
+  for (const key of OPTIONAL_FORWARDED_KEYS) forward(key);
   return wrapped;
 }
 
