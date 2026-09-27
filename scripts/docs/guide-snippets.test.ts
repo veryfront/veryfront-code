@@ -92,6 +92,14 @@ describe("guide snippet checks", () => {
         "mutation.executeIntegrationTool: object field needs a selection",
       ],
     );
+
+    assertEquals(
+      validateGraphqlOperation(
+        "mutation Run { executeIntegrationTool { isError } }",
+        schema,
+      ),
+      ['mutation.executeIntegrationTool: missing required argument "input"'],
+    );
   });
 
   it("extracts quoted GRAPHQL heredocs from shell snippets", () => {

@@ -19,8 +19,8 @@ one performs the other.
 | Provider authorization | Which provider account Veryfront may use | OAuth consent through `veryfront integration connect`, a `connectUrl`, or Studio's connect card |
 | Project credentials    | Which provider key a project uses        | Project environment variables named by the connector catalog                                    |
 
-`veryfront integration connect` requires an existing platform login and never
-starts one. Signing in to Veryfront with Google does not connect Gmail; the
+`veryfront integration connect` requires an existing platform credential, either
+a login session or `VERYFRONT_API_TOKEN`, and never starts a platform login. Signing in to Veryfront with Google does not connect Gmail; the
 Gmail connection is a separate consent with its own scopes, even for the same
 Google account. A Veryfront API token never reaches the provider, and a provider
 token never authenticates you to Veryfront.
@@ -106,8 +106,9 @@ grant. Use hosted execution for any connector that needs OAuth consent. See
 | `project` | The project                 | Shared with the project and its resources | `veryfront integration connect <NAME> --scope project` (editor) |
 
 The default scope is always `user`; Veryfront never creates a shared connection
-unless you ask for `project`. The legacy value `endUser` is accepted on input as
-`user`, and responses always use `user`.
+unless you ask for `project`. The REST API still accepts the legacy value
+`endUser` as `user`, and responses always use `user`. The CLI and the TypeScript
+client accept only `user` and `project`.
 
 ## Selection and schema reference
 

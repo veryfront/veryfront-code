@@ -51,9 +51,11 @@ screen.
 
 ## Wait for a new connection
 
-After the person opens the connect URL, confirm the result from inventory.
-Record the connections you already had, poll at a fixed interval, and stop at a
-deadline you choose before you start:
+Confirm a new connection from inventory. Record the connections you already
+had, start the handoff, show its one-time URL to the person, then poll at a
+fixed interval and stop at a deadline you choose before you start. The redirect
+URI is where the browser returns after consent, such as your application's
+integration page:
 
 ```ts
 import { createIntegrationClient, type IntegrationClientConnection } from "veryfront/integrations";
@@ -75,7 +77,9 @@ async function connectedRows(): Promise<IntegrationClientConnection[]> {
 const known = new Set(
   (await connectedRows()).map((row) => `${row.id}:${row.connection_generation_id}`),
 );
-// Start the connect operation and let the person open its URL here.
+const handoff = await client.connect("gmail", { redirectUri: "<REDIRECT_URI>" });
+if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
+console.log(`Open before ${handoff.expires_at}: ${handoff.connect_url}`);
 
 const deadline = Date.now() + 5 * 60 * 1000;
 let observed: IntegrationClientConnection | undefined;
@@ -110,7 +114,8 @@ example after the person revoked access in their provider account settings.
 account, even when the project has one.
 
 **Next step:** Reconnect the same account in the same scope, for example
-`veryfront integration connect gmail --scope project` for a shared connection.
+`veryfront integration connect gmail --project "<PROJECT_SLUG>" --scope project`
+for a shared connection.
 The reconnect issues a new `connection_generation_id`. Read inventory again,
 update any generation you pinned, and call once.
 

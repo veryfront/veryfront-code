@@ -224,9 +224,26 @@ class GraphqlOperationValidator {
     field: GraphqlSchemaField | undefined,
     path: string,
   ): void {
+    const provided = new Set<string>();
+    if (this.peek()?.value === "(") {
+      this.readArgumentList(field, path, provided);
+    }
+    for (const [arg, type] of Object.entries(field?.args ?? {})) {
+      if (type.endsWith("!") && !provided.has(arg)) {
+        this.issues.push(`${path}: missing required argument "${arg}"`);
+      }
+    }
+  }
+
+  private readArgumentList(
+    field: GraphqlSchemaField | undefined,
+    path: string,
+    provided: Set<string>,
+  ): void {
     this.expect("(");
     while (this.until(")")) {
       const arg = this.next()!.value;
+      provided.add(arg);
       this.expect(":");
       const value = this.next()!;
       const argType = field?.args[arg];
@@ -271,7 +288,7 @@ class GraphqlOperationValidator {
         this.issues.push(`${path}: ${typeName} has no field "${name}"`);
       }
       const fieldPath = `${path}.${name}`;
-      if (this.peek()?.value === "(") this.readArguments(field, fieldPath);
+      this.readArguments(field, fieldPath);
       this.readFieldSelection(field, fieldPath);
     }
     this.expect("}");
