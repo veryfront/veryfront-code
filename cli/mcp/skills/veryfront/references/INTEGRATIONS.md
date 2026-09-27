@@ -65,7 +65,7 @@ Other surfaces call the same tools:
 | `reconnect_required`                             | None            | Ask the person to reconnect the same account in the same scope.              |
 | `integration-consent-denied`                     | None            | Stop. Ask whether they want to connect.                                      |
 | `integration-connect-unconfirmed` or expired URL | None            | Inspect `integration connections`, then start a new connect if needed.       |
-| `Selected connection generation changed`         | None            | Re-read inventory, confirm the same `id`, call once with the new generation. |
+| `integration-connection-stale` (409)             | None            | Re-read inventory, confirm the same `id`, call once with the new generation. |
 | `execution_outcome_unknown` or `outcomeUnknown`  | Unknown         | Never repeat a write. Ask the person to check the provider.                  |
 
 Retry only after a failure that says no provider request ran. Never switch to a

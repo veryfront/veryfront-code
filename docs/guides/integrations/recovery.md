@@ -137,16 +137,16 @@ update any generation you pinned, and call once.
 
 **Signal:** A call with `expected_connection_generation_id` (REST and MCP
 `_meta`), `expectedConnectionGenerationId` (GraphQL and TypeScript), or
-`--expected-generation` (CLI) fails with `validation-failed` and the detail
-`Selected connection generation changed`:
+`--expected-generation` (CLI) fails with the `integration-connection-stale`
+condition (status 409):
 
-| Surface    | Where the failure appears                                                        |
-| ---------- | -------------------------------------------------------------------------------- |
-| REST       | HTTP 400 problem with `slug: "validation-failed"`                                |
-| GraphQL    | `errors[0].extensions.slug` is `validation-failed`, `data` is `null`             |
-| MCP        | `isError: true` with `_meta.condition.slug` set to `validation-failed`           |
-| TypeScript | `IntegrationApiError` with `httpStatus === 400` and `outcomeUnknown === false`   |
-| CLI        | `error.registrySlug` is `validation-failed`; `context.outcomeUnknown` is `false` |
+| Surface    | Where the failure appears                                                                     |
+| ---------- | --------------------------------------------------------------------------------------------- |
+| REST       | HTTP 409 problem with `slug: "integration-connection-stale"`                                  |
+| GraphQL    | `errors[0].extensions.slug` is `integration-connection-stale`, `data` is `null`               |
+| MCP        | `isError: true` with `_meta.condition.slug` set to `integration-connection-stale`             |
+| TypeScript | `IntegrationApiError` with `slug === "integration-connection-stale"` and `httpStatus === 409` |
+| CLI        | `error.registrySlug` is `integration-connection-stale`; `context.outcomeUnknown` is `false`   |
 
 Readiness for the same selection reports `selection.state: "stale"` and the
 blocker `connection_stale`.

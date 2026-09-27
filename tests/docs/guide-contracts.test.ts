@@ -675,7 +675,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "access_denied",
       "Invalid or expired OAuth connect session",
       "reconnect_required",
-      "Selected connection generation changed",
+      "integration-connection-stale",
       "connection_stale",
       "execution_outcome_unknown",
       "Never replay a write automatically",
