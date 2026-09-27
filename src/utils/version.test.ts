@@ -6,6 +6,7 @@ import {
   createBuildVersion,
   normalizeVeryfrontVersion,
   resolveRuntimeVersion,
+  resolveServiceVersion,
   RUNTIME_VERSION,
   SERVER_START_TIME,
   VERSION,
@@ -85,6 +86,21 @@ describe("version", () => {
         }),
         VERSION,
       );
+    });
+  });
+
+  describe("resolveServiceVersion", () => {
+    it("uses the deployed artifact tag from OTEL_SERVICE_VERSION", () => {
+      assertEquals(
+        resolveServiceVersion(" 20260927145139-0c317774e6d3 ", "1.2.3"),
+        "20260927145139-0c317774e6d3",
+      );
+    });
+
+    it("falls back to the runtime version when OTEL_SERVICE_VERSION is unset or blank", () => {
+      assertEquals(resolveServiceVersion(undefined, "1.2.3"), "1.2.3");
+      assertEquals(resolveServiceVersion("  ", "1.2.3"), "1.2.3");
+      assertEquals(resolveServiceVersion(undefined), RUNTIME_VERSION);
     });
   });
 

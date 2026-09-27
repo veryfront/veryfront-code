@@ -34,6 +34,16 @@ export const RUNTIME_VERSION = resolveRuntimeVersion({
   denoVersion: typeof denoConfig.version === "string" ? denoConfig.version : undefined,
 });
 
+/** The deployed artifact tag (OTEL_SERVICE_VERSION), or the runtime version when unset. */
+export function resolveServiceVersion(
+  serviceVersion: string | undefined,
+  fallbackVersion: string = RUNTIME_VERSION,
+): string {
+  return serviceVersion?.trim() || fallbackVersion;
+}
+
+export const SERVICE_VERSION = resolveServiceVersion(getVersionEnv("OTEL_SERVICE_VERSION"));
+
 export const SERVER_START_TIME: number = Date.now();
 
 export interface BuildVersion {
