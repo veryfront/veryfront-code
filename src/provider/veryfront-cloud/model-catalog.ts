@@ -726,6 +726,16 @@ export function getVeryfrontCloudProviderFromModelId(
 }
 
 /** Return the Veryfront Cloud provider named by a model ID, including one this package does not list, or `undefined` when the ID names none. */
+/**
+ * Whether a Veryfront Cloud model ID speaks the Anthropic protocol: its
+ * provider is served on the Anthropic surface. A newly served provider on that
+ * surface counts, not only `anthropic/*`.
+ */
+export function isVeryfrontCloudAnthropicSurfaceModel(modelId: string): boolean {
+  const provider = tryGetVeryfrontCloudProviderFromModelId(modelId);
+  return provider !== undefined && resolveVeryfrontCloudSurface(provider) === "anthropic";
+}
+
 export function tryGetVeryfrontCloudProviderFromModelId(
   modelId: string,
 ): VeryfrontCloudProviderId | undefined {

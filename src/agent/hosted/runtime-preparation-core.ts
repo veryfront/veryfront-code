@@ -10,10 +10,10 @@ import {
 } from "#veryfront/security/private-promise.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import {
+  isVeryfrontCloudAnthropicSurfaceModel,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
-  tryGetVeryfrontCloudProviderFromModelId,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { getExecutorModelAdditiveReasoningTokens } from "#veryfront/agent/hosted/executor-model-grant.ts";
@@ -497,11 +497,12 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       const thinking = request.thinking ?? definition.thinking ??
         resolveVeryfrontCloudModelThinking(modelId);
       let availableOutputTokens = modelGrant.maxOutputTokens;
-      const modelProvider = tryGetVeryfrontCloudProviderFromModelId(modelId);
-      if (modelProvider === "anthropic") {
+      // The served surface decides the protocol, so a newly served provider on
+      // the Anthropic surface reserves its reasoning tokens like `anthropic/*`.
+      if (isVeryfrontCloudAnthropicSurfaceModel(modelId)) {
         try {
           const effectiveThinking = thinking ?? resolveVeryfrontCloudModelThinking(modelId);
-          const model = { id: modelId, modelId, provider: modelProvider };
+          const model = { id: modelId, modelId, provider: "anthropic" };
           const options = {
             reasoning: resolveVeryfrontCloudReasoningOption(modelId, effectiveThinking),
             providerOptions: resolveVeryfrontCloudThinkingProviderOptions(

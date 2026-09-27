@@ -17,10 +17,10 @@ import {
   resolveRuntimeModel,
 } from "./model-resolution.ts";
 import {
+  isVeryfrontCloudAnthropicSurfaceModel,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
-  tryGetVeryfrontCloudProviderFromModelId,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { hasDisabledThinking } from "./model-capabilities.ts";
@@ -201,7 +201,7 @@ function resolveReasoningWithDefaults(
     return { enabled: false };
   }
 
-  if (tryGetVeryfrontCloudProviderFromModelId(modelString) === "anthropic") {
+  if (isVeryfrontCloudAnthropicSurfaceModel(modelString)) {
     return undefined;
   }
 
