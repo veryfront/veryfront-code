@@ -143,6 +143,9 @@ const setHas = Set.prototype.has;
 const regExpTest = RegExp.prototype.test;
 const arrayIncludes = Array.prototype.includes;
 const stringStartsWith = String.prototype.startsWith;
+const stringIndexOf = String.prototype.indexOf;
+const stringSlice = String.prototype.slice;
+const stringTrim = String.prototype.trim;
 const weakMapDelete = WeakMap.prototype.delete;
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
@@ -410,14 +413,21 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
 
 /** Parse the OTel `key=value,key=value` env format. */
 function parseKeyValueList(input: string | undefined): Record<string, string> {
-  // No prototype, so a value project code plants on Object.prototype is never read as a host key.
+  // Host values are parsed with captured intrinsics into a record without a
+  // prototype, so project code that patched String or Object never sees them.
   const result = apply(objectCreate, Object, [null]) as Record<string, string>;
   if (!input) return result;
-  for (const part of input.split(",")) {
-    const [key, ...valueParts] = part.split("=");
-    if (key && valueParts.length > 0) {
-      result[key.trim()] = valueParts.join("=").trim();
+  let start = 0;
+  while (start <= input.length) {
+    let end = apply(stringIndexOf, input, [",", start]) as number;
+    if (end === -1) end = input.length;
+    const part = apply(stringSlice, input, [start, end]) as string;
+    const separator = apply(stringIndexOf, part, ["="]) as number;
+    if (separator > 0) {
+      const key = apply(stringTrim, apply(stringSlice, part, [0, separator]), []) as string;
+      result[key] = apply(stringTrim, apply(stringSlice, part, [separator + 1]), []) as string;
     }
+    start = end + 1;
   }
   return result;
 }
