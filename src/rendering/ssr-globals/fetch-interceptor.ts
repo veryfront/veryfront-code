@@ -13,7 +13,8 @@ import {
   isSSRClientOnlyFetching,
   originalFetch,
 } from "./context.ts";
-import { setActiveSpanAttributes, SpanNames } from "#veryfront/observability";
+import { SpanNames } from "#veryfront/observability";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 function isProjectDomain(hostname: string): boolean {

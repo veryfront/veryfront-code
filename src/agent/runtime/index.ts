@@ -75,7 +75,7 @@ import {
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
+import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import {
   attachProviderMetadata,

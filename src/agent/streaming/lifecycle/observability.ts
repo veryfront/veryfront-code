@@ -1,4 +1,4 @@
-import { setActiveSpanAttributes } from "#veryfront/observability";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   recordStreamLifecycleDeadline,
   recordStreamLifecycleDuration,

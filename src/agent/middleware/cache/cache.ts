@@ -5,7 +5,7 @@ import {
   hasUnchangedSyntheticMessageId,
   hasUnchangedSyntheticMessageTimestamp,
 } from "#veryfront/agent/runtime/input-utils.ts";
-import { setActiveSpanAttributes } from "#veryfront/observability";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const DEFAULT_LRU_MAX_SIZE = 100;
