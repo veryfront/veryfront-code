@@ -1,9 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForTests,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 
 describe("resolveProviderOptionsWithDefaults", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("enables Anthropic thinking by default for Anthropic models", () => {
     const result = resolveProviderOptionsWithDefaults(
       "anthropic/claude-sonnet-4-6",
@@ -30,6 +37,27 @@ describe("resolveProviderOptionsWithDefaults", () => {
         thinking: { type: "enabled", budget_tokens: 2048 },
       },
     });
+  });
+
+  it("applies Anthropic defaults to a newly served provider on the Anthropic surface", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "m1",
+        modelId: "acme-labs/m1",
+        provider: "acme-labs",
+        surface: "anthropic",
+        operations: ["messages"],
+        aliases: [],
+        capabilities: { thinking: true, reasoning: true, reasoning_mode: "adaptive" },
+      }],
+    });
+
+    const result = resolveProviderOptionsWithDefaults("veryfront-cloud/acme-labs/m1", undefined);
+
+    assertEquals(
+      (result?.anthropic as { thinking?: unknown } | undefined)?.thinking,
+      { type: "adaptive", display: "summarized" },
+    );
   });
 
   it("does not enable thinking for non-Anthropic models", () => {

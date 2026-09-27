@@ -7,6 +7,9 @@
 import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
+import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
   resolveConfiguredAgentModel,
@@ -14,10 +17,10 @@ import {
   resolveRuntimeModel,
 } from "./model-resolution.ts";
 import {
+  isVeryfrontCloudAnthropicSurfaceModel,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
-  tryGetVeryfrontCloudProviderFromModelId,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { hasDisabledThinking } from "./model-capabilities.ts";
@@ -198,7 +201,7 @@ function resolveReasoningWithDefaults(
     return { enabled: false };
   }
 
-  if (tryGetVeryfrontCloudProviderFromModelId(modelString) === "anthropic") {
+  if (isVeryfrontCloudAnthropicSurfaceModel(modelString)) {
     return undefined;
   }
 
@@ -209,10 +212,25 @@ function resolveReasoningWithDefaults(
 export async function resolveAgentModelTransport(
   input: ResolveAgentModelTransportInput,
 ): Promise<ResolvedModelTransport> {
-  const requestedModel = resolveConfiguredAgentModel(input.modelOverride || input.config.model);
-  const resolvedModelString = resolveRuntimeModel(input.modelOverride || input.config.model);
-  const privatelyResolvedModel = input.resolveModelRuntime &&
-      IntrinsicReflectApply(StringStartsWith, resolvedModelString, [VERYFRONT_CLOUD_MODEL_PREFIX])
+  const configuredModel = input.modelOverride || input.config.model;
+  const startsWithCloudPrefix = (model: string): boolean =>
+    IntrinsicReflectApply(StringStartsWith, model, [VERYFRONT_CLOUD_MODEL_PREFIX]) as boolean;
+  // Every decision below reads the served catalog: which model an omitted or
+  // `auto` model means, whether an explicit provider model is served through
+  // Veryfront Cloud, and the thinking defaults. An ambient run that can reach
+  // Veryfront Cloud loads the catalog before any of them. A run with a private
+  // model resolver was prepared from the catalog as it stood then, and its call
+  // must keep what that preparation reserved, so it does not load it here.
+  if (
+    !input.resolveModelRuntime && isVeryfrontCloudEnabled() &&
+    !(typeof configuredModel === "string" && configuredModel.startsWith("local/"))
+  ) {
+    await warmVeryfrontCloudCatalog();
+  }
+  const requestedModel = resolveConfiguredAgentModel(configuredModel);
+  const resolvedModelString = resolveRuntimeModel(configuredModel);
+  const usesVeryfrontCloud = startsWithCloudPrefix(resolvedModelString);
+  const privatelyResolvedModel = input.resolveModelRuntime && usesVeryfrontCloud
     ? input.resolveModelRuntime(resolvedModelString)
     : undefined;
   const transport = privatelyResolvedModel
@@ -242,6 +260,16 @@ export async function resolveAgentModelTransport(
     : resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions);
   const languageModel = privatelyResolvedModel ?? transport?.model ??
     resolveModel(resolvedModelString);
+  // A Veryfront Cloud model settles its protocol and capabilities on its first
+  // async step. Settle it here, before anything reads them: the provider option
+  // key below and the runtime's tool-calling, structured-output and replay
+  // checks. A failure surfaces again when the model is called.
+  if (
+    readVeryfrontCloudModelFacts(languageModel) !== undefined &&
+    typeof languageModel.prepare === "function"
+  ) {
+    await Promise.resolve(languageModel.prepare()).catch(() => {});
+  }
   const providerOptionKey = resolveModelProviderOptionKey(resolvedModelString, languageModel);
 
   return {

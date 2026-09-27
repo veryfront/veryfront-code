@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, it } from "#veryfront/testing/bdd.ts";
+import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearModelProviders } from "#veryfront/provider";
@@ -24,6 +25,7 @@ afterEach(() => {
 });
 
 it("converts the sanitized issue 1834 context into a valid Mistral gateway ingress request", async () => {
+  using _catalog = useServedCatalogForTests();
   setEnv("VERYFRONT_API_TOKEN", "vf_test_issue_1834");
   setEnv("VERYFRONT_PROJECT_SLUG", "issue-1834-project");
   let capturedUrl = "";
