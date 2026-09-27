@@ -2,6 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { formatProxyJsonLine, runWithProxyRequestContext } from "./logger.ts";
+import {
+  PROXY_RUNTIME_VERSION,
+  PROXY_SERVICE_VERSION,
+  resolveProxyServiceVersion,
+} from "./version.ts";
 
 describe("proxy JSON log line", () => {
   it("stamps the resolved project and request with the snake_case fields the runtime uses", () => {
@@ -37,6 +42,13 @@ describe("proxy JSON log line", () => {
     assertEquals("request_id" in entry, false);
   });
 
+  it("stamps the deployed artifact tag as service_version and keeps veryfrontVersion", () => {
+    const entry = JSON.parse(formatProxyJsonLine("info", "Proxy listening"));
+
+    assertEquals(entry.service_version, PROXY_SERVICE_VERSION);
+    assertEquals(entry.veryfrontVersion, PROXY_RUNTIME_VERSION);
+  });
+
   it("stamps the run a signed control-plane request addresses as run_id", () => {
     const entry = JSON.parse(runWithProxyRequestContext(
       { requestId: "req-1", projectId: "project-1", runId: "run_1" },
@@ -55,5 +67,20 @@ describe("proxy JSON log line", () => {
     assertEquals(entry.context, { ms: 12 });
     assertEquals(entry.error.message, "connection reset");
     assertEquals("run_id" in entry, false);
+  });
+});
+
+describe("resolveProxyServiceVersion", () => {
+  it("uses the deployed artifact tag from OTEL_SERVICE_VERSION", () => {
+    assertEquals(
+      resolveProxyServiceVersion(" 20260927145139-0c317774e6d3 ", "1.2.3"),
+      "20260927145139-0c317774e6d3",
+    );
+  });
+
+  it("falls back to the runtime version when OTEL_SERVICE_VERSION is unset or blank", () => {
+    assertEquals(resolveProxyServiceVersion(undefined, "1.2.3"), "1.2.3");
+    assertEquals(resolveProxyServiceVersion("  ", "1.2.3"), "1.2.3");
+    assertEquals(resolveProxyServiceVersion(undefined), PROXY_RUNTIME_VERSION);
   });
 });
