@@ -167,18 +167,62 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
-  it("does not alias bare ids of models the gateway has retired", () => {
+  it("keeps bare aliases of gateway-retired models for direct provider keys", () => {
+    assertEquals(resolveConfiguredAgentModel("gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    assertEquals(
+      resolveConfiguredAgentModel("gemini-3.1-pro"),
+      "google-ai-studio/gemini-3.1-pro-preview",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("gemini-3.1-pro-preview"),
+      "google-ai-studio/gemini-3.1-pro-preview",
+    );
+    assertEquals(resolveConfiguredAgentModel("mistral-large"), "mistral/mistral-large-2512");
+    assertEquals(
+      resolveConfiguredAgentModel("mistral-large-2512"),
+      "mistral/mistral-large-2512",
+    );
+  });
+
+  it("calls gateway-retired models directly when the vendor key is configured", () => {
+    clearModelEnv();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    setEnv("OPENAI_API_KEY", "sk-test");
+    setEnv("GOOGLE_API_KEY", "google-test");
+    setEnv("MISTRAL_API_KEY", "mistral-test");
+
+    assertEquals(resolveRuntimeModel("gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    assertEquals(resolveRuntimeModel("gemini-3.1-pro"), "google/gemini-3.1-pro-preview");
+    assertEquals(resolveRuntimeModel("mistral-large"), "mistral/mistral-large-2512");
+  });
+
+  it("rejects gateway-retired models instead of routing them through Veryfront Cloud", () => {
+    clearModelEnv();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
     for (
-      const retired of [
-        "gpt-5.4-nano",
-        "gemini-3.1-pro",
-        "gemini-3.1-pro-preview",
-        "mistral-large",
-        "mistral-large-2512",
+      const [model, provider] of [
+        ["gpt-5.4-nano", "openai"],
+        ["openai/gpt-5.4-nano", "openai"],
+        ["veryfront-cloud/openai/gpt-5.4-nano", "openai"],
+        ["gemini-3.1-pro", "google"],
+        ["google/gemini-3.1-pro-preview", "google"],
+        ["veryfront-cloud/google-ai-studio/gemini-3.1-pro-preview", "google"],
       ]
     ) {
-      assertEquals(resolveConfiguredAgentModel(retired), retired);
+      assertThrows(
+        () => resolveRuntimeModel(model),
+        Error,
+        `no longer available through Veryfront Cloud. Choose another model, or configure a ${provider} API key`,
+      );
     }
+    assertThrows(
+      () => resolveRuntimeModel("veryfront-cloud/mistral/mistral-large-2512"),
+      Error,
+      'Unsupported Mistral model "veryfront-cloud/mistral/mistral-large-2512"',
+    );
   });
 
   it("aliases every Veryfront Cloud catalog model id to its provider model", () => {
@@ -320,7 +364,7 @@ describe("agent/runtime/model-resolution", () => {
     setEnv("MISTRAL_API_KEY", "mistral-test");
 
     assertEquals(
-      resolveRuntimeModel("mistral/mistral-large-2512"),
+      resolveRuntimeModel("mistral-large"),
       "mistral/mistral-large-2512",
     );
   });
