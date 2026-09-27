@@ -482,8 +482,12 @@ function resolveDirectCapacityScope(): string {
     "project:unattributed";
 }
 
+// Workflow workers restore only the request context, so a project named there
+// makes the sample the project's too.
 function hasTenantMetricsScope(): boolean {
-  return getTrustedProjectEnvIdentity() !== undefined || isProjectEnvActive();
+  const context = getRuntimeRequestContext();
+  return getTrustedProjectEnvIdentity() !== undefined || isProjectEnvActive() ||
+    (nonEmptyIdentity(context?.projectId) ?? nonEmptyIdentity(context?.projectSlug)) !== undefined;
 }
 
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {

@@ -545,6 +545,26 @@ describe("metrics public SDK", () => {
       assertEquals(lastPoint.asDouble, 2);
     });
 
+    it("sends the token of a workflow worker, which restores only the request context", async () => {
+      const requests = await exportedRequests(() =>
+        runWithRequestContext(
+          { projectSlug: "demo-project", projectId: "project-123", token: "worker-token" },
+          async () => {
+            metrics.counter("orders_total", 1, { project_id: "other-project" });
+            await metrics.__flushForTests();
+          },
+        )
+      );
+
+      assertEquals(headersOf(requests[0])["x-token"], "worker-token");
+      const [point] = JSON.parse(String(requests[0]?.body)).resourceMetrics[0].scopeMetrics[0]
+        .metrics[0].sum.dataPoints;
+      assertEquals(
+        point.attributes.find((attribute: { key: string }) => attribute.key === "project_id").value,
+        { stringValue: "project-123" },
+      );
+    });
+
     it("sends no token with host metrics that belong to no project", async () => {
       const requests = await exportedRequests(async () => {
         metrics.counter("orders_total", 1);
