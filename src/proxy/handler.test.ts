@@ -2799,6 +2799,7 @@ describe("Proxy Handler", () => {
 
         assertEquals(ctx.error?.status, 403);
         assertEquals(ctx.error?.message, "Access denied");
+        assertEquals(ctx.projectId, "proj-123");
 
         await handler.close();
       } finally {

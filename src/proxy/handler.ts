@@ -162,6 +162,8 @@ type ResolvedProjectMetadata =
       redirectUrl?: string;
       discardToken?: boolean;
     };
+    /** Set when the lookup resolved the project before the request was refused. */
+    projectId?: string;
   };
 
 type VerifySignedInternalControlPlaneBinding = (
@@ -632,6 +634,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           message: "Control-plane project binding failed",
           discardToken: true,
         },
+        projectId: lookupResult.id,
       };
     }
 
@@ -646,7 +649,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       logContext,
       isSignedInternalControlPlaneRequest: signedInternalControlPlaneRequest,
     });
-    if (protectionError) return { error: protectionError };
+    if (protectionError) return { error: protectionError, projectId: lookupResult.id };
 
     return {
       projectId: lookupResult.id,
@@ -758,6 +761,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
               message: "Control-plane project binding failed",
               discardToken: true,
             },
+            projectId: routingResult.id,
           };
         }
 
@@ -772,7 +776,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           logContext,
           isSignedInternalControlPlaneRequest: signedInternalControlPlaneRequest,
         });
-        if (protectionError) return { error: protectionError };
+        if (protectionError) return { error: protectionError, projectId: routingResult.id };
 
         return {
           projectId: routingResult.id,
@@ -1141,7 +1145,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         );
 
         if ("error" in resolved) {
-          return createProxyErrorContext(base, {
+          return createProxyErrorContext({ ...base, projectId: resolved.projectId }, {
             status: resolved.error.status,
             message: resolved.error.message,
             token: resolved.error.discardToken ? undefined : token,
@@ -1184,7 +1188,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         );
 
         if ("error" in resolved) {
-          return createProxyErrorContext(base, {
+          return createProxyErrorContext({ ...base, projectId: resolved.projectId }, {
             status: resolved.error.status,
             message: resolved.error.message,
             token: resolved.error.discardToken ? undefined : token,
@@ -1227,7 +1231,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         );
 
         if ("error" in resolved) {
-          return createProxyErrorContext(base, {
+          return createProxyErrorContext({ ...base, projectId: resolved.projectId }, {
             status: resolved.error.status,
             message: resolved.error.message,
             token: resolved.error.discardToken ? undefined : token,

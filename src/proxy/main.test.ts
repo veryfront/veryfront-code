@@ -105,8 +105,9 @@ describe("proxy main request URL parsing", () => {
     const resolveIndex = source.indexOf(
       "proxyHandler.processRequest(req, { url, timing: proxyTiming })",
     );
-    const stamp = 'if (ctx.projectId) lifecycle.setAttributes({ "project.id": ctx.projectId });';
-    const stampIndex = source.indexOf(stamp);
+    const stampIndex = source.search(
+      /lifecycle\.setAttributes\(\{\s*"project\.id":\s*ctx\.projectId/,
+    );
     assertEquals(resolveIndex >= 0, true);
     assertEquals(stampIndex > resolveIndex, true, "project.id must be set from the resolved ctx");
   });
