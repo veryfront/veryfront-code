@@ -216,9 +216,18 @@ describe("Guide: providers.md", () => {
     return guide.slice(start, end === -1 ? undefined : end);
   }
 
+  // The guide documents the default routes, so a host that opts back into
+  // vendor routes must not change what this suite compares against.
+  function neutralBaseUrl(provider: string): Promise<string> {
+    return withEnv(
+      { VERYFRONT_CLOUD_GATEWAY_ROUTES: "" },
+      () => Promise.resolve(getVeryfrontCloudGatewayBaseUrl(api, provider)),
+    );
+  }
+
   it("gives the OpenAI client the base URL the SDK sends OpenAI-protocol models to", async () => {
     const section = await gatewayClientSection();
-    const base = getVeryfrontCloudGatewayBaseUrl(api, "openai");
+    const base = await neutralBaseUrl("openai");
 
     assertStringIncludes(section, `baseURL: "${base}"`);
     assertStringIncludes(section, `curl ${base}/chat/completions`);
@@ -226,7 +235,7 @@ describe("Guide: providers.md", () => {
 
   it("gives the Anthropic client the base URL the SDK sends Anthropic-protocol models to", async () => {
     const section = await gatewayClientSection();
-    const base = getVeryfrontCloudGatewayBaseUrl(api, "anthropic");
+    const base = await neutralBaseUrl("anthropic");
 
     // The Anthropic client appends /v1/messages to its base URL.
     assertEquals(base.endsWith("/v1"), true);
@@ -237,7 +246,7 @@ describe("Guide: providers.md", () => {
   it("sends a vendor the SDK does not know over the OpenAI protocol", async () => {
     const section = await gatewayClientSection();
 
-    assertEquals(getVeryfrontCloudGatewayBaseUrl(api, "acme-labs"), `${api}/ai/v1`);
+    assertEquals(await neutralBaseUrl("acme-labs"), `${api}/ai/v1`);
     assertStringIncludes(section, "`<provider>/<model>`");
     assertStringIncludes(section, `curl ${api}/ai/v1/models`);
   });

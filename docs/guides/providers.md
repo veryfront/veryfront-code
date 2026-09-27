@@ -67,6 +67,8 @@ Code outside Veryfront can use the AI Gateway through the official OpenAI and
 Anthropic clients. Create a project API key with the Write permission in Studio
 under **Settings > API Keys**. Inference requests are writes, so a Read-only key
 is refused. The key starts with `vf_` and is bound to its project.
+The examples read it from `VERYFRONT_API_KEY`, a name for your own code only.
+The Veryfront CLI and SDK read `VERYFRONT_API_TOKEN`, described above.
 
 Name the model as `<provider>/<model>`. List the models your key can use:
 
