@@ -18,6 +18,7 @@ import {
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "./context.ts";
 import {
+  canVeryfrontCloudCatalogRefuse,
   createRetiredVeryfrontCloudModelError,
   isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
@@ -270,7 +271,10 @@ export function parseVeryfrontCloudModelId(
  * a clear error rather than a gateway-side failure.
  */
 export function assertVeryfrontCloudModelListed(provider: string, upstreamModelId: string): void {
-  if (provider === "mistral" && !isSupportedMistralModelId(`mistral/${upstreamModelId}`)) {
+  if (
+    provider === "mistral" && canVeryfrontCloudCatalogRefuse() &&
+    !isSupportedMistralModelId(`mistral/${upstreamModelId}`)
+  ) {
     throw toError(
       createError({
         type: "config",
@@ -338,6 +342,7 @@ export async function loadVeryfrontCloudModelCatalog(
     return false;
   }
   const catalog = await loadVeryfrontCloudCatalog({
+    fresh: true,
     apiBaseUrl: bootstrap.apiBaseUrl,
     apiToken: bootstrap.apiToken,
     ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),

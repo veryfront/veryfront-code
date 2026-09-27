@@ -5,6 +5,7 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import type { ModelRuntime } from "../types.ts";
 import {
   hasActiveVeryfrontCloudCatalogScope,
+  isVeryfrontCloudCatalogFresh,
   peekVeryfrontCloudCatalog,
   type VeryfrontCloudCatalog,
   type VeryfrontCloudCatalogModel,
@@ -262,6 +263,30 @@ function loadedCatalog(): VeryfrontCloudCatalog | undefined {
   const scope = ambientScope();
   // A scope-less read still sees a catalog fixed by a test hook.
   return scope ? peekVeryfrontCloudCatalog(scope) : peekVeryfrontCloudCatalog();
+}
+
+/**
+ * Whether the catalog reads use may refuse a model it does not list: a fresh
+ * served catalog, or the shipped list while none has loaded. A stale served
+ * catalog may miss a model the platform has enabled since, so a refusal waits
+ * until it is refreshed and the platform answers for the model meanwhile.
+ */
+export function canVeryfrontCloudCatalogRefuse(): boolean {
+  if (loadedCatalog() === undefined) return true;
+  if (hasActiveVeryfrontCloudCatalogScope()) return isVeryfrontCloudCatalogFresh();
+  const scope = ambientScope();
+  return scope ? isVeryfrontCloudCatalogFresh(scope) : isVeryfrontCloudCatalogFresh();
+}
+
+/**
+ * Whether the served catalog loaded for the current scope lists this model,
+ * under any accepted spelling. A listed model is a Veryfront Cloud candidate
+ * even when its provider is one this package does not name.
+ */
+export function isListedInServedVeryfrontCloudCatalog(modelId: string): boolean {
+  if (loadedCatalog() === undefined) return false;
+  const model = servedIndex().byKey.get(canonicalVeryfrontCloudModelKey(modelId));
+  return model !== undefined && !isRetiredVeryfrontCloudModelId(model.modelId);
 }
 
 /**
@@ -735,6 +760,7 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
     // list so callers get a clear error rather than a gateway-side failure.
     if (
       isMistralModelId(requestedModel) &&
+      canVeryfrontCloudCatalogRefuse() &&
       !isSupportedMistralModelId(requestedModel)
     ) {
       throw NOT_SUPPORTED.create({
@@ -790,7 +816,10 @@ export function resolveVeryfrontCloudGatewayModelId(
 
   // Unsupported Mistral ids are passed through unprefixed (not routed through
   // the Veryfront Cloud gateway prefix).
-  if (isMistralModelId(modelId) && !isSupportedMistralModelId(modelId)) {
+  if (
+    isMistralModelId(modelId) && canVeryfrontCloudCatalogRefuse() &&
+    !isSupportedMistralModelId(modelId)
+  ) {
     return modelId;
   }
 

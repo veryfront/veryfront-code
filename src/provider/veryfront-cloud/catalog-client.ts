@@ -87,6 +87,12 @@ export interface VeryfrontCloudCatalogLoadOptions extends VeryfrontCloudCatalogS
   readonly signal?: AbortSignal;
   /** Longest this caller waits for a request in flight before it goes on without it. */
   readonly maxWaitMs?: number;
+  /**
+   * Wait for the refresh of a stale entry instead of answering with it at once,
+   * for a caller about to make a decision the catalog must be current for. The
+   * stale entry still answers when the refresh fails or the wait ends.
+   */
+  readonly fresh?: boolean;
 }
 
 interface CatalogEntry {
@@ -354,14 +360,23 @@ export function loadVeryfrontCloudCatalog(
     ...(options.projectSlug ? { projectSlug: options.projectSlug } : {}),
   });
   // Stale while revalidate: the stale entry answers now, the refresh replaces it.
-  if (entry) return Promise.resolve(entry.catalog);
-  return waitFor(request, undefined, options.signal, options.maxWaitMs);
+  if (entry && !options.fresh) return Promise.resolve(entry.catalog);
+  return waitFor(request, entry?.catalog, options.signal, options.maxWaitMs).then((catalog) =>
+    catalog ?? entry?.catalog
+  );
 }
 
-/** Whether a load for this scope would answer from a fresh cache entry, without a request. */
-export function isVeryfrontCloudCatalogFresh(scope: VeryfrontCloudCatalogScope): boolean {
+/**
+ * Whether the catalog for a scope is fresh: loaded within the TTL. Without a
+ * scope, reads the one {@link withVeryfrontCloudCatalogScope} names. A stale
+ * catalog may miss models the platform has enabled since, so it must not be
+ * used to refuse one.
+ */
+export function isVeryfrontCloudCatalogFresh(scope?: VeryfrontCloudCatalogScope): boolean {
   if (seeded) return true;
-  const entry = entries.get(cacheKey(scope));
+  const key = scope ? cacheKey(scope) : activeKey;
+  if (key === undefined) return false;
+  const entry = entries.get(key);
   return entry !== undefined && now() - entry.fetchedAt < VERYFRONT_CLOUD_CATALOG_TTL_MS;
 }
 

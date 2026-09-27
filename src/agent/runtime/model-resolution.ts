@@ -5,7 +5,9 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import {
+  canVeryfrontCloudCatalogRefuse,
   createRetiredVeryfrontCloudModelError,
+  isListedInServedVeryfrontCloudCatalog,
   isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
   isVeryfrontCloudCatalogLoaded,
@@ -144,7 +146,8 @@ function listAvailableDirectProviders(): string[] {
 }
 
 function isSupportedHostedMistralModel(modelId: string): boolean {
-  return isSupportedMistralModelId(`mistral/${modelId}`);
+  // A stale served catalog cannot refuse: the platform answers for the model.
+  return !canVeryfrontCloudCatalogRefuse() || isSupportedMistralModelId(`mistral/${modelId}`);
 }
 
 function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
@@ -152,7 +155,7 @@ function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
   // the shipped list cannot know a model the platform added since, and the
   // model checks its own catalog once that has loaded.
   return modelId.startsWith("veryfront-cloud/mistral/") && isVeryfrontCloudCatalogLoaded() &&
-    !isSupportedMistralModelId(modelId);
+    canVeryfrontCloudCatalogRefuse() && !isSupportedMistralModelId(modelId);
 }
 
 function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {
@@ -249,7 +252,13 @@ export function resolveRuntimeModel(model?: string): string {
   const provider = configuredModel.slice(0, slashIndex);
   const modelId = configuredModel.slice(slashIndex + 1);
 
-  if (!HOSTED_PROVIDER_NAMES.has(provider) || !modelId) {
+  // A provider this package names, or any model the loaded served catalog
+  // lists (a provider the platform added since), is a Veryfront Cloud candidate.
+  if (
+    !modelId ||
+    (!HOSTED_PROVIDER_NAMES.has(provider) &&
+      !isListedInServedVeryfrontCloudCatalog(configuredModel))
+  ) {
     return configuredModel;
   }
 

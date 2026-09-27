@@ -6,7 +6,9 @@ import { seedServedCatalogForTests, servedCatalogPayload } from "./catalog-clien
 import {
   __resetVeryfrontCloudCatalogForTests,
   __setVeryfrontCloudCatalogClockForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
   VERYFRONT_CLOUD_CATALOG_RETRY_MS,
+  VERYFRONT_CLOUD_CATALOG_TTL_MS,
 } from "./catalog-client.ts";
 import { agent } from "#veryfront/agent";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -1958,6 +1960,66 @@ describe("provider/veryfront-cloud served catalog loading", () => {
 
     // The waiting caller used the served catalog, fetched once for both.
     assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/chat/completions"]);
+  });
+
+  it("does not refuse a model against a stale catalog, and serves it after the refresh", async () => {
+    setCloudBootstrap();
+    let now = 1_000_000;
+    __setVeryfrontCloudCatalogClockForTests(() => now);
+    const scope = {
+      apiBaseUrl: "https://api.veryfront.com",
+      apiToken: "vf_test_provider",
+      projectSlug: "provider-test-project",
+    };
+    // A catalog loaded before the platform enabled mistral/mistral-new.
+    __setVeryfrontCloudCatalogForScopeForTests(scope, {
+      models: [{
+        id: "mistral-small-2503",
+        modelId: "mistral/mistral-small-2503",
+        provider: "mistral",
+        surface: "openai",
+        operations: ["chat-completions"],
+      }],
+    });
+    now += VERYFRONT_CLOUD_CATALOG_TTL_MS;
+    const requests = installGateway(() =>
+      Response.json({
+        models: [{
+          id: "mistral-new",
+          modelId: "mistral/mistral-new",
+          provider: "mistral",
+          surface: "openai",
+          operations: ["chat-completions"],
+        }],
+      })
+    );
+
+    const model = resolveModel("veryfront-cloud/mistral/mistral-new") as ModelRuntime;
+    await streamOnce(model);
+
+    assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/chat/completions"]);
+  });
+
+  it("still refuses a model a fresh catalog does not list", () => {
+    setCloudBootstrap();
+    __setVeryfrontCloudCatalogForScopeForTests({
+      apiBaseUrl: "https://api.veryfront.com",
+      apiToken: "vf_test_provider",
+      projectSlug: "provider-test-project",
+    }, {
+      models: [{
+        id: "mistral-small-2503",
+        modelId: "mistral/mistral-small-2503",
+        provider: "mistral",
+        surface: "openai",
+      }],
+    });
+
+    assertThrows(
+      () => resolveModel("veryfront-cloud/mistral/mistral-new"),
+      Error,
+      'Unsupported Mistral model "mistral/mistral-new"',
+    );
   });
 
   it("forwards metadata to the model rebuilt from the catalog", async () => {

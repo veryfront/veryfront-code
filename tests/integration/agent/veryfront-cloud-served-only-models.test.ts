@@ -27,6 +27,8 @@ import { defineSchema } from "#veryfront/schemas/define.ts";
 
 const SERVED_ONLY_MODEL = "mistral/mistral-medium-2609";
 const SERVED_ONLY_ALIAS = "medium";
+const NEW_PROVIDER_MODEL = "acme-labs/m1";
+const NEW_PROVIDER_ALIAS = "acme-m1";
 const AMBIENT_TOKEN = "vf_ambient_token";
 const RUN_TOKEN = "vf_run_token";
 
@@ -45,6 +47,14 @@ function catalogFor(authorization: string | null): Response {
         surface: "openai",
         operations: ["chat-completions"],
         aliases: [SERVED_ONLY_ALIAS],
+        capabilities: {},
+      }, {
+        id: "m1",
+        modelId: NEW_PROVIDER_MODEL,
+        provider: "acme-labs",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [NEW_PROVIDER_ALIAS],
         capabilities: {},
       }]
       : [],
@@ -156,6 +166,24 @@ describe("served-only models from a cold process", () => {
       // A known alias keeps its meaning.
       assertEquals(resolveRuntimeModel("sonnet"), "veryfront-cloud/anthropic/claude-sonnet-4-6");
     });
+
+    for (const model of [NEW_PROVIDER_MODEL, NEW_PROVIDER_ALIAS]) {
+      it(`routes ${model}, served for a provider this package does not name, through Veryfront Cloud`, async () => {
+        setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);
+        setEnv("VERYFRONT_PROJECT_SLUG", "cold-project");
+        installGateway();
+
+        const transport = await resolveAgentModelTransport({
+          agentId: "agent-1",
+          config: { model, system: "You are concise." },
+          context: undefined,
+          modelOverride: undefined,
+          mode: "stream",
+        });
+
+        assertEquals(transport.resolvedModelString, `veryfront-cloud/${NEW_PROVIDER_MODEL}`);
+      });
+    }
 
     it("resolves a served-only alias once the ambient catalog is loaded", async () => {
       setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);

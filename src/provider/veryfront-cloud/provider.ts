@@ -32,7 +32,6 @@ import {
 import {
   isVeryfrontCloudCatalogFresh,
   loadVeryfrontCloudCatalog,
-  peekVeryfrontCloudCatalog,
   withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
 
@@ -286,7 +285,9 @@ function createVeryfrontCloudModelInternal(
       const parsed = parseVeryfrontCloudModelId(modelId, "language", { catalogChecks: false });
       assertVeryfrontCloudModelListed(parsed.provider, parsed.modelId);
     });
-  if (peekVeryfrontCloudCatalog(catalogScope) !== undefined) assertListed();
+  // Refuse at construction only against a fresh catalog: a stale one may miss a
+  // model enabled since, so the check waits for the refresh on the first call.
+  if (isVeryfrontCloudCatalogFresh(catalogScope)) assertListed();
   let facts = readFacts();
   const built = build();
   let current = built;
@@ -313,9 +314,12 @@ function createVeryfrontCloudModelInternal(
   const ready = async (abortSignal?: AbortSignal): Promise<ModelRuntime> => {
     const catalog = await loadVeryfrontCloudCatalog({
       ...catalogScope,
+      fresh: true,
       ...(abortSignal ? { signal: abortSignal } : {}),
     });
-    return rebuildIfChanged(catalog !== undefined);
+    // Settle (and run the listing check) only on a fresh catalog. A stale one
+    // answers this call, and a later call tries the refresh again.
+    return rebuildIfChanged(catalog !== undefined && isVeryfrontCloudCatalogFresh(catalogScope));
   };
   const wrapped = withServedCatalog(built, () => current, settled, ready);
   registerVeryfrontCloudModelFacts(wrapped, () => facts);
