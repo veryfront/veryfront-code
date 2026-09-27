@@ -41,7 +41,7 @@ const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi;
 const JWT_PATTERN = /\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g;
 const URL_CREDENTIAL_PATTERN = /(https?:\/\/)[^@\s/]+(@[^/\s]+)/gi;
 const SENSITIVE_QUERY_PATTERN =
-  /([?&](?:access_token|api_key|auth|authorization|dsn|password|secret|token)=)[^&#\s]+/gi;
+  /([?&](?:access_token|api_key|(?:k|%6b)(?:e|%65)(?:y|%79)|auth|authorization|dsn|password|secret|token)=)[^&#\s]+/gi;
 const SENSITIVE_ATTRIBUTE_KEY_PATTERN =
   /(?:^|[_\-.])(?:api[_\-.]?key|auth|authorization|cookie|credentials?|dsn|jwt|password|secret|session|signature|token)(?:$|[_\-.])/i;
 

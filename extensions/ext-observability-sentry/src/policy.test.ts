@@ -1046,3 +1046,20 @@ it("policy keeps flush bounded and isolates SDK flush failures", async () => {
     false,
   );
 });
+
+for (const parameter of ["key", "KEY", "%6bey", "k%65y", "ke%79"]) {
+  it(`policy redacts Gemini ${parameter} query credentials in errors`, () => {
+    const input =
+      `https://api.example.test/ai/v1beta/models?${parameter}=vf_test_query_0001&alt=sse`;
+    const redacted = `https://api.example.test/ai/v1beta/models?${parameter}=[REDACTED]&alt=sse`;
+    const event = prepareSentryEvent({
+      message: input,
+      logentry: { message: input },
+      exception: { values: [{ value: input }] },
+    }, "veryfront-api");
+    assertEquals(event.message, redacted);
+    assertEquals(event.logentry?.message, redacted);
+    assertEquals(event.exception?.values?.[0]?.value, redacted);
+    assertEquals(sanitizeApplicationErrorAttributes({ path: input }), { path: redacted });
+  });
+}
