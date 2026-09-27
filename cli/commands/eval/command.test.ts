@@ -3060,6 +3060,17 @@ describe("eval CLI command helpers", () => {
     }
   });
 
+  it("loads credit constraints and objectives without changing their units", async () => {
+    const expected = {
+      constraints: { costCredits: { max: 12, maxRegressionPct: 0.1 } },
+      objectives: { costCredits: { weight: 1, direction: "minimize" as const } },
+    };
+    await withTempDir(async (projectDir) => {
+      await Deno.writeTextFile(`${projectDir}/policy.json`, JSON.stringify(expected));
+      assertEquals(await loadEvalModelComparisonPolicy(projectDir, "policy.json"), expected);
+    });
+  });
+
   it("rejects invalid model comparison policy objective weights", async () => {
     const projectDir = await Deno.makeTempDir();
     try {

@@ -159,6 +159,7 @@ const MODEL_COMPARISON_METRICS = [
   "groundednessScore",
   "totalTokens",
   "costUsd",
+  "costCredits",
   "p95Ms",
 ] as const satisfies readonly EvalModelComparisonMetricName[];
 
