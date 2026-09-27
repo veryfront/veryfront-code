@@ -89,6 +89,7 @@ try {
     assertEquals(custom.parentSpanId, request.spanId);
   }
 } finally {
+  // Also clean up after failed assertions/setup; extension shutdown is idempotent.
   await extension.teardown!();
   await app?.shutdown();
   await collector.shutdown();
