@@ -332,10 +332,21 @@ An MCP client configuration uses the same URL and bearer token:
 
 ### Read the result
 
-Every surface returns the same tool result: `content`, `structuredContent`,
-`isError`, and optional `_meta`. For `gmail__list_emails`, `structuredContent`
-has `messages`, `pagination`, and `summary`. A tool failure keeps the envelope
-and sets `isError: true`, with a code in `structuredContent.error`:
+Every surface carries the same native tool result: `content`,
+`structuredContent`, `isError`, and optional `_meta`. For `gmail__list_emails`,
+`structuredContent` has `messages`, `pagination`, and `summary`. Each surface
+places that result at a different path:
+
+| Surface    | Tool result                                                                                                                            |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| REST       | The response body                                                                                                                      |
+| GraphQL    | `data.executeIntegrationTool`, limited to the fields you select                                                                        |
+| MCP        | The JSON-RPC `result`                                                                                                                  |
+| TypeScript | `outcome.result`, with `outcome.status` set to `success` or `tool_error`                                                               |
+| CLI        | `data.result` with `success: true`; a tool failure exits 1 with `error.code` set to `INTEGRATION_TOOL_ERROR` and the outcome in `data` |
+
+A tool failure keeps the native result and sets `isError: true`, with a code in
+`structuredContent.error`:
 
 | Code                         | Provider effect                                | Next step                                                          |
 | ---------------------------- | ---------------------------------------------- | ------------------------------------------------------------------ |
