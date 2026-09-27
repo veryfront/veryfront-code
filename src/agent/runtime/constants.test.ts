@@ -57,7 +57,6 @@ describe("getModelMaxOutputTokens", () => {
 
   it("returns known limits for Mistral models", () => {
     assertEquals(getModelMaxOutputTokens("mistral/mistral-large-2512"), 1_024);
-    assertEquals(getModelMaxOutputTokens("veryfront-cloud/mistral/mistral-large-2512"), 1_024);
     assertEquals(getModelMaxOutputTokens("mistral/mistral-small-2503"), 16_384);
     assertEquals(getModelMaxOutputTokens("veryfront-cloud/mistral/mistral-small-2503"), 16_384);
   });
@@ -74,7 +73,7 @@ describe("getModelMaxOutputTokens", () => {
     assertEquals(getModelMaxOutputTokens("openai/gpt-5.4"), 128_000);
     assertEquals(getModelMaxOutputTokens("openai/gpt-5.4-mini"), 128_000);
     assertEquals(getModelMaxOutputTokens("openai/gpt-5.4-nano"), 128_000);
-    assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.4-nano"), 128_000);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5-nano"), 128_000);
   });
 
   it("returns the safe fallback limit for unknown models", () => {

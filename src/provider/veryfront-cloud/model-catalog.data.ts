@@ -220,27 +220,11 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
       thinking: true,
     }),
     Object.freeze({
-      id: "gpt-5.4-nano",
-      modelId: "openai/gpt-5.4-nano",
-      provider: "openai",
-      name: "GPT-5.4 Nano",
-      description: "Lowest-cost OpenAI model for lightweight work",
-      thinking: true,
-    }),
-    Object.freeze({
       id: "gpt-5.2",
       modelId: "openai/gpt-5.2",
       provider: "openai",
       name: "GPT-5.2",
       description: "Previous OpenAI frontier generation",
-      thinking: true,
-    }),
-    Object.freeze({
-      id: "gemini-3.1-pro-preview",
-      modelId: "google-ai-studio/gemini-3.1-pro-preview",
-      provider: "google",
-      name: "Gemini 3.1 Pro Preview",
-      description: "Advanced reasoning and analysis",
       thinking: true,
     }),
     Object.freeze({
@@ -264,13 +248,6 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
       provider: "google",
       name: "Gemini 2.5 Flash",
       description: "Previous Google Flash model",
-    }),
-    Object.freeze({
-      id: "mistral-large-2512",
-      modelId: "mistral/mistral-large-2512",
-      provider: "mistral",
-      name: "Mistral Large 3",
-      description: "Most capable Mistral model",
     }),
     Object.freeze({
       id: "mistral-small-2503",

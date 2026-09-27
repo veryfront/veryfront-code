@@ -1,3 +1,4 @@
+import type { IntegrationSelectedReadiness } from "./readiness.ts";
 import type { BoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { IntegrationFailureCondition } from "./integration-condition.ts";
 
@@ -75,22 +76,23 @@ export type IntegrationCallOutcome =
     readonly condition?: IntegrationFailureCondition;
   };
 
+/** Select a saved connection and optionally pin its observed generation. */
+export interface IntegrationSelectionOptions {
+  readonly connectionId?: string;
+  /** Refuse replacement of the observed connection. Requires connectionId and server support. */
+  readonly expectedConnectionGenerationId?: string;
+  readonly abortSignal?: AbortSignal;
+}
+
 /**
- * Selection metadata, separate from native provider arguments. `connectionId` selects
- * a saved OAuth connection. `expectedConnectionGenerationId` accepts its observed
- * `connection_generation_id` and requires `connectionId`; both values must be UUIDs.
+ * Selection metadata for a tool call, separate from native provider arguments.
  * The API must advertise generation-precondition support. Unsupported deployments
  * throw `IntegrationApiError` with kind `unsupported_precondition` and
  * `outcomeUnknown: false` before dispatch. Missing confirmation after a successful
  * call response reports the same kind with `outcomeUnknown: true`. Calls never
  * authorize automatic replay. Omitting the generation retains existing call behavior.
  */
-export interface IntegrationCallOptions {
-  readonly connectionId?: string;
-  /** Refuse replacement of the observed connection. Requires connectionId and server support. */
-  readonly expectedConnectionGenerationId?: string;
-  readonly abortSignal?: AbortSignal;
-}
+export interface IntegrationCallOptions extends IntegrationSelectionOptions {}
 
 /** Connect options. Scope defaults to personal user ownership, never silently project scope. */
 export interface IntegrationConnectOptions {
@@ -121,6 +123,11 @@ export type IntegrationConnectOutcome = IntegrationOAuthHandoff | {
 /** Project-bound primitives. Iterators use a bounded deadline and fail rather than silently truncate. */
 export interface IntegrationClient {
   readonly project: Readonly<{ id: string; slug: string }>;
+  /** Read fresh selected-tool metadata. This neither executes a tool nor verifies provider access. */
+  readiness(
+    toolName: string,
+    options?: IntegrationSelectionOptions,
+  ): Promise<IntegrationSelectedReadiness>;
   discover(
     options?: { search?: string; sortOrder?: "asc" | "desc" },
   ): AsyncIterable<IntegrationCatalogEntry>;
