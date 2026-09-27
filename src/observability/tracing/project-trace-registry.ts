@@ -63,6 +63,9 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
     entry.state = "closed";
     this.clearTimer(entry);
     if (this.current.get(entry.key) === entry) this.current.delete(entry.key);
+    // An expired initializer must not reserve capacity forever. The ready handler
+    // below still closes any session it eventually produces.
+    if (!entry.session) this.entries.delete(entry);
     if (entry.stopping) {
       if (discard && entry.session) void entry.session.shutdown(true).catch(() => {});
       return entry.stopping;

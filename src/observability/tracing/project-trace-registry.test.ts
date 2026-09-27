@@ -38,11 +38,20 @@ describe("project trace registry", () => {
     hanging.resolve();
   });
 
-  it("times out initialization and closes its eventual result instead of leaking it", async () => {
+  it("reclaims timed-out initialization capacity and closes its eventual result", async () => {
     const creation = Promise.withResolvers<{ shutdown(discard: boolean): Promise<void> }>();
     const closed = Promise.withResolvers<boolean>();
-    const registry = new ProjectTraceRegistry(() => creation.promise, { initializeMs: 10 });
+    const registry = new ProjectTraceRegistry(
+      (cfg) =>
+        cfg.projectId === "a"
+          ? creation.promise
+          : Promise.resolve({ shutdown: () => Promise.resolve() }),
+      { initializeMs: 10, maxEntries: 1 },
+    );
     assertEquals(await registry.acquire(config("a")), undefined);
+    const healthy = await registry.acquire(config("b"));
+    assertExists(healthy);
+    healthy.release();
     creation.resolve({
       shutdown: (discard) => {
         closed.resolve(discard);
