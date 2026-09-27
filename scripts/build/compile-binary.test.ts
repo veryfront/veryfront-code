@@ -99,8 +99,8 @@ it("controlled binary compilation can require an entirely cached graph", () => {
   const args = createCompileArgs({
     cachedOnly: true,
     extraIncludes: [],
-    output: "veryfront-proxy",
-    profile: "proxy",
+    output: "veryfront",
+    profile: "full",
     target: "aarch64-unknown-linux-gnu",
   });
   assertEquals(args.includes("--cached-only"), true);
