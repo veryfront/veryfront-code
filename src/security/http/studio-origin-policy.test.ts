@@ -2,18 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  parseOperatorStudioOrigin,
   resolveTrustedStudioOrigin,
   studioTargetOriginHelperSource,
 } from "./studio-origin-policy.ts";
 
 describe("security/http/studio-origin-policy", () => {
   it("admits only an exact HTTPS Studio origin at the configured platform root", async () => {
-    const policy = await import("./studio-origin-policy.ts") as Record<string, unknown>;
-    const parseOperatorStudioOrigin = policy.parseOperatorStudioOrigin as
-      | ((raw: string, roots: readonly string[]) => string | null)
-      | undefined;
-    assertEquals(typeof parseOperatorStudioOrigin, "function");
-    if (!parseOperatorStudioOrigin) return;
     const root = "verified-0924.127.0.0.1.sslip.io";
     const expected = `https://${root}:58443`;
     assertEquals(parseOperatorStudioOrigin(expected, [root]), expected);
