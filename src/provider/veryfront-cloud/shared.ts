@@ -371,7 +371,7 @@ export const VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV = "VERYFRONT_CLOUD_GATEWAY_ROUTE
 const NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL: ReadonlyMap<string, string> = new Map([
   ["openai", "ai/v1"],
   ["anthropic", "ai/anthropic/v1"],
-  ["google", "ai/google/v1beta"],
+  ["google", "ai/v1beta"],
 ]);
 
 /**
@@ -424,7 +424,7 @@ function getVeryfrontCloudVendorGatewayBaseUrl(
 /**
  * Gateway route for a provider. OpenAI-protocol providers use `<api>/ai/v1`,
  * Anthropic-protocol providers use `<api>/ai/anthropic/v1`, and Google uses
- * `<api>/ai/google/v1beta`. {@link VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV} set to
+ * `<api>/ai/v1beta`. {@link VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV} set to
  * `vendor` restores the vendor-scoped path for every provider.
  */
 export function resolveVeryfrontCloudGatewayRoute(

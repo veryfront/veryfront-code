@@ -90,7 +90,7 @@ describe("provider/veryfront-cloud/shared", () => {
   it("builds gateway base URLs without duplicate slashes", () => {
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "google"),
-      "https://api.veryfront.com/ai/google/v1beta",
+      "https://api.veryfront.com/ai/v1beta",
     );
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com/", "mistral"),

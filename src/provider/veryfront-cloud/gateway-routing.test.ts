@@ -113,21 +113,21 @@ describe("provider/veryfront-cloud gateway routing", () => {
       {
         model: "google-ai-studio/gemini-3.5-flash",
         provider: "google",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/google/v1beta",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
         genAiSystem: "gcp.gen_ai",
         toolProfile: "google",
       },
       {
         model: "google-ai-studio/gemini-2.5-pro",
         provider: "google",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/google/v1beta",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
         genAiSystem: "gcp.gen_ai",
         toolProfile: "google",
       },
       {
         model: "google-ai-studio/gemini-2.5-flash",
         provider: "google",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/google/v1beta",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
         genAiSystem: "gcp.gen_ai",
         toolProfile: "google",
       },
@@ -182,8 +182,8 @@ describe("provider/veryfront-cloud gateway routing", () => {
       [
         ["anthropic", "https://api.veryfront.com/ai/anthropic/v1"],
         ["openai", "https://api.veryfront.com/ai/v1"],
-        ["google", "https://api.veryfront.com/ai/google/v1beta"],
-        ["google-ai-studio", "https://api.veryfront.com/ai/google/v1beta"],
+        ["google", "https://api.veryfront.com/ai/v1beta"],
+        ["google-ai-studio", "https://api.veryfront.com/ai/v1beta"],
         ["mistral", "https://api.veryfront.com/ai/v1"],
         ["moonshotai", "https://api.veryfront.com/ai/v1"],
       ],
@@ -203,7 +203,7 @@ describe("provider/veryfront-cloud gateway routing", () => {
         },
         { baseURL: "https://api.veryfront.com/ai/v1", neutral: true, wireModelProvider: "openai" },
         // Gemini names the model in the URL, so no body model is rewritten.
-        { baseURL: "https://api.veryfront.com/ai/google/v1beta", neutral: true },
+        { baseURL: "https://api.veryfront.com/ai/v1beta", neutral: true },
         { baseURL: "https://api.veryfront.com/ai/v1", neutral: true, wireModelProvider: "mistral" },
         {
           baseURL: "https://api.veryfront.com/ai/v1",

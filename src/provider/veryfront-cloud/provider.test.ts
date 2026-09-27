@@ -1133,7 +1133,7 @@ describe("provider/veryfront-cloud", () => {
     await drainStream(stream);
 
     assertEquals(
-      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/google/v1beta"),
+      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/v1beta"),
       true,
       "the google runtime must be pointed at the Veryfront Cloud google gateway",
     );
@@ -1293,7 +1293,7 @@ describe("provider/veryfront-cloud", () => {
       ],
       [
         "google-ai-studio/gemini-3.5-flash",
-        "https://api.veryfront.com/ai/google/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+        "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
         "google",
       ],
       [
@@ -1591,7 +1591,7 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     const neutral = await captureGatewayRequest("google-ai-studio/gemini-3.5-flash");
     assertEquals(
       neutral.url,
-      "https://api.veryfront.com/ai/google/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+      "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
     );
     assertEquals(JSON.parse(neutral.body).model, undefined);
 
@@ -1693,7 +1693,7 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
 
     assertEquals(
       await captureEmbeddingUrl(),
-      "https://api.veryfront.com/ai/google/v1beta/models/gemini-embedding-001:embedContent",
+      "https://api.veryfront.com/ai/v1beta/models/gemini-embedding-001:embedContent",
     );
     assertEquals(
       await withEnv({ VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" }, captureEmbeddingUrl),
@@ -1795,8 +1795,7 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
   });
 
   it("reads a Veryfront refusal in the Google envelope as the vendor route's body", async () => {
-    const googleUrl =
-      "https://api.veryfront.com/ai/google/v1beta/models/gemini-3.5-flash:generateContent";
+    const googleUrl = "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:generateContent";
     const body = '{"contents":[{"role":"user","parts":[{"text":"Hi"}]}]}';
     const cases: ReadonlyArray<readonly [number, unknown, Record<string, unknown>]> = [
       [
@@ -1850,7 +1849,7 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
       });
       const wrappedFetch = createVeryfrontCloudFetch(
         "vf_test_provider",
-        "https://api.veryfront.com/ai/google/v1beta",
+        "https://api.veryfront.com/ai/v1beta",
         undefined,
         { neutralRoute: true },
       );
@@ -1884,12 +1883,12 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     );
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
-      "https://api.veryfront.com/ai/google/v1beta",
+      "https://api.veryfront.com/ai/v1beta",
       undefined,
       { neutralRoute: true },
     );
     const response = await wrappedFetch(
-      "https://api.veryfront.com/ai/google/v1beta/models/gemini-3.5-flash:generateContent",
+      "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:generateContent",
       { method: "POST", body: "{}" },
     );
     restoreMockFetch();
