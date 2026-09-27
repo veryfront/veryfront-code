@@ -22,6 +22,7 @@ import {
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
+import { buildServingSpanAttributes } from "#veryfront/routing/registry/registry.ts";
 import { getDiscoveredHostTools } from "#veryfront/agent/hosted/veryfront-cloud-agent-service.ts";
 import {
   runWithVerifiedCacheApiCredential,
@@ -1323,6 +1324,12 @@ export class AgentStreamHandler extends BaseHandler {
                             localTools,
                             providerReplayCheckpoints,
                             persistProviderReplayCheckpoint,
+                            servingIdentity: ctx.projectId
+                              ? {
+                                projectId: ctx.projectId,
+                                spanAttributes: buildServingSpanAttributes(ctx),
+                              }
+                              : undefined,
                             projectAgentSandbox: {
                               apiUrl: veryfrontApiUrl,
                               authToken: projectRuntimeToken || undefined,

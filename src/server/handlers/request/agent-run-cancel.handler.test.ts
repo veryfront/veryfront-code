@@ -7,6 +7,7 @@ import {
   createControlPlaneSignature,
   createCtx,
   stubApplicationErrorReporter,
+  withRecordedActiveSpan,
 } from "./internal-agent-run.test-helpers.ts";
 
 describe("server/handlers/request/agent-run-cancel.handler", () => {
@@ -132,6 +133,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
 
   it("returns 500 when cancel handling fails unexpectedly", async () => {
     const handler = new AgentRunCancelHandler({
+      getServingSpanAttributes: () => undefined,
       cancelRun() {
         throw new Error("cancel boom");
       },
@@ -197,6 +199,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
 
     try {
       const handler = new AgentRunCancelHandler({
+        getServingSpanAttributes: () => undefined,
         cancelRun() {
           throw thrown;
         },
@@ -234,5 +237,101 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe("agent-run-cancel.handler serving identity", () => {
+  const productionIdentity = {
+    projectId: "proj-1",
+    spanAttributes: { "veryfront.environment_name": "staging", "release.id": "rel-1" },
+  };
+
+  async function cancel(
+    sessionManager: AgentRunSessionManager,
+    ctxOverrides: Record<string, unknown> = {},
+  ) {
+    const body = JSON.stringify({ runId: "run_1" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+      requestMethod: "DELETE",
+      requestPath: "/api/control-plane/runs/run_1",
+    });
+    const { result, attributes } = await withRecordedActiveSpan(() =>
+      new AgentRunCancelHandler(sessionManager).handle(
+        new Request("https://example.com/api/control-plane/runs/run_1", {
+          method: "DELETE",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+            "x-release-id": "rel-untrusted",
+            "x-environment-name": "untrusted",
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), ...ctxOverrides },
+      )
+    );
+    return { status: result.response?.status, attributes };
+  }
+
+  it("stamps the release the owned run's stream was served from", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      servingIdentity: productionIdentity,
+    });
+
+    const { status, attributes } = await cancel(sessionManager, {
+      resolvedEnvironment: "production",
+      releaseId: "rel-untrusted",
+      environmentName: "untrusted",
+    });
+
+    assertEquals(status, 202);
+    assertEquals(attributes["release.id"], "rel-1");
+    assertEquals(attributes["veryfront.environment_name"], "staging");
+  });
+
+  it("stamps the branch of an owned preview run", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      servingIdentity: {
+        projectId: "proj-1",
+        spanAttributes: { "branch.id": "branch-1", "branch.name": "feature" },
+      },
+    });
+
+    const { status, attributes } = await cancel(sessionManager);
+
+    assertEquals(status, 202);
+    assertEquals(attributes["branch.name"], "feature");
+    assertEquals(attributes["release.id"], undefined);
+  });
+
+  it("stamps no release for a run this pod does not own", async () => {
+    const { status, attributes } = await cancel(new AgentRunSessionManager(), {
+      resolvedEnvironment: "production",
+      releaseId: "rel-untrusted",
+    });
+
+    assertEquals(status, 204);
+    assertEquals(attributes["release.id"], undefined);
+    assertEquals(attributes["veryfront.environment_name"], undefined);
+  });
+
+  it("stamps nothing when the run was served for another project", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      servingIdentity: { ...productionIdentity, projectId: "proj-other" },
+    });
+
+    const { attributes } = await cancel(sessionManager);
+
+    assertEquals(attributes["release.id"], undefined);
   });
 });

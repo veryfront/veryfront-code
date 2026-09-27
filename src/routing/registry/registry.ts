@@ -33,6 +33,12 @@ export function buildRouteRegistrySpanAttributes(
 
   if (!projectSlug && !projectId) return attributes;
 
+  return { ...attributes, ...buildServingSpanAttributes(ctx) };
+}
+
+/** The environment name plus the release or branch a request was served from. */
+export function buildServingSpanAttributes(ctx: HandlerContext): SpanAttributes {
+  const attributes: SpanAttributes = {};
   if (ctx.environmentName) attributes["veryfront.environment_name"] = ctx.environmentName;
 
   const signedBranchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;

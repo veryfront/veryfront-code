@@ -8,6 +8,7 @@ import {
   createControlPlaneSignature as createTestControlPlaneSignature,
   createCtx,
   stubApplicationErrorReporter,
+  withRecordedActiveSpan,
 } from "./internal-agent-run.test-helpers.ts";
 
 function createControlPlaneSignature(
@@ -294,6 +295,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
 
     try {
       const handler = new AgentRunResumeHandler({
+        getServingSpanAttributes: () => undefined,
         submitToolResult() {
           throw thrown;
         },
@@ -336,6 +338,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
   it("returns 401 when the control-plane signature is missing", async () => {
     let submitCalls = 0;
     const handler = new AgentRunResumeHandler({
+      getServingSpanAttributes: () => undefined,
       submitToolResult() {
         submitCalls++;
         return { accepted: true };
@@ -366,6 +369,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
   it("refuses a signature minted for a different run", async () => {
     let submitCalls = 0;
     const handler = new AgentRunResumeHandler({
+      getServingSpanAttributes: () => undefined,
       submitToolResult() {
         submitCalls++;
         return { accepted: true };
@@ -399,5 +403,50 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
       0,
       "a replayed signature must not inject a tool result into another run",
     );
+  });
+});
+
+describe("agent-run-resume.handler serving identity", () => {
+  it("stamps the release the owned run's stream was served from", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      servingIdentity: {
+        projectId: "proj-1",
+        spanAttributes: { "veryfront.environment_name": "staging", "release.id": "rel-1" },
+      },
+    });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+    const body = JSON.stringify({
+      type: "tool_result",
+      toolCallId: "tool_1",
+      result: { ok: true },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const { result, attributes } = await withRecordedActiveSpan(() =>
+      new AgentRunResumeHandler(sessionManager).handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/resume", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+            "x-release-id": "rel-untrusted",
+          },
+          body,
+        }),
+        {
+          ...createCtx(publicKeyPem),
+          resolvedEnvironment: "production",
+          releaseId: "rel-untrusted",
+        },
+      )
+    );
+
+    assertEquals(result.response?.status, 200);
+    await pending;
+    assertEquals(attributes["release.id"], "rel-1");
+    assertEquals(attributes["veryfront.environment_name"], "staging");
   });
 });

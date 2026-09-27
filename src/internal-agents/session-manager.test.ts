@@ -10,6 +10,24 @@ import {
 } from "./session-manager.ts";
 
 describe("internal-agents/session-manager", () => {
+  it("keeps a run's serving span attributes for its own project until the run ends", () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      servingIdentity: { projectId: "proj-1", spanAttributes: { "release.id": "rel-1" } },
+    });
+
+    assertEquals(sessionManager.getServingSpanAttributes("run_1", "proj-1"), {
+      "release.id": "rel-1",
+    });
+    assertEquals(sessionManager.getServingSpanAttributes("run_1", "proj-2"), undefined);
+    assertEquals(sessionManager.getServingSpanAttributes("run_1", undefined), undefined);
+
+    sessionManager.completeRun("run_1");
+    assertEquals(sessionManager.getServingSpanAttributes("run_1", "proj-1"), undefined);
+  });
+
   it("accepts duplicate tool results and rejects conflicting ones", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });

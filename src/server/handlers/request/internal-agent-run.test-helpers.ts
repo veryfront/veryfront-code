@@ -6,6 +6,19 @@ import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
+import * as otelApi from "npm:@opentelemetry/api@1.9.1";
+import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
+import {
+  _resetShimForTests,
+  setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
+  setGlobalTracerProvider,
+} from "#veryfront/observability/tracing/api-shim.ts";
 
 export type CapturedApplicationError = {
   error: unknown;
@@ -26,6 +39,37 @@ export function stubApplicationErrorReporter(): {
     flush: () => Promise.resolve(true),
   });
   return { captures, restore: () => setApplicationErrorReporter(undefined) };
+}
+
+/** Run `fn` inside an active span, standing in for routing.registry.execute; return its attributes. */
+export async function withRecordedActiveSpan<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; attributes: Record<string, unknown> }> {
+  const exporter = new InMemorySpanExporter();
+  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+  const contextManager = new AsyncLocalStorageContextManager();
+  contextManager.enable();
+  otelApi.context.setGlobalContextManager(contextManager);
+  setGlobalTracerProvider(provider as never);
+  setGlobalActiveSpanAccessor(otelApi.trace as never);
+  setGlobalContextAccessor(otelApi.context as never);
+
+  try {
+    const result = await provider.getTracer("test").startActiveSpan("routing", async (span) => {
+      try {
+        return await fn();
+      } finally {
+        span.end();
+      }
+    });
+    const [span] = exporter.getFinishedSpans();
+    return { result, attributes: { ...span?.attributes } };
+  } finally {
+    _resetShimForTests();
+    contextManager.disable();
+    otelApi.context.disable();
+    await provider.shutdown();
+  }
 }
 
 const encoder = new TextEncoder();
