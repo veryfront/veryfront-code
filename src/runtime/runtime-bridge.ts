@@ -119,6 +119,7 @@ type DirectGenerateUsage = {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
@@ -496,6 +497,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     outputTokens?: number;
     totalTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreation1hInputTokens?: number;
     cacheReadInputTokens?: number;
     cachedInputTokens?: number;
     reasoningTokens?: number;
@@ -524,6 +526,9 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     totalTokens: flatUsage.totalTokens,
     ...(typeof flatUsage.cacheCreationInputTokens === "number"
       ? { cacheCreationInputTokens: flatUsage.cacheCreationInputTokens }
+      : {}),
+    ...(typeof flatUsage.cacheCreation1hInputTokens === "number"
+      ? { cacheCreation1hInputTokens: flatUsage.cacheCreation1hInputTokens }
       : {}),
     ...(typeof flatUsage.cacheReadInputTokens === "number"
       ? { cacheReadInputTokens: flatUsage.cacheReadInputTokens }
@@ -917,6 +922,9 @@ function streamUsageToGenerateUsage(
     ...(totalTokens !== undefined ? { totalTokens } : {}),
     ...(totalUsage.cacheCreationInputTokens !== undefined
       ? { cacheCreationInputTokens: totalUsage.cacheCreationInputTokens }
+      : {}),
+    ...(totalUsage.cacheCreation1hInputTokens !== undefined
+      ? { cacheCreation1hInputTokens: totalUsage.cacheCreation1hInputTokens }
       : {}),
     ...(totalUsage.cacheReadInputTokens !== undefined
       ? { cacheReadInputTokens: totalUsage.cacheReadInputTokens }

@@ -3868,6 +3868,52 @@ describe("anthropic-provider", () => {
       });
     });
 
+    it("reports only the one-hour share of a mixed cache-write breakdown", async () => {
+      const generateWith = async (usage: Record<string, unknown>) => {
+        const runtime = createAnthropicModelRuntime({
+          apiKey: "k",
+          baseURL: "https://example.anthropic.test/v1",
+          fetch: () =>
+            Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  content: [{ type: "text", text: "ok" }],
+                  stop_reason: "end_turn",
+                  usage: { input_tokens: 100, output_tokens: 10, ...usage },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            ),
+        }, "claude-sonnet-4-20250514");
+        return (await runtime.doGenerate({ prompt: [userPrompt] })).usage;
+      };
+
+      assertEquals(
+        await generateWith({
+          cache_creation_input_tokens: 50,
+          cache_creation: { ephemeral_5m_input_tokens: 30, ephemeral_1h_input_tokens: 20 },
+        }),
+        {
+          inputTokens: 100,
+          outputTokens: 10,
+          totalTokens: 110,
+          cacheCreationInputTokens: 50,
+          cacheCreation1hInputTokens: 20,
+        },
+      );
+      assertEquals(
+        await generateWith({
+          cache_creation_input_tokens: 50,
+          cache_creation: { ephemeral_5m_input_tokens: 50 },
+        }),
+        { inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheCreationInputTokens: 50 },
+      );
+      assertEquals(
+        await generateWith({ cache_creation_input_tokens: 50 }),
+        { inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheCreationInputTokens: 50 },
+      );
+    });
+
     it("omits cache fields when not present", async () => {
       const runtime = createAnthropicModelRuntime({
         apiKey: "k",

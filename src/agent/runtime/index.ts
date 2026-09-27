@@ -1311,6 +1311,9 @@ function buildStreamFinishUsage(
     ...(usage.cacheCreationInputTokens !== undefined
       ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
       : {}),
+    ...(usage.cacheCreation1hInputTokens !== undefined
+      ? { cacheCreation1hInputTokens: usage.cacheCreation1hInputTokens }
+      : {}),
     ...(usage.cacheReadInputTokens !== undefined
       ? { cacheReadInputTokens: usage.cacheReadInputTokens }
       : {}),
@@ -2990,6 +2993,7 @@ export class AgentRuntime {
             cachedInputTokens: response.usage.cachedInputTokens ??
               response.usage.cacheReadInputTokens,
             cacheCreationInputTokens: response.usage.cacheCreationInputTokens,
+            cacheCreation1hInputTokens: response.usage.cacheCreation1hInputTokens,
             cacheReadInputTokens: response.usage.cacheReadInputTokens,
             reasoningTokens: response.usage.reasoningTokens,
             billableInputTokens: response.usage.billableInputTokens,

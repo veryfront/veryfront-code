@@ -649,6 +649,44 @@ describe("channels/invoke", () => {
       });
     });
 
+    it("reports the one-hour cache-write share in channel token usage only when present", async () => {
+      const invokeWith = (usage: AgentResponse["usage"]) =>
+        executeChannelInvoke(createPayload(), createHandlerContext(), {
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: () =>
+            createAgent({ generate: async () => createAgentResponse("ok", { usage }) }),
+          getAllAgentIds: () => ["agent-1"],
+        });
+
+      const withShare = await invokeWith({
+        promptTokens: 12,
+        completionTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      });
+      assertEquals(withShare.tokenUsage, {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      });
+
+      const withoutShare = await invokeWith({
+        promptTokens: 12,
+        completionTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 50,
+      });
+      assertEquals(withoutShare.tokenUsage, {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 50,
+      });
+    });
+
     it("returns a structured provider error when no AI runtime is available", async () => {
       const agent = createAgent({
         generate: async () => {

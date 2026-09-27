@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mergeUsage, type RuntimeUsage, sanitizeRuntimeUsage } from "./provider-usage.ts";
+import {
+  extractAnthropicUsage,
+  mergeUsage,
+  type RuntimeUsage,
+  sanitizeRuntimeUsage,
+} from "./provider-usage.ts";
 import { readGatewayUsageCosts, readRuntimeAmount, readRuntimeCost } from "../runtime-usage.ts";
 
 describe("provider/runtime-loader/provider-usage mergeUsage", () => {
@@ -635,5 +640,69 @@ describe("provider/runtime-usage amount readers", () => {
 
     assertEquals(setterCalls, 0);
     assertEquals(getterCalls, 0);
+  });
+});
+
+describe("provider/runtime-loader/provider-usage one-hour cache-write share", () => {
+  it("extracts only the one-hour share of a mixed breakdown", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation_input_tokens: 50,
+          cache_creation: { ephemeral_5m_input_tokens: 30, ephemeral_1h_input_tokens: 20 },
+        },
+      }),
+      {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      },
+    );
+  });
+
+  it("omits the share when the breakdown or the total is absent", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: { input_tokens: 8, output_tokens: 2, cache_creation_input_tokens: 50 },
+      }),
+      { inputTokens: 8, outputTokens: 2, totalTokens: 10, cacheCreationInputTokens: 50 },
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation_input_tokens: 50,
+          cache_creation: { ephemeral_5m_input_tokens: 50 },
+        },
+      }),
+      { inputTokens: 8, outputTokens: 2, totalTokens: 10, cacheCreationInputTokens: 50 },
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation: { ephemeral_1h_input_tokens: 20 },
+        },
+      }),
+      { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
+    );
+  });
+
+  it("keeps the latest valid share across merges and drops invalid values", () => {
+    const merged = mergeUsage(
+      { cacheCreationInputTokens: 50, cacheCreation1hInputTokens: 20 },
+      { cacheCreationInputTokens: 50, outputTokens: 5 },
+    );
+    assertEquals(merged?.cacheCreation1hInputTokens, 20);
+    assertEquals(
+      sanitizeRuntimeUsage({ cacheCreationInputTokens: 50, cacheCreation1hInputTokens: -1 }),
+      { cacheCreationInputTokens: 50 },
+    );
   });
 });

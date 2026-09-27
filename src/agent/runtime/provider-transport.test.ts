@@ -6,7 +6,13 @@ import { agent } from "../factory.ts";
 import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
 import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import type { ModelTransportRequest } from "../types.ts";
-import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { scriptedModel, type ScriptedUsage } from "./model-runtime.test-helpers.ts";
+import type { AgentResponse } from "../types.ts";
+import {
+  createAgUiEncoderState,
+  finalizeAgUiEvents,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "../ag-ui/encoder.ts";
 import {
   __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
@@ -460,4 +466,80 @@ describe("agent provider transport hooks", () => {
     );
     assertEquals(entry?.level, "debug");
   });
+});
+
+describe("one-hour cache-write share in run usage", () => {
+  const mixedUsage: ScriptedUsage = {
+    inputTokens: 12,
+    outputTokens: 8,
+    totalTokens: 20,
+    cacheCreationInputTokens: 50,
+    cacheCreation1hInputTokens: 20,
+  };
+  const usageWithoutShare: ScriptedUsage = {
+    inputTokens: 12,
+    outputTokens: 8,
+    totalTokens: 20,
+    cacheCreationInputTokens: 50,
+  };
+
+  function runFinishedMetadata(response: AgentResponse): Record<string, unknown> {
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    mapRuntimeStreamEventToAgUiEvents(state, { type: "message-start", messageId: "assistant-1" });
+    mapRuntimeStreamEventToAgUiEvents(state, { type: "text-start", id: "text-1" });
+    const runFinished = finalizeAgUiEvents(state, response).find((event) =>
+      event.event === "RunFinished"
+    );
+    assertExists(runFinished);
+    return runFinished.payload.metadata as Record<string, unknown>;
+  }
+
+  async function generateWith(usage: ScriptedUsage): Promise<AgentResponse> {
+    const transportModel = scriptedModel([{ text: "cached" }], { only: "generate", usage });
+    const assistant = agent({
+      model: "host/test-model",
+      system: "You are a helpful assistant.",
+      resolveModelTransport: () => ({ model: transportModel }),
+    });
+    return await assistant.generate({ input: "Hello" });
+  }
+
+  async function streamWith(usage: ScriptedUsage): Promise<AgentResponse> {
+    const transportModel = scriptedModel([{ text: "cached" }], { only: "stream", usage });
+    const assistant = agent({
+      model: "host/test-model",
+      system: "You are a helpful assistant.",
+      resolveModelTransport: () => ({ model: transportModel }),
+    });
+    let finished: AgentResponse | undefined;
+    const result = await assistant.stream({
+      input: "Hello",
+      onFinish: (response) => finished = response,
+    });
+    await result.toDataStreamResponse().text();
+    assertExists(finished);
+    return finished;
+  }
+
+  for (const [path, run] of [["generate", generateWith], ["stream", streamWith]] as const) {
+    it(`${path}: reports only the one-hour share of mixed cache writes`, async () => {
+      const response = await run(mixedUsage);
+
+      assertEquals(response.usage?.cacheCreationInputTokens, 50);
+      assertEquals(response.usage?.cacheCreation1hInputTokens, 20);
+      const metadata = runFinishedMetadata(response);
+      assertEquals(metadata.cacheCreationInputTokens, 50);
+      assertEquals(metadata.cacheCreation1hInputTokens, 20);
+    });
+
+    it(`${path}: omits the share when the provider does not report it`, async () => {
+      const response = await run(usageWithoutShare);
+
+      assertEquals(response.usage?.cacheCreationInputTokens, 50);
+      assertEquals(Object.hasOwn(response.usage ?? {}, "cacheCreation1hInputTokens"), false);
+      const metadata = runFinishedMetadata(response);
+      assertEquals(metadata.cacheCreationInputTokens, 50);
+      assertEquals(Object.hasOwn(metadata, "cacheCreation1hInputTokens"), false);
+    });
+  }
 });

@@ -6,6 +6,16 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: run usage reports the one-hour cache-write share
+
+When a provider reports how its cache-write tokens split by cache lifetime,
+run usage now carries the one-hour share as `cacheCreation1hInputTokens`. It
+appears on `RunFinished` metadata, on agent response usage, and on channel
+`tokenUsage`, always next to `cacheCreationInputTokens`, of which it is a part:
+it is never larger than that total and is not added to it. The field is omitted
+when the provider does not report the split. A consumer that validates run
+usage against a closed list of keys must allow the new optional field.
+
 ### Changed: API handlers that cannot be parsed are rejected
 
 Veryfront validates every API handler module with its parser

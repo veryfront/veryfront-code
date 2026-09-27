@@ -13,6 +13,8 @@ export interface AgUiRunFinishedMetadata {
   totalTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
+  /** One-hour-TTL share of {@link AgUiRunFinishedMetadata.cacheCreationInputTokens}. */
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
   billableInputTokens?: number;
@@ -281,6 +283,9 @@ function applyResponseMetadata(
     if (typeof response.usage.cacheCreationInputTokens === "number") {
       state.metadata.cacheCreationInputTokens = response.usage.cacheCreationInputTokens;
     }
+    if (typeof response.usage.cacheCreation1hInputTokens === "number") {
+      state.metadata.cacheCreation1hInputTokens = response.usage.cacheCreation1hInputTokens;
+    }
     if (typeof response.usage.cacheReadInputTokens === "number") {
       state.metadata.cacheReadInputTokens = response.usage.cacheReadInputTokens;
     }
@@ -440,6 +445,9 @@ export function buildAgUiFinalizeResponse(
   if (typeof metadata.cacheCreationInputTokens === "number") {
     responseMetadata.cacheCreationInputTokens = metadata.cacheCreationInputTokens;
   }
+  if (typeof metadata.cacheCreation1hInputTokens === "number") {
+    responseMetadata.cacheCreation1hInputTokens = metadata.cacheCreation1hInputTokens;
+  }
   if (typeof metadata.cacheReadInputTokens === "number") {
     responseMetadata.cacheReadInputTokens = metadata.cacheReadInputTokens;
   }
@@ -502,6 +510,9 @@ export function buildAgUiFinalizeResponse(
         : {}),
       ...(typeof metadata.cacheCreationInputTokens === "number"
         ? { cacheCreationInputTokens: metadata.cacheCreationInputTokens }
+        : {}),
+      ...(typeof metadata.cacheCreation1hInputTokens === "number"
+        ? { cacheCreation1hInputTokens: metadata.cacheCreation1hInputTokens }
         : {}),
       ...(typeof metadata.cacheReadInputTokens === "number"
         ? { cacheReadInputTokens: metadata.cacheReadInputTokens }

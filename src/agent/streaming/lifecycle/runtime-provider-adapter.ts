@@ -499,6 +499,9 @@ function normalizeRuntimeUsage(
     ...(usage.cacheCreationInputTokens !== undefined
       ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
       : {}),
+    ...(usage.cacheCreation1hInputTokens !== undefined
+      ? { cacheCreation1hInputTokens: usage.cacheCreation1hInputTokens }
+      : {}),
     ...(usage.cacheReadInputTokens !== undefined
       ? { cacheReadInputTokens: usage.cacheReadInputTokens }
       : {}),

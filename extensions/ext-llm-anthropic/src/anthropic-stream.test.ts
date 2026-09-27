@@ -190,6 +190,126 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     );
   });
 
+  it("extracts the one-hour cache-write share only next to its total", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          cache_creation_input_tokens: 50,
+          cache_creation: { ephemeral_5m_input_tokens: 30, ephemeral_1h_input_tokens: 20 },
+        },
+      }),
+      {
+        inputTokens: 8,
+        totalTokens: 8,
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      },
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          cache_creation_input_tokens: 50,
+          cache_creation: { ephemeral_5m_input_tokens: 50 },
+        },
+      }),
+      { inputTokens: 8, totalTokens: 8, cacheCreationInputTokens: 50 },
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: { input_tokens: 8, cache_creation: { ephemeral_1h_input_tokens: 20 } },
+      }),
+      { inputTokens: 8, totalTokens: 8 },
+      "a share without its cache-write total is dropped",
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          cache_creation_input_tokens: 10,
+          cache_creation: { ephemeral_1h_input_tokens: 20 },
+        },
+      }),
+      {
+        inputTokens: 8,
+        totalTokens: 8,
+        cacheCreationInputTokens: 10,
+        cacheCreation1hInputTokens: 10,
+      },
+      "the share never exceeds its cache-write total",
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          cache_creation_input_tokens: 10,
+          cache_creation: { ephemeral_1h_input_tokens: 1.5 },
+        },
+      }),
+      { inputTokens: 8, totalTokens: 8, cacheCreationInputTokens: 10 },
+      "an invalid share is dropped",
+    );
+  });
+
+  it("adds the one-hour cache-write share across continuations", () => {
+    assertEquals(
+      addAnthropicUsage(
+        { cacheCreationInputTokens: 50, cacheCreation1hInputTokens: 20 },
+        { cacheCreationInputTokens: 30 },
+      ),
+      { cacheCreationInputTokens: 80, cacheCreation1hInputTokens: 20 },
+    );
+    assertEquals(
+      addAnthropicUsage({ cacheCreationInputTokens: 50 }, { cacheCreationInputTokens: 30 }),
+      { cacheCreationInputTokens: 80 },
+    );
+  });
+
+  it("streams the one-hour share from message_start through the finish usage", async () => {
+    const parts = await collectParts(streamFromText([
+      data({
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 8,
+            cache_creation_input_tokens: 50,
+            cache_creation: { ephemeral_5m_input_tokens: 30, ephemeral_1h_input_tokens: 20 },
+          },
+        },
+      }),
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      }),
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "Done." },
+      }),
+      data({ type: "content_block_stop", index: 0 }),
+      data({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 5, cache_creation_input_tokens: 50 },
+      }),
+      data({ type: "message_stop" }),
+    ].join("")));
+
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      usage: {
+        inputTokens: 8,
+        outputTokens: 5,
+        totalTokens: 13,
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      },
+    });
+  });
+
   it("reads gateway amounts sent as decimal strings at the extraction boundary", () => {
     assertEquals(
       extractAnthropicUsage({

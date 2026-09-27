@@ -24,6 +24,11 @@ export interface RuntimeUsage {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  /**
+   * One-hour-TTL share of {@link RuntimeUsage.cacheCreationInputTokens}, when
+   * the provider reports the breakdown. Absent when it does not.
+   */
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   /** Compatibility alias for {@link RuntimeUsage.cacheReadInputTokens}. */
   cachedInputTokens?: number;
@@ -49,6 +54,7 @@ const RUNTIME_USAGE_NUMERIC_FIELDS = [
   ["outputTokens", "token"],
   ["totalTokens", "total"],
   ["cacheCreationInputTokens", "token"],
+  ["cacheCreation1hInputTokens", "token"],
   ["cacheReadInputTokens", "token"],
   ["reasoningTokens", "token"],
   ["billableInputTokens", "token"],

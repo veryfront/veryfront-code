@@ -441,6 +441,43 @@ describe("lifecycle AG-UI adapter", () => {
     );
   });
 
+  it("carries the one-hour cache-write share on RunFinished only when reported", () => {
+    const finishWith = (usage: Record<string, number>) => {
+      const adapter = createLifecycleAgUiAdapter({ messageId: "message-cache-1h" });
+      for (
+        const frame of frames([
+          { event: { type: "text_start" } },
+          { event: { type: "text_content", delta: "done" } },
+          { event: { type: "text_end" } },
+          {
+            event: {
+              type: "usage",
+              usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20, ...usage },
+            },
+          },
+        ])
+      ) {
+        adapter.encode(frame);
+      }
+      return adapter.finalize({ terminalStatus: "completed" })[0]?.payload.metadata;
+    };
+
+    assertEquals(
+      finishWith({ cacheCreationInputTokens: 50, cacheCreation1hInputTokens: 20 }),
+      {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
+      },
+    );
+    assertEquals(
+      finishWith({ cacheCreationInputTokens: 50 }),
+      { inputTokens: 12, outputTokens: 8, totalTokens: 20, cacheCreationInputTokens: 50 },
+    );
+  });
+
   it("drops a reasoning end that closes no open span", () => {
     const adapter = createLifecycleAgUiAdapter({
       messageId: "message-unmatched-end",

@@ -1231,6 +1231,52 @@ describe("runtime-bridge", () => {
     });
   });
 
+  it("forwards the one-hour cache-write share through generate and stream only when present", async () => {
+    const withShare = {
+      inputTokens: 3,
+      outputTokens: 4,
+      totalTokens: 7,
+      cacheCreationInputTokens: 50,
+      cacheCreation1hInputTokens: 20,
+    };
+    const withoutShare = {
+      inputTokens: 3,
+      outputTokens: 4,
+      totalTokens: 7,
+      cacheCreationInputTokens: 50,
+    };
+
+    for (const usage of [withShare, withoutShare]) {
+      const generateModel = createGenerateModel("test", "test/cache-1h-generate", async () => ({
+        content: [{ type: "text", text: "cached" }],
+        finishReason: "stop",
+        usage,
+      }));
+      const generated = await generateText({
+        model: generateModel,
+        messages: [{ role: "user", content: "Hello" }],
+      });
+      assertEquals(generated.usage, usage, "generate forwards the flat usage as reported");
+
+      const streamModel = createStreamModel("test", "test/cache-1h-stream", async () => ({
+        stream: readableStreamFrom([
+          { type: "text-delta", delta: "cached" },
+          { type: "finish", finishReason: "stop", usage },
+        ]),
+      }));
+      const parts = await collectAsync(
+        streamText({ model: streamModel, messages: [{ role: "user", content: "Hello" }] })
+          .fullStream,
+      );
+      const { totalTokens: _totalTokens, ...expectedStreamUsage } = usage;
+      assertEquals(
+        parts.at(-1),
+        { type: "finish", finishReason: "stop", totalUsage: expectedStreamUsage },
+        "stream finish forwards the usage as reported",
+      );
+    }
+  });
+
   it("forwards provider cost and billing telemetry from the flat usage branch", async () => {
     const model = createGenerateModel("test", "test/flat-usage-billing", async () => ({
       content: [{ type: "text", text: "billed" }],

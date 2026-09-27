@@ -616,6 +616,18 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("preserves the one-hour cache-write share in RunFinished frames", () => {
+    const payload = formatAgUiEvent("RunFinished", {
+      metadata: { cacheCreationInputTokens: 50, cacheCreation1hInputTokens: 20 },
+      emittedAt: 8,
+    });
+
+    assertEquals(
+      new TextDecoder().decode(payload),
+      'event: RunFinished\ndata: {"metadata":{"cacheCreationInputTokens":50,"cacheCreation1hInputTokens":20},"emittedAt":8}\n\n',
+    );
+  });
+
   it("preserves text content ids when formatting AG-UI events", () => {
     const payload = formatAgUiEvent("TextMessageContent", {
       messageId: "assistant-1",

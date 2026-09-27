@@ -24,6 +24,10 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
   const inputTokens = readTokenCount(usage.input_tokens);
   const outputTokens = readTokenCount(usage.output_tokens);
   const cacheCreationInputTokens = readTokenCount(usage.cache_creation_input_tokens);
+  const cacheCreation1hInputTokens = readAnthropicCacheCreation1hInputTokens(
+    usage,
+    cacheCreationInputTokens,
+  );
   const cacheReadInputTokens = readTokenCount(usage.cache_read_input_tokens);
 
   return {
@@ -31,8 +35,25 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
     outputTokens,
     totalTokens: sumTokenCounts(inputTokens, outputTokens),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
+}
+
+/**
+ * Read the one-hour-TTL share of the cache-write tokens from
+ * `usage.cache_creation.ephemeral_1h_input_tokens`.
+ *
+ * The share is only meaningful next to its cache-write total, so it is absent
+ * when either value is missing, and it never exceeds the total.
+ */
+function readAnthropicCacheCreation1hInputTokens(
+  usage: Record<string, unknown>,
+  cacheCreationInputTokens: number | undefined,
+): number | undefined {
+  if (cacheCreationInputTokens === undefined) return undefined;
+  const oneHour = readTokenCount(readRecord(usage.cache_creation)?.ephemeral_1h_input_tokens);
+  return oneHour === undefined ? undefined : Math.min(oneHour, cacheCreationInputTokens);
 }
 
 export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
