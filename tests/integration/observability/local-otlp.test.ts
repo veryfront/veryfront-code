@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("local application OTLP export", () => {
-  for (const mode of ["enabled", "disabled"]) {
+  for (const mode of ["enabled", "disabled", "collector-rejects"]) {
     it(`honors ${mode} tracing with a real HTTP collector`, async () => {
       const output = await new Deno.Command(Deno.execPath(), {
         args: [
