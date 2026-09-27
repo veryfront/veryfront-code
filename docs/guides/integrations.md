@@ -365,8 +365,8 @@ depends on three availability states. Each state narrows the one before it.
 
 ### Package-declared
 
-`DECLARED_INTEGRATION_NAMES` in `src/integrations/feature-flags.ts` lists every
-declared name. A declared name is not visible until the environment enables it.
+Each `veryfront` release declares a fixed set of connector names. A declared
+name is not visible until the environment enables it.
 
 ### Environment-enabled
 
@@ -376,13 +376,13 @@ A declared connector is enabled in one of three ways:
   `airtable`, `asana`, `calendar`, `confluence`, `docs-google`, `drive`,
   `figma`, `github`, `gitlab`, `gmail`, `harvest`, `hubspot`, `jira`, `linear`,
   `notion`, `onedrive`, `outlook`, `sentry`, `sharepoint`, `sheets`, `slack`,
-  and `teams` (`SUPPORTED_INTEGRATION_NAMES`).
+  and `teams`.
 - **Experimental.** `VERYFRONT_EXPERIMENTAL_INTEGRATIONS` enables other
   declared connectors. Set it to a comma-separated list such as `stripe,adyen`,
   or to `all`.
 - **Host adapter.** `box`, `clickup`, `freshdesk`, `intercom`, `mailchimp`,
   `monday`, `pipedrive`, `quickbooks`, `salesforce`, `shopify`, `trello`, and
-  `xero` need a provider adapter (`INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER`).
+  `xero` need a provider adapter.
   The experimental flag never enables them, including `all`. A host that drives
   one with its own client names it in `VERYFRONT_HOST_ADAPTER_INTEGRATIONS`,
   which exposes the connector definitions for catalog lookup only. Scaffolding
