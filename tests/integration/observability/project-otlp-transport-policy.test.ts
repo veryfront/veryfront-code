@@ -15,6 +15,121 @@ const suppression = new AsyncLocalStorage<boolean>();
 const withSuppressedTracing = <T>(operation: () => Promise<T>) => suppression.run(true, operation);
 
 describe("project OTLP transport", () => {
+  it("launches one request despite replaced Promise construction and chaining", async () => {
+    const response = Response.json({});
+    let sends = 0;
+    await withMockFetch(() => {
+      sends++;
+      return Promise.resolve(response);
+    }, async () => {
+      const transport = createProjectOtlpTransport({
+        endpoint,
+        headers: {},
+        withSuppressedTracing,
+      });
+      const NativePromise = Promise;
+      const descriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "then")!;
+      const nativeThen = Promise.prototype.then;
+      let constructions = 0;
+      let pending: ReturnType<typeof transport.send>;
+      try {
+        globalThis.Promise = new Proxy(NativePromise, {
+          construct(target, args, newTarget) {
+            constructions++;
+            return Reflect.construct(target, args, newTarget);
+          },
+        });
+        Object.defineProperty(NativePromise.prototype, "then", {
+          ...descriptor,
+          value: function (
+            this: Promise<unknown>,
+            fulfilled?: (value: unknown) => unknown,
+            rejected?: (reason: unknown) => unknown,
+          ) {
+            return Reflect.apply(nativeThen, this, [
+              fulfilled
+                ? (value: unknown) => {
+                  fulfilled(value);
+                  return fulfilled(value);
+                }
+                : fulfilled,
+              rejected,
+            ]);
+          },
+        });
+        pending = transport.send(bytes, 1000);
+      } finally {
+        globalThis.Promise = NativePromise;
+        Object.defineProperty(NativePromise.prototype, "then", descriptor);
+      }
+      try {
+        assertEquals((await pending).status, "success");
+        assertEquals(sends, 1);
+        assertEquals(constructions, 0);
+      } finally {
+        transport.shutdown();
+      }
+    });
+  });
+
+  it("discards collector responses without invoking replaced response and stream hooks", async () => {
+    let cancelled = 0;
+    const response = new Response(
+      new ReadableStream({
+        cancel() {
+          cancelled++;
+        },
+      }),
+    );
+    const release = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<void>();
+    await withMockFetch(() => {
+      started.resolve();
+      return release.promise;
+    }, async () => {
+      const transport = createProjectOtlpTransport({
+        endpoint,
+        headers: {},
+        withSuppressedTracing,
+      });
+      const pending = transport.send(bytes, 1000);
+      await started.promise;
+      const body = Object.getOwnPropertyDescriptor(Response.prototype, "body")!;
+      const ok = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!;
+      const cancel = ReadableStream.prototype.cancel;
+      let observed = 0;
+      try {
+        Object.defineProperty(Response.prototype, "body", {
+          ...body,
+          get() {
+            observed++;
+            return Reflect.apply(body.get!, this, []);
+          },
+        });
+        Object.defineProperty(Response.prototype, "ok", {
+          ...ok,
+          get() {
+            observed++;
+            return false;
+          },
+        });
+        ReadableStream.prototype.cancel = () => {
+          observed++;
+          return Promise.resolve();
+        };
+        release.resolve(response);
+        assertEquals((await pending).status, "success");
+      } finally {
+        Object.defineProperty(Response.prototype, "body", body);
+        Object.defineProperty(Response.prototype, "ok", ok);
+        ReadableStream.prototype.cancel = cancel;
+        transport.shutdown();
+      }
+      assertEquals(observed, 0);
+      assertEquals(cancelled, 1);
+    });
+  });
+
   it("keeps the send cap when Set tracking methods are replaced", async () => {
     const release = Promise.withResolvers<Response>();
     let calls = 0;

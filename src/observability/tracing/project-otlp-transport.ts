@@ -1,3 +1,10 @@
+import {
+  chainPrivatePromise,
+  createPrivateDeferred,
+  observePrivatePromise,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
+import { cancelPrivateStream } from "#veryfront/security/private-stream.ts";
 import { privateByteLength, PrivateUint8Array } from "#veryfront/security/private-bytes.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
@@ -25,6 +32,11 @@ interface ProjectOtlpTransportOptions {
 }
 
 const NativeAbortController = AbortController;
+const NativeError = Error;
+const isFiniteNumber = Number.isFinite;
+const minimum = Math.min;
+const getResponseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const getResponseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
 const abortController = AbortController.prototype.abort;
 const getSignal = Object.getOwnPropertyDescriptor(AbortController.prototype, "signal")!.get!;
 const getAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
@@ -42,7 +54,7 @@ const cancelTimer = clearTimeout;
 
 function failed(): ProjectOtlpSendResult {
   // Collector URLs, response text and transport errors can contain credentials.
-  return { status: "failure", error: new Error("Project trace export failed") };
+  return { status: "failure", error: new NativeError("Project trace export failed") };
 }
 
 /** Host-owned, origin-bound JSON OTLP transport with bounded request lifetime. */
@@ -67,49 +79,60 @@ export function createProjectOtlpTransport(
 
   return freeze({
     send(data: Uint8Array, timeoutMillis: number): Promise<ProjectOtlpSendResult> {
+      const completion = createPrivateDeferred<ProjectOtlpSendResult>();
       if (
         closed || apply(setSize, active, []) >= MAX_CONCURRENT_SENDS ||
         privateByteLength(data) > PROJECT_OTLP_MAX_REQUEST_BYTES ||
-        !Number.isFinite(timeoutMillis) || timeoutMillis <= 0
-      ) return Promise.resolve(failed());
+        !isFiniteNumber(timeoutMillis) || timeoutMillis <= 0
+      ) {
+        completion.resolve(failed());
+        return completion.promise;
+      }
 
       const body = new PrivateUint8Array(data);
       const controller = new NativeAbortController();
       const signal = apply(getSignal, controller, []) as AbortSignal;
-      return new Promise((resolve) => {
-        let settled = false;
-        const finish = (result: ProjectOtlpSendResult) => {
-          if (settled) return;
-          settled = true;
-          cancelTimer(timer);
-          apply(setDelete, active, [cancel]);
-          resolve(result);
-        };
-        const cancel = () => {
-          apply(abortController, controller, []);
-          finish(failed());
-        };
-        apply(setAdd, active, [cancel]);
-        const timer = schedule(cancel, Math.min(timeoutMillis, MAX_TIMEOUT_MS));
+      let settled = false;
+      const finish = (result: ProjectOtlpSendResult) => {
+        if (settled) return;
+        settled = true;
+        cancelTimer(timer);
+        apply(setDelete, active, [cancel]);
+        completion.resolve(result);
+      };
+      const cancel = () => {
+        apply(abortController, controller, []);
+        finish(failed());
+      };
+      apply(setAdd, active, [cancel]);
+      const timer = schedule(cancel, minimum(timeoutMillis, MAX_TIMEOUT_MS));
 
-        // A separate completion path enforces the deadline even if a transport ignores abort.
-        Promise.resolve().then(() =>
+      // Protected reactions prevent mutable Promise hooks from replaying a send.
+      // A separate deadline still settles transports that ignore abort.
+      void chainPrivatePromise(
+        chainPrivatePromise(resolvePrivatePromise(), () =>
           suppress(async () => {
             if (apply(getAborted, signal, [])) return failed();
-            const response = await fetch(endpoint, {
+            const response = await observePrivatePromise(fetch(endpoint, {
               method: "POST",
               headers,
               body,
               signal,
               redirect: "error",
-            });
-            // Delivery is best effort. Never retain/log an untrusted collector response body.
-            // OTLP partial-success responses are not retried, consistent with the SDK contract.
-            response.body?.cancel().catch(() => {});
-            return response.ok ? { status: "success" as const } : failed();
-          })
-        ).then(finish, () => finish(failed()));
-      });
+            }));
+            // Collector response content is discarded, including partial-success bodies.
+            const responseBody = apply(getResponseBody, response, []) as
+              | ReadableStream<Uint8Array>
+              | null;
+            if (responseBody) {
+              void chainPrivatePromise(cancelPrivateStream(responseBody), () => {}, () => {});
+            }
+            return apply(getResponseOk, response, []) ? { status: "success" as const } : failed();
+          })),
+        finish,
+        () => finish(failed()),
+      );
+      return completion.promise;
     },
     shutdown(): void {
       closed = true;
