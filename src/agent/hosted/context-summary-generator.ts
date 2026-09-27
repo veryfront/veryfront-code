@@ -208,6 +208,11 @@ function summaryCloudContext(
 
 /** Longest summary generation waits for the served catalog before resolving its model. */
 const CATALOG_MAX_WAIT_MS = 3_000;
+/**
+ * Model built only to load the run-scoped catalog, never called. No catalog
+ * lists it and no listing check applies to its provider, so it always builds.
+ */
+const CATALOG_PROBE_MODEL_ID = "veryfront-cloud/catalog-probe/catalog-probe";
 
 function resolveSummaryModelId(model: string | undefined): string {
   const cloudModelId = resolveVeryfrontCloudModelId(model);
@@ -275,28 +280,35 @@ async function loadResolverCatalogScopeKey(
   context: VeryfrontCloudContext,
   signal: AbortSignal,
 ): Promise<string | undefined> {
+  // The configured model first, so the summary reuses the prepared probe.
+  // Every model of one credential names the same catalog, so a configured
+  // model that cannot be built falls back to a probe no catalog check refuses.
+  const candidates: string[] = [];
   try {
-    const probeId = runWithVeryfrontCloudContext(context, () => {
-      try {
-        return resolveSummaryModelId(model);
-      } catch {
-        // An alias only the served catalog knows: any model of the same
-        // credential names the same catalog.
-        return resolveSummaryModelId(undefined);
-      }
-    });
-    const probe = resolveModel(probeId);
+    candidates.push(runWithVeryfrontCloudContext(context, () => resolveSummaryModelId(model)));
+  } catch {
+    // An alias only the served catalog knows.
+  }
+  candidates.push(CATALOG_PROBE_MODEL_ID);
+  for (const probeId of candidates) {
+    let probe: ModelRuntime;
+    try {
+      probe = resolveModel(probeId);
+    } catch {
+      continue;
+    }
     const wait = new AbortController();
     const timer = setTimeout(() => wait.abort(), CATALOG_MAX_WAIT_MS);
     try {
       await probe.prepare?.(AbortSignal.any([signal, wait.signal]));
+    } catch {
+      // A refused probe still names the catalog its preparation loaded.
     } finally {
       clearTimeout(timer);
     }
     return readVeryfrontCloudModelFacts(probe)?.catalogScopeKey;
-  } catch {
-    return undefined;
   }
+  return undefined;
 }
 
 /** @internal Bind context-compaction inference authority to one generator invocation. */

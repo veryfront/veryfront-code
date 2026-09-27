@@ -481,10 +481,10 @@ describe("createRunScopedVeryfrontCloudContextSummaryGenerator", () => {
 
     try {
       assertEquals(await generator(summaryInput), { text: "served summary" });
-      // The shipped facts do not know the alias: a probe on the built-in
-      // default loads the catalog, then the served model is resolved.
+      // The shipped facts do not know the alias: a probe no catalog check
+      // refuses loads the catalog, then the served model is resolved.
       assertEquals(resolvedModelIds, [
-        "veryfront-cloud/mistral/mistral-small-2503",
+        "veryfront-cloud/catalog-probe/catalog-probe",
         "veryfront-cloud/anthropic/served-only-summary",
       ]);
       assertEquals(preparations, 1);
