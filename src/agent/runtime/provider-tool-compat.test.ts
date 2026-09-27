@@ -605,6 +605,24 @@ describe("getProviderToolProfile for providers only the served catalog lists", (
     });
   });
 
+  it("applies the served surface before the kimi- model-name heuristic", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "kimi-1",
+        modelId: "acme-labs/kimi-1",
+        provider: "acme-labs",
+        surface: "google",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/kimi-1").provider, "google");
+    // The heuristic still applies where no served surface decides.
+    assertEquals(getProviderToolProfile("kimi-k2.6").provider, "moonshot");
+    assertEquals(getProviderToolProfile("moonshotai/kimi-k2.6").provider, "moonshot");
+  });
+
   it("keeps an unlisted provider on the OpenAI surface, and a direct id, unknown", () => {
     served("openai");
     assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/m1").provider, "unknown");

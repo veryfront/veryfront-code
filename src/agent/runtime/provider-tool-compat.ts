@@ -98,17 +98,22 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
     return { provider: "anthropic", sanitizeSchema: true };
   }
 
-  if (provider === "moonshot" || provider === "moonshotai" || modelName?.startsWith("kimi-")) {
+  if (provider === "moonshot" || provider === "moonshotai") {
     return { provider: "moonshot", sanitizeSchema: true };
   }
 
   // A Veryfront Cloud provider this list does not name takes the schema rules
   // of the wire protocol it is served on: Google and Anthropic constrain tool
-  // schemas by protocol, not by vendor.
+  // schemas by protocol, not by vendor. This runs before the model-name
+  // heuristic below, so a served provider's own naming cannot override it.
   if (parts[0] === "veryfront-cloud") {
     const surface = resolveVeryfrontCloudModelSurface(normalized);
     if (surface === "google") return { provider: "google", sanitizeSchema: true };
     if (surface === "anthropic") return { provider: "anthropic", sanitizeSchema: true };
+  }
+
+  if (modelName?.startsWith("kimi-")) {
+    return { provider: "moonshot", sanitizeSchema: true };
   }
 
   return { provider: "unknown", sanitizeSchema: false };
