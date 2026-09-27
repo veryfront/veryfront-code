@@ -101,7 +101,7 @@ while (!observed) {
     if (matches && row.scope === scope && row.status === "connected") observed = row;
   }
 }
-console.log(observed.id, observed.scope);
+console.log(`Gmail connected in ${observed.scope} scope.`);
 ```
 
 The example correlates the scope's OAuth status with an inventory row, so a
