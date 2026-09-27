@@ -134,6 +134,20 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
     }
   }
 
+  /** Use a ready generation immediately; initialize missing generations in the background. */
+  tryAcquire(config: ProjectTraceConfig): ProjectTraceLease<T> | undefined {
+    if (this.closed) return undefined;
+    const entry = this.current.get(this.key(config.projectId, config.environmentId));
+    if (entry?.revision === config.revision && entry.state === "current") {
+      if (!entry.session) return undefined;
+      this.clearTimer(entry);
+      entry.users++;
+      return this.lease(entry, entry.session);
+    }
+    void this.acquire(config).then((lease) => lease?.release(), () => {});
+    return undefined;
+  }
+
   async acquire(config: ProjectTraceConfig): Promise<ProjectTraceLease<T> | undefined> {
     if (this.closed) return undefined;
     const key = this.key(config.projectId, config.environmentId);
@@ -185,6 +199,10 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
       this.release(acquired);
       return undefined;
     }
+    return this.lease(acquired, session);
+  }
+
+  private lease(acquired: Entry<T>, session: T): ProjectTraceLease<T> {
     let released = false;
     return Object.freeze({
       session,

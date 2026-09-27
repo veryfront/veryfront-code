@@ -17,6 +17,29 @@ function config(projectId: string, revision = "one"): ProjectTraceConfig {
 }
 
 describe("project trace registry", () => {
+  it("coalesces background startup and leases the ready provider without waiting", async () => {
+    const creation = Promise.withResolvers<{ shutdown(): Promise<void> }>();
+    let starts = 0;
+    const registry = new ProjectTraceRegistry(() => {
+      starts++;
+      return creation.promise;
+    });
+    try {
+      for (let i = 0; i < 25; i++) assertEquals(registry.tryAcquire(config("a")), undefined);
+      await Promise.resolve();
+      assertEquals(starts, 1);
+      creation.resolve({ shutdown: () => Promise.resolve() });
+      await registry.flush(() => Promise.resolve());
+      const ready = registry.tryAcquire(config("a"));
+      assertExists(ready);
+      assertEquals(starts, 1);
+      ready.release();
+    } finally {
+      creation.resolve({ shutdown: () => Promise.resolve() });
+      await registry.shutdown();
+    }
+  });
+
   it("bounds shutdown even if an exporter never settles and tries every generation", async () => {
     const calls: string[] = [];
     const hanging = Promise.withResolvers<void>();

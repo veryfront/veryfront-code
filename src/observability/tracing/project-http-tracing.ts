@@ -72,7 +72,7 @@ export async function runProjectHttpTracing<T extends Response | undefined>(
     }
     return runWithProjectTraceProvider(undefined, operation);
   }
-  const lease = await active.acquire(settings.config);
+  const lease = active.tryAcquire(settings.config);
   if (!lease) return runWithProjectTraceProvider(undefined, operation);
 
   let span: Span;

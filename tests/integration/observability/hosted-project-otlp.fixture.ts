@@ -140,7 +140,7 @@ try {
     config: { fs: { veryfront: { proxyMode: true } } },
   });
   app = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, handler);
-  for (let batch = 0; batch < 20; batch++) {
+  for (let batch = -1; batch < 20; batch++) {
     await Promise.all(Array.from({ length: 10 }, async (_, index) => {
       const id = index % 2 === 0 ? "a" : "b";
       const project = dedicated ? "project" : `project-${id}`;
@@ -167,6 +167,11 @@ try {
         assertEquals(JSON.parse(body), { ok: true });
       }
     }));
+    if (batch === -1) {
+      await flushProjectHttpTracing();
+      captured.a = [];
+      captured.b = [];
+    }
   }
   await flushProjectHttpTracing();
   assertEquals(managementReads, 2);

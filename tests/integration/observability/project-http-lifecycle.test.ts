@@ -22,7 +22,53 @@ async function settings(token: string) {
   });
 }
 
+async function readySettings(token: string) {
+  const config = await settings(token);
+  await runProjectHttpTracing(
+    config,
+    identity,
+    request,
+    async () => new Response(null, { status: 204 }),
+  );
+  await flushProjectHttpTracing();
+  return config;
+}
+
 describe("project HTTP exporter lifecycle", () => {
+  it("serves the application while exporter initialization is pending", async () => {
+    const owner = new OtlpTracingExporter();
+    const create = owner.createProjectProvider.bind(owner);
+    const ready = Promise.withResolvers<void>();
+    const application = Promise.withResolvers<void>();
+    owner.createProjectProvider = async (options) => {
+      await ready.promise;
+      return create(options);
+    };
+    register("TracingExporter", owner);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let response: Promise<Response> | undefined;
+    try {
+      response = runProjectHttpTracing(await settings("pending"), identity, request, async () => {
+        application.resolve();
+        return new Response("application response");
+      });
+      await Promise.race([
+        application.promise,
+        new Promise<void>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("application waited for telemetry")), 100);
+        }),
+      ]);
+      assertEquals(await (await response).text(), "application response");
+    } finally {
+      clearTimeout(timer);
+      ready.resolve();
+      await response;
+      await shutdownProjectHttpTracing();
+      await owner.shutdown();
+      unregister("TracingExporter");
+    }
+  });
+
   for (const outcome of ["close", "error", "cancel", "abort"] as const) {
     it(`retains project tracing until a response stream settles by ${outcome}`, async () => {
       const owner = new OtlpTracingExporter();
@@ -36,7 +82,7 @@ describe("project HTTP exporter lifecycle", () => {
           return Response.json({});
         }, async () => {
           const response = await runProjectHttpTracing(
-            await settings("stream"),
+            await readySettings("stream"),
             identity,
             new Request(request.url, { signal: abort.signal }),
             async () =>
@@ -106,7 +152,7 @@ describe("project HTTP exporter lifecycle", () => {
           return Response.json({});
         }, async () => {
           const response = await runProjectHttpTracing(
-            await settings("stalled"),
+            await readySettings("stalled"),
             identity,
             new Request(request.url, { signal: abort.signal }),
             async () =>
@@ -143,7 +189,7 @@ describe("project HTTP exporter lifecycle", () => {
         bodies.push(await new Request(input, init).text());
         return Response.json({});
       }, async () => {
-        await runProjectHttpTracing(await settings("active"), identity, request, async () => {
+        await runProjectHttpTracing(await readySettings("active"), identity, request, async () => {
           trace.getTracer("app").startSpan("retained.custom").end();
           return new Response("ok");
         });
@@ -174,7 +220,7 @@ describe("project HTTP exporter lifecycle", () => {
         requests++;
         return Promise.resolve(Response.json({}));
       }, async () => {
-        await runProjectHttpTracing(await settings("old"), identity, request, async () => {
+        await runProjectHttpTracing(await readySettings("old"), identity, request, async () => {
           trace.getTracer("app").startSpan("queued.custom").end();
           return new Response("ok");
         });
@@ -204,7 +250,7 @@ describe("project HTTP exporter lifecycle", () => {
         return Promise.resolve(new Response("untrusted collector body", { status: 503 }));
       }, async () => {
         const response = await runProjectHttpTracing(
-          await settings("failed"),
+          await readySettings("failed"),
           identity,
           request,
           () => Promise.resolve(new Response("application response")),
@@ -232,14 +278,19 @@ describe("project HTTP exporter lifecycle", () => {
         captures.push({ authorization: req.headers.get("authorization"), body: await req.text() });
         return Response.json({});
       }, async () => {
-        const first = runProjectHttpTracing(await settings("old"), identity, request, async () => {
-          entered.resolve();
-          await release.promise;
-          trace.getTracer("app").startSpan("old.custom").end();
-          return new Response("old");
-        });
+        const first = runProjectHttpTracing(
+          await readySettings("old"),
+          identity,
+          request,
+          async () => {
+            entered.resolve();
+            await release.promise;
+            trace.getTracer("app").startSpan("old.custom").end();
+            return new Response("old");
+          },
+        );
         await entered.promise;
-        await runProjectHttpTracing(await settings("new"), identity, request, async () => {
+        await runProjectHttpTracing(await readySettings("new"), identity, request, async () => {
           trace.getTracer("app").startSpan("new.custom").end();
           return new Response("new");
         });
