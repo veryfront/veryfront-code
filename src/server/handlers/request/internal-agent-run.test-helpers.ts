@@ -6,19 +6,14 @@ import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
-import * as otelApi from "npm:@opentelemetry/api@1.9.1";
-import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
-import {
-  BasicTracerProvider,
-  InMemorySpanExporter,
-  SimpleSpanProcessor,
-} from "npm:@opentelemetry/sdk-trace-base@2.9.0";
 import {
   _resetShimForTests,
-  setGlobalActiveSpanAccessor,
-  setGlobalContextAccessor,
+  type AttributeValue,
   setGlobalTracerProvider,
+  type Span,
+  type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export type CapturedApplicationError = {
   error: unknown;
@@ -41,6 +36,45 @@ export function stubApplicationErrorReporter(): {
   return { captures, restore: () => setApplicationErrorReporter(undefined) };
 }
 
+type RecordedSpan = { attributes: Record<string, unknown> };
+
+/**
+ * A tracer that records attributes in memory. It needs no OpenTelemetry SDK, so the
+ * helper also runs under Bun, where the SDK's `npm:` packages do not resolve.
+ */
+function createRecordingTracer(finished: RecordedSpan[]): Tracer {
+  let nextSpanId = 0;
+  const startSpan = (_name: string, options?: { attributes?: Record<string, AttributeValue> }) => {
+    const recorded: RecordedSpan = { attributes: { ...options?.attributes } };
+    const spanId = (++nextSpanId).toString(16).padStart(16, "0");
+    const span: Span = {
+      setAttribute(key, value) {
+        recorded.attributes[key] = value;
+        return span;
+      },
+      setAttributes(attrs) {
+        Object.assign(recorded.attributes, attrs);
+        return span;
+      },
+      setStatus: () => span,
+      recordException() {},
+      addEvent: () => span,
+      end() {
+        finished.push(recorded);
+      },
+      spanContext: () => ({ traceId: "1".padStart(32, "0"), spanId, traceFlags: 1 }),
+      updateName() {},
+    };
+    return span;
+  };
+  return {
+    startSpan,
+    startActiveSpan: (() => {
+      throw new Error("startActiveSpan is not used by withSpan");
+    }) as Tracer["startActiveSpan"],
+  };
+}
+
 /**
  * Run `fn` inside an active span standing in for routing.registry.execute. Returns the
  * attributes of the first span to finish: the stand-in, or a registry span `fn` opened.
@@ -48,30 +82,15 @@ export function stubApplicationErrorReporter(): {
 export async function withRecordedActiveSpan<T>(
   fn: () => Promise<T>,
 ): Promise<{ result: T; attributes: Record<string, unknown> }> {
-  const exporter = new InMemorySpanExporter();
-  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
-  const contextManager = new AsyncLocalStorageContextManager();
-  contextManager.enable();
-  otelApi.context.setGlobalContextManager(contextManager);
-  setGlobalTracerProvider(provider as never);
-  setGlobalActiveSpanAccessor(otelApi.trace as never);
-  setGlobalContextAccessor(otelApi.context as never);
+  const finished: RecordedSpan[] = [];
+  const tracer = createRecordingTracer(finished);
+  setGlobalTracerProvider({ getTracer: () => tracer });
 
   try {
-    const result = await provider.getTracer("test").startActiveSpan("routing", async (span) => {
-      try {
-        return await fn();
-      } finally {
-        span.end();
-      }
-    });
-    const [span] = exporter.getFinishedSpans();
-    return { result, attributes: { ...span?.attributes } };
+    const result = await withSpan("routing", () => fn());
+    return { result, attributes: { ...finished[0]?.attributes } };
   } finally {
     _resetShimForTests();
-    contextManager.disable();
-    otelApi.context.disable();
-    await provider.shutdown();
   }
 }
 
