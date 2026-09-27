@@ -130,7 +130,7 @@ export async function runProjectHttpTracing<T extends Response | undefined>(
       complete,
       request.signal,
       { highWaterMark: 0 },
-      runInProject,
+      { runDeferredOperation: runInProject, cancellationTimeoutMs: 1000 },
     ) as T;
   } catch (error) {
     try {

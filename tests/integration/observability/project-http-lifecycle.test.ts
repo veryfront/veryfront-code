@@ -93,6 +93,47 @@ describe("project HTTP exporter lifecycle", () => {
     });
   }
 
+  for (const mode of ["abort", "cancel"] as const) {
+    it(`finishes tracing when ${mode} leaves source cancellation pending`, async () => {
+      const owner = new OtlpTracingExporter();
+      register("TracingExporter", owner);
+      const abort = new AbortController();
+      const cancellation = Promise.withResolvers<void>();
+      const bodies: string[] = [];
+      try {
+        await withMockFetch(async (input, init) => {
+          bodies.push(await new Request(input, init).text());
+          return Response.json({});
+        }, async () => {
+          const response = await runProjectHttpTracing(
+            await settings("stalled"),
+            identity,
+            new Request(request.url, { signal: abort.signal }),
+            async () =>
+              new Response(
+                new ReadableStream({
+                  cancel: () => cancellation.promise,
+                }),
+              ),
+          );
+          let pending: Promise<void> | undefined;
+          if (mode === "abort") abort.abort();
+          else pending = response.body!.cancel();
+          await new Promise((resolve) => setTimeout(resolve, 1100));
+          await flushProjectHttpTracing();
+          assertEquals(bodies.some((body) => body.includes("http.server.request")), true);
+          cancellation.resolve();
+          await pending;
+        });
+      } finally {
+        cancellation.resolve();
+        await shutdownProjectHttpTracing();
+        await owner.shutdown();
+        unregister("TracingExporter");
+      }
+    });
+  }
+
   it("preserves queued application spans when a control-plane request defers config", async () => {
     const owner = new OtlpTracingExporter();
     register("TracingExporter", owner);
