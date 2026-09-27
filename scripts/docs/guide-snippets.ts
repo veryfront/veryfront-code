@@ -87,6 +87,19 @@ export function findUnquotedPlaceholders(script: string): SnippetIssue[] {
   return issues;
 }
 
+/** Report unquoted placeholders in inline `veryfront integration ...` code spans. */
+export function findUnquotedInlineCommands(markdown: string): SnippetIssue[] {
+  const issues: SnippetIssue[] = [];
+  markdown.split("\n").forEach((line, index) => {
+    for (const span of line.matchAll(/`(veryfront integration [^`]*)`/g)) {
+      for (const issue of findUnquotedPlaceholders(span[1]!)) {
+        issues.push({ line: index + 1, message: issue.message });
+      }
+    }
+  });
+  return issues;
+}
+
 /** Return GraphQL documents embedded as `<<'GRAPHQL'` heredocs in a shell snippet. */
 export function extractGraphqlHeredocs(script: string): string[] {
   const documents: string[] = [];

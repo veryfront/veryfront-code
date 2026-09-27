@@ -52,7 +52,7 @@ later call on their own.
 
 The connector catalog tells you which setup a connector needs. Read
 `credential_requirement` from `GET /integrations/<NAME>`,
-`veryfront integration get <NAME> --json`, or `client.getIntegration("<NAME>")`:
+`veryfront integration get "<NAME>" --json`, or `client.getIntegration("<NAME>")`:
 
 - `mode: "oauth_connection"`: connect an account through OAuth consent.
 - `mode: "project_credentials"`: set the variables in `mandatory_env_vars` as
@@ -100,10 +100,10 @@ grant. Use hosted execution for any connector that needs OAuth consent. See
 
 ## Connection scope
 
-| Scope     | Owner                       | Who can use it                            | Create it with                                                  |
-| --------- | --------------------------- | ----------------------------------------- | --------------------------------------------------------------- |
-| `user`    | One user inside one project | That user's calls and runs in the project | `veryfront integration connect <NAME>` (default scope)          |
-| `project` | The project                 | Shared with the project and its resources | `veryfront integration connect <NAME> --scope project` (editor) |
+| Scope     | Owner                       | Who can use it                            | Create it with                                                    |
+| --------- | --------------------------- | ----------------------------------------- | ----------------------------------------------------------------- |
+| `user`    | One user inside one project | That user's calls and runs in the project | `veryfront integration connect "<NAME>"` (default scope)          |
+| `project` | The project                 | Shared with the project and its resources | `veryfront integration connect "<NAME>" --scope project` (editor) |
 
 The default scope is always `user`; Veryfront never creates a shared connection
 unless you ask for `project`. The REST API still accepts the legacy value
@@ -118,7 +118,7 @@ client accept only `user` and `project`.
 | GraphQL    | `projectReference`                                          | `connectionId`              | `expectedConnectionGenerationId`                | Not exposed; use REST, MCP, or TypeScript |
 | MCP        | `/projects/<PROJECT_SLUG>/mcp`                              | `_meta.connection_id`       | `_meta.expected_connection_generation_id`       | `tools/list` `inputSchema`                |
 | TypeScript | `projectReference` in `createIntegrationClient`             | `connectionId` option       | `expectedConnectionGenerationId` option         | `client.listTools("<NAME>")`              |
-| CLI        | `--project`                                                 | `--connection`              | `--expected-generation`                         | `veryfront integration tools <NAME>`      |
+| CLI        | `--project`                                                 | `--connection`              | `--expected-generation`                         | `veryfront integration tools "<NAME>"`    |
 
 Tool arguments are provider input and are never read as selectors. REST also
 accepts `x-veryfront-expected-project-id`, which rejects a request when the slug
@@ -137,9 +137,9 @@ Connection rows from `GET /projects/<ref>/integrations/<NAME>/connections`,
 
 ## Verify it worked
 
-1. `veryfront integration get <NAME> --json` reports the
+1. `veryfront integration get "<NAME>" --json` reports the
    `credential_requirement.mode` you set up for.
-2. For an OAuth connector, `veryfront integration connections <NAME>` lists a
+2. For an OAuth connector, `veryfront integration connections "<NAME>"` lists a
    `connected` row in the scope you chose.
 3. For a project-credentials connector, a read-only call no longer returns
    `missing_credentials`.

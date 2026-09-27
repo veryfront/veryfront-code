@@ -17,6 +17,7 @@ import {
   extractGraphqlHeredocs,
   findSecretLiterals,
   findUnknownIntegrationSubcommands,
+  findUnquotedInlineCommands,
   findUnquotedPlaceholders,
   type GraphqlSchemaSnapshot,
   parseSubcommandUsage,
@@ -150,6 +151,9 @@ try {
       for (const issue of findSecretLiterals(text)) {
         report(file, issue.line, issue.message);
       }
+      for (const issue of findUnquotedInlineCommands(text)) {
+        report(file, issue.line, issue.message);
+      }
       for (
         const issue of findUnknownIntegrationSubcommands(text, subcommands)
       ) {
@@ -160,6 +164,9 @@ try {
   for (const file of ["docs/guides/integrations.md"]) {
     const text = await Deno.readTextFile(new URL(file, ROOT));
     for (const issue of findSecretLiterals(text)) {
+      report(file, issue.line, issue.message);
+    }
+    for (const issue of findUnquotedInlineCommands(text)) {
       report(file, issue.line, issue.message);
     }
     for (const issue of findUnknownIntegrationSubcommands(text, subcommands)) {

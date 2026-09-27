@@ -7,7 +7,7 @@ Full guide: https://veryfront.com/docs/code/guides/integrations
 
 - **Platform login** (`veryfront login`, `VERYFRONT_API_TOKEN`) authenticates
   you to Veryfront. It never connects a provider.
-- **Provider consent** (`veryfront integration connect <name>`) authorizes one
+- **Provider consent** (`veryfront integration connect "<NAME>"`) authorizes one
   provider account for one project. It needs a person in a browser and an
   existing platform login.
 
@@ -69,7 +69,7 @@ different account to make a call succeed.
 
 ## Non-OAuth connectors
 
-`veryfront integration connect <name>` returns `setup_required` for connectors
+`veryfront integration connect "<NAME>"` returns `setup_required` for connectors
 with `credential_requirement.mode: "project_credentials"`. The person sets the
 variables in `mandatory_env_vars` as project environment variables. Do not
 accept those values in chat.

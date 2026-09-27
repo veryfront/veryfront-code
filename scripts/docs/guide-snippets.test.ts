@@ -5,6 +5,7 @@ import {
   extractGraphqlHeredocs,
   findSecretLiterals,
   findUnknownIntegrationSubcommands,
+  findUnquotedInlineCommands,
   findUnquotedPlaceholders,
   type GraphqlSchemaSnapshot,
   parseSubcommandUsage,
@@ -100,6 +101,14 @@ describe("guide snippet checks", () => {
       ),
       ['mutation.executeIntegrationTool: missing required argument "input"'],
     );
+  });
+
+  it("flags unquoted placeholders in inline integration commands", () => {
+    const text =
+      'Run `veryfront integration connect <NAME>` or\n`veryfront integration tools "<NAME>"`.';
+    assertEquals(findUnquotedInlineCommands(text), [
+      { line: 1, message: "Quote <NAME>; unquoted it is a shell redirection" },
+    ]);
   });
 
   it("extracts quoted GRAPHQL heredocs from shell snippets", () => {
