@@ -232,6 +232,54 @@ describe("hosted-agent-run-lifecycle", () => {
   //
   // `operationName` is the value chat-execution-runtime.ts actually passes, so the
   // span name asserted below is the name production emits.
+  it("reports the one-hour cache-write share on the hosted agent run span", async () => {
+    const dispatchWith = async (usage: Record<string, number>) => {
+      const span = new RecordingSpan();
+      const controller = createHostedAgentRunSpanController({
+        tracer: { startSpan: () => span },
+        operationName: "invoke_agent",
+        conversationId: "conversation-1",
+        projectId: "project-1",
+        userId: "user-1",
+        agentId: "agent-1",
+        agentName: "Ops Agent",
+        modelId: "test/model",
+        rootRun: { runId: "run-1", messageId: "message-1" },
+      });
+      const adapter = createHostedRootRunLifecycleRuntimeAdapter({
+        authToken: "token",
+        apiUrl: "https://api.example.com",
+        modelId: "test/model",
+        durableRootRun: null,
+        durableRunMirror: null,
+        resolveProvider: () => "test",
+        agentRunSpan: controller,
+      });
+      await dispatchConversationHostedTerminalState(adapter, {
+        status: "completed",
+        metadata: { modelId: "test/model", usage: { inputTokens: 12, outputTokens: 8, ...usage } },
+      });
+      return span.attributes;
+    };
+
+    const withShare = await dispatchWith({
+      cacheCreationInputTokens: 50,
+      cacheCreation1hInputTokens: 20,
+    });
+    assertEquals(withShare["gen_ai.usage.cache_creation.input_tokens"], 50);
+    assertEquals(withShare["agent.usage.cache_creation_1h_input_tokens"], 20);
+
+    const withoutShare = await dispatchWith({ cacheCreationInputTokens: 50 });
+    assertEquals(withoutShare["gen_ai.usage.cache_creation.input_tokens"], 50);
+    assertEquals(Object.hasOwn(withoutShare, "agent.usage.cache_creation_1h_input_tokens"), false);
+
+    const shareWithoutTotal = await dispatchWith({ cacheCreation1hInputTokens: 20 });
+    assertEquals(
+      Object.hasOwn(shareWithoutTotal, "agent.usage.cache_creation_1h_input_tokens"),
+      false,
+    );
+  });
+
   it("reports run cost, not only tokens, on the hosted agent run span", async () => {
     const span = new RecordingSpan();
     let spanName: string | undefined;

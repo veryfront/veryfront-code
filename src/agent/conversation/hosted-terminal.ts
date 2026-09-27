@@ -182,6 +182,14 @@ function buildConversationHostedLifecycleUsage(
     ...(usage.cachedInputTokens !== undefined
       ? { cachedInputTokens: usage.cachedInputTokens }
       : {}),
+    ...(usage.cacheCreationInputTokens !== undefined
+      ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
+      : {}),
+    // The one-hour share only means something next to its cache-write total.
+    ...(usage.cacheCreationInputTokens !== undefined &&
+        usage.cacheCreation1hInputTokens !== undefined
+      ? { cacheCreation1hInputTokens: usage.cacheCreation1hInputTokens }
+      : {}),
   };
 }
 
