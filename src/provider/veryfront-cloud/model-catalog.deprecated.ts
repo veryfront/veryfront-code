@@ -1,18 +1,23 @@
 /**
  * Deprecated model list exports, backed by the table shipped in this package.
  *
- * Model facts now come from the served catalog (`catalog-client.ts`), and no
- * resolution logic reads this module. It keeps the public exports that only
- * make sense with a shipped list working for one release, and it is the only
- * module that imports the shipped table.
+ * Model facts now come from the served catalog (`catalog-client.ts`). This
+ * module keeps the public exports that only make sense with a shipped list
+ * working for one release, and it is the only module that imports the shipped
+ * table. While it ships, the resolvers also read {@link SHIPPED_VERYFRONT_CLOUD_CATALOG}
+ * for a scope whose catalog has not loaded, so a process that has not reached
+ * `/ai/models` keeps the behaviour of the previous release.
  */
 import type { KnownVeryfrontCloudProviderId, VeryfrontCloudChatModel } from "./model-catalog.ts";
+import type { VeryfrontCloudCatalog, VeryfrontCloudCatalogModel } from "./catalog-client.ts";
 import {
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID as TABLE_DEFAULT_MODEL_ID,
   VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES,
+  VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES,
   VERYFRONT_CLOUD_PROVIDER_ALIASES,
   VERYFRONT_CLOUD_PROVIDER_LABELS as PROVIDER_LABELS,
   VERYFRONT_CLOUD_PROVIDER_ORDER as PROVIDER_ORDER,
+  VERYFRONT_CLOUD_PROVIDER_ROUTING,
 } from "./model-catalog.data.ts";
 
 const MODEL_PREFIX = "veryfront-cloud/";
@@ -109,3 +114,93 @@ export function groupVeryfrontCloudModelsByProvider(): Array<{
     ),
   })).filter((group) => group.models.length > 0);
 }
+
+const providerRouting = new Map(VERYFRONT_CLOUD_PROVIDER_ROUTING);
+const transportCapabilities = new Map(VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES);
+
+/** The operations the shipped table implies for a model, in the served catalog's terms. */
+function shippedOperations(provider: string, key: string): readonly string[] | undefined {
+  const routing = providerRouting.get(provider);
+  switch (routing?.surface) {
+    case "anthropic":
+      return ["messages"];
+    case "google":
+      return ["generate-content", "stream-generate-content"];
+    case "openai":
+      return routing.native === true &&
+          transportCapabilities.get(key)?.openAITransport !== "chat-completions"
+        ? ["responses", "chat-completions"]
+        : ["chat-completions"];
+    default:
+      return undefined;
+  }
+}
+
+function shippedModel(
+  id: string,
+  modelId: string,
+  provider: string,
+  thinking: boolean | undefined,
+  budget: number | undefined,
+): VeryfrontCloudCatalogModel {
+  const key = tableModelKey(modelId);
+  const capabilities = transportCapabilities.get(key);
+  const surface = providerRouting.get(provider)?.surface;
+  const operations = shippedOperations(provider, key);
+  return Object.freeze({
+    id,
+    modelId,
+    provider,
+    aliases: Object.freeze([]),
+    ...(surface === undefined ? {} : { surface }),
+    ...(operations === undefined ? {} : { operations: Object.freeze([...operations]) }),
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(capabilities?.anthropicThinkingMode
+      ? { reasoningMode: capabilities.anthropicThinkingMode }
+      : {}),
+    ...(capabilities?.openAITransport ? { transport: capabilities.openAITransport } : {}),
+    ...(budget === undefined ? {} : { reasoningBudgetTokens: budget }),
+    ...(capabilities?.openAIChatReasoningWithFunctionTools === undefined ? {} : {
+      chatCompletionsReasoningWithFunctionTools: capabilities.openAIChatReasoningWithFunctionTools,
+    }),
+    ...(capabilities?.openAIChatPreserveSystemMessages === undefined ? {} : {
+      chatCompletionsConsecutiveSystemMessages: capabilities.openAIChatPreserveSystemMessages,
+    }),
+  });
+}
+
+/**
+ * The shipped table in the served catalog's shape. The resolvers read it for a
+ * scope whose catalog has not loaded. A later release removes it with the table.
+ *
+ * @deprecated Internal fallback that is removed with the shipped table.
+ */
+export const SHIPPED_VERYFRONT_CLOUD_CATALOG: VeryfrontCloudCatalog = Object.freeze({
+  models: Object.freeze([
+    ...VERYFRONT_CLOUD_CHAT_MODELS.map((model) =>
+      shippedModel(
+        model.id,
+        model.modelId,
+        model.provider,
+        model.thinking === true || model.thinkingBudgetTokens !== undefined ? true : undefined,
+        model.thinkingBudgetTokens,
+      )
+    ),
+    // Transport rows for models without a chat entry keep their facts too.
+    ...VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES
+      .filter(([key]) =>
+        !VERYFRONT_CLOUD_CHAT_MODELS.some((model) => tableModelKey(model.modelId) === key)
+      )
+      .map(([key]) => {
+        const slashIndex = key.indexOf("/");
+        return shippedModel(
+          key.slice(slashIndex + 1),
+          key,
+          key.slice(0, slashIndex),
+          undefined,
+          undefined,
+        );
+      }),
+  ]),
+  defaultModelId: DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.modelId,
+});

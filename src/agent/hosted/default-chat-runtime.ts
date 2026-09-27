@@ -525,6 +525,9 @@ function runWithDefaultHostedRequestContext<TResult>(
   );
 }
 
+/** Longest a hosted run waits for the served catalog before resolving a short alias. */
+const CATALOG_ALIAS_MAX_WAIT_MS = 3_000;
+
 /** Create default hosted chat runtime. */
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
@@ -540,6 +543,7 @@ export async function createDefaultHostedChatRuntime(
           apiBaseUrl: input.config.apiUrl,
           apiToken: input.options.authToken,
           ...(input.options.projectSlug ? { projectSlug: input.options.projectSlug } : {}),
+          maxWaitMs: CATALOG_ALIAS_MAX_WAIT_MS,
         });
       }
       const modelId = resolveVeryfrontCloudModelId(input.options.model);

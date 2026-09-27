@@ -7,9 +7,12 @@
  * model call; every synchronous reader uses {@link peekVeryfrontCloudCatalog}
  * and degrades when nothing is loaded yet.
  *
- * - Entries are cached per API base URL and project, because the served list
- *   is filtered by project policy.
- * - Concurrent loads for one key share a single request.
+ * - Entries are cached per API base URL, project and credential, because the
+ *   served list is filtered by the project the credential or header selects.
+ *   A synchronous read names the same scope, so one project never reads
+ *   another project's list.
+ * - Concurrent loads for one key share a single request. A caller's abort
+ *   signal only stops that caller waiting; it never cancels the shared request.
  * - An entry is fresh for {@link VERYFRONT_CLOUD_CATALOG_TTL_MS}. A stale entry
  *   is returned at once while one refresh runs in the background, and it is
  *   kept when that refresh fails.
@@ -25,6 +28,8 @@ export const VERYFRONT_CLOUD_CATALOG_TTL_MS = 5 * 60_000;
 export const VERYFRONT_CLOUD_CATALOG_RETRY_MS = 30_000;
 /** Upper bound on one catalog request. */
 const VERYFRONT_CLOUD_CATALOG_TIMEOUT_MS = 10_000;
+/** Header naming the project a catalog request is scoped to. */
+const PROJECT_SLUG_HEADER = "x-veryfront-project-slug";
 /** Path of the served catalog, relative to the API base URL. */
 const VERYFRONT_CLOUD_CATALOG_PATH = "ai/models";
 
@@ -63,12 +68,19 @@ export interface VeryfrontCloudCatalog {
   readonly defaultModelId?: string;
 }
 
-/** Credentials and scope a catalog load uses: the same ones inference uses. */
-export interface VeryfrontCloudCatalogLoadOptions {
+/** Credentials and project a catalog is loaded and read for: the same ones inference uses. */
+export interface VeryfrontCloudCatalogScope {
   readonly apiBaseUrl: string;
   readonly apiToken: string;
   readonly projectSlug?: string;
+}
+
+/** Options for one catalog load. */
+export interface VeryfrontCloudCatalogLoadOptions extends VeryfrontCloudCatalogScope {
+  /** Stops this caller waiting. The shared request keeps running for other callers. */
   readonly signal?: AbortSignal;
+  /** Longest this caller waits for a request in flight before it goes on without it. */
+  readonly maxWaitMs?: number;
 }
 
 interface CatalogEntry {
@@ -79,7 +91,8 @@ interface CatalogEntry {
 const entries = new Map<string, CatalogEntry>();
 const inflight = new Map<string, Promise<VeryfrontCloudCatalog | undefined>>();
 const failedAt = new Map<string, number>();
-let latest: VeryfrontCloudCatalog | undefined;
+/** Key of the scope a synchronous read uses, while {@link withVeryfrontCloudCatalogScope} runs. */
+let activeKey: string | undefined;
 let seeded: VeryfrontCloudCatalog | undefined;
 let failureLogged = false;
 let now: () => number = Date.now;
@@ -155,8 +168,25 @@ export function parseVeryfrontCloudCatalog(payload: unknown): VeryfrontCloudCata
   });
 }
 
-function cacheKey(apiBaseUrl: string, projectSlug: string | undefined): string {
-  return `${apiBaseUrl}\n${projectSlug ?? ""}`;
+/**
+ * Non-reversible fingerprint of a credential, so entries for different
+ * credentials never share a key and the key never holds the credential.
+ */
+function credentialFingerprint(token: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (let index = 0; index < token.length; index++) {
+    const code = token.charCodeAt(index);
+    a = Math.imul(a ^ code, 0x01000193) >>> 0;
+    b = Math.imul(b ^ code, 0x85ebca6b) >>> 0;
+  }
+  return `${a.toString(16)}${b.toString(16)}`;
+}
+
+function cacheKey(scope: VeryfrontCloudCatalogScope): string {
+  return `${scope.apiBaseUrl}\n${scope.projectSlug ?? ""}\n${
+    credentialFingerprint(scope.apiToken)
+  }`;
 }
 
 function catalogUrl(apiBaseUrl: string): string {
@@ -168,18 +198,18 @@ function catalogUrl(apiBaseUrl: string): string {
 }
 
 async function fetchCatalog(
-  options: VeryfrontCloudCatalogLoadOptions,
+  options: VeryfrontCloudCatalogScope,
 ): Promise<VeryfrontCloudCatalog> {
   const headers = new Headers({
     Accept: "application/json",
     Authorization: `Bearer ${options.apiToken}`,
   });
-  if (options.projectSlug) headers.set("x-veryfront-project-slug", options.projectSlug);
+  if (options.projectSlug) headers.set(PROJECT_SLUG_HEADER, options.projectSlug);
+  // Only the internal timeout bounds the shared request: one caller giving up
+  // must not fail the load for every other caller on the same key.
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), VERYFRONT_CLOUD_CATALOG_TIMEOUT_MS);
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, timeout.signal])
-    : timeout.signal;
+  const signal = timeout.signal;
   try {
     const response = await createVeryfrontApiOriginBoundOutboundFetch(options.apiBaseUrl)(
       catalogUrl(options.apiBaseUrl),
@@ -201,7 +231,7 @@ async function fetchCatalog(
 
 function refresh(
   key: string,
-  options: VeryfrontCloudCatalogLoadOptions,
+  options: VeryfrontCloudCatalogScope,
 ): Promise<VeryfrontCloudCatalog | undefined> {
   const pending = inflight.get(key);
   if (pending) return pending;
@@ -211,7 +241,6 @@ function refresh(
       if (started !== generation) return catalog;
       entries.set(key, { catalog, fetchedAt: now() });
       failedAt.delete(key);
-      latest = catalog;
       failureLogged = false;
       return catalog;
     },
@@ -221,7 +250,7 @@ function refresh(
       if (!failureLogged) {
         failureLogged = true;
         logger.warn(
-          "Veryfront Cloud model catalog is unavailable; model facts fall back to protocol defaults",
+          "Veryfront Cloud model catalog is unavailable; model facts fall back to the built-in list",
           { error: error instanceof Error ? error.message : String(error) },
         );
       }
@@ -234,16 +263,39 @@ function refresh(
   return request;
 }
 
+/** Resolve with what `request` resolves to, or with `fallback` once this caller stops waiting. */
+function waitFor(
+  request: Promise<VeryfrontCloudCatalog | undefined>,
+  fallback: VeryfrontCloudCatalog | undefined,
+  signal: AbortSignal | undefined,
+  maxWaitMs: number | undefined,
+): Promise<VeryfrontCloudCatalog | undefined> {
+  if (!signal && maxWaitMs === undefined) return request;
+  if (signal?.aborted) return Promise.resolve(fallback);
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: VeryfrontCloudCatalog | undefined) => {
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish(fallback);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (maxWaitMs !== undefined) timer = setTimeout(() => finish(fallback), maxWaitMs);
+    request.then(finish);
+  });
+}
+
 /**
- * Load the served catalog for an API base URL and project. Resolves to the
- * cached catalog when it is fresh, to a stale one while a refresh runs, and to
- * undefined when no catalog could be loaded. Never rejects.
+ * Load the served catalog for a scope. Resolves to the cached catalog when it
+ * is fresh, to a stale one while a refresh runs, and to undefined when no
+ * catalog could be loaded or the caller stopped waiting first. Never rejects.
  */
 export function loadVeryfrontCloudCatalog(
   options: VeryfrontCloudCatalogLoadOptions,
 ): Promise<VeryfrontCloudCatalog | undefined> {
   if (seeded) return Promise.resolve(seeded);
-  const key = cacheKey(options.apiBaseUrl, options.projectSlug);
+  const key = cacheKey(options);
   const entry = entries.get(key);
   const current = now();
   if (entry && current - entry.fetchedAt < VERYFRONT_CLOUD_CATALOG_TTL_MS) {
@@ -253,28 +305,72 @@ export function loadVeryfrontCloudCatalog(
   if (lastFailure !== undefined && current - lastFailure < VERYFRONT_CLOUD_CATALOG_RETRY_MS) {
     return Promise.resolve(entry?.catalog);
   }
-  const request = refresh(key, options);
+  const request = refresh(key, {
+    apiBaseUrl: options.apiBaseUrl,
+    apiToken: options.apiToken,
+    ...(options.projectSlug ? { projectSlug: options.projectSlug } : {}),
+  });
   // Stale while revalidate: the stale entry answers now, the refresh replaces it.
-  return entry ? Promise.resolve(entry.catalog) : request;
+  if (entry) return Promise.resolve(entry.catalog);
+  return waitFor(request, undefined, options.signal, options.maxWaitMs);
 }
 
-/** Whether a load for these credentials would answer from a fresh cache entry, without a request. */
-export function isVeryfrontCloudCatalogFresh(
-  options: Pick<VeryfrontCloudCatalogLoadOptions, "apiBaseUrl" | "projectSlug">,
-): boolean {
+/** Whether a load for this scope would answer from a fresh cache entry, without a request. */
+export function isVeryfrontCloudCatalogFresh(scope: VeryfrontCloudCatalogScope): boolean {
   if (seeded) return true;
-  const entry = entries.get(cacheKey(options.apiBaseUrl, options.projectSlug));
+  const entry = entries.get(cacheKey(scope));
   return entry !== undefined && now() - entry.fetchedAt < VERYFRONT_CLOUD_CATALOG_TTL_MS;
 }
 
-/** The most recently loaded catalog, stale or not, or undefined before any load. */
-export function peekVeryfrontCloudCatalog(): VeryfrontCloudCatalog | undefined {
-  return seeded ?? latest;
+/**
+ * Run `fn` synchronously with {@link peekVeryfrontCloudCatalog} reading the
+ * catalog loaded for `scope`, so a model's facts come from its own project and
+ * credential whatever the ambient request carries.
+ */
+export function withVeryfrontCloudCatalogScope<T>(
+  scope: VeryfrontCloudCatalogScope,
+  fn: () => T,
+): T {
+  const previous = activeKey;
+  activeKey = cacheKey(scope);
+  try {
+    return fn();
+  } finally {
+    activeKey = previous;
+  }
+}
+
+/** Whether {@link withVeryfrontCloudCatalogScope} names the scope reads use right now. */
+export function hasActiveVeryfrontCloudCatalogScope(): boolean {
+  return activeKey !== undefined;
+}
+
+/**
+ * The catalog loaded for a scope, stale or not, or undefined before any load
+ * for it. Without a scope, reads the one {@link withVeryfrontCloudCatalogScope}
+ * names, and undefined outside it.
+ */
+export function peekVeryfrontCloudCatalog(
+  scope?: VeryfrontCloudCatalogScope,
+): VeryfrontCloudCatalog | undefined {
+  if (seeded) return seeded;
+  const key = scope ? cacheKey(scope) : activeKey;
+  return key === undefined ? undefined : entries.get(key)?.catalog;
 }
 
 /** @internal Serve a fixed catalog for every key, as if freshly loaded. `undefined` clears it. */
 export function __setVeryfrontCloudCatalogForTests(payload: unknown): void {
   seeded = payload === undefined ? undefined : parseVeryfrontCloudCatalog(payload);
+}
+
+/** @internal Store a catalog for one scope, as if it had just loaded for it. */
+export function __setVeryfrontCloudCatalogForScopeForTests(
+  scope: VeryfrontCloudCatalogScope,
+  payload: unknown,
+): void {
+  const catalog = parseVeryfrontCloudCatalog(payload);
+  if (!catalog) throw new TypeError("Test catalog payload has no model list");
+  entries.set(cacheKey(scope), { catalog, fetchedAt: now() });
 }
 
 /** @internal Forget every loaded catalog, pending load and failure. */
@@ -283,7 +379,7 @@ export function __resetVeryfrontCloudCatalogForTests(): void {
   entries.clear();
   inflight.clear();
   failedAt.clear();
-  latest = undefined;
+  activeKey = undefined;
   seeded = undefined;
   failureLogged = false;
   now = Date.now;

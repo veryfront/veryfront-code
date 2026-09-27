@@ -9,6 +9,7 @@ import {
 } from "#veryfront/provider/shared/openai-reasoning.ts";
 import { readProviderOptions } from "#veryfront/provider/runtime-loader.ts";
 import {
+  readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
@@ -74,8 +75,10 @@ function stopControl(value: unknown): string[] | undefined {
 function usesOpenAIBuilder(model: ModelCallRuntimeMetadata): boolean {
   const provider = resolveModelCallProvider(model);
   if (provider === "openai") return true;
-  return model.provider === "veryfront-cloud" && provider !== undefined &&
-    resolveVeryfrontCloudProviderRouting(provider).surface === "openai";
+  if (model.provider !== "veryfront-cloud" || provider === undefined) return false;
+  // A model built by this package records the facts it was built with.
+  const built = readVeryfrontCloudModelFacts(model);
+  return (built?.surface ?? resolveVeryfrontCloudProviderRouting(provider).surface) === "openai";
 }
 
 function managedOpenAITransport(
@@ -90,12 +93,15 @@ function managedOpenAITransport(
   // against the call is the one the request is built with. A provider that is
   // not native to the OpenAI surface never reaches the Responses transport,
   // whatever its model IDs look like.
-  return resolveVeryfrontCloudOpenAICallTransport(
-    provider,
-    model.modelId,
+  const usesHostedTool =
     options.tools?.some((tool) => tool.type === "provider" && tool.id.startsWith("openai.")) ===
-      true,
-  );
+      true;
+  const built = readVeryfrontCloudModelFacts(model);
+  if (built) {
+    if (built.transportPlan.pinned) return built.transportPlan.transport;
+    return usesHostedTool ? "responses" : "chat-completions";
+  }
+  return resolveVeryfrontCloudOpenAICallTransport(provider, model.modelId, usesHostedTool);
 }
 
 function openAIProviderOptions(
@@ -314,10 +320,17 @@ function suppressOpenAIFunctionToolReasoning(
   // must not apply it either.
   if (resolveModelCallProvider(model) !== "openai") return false;
   const catalogId = `openai/${model.modelId}`;
+  const built = readVeryfrontCloudModelFacts(model);
+  const openAITransport = built
+    ? built.openAITransport
+    : resolveVeryfrontCloudOpenAITransport(catalogId);
+  const reasoningWithFunctionTools = built
+    ? built.openAIChatReasoningWithFunctionTools
+    : resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId);
   if (
     model.provider === "veryfront-cloud" &&
-    resolveVeryfrontCloudOpenAITransport(catalogId) === "chat-completions" &&
-    resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId) === false
+    openAITransport === "chat-completions" &&
+    reasoningWithFunctionTools === false
   ) {
     // Match the Chat builder's native bucket precedence, including an own
     // tools value that clears the neutral list with [] or undefined.

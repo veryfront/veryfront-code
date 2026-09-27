@@ -24,6 +24,7 @@ import {
   resolveVeryfrontCloudSurface,
   type VeryfrontCloudProviderId,
 } from "./model-catalog.ts";
+import { loadVeryfrontCloudCatalog } from "./catalog-client.ts";
 import {
   requireInferenceProviderCredential,
   requireProviderCredential,
@@ -296,6 +297,33 @@ export function requireVeryfrontCloudBootstrap(
     apiToken,
     projectSlug: bootstrap.projectSlug,
   };
+}
+
+/**
+ * Load the model catalog Veryfront Cloud serves, with the Veryfront Cloud
+ * credentials and project in effect, so model facts read synchronously
+ * afterwards (thinking defaults, short aliases such as `opus`, the default
+ * model) come from it. Resolves to whether a catalog is available. Never
+ * throws: without credentials or a reachable catalog, the facts shipped with
+ * this package apply.
+ */
+export async function loadVeryfrontCloudModelCatalog(
+  options: { signal?: AbortSignal; maxWaitMs?: number } = {},
+): Promise<boolean> {
+  let bootstrap: ReturnType<typeof requireVeryfrontCloudBootstrap>;
+  try {
+    bootstrap = requireVeryfrontCloudBootstrap();
+  } catch {
+    return false;
+  }
+  const catalog = await loadVeryfrontCloudCatalog({
+    apiBaseUrl: bootstrap.apiBaseUrl,
+    apiToken: bootstrap.apiToken,
+    ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.maxWaitMs === undefined ? {} : { maxWaitMs: options.maxWaitMs }),
+  });
+  return catalog !== undefined;
 }
 
 /**

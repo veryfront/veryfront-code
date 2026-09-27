@@ -126,12 +126,12 @@ describe("provider/veryfront-cloud/catalog-client", () => {
   describe("loadVeryfrontCloudCatalog", () => {
     it("is cold until the first load, then serves the loaded catalog synchronously", async () => {
       const stub = recordingFetch(() => jsonResponse(servedCatalogPayload()));
-      assertEquals(peekVeryfrontCloudCatalog(), undefined);
+      assertEquals(peekVeryfrontCloudCatalog(LOAD), undefined);
 
       const loaded = await withMockFetch(stub.fetch, () => loadVeryfrontCloudCatalog(LOAD));
 
       assertEquals(loaded?.defaultModelId, "mistral/mistral-small-2503");
-      assertEquals(peekVeryfrontCloudCatalog(), loaded);
+      assertEquals(peekVeryfrontCloudCatalog(LOAD), loaded);
       assertEquals(stub.requests.length, 1);
       const [request] = stub.requests;
       assertEquals(request?.method, "GET");
@@ -150,6 +150,65 @@ describe("provider/veryfront-cloud/catalog-client", () => {
 
       assertEquals(stub.requests.length, 1);
       assertEquals(first, second);
+    });
+
+    it("keeps a separate entry per credential for the same project", async () => {
+      const stub = recordingFetch(() => jsonResponse(servedCatalogPayload()));
+
+      await withMockFetch(stub.fetch, async () => {
+        await loadVeryfrontCloudCatalog(LOAD);
+        await loadVeryfrontCloudCatalog({ ...LOAD, apiToken: "vf_other_credential" });
+      });
+
+      assertEquals(
+        stub.requests.map((request) => request.headers.get("authorization")),
+        ["Bearer vf_catalog_test", "Bearer vf_other_credential"],
+      );
+      assertEquals(peekVeryfrontCloudCatalog({ ...LOAD, apiToken: "vf_third" }), undefined);
+    });
+
+    it("lets one caller stop waiting without failing the load for the others", async () => {
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => release = resolve);
+      const stub = recordingFetch(async () => {
+        await gate;
+        return jsonResponse(servedCatalogPayload());
+      });
+
+      await withMockFetch(stub.fetch, async () => {
+        const controller = new AbortController();
+        const abandoned = loadVeryfrontCloudCatalog({ ...LOAD, signal: controller.signal });
+        const waiting = loadVeryfrontCloudCatalog(LOAD);
+        controller.abort();
+        assertEquals(await abandoned, undefined);
+
+        release?.();
+        assertEquals((await waiting)?.defaultModelId, "mistral/mistral-small-2503");
+        // The abandoned wait recorded no failure: the next load is a cache hit.
+        assertEquals(
+          (await loadVeryfrontCloudCatalog(LOAD))?.defaultModelId,
+          "mistral/mistral-small-2503",
+        );
+      });
+      assertEquals(stub.requests.length, 1);
+      assertEquals(stub.requests[0]?.signal.aborted, false);
+    });
+
+    it("stops waiting after maxWaitMs while the request finishes for later callers", async () => {
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => release = resolve);
+      const stub = recordingFetch(async () => {
+        await gate;
+        return jsonResponse(servedCatalogPayload());
+      });
+
+      await withMockFetch(stub.fetch, async () => {
+        assertEquals(await loadVeryfrontCloudCatalog({ ...LOAD, maxWaitMs: 1 }), undefined);
+        release?.();
+        await settleBackgroundRefresh();
+        assertEquals(peekVeryfrontCloudCatalog(LOAD)?.defaultModelId, "mistral/mistral-small-2503");
+      });
+      assertEquals(stub.requests.length, 1);
     });
 
     it("keeps a separate entry per project", async () => {
@@ -188,7 +247,10 @@ describe("provider/veryfront-cloud/catalog-client", () => {
         assertEquals(stub.requests.length, 2);
         const refreshed = await loadVeryfrontCloudCatalog(LOAD);
         assertEquals(refreshed?.defaultModelId, "anthropic/claude-sonnet-4-6");
-        assertEquals(peekVeryfrontCloudCatalog()?.defaultModelId, "anthropic/claude-sonnet-4-6");
+        assertEquals(
+          peekVeryfrontCloudCatalog(LOAD)?.defaultModelId,
+          "anthropic/claude-sonnet-4-6",
+        );
         assertEquals(stub.requests.length, 2);
       });
     });
@@ -202,7 +264,7 @@ describe("provider/veryfront-cloud/catalog-client", () => {
 
       await withMockFetch(stub.fetch, async () => {
         assertEquals(await loadVeryfrontCloudCatalog(LOAD), undefined);
-        assertEquals(peekVeryfrontCloudCatalog(), undefined);
+        assertEquals(peekVeryfrontCloudCatalog(LOAD), undefined);
 
         status = 200;
         clock.advance(VERYFRONT_CLOUD_CATALOG_RETRY_MS - 1);
@@ -224,7 +286,7 @@ describe("provider/veryfront-cloud/catalog-client", () => {
       const loaded = await withMockFetch(stub.fetch, () => loadVeryfrontCloudCatalog(LOAD));
 
       assertEquals(loaded, undefined);
-      assertEquals(peekVeryfrontCloudCatalog(), undefined);
+      assertEquals(peekVeryfrontCloudCatalog(LOAD), undefined);
     });
 
     it("keeps the stale catalog when a refresh fails", async () => {
@@ -245,7 +307,7 @@ describe("provider/veryfront-cloud/catalog-client", () => {
 
         assertEquals(stub.requests.length, 2);
         assertEquals(afterFailure, loaded);
-        assertEquals(peekVeryfrontCloudCatalog(), loaded);
+        assertEquals(peekVeryfrontCloudCatalog(LOAD), loaded);
       });
     });
   });

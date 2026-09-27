@@ -3,7 +3,11 @@ import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetc
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { seedServedCatalogForTests, servedCatalogPayload } from "./catalog-client.test-helpers.ts";
-import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogClockForTests,
+  VERYFRONT_CLOUD_CATALOG_RETRY_MS,
+} from "./catalog-client.ts";
 import { agent } from "#veryfront/agent";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embedding/index.ts";
@@ -16,7 +20,14 @@ import {
   createVeryfrontCloudModel,
   warmVeryfrontCloudCatalog,
 } from "./provider.ts";
-import { resolveVeryfrontCloudModelThinking } from "./model-catalog.ts";
+import {
+  readVeryfrontCloudModelFacts,
+  resolveVeryfrontCloudModelThinking,
+} from "./model-catalog.ts";
+import { loadVeryfrontCloudModelCatalog } from "./shared.ts";
+import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import type { AgentRunEvent } from "#veryfront/runtime/model-call-context.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -1780,7 +1791,7 @@ describe("provider/veryfront-cloud served catalog loading", () => {
   };
 
   /** Answer the catalog request from `catalog` and every other request with a finished chat stream. */
-  function installGateway(catalog: () => Response): CapturedRequest[] {
+  function installGateway(catalog: () => Response, catalogGate?: Promise<void>): CapturedRequest[] {
     const requests: CapturedRequest[] = [];
     const encoder = new TextEncoder();
     installMockFetch(
@@ -1792,7 +1803,9 @@ describe("provider/veryfront-cloud served catalog loading", () => {
           authorization: request.headers.get("authorization"),
           projectSlug: request.headers.get("x-veryfront-project-slug"),
         });
-        if (request.url.endsWith("/ai/models")) return Promise.resolve(catalog());
+        if (request.url.endsWith("/ai/models")) {
+          return (catalogGate ?? Promise.resolve()).then(catalog);
+        }
         return Promise.resolve(
           new Response(
             readableStreamFrom([
@@ -1808,27 +1821,50 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     return requests;
   }
 
+  /** Stream once; a response the model cannot parse still leaves its request captured. */
   async function streamOnce(model: ModelRuntime): Promise<void> {
-    const result = await model.doStream({
-      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
-    } as never);
-    await drainStream(result.stream);
+    try {
+      const result = await model.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      } as never);
+      await drainStream(result.stream);
+    } catch {
+      // expected for a Responses request answered with a chat stream
+    }
   }
+
+  const calls = (requests: CapturedRequest[]) =>
+    requests.map(({ method, url }) => `${method} ${url.replace("https://api.veryfront.com", "")}`);
+
+  /** A catalog serving one OpenAI-protocol model only on chat completions. */
+  const chatOnlyCatalog = () =>
+    Response.json({
+      models: [{
+        id: "gpt-5.9-chat",
+        modelId: "openai/gpt-5.9-chat",
+        provider: "openai",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: { thinking: true },
+      }],
+    });
 
   it("builds synchronously, then loads the catalog on the first call and follows it", async () => {
     setCloudBootstrap();
-    const requests = installGateway(() => Response.json(servedCatalogPayload()));
+    const requests = installGateway(chatOnlyCatalog);
 
-    // Before the catalog loads, a reasoning-style OpenAI id would use Responses.
-    const model = resolveModel("veryfront-cloud/openai/gpt-5.5") as ModelRuntime;
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.9-chat") as ModelRuntime;
+    // Unlisted and reasoning-style: before the catalog loads it would use Responses.
+    assertEquals(readVeryfrontCloudModelFacts(model)?.transportPlan.transport, "responses");
     assertEquals(requests.length, 0);
     await streamOnce(model);
     await streamOnce(model);
 
-    assertEquals(requests.map(({ method, url }) => `${method} ${url}`), [
-      "GET https://api.veryfront.com/ai/models",
-      "POST https://api.veryfront.com/ai/v1/chat/completions",
-      "POST https://api.veryfront.com/ai/v1/chat/completions",
+    assertEquals(calls(requests), [
+      "GET /ai/models",
+      "POST /ai/v1/chat/completions",
+      "POST /ai/v1/chat/completions",
     ]);
     assertEquals(requests[0]?.authorization, "Bearer vf_test_provider");
     assertEquals(requests[0]?.projectSlug, "provider-test-project");
@@ -1844,35 +1880,133 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     assertEquals(requests.map(({ url }) => url), ["https://api.veryfront.com/ai/models"]);
   });
 
-  it("still calls the model when the catalog cannot be loaded", async () => {
+  it("retries the catalog on a later call after a failed first load", async () => {
     setCloudBootstrap();
-    const requests = installGateway(() => Response.json({ error: "unavailable" }, { status: 503 }));
+    let now = 1_000_000;
+    __setVeryfrontCloudCatalogClockForTests(() => now);
+    let available = false;
+    const requests = installGateway(() =>
+      available ? chatOnlyCatalog() : Response.json({ error: "unavailable" }, { status: 503 })
+    );
 
-    await streamOnce(resolveModel("veryfront-cloud/mistral/mistral-small-2503") as ModelRuntime);
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.9-chat") as ModelRuntime;
+    await streamOnce(model);
+    available = true;
+    // Inside the retry window no new catalog request is made.
+    await streamOnce(model);
+    now += VERYFRONT_CLOUD_CATALOG_RETRY_MS;
+    await streamOnce(model);
+    await streamOnce(model);
 
-    assertEquals(requests.map(({ method, url }) => `${method} ${url}`), [
-      "GET https://api.veryfront.com/ai/models",
-      "POST https://api.veryfront.com/ai/v1/chat/completions",
+    assertEquals(calls(requests), [
+      "GET /ai/models",
+      "POST /ai/v1/responses",
+      "POST /ai/v1/responses",
+      "GET /ai/models",
+      "POST /ai/v1/chat/completions",
+      "POST /ai/v1/chat/completions",
     ]);
   });
 
-  it("loads the catalog with the ambient credentials before thinking defaults are read", async () => {
+  it("does not settle a model on a caller that stopped waiting", async () => {
     setCloudBootstrap();
-    const requests = installGateway(() => Response.json(servedCatalogPayload()));
-    assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"), undefined);
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => release = resolve);
+    const requests = installGateway(chatOnlyCatalog, gate);
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.9-chat") as ModelRuntime;
 
+    const controller = new AbortController();
+    controller.abort();
+    await model.prepare?.(controller.signal);
+    release?.();
+    await streamOnce(model);
+
+    // The abandoned wait left the model unsettled; the call used the catalog.
+    assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/chat/completions"]);
+  });
+
+  it("forwards metadata to the model rebuilt from the catalog", async () => {
+    setCloudBootstrap();
+    installGateway(() =>
+      Response.json({
+        models: [{
+          id: "acme-claude",
+          modelId: "acme/acme-claude",
+          provider: "acme",
+          surface: "anthropic",
+          operations: ["messages"],
+          aliases: [],
+          capabilities: {},
+        }],
+      })
+    );
+
+    const model = resolveModel("veryfront-cloud/acme/acme-claude") as ModelRuntime;
+    const coldCapabilities = model.runtimeCapabilities;
+    await model.prepare?.();
+
+    // A model constructed now, with the catalog loaded, is the reference.
+    const warm = resolveModel("veryfront-cloud/acme/acme-claude") as ModelRuntime;
+    assertEquals(coldCapabilities, { structuredOutput: true });
+    assertEquals(
+      JSON.stringify(warm.runtimeCapabilities) === JSON.stringify(coldCapabilities),
+      false,
+    );
+    assertEquals(model.runtimeCapabilities, warm.runtimeCapabilities);
+    assertEquals(model.modelProvider, "acme");
+    assertEquals(readVeryfrontCloudModelFacts(model)?.surface, "anthropic");
+  });
+
+  it("records the transport the request is sent with, from a cold start", async () => {
+    setCloudBootstrap();
+    const bodies: Record<string, unknown>[] = [];
+    const requests = installGateway(chatOnlyCatalog);
+    const captureBodies = globalThis.fetch;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.method === "POST") bodies.push(await request.clone().json());
+        return captureBodies(request);
+      }) as typeof fetch,
+    );
+    const recorded: AgentRunEvent[] = [];
+
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.9-chat") as ModelRuntime;
+    assertEquals(readVeryfrontCloudModelFacts(model)?.transportPlan.transport, "responses");
+    await runWithMandatoryRunEventSink(
+      (event) => {
+        recorded.push(event);
+      },
+      () => generateText({ model, messages: [{ role: "user", content: "Hi" }], seed: 7 }),
+    );
+
+    const context = recorded.find((event) =>
+      event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+    ) as
+      | { request?: { seed?: number } }
+      | undefined;
+    assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/chat/completions"]);
+    // Chat completions carries the seed; Responses would not. Record and request agree.
+    assertEquals(bodies[0]?.seed, 7);
+    assertEquals(context?.request?.seed, 7);
+  });
+
+  it("loads the catalog with the ambient credentials for synchronous reads", async () => {
+    setCloudBootstrap();
+    const requests = installGateway(chatOnlyCatalog);
+    assertEquals(resolveVeryfrontCloudModelThinking("openai/gpt-5.9-chat"), undefined);
+
+    assertEquals(await loadVeryfrontCloudModelCatalog(), true);
     await warmVeryfrontCloudCatalog();
 
     assertEquals(requests.map(({ url }) => url), ["https://api.veryfront.com/ai/models"]);
-    assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"), {
-      enabled: true,
-      budgetTokens: 2048,
-    });
+    assertEquals(resolveVeryfrontCloudModelThinking("openai/gpt-5.9-chat"), { enabled: true });
   });
 
   it("skips the ambient load without credentials", async () => {
     const requests = installGateway(() => Response.json(servedCatalogPayload()));
 
+    assertEquals(await loadVeryfrontCloudModelCatalog(), false);
     await warmVeryfrontCloudCatalog();
 
     assertEquals(requests, []);

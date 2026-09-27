@@ -33,14 +33,18 @@ unchanged.
 - Model construction stays synchronous and makes no network call. The catalog
   loads on the first async step of a model (`prepare`, `doGenerate` or
   `doStream`), with the same credentials and project as inference, and is
-  cached for five minutes.
-- When the catalog cannot be loaded, calls still go out. Each model then uses
-  its protocol defaults: a provider named `openai`, `anthropic` or `google`
-  speaks its own protocol, any other provider speaks the OpenAI protocol, and
-  no thinking defaults apply. A short alias such as `opus` resolves only once
-  the catalog is loaded.
-- A Mistral model ID the catalog does not list is refused only once the
-  catalog is loaded. Before that, the platform answers for it.
+  cached for five minutes per API, project and credential.
+- Until the catalog has loaded for the credentials in use, and whenever it
+  cannot be loaded, the facts shipped with this package apply, as in the
+  previous release. A model whose first load failed tries again on a later
+  call.
+- A model keeps the facts it settled with for its lifetime. A catalog refreshed
+  later applies to models constructed after the refresh.
+- `loadVeryfrontCloudModelCatalog()` loads the catalog for the Veryfront Cloud
+  credentials in effect, so synchronous helpers such as
+  `resolveVeryfrontCloudModelId("opus")` and
+  `resolveVeryfrontCloudModelThinking()` read served facts, including models
+  the platform added after this release.
 - `resolveVeryfrontCloudDefaultModelId()` returns the default model the
   catalog names, or the built-in default before it loads.
   `VeryfrontCloudModelId` types a model ID as `<provider>/<model>`.

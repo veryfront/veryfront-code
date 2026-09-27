@@ -233,11 +233,18 @@ export function isVeryfrontCloudEnabled(): boolean {
 
 /**
  * Default Veryfront Cloud model: `VERYFRONT_DEFAULT_MODEL` when set, otherwise
- * the default the served catalog names once it is loaded, otherwise the
- * built-in default.
+ * the default the served catalog names once it has loaded for the current
+ * credentials and project, otherwise the built-in default.
  */
 export function getDefaultVeryfrontCloudModel(): string {
-  const served = peekVeryfrontCloudCatalog()?.defaultModelId;
+  const bootstrap = getVeryfrontCloudBootstrap();
+  const served = (bootstrap.apiToken
+    ? peekVeryfrontCloudCatalog({
+      apiBaseUrl: bootstrap.apiBaseUrl,
+      apiToken: bootstrap.apiToken,
+      ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
+    })
+    : peekVeryfrontCloudCatalog())?.defaultModelId;
   return normalizeCloudModelString(
     getHostEnv("VERYFRONT_DEFAULT_MODEL"),
     served?.includes("/") ? served : DEFAULT_VERYFRONT_CLOUD_MODEL,

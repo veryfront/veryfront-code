@@ -44,6 +44,7 @@ export {
   VERYFRONT_CLOUD_CHAT_MODELS,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "./veryfront-cloud/model-catalog.ts";
+export { loadVeryfrontCloudModelCatalog } from "./veryfront-cloud/shared.ts";
 export type {
   VeryfrontCloudChatModel,
   VeryfrontCloudModelThinkingConfig,

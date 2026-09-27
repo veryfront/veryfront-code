@@ -1,3 +1,4 @@
+import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
@@ -737,6 +738,14 @@ async function emitModelCallContextEvent(
 ): Promise<void> {
   const sinks = getActiveRunEventSinks();
   if (!sinks.mandatory && !sinks.public) return;
+  // A Veryfront Cloud model settles how it is built on its first async step.
+  // It does so here, so the recorded request describes the request then sent.
+  if (
+    readVeryfrontCloudModelFacts(options.model) !== undefined &&
+    typeof options.model.prepare === "function"
+  ) {
+    await options.model.prepare(options.abortSignal);
+  }
   const request = buildModelCallContextRequest(options.model, directOptions);
 
   const event: AgentRunModelCallContextEvent = {

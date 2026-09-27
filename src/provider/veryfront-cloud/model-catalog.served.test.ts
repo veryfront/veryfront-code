@@ -3,7 +3,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
   __setVeryfrontCloudCatalogForTests,
+  peekVeryfrontCloudCatalog,
+  withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
 import {
   seedServedCatalogForTests,
@@ -58,7 +61,7 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
   afterEach(__resetVeryfrontCloudCatalogForTests);
 
   describe("before the catalog is loaded", () => {
-    it("routes providers named after a protocol natively and any other on the default surface", () => {
+    it("routes on the shipped list: protocol providers natively, Mistral on the OpenAI protocol", () => {
       assertEquals(resolveVeryfrontCloudProviderRouting("openai"), {
         surface: "openai",
         native: true,
@@ -71,23 +74,100 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
         surface: "google",
         native: true,
       });
-      assertEquals(resolveVeryfrontCloudProviderRouting("mistral"), { surface: "openai" });
+      assertEquals(resolveVeryfrontCloudProviderRouting("mistral").surface, "openai");
+      assertEquals(resolveVeryfrontCloudProviderRouting("mistral").native, false);
+      assertEquals(resolveVeryfrontCloudProviderRouting("acme-labs"), { surface: "openai" });
     });
 
-    it("declares no model facts and uses the built-in default model", () => {
-      assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"), undefined);
-      assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.5"), undefined);
+    it("routes google-ai-studio as Google", () => {
+      assertEquals(resolveVeryfrontCloudProviderId("google-ai-studio"), "google");
+      assertEquals(resolveVeryfrontCloudProviderRouting("google-ai-studio"), {
+        surface: "google",
+        native: true,
+      });
+    });
+
+    it("reads the facts shipped with this package, so behaviour matches the previous release", () => {
+      assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"), {
+        enabled: true,
+        budgetTokens: 2048,
+      });
+      assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.5"), "chat-completions");
       assertEquals(
         resolveVeryfrontCloudOpenAIChatSystemMessages("mistral/mistral-small-2503"),
-        undefined,
+        true,
       );
+      assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
       assertEquals(
         resolveVeryfrontCloudDefaultModelId(),
         DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
       );
       assertEquals(resolveVeryfrontCloudModelId(), DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID);
-      // The platform refuses a model it does not serve; nothing is refused locally.
-      assertEquals(isSupportedMistralModelId("mistral/not-served"), true);
+      assertEquals(isSupportedMistralModelId("mistral/mistral-small-2503"), true);
+      assertEquals(isSupportedMistralModelId("mistral/not-listed"), false);
+    });
+  });
+
+  describe("scope", () => {
+    const projectA = {
+      apiBaseUrl: "https://api.example.test",
+      apiToken: "token-a",
+      projectSlug: "a",
+    };
+    const projectB = {
+      apiBaseUrl: "https://api.example.test",
+      apiToken: "token-b",
+      projectSlug: "b",
+    };
+    const sameProjectOtherToken = { ...projectA, apiToken: "token-c" };
+
+    it("reads each project's own catalog, never one another project loaded", () => {
+      __setVeryfrontCloudCatalogForScopeForTests(
+        projectA,
+        payload([
+          row("openai/gpt-a", { surface: "openai", operations: ["chat-completions"] }),
+        ], "openai/gpt-a"),
+      );
+      __setVeryfrontCloudCatalogForScopeForTests(
+        projectB,
+        payload([
+          row("mistral/mistral-b", { surface: "openai", operations: ["chat-completions"] }),
+        ], "mistral/mistral-b"),
+      );
+
+      withVeryfrontCloudCatalogScope(projectA, () => {
+        assertEquals(isSupportedMistralModelId("mistral/mistral-b"), false);
+        assertEquals(resolveVeryfrontCloudDefaultModelId(), "openai/gpt-a");
+        assertEquals(resolveVeryfrontCloudProviderRouting("openai").native, false);
+      });
+      withVeryfrontCloudCatalogScope(projectB, () => {
+        assertEquals(isSupportedMistralModelId("mistral/mistral-b"), true);
+        assertEquals(resolveVeryfrontCloudDefaultModelId(), "mistral/mistral-b");
+      });
+    });
+
+    it("keeps a credential's catalog apart from another credential's for the same project", () => {
+      __setVeryfrontCloudCatalogForScopeForTests(projectA, payload([], "openai/gpt-a"));
+
+      assertEquals(peekVeryfrontCloudCatalog(projectA)?.defaultModelId, "openai/gpt-a");
+      assertEquals(peekVeryfrontCloudCatalog(sameProjectOtherToken), undefined);
+      withVeryfrontCloudCatalogScope(sameProjectOtherToken, () => {
+        // Nothing loaded for this credential: the shipped list applies.
+        assertEquals(
+          resolveVeryfrontCloudDefaultModelId(),
+          DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
+        );
+        assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
+      });
+    });
+
+    it("keeps google-ai-studio as Google when a loaded catalog lists no Google model", () => {
+      __setVeryfrontCloudCatalogForTests(payload([
+        row("openai/gpt-x", { surface: "openai", operations: ["chat-completions"] }),
+      ]));
+
+      assertEquals(resolveVeryfrontCloudProviderId("google-ai-studio"), "google");
+      assertEquals(resolveVeryfrontCloudProviderRouting("google-ai-studio").surface, "google");
     });
   });
 

@@ -9,6 +9,7 @@ import type { ModelRuntime } from "../types.ts";
 import { getCurrentVeryfrontCloudContext } from "./context.ts";
 import {
   createVeryfrontCloudFetch,
+  loadVeryfrontCloudModelCatalog,
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
   resolveVeryfrontCloudGatewayRoute,
@@ -18,13 +19,20 @@ import {
   createVeryfrontCloudOpenAIResponsesModel,
 } from "./openai.ts";
 import {
+  registerVeryfrontCloudModelFacts,
   requireVeryfrontCloudWireSurface,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAIChatSystemMessages,
+  resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudOpenAITransportPlan,
   resolveVeryfrontCloudProviderRouting,
+  type VeryfrontCloudModelFacts,
 } from "./model-catalog.ts";
-import { isVeryfrontCloudCatalogFresh, loadVeryfrontCloudCatalog } from "./catalog-client.ts";
+import {
+  isVeryfrontCloudCatalogFresh,
+  loadVeryfrontCloudCatalog,
+  withVeryfrontCloudCatalogScope,
+} from "./catalog-client.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const HostCrypto = globalThis.crypto;
@@ -38,6 +46,7 @@ const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
+const ReflectGet = Reflect.get;
 
 function bindModelMethod<T extends (...args: never[]) => unknown>(
   method: T,
@@ -83,34 +92,40 @@ function wrapVeryfrontCloudModel(
   return wrapped;
 }
 
+/** Upper bound on how long a warm-up before a model call waits for the catalog. */
+const CATALOG_WARM_UP_MAX_WAIT_MS = 3_000;
+
 /**
- * @internal Load the served catalog with the ambient Veryfront Cloud
- * credentials, before model facts are read synchronously. Never throws: without
- * credentials or a catalog, the readers fall back to protocol defaults.
+ * @internal Load the catalog with the ambient credentials before a model call
+ * reads facts synchronously, waiting at most a few seconds.
  */
 export async function warmVeryfrontCloudCatalog(abortSignal?: AbortSignal): Promise<void> {
-  let bootstrap: ReturnType<typeof requireVeryfrontCloudBootstrap>;
-  try {
-    bootstrap = requireVeryfrontCloudBootstrap();
-  } catch {
-    return;
-  }
-  await loadVeryfrontCloudCatalog({
-    apiBaseUrl: bootstrap.apiBaseUrl,
-    apiToken: bootstrap.apiToken,
-    ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
+  await loadVeryfrontCloudModelCatalog({
     ...(abortSignal ? { signal: abortSignal } : {}),
+    maxWaitMs: CATALOG_WARM_UP_MAX_WAIT_MS,
   });
 }
 
+/** Metadata keys a wrapped model forwards to the model it currently calls. */
+const NON_FORWARDED_KEYS: ReadonlySet<PropertyKey> = new Set([
+  "prepare",
+  "doGenerate",
+  "doStream",
+  "constructor",
+]);
+
 /**
  * Wrap a built model so its first async step loads the served catalog. When
- * the catalog changes how the model is built, the calls go to a model rebuilt
- * from it; the metadata stays that of the model built at construction. Once
- * the catalog is settled, calls go straight to the current model.
+ * the catalog changes how the model is built, calls and metadata go to the
+ * model rebuilt from it. Once the catalog is settled, calls go straight to the
+ * current model.
+ *
+ * A settled model keeps the facts it settled with for its lifetime: a catalog
+ * refreshed later applies to models constructed after the refresh.
  */
 function withServedCatalog(
   model: ModelRuntime,
+  current: () => ModelRuntime,
   settled: () => ModelRuntime | undefined,
   ready: (abortSignal?: AbortSignal) => Promise<ModelRuntime>,
 ): ModelRuntime {
@@ -118,28 +133,52 @@ function withServedCatalog(
     options !== null && typeof options === "object"
       ? (options as { abortSignal?: AbortSignal }).abortSignal
       : undefined;
-  return ObjectCreate(model, {
+  const wrapped = ObjectCreate(model, {
     prepare: {
       value: async (abortSignal?: AbortSignal): Promise<void> => {
-        const current = settled() ?? await ready(abortSignal);
-        if (current.prepare) await current.prepare(abortSignal);
+        const target = settled() ?? await ready(abortSignal);
+        if (target.prepare) await target.prepare(abortSignal);
       },
     },
     doGenerate: {
       value: (options: unknown) => {
-        const current = settled();
-        if (current) return current.doGenerate(options);
+        const target = settled();
+        if (target) return target.doGenerate(options);
         return (async () => await (await ready(readSignal(options))).doGenerate(options))();
       },
     },
     doStream: {
       value: (options: unknown) => {
-        const current = settled();
-        if (current) return current.doStream(options);
+        const target = settled();
+        if (target) return target.doStream(options);
         return (async () => await (await ready(readSignal(options))).doStream(options))();
       },
     },
   });
+
+  // Metadata (provider attribution, capabilities, model ID) follows the model
+  // the calls go to, so a rebuild never leaves the construction-time values.
+  const forwarded = new Set<PropertyKey>();
+  let source: object | null = model;
+  while (source && source !== ObjectPrototype) {
+    for (const key of ReflectOwnKeys(source)) {
+      if (forwarded.has(key) || NON_FORWARDED_KEYS.has(key)) continue;
+      forwarded.add(key);
+      ObjectDefineProperty(wrapped, key, {
+        configurable: false,
+        enumerable: true,
+        get: () => {
+          const target = current();
+          const value: unknown = IntrinsicReflectApply(ReflectGet, undefined, [target, key]);
+          return typeof value === "function"
+            ? IntrinsicReflectApply(FunctionBind, value, [target])
+            : value;
+        },
+      });
+    }
+    source = ObjectGetPrototypeOf(source);
+  }
+  return wrapped;
 }
 
 type VeryfrontCloudModelOptions = {
@@ -177,66 +216,91 @@ function createVeryfrontCloudModelInternal(
   // cannot replace; ordinary project credentials retain extension behavior.
   const registry = useFirstPartyTransport ? undefined : ensureBuiltinLLMProviders();
 
-  // The served facts a build reads. A model built before the catalog loaded is
-  // rebuilt at its first async step when these differ.
-  function buildFacts(): string {
-    const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
-    const catalogModelId = `${provider}/${upstreamModelId}`;
-    const routing = resolveVeryfrontCloudProviderRouting(provider);
-    const plan = resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId);
-    return [
-      provider,
-      routing.surface,
-      String(routing.native),
-      plan.transport,
-      String(plan.pinned),
-      String(resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogModelId)),
-      String(resolveVeryfrontCloudOpenAIChatSystemMessages(catalogModelId)),
-    ].join("\n");
+  const catalogScope = { apiBaseUrl, apiToken, ...(projectSlug ? { projectSlug } : {}) };
+
+  // The catalog facts a build reads, from this model's own credentials and
+  // project. A model built before the catalog loaded is rebuilt at its first
+  // async step when these differ.
+  function readFacts(): VeryfrontCloudModelFacts {
+    return withVeryfrontCloudCatalogScope(catalogScope, () => {
+      const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(
+        modelId,
+        "language",
+      );
+      const catalogModelId = `${provider}/${upstreamModelId}`;
+      const routing = resolveVeryfrontCloudProviderRouting(provider);
+      const openAIChatReasoningWithFunctionTools =
+        resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogModelId);
+      const openAIChatPreserveSystemMessages = resolveVeryfrontCloudOpenAIChatSystemMessages(
+        catalogModelId,
+      );
+      const openAITransport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
+      return Object.freeze({
+        provider,
+        surface: routing.surface,
+        native: routing.native === true,
+        transportPlan: resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId),
+        ...(openAITransport === undefined ? {} : { openAITransport }),
+        ...(openAIChatReasoningWithFunctionTools === undefined
+          ? {}
+          : { openAIChatReasoningWithFunctionTools }),
+        ...(openAIChatPreserveSystemMessages === undefined
+          ? {}
+          : { openAIChatPreserveSystemMessages }),
+      });
+    });
   }
+  const factsKey = (value: VeryfrontCloudModelFacts): string =>
+    [
+      value.provider,
+      value.surface,
+      String(value.native),
+      value.transportPlan.transport,
+      String(value.transportPlan.pinned),
+      String(value.openAITransport),
+      String(value.openAIChatReasoningWithFunctionTools),
+      String(value.openAIChatPreserveSystemMessages),
+    ].join("\n");
 
   const build = (): ModelRuntime =>
-    buildVeryfrontCloudModel({
-      modelId,
-      inferenceCredential,
-      options,
-      apiBaseUrl,
-      apiToken,
-      projectSlug,
-      providerCredential,
-      registry,
-      useFirstPartyTransport,
-    });
-  let facts = buildFacts();
+    withVeryfrontCloudCatalogScope(catalogScope, () =>
+      buildVeryfrontCloudModel({
+        modelId,
+        inferenceCredential,
+        options,
+        apiBaseUrl,
+        apiToken,
+        projectSlug,
+        providerCredential,
+        registry,
+        useFirstPartyTransport,
+      }));
+  let facts = readFacts();
   const built = build();
   let current = built;
   let preparing: Promise<ModelRuntime> | undefined;
   let isSettled = false;
-  const rebuildIfChanged = (): ModelRuntime => {
-    const next = buildFacts();
-    if (next !== facts) {
-      facts = next;
-      current = build();
-    }
-    isSettled = true;
+  const rebuildIfChanged = (settle: boolean): ModelRuntime => {
+    const next = readFacts();
+    if (factsKey(next) !== factsKey(facts)) current = build();
+    facts = next;
+    // Only a catalog actually obtained settles the model: after a failed or
+    // abandoned load, the next call tries again.
+    if (settle) isSettled = true;
     return current;
   };
   // A fresh cached catalog settles the model without waiting on anything.
   const settled = (): ModelRuntime | undefined => {
     if (isSettled) return current;
-    if (!isVeryfrontCloudCatalogFresh({ apiBaseUrl, ...(projectSlug ? { projectSlug } : {}) })) {
-      return undefined;
-    }
-    return rebuildIfChanged();
+    if (!isVeryfrontCloudCatalogFresh(catalogScope)) return undefined;
+    return rebuildIfChanged(true);
   };
   const prepare = async (abortSignal?: AbortSignal): Promise<ModelRuntime> => {
-    await loadVeryfrontCloudCatalog({
-      apiBaseUrl,
-      apiToken,
-      ...(projectSlug ? { projectSlug } : {}),
+    const catalog = await loadVeryfrontCloudCatalog({
+      ...catalogScope,
       ...(abortSignal ? { signal: abortSignal } : {}),
     });
-    return rebuildIfChanged();
+    return rebuildIfChanged(catalog !== undefined);
   };
   const ready = async (abortSignal?: AbortSignal): Promise<ModelRuntime> => {
     preparing ??= prepare(abortSignal);
@@ -246,9 +310,13 @@ function createVeryfrontCloudModelInternal(
       // A failed build is retried on the next call rather than cached.
       preparing = undefined;
       throw error;
+    } finally {
+      if (!isSettled) preparing = undefined;
     }
   };
-  return withServedCatalog(built, settled, ready);
+  const wrapped = withServedCatalog(built, () => current, settled, ready);
+  registerVeryfrontCloudModelFacts(wrapped, () => facts);
+  return wrapped;
 }
 
 interface VeryfrontCloudModelBuild {

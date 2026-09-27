@@ -1,10 +1,15 @@
 import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
 import { isOpenAIReasoningModel } from "../shared/openai-reasoning.ts";
+import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import type { ModelRuntime } from "../types.ts";
 import {
+  hasActiveVeryfrontCloudCatalogScope,
   peekVeryfrontCloudCatalog,
   type VeryfrontCloudCatalog,
   type VeryfrontCloudCatalogModel,
 } from "./catalog-client.ts";
+import { SHIPPED_VERYFRONT_CLOUD_CATALOG } from "./model-catalog.deprecated.ts";
 
 export {
   DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL,
@@ -132,7 +137,7 @@ export const DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID: VeryfrontCloudRuntimeMode
  * names once it is loaded, otherwise the built-in default.
  */
 export function resolveVeryfrontCloudDefaultModelId(): VeryfrontCloudModelId {
-  const served = peekVeryfrontCloudCatalog()?.defaultModelId;
+  const served = loadedCatalog()?.defaultModelId;
   return served !== undefined && served.includes("/")
     ? served as VeryfrontCloudModelId
     : DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID;
@@ -151,11 +156,18 @@ const DEFAULT_VENDOR_GATEWAY_API_VERSION = "v1";
 /** Surface used for a provider the served catalog does not describe. */
 const DEFAULT_VERYFRONT_CLOUD_SURFACE = "openai";
 /**
- * Providers named after the wire protocol they implement. When the served
- * catalog does not describe a provider, one of these speaks its own protocol
- * natively and any other provider speaks the default surface.
+ * Providers named after the wire protocol they implement. When no catalog
+ * describes a provider, one of these speaks its own protocol natively and any
+ * other provider speaks the default surface.
  */
 const PROTOCOL_NAMED_PROVIDERS: ReadonlySet<string> = new Set(["openai", "anthropic", "google"]);
+/**
+ * Provider spellings that name a protocol-named provider. A protocol fact, not
+ * a model fact: it holds whether or not a catalog has loaded.
+ */
+const PROTOCOL_PROVIDER_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["google-ai-studio", "google"],
+]);
 
 /** Lookups built once per loaded catalog. */
 interface ServedCatalogIndex {
@@ -223,9 +235,41 @@ function buildServedIndex(catalog: VeryfrontCloudCatalog): ServedCatalogIndex {
   return { providerAliases, routing, byKey, byShortId, byModelId };
 }
 
-function servedIndex(): ServedCatalogIndex | undefined {
-  const catalog = peekVeryfrontCloudCatalog();
-  if (!catalog) return undefined;
+/**
+ * The scope synchronous reads use: the one a model build names, otherwise the
+ * ambient Veryfront Cloud credentials. Undefined without credentials.
+ */
+function ambientScope():
+  | { apiBaseUrl: string; apiToken: string; projectSlug?: string }
+  | undefined {
+  let bootstrap: ReturnType<typeof getVeryfrontCloudBootstrap>;
+  try {
+    bootstrap = getVeryfrontCloudBootstrap();
+  } catch {
+    return undefined;
+  }
+  if (!bootstrap.apiToken || !bootstrap.apiBaseUrl) return undefined;
+  return {
+    apiBaseUrl: bootstrap.apiBaseUrl,
+    apiToken: bootstrap.apiToken,
+    ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
+  };
+}
+
+/** The served catalog loaded for the scope reads use, or undefined before it loads. */
+function loadedCatalog(): VeryfrontCloudCatalog | undefined {
+  if (hasActiveVeryfrontCloudCatalogScope()) return peekVeryfrontCloudCatalog();
+  const scope = ambientScope();
+  // A scope-less read still sees a catalog fixed by a test hook.
+  return scope ? peekVeryfrontCloudCatalog(scope) : peekVeryfrontCloudCatalog();
+}
+
+/**
+ * The index reads use: the served catalog loaded for the current scope, or the
+ * shipped list while none has loaded for it.
+ */
+function servedIndex(): ServedCatalogIndex {
+  const catalog = loadedCatalog() ?? SHIPPED_VERYFRONT_CLOUD_CATALOG;
   let index = servedIndexes.get(catalog);
   if (!index) {
     index = buildServedIndex(catalog);
@@ -235,14 +279,14 @@ function servedIndex(): ServedCatalogIndex | undefined {
 }
 
 /**
- * Canonical provider for a provider segment the served catalog spells, for
- * example `google-ai-studio` for `google`. Undefined before the catalog is
- * loaded, or when the catalog does not name the segment.
+ * Canonical provider for a provider segment the catalog spells, for example
+ * `google-ai-studio` for `google`. Undefined when neither the catalog nor the
+ * protocol aliases name the segment.
  */
 export function normalizeVeryfrontCloudProviderAlias(
   provider: string,
 ): VeryfrontCloudProviderId | undefined {
-  return servedIndex()?.providerAliases.get(provider);
+  return servedIndex().providerAliases.get(provider) ?? PROTOCOL_PROVIDER_ALIASES.get(provider);
 }
 
 /**
@@ -300,7 +344,7 @@ export function resolveVeryfrontCloudProviderRouting(
   provider: string,
 ): Readonly<VeryfrontCloudProviderRouting> {
   const canonical = normalizeVeryfrontCloudProviderAlias(provider) ?? provider;
-  return servedIndex()?.routing.get(canonical) ??
+  return servedIndex().routing.get(canonical) ??
     PROTOCOL_NAMED_ROUTING.get(canonical) ??
     DEFAULT_PROVIDER_ROUTING;
 }
@@ -392,7 +436,6 @@ export function canonicalVeryfrontCloudModelKey(modelId: string): string {
  */
 function findServedModel(modelId: string): VeryfrontCloudCatalogModel | undefined {
   const index = servedIndex();
-  if (!index) return undefined;
   return index.byKey.get(canonicalVeryfrontCloudModelKey(modelId)) ??
     index.byShortId.get(normalizeVeryfrontCloudModelId(modelId));
 }
@@ -512,6 +555,41 @@ export function resolveVeryfrontCloudOpenAITransportPlan(
   return CHAT_COMPLETIONS_ADAPTIVE;
 }
 
+/** @internal The catalog facts one built Veryfront Cloud model was built with. */
+export interface VeryfrontCloudModelFacts {
+  readonly provider: string;
+  readonly surface: VeryfrontCloudSurfaceId;
+  readonly native: boolean;
+  readonly transportPlan: VeryfrontCloudOpenAITransportPlan;
+  readonly openAITransport?: "chat-completions" | "responses";
+  readonly openAIChatReasoningWithFunctionTools?: boolean;
+  readonly openAIChatPreserveSystemMessages?: boolean;
+}
+
+const builtModelFacts = createPrivateWeakStore<ModelRuntime, () => VeryfrontCloudModelFacts>();
+
+/** @internal Record where a built model's current facts are read from. */
+export function registerVeryfrontCloudModelFacts(
+  model: ModelRuntime,
+  read: () => VeryfrontCloudModelFacts,
+): void {
+  builtModelFacts.set(model, read);
+}
+
+/**
+ * @internal The facts a Veryfront Cloud model built by this package currently
+ * calls with, so a record of a call describes the request actually sent.
+ * Undefined for any other object.
+ */
+export function readVeryfrontCloudModelFacts(
+  model: unknown,
+): VeryfrontCloudModelFacts | undefined {
+  if (model === null || (typeof model !== "object" && typeof model !== "function")) {
+    return undefined;
+  }
+  return builtModelFacts.get(model as ModelRuntime)?.();
+}
+
 /** Transport one call uses, given whether that call carries a hosted tool. */
 export function resolveVeryfrontCloudOpenAICallTransport(
   provider: string,
@@ -536,13 +614,11 @@ function isMistralModelId(modelId: string): boolean {
 }
 
 /**
- * Whether a Mistral model ID is one the served catalog lists. Before the
- * catalog is loaded every ID passes, and the platform refuses one it does not
- * serve.
+ * Whether a Mistral model ID is one the catalog lists: the served catalog once
+ * it has loaded for the current scope, otherwise the shipped list.
  */
 export function isSupportedMistralModelId(modelId: string): boolean {
   const index = servedIndex();
-  if (!index) return true;
   return index.byKey.get(canonicalVeryfrontCloudModelKey(modelId))?.provider === "mistral";
 }
 
@@ -589,13 +665,15 @@ export function tryGetVeryfrontCloudProviderFromModelId(
  * Resolve a model ID or short alias to a provider-qualified model ID.
  *
  * No value resolves to the default model. A provider-qualified ID is returned
- * as written. A short ID or alias resolves through the served catalog, so it
- * resolves only once the catalog is loaded.
+ * as written. A short ID or alias resolves through the served catalog, or
+ * through the shipped list before the catalog has loaded; use
+ * `loadVeryfrontCloudModelCatalog()` first to resolve an alias the platform
+ * added since this release.
  */
 export function resolveVeryfrontCloudModelId(alias?: string): string {
   const requestedModel = alias || resolveVeryfrontCloudDefaultModelId();
   const index = servedIndex();
-  const catalogModel = index?.byModelId.get(requestedModel);
+  const catalogModel = index.byModelId.get(requestedModel);
   if (catalogModel) {
     return catalogModel.modelId;
   }
@@ -614,7 +692,7 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
     return requestedModel;
   }
 
-  const model = index?.byShortId.get(requestedModel);
+  const model = index.byShortId.get(requestedModel);
   if (!model) {
     throw INVALID_ARGUMENT.create({
       detail: `Unknown model alias "${requestedModel}"`,

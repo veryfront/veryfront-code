@@ -167,6 +167,15 @@ export type ExecutorRuntimePreparationGrant = Omit<ExecutorRuntimeGrantData, "mo
 export interface ExecutorRuntimeFacades {
   /** Must be the invocation's granted model proxy; missing models throw instead of using provider defaults. */
   resolveModelRuntime: AgentModelRuntimeResolver;
+  /**
+   * Optional and non-reserving: load the served model catalog that this
+   * executor's model fact reads resolve to. Awaited once, after every grant
+   * check and before thinking defaults are read, so the first run in a process
+   * reads served facts. It must not resolve a model or reserve any resource,
+   * and a failure is ignored: the reads then use the facts shipped with this
+   * package.
+   */
+  loadModelCatalog?: (signal: AbortSignal) => Promise<void>;
   hostTools: ReadonlyMap<string, HostToolSet>;
   remoteToolSources: ReadonlyMap<string, RemoteToolSource>;
   projectSteering?: {
@@ -325,6 +334,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
   const installedModelResolver = input.facades.resolveModelRuntime;
   const facades: ExecutorRuntimeFacades = {
     resolveModelRuntime: snapshotFacadeMethod(input.facades, "resolveModelRuntime"),
+    loadModelCatalog: snapshotFacadeMethod(input.facades, "loadModelCatalog"),
     cleanup: snapshotFacadeMethod(input.facades, "cleanup"),
     projectSteering: snapshotSteeringFacade(input.facades.projectSteering),
     latestConversationUserText: snapshotFacadeMethod(input.facades, "latestConversationUserText"),
@@ -476,6 +486,14 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         (request.maxOutputTokens !== undefined &&
           request.maxOutputTokens > modelGrant.maxOutputTokens)
       ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+      if (facades.loadModelCatalog) {
+        try {
+          await observePrivatePromise(facades.loadModelCatalog(context.signal));
+        } catch {
+          // The reads below fall back to the shipped facts.
+        }
+        assertActive();
+      }
       const thinking = request.thinking ?? definition.thinking ??
         resolveVeryfrontCloudModelThinking(modelId);
       let availableOutputTokens = modelGrant.maxOutputTokens;
