@@ -5,7 +5,8 @@ import { instrumentHttpHandler, trace } from "veryfront/observability";
 import extOpenTelemetry from "../../../extensions/ext-observability-opentelemetry/src/index.ts";
 
 // A fresh process prevents one case's global SDK from affecting the next case.
-const enabled = Deno.args[0] === "enabled";
+const enabled = Deno.args[0] !== "disabled";
+const collectorRejects = Deno.args[0] === "collector-rejects";
 for (const key of Object.keys(Deno.env.toObject())) {
   if (key.startsWith("OTEL_") || key.startsWith("DD_") || key === "VERYFRONT_OTEL") {
     Deno.env.delete(key);
@@ -27,7 +28,7 @@ const collector = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, 
     authorization: req.headers.get("authorization"),
     payload: await req.json(),
   });
-  return Response.json({});
+  return Response.json({}, { status: collectorRejects ? 400 : 200 });
 });
 
 Deno.env.set("OTEL_TRACES_ENABLED", String(enabled));
@@ -64,8 +65,25 @@ try {
   assertEquals(response.status, 200);
   assertEquals(await response.text(), "hello");
 
+  if (collectorRejects) {
+    // Force delivery while the app is still serving, then prove later requests also succeed.
+    const exporter = (await import("#veryfront/extensions/contracts.ts")).resolve<{
+      getProvider(): { forceFlush(): Promise<void> };
+    }>("TracingExporter");
+    await exporter.getProvider().forceFlush().catch(() => {});
+    assertEquals(received.length > 0, true);
+    const next = await fetch(`http://127.0.0.1:${app.addr.port}/hello`);
+    assertEquals(next.status, 200);
+    assertEquals(await next.text(), "hello");
+  }
+
   // The SDK batches on a timer. Shutdown must drain the batch without a sleep.
-  await extension.teardown!();
+  if (collectorRejects) {
+    // The SDK reports the rejected batch to the explicit flush caller, not the HTTP request.
+    await extension.teardown!().catch(() => {});
+  } else {
+    await extension.teardown!();
+  }
   if (!enabled) {
     assertEquals(received.length, 0);
   } else {
