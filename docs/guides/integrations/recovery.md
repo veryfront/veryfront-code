@@ -112,7 +112,7 @@ reconnected. `veryfront integration connect` performs the same check for you and
 returns `connection_observed` with the confirmed row. If the callback arrives
 but inventory does not show a new generation within its short confirmation
 window, it returns `integration-connect-unconfirmed`. Inspect
-`veryfront integration connections gmail` before calling a tool.
+`veryfront integration connections gmail --project "<PROJECT_SLUG>"` before calling a tool.
 
 ## The connection expired or was revoked
 

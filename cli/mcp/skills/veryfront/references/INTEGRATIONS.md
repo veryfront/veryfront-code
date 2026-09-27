@@ -7,7 +7,7 @@ Full guide: https://veryfront.com/docs/code/guides/integrations
 
 - **Platform login** (`veryfront login`, `VERYFRONT_API_TOKEN`) authenticates
   you to Veryfront. It never connects a provider.
-- **Provider consent** (`veryfront integration connect "<NAME>"`) authorizes one
+- **Provider consent** (`veryfront integration connect "<NAME>" --project "<PROJECT_SLUG>"`) authorizes one
   provider account for one project. It needs a person in a browser and an
   existing platform login.
 
@@ -49,7 +49,8 @@ Other surfaces call the same tools:
 - GraphQL: the `executeIntegrationTool` mutation with `projectReference`,
   `toolName`, `connectionId`, `expectedConnectionGenerationId`, and `args`.
 - MCP: `https://api.veryfront.com/projects/<PROJECT_SLUG>/mcp`, `tools/call`
-  with the canonical tool name and `_meta.connection_id`. The unscoped `/mcp`
+  with the canonical tool name, `_meta.connection_id`, and
+  `_meta.expected_connection_generation_id`. The unscoped `/mcp`
   endpoint cannot call integration tools.
 - TypeScript: `createIntegrationClient` from `veryfront/integrations`.
 
@@ -69,7 +70,7 @@ different account to make a call succeed.
 
 ## Non-OAuth connectors
 
-`veryfront integration connect "<NAME>"` returns `setup_required` for connectors
+`veryfront integration connect "<NAME>" --project "<PROJECT_SLUG>"` returns `setup_required` for connectors
 with `credential_requirement.mode: "project_credentials"`. The person sets the
 variables in `mandatory_env_vars` as project environment variables. Do not
 accept those values in chat.

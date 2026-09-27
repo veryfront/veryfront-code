@@ -147,8 +147,9 @@ inventory again rather than choosing another account.
 Send provider arguments in `arguments`. `connection_id` selects the account and
 `expected_connection_generation_id` rejects the call before any provider request
 if that account was replaced. `x-veryfront-expected-project-id` rejects the call
-if the slug now resolves to a different project. All three are optional; omit
-them only when the project has exactly one usable connection.
+if the slug now resolves to a different project. All three are optional in the
+API, but keep them: they make the call fail instead of running against an
+account, generation, or project you did not inspect.
 
 ```bash
 curl -sS -X POST "$VERYFRONT_API_URL/integrations/gmail/tools/list_emails/call" \
