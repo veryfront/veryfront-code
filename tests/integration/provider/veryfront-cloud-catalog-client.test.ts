@@ -400,6 +400,29 @@ describe("provider/veryfront-cloud/catalog-client", () => {
       });
     });
 
+    it("never logs a signed query value from the API base URL or the error text", async () => {
+      const warnings: unknown[] = [];
+      const originalWarn = logger.warn;
+      logger.warn = (_message: string, fields?: unknown) => warnings.push(fields);
+      const signed = { ...LOAD, apiBaseUrl: `${API_BASE_URL}/tenant/?scope=signed-secret-value` };
+      const stub = recordingFetch(() =>
+        Promise.reject(
+          new TypeError(
+            `error sending request for url (${API_BASE_URL}/tenant/ai/models?scope=signed-secret-value)`,
+          ),
+        )
+      );
+      try {
+        await withMockFetch(stub.fetch, () => loadVeryfrontCloudCatalog(signed));
+      } finally {
+        logger.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 1);
+      assertEquals(JSON.stringify(warnings).includes("signed-secret-value"), false);
+      assertEquals((warnings[0] as { apiBaseUrl?: string }).apiBaseUrl, `${API_BASE_URL}/tenant/`);
+    });
+
     it("logs one warning per failing scope, naming the scope but never the credential", async () => {
       const warnings: { message: string; fields: unknown }[] = [];
       const originalWarn = logger.warn;

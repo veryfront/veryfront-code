@@ -274,6 +274,22 @@ function catalogUrl(apiBaseUrl: string): string {
   return url.toString();
 }
 
+/** An API base URL without its query or fragment, which can carry signed values. */
+function loggableBaseUrl(apiBaseUrl: string): string {
+  try {
+    const url = new URL(apiBaseUrl);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "[invalid URL]";
+  }
+}
+
+/** Strip the query and fragment from every URL an error message quotes. */
+function loggableErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/(https?:\/\/[^\s?#"'<>)]*)[?#][^\s"'<>)]*/g, "$1");
+}
+
 async function fetchCatalog(
   options: VeryfrontCloudCatalogScope,
 ): Promise<VeryfrontCloudCatalog> {
@@ -328,15 +344,15 @@ function refresh(
       if (!loggedFailures.has(key)) {
         if (loggedFailures.size >= VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES) loggedFailures.clear();
         loggedFailures.add(key);
-        // Names the scope, never the credential.
+        // Names the scope, never the credential or a signed query value.
         logger.warn(
           stale
             ? "Veryfront Cloud model catalog refresh failed; the last loaded catalog stays in use"
             : "Veryfront Cloud model catalog is unavailable; model facts fall back to the built-in list",
           {
-            apiBaseUrl: options.apiBaseUrl,
+            apiBaseUrl: loggableBaseUrl(options.apiBaseUrl),
             projectSlug: options.projectSlug,
-            error: error instanceof Error ? error.message : String(error),
+            error: loggableErrorMessage(error),
           },
         );
       }
