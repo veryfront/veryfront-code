@@ -12,11 +12,13 @@ import {
   runWithRequestContext as runWithProjectRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
+  currentVeryfrontCloudCatalogScopeKey,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { loadVeryfrontCloudModelCatalog } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import {
   runWithVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
@@ -407,12 +409,19 @@ function withoutHostedCredentials<TResult>(input: {
   cloudContext: VeryfrontCloudContext;
   operation: () => Promise<TResult>;
 }): Promise<TResult> {
+  // The run's catalog is named by its non-secret scope key, so model reads in
+  // project code use the catalog the run loaded without holding its credential.
+  const catalogScopeKey = runWithVeryfrontCloudContext(
+    input.cloudContext,
+    currentVeryfrontCloudCatalogScopeKey,
+  );
   const publicCloudContext: VeryfrontCloudContext = {
     apiBaseUrl: input.cloudContext.apiBaseUrl,
     projectSlug: input.cloudContext.projectSlug,
     serviceLayer: input.cloudContext.serviceLayer,
     billingGroupId: input.cloudContext.billingGroupId,
     billingGroupUsed: input.cloudContext.billingGroupUsed,
+    ...(catalogScopeKey ? { catalogScopeKey } : {}),
   };
   const runWithPublicCloudContext = () =>
     runWithVeryfrontCloudContextAsync(publicCloudContext, input.operation);
@@ -524,6 +533,9 @@ function runWithDefaultHostedRequestContext<TResult>(
   );
 }
 
+/** Longest a run waits for the served catalog before resolving a short model alias. */
+const CATALOG_ALIAS_MAX_WAIT_MS = 3_000;
+
 /** Create default hosted chat runtime. */
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
@@ -533,11 +545,21 @@ export async function createDefaultHostedChatRuntime(
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
     async () => {
-      const modelId = resolveVeryfrontCloudModelId(input.options.model);
       const cloudContext = createCloudContext({
         config: input.config,
         options: input.options,
       });
+      // A short model alias resolves through the served catalog. It is loaded
+      // and read under the run's own credentials and project, the same scope
+      // the run's later model reads use.
+      await runWithVeryfrontCloudContextAsync(
+        cloudContext,
+        () => loadVeryfrontCloudModelCatalog({ maxWaitMs: CATALOG_ALIAS_MAX_WAIT_MS }),
+      );
+      const modelId = runWithVeryfrontCloudContext(
+        cloudContext,
+        () => resolveVeryfrontCloudModelId(input.options.model),
+      );
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
         : createDefaultTaskContext({ options: input.options, modelId });

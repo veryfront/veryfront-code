@@ -9,6 +9,7 @@ import {
 } from "#veryfront/provider/shared/openai-reasoning.ts";
 import { readProviderOptions } from "#veryfront/provider/runtime-loader.ts";
 import {
+  readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
@@ -52,7 +53,8 @@ function readProviderControl(
 ): PropertyDescriptor | undefined {
   const provider = resolveModelCallProvider(model);
   let selected: PropertyDescriptor | undefined;
-  for (const name of [provider, model.provider ?? provider]) {
+  // The protocol's bucket first, so a provider-named bucket still takes precedence.
+  for (const name of [resolveModelCallProtocol(model), provider, model.provider ?? provider]) {
     if (!name) continue;
     const bucket = readOwnEnumerableDataDescriptor(options.providerOptions, name)?.value;
     if (Array.isArray(bucket)) continue;
@@ -74,8 +76,10 @@ function stopControl(value: unknown): string[] | undefined {
 function usesOpenAIBuilder(model: ModelCallRuntimeMetadata): boolean {
   const provider = resolveModelCallProvider(model);
   if (provider === "openai") return true;
-  return model.provider === "veryfront-cloud" && provider !== undefined &&
-    resolveVeryfrontCloudProviderRouting(provider).surface === "openai";
+  if (model.provider !== "veryfront-cloud" || provider === undefined) return false;
+  // A model built by this package records the facts it was built with.
+  const built = readVeryfrontCloudModelFacts(model);
+  return (built?.surface ?? resolveVeryfrontCloudProviderRouting(provider).surface) === "openai";
 }
 
 function managedOpenAITransport(
@@ -90,12 +94,15 @@ function managedOpenAITransport(
   // against the call is the one the request is built with. A provider that is
   // not native to the OpenAI surface never reaches the Responses transport,
   // whatever its model IDs look like.
-  return resolveVeryfrontCloudOpenAICallTransport(
-    provider,
-    model.modelId,
+  const usesHostedTool =
     options.tools?.some((tool) => tool.type === "provider" && tool.id.startsWith("openai.")) ===
-      true,
-  );
+      true;
+  const built = readVeryfrontCloudModelFacts(model);
+  if (built) {
+    if (built.transportPlan.pinned) return built.transportPlan.transport;
+    return usesHostedTool ? "responses" : "chat-completions";
+  }
+  return resolveVeryfrontCloudOpenAICallTransport(provider, model.modelId, usesHostedTool);
 }
 
 function openAIProviderOptions(
@@ -124,9 +131,9 @@ function resolvePersistedControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): ModelCallRequestSource {
-  const provider = resolveModelCallProvider(model);
-  if (provider === "anthropic") return resolveAnthropicControls(model, options);
-  if (provider === "google") return resolveGoogleControls(model, options);
+  const protocol = resolveModelCallProtocol(model);
+  if (protocol === "anthropic") return resolveAnthropicControls(model, options);
+  if (protocol === "google") return resolveGoogleControls(model, options);
   if (!usesOpenAIBuilder(model)) {
     return options;
   }
@@ -272,6 +279,18 @@ function buildModelCallRequest(
 }
 
 /** Resolve the canonical provider recorded by the existing durable contract. */
+/**
+ * The wire protocol a model's request is built for. A Veryfront Cloud model
+ * speaks the surface it settled on, so a newly served provider on the Anthropic
+ * or Google surface records the same native controls as `anthropic/*` or
+ * `google/*`. Other models are identified by their provider name.
+ */
+function resolveModelCallProtocol(model: ModelCallRuntimeMetadata): string | undefined {
+  const surface = readVeryfrontCloudModelFacts(model)?.surface;
+  if (surface === "anthropic" || surface === "google") return surface;
+  return resolveModelCallProvider(model);
+}
+
 export function resolveModelCallProvider(model: ModelCallRuntimeMetadata): string | undefined {
   if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
     return model.modelProvider;
@@ -283,8 +302,7 @@ function resolvePersistedReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): RuntimeReasoningOption | undefined {
-  const modelProvider = resolveModelCallProvider(model);
-  if (modelProvider === "google") return resolveGoogleReasoning(model, options);
+  if (resolveModelCallProtocol(model) === "google") return resolveGoogleReasoning(model, options);
   if (usesOpenAIBuilder(model) && typeof model.modelId === "string") {
     const neutral = resolveOpenAINeutralReasoning(model, options);
     const transport = managedOpenAITransport(model, options);
@@ -314,10 +332,17 @@ function suppressOpenAIFunctionToolReasoning(
   // must not apply it either.
   if (resolveModelCallProvider(model) !== "openai") return false;
   const catalogId = `openai/${model.modelId}`;
+  const built = readVeryfrontCloudModelFacts(model);
+  const openAITransport = built
+    ? built.openAITransport
+    : resolveVeryfrontCloudOpenAITransport(catalogId);
+  const reasoningWithFunctionTools = built
+    ? built.openAIChatReasoningWithFunctionTools
+    : resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId);
   if (
     model.provider === "veryfront-cloud" &&
-    resolveVeryfrontCloudOpenAITransport(catalogId) === "chat-completions" &&
-    resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogId) === false
+    openAITransport === "chat-completions" &&
+    reasoningWithFunctionTools === false
   ) {
     // Match the Chat builder's native bucket precedence, including an own
     // tools value that clears the neutral list with [] or undefined.
@@ -353,10 +378,9 @@ function resolveNonOpenAIReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): RuntimeReasoningOption | undefined {
-  const modelProvider = resolveModelCallProvider(model);
   // The Anthropic request builder only gives neutral reasoning precedence when
   // it enables thinking; otherwise a raw provider thinking config remains effective.
-  if (modelProvider !== "anthropic" || options.reasoning?.enabled === true) {
+  if (resolveModelCallProtocol(model) !== "anthropic" || options.reasoning?.enabled === true) {
     return options.reasoning;
   }
 

@@ -7,7 +7,9 @@
  */
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { seedServedCatalogForTests } from "./catalog-client.test-helpers.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import { resolveGenAiProviderName } from "#veryfront/agent/hosted/trace-attributes.ts";
 import { getProviderToolProfile } from "#veryfront/agent/runtime/provider-tool-compat.ts";
 import {
@@ -48,6 +50,8 @@ function routingRow(modelId: string): RoutingRow {
 }
 
 describe("provider/veryfront-cloud gateway routing", () => {
+  beforeEach(seedServedCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
   it("keeps the routing facts of every catalog model", () => {
     assertEquals(VERYFRONT_CLOUD_CHAT_MODELS.map((model) => routingRow(model.modelId)), [
       {

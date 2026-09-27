@@ -41,7 +41,10 @@ When code runs inside Veryfront, the SDK adds request-scoped labels for
 `project_id`, `project_slug`, `environment`, and `branch` for preview requests.
 Preview requests without an explicit branch use `branch="main"`. User code
 should not provide or trust those labels for isolation; the platform-owned
-request context wins.
+request context wins. In shared Veryfront runtimes, `service_name`,
+`service_version` and `deployment_environment` name the runtime service, its
+release and the platform deployment, such as `staging`, that exported the
+sample.
 
 ## Emit eval metrics
 
