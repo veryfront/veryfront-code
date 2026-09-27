@@ -1,0 +1,412 @@
+{
+  "_source": "Introspection of the integration query and mutation types served by the Veryfront API (captured 2026-09-27). Refresh when those GraphQL types change.",
+  "Boolean": {
+    "kind": "SCALAR"
+  },
+  "ExecuteIntegrationToolInput": {
+    "inputFields": {
+      "args": "JSON!",
+      "connectionId": "ID",
+      "expectedConnectionGenerationId": "ID",
+      "projectReference": "String",
+      "toolName": "String!"
+    },
+    "kind": "INPUT_OBJECT"
+  },
+  "GetIntegrationInput": {
+    "inputFields": {
+      "connectionId": "ID",
+      "expectedConnectionGenerationId": "ID",
+      "name": "String!",
+      "projectReference": "String",
+      "toolName": "String"
+    },
+    "kind": "INPUT_OBJECT"
+  },
+  "ID": {
+    "kind": "SCALAR"
+  },
+  "Int": {
+    "kind": "SCALAR"
+  },
+  "IntegrationAuth": {
+    "fields": {
+      "provider": {
+        "args": {},
+        "type": "String"
+      },
+      "scopes": {
+        "args": {},
+        "type": "[String!]"
+      },
+      "type": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationByoOAuthAppOverride": {
+    "fields": {
+      "clientIdEnvVar": {
+        "args": {},
+        "type": "String"
+      },
+      "clientSecretEnvVar": {
+        "args": {},
+        "type": "String"
+      },
+      "required": {
+        "args": {},
+        "type": "Boolean!"
+      },
+      "supported": {
+        "args": {},
+        "type": "Boolean!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationCredentialRequirement": {
+    "fields": {
+      "byoOAuthAppOverride": {
+        "args": {},
+        "type": "IntegrationByoOAuthAppOverride!"
+      },
+      "managedOAuth": {
+        "args": {},
+        "type": "Boolean!"
+      },
+      "mandatoryEnvVars": {
+        "args": {},
+        "type": "[String!]!"
+      },
+      "mode": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationDetails": {
+    "fields": {
+      "auth": {
+        "args": {},
+        "type": "IntegrationAuth!"
+      },
+      "configSchema": {
+        "args": {},
+        "type": "JSON"
+      },
+      "credentialRequirement": {
+        "args": {},
+        "type": "IntegrationCredentialRequirement!"
+      },
+      "description": {
+        "args": {},
+        "type": "String!"
+      },
+      "displayName": {
+        "args": {},
+        "type": "String!"
+      },
+      "envVars": {
+        "args": {},
+        "type": "[IntegrationEnvVar!]!"
+      },
+      "icon": {
+        "args": {},
+        "type": "String"
+      },
+      "name": {
+        "args": {},
+        "type": "String!"
+      },
+      "prompts": {
+        "args": {},
+        "type": "[IntegrationPrompt!]!"
+      },
+      "selectedReadiness": {
+        "args": {},
+        "type": "SelectedIntegrationReadiness"
+      },
+      "suggestedWith": {
+        "args": {},
+        "type": "[String!]"
+      },
+      "tools": {
+        "args": {},
+        "type": "[IntegrationTool!]!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationEnvVar": {
+    "fields": {
+      "description": {
+        "args": {},
+        "type": "String!"
+      },
+      "name": {
+        "args": {},
+        "type": "String!"
+      },
+      "required": {
+        "args": {},
+        "type": "Boolean!"
+      },
+      "sensitive": {
+        "args": {},
+        "type": "Boolean!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationPayload": {
+    "fields": {
+      "error": {
+        "args": {},
+        "type": "String"
+      },
+      "integration": {
+        "args": {},
+        "type": "IntegrationDetails"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationPrompt": {
+    "fields": {
+      "id": {
+        "args": {},
+        "type": "String!"
+      },
+      "prompt": {
+        "args": {},
+        "type": "String!"
+      },
+      "title": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationTool": {
+    "fields": {
+      "description": {
+        "args": {},
+        "type": "String!"
+      },
+      "id": {
+        "args": {},
+        "type": "String!"
+      },
+      "name": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "IntegrationToolResult": {
+    "fields": {
+      "_meta": {
+        "args": {},
+        "type": "JSON"
+      },
+      "content": {
+        "args": {},
+        "type": "JSON!"
+      },
+      "isError": {
+        "args": {},
+        "type": "Boolean"
+      },
+      "structuredContent": {
+        "args": {},
+        "type": "JSON"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "JSON": {
+    "kind": "SCALAR"
+  },
+  "Mutation": {
+    "fields": {
+      "executeIntegrationTool": {
+        "args": {
+          "input": "ExecuteIntegrationToolInput!"
+        },
+        "type": "IntegrationToolResult!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "Query": {
+    "fields": {
+      "integration": {
+        "args": {
+          "input": "GetIntegrationInput!"
+        },
+        "type": "IntegrationPayload!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "SelectedIntegrationAccount": {
+    "fields": {
+      "displayName": {
+        "args": {},
+        "type": "String"
+      },
+      "evidence": {
+        "args": {},
+        "type": "String!"
+      },
+      "id": {
+        "args": {},
+        "type": "String"
+      },
+      "state": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "SelectedIntegrationConnectionState": {
+    "fields": {
+      "state": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "SelectedIntegrationCredentialEvidence": {
+    "fields": {
+      "evidence": {
+        "args": {},
+        "type": "String!"
+      },
+      "missingKeys": {
+        "args": {},
+        "type": "[String!]!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "SelectedIntegrationLocalEligibility": {
+    "fields": {
+      "basis": {
+        "args": {},
+        "type": "String!"
+      },
+      "blockers": {
+        "args": {},
+        "type": "[String!]!"
+      },
+      "pendingChecks": {
+        "args": {},
+        "type": "[String!]!"
+      },
+      "requiredCapability": {
+        "args": {},
+        "type": "String!"
+      },
+      "state": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "SelectedIntegrationProviderVerification": {
+    "fields": {
+      "state": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "SelectedIntegrationReadiness": {
+    "fields": {
+      "account": {
+        "args": {},
+        "type": "SelectedIntegrationAccount!"
+      },
+      "connection": {
+        "args": {},
+        "type": "SelectedIntegrationConnectionState!"
+      },
+      "credentials": {
+        "args": {},
+        "type": "SelectedIntegrationCredentialEvidence!"
+      },
+      "localEligibility": {
+        "args": {},
+        "type": "SelectedIntegrationLocalEligibility!"
+      },
+      "providerVerification": {
+        "args": {},
+        "type": "SelectedIntegrationProviderVerification!"
+      },
+      "selection": {
+        "args": {},
+        "type": "SelectedIntegrationSelection!"
+      },
+      "version": {
+        "args": {},
+        "type": "Int!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "SelectedIntegrationSelection": {
+    "fields": {
+      "connectionGenerationId": {
+        "args": {},
+        "type": "ID"
+      },
+      "connectionId": {
+        "args": {},
+        "type": "ID"
+      },
+      "integration": {
+        "args": {},
+        "type": "String!"
+      },
+      "mode": {
+        "args": {},
+        "type": "String!"
+      },
+      "projectId": {
+        "args": {},
+        "type": "ID!"
+      },
+      "requestedConnectionId": {
+        "args": {},
+        "type": "ID"
+      },
+      "scope": {
+        "args": {},
+        "type": "String"
+      },
+      "state": {
+        "args": {},
+        "type": "String!"
+      },
+      "toolName": {
+        "args": {},
+        "type": "String!"
+      }
+    },
+    "kind": "OBJECT"
+  },
+  "String": {
+    "kind": "SCALAR"
+  }
+}

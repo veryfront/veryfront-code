@@ -119,6 +119,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "deploy-project.md",
   "integrations.md",
   "integrations/salesforce.md",
+  "integrations/recovery.md",
   "move-studio-changes-to-git.md",
   "pages-and-routing.md",
   "project-knowledge.md",

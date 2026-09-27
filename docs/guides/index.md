@@ -66,17 +66,19 @@ details, see [API reference](../api-reference/index.md).
 
 ## Connect external systems
 
-| Goal                                               | Guide                                               |
-| -------------------------------------------------- | --------------------------------------------------- |
-| Sign users in with OAuth                           | [OAuth](./oauth.md)                                 |
-| Protect app users with OIDC                        | [Application authentication](./application-auth.md) |
-| Add connector-backed service tools                 | [Integrations](./integrations.md)                   |
-| Set up GitHub                                      | [GitHub](./integrations/github.md)                  |
-| Set up Jira                                        | [Jira](./integrations/jira.md)                      |
-| Set up Salesforce                                  | [Salesforce](./integrations/salesforce.md)          |
-| Expose tools, prompts, and resources to assistants | [MCP server](./mcp-server.md)                       |
-| Connect coding agents to the dev server            | [Coding agents](./coding-agents.md)                 |
-| Run isolated commands or file operations           | [Sandbox](./sandbox.md)                             |
+| Goal                                               | Guide                                                   |
+| -------------------------------------------------- | ------------------------------------------------------- |
+| Sign users in with OAuth                           | [OAuth](./oauth.md)                                     |
+| Protect app users with OIDC                        | [Application authentication](./application-auth.md)     |
+| Add connector-backed service tools                 | [Integrations](./integrations.md)                       |
+| Set up GitHub                                      | [GitHub](./integrations/github.md)                      |
+| Set up Jira                                        | [Jira](./integrations/jira.md)                          |
+| Set up Salesforce                                  | [Salesforce](./integrations/salesforce.md)              |
+| Recover denied, expired, or replaced connections   | [Integration recovery](./integrations/recovery.md)      |
+| Choose integration credentials and scopes          | [Credentials and scopes](./integrations/credentials.md) |
+| Expose tools, prompts, and resources to assistants | [MCP server](./mcp-server.md)                           |
+| Connect coding agents to the dev server            | [Coding agents](./coding-agents.md)                     |
+| Run isolated commands or file operations           | [Sandbox](./sandbox.md)                                 |
 
 ## Deploy and extend
 

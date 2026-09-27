@@ -20,87 +20,207 @@ and transport surfaces.
   `salesforce__find_customer`. The catalog defines their names and schemas;
   managed connections supply provider access, while local tools use host-
   resolved credentials.
-- **Transport:** REST and GraphQL expose the hosted discovery, connection, status,
-  and call lifecycle. MCP, the Veryfront framework/TypeScript client, and the
-  Veryfront CLI expose integration tools where their current runtime supports
-  them; they do not all provide connection-management operations.
+- **Transport:** REST, GraphQL, MCP, the TypeScript client, and the Veryfront
+  CLI all call the same hosted tools. REST, the TypeScript client, and the CLI
+  also read connection inventory and start OAuth. GraphQL and MCP discover and
+  call tools but do not list connections.
 
 The hosted API flow is `discover → connect → status → call`. No integration
-policy setup is required. REST and GraphQL calls can include an optional
-`connection_id` when a project has multiple accessible accounts; framework
-tool calls currently use the connection selected by the hosted runtime, and a
-`connection_id` passed inside tool arguments is provider input rather than an
-account selector.
+policy setup is required. Every surface can select an exact connection when a
+project has multiple accessible accounts. Framework tool calls inside an agent
+run use the connection selected by the hosted runtime, and a `connection_id`
+passed inside tool arguments is provider input rather than an account selector.
 
-## Prerequisites for agent tools
+## Make your first call
 
-- A Veryfront project with a configured agent (see [Agents](./agents.md)).
-- The integration tool names the agent needs.
-- For managed execution, a project token or hosted runtime that can reach the
-  Veryfront integration tool endpoints.
-- For local execution, provider credentials in the project environment.
-- Project environment credentials only for static-credential connectors or an
-  explicitly selected custom OAuth app override (see [OAuth](./oauth.md)).
+This walkthrough reads one Gmail message summary with `gmail__list_emails` and
+the arguments `{"q":"in:inbox","maxResults":1}`. Each surface below runs the
+same tool with the same arguments against the same connection, so you can pick
+the one that fits your application. The tool is read-only.
 
-## Inspect readiness for one tool
+For other failures and non-OAuth connectors, see
+[Recover integration connections](./integrations/recovery.md) and
+[Integration credentials and scopes](./integrations/credentials.md).
 
-Use `readiness` with a canonical tool name to read the server's selected-account
-assessment. The client requests fresh metadata for its bound project on every
-call; it does not cache readiness or contact the provider. Replace these
-placeholders with your trusted API origin, project and selected connection:
+### Before you start
 
-```ts
-import { createIntegrationClient } from "veryfront/integrations";
+You need three things. None of them is created implicitly:
 
-const client = await createIntegrationClient({
-  apiBaseUrl: "<API_BASE_URL>",
-  authToken: "<TOKEN>",
-  projectReference: "<PROJECT_ID>",
-});
-const readiness = await client.readiness("github__get_current_user", {
-  connectionId: "<CONNECTION_ID>",
-});
-console.log(readiness.selection.state);
-console.log(readiness.local_eligibility.state);
-console.log(readiness.provider_verification.state);
-```
+- **A platform credential.** A Veryfront API key or login token for a user who
+  can read the project. It authenticates you to Veryfront, not to Gmail. Keep
+  it server-side and never place it in prompts, tool arguments, or URLs.
+- **A project.** Pass the project slug or UUID on every request. Veryfront never
+  picks a project for you.
+- **The API origin.** Use `https://api.veryfront.com`, or your own API origin
+  for a self-hosted or non-production deployment.
 
-The equivalent CLI command is:
+The shell examples use `curl` and `jq` and share these variables. The first line
+keeps an API origin you already exported:
 
 ```bash
-veryfront integration status github --project "<PROJECT_ID>" \
-  --tool github__get_current_user --connection "<CONNECTION_ID>" --json
+export VERYFRONT_API_URL="${VERYFRONT_API_URL:-https://api.veryfront.com}"
+export VERYFRONT_API_TOKEN="<TOKEN>"
+export VERYFRONT_PROJECT="<PROJECT_SLUG>"
+AUTH="Authorization: Bearer $VERYFRONT_API_TOKEN"
+PROJECT="x-veryfront-project-slug: $VERYFRONT_PROJECT"
 ```
 
-With `--tool`, status returns `selected_readiness` from the shared client instead
-of deriving readiness from OAuth connectivity. `--scope` is rejected for this
-operation: the selected connection determines its scope. An optional
-`--expected-generation "<CONNECTION_GENERATION_ID>"` checks a previously observed
-generation. A stale observation is returned as a blocked assessment, not repaired
-by selecting another account.
+The TypeScript client and the CLI refuse API origins that resolve to private
+network addresses, such as a VPN or self-hosted API. On a host you control, set
+`VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` in the process environment to allow
+them. Project environment variables cannot set it.
 
-`local_eligibility.state === "eligible"` means the evaluated local metadata checks
-passed. It does not establish provider permission. Key presence cannot prove usable
-credential values, and recorded shared-account metadata is not provider-verified
-identity. Inspect `pending_checks` and `blockers`; `provider_verification.state`
-remains `not_checked`. A later tool call still requires current authorization.
+### Discover the tool
 
-This method requires the selected-readiness API contract. A missing or malformed
-projection, or a response for another project/tool/connection, throws
-`IntegrationApiError` with `kind === "invalid_response"` and `outcomeUnknown === false`.
-Changing project or platform credentials requires a new bound client. Concurrent
-reads return independent results; the client never applies one response to another
-selection. The selected account and generation are metadata, not a reusable grant.
+Tool discovery works before any connection exists. The response lists each
+tool's `name`, `description`, and `inputSchema`:
 
-## Call the connection generation you observed
+```bash
+curl -sS "$VERYFRONT_API_URL/integrations/gmail/tools?name=gmail__list_emails" \
+  -H "$AUTH" -H "$PROJECT"
+```
 
-For direct client calls, provide platform credentials, an authorized project and
-an existing OAuth connection. Project access and provider authorization are
-sufficient for this path.
+The response header `x-veryfront-project-id` carries the project UUID that
+Veryfront resolved from the slug. The CLI equivalent is
+`veryfront integration tools gmail --project "$VERYFRONT_PROJECT" --json`.
 
-Replace the placeholders below. Use your trusted HTTPS API origin and the exact
-connection ID you selected from connection inventory. Read that connection's
-current generation, then supply both identifiers to the call:
+### Connect the provider account
+
+The first call without a connection returns a tool result with `isError: true`,
+`structuredContent.error` set to `authentication_required`, and a
+`structuredContent.connectUrl`. No provider request is sent. Provider consent is
+a separate login to Gmail and always needs a person in a browser:
+
+- **CLI:** Run `veryfront integration connect gmail --project "$VERYFRONT_PROJECT"`.
+  It opens the browser, waits at most `--timeout` seconds (default 300), and
+  confirms the new connection from inventory. Add `--scope project` to create a
+  shared connection instead of a personal one.
+- **REST:** Open `connectUrl` in a browser that is signed in to Veryfront.
+- **Studio:** Use the connect card that appears in the run, or the project's
+  integration settings.
+
+The call is not retried for you. After consent, read the connection inventory
+and call again. If consent is denied, cancelled, or expires, see
+[Recover integration connections](./integrations/recovery.md).
+
+### Select the connection and check readiness
+
+Read the project's Gmail connections. Each row has an `id`, a `scope` (`user` or
+`project`), a `status` (`connected`, `expired`, or `disconnected`), and a
+`connection_generation_id` that changes when the account is reconnected:
+
+```bash
+curl -sS "$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/integrations/gmail/connections?limit=100" \
+  -H "$AUTH"
+```
+
+Copy the `connected` row you want to use, and the project UUID from the
+discovery response header:
+
+```bash
+CONNECTION_ID="<CONNECTION_ID>"
+CONNECTION_GENERATION_ID="<CONNECTION_GENERATION_ID>"
+PROJECT_ID="<PROJECT_ID>"
+```
+
+Readiness reports whether that selection can run the tool. It reads metadata
+only and never contacts Gmail:
+
+```bash
+curl -sS -G "$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/integrations/gmail" \
+  --data-urlencode "tool_name=gmail__list_emails" \
+  --data-urlencode "connection_id=$CONNECTION_ID" \
+  --data-urlencode "expected_connection_generation_id=$CONNECTION_GENERATION_ID" \
+  -H "$AUTH" | jq '.selected_readiness | {selection: .selection.state, local: .local_eligibility.state, blockers: .local_eligibility.blockers}'
+```
+
+Continue when `selection` is `selected` and `local` is `eligible`. A `stale`
+selection means the account was reconnected after you read inventory: read
+inventory again rather than choosing another account.
+
+### Call with REST
+
+Send provider arguments in `arguments`. `connection_id` selects the account and
+`expected_connection_generation_id` rejects the call before any provider request
+if that account was replaced. `x-veryfront-expected-project-id` rejects the call
+if the slug now resolves to a different project. All three are optional; omit
+them only when the project has exactly one usable connection.
+
+```bash
+curl -sS -X POST "$VERYFRONT_API_URL/integrations/gmail/tools/list_emails/call" \
+  -H "$AUTH" -H "$PROJECT" \
+  -H "x-veryfront-expected-project-id: $PROJECT_ID" \
+  -H "Content-Type: application/json" \
+  --data @- <<JSON | jq '{isError, fields: (.structuredContent | keys)}'
+{
+  "arguments": { "q": "in:inbox", "maxResults": 1 },
+  "connection_id": "$CONNECTION_ID",
+  "expected_connection_generation_id": "$CONNECTION_GENERATION_ID"
+}
+JSON
+```
+
+### Call with GraphQL
+
+GraphQL has no connection inventory; take the IDs from the REST inventory or
+the CLI. The `integration` query returns the tool list and readiness, and the
+`executeIntegrationTool` mutation runs the tool. `projectReference` accepts the
+slug or UUID:
+
+```bash
+QUERY=$(cat <<'GRAPHQL'
+query GmailReadiness($input: GetIntegrationInput!) {
+  integration(input: $input) {
+    error
+    integration {
+      tools { name }
+      selectedReadiness {
+        selection { state connectionId connectionGenerationId }
+        localEligibility { state blockers }
+      }
+    }
+  }
+}
+GRAPHQL
+)
+jq -n --arg query "$QUERY" --arg project "$VERYFRONT_PROJECT" \
+  --arg connection "$CONNECTION_ID" --arg generation "$CONNECTION_GENERATION_ID" \
+  '{query: $query, variables: {input: {name: "gmail", projectReference: $project,
+    toolName: "gmail__list_emails", connectionId: $connection,
+    expectedConnectionGenerationId: $generation}}}' |
+  curl -sS "$VERYFRONT_API_URL/graphql" -H "$AUTH" -H "Content-Type: application/json" --data @- |
+  jq '.data.integration.integration.selectedReadiness'
+
+MUTATION=$(cat <<'GRAPHQL'
+mutation ListOneEmail($input: ExecuteIntegrationToolInput!) {
+  executeIntegrationTool(input: $input) {
+    isError
+    structuredContent
+  }
+}
+GRAPHQL
+)
+jq -n --arg query "$MUTATION" --arg project "$VERYFRONT_PROJECT" \
+  --arg connection "$CONNECTION_ID" --arg generation "$CONNECTION_GENERATION_ID" \
+  '{query: $query, variables: {input: {projectReference: $project,
+    toolName: "gmail__list_emails", connectionId: $connection,
+    expectedConnectionGenerationId: $generation,
+    args: {q: "in:inbox", maxResults: 1}}}}' |
+  curl -sS "$VERYFRONT_API_URL/graphql" -H "$AUTH" -H "Content-Type: application/json" --data @- |
+  jq '{errors, isError: .data.executeIntegrationTool.isError, fields: (.data.executeIntegrationTool.structuredContent | keys?)}'
+```
+
+`executeIntegrationTool` is a mutation because it can run write tools. A
+read-only tool needs only read access to the project. Tool failures return
+`isError: true`; request failures such as a stale generation return GraphQL
+`errors`.
+
+### Call with TypeScript
+
+`createIntegrationClient` from `veryfront/integrations` takes every credential
+explicitly and never reads them from the environment. It sends the project
+precondition headers for you. Replace the placeholders with the same values as
+the shell variables:
 
 ```ts
 import { createIntegrationClient, type IntegrationClientConnection } from "veryfront/integrations";
@@ -108,135 +228,144 @@ import { createIntegrationClient, type IntegrationClientConnection } from "veryf
 const client = await createIntegrationClient({
   apiBaseUrl: "<API_BASE_URL>",
   authToken: "<TOKEN>",
-  projectReference: "<PROJECT_ID>",
+  projectReference: "<PROJECT_SLUG>",
 });
+
 const selectedConnectionId = "<CONNECTION_ID>";
-let observed: IntegrationClientConnection | undefined;
-for await (const connection of client.listConnections("github")) {
-  if (connection.id === selectedConnectionId && connection.scope === "user") {
-    observed = connection;
+let selected: IntegrationClientConnection | undefined;
+for await (const connection of client.listConnections("gmail")) {
+  if (connection.id === selectedConnectionId) {
+    selected = connection;
     break;
   }
 }
-if (!observed || observed.status !== "connected") {
-  throw new Error("Select a connected personal GitHub connection before calling.");
+if (!selected || selected.status !== "connected") {
+  throw new Error("Connect Gmail and select a connected account before calling.");
 }
-const outcome = await client.call("github__get_current_user", {}, {
-  connectionId: observed.id,
-  expectedConnectionGenerationId: observed.connection_generation_id,
-});
-console.log(outcome.status);
+
+const selection = {
+  connectionId: selected.id,
+  expectedConnectionGenerationId: selected.connection_generation_id,
+};
+const readiness = await client.readiness("gmail__list_emails", selection);
+if (readiness.local_eligibility.state !== "eligible") {
+  throw new Error(`Not ready: ${readiness.local_eligibility.blockers.join(", ")}`);
+}
+
+const outcome = await client.call(
+  "gmail__list_emails",
+  { q: "in:inbox", maxResults: 1 },
+  selection,
+);
+console.log(outcome.status, Object.keys(outcome.result.structuredContent ?? {}));
 ```
 
-Use `scope === "project"` when you intentionally select a shared connection. A
-reconnect can replace a generation between inventory and execution. The API
+The script runs under Deno or Node.js with the `veryfront` package installed.
+`client.connect("gmail", { redirectUri })` starts the same OAuth handoff as the
+CLI and returns a one-time `connect_url` with an `expires_at` deadline.
+
+### Call with the CLI
+
+The CLI uses your `veryfront login` session or `VERYFRONT_API_TOKEN`, and
+`VERYFRONT_API_URL` when it is set in your shell:
+
+```bash
+veryfront integration connections gmail --project "$VERYFRONT_PROJECT" --json
+veryfront integration status gmail --project "$VERYFRONT_PROJECT" \
+  --tool gmail__list_emails --connection "$CONNECTION_ID" \
+  --expected-generation "$CONNECTION_GENERATION_ID" --json
+veryfront integration call gmail__list_emails --project "$VERYFRONT_PROJECT" \
+  --connection "$CONNECTION_ID" --expected-generation "$CONNECTION_GENERATION_ID" \
+  --args '{"q":"in:inbox","maxResults":1}' --json
+```
+
+`--expected-generation` requires `--connection`. `status --tool` rejects
+`--scope` because the selected connection determines its scope.
+
+### Call with MCP
+
+Point MCP clients at the project endpoint `/projects/<PROJECT_SLUG>/mcp`. The
+unscoped `/mcp` endpoint serves platform tools but cannot call integration tools
+because it has no project. Integration tools are listed by their canonical
+names. Select a connection with `_meta`, not with tool arguments:
+
+```bash
+MCP_URL="$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/mcp"
+mcp() {
+  curl -sS -X POST "$MCP_URL" -H "$AUTH" -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" --data "$1"
+}
+
+mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"integration-example","version":"1.0.0"}}}'
+mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' |
+  jq '[.result.tools[].name | select(. == "gmail__list_emails")]'
+mcp "$(jq -n --arg connection "$CONNECTION_ID" --arg generation "$CONNECTION_GENERATION_ID" \
+  '{jsonrpc: "2.0", id: 3, method: "tools/call", params: {name: "gmail__list_emails",
+    arguments: {q: "in:inbox", maxResults: 1},
+    _meta: {connection_id: $connection, expected_connection_generation_id: $generation}}}')" |
+  jq '{isError: .result.isError, fields: (.result.structuredContent | keys?)}'
+```
+
+An MCP client configuration uses the same URL and bearer token:
+
+```json
+{
+  "mcpServers": {
+    "veryfront": {
+      "url": "https://api.veryfront.com/projects/<PROJECT_SLUG>/mcp",
+      "headers": { "Authorization": "Bearer <TOKEN>" }
+    }
+  }
+}
+```
+
+### Read the result
+
+Every surface returns the same tool result: `content`, `structuredContent`,
+`isError`, and optional `_meta`. For `gmail__list_emails`, `structuredContent`
+has `messages`, `pagination`, and `summary`. A tool failure keeps the envelope
+and sets `isError: true`, with a code in `structuredContent.error`:
+
+| Code                         | Provider effect                                | Next step                                                          |
+| ---------------------------- | ---------------------------------------------- | ------------------------------------------------------------------ |
+| `authentication_required`    | None. No provider request was sent.            | Connect the account, then call again.                              |
+| `reconnect_required`         | None. The stored grant expired or was revoked. | Reconnect the same account, then call again.                       |
+| `provider_permission_denied` | None. The provider refused the request.        | Check the account's provider permissions and granted scopes.       |
+| `rate_limited`               | None. The provider refused the request.        | Wait `retryAfter` seconds before one new attempt.                  |
+| `execution_outcome_unknown`  | Unknown. A write tool may have changed data.   | Inspect the provider before repeating. Never replay automatically. |
+
+Selection and precondition failures, such as a stale generation or a connection
+that belongs to another project, are request errors: REST returns an HTTP
+problem, GraphQL returns `errors`, and MCP returns an `isError` result with
+`_meta.condition.slug`. They fail before credentials are read. See
+[Recover integration connections](./integrations/recovery.md) for each case.
+
+## Connection generation preconditions
+
+`local_eligibility.state === "eligible"` means the evaluated local metadata checks
+passed. It does not establish provider permission. Key presence cannot prove usable
+credential values, and recorded shared-account metadata is not provider-verified
+identity. Inspect `pending_checks` and `blockers`; `provider_verification.state`
+remains `not_checked`. A later tool call still requires current authorization.
+
+A reconnect can replace a generation between inventory and execution. The API
 rejects a mismatched generation before reading credentials or calling the provider.
 A generation match does not establish provider permission or prevent a later
-provider-side revocation.
+provider-side revocation. The selected account and generation are metadata, not a
+reusable grant.
 
-For the equivalent CLI call, copy the selected row's `id` and
-`connection_generation_id` from inventory:
-
-```bash
-veryfront integration connections github --project "<PROJECT_ID>" --json
-veryfront integration call github__get_current_user \
-  --project "<PROJECT_ID>" \
-  --connection "<CONNECTION_ID>" \
-  --expected-generation "<CONNECTION_GENERATION_ID>" \
-  --args '{}' --json
-```
-
-`--expected-generation` is available for `call` and `status --tool`, and requires
-`--connection`.
-The API deployment must support the generation precondition. If it does not
-advertise support, the client throws `IntegrationApiError` with
-`kind === "unsupported_precondition"` and `outcomeUnknown === false` before
-sending the call. Update the API deployment before using the option.
-
-If support is no longer confirmed on a successful call response, the error has
-`outcomeUnknown === true`: the operation may already have run. Inspect the
-provider outcome before retrying. The client never automatically replays the call.
-Omit the generation option to retain the existing call behavior, with no
-caller-observed generation check. See the
+The TypeScript client requires the API deployment to advertise generation
+precondition support in `x-veryfront-tool-preconditions`. If it does not, the
+client throws `IntegrationApiError` with `kind === "unsupported_precondition"` and
+`outcomeUnknown === false` before sending the call. If support is no longer
+confirmed on a successful call response, the error has `outcomeUnknown === true`:
+the operation may already have run. Inspect the provider outcome before retrying.
+The client never automatically replays the call. A missing or malformed readiness
+projection, or a response for another project, tool, or connection, throws
+`IntegrationApiError` with `kind === "invalid_response"`. Changing project or
+platform credentials requires a new bound client. See the
 [integration API reference](../api-reference/veryfront/integrations.md) for the
 public types.
-
-## Use the hosted flow
-
-Use one of these surfaces after OAuth returns a connected account. Every call
-uses the same four parts: catalog, connection, tool, and transport. Replace
-`<PROJECT_SLUG>` with the project selector and keep tokens server-side.
-
-### REST
-
-Discover tools, inspect connections, then call the tool. A call can select a
-specific account with `connection_id`.
-
-```bash
-API=https://api.veryfront.com
-AUTH="Authorization: Bearer $VERYFRONT_API_TOKEN"
-PROJECT="x-veryfront-project-slug: <PROJECT_SLUG>"
-
-curl -sS "$API/integrations/gmail/tools" -H "$AUTH" -H "$PROJECT"
-curl -sS "$API/projects/<PROJECT_REFERENCE>/integrations/gmail/connections?limit=100" \
-  -H "$AUTH"
-curl -sS -X POST "$API/integrations/gmail/tools/list_emails/call" \
-  -H "$AUTH" -H "$PROJECT" -H 'Content-Type: application/json' \
-  -d '{"arguments":{"q":"in:inbox","maxResults":10},"connection_id":"<CONNECTION_ID>"}'
-```
-
-Omit `connection_id` when the project has one usable connection. The call
-returns `authentication_required` and a `connectUrl` when OAuth is needed.
-Open that URL, finish provider consent, wait for the connection to become
-`connected`, and retry the call.
-
-### GraphQL
-
-Use the served GraphQL schema for integration catalog and project-configuration
-queries. Tool execution is documented through REST, MCP, the TypeScript runtime,
-and the CLI because this release does not expose a verified GraphQL tool-call
-field.
-
-### MCP
-
-Connect an MCP client to `https://api.veryfront.com/mcp` with the same bearer
-token and project context. Call the standard `tools/list` method, select the
-returned integration tool name, then call `tools/call` with its arguments. MCP
-handles discovery and execution; OAuth still follows the same connect URL flow.
-
-### TypeScript
-
-The hosted TypeScript path uses the same REST contract, so it is easy to test
-without an SDK-specific wrapper:
-
-```ts
-const headers = {
-  Authorization: `Bearer ${process.env.VERYFRONT_API_TOKEN}`,
-  "x-veryfront-project-slug": process.env.VERYFRONT_PROJECT_SLUG!,
-};
-const response = await fetch(
-  "https://api.veryfront.com/integrations/gmail/tools/list_emails/call",
-  {
-    method: "POST",
-    headers: { ...headers, "content-type": "application/json" },
-    body: JSON.stringify({ arguments: { q: "in:inbox", maxResults: 10 } }),
-  },
-);
-console.log(await response.json());
-```
-
-### CLI
-
-```bash
-veryfront integration tools gmail --project <PROJECT_SLUG> --json
-veryfront integration connections gmail --project <PROJECT_SLUG> --json
-veryfront integration call gmail__list_emails --project <PROJECT_SLUG> \
-  --args '{"q":"in:inbox","maxResults":10}' --json
-```
-
-Use `veryfront integration connect gmail --project <PROJECT_SLUG>` to start
-OAuth. The `call` command executes an already connected account. Use
-`--connection <CONNECTION_ID>` when more than one account is available.
 
 ## Run account-free local integration tools
 
@@ -285,6 +414,16 @@ Salesforce service-account specialization. It rejects authorization-code OAuth,
 query-string credentials, GraphQL, response enrichment, multipart bodies, raw
 bodies, dynamic endpoint origins, and tools outside the exact grant. Use managed
 execution for per-user OAuth and other unsupported connector features.
+
+## Prerequisites for agent tools
+
+- A Veryfront project with a configured agent (see [Agents](./agents.md)).
+- The integration tool names the agent needs.
+- For managed execution, a project token or hosted runtime that can reach the
+  Veryfront integration tool endpoints.
+- For local execution, provider credentials in the project environment.
+- Project environment credentials only for static-credential connectors or an
+  explicitly selected custom OAuth app override (see [OAuth](./oauth.md)).
 
 ## Declare agent tool access
 
@@ -367,10 +506,10 @@ to run. Local static-credential tools resolve their credentials from the host
 environment or credential provider and do not use connection inventory. Adding
 a tool does not create a connection. Connecting OAuth does not
 rewrite agent source or source configuration. If a project has several
-accessible accounts, a REST or GraphQL call can provide an optional
-`connection_id`; Veryfront validates that it belongs to the project and is
-visible to the caller. Framework tool calls use the runtime-selected
-connection.
+accessible accounts, a REST, GraphQL, MCP, TypeScript client, or CLI call can
+select an exact connection; Veryfront validates that it belongs to the project
+and is visible to the caller, and never falls back to another account. Framework
+tool calls use the runtime-selected connection.
 
 ## Authentication flow
 
@@ -380,12 +519,14 @@ When an agent calls an OAuth integration tool and no valid connection exists:
 2. The agent surfaces the connect action to the user.
 3. The user completes provider consent and the OAuth callback.
 4. The control plane stores the connection for the selected project or user scope.
-5. The run retries the tool with the new connection.
+5. The run calls the tool again with the new connection. This is safe because
+   `authentication_required` means no provider request was sent.
 6. Later calls reuse or refresh that connection according to the provider's
    token lifecycle.
 
 OAuth connection happens during use. Adding a tool to agent source does not
-require a connection in advance.
+require a connection in advance. A call that failed with any other error is not
+retried automatically. See [Recover integration connections](./integrations/recovery.md).
 
 ### Managed OAuth and custom app overrides
 
@@ -393,7 +534,7 @@ Managed OAuth connectors do not require project OAuth client credentials. Set
 client ID and client secret environment variables only when the connector
 supports and the project selects a custom OAuth app override:
 
-```bash
+```dotenv
 GITHUB_CLIENT_ID=<GITHUB_CLIENT_ID>
 GITHUB_CLIENT_SECRET=<GITHUB_CLIENT_SECRET>
 ```
@@ -407,7 +548,7 @@ Some connectors use static credentials instead of interactive OAuth. Store
 those credentials in project environment variables named by the connector
 metadata:
 
-```bash
+```dotenv
 STRIPE_SECRET_KEY=<STRIPE_SECRET_KEY>
 TELEGRAM_BOT_TOKEN=<TELEGRAM_BOT_TOKEN>
 PERSONIO_CLIENT_ID=<PERSONIO_CLIENT_ID>
@@ -416,7 +557,8 @@ PERSONIO_CLIENT_SECRET=<PERSONIO_CLIENT_SECRET>
 
 No OAuth connect step is shown for these connectors. The integration runtime
 resolves their credentials during tool execution; agents do not receive raw
-secrets.
+secrets. See [Integration credentials and scopes](./integrations/credentials.md)
+for the setup of each authentication type and where each one runs.
 
 ## Test without provider access
 
@@ -434,6 +576,10 @@ permissions, OAuth configuration, or service-account credentials.
 | GitHub     | [Set up GitHub](./integrations/github.md)         |
 | Jira       | [Set up Jira](./integrations/jira.md)             |
 | Salesforce | [Set up Salesforce](./integrations/salesforce.md) |
+
+For credential types, scopes, and recovery that apply to every provider, see
+[Integration credentials and scopes](./integrations/credentials.md) and
+[Recover integration connections](./integrations/recovery.md).
 
 ## Available integrations
 
@@ -462,12 +608,14 @@ when you need exact exported names or icon metadata:
 1. Confirm the integration tool name is present in the agent source.
 2. Start a new agent run and request an action that uses the tool.
 3. If an OAuth connection is absent, complete the connect action and callback.
-4. Confirm the run retries the tool and receives a non-error result.
+4. Confirm the next tool call receives a result with `isError` unset or `false`.
 5. Reload the project and confirm connection inventory still reports the
    connection independently of agent source and source configuration.
 
 ## Next
 
+- [Recover integration connections](./integrations/recovery.md)
+- [Integration credentials and scopes](./integrations/credentials.md)
 - [Set up GitHub](./integrations/github.md)
 - [Set up Jira](./integrations/jira.md)
 - [Set up Salesforce](./integrations/salesforce.md)
