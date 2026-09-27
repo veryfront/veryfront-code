@@ -573,6 +573,60 @@ describe("eval/agent-service", () => {
     assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
   });
 
+  it("keeps the one-hour cache-write share from RunFinished usage in records and summaries", async () => {
+    const runWith = async (cacheUsage: Record<string, number>) => {
+      const adapter = createAgentServiceEvalAdapter({
+        endpoint: "http://127.0.0.1:4311/api/ag-ui",
+        authToken: "token",
+        fetch: async () =>
+          createSseResponse([
+            { event: "RunStarted", data: { runId: "run_cache" } },
+            { event: "TextMessageContent", data: { delta: "Done" } },
+            {
+              event: "RunFinished",
+              data: { metadata: { inputTokens: 12, outputTokens: 8, ...cacheUsage } },
+            },
+          ]),
+        now: () => 1_000,
+      });
+      const report = await runEval(
+        evalAgent({
+          id: "eval:cache-share",
+          target: "agent:veryfront",
+          dataset: datasets.inline([{ id: "a", input: "one" }, { id: "b", input: "two" }]),
+        }),
+        { adapters: { agent: adapter }, now: () => new Date("2026-06-20T10:00:00.000Z") },
+      );
+      return report;
+    };
+
+    const withShare = await runWith({
+      cacheCreationInputTokens: 50,
+      cacheCreation1hInputTokens: 20,
+    });
+    assertEquals(withShare.records[0]?.usage?.cacheCreationInputTokens, 50);
+    assertEquals(withShare.records[0]?.usage?.cacheCreation1hInputTokens, 20);
+    assertEquals(withShare.summary.usage?.cacheCreationInputTokens, 100);
+    assertEquals(withShare.summary.usage?.cacheCreation1hInputTokens, 40);
+
+    const withoutShare = await runWith({ cacheCreationInputTokens: 50 });
+    assertEquals(withoutShare.records[0]?.usage?.cacheCreationInputTokens, 50);
+    assertEquals(
+      Object.hasOwn(withoutShare.records[0]?.usage ?? {}, "cacheCreation1hInputTokens"),
+      false,
+    );
+    assertEquals(
+      Object.hasOwn(withoutShare.summary.usage ?? {}, "cacheCreation1hInputTokens"),
+      false,
+    );
+
+    const shareWithoutTotal = await runWith({ cacheCreation1hInputTokens: 20 });
+    assertEquals(
+      Object.hasOwn(shareWithoutTotal.records[0]?.usage ?? {}, "cacheCreation1hInputTokens"),
+      false,
+    );
+  });
+
   it("rejects remote eval agent overrides that public AG-UI cannot honor", () => {
     assertThrows(
       () =>

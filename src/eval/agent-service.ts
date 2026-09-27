@@ -597,6 +597,15 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
   const cacheCreationInputTokens = readNonNegativeNumber(record.cacheCreationInputTokens) ??
     readNonNegativeNumber(record.cacheCreationTokens) ??
     readNonNegativeNumber(record.cache_creation_input_tokens);
+  // The one-hour share is part of the cache-write total: keep it only next to
+  // that total and never above it.
+  const reportedCacheCreation1hInputTokens = readNonNegativeNumber(
+    record.cacheCreation1hInputTokens,
+  );
+  const cacheCreation1hInputTokens = cacheCreationInputTokens !== undefined &&
+      reportedCacheCreation1hInputTokens !== undefined
+    ? Math.min(reportedCacheCreation1hInputTokens, cacheCreationInputTokens)
+    : undefined;
   const cacheReadInputTokens = readNonNegativeNumber(record.cacheReadInputTokens) ??
     readNonNegativeNumber(record.cacheReadTokens) ??
     readNonNegativeNumber(record.cache_read_input_tokens);
@@ -637,6 +646,7 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
