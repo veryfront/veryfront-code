@@ -9,7 +9,7 @@ Full guide: https://veryfront.com/docs/code/guides/integrations
   you to Veryfront. It never connects a provider.
 - **Provider consent** (`veryfront integration connect "<NAME>" --project "<PROJECT_SLUG>"`) authorizes one
   provider account for one project. It needs a person in a browser and an
-  existing platform login.
+  existing platform credential: a login session or `VERYFRONT_API_TOKEN`.
 
 Never ask for, print, or store provider passwords, OAuth tokens, API keys, or
 the Veryfront token in prompts, tool arguments, files, or logs.
