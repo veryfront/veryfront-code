@@ -8,6 +8,7 @@ import {
   createRetiredVeryfrontCloudModelError,
   findVeryfrontCloudModelByModelId,
   isRetiredVeryfrontCloudModelId,
+  VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
@@ -21,14 +22,16 @@ import { getModelRuntimeProvider } from "#veryfront/provider/runtime-inspection.
 export const AUTO_AGENT_MODEL = "auto";
 export const DEFAULT_AGENT_MODEL = "openai/gpt-5-nano";
 
-const HOSTED_PROVIDER_NAMES = new Set([
-  "deepseek",
-  "anthropic",
-  "google",
-  "google-ai-studio",
-  "mistral",
-  "moonshotai",
-  "openai",
+/**
+ * Providers the gateway serves that the catalog snapshot shipped in this
+ * package does not list yet. Each routes on the default surface, which the
+ * gateway serves at the vendor-neutral `/ai/v1`. Drop an entry once
+ * `deno task generate:model-catalog` adds its provider to the snapshot.
+ */
+const GATEWAY_PROVIDERS_AHEAD_OF_CATALOG = ["qwen"] as const;
+const HOSTED_PROVIDER_NAMES: ReadonlySet<string> = new Set([
+  ...VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
+  ...GATEWAY_PROVIDERS_AHEAD_OF_CATALOG,
 ]);
 const DIRECT_CREDENTIAL_PROVIDER_ALIASES = new Map<string, string>([
   ["google-ai-studio", "google"],

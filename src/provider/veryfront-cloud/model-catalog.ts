@@ -415,6 +415,20 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: readonly VeryfrontCloudChatModel[] = O
   }),
 );
 
+/**
+ * Every provider name the catalog data routes: accepted aliases, providers
+ * with a routing row, and providers of a listed chat model. Runtime model
+ * resolution sends `<provider>/<model>` for these through the gateway when no
+ * direct provider credential applies.
+ */
+export const VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES: readonly string[] = Object.freeze([
+  ...new Set<string>([
+    ...VERYFRONT_CLOUD_PROVIDER_ALIASES.map(([alias]) => alias),
+    ...VERYFRONT_CLOUD_PROVIDER_ROUTING.map(([provider]) => provider),
+    ...VERYFRONT_CLOUD_CHAT_MODELS.map((model) => model.provider),
+  ]),
+]);
+
 const defaultVeryfrontCloudChatModel = VERYFRONT_CLOUD_CHAT_MODELS.find(
   (model) => model.id === DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
 );
