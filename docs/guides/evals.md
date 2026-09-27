@@ -223,10 +223,13 @@ threshold when measured, and improves cost, token use, or p95 latency. Otherwise
 the comparison keeps the baseline or asks for review.
 
 Gateway-backed runs add split input/output tokens, billable input/output tokens,
-credits, and cost source to the comparison report. A credit is the unit of
-account; the framework keeps no pricing table and does not convert credits to
-a currency. Direct local runs do not estimate prices in the framework; their
-cost cells stay `not measured` unless a gateway supplies billing metadata.
+credits, and cost source to the comparison report. The comparison Markdown
+renderer still includes legacy USD columns for historical reports; those columns
+are `not measured` for credits-only gateway usage. Its metered-USD note describes
+the preference when both reports contain USD measurements. When both reports
+contain only gateway credit measurements, the default comparison uses credits.
+The framework keeps no pricing table and does not convert credits to currency.
+Direct local runs do not estimate prices in the framework.
 
 Use a comparison policy when latency, cost, and quality tradeoffs depend on the
 product. Constraints are hard gates. Objectives rank candidates that pass those
@@ -257,8 +260,12 @@ veryfront eval deep-research \
 Policy metrics can reference `passRate`, `failed`, `gateFailures`,
 `groundednessScore`, `inputTokens`, `outputTokens`, `totalTokens`,
 `billableInputTokens`, `billableOutputTokens`, `costUsd`, `costCredits`, and
-`p95Ms`. `costUsd` remains a backward-compatible cost objective; for
-gateway-backed runs it compares `costCredits`. Use `min`, `max`, and
+`p95Ms`. Use `costCredits` for credits-only gateway runs. `costUsd` reads
+USD measurements from historical reports only; it does not fall back to credits.
+A `costUsd` constraint fails with `costUsd was not measured` when those
+measurements are absent, and a `costUsd` objective cannot score that report.
+Migrate the policy key to `costCredits` and set thresholds in credits; do not
+reuse a USD threshold as a credit amount. Use `min`, `max`, and
 `maxRegressionPct` for constraints. Use `weight` with `direction` set to
 `"minimize"` or `"maximize"` for objectives.
 
