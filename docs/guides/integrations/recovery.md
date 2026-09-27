@@ -64,10 +64,13 @@ import {
   type IntegrationConnectionStatus,
 } from "veryfront/integrations";
 
+// One deadline bounds every request this client makes, including connect.
+const deadline = AbortSignal.timeout(5 * 60 * 1000);
 const client = await createIntegrationClient({
   apiBaseUrl: "<API_BASE_URL>",
   authToken: "<TOKEN>",
   projectReference: "<PROJECT_SLUG>",
+  abortSignal: deadline,
 });
 
 async function presentConnectUrl(url: string, expiresAt: string): Promise<void> {
@@ -84,7 +87,6 @@ function identity(status: IntegrationConnectionStatus): string | undefined {
 }
 
 const scope = "user";
-const deadline = AbortSignal.timeout(5 * 60 * 1000);
 const before = identity(await client.status("gmail", scope, { abortSignal: deadline }));
 const handoff = await client.connect("gmail", { scope, redirectUri: "<REDIRECT_URI>" });
 if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
@@ -106,7 +108,8 @@ console.log(`Gmail connected in ${observed.scope} scope.`);
 
 The example correlates the scope's OAuth status with an inventory row, so a
 connection that someone else adds at the same time is not mistaken for this
-one. The abort signal ends every request at the deadline. A new
+one. The client-level abort signal ends every request, including `connect`, at the
+deadline. A new
 `connection_generation_id` on an existing `id` means the same account was
 reconnected. `veryfront integration connect` performs the same check for you and
 returns `connection_observed` with the confirmed row. If the callback arrives
