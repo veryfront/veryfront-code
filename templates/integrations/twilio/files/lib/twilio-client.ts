@@ -1,6 +1,31 @@
-import { getTwilioCredentials } from "./token-store.ts";
-
 const TWILIO_API_VERSION = "2010-04-01";
+
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+export interface TwilioCredentials {
+  accountSid: string;
+  authToken: string;
+  /** Sender number; only the send and call tools need it. */
+  phoneNumber?: string;
+}
+
+/** Read the Twilio credentials from TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER. */
+export function getTwilioCredentials(): TwilioCredentials | null {
+  const accountSid = getEnv("TWILIO_ACCOUNT_SID");
+  const authToken = getEnv("TWILIO_AUTH_TOKEN");
+  if (!accountSid || !authToken) return null;
+
+  const phoneNumber = getEnv("TWILIO_PHONE_NUMBER") || undefined;
+  return { accountSid, authToken, phoneNumber };
+}
 
 export interface TwilioMessage {
   sid: string;
@@ -73,10 +98,10 @@ function addMediaUrls(params: Record<string, string>, mediaUrl?: string[]): void
   }
 }
 
-function ensureTwilioCredentials(): NonNullable<ReturnType<typeof getTwilioCredentials>> {
-  const credentials = getTwilioCredentials();
-  if (!credentials) throw new Error("Twilio credentials not configured");
-  return credentials;
+function requireSenderNumber(): string {
+  const phoneNumber = getTwilioCredentials()?.phoneNumber;
+  if (!phoneNumber) throw new Error("Twilio sender not configured. Set TWILIO_PHONE_NUMBER.");
+  return phoneNumber;
 }
 
 async function twilioFetch<T>(
@@ -129,7 +154,7 @@ export async function sendSMS(
     statusCallback?: string;
   },
 ): Promise<TwilioMessage> {
-  const { phoneNumber } = ensureTwilioCredentials();
+  const phoneNumber = requireSenderNumber();
 
   const params: Record<string, string> = {
     To: to,
@@ -152,7 +177,7 @@ export async function sendWhatsApp(
     statusCallback?: string;
   },
 ): Promise<TwilioMessage> {
-  const { phoneNumber } = ensureTwilioCredentials();
+  const phoneNumber = requireSenderNumber();
 
   const whatsappTo = to.startsWith("whatsapp:") ? to : `whatsapp:${to}`;
   const whatsappFrom = phoneNumber.startsWith("whatsapp:") ? phoneNumber : `whatsapp:${phoneNumber}`;
@@ -224,7 +249,7 @@ export async function makeCall(
     timeout?: number;
   },
 ): Promise<TwilioCall> {
-  const { phoneNumber } = ensureTwilioCredentials();
+  const phoneNumber = requireSenderNumber();
 
   const params: Record<string, string | number> = {
     To: to,

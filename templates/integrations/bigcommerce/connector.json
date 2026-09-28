@@ -27,7 +27,7 @@
     {
       "name": "BIGCOMMERCE_STORE_HASH",
       "description": "Store hash from the API path, e.g. the 'abc123' in https://api.bigcommerce.com/stores/abc123/v3/",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://developer.bigcommerce.com/docs/start/authentication/api-accounts"
     }

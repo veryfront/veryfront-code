@@ -5080,7 +5080,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "BAMBOOHR_SUBDOMAIN",
       "description":
         "Your BambooHR company subdomain - the {company} part of https://{company}.bamboohr.com. Pass it as the companyDomain parameter on each tool.",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://documentation.bamboohr.com/docs/getting-started",
     }],
@@ -6012,7 +6012,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "BIGCOMMERCE_STORE_HASH",
       "description":
         "Store hash from the API path, e.g. the 'abc123' in https://api.bigcommerce.com/stores/abc123/v3/",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://developer.bigcommerce.com/docs/start/authentication/api-accounts",
     }],
@@ -9537,7 +9537,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "CHARGEBEE_SITE",
       "description":
         "Chargebee site name (the subdomain of your Chargebee account, e.g. acme or acme-test)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://apidocs.chargebee.com/docs/api",
     }],
@@ -24705,7 +24705,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "GORGIAS_ACCOUNT_DOMAIN",
       "description":
         "Your Gorgias account subdomain, e.g. 'acme' for acme.gorgias.com — passed as the accountDomain parameter on every tool",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://developers.gorgias.com/reference/authentication",
     }],
@@ -34220,7 +34220,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "MIXPANEL_PROJECT_ID",
       "description":
         "Mixpanel Project ID (found in project settings; pass it as the project_id parameter on query tools)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://docs.mixpanel.com/docs/admin/organizations-projects/manage-projects",
     }, {
@@ -35810,7 +35810,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "DATABASE_URL",
       "description": "PostgreSQL connection string for database queries",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://neon.tech/docs/connect/connect-from-any-app",
     }],
@@ -50914,7 +50914,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "SHOPIFY_SHOP_DOMAIN",
       "description": "Your Shopify store domain (e.g., mystore.myshopify.com)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://shopify.dev/docs/apps/auth/oauth",
     }],
@@ -51863,25 +51863,25 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "SNOWFLAKE_ACCOUNT",
       "description": "Your Snowflake account identifier (e.g., xy12345.us-east-1)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-account-identifier",
     }, {
       "name": "SNOWFLAKE_USERNAME",
       "description": "Snowflake username for authentication",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management",
     }, {
       "name": "SNOWFLAKE_PASSWORD",
       "description": "Snowflake password for authentication",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management",
     }, {
       "name": "SNOWFLAKE_WAREHOUSE",
       "description": "Default warehouse to use for queries (e.g., COMPUTE_WH)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/warehouses",
     }, {
@@ -53692,19 +53692,19 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "SUPABASE_URL",
       "description": "Your Supabase project URL (e.g., https://xxxxx.supabase.co)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys",
     }, {
       "name": "SUPABASE_ANON_KEY",
       "description": "Supabase anonymous/public API key for client-side operations",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys",
     }, {
       "name": "SUPABASE_SERVICE_KEY",
       "description": "Supabase service role key for server-side operations (bypasses RLS)",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys",
     }],
@@ -57592,7 +57592,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "WHATSAPP_PHONE_NUMBER_ID",
       "description":
         "Phone number ID of the business phone number (from WhatsApp > API Setup in the Meta app dashboard); pass it as the phoneNumberId parameter of messaging tools",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started",
     }, {
@@ -58615,7 +58615,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "WORKABLE_SUBDOMAIN",
       "description":
         "Your Workable account subdomain ({subdomain}.workable.com), shown in your company profile settings",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://workable.readme.io/reference/generate-an-access-token",
     }],
@@ -59954,7 +59954,7 @@ export const connectors: IntegrationConfig[] = [
     "envVars": [{
       "name": "ZENDESK_SUBDOMAIN",
       "description": "Zendesk subdomain, for example example for example.zendesk.com",
-      "required": true,
+      "required": false,
     }, {
       "name": "ZENDESK_ACCESS_TOKEN",
       "description": "Zendesk OAuth access token",
