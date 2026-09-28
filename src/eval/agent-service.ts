@@ -7,7 +7,11 @@ import {
   parseAgUiSseResponse,
   type ParseAgUiSseResponseOptions,
 } from "#veryfront/agent";
-import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
+import {
+  readCacheWrite1hShare,
+  readRuntimeCost,
+  readRuntimeTokenCount,
+} from "#veryfront/provider/runtime-usage.ts";
 import type {
   EvalAgentAdapter,
   EvalAgentAdapterContext,
@@ -594,11 +598,16 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     readNonNegativeNumber(record.billable_output_tokens);
   const cachedInputTokens = readNonNegativeNumber(record.cachedInputTokens) ??
     readNonNegativeNumber(record.cached_input_tokens);
-  const cacheCreationInputTokens = readNonNegativeNumber(record.cacheCreationInputTokens) ??
+  // Prefer a token-count alias so the one-hour share can pair with the total.
+  const cacheCreationInputTokens = readRuntimeTokenCount(record.cacheCreationInputTokens) ??
+    readRuntimeTokenCount(record.cacheCreationTokens) ??
+    readRuntimeTokenCount(record.cache_creation_input_tokens) ??
+    readNonNegativeNumber(record.cacheCreationInputTokens) ??
     readNonNegativeNumber(record.cacheCreationTokens) ??
     readNonNegativeNumber(record.cache_creation_input_tokens);
-  const cacheCreation1hInputTokens = readNonNegativeNumber(record.cacheCreation1hInputTokens) ??
-    readNonNegativeNumber(record.cache_creation_1h_input_tokens);
+  const cacheCreation1hInputTokens =
+    readCacheWrite1hShare(cacheCreationInputTokens, record.cacheCreation1hInputTokens) ??
+      readCacheWrite1hShare(cacheCreationInputTokens, record.cache_creation_1h_input_tokens);
   const cacheReadInputTokens = readNonNegativeNumber(record.cacheReadInputTokens) ??
     readNonNegativeNumber(record.cacheReadTokens) ??
     readNonNegativeNumber(record.cache_read_input_tokens);

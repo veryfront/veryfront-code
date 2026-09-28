@@ -15,6 +15,7 @@ import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { serverLogger } from "#veryfront/utils";
+import { readCacheWrite1hShare } from "#veryfront/provider/runtime-usage.ts";
 import type {
   RuntimeGenerateTextResult,
   RuntimeStreamPart,
@@ -519,6 +520,10 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
   const costSource = flatUsage.costSource;
   const billingMode = flatUsage.billingMode;
   const usageCaptureStatus = flatUsage.usageCaptureStatus;
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    flatUsage.cacheCreationInputTokens,
+    flatUsage.cacheCreation1hInputTokens,
+  );
 
   return {
     inputTokens: flatUsage.inputTokens,
@@ -527,9 +532,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     ...(typeof flatUsage.cacheCreationInputTokens === "number"
       ? { cacheCreationInputTokens: flatUsage.cacheCreationInputTokens }
       : {}),
-    ...(typeof flatUsage.cacheCreation1hInputTokens === "number"
-      ? { cacheCreation1hInputTokens: flatUsage.cacheCreation1hInputTokens }
-      : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(typeof flatUsage.cacheReadInputTokens === "number"
       ? { cacheReadInputTokens: flatUsage.cacheReadInputTokens }
       : {}),

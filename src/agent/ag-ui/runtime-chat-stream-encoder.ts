@@ -6,6 +6,7 @@ import {
 import type { AgUiRuntimeStreamEvent } from "./encoder.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { mapFinishReason, toRenderableCustomChunk } from "../../chat/ag-ui-helpers.ts";
+import { readCacheWrite1hShare, readRuntimeTokenCount } from "#veryfront/provider/runtime-usage.ts";
 
 /** Usage metadata captured from an AG-UI runtime finish event. */
 export type AgUiRuntimeChatStreamUsage = {
@@ -171,9 +172,15 @@ function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsa
   const cacheReadTokens = getNumberField(inputTokenDetails, "cacheReadTokens") ??
     getNumberField(usage, "cacheReadInputTokens") ??
     getNumberField(usage, "cachedInputTokens");
-  const cacheWriteTokens = getNumberField(inputTokenDetails, "cacheWriteTokens") ??
+  // Prefer a token-count alias so the one-hour share can pair with the total.
+  const cacheWriteTokens = readRuntimeTokenCount(inputTokenDetails.cacheWriteTokens) ??
+    readRuntimeTokenCount(usage.cacheCreationInputTokens) ??
+    getNumberField(inputTokenDetails, "cacheWriteTokens") ??
     getNumberField(usage, "cacheCreationInputTokens");
-  const cacheCreation1hInputTokens = getNumberField(usage, "cacheCreation1hInputTokens");
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    cacheWriteTokens,
+    usage.cacheCreation1hInputTokens,
+  );
   const reasoningTokens = getNumberField(outputTokenDetails, "reasoningTokens") ??
     getNumberField(usage, "reasoningTokens");
 

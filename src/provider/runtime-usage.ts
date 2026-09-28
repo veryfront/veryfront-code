@@ -144,6 +144,20 @@ export function readRuntimeTokenCount(value: unknown): number | undefined {
 }
 
 /**
+ * Read the one-hour cache-write share of a cache-write total.
+ *
+ * Both values must be non-negative safe integers. The share is absent without
+ * a valid total and never exceeds it.
+ */
+export function readCacheWrite1hShare(total: unknown, share: unknown): number | undefined {
+  const validTotal = readRuntimeTokenCount(total);
+  const validShare = readRuntimeTokenCount(share);
+  return validTotal === undefined || validShare === undefined
+    ? undefined
+    : Math.min(validShare, validTotal);
+}
+
+/**
  * Add two optional token counters without returning an unsafe integer.
  *
  * An absent pair remains absent; an overflowing pair is rejected.
@@ -293,7 +307,11 @@ export function mergeRuntimeUsage(
   const normalizedNumbers = Object.create(null) as RuntimeUsage;
 
   for (const [field, kind] of RUNTIME_USAGE_NUMERIC_FIELDS) {
-    if (kind === "total" || field === "cacheReadInputTokens") continue;
+    if (
+      kind === "total" ||
+      field === "cacheReadInputTokens" ||
+      field === "cacheCreation1hInputTokens"
+    ) continue;
     const read = kind === "token" ? readRuntimeTokenCount : readRuntimeCost;
     const value = latestValidValue(
       incoming[field],
@@ -303,6 +321,17 @@ export function mergeRuntimeUsage(
     if (value !== undefined) {
       normalizedNumbers[field] = value;
     }
+  }
+
+  // The one-hour share is valid only beside a valid total in its own snapshot,
+  // and never exceeds the merged cache-write total.
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    normalizedNumbers.cacheCreationInputTokens,
+    readCacheWrite1hShare(incoming.cacheCreationInputTokens, incoming.cacheCreation1hInputTokens) ??
+      readCacheWrite1hShare(previous.cacheCreationInputTokens, previous.cacheCreation1hInputTokens),
+  );
+  if (cacheCreation1hInputTokens !== undefined) {
+    normalizedNumbers.cacheCreation1hInputTokens = cacheCreation1hInputTokens;
   }
 
   const cacheReadInputTokens = readRuntimeTokenCount(incoming.cacheReadInputTokens) ??

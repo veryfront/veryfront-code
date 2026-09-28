@@ -1276,6 +1276,42 @@ describe("runtime-bridge", () => {
     );
   });
 
+  it("keeps the flat one-hour cache-write share only beside a valid total", async () => {
+    const cases: Array<[unknown, unknown, Record<string, number>]> = [
+      [1000, 600, { cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 600 }],
+      [500, 600, { cacheCreationInputTokens: 500, cacheCreation1hInputTokens: 500 }],
+      [1000, 1.5, { cacheCreationInputTokens: 1000 }],
+      [1000, -1, { cacheCreationInputTokens: 1000 }],
+      [1.5, 1, { cacheCreationInputTokens: 1.5 }],
+      [-1, 1, { cacheCreationInputTokens: -1 }],
+      [undefined, 600, {}],
+    ];
+    for (const [total, share, expected] of cases) {
+      const model = createGenerateModel("test", "test/flat-usage-1h-share", async () => ({
+        content: [{ type: "text", text: "ok" }],
+        finishReason: "stop",
+        usage: {
+          inputTokens: 3,
+          outputTokens: 4,
+          totalTokens: 7,
+          ...(total === undefined ? {} : { cacheCreationInputTokens: total }),
+          cacheCreation1hInputTokens: share,
+        },
+      }));
+
+      const result = await generateText({
+        model,
+        messages: [{ role: "user", content: "Hello" }],
+      });
+
+      assertEquals(
+        result.usage,
+        { inputTokens: 3, outputTokens: 4, totalTokens: 7, ...expected },
+        `total ${String(total)}, share ${String(share)}`,
+      );
+    }
+  });
+
   it("drops flat usage billing labels outside the supported allowlists", async () => {
     const model = createGenerateModel("test", "test/flat-usage-bogus-labels", async () => ({
       content: [{ type: "text", text: "billed" }],

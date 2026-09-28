@@ -223,6 +223,38 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     }
   });
 
+  it("emits the one-hour share only beside a valid cache-write total, capped at it", () => {
+    const extract = (total: unknown, share: unknown) =>
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          ...(total === undefined ? {} : { cache_creation_input_tokens: total }),
+          cache_creation: { ephemeral_1h_input_tokens: share },
+        },
+      });
+
+    for (const total of [1.5, -1, "1000", Number.MAX_SAFE_INTEGER + 1, undefined]) {
+      const usage = extract(total, 1);
+      assertEquals(usage !== undefined && "cacheCreationInputTokens" in usage, false);
+      assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+    }
+    for (const share of [1.5, -1, "600"]) {
+      const usage = extract(1000, share);
+      assertEquals(usage?.cacheCreationInputTokens, 1000);
+      assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+    }
+    assertEquals(extract(500, 600)?.cacheCreation1hInputTokens, 500);
+  });
+
+  it("drops an aggregated one-hour share that has no cache-write total", () => {
+    const usage = addAnthropicUsage(
+      { inputTokens: 1 },
+      { inputTokens: 2, cacheCreation1hInputTokens: 5 },
+    );
+    assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+  });
+
   it("reads gateway amounts sent as decimal strings at the extraction boundary", () => {
     assertEquals(
       extractAnthropicUsage({
