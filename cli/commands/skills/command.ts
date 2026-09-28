@@ -4,7 +4,7 @@
  * @module cli/commands/skills
  */
 
-import { listAllSkills, loadSkill } from "../../skills/loader.ts";
+import { findSkill, listAllSkills, loadSkill } from "../../skills/loader.ts";
 import type { LoadedSkill } from "../../skills/types.ts";
 
 export async function listSkills(): Promise<LoadedSkill[]> {
@@ -14,10 +14,9 @@ export async function listSkills(): Promise<LoadedSkill[]> {
 export async function getSkillInfo(
   name: string,
 ): Promise<LoadedSkill | null> {
-  const skills = await listAllSkills();
-  const found = skills.find((s) => s.metadata.name === name);
+  const found = await findSkill(name);
   if (found) return found;
 
   // Try loading directly by path
-  return await loadSkill(name);
+  return await loadSkill(name, { references: true });
 }

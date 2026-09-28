@@ -349,6 +349,39 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(promptNames.includes("veryfront-components"), true);
     });
 
+    it("should serve bundled skill prompts and the skill resource", async () => {
+      const portNum = 19920;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+      await waitForServerBind();
+
+      const skill = await (await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "veryfront://skill" },
+      })).json();
+      const routing = await (await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "prompts/get",
+        params: { name: "veryfront-routing" },
+      })).json();
+      const unknown = await (await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "prompts/get",
+        params: { name: "unknown-prompt" },
+      })).json();
+
+      assertEquals(
+        skill.result.contents[0].text.includes("veryfront integration connect"),
+        true,
+      );
+      assertEquals(routing.result.messages[0].content.text.length > 0, true);
+      assertExists(unknown.error);
+    });
+
     it("should include title and annotations in tools/list response", async () => {
       const portNum = 19888;
       server = new MCPDevServer({ httpPort: portNum });
