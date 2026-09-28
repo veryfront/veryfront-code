@@ -114,7 +114,10 @@ export function isSelectedReadiness(value: unknown, expected: {
   if (
     a.state === "unknown" && (a.id !== null || a.display_name !== null || a.evidence !== "none")
   ) return false;
-  if (a.state === "recorded" && (a.evidence !== "stored_metadata" || s.scope !== "project")) {
+  if (
+    a.state === "recorded" &&
+    (a.evidence !== "stored_metadata" || !oneOf(s.scope, ["user", "project"]))
+  ) {
     return false;
   }
   if (

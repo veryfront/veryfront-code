@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createIntegrationClient, IntegrationApiError } from "#veryfront/integrations/client.ts";
@@ -27,7 +27,7 @@ function response() {
       state: "eligible",
       basis: "metadata_only",
       required_capability: "project.integrations.read",
-      blockers: [],
+      blockers: [] as string[],
       pending_checks: ["provider_authorization"],
     },
     provider_verification: { state: "not_checked" },
@@ -51,7 +51,7 @@ describe("selected readiness client", () => {
   ) {
     it(scenario, async () => {
       let reads = 0;
-      await withMockFetch((url, init) => {
+      await withMockFetch(async (url, init) => {
         const path = new URL(String(url));
         if (path.pathname.endsWith("/tools/list")) {
           return Response.json({ tools: [] }, {
@@ -107,6 +107,7 @@ describe("selected readiness client", () => {
           assertEquals(reads, 2);
         } else {
           const error = await assertRejects(read, IntegrationApiError);
+          assertInstanceOf(error, IntegrationApiError);
           assertEquals(error.kind, "invalid_response");
           assertEquals(error.outcomeUnknown, false);
           assertEquals(reads, 1);
@@ -115,6 +116,41 @@ describe("selected readiness client", () => {
     });
   }
 });
+
+for (const scope of ["user", "project"] as const) {
+  it(`accepts recorded account metadata for ${scope} connections`, async () => {
+    const account = {
+      state: "recorded",
+      id: "provider-test-account",
+      display_name: "Test account",
+      evidence: "stored_metadata",
+    } as const;
+    await withMockFetch(async (url) => {
+      const path = new URL(String(url));
+      if (path.pathname.endsWith("/tools/list")) {
+        return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
+      }
+      if (!path.pathname.includes("/integrations/")) return Response.json(project);
+      const data = response();
+      return Response.json({
+        selected_readiness: { ...data, selection: { ...data.selection, scope }, account },
+      });
+    }, async () => {
+      const client = await createIntegrationClient({
+        apiBaseUrl: "https://api.example.test",
+        authToken: "synthetic-token",
+        projectReference: project.id,
+      });
+      const readiness = await client.readiness("github__get_current_user", {
+        connectionId,
+        expectedConnectionGenerationId: generation,
+      });
+      assertEquals(readiness.account, account);
+      assertEquals(readiness.selection.scope, scope);
+      assertEquals(readiness.provider_verification.state, "not_checked");
+    });
+  });
+}
 
 it("keeps out-of-order readiness reads isolated by project and credential", async () => {
   const second = { id: "44444444-4444-4444-8444-444444444444", slug: "second-project" };
@@ -207,7 +243,7 @@ it("validates the selection sent even when caller options change during the requ
 });
 
 it("rejects a selected result that drops an explicit connection without a generation", async () => {
-  await withMockFetch((input) => {
+  await withMockFetch(async (input) => {
     const url = new URL(String(input));
     if (url.pathname.endsWith("/tools/list")) {
       return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
@@ -237,6 +273,7 @@ it("rejects a selected result that drops an explicit connection without a genera
       () => client.readiness("github__get_current_user", { connectionId }),
       IntegrationApiError,
     );
+    assertInstanceOf(error, IntegrationApiError);
     assertEquals(error.kind, "invalid_response");
     assertEquals(error.outcomeUnknown, false);
   });
