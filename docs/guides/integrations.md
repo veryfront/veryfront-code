@@ -53,8 +53,9 @@ You need three things. None of them is created implicitly:
   picks a project for you.
 - **The API origin.** Use `https://api.veryfront.com`, or your own API origin
   for a self-hosted or non-production deployment. Every request carries the
-  platform credential, so use an `https://` origin; plain `http://` is only
-  safe for a loopback address such as `http://localhost`.
+  platform credential, so use an `https://` origin. The TypeScript client and
+  the CLI refuse any other scheme; only the raw `curl` examples can reach a
+  loopback `http://localhost` origin.
 
 The shell examples use `curl` and `jq` and share these variables. The first line
 keeps an API origin you already exported:
