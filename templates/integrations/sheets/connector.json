@@ -3,6 +3,7 @@
   "displayName": "Google Sheets",
   "icon": "sheets.svg",
   "description": "Read, write, and manage Google Sheets spreadsheets",
+  "category": "data",
   "auth": {
     "type": "oauth2",
     "provider": "google",

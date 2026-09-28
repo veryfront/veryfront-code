@@ -53,6 +53,9 @@ export const CHANNEL_INVOKE_PATH = "/channels/invoke";
  * - `POST /api/control-plane/runs/{runId}/resume`
  * - `DELETE /api/control-plane/runs/{runId}`
  *
+ * Cancel and resume reach the owning pod directly, past the proxy. On a pod that
+ * does not own the run they are platform-scoped, with no release.
+ *
  * Any other path under the prefix falls through to project code, so treating
  * the prefix as proof of a control-plane request would hand a project's own
  * routes whatever exemption the caller grants.

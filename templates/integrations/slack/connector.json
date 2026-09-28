@@ -3,6 +3,7 @@
   "displayName": "Slack",
   "icon": "slack.svg",
   "description": "Send messages, read channels, and manage Slack workspace",
+  "category": "communication",
   "auth": {
     "type": "oauth2",
     "provider": "slack",

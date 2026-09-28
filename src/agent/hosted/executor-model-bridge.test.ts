@@ -13,8 +13,18 @@ import {
 import {
   createExecutorModelBroker,
   createExecutorModelRuntimeResolver,
+  loadExecutorModelCatalog,
 } from "./executor-model-bridge.ts";
-import { registerVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  registerVeryfrontCloudModelFacts,
+  resolveVeryfrontCloudModelThinking,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
+  veryfrontCloudCatalogScopeKey,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic-model";
 const allowedModelIds = new Set([modelId]);
@@ -1006,5 +1016,111 @@ describe("executor managed model bridge", () => {
     }) as { modelProvider?: string }[];
 
     assertEquals(metadata.map((entry) => entry.modelProvider), ["anthropic"]);
+  });
+  it("returns the served facts of granted models without a credential, and the executor reads them", async () => {
+    __resetVeryfrontCloudCatalogForTests();
+    const servedModelId = "veryfront-cloud/anthropic/claude-sonnet-4-6";
+    const unloadedModelId = "veryfront-cloud/openai/gpt-unloaded";
+    const granted = new Set([servedModelId, unloadedModelId]);
+    const runCredential = "run-scoped-secret-credential";
+    const scope = { apiBaseUrl: "https://api.example.test", apiToken: runCredential };
+    const scopeKey = veryfrontCloudCatalogScopeKey(scope);
+    __setVeryfrontCloudCatalogForScopeForTests(scope, {
+      models: [{
+        id: "claude-sonnet-4-6",
+        modelId: "anthropic/claude-sonnet-4-6",
+        provider: "anthropic",
+        surface: "anthropic",
+        operations: ["messages"],
+        capabilities: { thinking: true, reasoning_mode: "budget", reasoning_budget_tokens: 1536 },
+      }],
+    });
+    const calls: string[] = [];
+    const built = (id: string, key = scopeKey) => {
+      const model = stubModel({
+        prepare: () => {
+          calls.push(`prepare:${id}`);
+          return Promise.resolve();
+        },
+        doGenerate: () => {
+          throw new Error("model.catalog must not call the model");
+        },
+        doStream: () => {
+          throw new Error("model.catalog must not call the model");
+        },
+      });
+      registerVeryfrontCloudModelFacts(model, () => ({ catalogScopeKey: key }) as never);
+      return model;
+    };
+    const models = new Map([
+      [servedModelId, built(servedModelId)],
+      [
+        unloadedModelId,
+        built(
+          unloadedModelId,
+          veryfrontCloudCatalogScopeKey({ ...scope, projectSlug: "unloaded" }),
+        ),
+      ],
+    ]);
+    const channels = pair(createExecutorModelBroker({
+      allowedModelIds: granted,
+      resolveModelRuntime: (id) => models.get(id),
+    }));
+    try {
+      const rows = await channels.caller.request("model.catalog", {});
+      const serialized = JSON.stringify(rows);
+      assertEquals(serialized.includes(runCredential), false);
+      assertEquals(serialized.includes(scopeKey), false);
+      assertEquals((rows as { id: string }[]).map((row) => row.id), [servedModelId]);
+
+      const key = await loadExecutorModelCatalog({
+        channel: channels.caller,
+        allowedModelIds: granted,
+      });
+      assert(key);
+      assertEquals(key.includes(runCredential), false);
+      assertEquals(
+        runWithVeryfrontCloudContext(
+          { catalogScopeKey: key },
+          () => resolveVeryfrontCloudModelThinking(servedModelId),
+        ),
+        { enabled: true, budgetTokens: 1536 },
+      );
+      // Outside the key the executor still reads the facts shipped with the package.
+      assertEquals(resolveVeryfrontCloudModelThinking(servedModelId), {
+        enabled: true,
+        budgetTokens: 2048,
+      });
+      assert(calls.includes(`prepare:${servedModelId}`));
+    } finally {
+      await channels.close();
+      __resetVeryfrontCloudCatalogForTests();
+    }
+  });
+
+  it("rejects served catalog rows for a model the executor was not granted", async () => {
+    const channels = pair(
+      new Map<string, ExecutorOperation>([["model.catalog", {
+        mode: "unary",
+        handle: () => [{
+          id: "veryfront-cloud/anthropic/not-granted",
+          model: {
+            id: "not-granted",
+            modelId: "anthropic/not-granted",
+            provider: "anthropic",
+            aliases: [],
+          },
+        }],
+      }]]),
+    );
+    try {
+      await assertRejects(
+        () => loadExecutorModelCatalog({ channel: channels.caller, allowedModelIds }),
+        TypeError,
+        "Invalid managed model catalog",
+      );
+    } finally {
+      await channels.close();
+    }
   });
 });

@@ -220,6 +220,32 @@ describe("local integration endpoint executor", () => {
     assertEquals(result, { ok: true });
   });
 
+  it("sends a fixed body field as its catalog default even when the caller supplies another value", async () => {
+    let requestBody: BodyInit | null | undefined;
+    await executeLocalIntegrationEndpoint({
+      endpoint: endpoint({
+        method: "POST",
+        url: "https://graph.example.test/db/neo4j/query/v2",
+        body: {
+          statement: { type: "string", description: "Cypher", required: true },
+          accessMode: { type: "string", description: "Access mode", default: "Read", fixed: true },
+        },
+      }),
+      args: { statement: "CREATE (n) RETURN n", accessMode: "Write" },
+      authHeaders: {},
+      allowedOrigin: "https://graph.example.test",
+      transport: (request) => {
+        requestBody = request.init.body;
+        return Promise.resolve(Response.json({ ok: true }));
+      },
+    });
+
+    assertEquals(JSON.parse(String(requestBody)), {
+      statement: "CREATE (n) RETURN n",
+      accessMode: "Read",
+    });
+  });
+
   it("formats Outlook thread ids as fixed Microsoft Graph conversation filters", async () => {
     let requestUrl = "";
     await executeLocalIntegrationEndpoint({

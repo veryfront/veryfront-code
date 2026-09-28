@@ -3,6 +3,7 @@
   "displayName": "Google Calendar",
   "icon": "calendar.svg",
   "description": "Manage events, find free time, and schedule meetings",
+  "category": "scheduling",
   "auth": {
     "type": "oauth2",
     "provider": "google",

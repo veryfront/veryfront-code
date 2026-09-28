@@ -33,7 +33,8 @@ export interface ExecutorOperationGate {
 
 /**
  * Wrap an invocation's trusted operation map without changing channel encoding.
- * Preparation permits model.metadata, model.prepare, tool.sources and tool.list.
+ * Preparation permits model.metadata, model.catalog, model.prepare, tool.sources
+ * and tool.list.
  * Other operations require execution unless explicitly granted for preparation;
  * model.generate, model.stream and tool.execute always require execution.
  *
@@ -53,7 +54,13 @@ export function createExecutorOperationGate(
     throw new TypeError("Executor operation gate requires an owner signal");
   }
   const registered = new Map(options.operations);
-  const preparation = new Set(["model.metadata", "model.prepare", "tool.sources", "tool.list"]);
+  const preparation = new Set([
+    "model.metadata",
+    "model.catalog",
+    "model.prepare",
+    "tool.sources",
+    "tool.list",
+  ]);
   for (const name of options.preparationOperations ?? []) {
     if (
       !registered.has(name) ||

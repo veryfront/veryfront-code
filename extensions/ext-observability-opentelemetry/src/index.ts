@@ -102,6 +102,11 @@ type ContextAPI = {
   active(): unknown;
   with<T>(ctx: unknown, fn: () => T): T;
 };
+type Propagator = {
+  inject(ctx: unknown, carrier: unknown, setter?: unknown): void;
+  extract(ctx: unknown, carrier: unknown, getter?: unknown): unknown;
+  fields(): string[];
+};
 
 const NOOP_SPAN = {
   setAttribute() {
@@ -852,6 +857,7 @@ class OtlpTracingExporter implements TracingExporter {
   private metricsApi: MetricsAPI | null = null;
   private traceApi: TraceAPI | null = null;
   private contextApi: ContextAPI | null = null;
+  private propagator: Propagator | null = null;
   private logRecordEmitter: ((record: NodeTelemetryLogRecord) => void) | null = null;
 
   async start(_ctxConfig: Record<string, unknown>): Promise<void> {
@@ -931,6 +937,7 @@ class OtlpTracingExporter implements TracingExporter {
       otel.api.context.setGlobalContextManager(contextManager);
 
       this.sdkProvider = provider;
+      this.propagator = propagator;
       this.traceApi = {
         getActiveSpan: () => otel.api.trace.getActiveSpan(),
         getSpan: (ctx) =>
@@ -1059,6 +1066,7 @@ class OtlpTracingExporter implements TracingExporter {
         this.sdkProvider = null;
         this.traceApi = null;
         this.contextApi = null;
+        this.propagator = null;
       }
     }
   }
@@ -1078,6 +1086,10 @@ class OtlpTracingExporter implements TracingExporter {
 
   getContextAPI(): ContextAPI | null {
     return this.contextApi;
+  }
+
+  getPropagator(): Propagator | null {
+    return this.propagator;
   }
 
   getLogRecordEmitter(): ((record: NodeTelemetryLogRecord) => void) | null {

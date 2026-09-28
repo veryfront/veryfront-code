@@ -101,6 +101,8 @@ export type {
   IntegrationClientContext,
   IntegrationClientTool,
   IntegrationConnectionStatus,
+  IntegrationConnectionWaitOptions,
+  IntegrationConnectionWaitOutcome,
   IntegrationConnectOptions,
   IntegrationConnectOutcome,
   IntegrationDetails,

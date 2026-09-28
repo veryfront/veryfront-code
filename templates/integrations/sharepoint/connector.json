@@ -3,6 +3,7 @@
   "displayName": "SharePoint",
   "icon": "sharepoint.svg",
   "description": "Access and manage SharePoint sites, document libraries, and files",
+  "category": "files",
   "auth": {
     "type": "oauth2",
     "provider": "microsoft",

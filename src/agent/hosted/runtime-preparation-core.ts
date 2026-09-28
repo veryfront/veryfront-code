@@ -16,6 +16,10 @@ import {
   resolveVeryfrontCloudThinkingProviderOptions,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  runWithVeryfrontCloudContext,
+  runWithVeryfrontCloudContextAsync,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
 import { getExecutorModelAdditiveReasoningTokens } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import type { HostToolSet, RemoteToolSource } from "#veryfront/tool";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
@@ -173,9 +177,10 @@ export interface ExecutorRuntimeFacades {
    * check and before thinking defaults are read, so the first run in a process
    * reads served facts. It must not resolve a model or reserve any resource,
    * and a failure is ignored: the reads then use the facts shipped with this
-   * package.
+   * package. It may resolve to the non-secret key naming the loaded catalog;
+   * preparation and the run then read under that key.
    */
-  loadModelCatalog?: (signal: AbortSignal) => Promise<void>;
+  loadModelCatalog?: (signal: AbortSignal) => Promise<string | undefined | void>;
   hostTools: ReadonlyMap<string, HostToolSet>;
   remoteToolSources: ReadonlyMap<string, RemoteToolSource>;
   projectSteering?: {
@@ -318,6 +323,46 @@ function intersectNames(
       (source === undefined || source === true || includes(source, name)) &&
       (requested === undefined || includes(requested, name)) && !includes(denied, name),
   );
+}
+
+/** Thinking defaults and the output allowance left after the reasoning reservation. */
+function resolvePreparedOutput(
+  request: ExecutorRuntimePrepareRequest,
+  definition: RuntimeAgentMarkdownDefinition,
+  modelId: string,
+  grantedOutputTokens: number,
+) {
+  const thinking = request.thinking ?? definition.thinking ??
+    resolveVeryfrontCloudModelThinking(modelId);
+  let availableOutputTokens = grantedOutputTokens;
+  // The served surface decides the protocol, so a newly served provider on
+  // the Anthropic surface reserves its reasoning tokens like `anthropic/*`.
+  if (isVeryfrontCloudAnthropicSurfaceModel(modelId)) {
+    try {
+      const effectiveThinking = thinking ?? resolveVeryfrontCloudModelThinking(modelId);
+      const model = { id: modelId, modelId, provider: "anthropic" };
+      const options = {
+        reasoning: resolveVeryfrontCloudReasoningOption(modelId, effectiveThinking),
+        providerOptions: resolveVeryfrontCloudThinkingProviderOptions(
+          modelId,
+          effectiveThinking,
+        ),
+      };
+      objectSetPrototypeOf(model, null);
+      objectSetPrototypeOf(options, null);
+      availableOutputTokens -= getExecutorModelAdditiveReasoningTokens({ model, options });
+    } catch {
+      refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+    }
+  }
+  const maxOutputTokens = request.maxOutputTokens ?? availableOutputTokens;
+  if (
+    !numberIsSafeInteger(maxOutputTokens) || maxOutputTokens <= 0 ||
+    maxOutputTokens > availableOutputTokens
+  ) {
+    refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+  }
+  return { thinking, maxOutputTokens };
 }
 
 /**
@@ -486,44 +531,24 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         (request.maxOutputTokens !== undefined &&
           request.maxOutputTokens > modelGrant.maxOutputTokens)
       ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+      let catalogScopeKey: string | undefined;
       if (facades.loadModelCatalog) {
         try {
-          await observePrivatePromise(facades.loadModelCatalog(context.signal));
+          const key = await observePrivatePromise(facades.loadModelCatalog(context.signal));
+          if (typeof key === "string" && key) catalogScopeKey = key;
         } catch {
           // The reads below fall back to the shipped facts.
         }
         assertActive();
       }
-      const thinking = request.thinking ?? definition.thinking ??
-        resolveVeryfrontCloudModelThinking(modelId);
-      let availableOutputTokens = modelGrant.maxOutputTokens;
-      // The served surface decides the protocol, so a newly served provider on
-      // the Anthropic surface reserves its reasoning tokens like `anthropic/*`.
-      if (isVeryfrontCloudAnthropicSurfaceModel(modelId)) {
-        try {
-          const effectiveThinking = thinking ?? resolveVeryfrontCloudModelThinking(modelId);
-          const model = { id: modelId, modelId, provider: "anthropic" };
-          const options = {
-            reasoning: resolveVeryfrontCloudReasoningOption(modelId, effectiveThinking),
-            providerOptions: resolveVeryfrontCloudThinkingProviderOptions(
-              modelId,
-              effectiveThinking,
-            ),
-          };
-          objectSetPrototypeOf(model, null);
-          objectSetPrototypeOf(options, null);
-          availableOutputTokens -= getExecutorModelAdditiveReasoningTokens({ model, options });
-        } catch {
-          refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
-        }
-      }
-      const maxOutputTokens = request.maxOutputTokens ?? availableOutputTokens;
-      if (
-        !numberIsSafeInteger(maxOutputTokens) || maxOutputTokens <= 0 ||
-        maxOutputTokens > availableOutputTokens
-      ) {
-        refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
-      }
+      // Preparation and every later read of the run use the same catalog, so a
+      // call carries exactly the thinking controls its preparation reserved for.
+      const catalogContext = catalogScopeKey === undefined ? undefined : { catalogScopeKey };
+      const withServedFacts = <T>(read: () => T): T =>
+        catalogContext ? runWithVeryfrontCloudContext(catalogContext, read) : read();
+      const { thinking, maxOutputTokens } = withServedFacts(() =>
+        resolvePreparedOutput(request, definition, modelId, modelGrant.maxOutputTokens)
+      );
       requireFacades(definition, grant);
       // Enroll only after agent.describe returns: a failed discovery operation
       // can await discovery.close(). No remaining preparation work awaits it.
@@ -803,7 +828,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       };
       objectSetPrototypeOf(runtimeInput, null);
       objectSetPrototypeOf(runtimeOptions, null);
-      const runtimeAgent = input.project.instantiate(runtimeInput, runtimeOptions);
+      const runtimeAgent = withServedFacts(() =>
+        input.project.instantiate(runtimeInput, runtimeOptions)
+      );
       assertActive();
       const preparedRuntimeHandle = crypto.randomUUID();
       preparedOperations = createExecutorAgentOperations({
@@ -822,6 +849,12 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
                 ? { runId: execution.runId, conversationId: execution.conversationId }
                 : {}),
               maxOutputTokens: options.maxOutputTokens,
+              ...(catalogContext
+                ? {
+                  runStream: <T>(operation: () => Promise<T>) =>
+                    runWithVeryfrontCloudContextAsync(catalogContext, operation),
+                }
+                : {}),
             };
             objectSetPrototypeOf(streamOptions, null);
             return createHostedChatRuntimeDataStream(streamOptions, streamInput);

@@ -74,10 +74,21 @@ interface SubmittedToolResult {
   key: string;
 }
 export type SessionStatus = RunSessionStatus;
+
+/**
+ * Who served a run's stream, captured from the proxy-authenticated stream request.
+ * Direct-to-pod control calls (cancel, resume) bypass the proxy, so this is their only
+ * trusted source for the run's release or branch.
+ */
+export interface RunServingIdentity {
+  projectId: string;
+  spanAttributes: Record<string, string | number | boolean>;
+}
 export type SubmitToolResultOutcome = SubmitResumeValueOutcome;
 
 export class AgentRunSessionManager {
   private readonly sessions: RunResumeSessionManager<SubmittedToolResult>;
+  private readonly servingIdentities = new Map<string, RunServingIdentity>();
 
   constructor(
     private readonly options: {
@@ -99,9 +110,25 @@ export class AgentRunSessionManager {
     this.sessions = new RunResumeSessionManager(managerOptions);
   }
 
-  startRun(input: { runId: string; threadId: string }): AbortSignal {
+  startRun(
+    input: { runId: string; threadId: string; servingIdentity?: RunServingIdentity },
+  ): AbortSignal {
     try {
-      return this.sessions.startRun(input);
+      const signal = this.sessions.startRun(input);
+      const identity = input.servingIdentity;
+      if (identity) {
+        this.servingIdentities.set(input.runId, identity);
+        // Session and waiting TTLs cancel inside `sessions`, bypassing this wrapper; every
+        // cancel aborts the run's signal, so drop the identity then, unless a newer run owns it.
+        signal.addEventListener("abort", () => {
+          if (this.servingIdentities.get(input.runId) === identity) {
+            this.servingIdentities.delete(input.runId);
+          }
+        }, { once: true });
+      } else {
+        this.servingIdentities.delete(input.runId);
+      }
+      return signal;
     } catch (error) {
       if (error instanceof RunAlreadyExistsError) {
         throw new AgentRunAlreadyExistsError(input.runId);
@@ -158,15 +185,28 @@ export class AgentRunSessionManager {
     }
   }
 
+  /** Span attributes of an active run's stream, only when it was served for `projectId`. */
+  getServingSpanAttributes(
+    runId: string,
+    projectId: string | undefined,
+  ): RunServingIdentity["spanAttributes"] | undefined {
+    const identity = this.servingIdentities.get(runId);
+    if (!identity || !this.sessions.getRunStatus(runId)) return undefined;
+    return identity.projectId === projectId ? identity.spanAttributes : undefined;
+  }
+
   cancelRun(runId: string): boolean {
+    this.servingIdentities.delete(runId);
     return this.sessions.cancelRun(runId);
   }
 
   completeRun(runId: string): void {
+    this.servingIdentities.delete(runId);
     this.sessions.completeRun(runId);
   }
 
   failRun(runId: string): void {
+    this.servingIdentities.delete(runId);
     this.sessions.failRun(runId);
   }
 
@@ -175,6 +215,7 @@ export class AgentRunSessionManager {
   }
 
   reset(): void {
+    this.servingIdentities.clear();
     this.sessions.reset();
   }
 }

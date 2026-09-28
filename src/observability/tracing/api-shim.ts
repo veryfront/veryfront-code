@@ -882,18 +882,23 @@ export const publicTrace: Readonly<
 // ---------------------------------------------------------------------------
 
 export const propagation = {
-  setGlobalPropagator(p: TextMapPropagator): void {
+  setGlobalPropagator(p: TextMapPropagator | null): void {
     updateTelemetryState({ propagator: p });
   },
+  // Like the OTel API, a record carrier needs no accessors: SDK propagators require them.
   extract<C>(ctx: Context, carrier: C, getter?: TextMapGetter<C>): Context {
     const propagator = telemetryState.propagator;
     if (!propagator) return ctx;
-    return propagator.extract(ctx, carrier, getter as TextMapGetter<unknown> | undefined);
+    return propagator.extract(
+      ctx,
+      carrier,
+      (getter ?? defaultTextMapGetter) as TextMapGetter<unknown>,
+    );
   },
   inject<C>(ctx: Context, carrier: C, setter?: TextMapSetter<C>): void {
     const propagator = telemetryState.propagator;
     if (!propagator) return;
-    propagator.inject(ctx, carrier, setter as TextMapSetter<unknown> | undefined);
+    propagator.inject(ctx, carrier, (setter ?? defaultTextMapSetter) as TextMapSetter<unknown>);
   },
 };
 

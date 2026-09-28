@@ -3,6 +3,7 @@
   "displayName": "OneDrive",
   "icon": "onedrive.svg",
   "description": "Access and manage files in Microsoft OneDrive",
+  "category": "files",
   "auth": {
     "type": "oauth2",
     "provider": "microsoft",

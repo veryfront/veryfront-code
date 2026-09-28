@@ -5,9 +5,14 @@ import {
   __resetVeryfrontCloudCatalogForTests,
   __setVeryfrontCloudCatalogForScopeForTests,
   __setVeryfrontCloudCatalogForTests,
+  forgetReceivedVeryfrontCloudCatalog,
+  isVeryfrontCloudCatalogFresh,
   peekVeryfrontCloudCatalog,
+  rememberReceivedVeryfrontCloudCatalog,
+  veryfrontCloudCatalogScopeKey,
   withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
+import { runWithVeryfrontCloudContext } from "./context.ts";
 import {
   seedServedCatalogForTests,
   SERVED_MODEL_ROWS,
@@ -18,6 +23,7 @@ import {
   DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
   isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
+  readServedVeryfrontCloudCatalogModel,
   resolveVeryfrontCloudDefaultModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -161,6 +167,46 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
         );
         assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
       });
+    });
+
+    it("reads a received catalog under its key until it is forgotten", () => {
+      const key = rememberReceivedVeryfrontCloudCatalog([{
+        id: "claude-sonnet-4-6",
+        modelId: "anthropic/claude-sonnet-4-6",
+        provider: "anthropic",
+        aliases: [],
+        surface: "anthropic",
+        thinking: true,
+        reasoningBudgetTokens: 1024,
+      }]);
+      const read = () =>
+        runWithVeryfrontCloudContext(
+          { catalogScopeKey: key },
+          () => resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"),
+        );
+      assertEquals(read(), { enabled: true, budgetTokens: 1024 });
+      // It lists only the models it was received for, so it never refuses one.
+      assertEquals(isVeryfrontCloudCatalogFresh(key), false);
+      forgetReceivedVeryfrontCloudCatalog(key);
+      assertEquals(read(), { enabled: true, budgetTokens: 2048 });
+    });
+
+    it("reads a served row for a scope key, never the shipped list", () => {
+      const key = veryfrontCloudCatalogScopeKey(projectA);
+      assertEquals(
+        readServedVeryfrontCloudCatalogModel(key, "anthropic/claude-sonnet-4-6"),
+        undefined,
+      );
+      __setVeryfrontCloudCatalogForScopeForTests(
+        projectA,
+        payload([row("anthropic/claude-sonnet-4-6", { surface: "anthropic" })]),
+      );
+      assertEquals(
+        readServedVeryfrontCloudCatalogModel(key, "veryfront-cloud/anthropic/claude-sonnet-4-6")
+          ?.modelId,
+        "anthropic/claude-sonnet-4-6",
+      );
+      assertEquals(readServedVeryfrontCloudCatalogModel(key, "anthropic/unlisted"), undefined);
     });
 
     it("keeps google-ai-studio as Google when a loaded catalog lists no Google model", () => {
