@@ -954,9 +954,9 @@ describe("ext-llm-openai/openai-chat-stream", () => {
   });
 
   it("skips Azure content-filter annotation frames around the finish reason", async () => {
-    // Verbatim frames from the Azure OpenAI deployment behind veryfront-cloud
-    // (`gpt-5.5`, captured on staging 2026-09-28): after the finish chunk,
-    // Azure reports its output content-filter result for the streamed text as
+    // Frame shapes from the Azure OpenAI deployment behind veryfront-cloud
+    // (`gpt-5.5`, observed on staging 2026-09-28; identifiers are synthetic):
+    // after the finish chunk, Azure reports its output content-filter result for the streamed text as
     // a choice with no delta, a null finish reason, and no id or model. The
     // report is informational and must not fail an otherwise complete stream.
     const annotation = {
@@ -980,7 +980,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     const chunk = (choice: Record<string, unknown>) => ({
       choices: [{ content_filter_results: {}, index: 0, logprobs: null, ...choice }],
       created: 1790597867,
-      id: "chatcmpl-ET4ah01xDtLLiOIKt6EC5dml9zRRB",
+      id: "chatcmpl-azure-annotation-fixture",
       model: "gpt-5.5-2026-04-24",
       object: "chat.completion.chunk",
     });
@@ -996,7 +996,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
         data(annotation),
         data({
           choices: [],
-          id: "chatcmpl-ET4ah01xDtLLiOIKt6EC5dml9zRRB",
+          id: "chatcmpl-azure-annotation-fixture",
           usage: { prompt_tokens: 8, completion_tokens: 5, total_tokens: 13 },
         }),
         "data: [DONE]\r\n\r\n",
