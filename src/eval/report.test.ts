@@ -154,6 +154,7 @@ describe("eval/report", () => {
           billingMode: "deferred",
           cacheReadInputTokens: 2,
           cachedInputTokens: 2,
+          cacheCreation1hInputTokens: 4,
           reasoningTokens: 2,
           usageCaptureStatus: "complete",
         },
@@ -273,6 +274,7 @@ describe("eval/report", () => {
       billingMode: "deferred",
       cacheReadInputTokens: 5,
       cachedInputTokens: 5,
+      cacheCreation1hInputTokens: 4,
       reasoningTokens: 5,
       usageCaptureStatus: "partial",
     });

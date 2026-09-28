@@ -184,6 +184,7 @@ export interface EvalUsage {
   billableOutputTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
   costUsd?: number;
@@ -663,6 +664,7 @@ export interface EvalUsageSummary {
   billableOutputTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
   costUsd?: number;
