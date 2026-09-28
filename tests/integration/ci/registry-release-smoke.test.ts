@@ -98,7 +98,7 @@ describe("exact-version registry smoke", () => {
     assertEquals(pack.code, 0, decoder.decode(pack.stderr));
     const filename = `veryfront-${version}.tgz`;
     const tarball = await Deno.readFile(`${packageDir}/${filename}`);
-    const lookup = await new Deno.Command("sh", {
+    const lookup = await new Deno.Command("bash", {
       args: ["-c", "command -v npm; command -v node"],
       stdout: "piped",
       stderr: "piped",
