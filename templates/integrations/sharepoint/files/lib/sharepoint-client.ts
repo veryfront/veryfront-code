@@ -232,7 +232,7 @@ export async function uploadFile(
     ? `/sites/${siteId}/drives/${driveId}/items/${folderId}:/${encodedFileName}:/content`
     : `/sites/${siteId}/drives/${driveId}/root:/${encodedFileName}:/content`;
 
-  let body: ArrayBuffer;
+  let body: BodyInit;
   if (typeof content === "string") {
     body = new TextEncoder().encode(content);
   } else if (content instanceof Blob) {

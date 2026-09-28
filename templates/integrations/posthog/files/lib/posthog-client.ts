@@ -250,11 +250,9 @@ export function formatDate(dateString: string): string {
 }
 
 export function calculateConversionRate(funnel: PostHogFunnel): number {
-  if (funnel.steps.length < 2) return 0;
-
   const firstStep = funnel.steps[0];
-  if (firstStep.count === 0) return 0;
+  const lastStep = funnel.steps.at(-1);
+  if (funnel.steps.length < 2 || !firstStep || !lastStep || firstStep.count === 0) return 0;
 
-  const lastStep = funnel.steps[funnel.steps.length - 1];
   return (lastStep.count / firstStep.count) * 100;
 }

@@ -27,10 +27,16 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
+import { dirname, fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 import { walk } from "#std/fs.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
 import { createProject } from "../cli/shared/project-creation.ts";
+import {
+  ALL_AVAILABLE_INTEGRATIONS,
+  loadIntegration,
+  loadIntegrationBaseFilesFromDirectory,
+} from "./integration-loader.ts";
+import { mergeFiles } from "./loader.ts";
 import { STARTER_TEMPLATE_NAMES } from "./types.ts";
 
 interface LintDiagnostic {
@@ -120,11 +126,15 @@ async function serverSourceFiles(projectDir: string): Promise<string[]> {
 }
 
 /** Type-check source files against the framework declarations. */
-async function typeCheckFiles(projectDir: string, files: string[]): Promise<string> {
+async function typeCheckFiles(
+  projectDir: string,
+  files: string[],
+  extraArgs: string[] = [],
+): Promise<string> {
   if (files.length === 0) return "";
 
   const result = await runCommand("deno", {
-    args: ["check", "--config", REPO_CONFIG, ...files],
+    args: ["check", ...extraArgs, "--config", REPO_CONFIG, ...files],
     cwd: projectDir,
     capture: true,
   });
@@ -197,6 +207,56 @@ describe("scaffolded starter templates", () => {
       );
     } finally {
       await remove(projectDir, { recursive: true }).catch(() => {});
+    }
+  });
+});
+
+/**
+ * Write each integration scaffold the way `veryfront init --integrations`
+ * does (the shared `_base` files plus the integration's own), one directory
+ * per integration. A third-party import the connector declares in
+ * `npmDependencies` becomes an `npm:` specifier so Deno resolves its types.
+ */
+async function scaffoldIntegrations(rootDir: string): Promise<string[]> {
+  const baseFiles = await loadIntegrationBaseFilesFromDirectory();
+  const files: string[] = [];
+  for (const name of ALL_AVAILABLE_INTEGRATIONS) {
+    const integration = await loadIntegration(name);
+    if (!integration?.files.length) continue;
+    const dependencies = Object.entries(integration.config.npmDependencies ?? {});
+    for (const file of mergeFiles(baseFiles, integration.files)) {
+      const path = join(rootDir, name, file.path);
+      await Deno.mkdir(dirname(path), { recursive: true });
+      let content = file.content;
+      for (const [pkg, range] of dependencies) {
+        content = content.replaceAll(
+          new RegExp(`(from\\s+["'])${pkg.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}(["'])`, "g"),
+          `$1npm:${pkg}@${range}$2`,
+        );
+      }
+      await Deno.writeTextFile(path, content);
+      if (/\.tsx?$/.test(file.path) && !file.path.startsWith("app/")) files.push(path);
+    }
+  }
+  return files.sort();
+}
+
+describe("scaffolded integrations", () => {
+  it("type-checks every integration scaffold against the framework", async () => {
+    const rootDir = await makeTempDir({ prefix: "veryfront-types-integrations-" });
+    try {
+      const files = await scaffoldIntegrations(rootDir);
+      assertEquals(files.some((file) => file.endsWith("/neon/lib/neon-client.ts")), true);
+      assertEquals(
+        // The scaffolds' own npm packages resolve from Deno's global cache, so
+        // they neither touch the lockfile nor land in the repo's node_modules,
+        // where their types would leak into the other checks.
+        await typeCheckFiles(rootDir, files, ["--no-lock", "--node-modules-dir=none"]),
+        "",
+        "every `veryfront init --integrations <name>` scaffold must type-check",
+      );
+    } finally {
+      await remove(rootDir, { recursive: true }).catch(() => {});
     }
   });
 });

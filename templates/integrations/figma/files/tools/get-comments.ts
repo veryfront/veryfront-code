@@ -12,7 +12,7 @@ type FormattedComment = {
   isResolved: boolean;
   parentId: string | null;
   isReply: boolean;
-  location: { nodeIds: string; x: number; y: number } | null;
+  location: { nodeIds: string[]; x?: number; y?: number } | null;
 };
 
 type Output = {
@@ -58,9 +58,9 @@ export default tool({
         avatar: comment.user.img_url,
       },
       createdAt: comment.created_at,
-      resolvedAt: comment.resolved_at,
+      resolvedAt: comment.resolved_at ?? null,
       isResolved: Boolean(comment.resolved_at),
-      parentId: comment.parent_id,
+      parentId: comment.parent_id ?? null,
       isReply: Boolean(comment.parent_id),
       location: comment.client_meta.node_id
         ? {

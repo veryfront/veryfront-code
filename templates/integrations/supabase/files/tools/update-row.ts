@@ -18,15 +18,6 @@ export default tool({
     data: v.record(v.string(), v.unknown()).describe("The data to update as key-value pairs"),
   }))(),
   async execute({ tableName, id, filter, data }) {
-    if (id == null && filter == null) {
-      return {
-        success: false,
-        tableName,
-        error: "Either id or filter must be provided",
-        message: "You must specify either an id or filter conditions to update rows",
-      };
-    }
-
     try {
       if (id != null) {
         const row = await updateRow(tableName, id, data);
@@ -36,6 +27,15 @@ export default tool({
           rowsUpdated: 1,
           row,
           message: `Successfully updated row with id ${id} in ${tableName}`,
+        };
+      }
+
+      if (filter == null) {
+        return {
+          success: false,
+          tableName,
+          error: "Either id or filter must be provided",
+          message: "You must specify either an id or filter conditions to update rows",
         };
       }
 

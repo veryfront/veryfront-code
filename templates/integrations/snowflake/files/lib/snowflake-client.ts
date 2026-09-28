@@ -82,22 +82,23 @@ interface SnowflakeQueryStatusResponse {
   };
 }
 
-interface DatabaseInfo {
+// Type aliases, not interfaces, so query rows (Record<string, unknown>) can be cast to them.
+type DatabaseInfo = {
   name: string;
   created_on: string;
   owner: string;
   comment?: string;
-}
+};
 
-interface SchemaInfo {
+type SchemaInfo = {
   name: string;
   database_name: string;
   created_on: string;
   owner: string;
   comment?: string;
-}
+};
 
-interface TableInfo {
+type TableInfo = {
   name: string;
   database_name: string;
   schema_name: string;
@@ -107,9 +108,9 @@ interface TableInfo {
   bytes?: number;
   owner: string;
   comment?: string;
-}
+};
 
-interface ColumnInfo {
+type ColumnInfo = {
   name: string;
   type: string;
   kind: string;
@@ -120,7 +121,7 @@ interface ColumnInfo {
   check?: string;
   expression?: string;
   comment?: string;
-}
+};
 
 interface SnowflakeError extends Error {
   code?: string;
@@ -221,7 +222,9 @@ function transformResults(result: SnowflakeQueryResult): Record<string, unknown>
 
   return result.data.map((row) => {
     const obj: Record<string, unknown> = {};
-    for (let i = 0; i < columns.length; i++) obj[columns[i]] = row[i];
+    columns.forEach((name, i) => {
+      obj[name] = row[i];
+    });
     return obj;
   });
 }
