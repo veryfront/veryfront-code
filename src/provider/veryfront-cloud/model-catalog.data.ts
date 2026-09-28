@@ -204,6 +204,22 @@ export const VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES: readonly VeryfrontCloudChatMode
       thinking: true,
     }),
     Object.freeze({
+      id: "gpt-6-sol",
+      modelId: "openai/gpt-6-sol",
+      provider: "openai",
+      name: "GPT-6 Sol",
+      description: "Most capable GPT-6 model",
+      thinking: true,
+    }),
+    Object.freeze({
+      id: "gpt-6-luna",
+      modelId: "openai/gpt-6-luna",
+      provider: "openai",
+      name: "GPT-6 Luna",
+      description: "Fast, low-cost GPT-6 model",
+      thinking: true,
+    }),
+    Object.freeze({
       id: "gpt-5.4-mini",
       modelId: "openai/gpt-5.4-mini",
       provider: "openai",

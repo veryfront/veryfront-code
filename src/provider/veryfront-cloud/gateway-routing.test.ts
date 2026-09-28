@@ -90,6 +90,20 @@ describe("provider/veryfront-cloud gateway routing", () => {
         toolProfile: "openai",
       },
       {
+        model: "openai/gpt-6-sol",
+        provider: "openai",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+        genAiSystem: "openai",
+        toolProfile: "openai",
+      },
+      {
+        model: "openai/gpt-6-luna",
+        provider: "openai",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+        genAiSystem: "openai",
+        toolProfile: "openai",
+      },
+      {
         model: "openai/gpt-5.4-mini",
         provider: "openai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
