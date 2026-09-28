@@ -276,8 +276,10 @@ const selection = {
   expectedConnectionGenerationId: selected.connection_generation_id,
 };
 const readiness = await client.readiness("gmail__list_emails", selection);
-if (readiness.local_eligibility.state !== "eligible") {
-  throw new Error(`Not ready: ${readiness.local_eligibility.blockers.join(", ")}`);
+if (readiness.selection.state !== "selected" || readiness.local_eligibility.state !== "eligible") {
+  throw new Error(
+    `Not ready: ${readiness.selection.state}, ${readiness.local_eligibility.blockers.join(", ")}`,
+  );
 }
 
 const outcome = await client.call(

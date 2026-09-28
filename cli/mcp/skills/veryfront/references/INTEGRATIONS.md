@@ -42,7 +42,7 @@ veryfront integration call "<TOOL>" --project "<PROJECT_SLUG>" \
 2. Read `integration connections`. Use a row with `status: "connected"`. If
    several rows qualify, ask the person which account to use.
 3. Check readiness with `integration status --tool`. Continue only when
-   `local_eligibility.state` is `eligible`.
+   `selection.state` is `selected` and `local_eligibility.state` is `eligible`.
 4. Call once with `--connection` and `--expected-generation` from that row.
 
 When no connection exists, ask the person to run
