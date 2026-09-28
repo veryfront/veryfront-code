@@ -16,11 +16,18 @@ const withSuppressedTracing = <T>(operation: () => Promise<T>) => suppression.ru
 
 describe("project OTLP transport", () => {
   it("launches one request despite replaced Promise construction and chaining", async () => {
-    const response = Response.json({});
+    const response = Promise.resolve(Response.json({}));
+    const addresses = Promise.resolve(["93.184.216.34"]);
     let sends = 0;
-    await withMockFetch(() => {
-      sends++;
-      return Promise.resolve(response);
+    await __runWithOutboundFetchTransportForTests({
+      resolveHost: () => addresses,
+      fetch: () => {
+        throw new Error("Expected the pinned transport");
+      },
+      pinnedFetch: () => {
+        sends++;
+        return response;
+      },
     }, async () => {
       const transport = createProjectOtlpTransport({
         endpoint,
@@ -31,7 +38,7 @@ describe("project OTLP transport", () => {
       const descriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "then")!;
       const nativeThen = Promise.prototype.then;
       let constructions = 0;
-      let pending: ReturnType<typeof transport.send>;
+      let status: string | undefined;
       try {
         globalThis.Promise = new Proxy(NativePromise, {
           construct(target, args, newTarget) {
@@ -57,13 +64,13 @@ describe("project OTLP transport", () => {
             ]);
           },
         });
-        pending = transport.send(bytes, 1000);
+        status = (await transport.send(bytes, 1000)).status;
       } finally {
         globalThis.Promise = NativePromise;
         Object.defineProperty(NativePromise.prototype, "then", descriptor);
       }
       try {
-        assertEquals((await pending).status, "success");
+        assertEquals(status, "success");
         assertEquals(sends, 1);
         assertEquals(constructions, 0);
       } finally {

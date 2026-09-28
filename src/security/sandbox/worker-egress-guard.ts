@@ -20,6 +20,11 @@
  * @module security/sandbox/worker-egress-guard
  */
 
+import {
+  chainPrivatePromise,
+  createPrivateDeferred,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DnsPermissionError, resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
 import { getDenoRuntime, isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
@@ -559,25 +564,23 @@ async function writeAll(connection: Deno.Conn, bytes: Uint8Array): Promise<void>
 function waitForOperation<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return operation;
 
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-    if (signal.aborted) {
-      onAbort();
-    } else {
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
+  const completion = createPrivateDeferred<T>();
+  const { resolve, reject } = completion;
+  const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  if (signal.aborted) {
+    onAbort();
+  } else {
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
 
-    operation.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
+  void chainPrivatePromise(operation, (value) => {
+    signal.removeEventListener("abort", onAbort);
+    resolve(value);
+  }, (error) => {
+    signal.removeEventListener("abort", onAbort);
+    reject(error);
   });
+  return completion.promise;
 }
 
 async function relayTcpConnections(
@@ -1408,8 +1411,9 @@ export async function guardedEgressFetch(
             : 80;
           if (deps.pinnedFetch || (isNode || isBun) && deps.runtime === undefined) {
             const pinnedFetch = deps.pinnedFetch ?? fetchWithPinnedAddresses;
-            pinnedResponse = Promise.resolve().then(() =>
-              pinnedFetch(parsedUrl, addresses, requestInit)
+            pinnedResponse = chainPrivatePromise(
+              resolvePrivatePromise(),
+              () => pinnedFetch(parsedUrl, addresses, requestInit),
             );
           } else {
             tunnel = startPinnedSocksTunnel(hostname, addresses, port, getRuntime());
@@ -1420,12 +1424,11 @@ export async function guardedEgressFetch(
 
       const pendingResponse = pinnedResponse
         ? pinnedResponse
-        : Promise.resolve().then(() =>
+        : chainPrivatePromise(resolvePrivatePromise(), () =>
           doFetch(url, {
             ...requestInit,
             ...(client ? { client } : {}),
-          })
-        );
+          }));
       try {
         response = await waitForOperation(pendingResponse, requestInit.signal ?? undefined);
       } catch (error) {
@@ -1433,7 +1436,8 @@ export async function guardedEgressFetch(
         // A non-cooperative fetch can resolve after the request has already
         // timed out. Its body is no longer observable, so release it without
         // keeping the listener/client alive for the late result.
-        void pendingResponse.then(
+        void chainPrivatePromise(
+          pendingResponse,
           (lateResponse) => lateResponse.body?.cancel().catch(() => undefined),
           () => undefined,
         );
