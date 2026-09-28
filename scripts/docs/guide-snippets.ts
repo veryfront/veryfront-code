@@ -419,3 +419,87 @@ export function rewritePublicImports(
     },
   );
 }
+
+/** The TypeScript first-call script and the Node commands the guide gives for it. */
+export interface NodeFirstCall {
+  readonly script: string;
+  readonly setup: string;
+  readonly fileName: string;
+  readonly run: string;
+}
+
+/**
+ * Read the "Call with TypeScript" section: its `ts` fence, the `bash` fence
+ * that runs `npm init -y`, and the `bash` fence that runs `node <file>`.
+ */
+export function extractNodeFirstCall(
+  markdown: string,
+  heading = "### Call with TypeScript",
+): NodeFirstCall {
+  const start = markdown.indexOf(`${heading}\n`);
+  if (start < 0) throw new Error(`Missing section "${heading}"`);
+  const next = markdown.indexOf("\n### ", start + heading.length);
+  const fences = extractFences(
+    markdown.slice(start, next < 0 ? undefined : next),
+  );
+  const script = fences.find((fence) => fence.lang === "ts")?.code;
+  const setup = fences.find((fence) =>
+    fence.lang === "bash" && /^npm init -y$/m.test(fence.code)
+  )?.code;
+  const run = fences.find((fence) =>
+    fence.lang === "bash" && /^node \S+$/.test(fence.code.trim())
+  )?.code.trim();
+  if (script === undefined) throw new Error(`No ts fence under "${heading}"`);
+  if (setup === undefined) {
+    throw new Error(`No bash fence with "npm init -y" under "${heading}"`);
+  }
+  if (run === undefined) {
+    throw new Error(`No bash fence with "node <file>" under "${heading}"`);
+  }
+  return { script, setup, fileName: run.slice("node ".length), run };
+}
+
+/**
+ * Build a bash script that runs the guide's Node setup and run commands as
+ * printed. `npm install veryfront` installs the local package at
+ * `$VERYFRONT_PACKAGE` so the check needs no registry, and the script file is
+ * copied from `$SNIPPET`. `commonjs` replaces `npm pkg set type=module` with
+ * `npm pkg set type=commonjs`, the default recent npm versions write, to show
+ * that the check fails without the guide's step.
+ */
+export function nodeFirstCallScript(
+  call: NodeFirstCall,
+  options: { commonjs?: boolean } = {},
+): string {
+  const setup = options.commonjs
+    ? call.setup.replace(
+      /^npm pkg set type=module$/m,
+      "npm pkg set type=commonjs",
+    )
+    : call.setup;
+  return [
+    "set -euo pipefail",
+    "npm() {",
+    '  if [ "$*" = "install veryfront" ]; then',
+    '    command npm install --offline --no-audit --no-fund "$VERYFRONT_PACKAGE"',
+    "  else",
+    '    command npm "$@"',
+    "  fi",
+    "}",
+    setup,
+    `cp "$SNIPPET" ${call.fileName}`,
+    call.run,
+    "",
+  ].join("\n");
+}
+
+/** Whether `node --version` output names a release that strips types by default (22.18+, 23.6+). */
+export function nodeStripsTypes(version: string): boolean {
+  const match = /^v(\d+)\.(\d+)\./.exec(version.trim());
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major === 22) return minor >= 18;
+  if (major === 23) return minor >= 6;
+  return major > 23;
+}
