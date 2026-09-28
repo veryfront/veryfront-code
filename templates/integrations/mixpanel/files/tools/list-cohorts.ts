@@ -33,8 +33,9 @@ export default tool({
       };
     }
 
-    const largest = cohorts.reduce((max, c) => (c.count > max.count ? c : max));
-    const smallest = cohorts.reduce((min, c) => (c.count < min.count ? c : min));
+    const bySize = [...cohorts].sort((a, b) => a.count - b.count);
+    const smallest = bySize[0];
+    const largest = bySize.at(-1);
 
     return {
       total: cohorts.length,
@@ -49,8 +50,8 @@ export default tool({
       })),
       summary: {
         totalUsers,
-        largestCohort: largest.name,
-        smallestCohort: smallest.name,
+        largestCohort: largest?.name ?? "N/A",
+        smallestCohort: smallest?.name ?? "N/A",
       },
     };
   },
