@@ -34207,6 +34207,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "MIXPANEL_PROJECT_TOKEN",
       "description": "Mixpanel Project Token for event tracking",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": true,
       "docsUrl": "https://docs.mixpanel.com/docs/tracking/how-tos/api-credentials",
     }, {
@@ -34221,6 +34222,7 @@ export const connectors: IntegrationConfig[] = [
       "description":
         "Mixpanel Project ID (found in project settings; pass it as the project_id parameter on query tools)",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.mixpanel.com/docs/admin/organizations-projects/manage-projects",
     }, {
@@ -35811,6 +35813,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "DATABASE_URL",
       "description": "PostgreSQL connection string for database queries",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": true,
       "docsUrl": "https://neon.tech/docs/connect/connect-from-any-app",
     }],
@@ -43445,6 +43448,14 @@ export const connectors: IntegrationConfig[] = [
       "sensitive": true,
       "docsUrl": "https://posthog.com/docs/api/overview",
     }, {
+      "name": "POSTHOG_PROJECT_API_KEY",
+      "description":
+        "PostHog project API key (phc_...) the local scaffold's capture-event tool sends. Event ingestion rejects personal API keys.",
+      "required": false,
+      "scaffoldRequired": true,
+      "sensitive": false,
+      "docsUrl": "https://posthog.com/docs/api/capture",
+    }, {
       "name": "POSTHOG_HOST",
       "description":
         "PostHog API host or HTTPS origin: us.posthog.com for US Cloud (default; https://app.posthog.com is the legacy US alias) or eu.posthog.com for EU Cloud",
@@ -48772,9 +48783,18 @@ export const connectors: IntegrationConfig[] = [
       "sensitive": false,
       "docsUrl": "https://docs.sentry.io/api/auth/",
     }, {
+      "name": "SENTRY_AUTH_TOKEN",
+      "description":
+        "Sentry user auth token (org:read, project:read, event:read, event:write) that the local scaffold's client sends. The hosted connector uses OAuth instead.",
+      "required": false,
+      "scaffoldRequired": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.sentry.io/account/auth-tokens/",
+    }, {
       "name": "SENTRY_ORG",
       "description": "Default Sentry organization slug for prompts that do not specify one",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.sentry.io/api/organizations/",
     }],
@@ -51895,6 +51915,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "SNOWFLAKE_ACCOUNT",
       "description": "Your Snowflake account identifier (e.g., xy12345.us-east-1)",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-account-identifier",
     }, {
@@ -53718,12 +53739,14 @@ export const connectors: IntegrationConfig[] = [
       "name": "SUPABASE_ACCESS_TOKEN",
       "description": "Supabase personal access token for the Management API (starts with sbp_)",
       "required": true,
+      "scaffoldRequired": false,
       "sensitive": true,
       "docsUrl": "https://supabase.com/dashboard/account/tokens",
     }, {
       "name": "SUPABASE_URL",
       "description": "Your Supabase project URL (e.g., https://xxxxx.supabase.co)",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys",
     }, {
@@ -53736,6 +53759,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "SUPABASE_SERVICE_KEY",
       "description": "Supabase service role key for server-side operations (bypasses RLS)",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": true,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys",
     }],

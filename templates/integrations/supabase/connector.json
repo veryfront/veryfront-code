@@ -25,6 +25,7 @@
       "name": "SUPABASE_ACCESS_TOKEN",
       "description": "Supabase personal access token for the Management API (starts with sbp_)",
       "required": true,
+      "scaffoldRequired": false,
       "sensitive": true,
       "docsUrl": "https://supabase.com/dashboard/account/tokens"
     },
@@ -32,6 +33,7 @@
       "name": "SUPABASE_URL",
       "description": "Your Supabase project URL (e.g., https://xxxxx.supabase.co)",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys"
     },
@@ -46,6 +48,7 @@
       "name": "SUPABASE_SERVICE_KEY",
       "description": "Supabase service role key for server-side operations (bypasses RLS)",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": true,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys"
     }

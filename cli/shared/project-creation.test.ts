@@ -336,6 +336,70 @@ describe("createProject", () => {
     }
   });
 
+  it("reports env-backed integrations as connected from their required env vars", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-env-status-" });
+    const projectDir = join(parentDir, "env-status");
+    const envNames = ["SENTRY_AUTH_TOKEN", "SENTRY_ORG"];
+    // The generated token store keeps its in-memory default only under test.
+    const original = new Map(
+      [...envNames, "NODE_ENV"].map((name) => [name, Deno.env.get(name)]),
+    );
+    Deno.env.set("NODE_ENV", "test");
+
+    try {
+      await createProject({
+        ...baseRequest(parentDir),
+        name: "env-status",
+        integrations: ["sentry", "github", "harvest"],
+      });
+
+      // Sentry's client reads both, so the scaffold must list both.
+      const envExample = await Deno.readTextFile(join(projectDir, ".env.example"));
+      assertStringIncludes(envExample, "SENTRY_AUTH_TOKEN=");
+      assertStringIncludes(envExample, "SENTRY_ORG=");
+
+      // Stand in for the app's own identity resolution.
+      const userIdPath = join(projectDir, "lib/user-id.ts");
+      const userId = await Deno.readTextFile(userIdPath);
+      await Deno.writeTextFile(
+        userIdPath,
+        userId.replace(/(resolveAuthenticatedUserId\([^)]*\)[^{]*\{)/, '$1\n  return "user-1";'),
+      );
+      const route = await import(
+        new URL(`file://${join(projectDir, "app/api/integrations/status/route.ts")}`).href
+      );
+      const readStatus = async () => {
+        const response: Response = await route.GET(new Request("http://localhost/"));
+        const body = await response.json() as {
+          integrations: Array<{ id: string; connected: boolean; connectUrl: string | null }>;
+        };
+        return Object.fromEntries(body.integrations.map((item) => [item.id, item]));
+      };
+
+      for (const name of envNames) Deno.env.delete(name);
+      const unset = await readStatus();
+      assertEquals(unset.sentry?.connected, false);
+      assertEquals(unset.sentry?.connectUrl, null);
+      assertEquals(unset.github?.connected, false);
+      assertEquals(unset.github?.connectUrl, "/api/auth/github");
+
+      Deno.env.set("SENTRY_AUTH_TOKEN", "token");
+      Deno.env.set("SENTRY_ORG", "acme");
+      const set = await readStatus();
+      assertEquals(set.sentry?.connected, true);
+      assertEquals(set.sentry?.connectUrl, null);
+      assertEquals(set.github?.connected, false);
+      // Harvest ships no client, so an empty env contract is not connected.
+      assertEquals(set.harvest?.connected, false);
+    } finally {
+      for (const [name, value] of original) {
+        if (value === undefined) Deno.env.delete(name);
+        else Deno.env.set(name, value);
+      }
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("returns the setup tips assembled from selected integrations", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-tips-" });
 

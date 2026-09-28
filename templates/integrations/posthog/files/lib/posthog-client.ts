@@ -231,8 +231,13 @@ export function getPerson(personId: string): Promise<PostHogPerson> {
 }
 
 export function captureEvent(event: PostHogEvent): Promise<{ status: number }> {
+  // Ingestion authenticates with the project API key, not the personal key.
+  const projectApiKey = getEnv("POSTHOG_PROJECT_API_KEY");
+  if (!projectApiKey) {
+    return Promise.reject(new Error("POSTHOG_PROJECT_API_KEY is not set"));
+  }
   const body = {
-    api_key: getApiKey(),
+    api_key: projectApiKey,
     event: event.event,
     distinct_id: event.distinct_id,
     properties: event.properties ?? {},

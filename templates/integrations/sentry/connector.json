@@ -35,9 +35,18 @@
       "docsUrl": "https://docs.sentry.io/api/auth/"
     },
     {
+      "name": "SENTRY_AUTH_TOKEN",
+      "description": "Sentry user auth token (org:read, project:read, event:read, event:write) that the local scaffold's client sends. The hosted connector uses OAuth instead.",
+      "required": false,
+      "scaffoldRequired": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.sentry.io/account/auth-tokens/"
+    },
+    {
       "name": "SENTRY_ORG",
       "description": "Default Sentry organization slug for prompts that do not specify one",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.sentry.io/api/organizations/"
     }

@@ -7,7 +7,9 @@ interface Integration {
   id: string
   name: string
   connected: boolean
-  connectUrl: string
+  /** Null for integrations configured through env vars instead of OAuth. */
+  connectUrl: string | null
+  envVars?: string[] | null
 }
 
 export default function ChatPage(): React.ReactElement {
@@ -88,17 +90,32 @@ function ServiceStatusFromAPI(): React.ReactElement | null {
         </span>
       ))}
 
-      {disconnected.map(service => (
-        <a
-          key={service.id}
-          href={service.connectUrl}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700 transition-colors"
-          title={`Connect ${service.name}`}
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-neutral-400" />
-          {service.name}
-        </a>
-      ))}
+      {disconnected.map(service =>
+        service.connectUrl ? (
+          <a
+            key={service.id}
+            href={service.connectUrl}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700 transition-colors"
+            title={`Connect ${service.name}`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-neutral-400" />
+            {service.name}
+          </a>
+        ) : (
+          <span
+            key={service.id}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+            title={
+              service.envVars?.length
+                ? `Set ${service.envVars.join(', ')} in .env`
+                : `${service.name} has no local client in this project`
+            }
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-neutral-400" />
+            {service.name}
+          </span>
+        )
+      )}
 
       {disconnected.length > 0 && (
         <span className="text-xs text-neutral-500 dark:text-neutral-400">

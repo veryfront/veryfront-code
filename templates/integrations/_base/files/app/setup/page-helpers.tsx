@@ -5,7 +5,9 @@ export interface Integration {
   name: string;
   icon: string;
   connected: boolean;
-  connectUrl: string;
+  /** Null for integrations configured through env vars instead of OAuth. */
+  connectUrl: string | null;
+  envVars?: string[] | null;
 }
 
 export interface SetupStep {
@@ -285,20 +287,23 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     title: "Sentry Setup",
     category: "development",
     steps: [
-      "Go to Sentry Settings > Developer Settings",
-      "Create new integration",
-      "Add redirect URL: http://localhost:3000/api/auth/sentry/callback",
-      "Copy Client ID and Secret to .env",
+      "Go to Sentry Settings > Auth Tokens",
+      "Create a token with org:read, project:read, event:read and event:write",
+      "Add the token and your organization slug to .env",
     ],
-    link: "https://sentry.io/settings/developer-settings/",
-    envVars: ["SENTRY_CLIENT_ID", "SENTRY_CLIENT_SECRET"],
+    link: "https://sentry.io/settings/account/api/auth-tokens/",
+    envVars: ["SENTRY_AUTH_TOKEN", "SENTRY_ORG"],
   },
   posthog: {
     title: "PostHog Setup",
     category: "development",
-    steps: ["Go to PostHog Project Settings", "Copy your Project API Key", "Add to .env file"],
+    steps: [
+      "Create a personal API key in your PostHog account settings",
+      "Copy your project API key from PostHog Project Settings (for capturing events)",
+      "Add both to .env file",
+    ],
     link: "https://app.posthog.com/project/settings",
-    envVars: ["POSTHOG_API_KEY", "POSTHOG_HOST"],
+    envVars: ["POSTHOG_API_KEY", "POSTHOG_PROJECT_API_KEY", "POSTHOG_HOST"],
   },
   mixpanel: {
     title: "Mixpanel Setup",
