@@ -14,6 +14,46 @@ const env = {
 };
 
 describe("hosted project telemetry configuration", () => {
+  it("requires HTTPS for project headers unless the HTTP origin is host-allowlisted", async () => {
+    await withEnv({
+      VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: "http://collector.example:4318",
+    }, async () => {
+      for (
+        const [endpoint, allowed] of [["http://public.example:4318", false], [
+          "http://collector.example:4318",
+          true,
+        ], ["https://public.example", true]] as const
+      ) {
+        const result = await resolveProjectTraceConfig(scope, declarations, {
+          ...env,
+          OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+        });
+        assertEquals(result.status, allowed ? "enabled" : "invalid");
+      }
+      const withoutHeaders = await resolveProjectTraceConfig(scope, declarations, {
+        ...env,
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://public.example:4318",
+        OTEL_EXPORTER_OTLP_HEADERS: "",
+      });
+      assertEquals(withoutHeaders.status, "enabled");
+    });
+  });
+
+  it("rejects a malformed host allowlist without throwing from telemetry validation", async () => {
+    await withEnv(
+      { VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS: "not-an-origin" },
+      async () => {
+        assertEquals(
+          await resolveProjectTraceConfig(scope, declarations, {
+            ...env,
+            OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.example:4318",
+          }),
+          { status: "invalid", reason: "endpoint" },
+        );
+      },
+    );
+  });
+
   it("uses the extension marker retained by hosted declarative evaluation", async () => {
     const snapshot = await evaluateDeclarativeConfig({
       source: `

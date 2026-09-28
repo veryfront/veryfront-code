@@ -102,7 +102,7 @@ OTEL_SERVICE_NAME=my-application
 OTEL_EXPORTER_OTLP_ENDPOINT=https://<COLLECTOR_HOST>/otlp
 ```
 
-Store `OTEL_EXPORTER_OTLP_HEADERS` as a project secret when the collector requires authentication. Signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` take precedence. A trace-specific URL is used as supplied; a base URL receives `/v1/traces`.
+Store `OTEL_EXPORTER_OTLP_HEADERS` as a project secret when the collector requires authentication. Collectors with configured headers require HTTPS unless their HTTP origin is explicitly allowlisted by the host operator. Signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` take precedence. A trace-specific URL is used as supplied; a base URL receives `/v1/traces`.
 
 On hosted runtimes containing project trace export support, dedicated and shared apps use these project settings without replacing platform telemetry. Each project environment has separate credentials, resources and export buffers. HTTP request spans and custom spans created through `trace` or the tracing helpers from `veryfront/observability` use the active project. You do not install another global OpenTelemetry SDK.
 

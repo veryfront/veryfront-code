@@ -1,3 +1,4 @@
+import { isHostAllowedInternalProviderOrigin } from "#veryfront/security/http/outbound-fetch.ts";
 import { readOwnDataProperty } from "#veryfront/security/project-locality.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 
@@ -228,6 +229,16 @@ export async function resolveProjectTraceConfig(
     readOwnDataProperty(environment, "OTEL_EXPORTER_OTLP_TRACES_HEADERS"),
   );
   if (!baseHeaders || !traceHeaders) return invalid("headers");
+  const mergedHeaders = { ...baseHeaders, ...traceHeaders };
+  try {
+    const collector = new NativeURL(endpoint);
+    if (
+      apply(urlGetters.protocol, collector, []) === "http:" && entries(mergedHeaders).length > 0 &&
+      !isHostAllowedInternalProviderOrigin(collector)
+    ) return invalid("endpoint");
+  } catch {
+    return invalid("endpoint");
+  }
   const attributes = resourceAttributes(
     readOwnDataProperty(environment, "OTEL_RESOURCE_ATTRIBUTES"),
   );
@@ -252,7 +263,7 @@ export async function resolveProjectTraceConfig(
     projectId,
     environmentId,
     endpoint,
-    headers: freeze({ ...baseHeaders, ...traceHeaders }),
+    headers: freeze(mergedHeaders),
     serviceName,
     serviceVersion,
     deploymentEnvironment,
