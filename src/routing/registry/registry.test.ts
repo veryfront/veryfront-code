@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildRouteRegistrySpanAttributes, RouteRegistry } from "./registry.ts";
 import type { Handler, HandlerContext, HandlerResult } from "./types.ts";
-import { CONFIG_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import {
+  CONFIG_NOT_FOUND,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
+} from "#veryfront/errors/error-registry.ts";
+import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import { __registerLogRecordEmitter, refreshLoggerConfig } from "#veryfront/utils/logger/logger.ts";
 import {
   BasicTracerProvider,
@@ -468,6 +472,38 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(body.detail, "Test config error");
       assertEquals(body.suggestion?.includes("veryfront.config.ts"), true);
       assertEquals(body.suggestion?.includes("vf init"), false);
+    });
+
+    it("propagates snapshot changes only when the caller owns recovery", async () => {
+      const error = createSourceSnapshotChangedError("Source changed during rendering");
+      const registry = new RouteRegistry();
+      registry.register({
+        metadata: { name: "changing-source", priority: 100 },
+        handle: () => Promise.reject(error),
+      });
+
+      const response = await registry.execute(makeReq(), makeCtx());
+      assertEquals(response?.status, 503);
+      const thrown = await assertRejects(() =>
+        registry.execute(makeReq(), makeCtx(), { propagateSourceSnapshotChanges: true })
+      );
+      assertEquals(thrown, error);
+    });
+
+    it("keeps snapshot capability failures as HTTP errors when recovery is enabled", async () => {
+      const registry = new RouteRegistry();
+      registry.register({
+        metadata: { name: "incapable-source", priority: 100 },
+        handle: () =>
+          Promise.reject(SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+            detail: "The adapter cannot identify its source snapshot",
+          })),
+      });
+
+      const response = await registry.execute(makeReq(), makeCtx(), {
+        propagateSourceSnapshotChanges: true,
+      });
+      assertEquals(response?.status, 503);
     });
 
     it("should return null on empty registry", async () => {

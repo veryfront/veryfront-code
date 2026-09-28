@@ -339,7 +339,16 @@ describe("createProject", () => {
   it("reports env-backed integrations as connected from their required env vars", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-env-status-" });
     const projectDir = join(parentDir, "env-status");
-    const envNames = ["SENTRY_AUTH_TOKEN", "SENTRY_ORG"];
+    const envNames = [
+      "SENTRY_AUTH_TOKEN",
+      "SENTRY_ORG",
+      "MIXPANEL_SERVICE_ACCOUNT_USERNAME",
+      "MIXPANEL_SERVICE_ACCOUNT_SECRET",
+      "MIXPANEL_API_SECRET",
+      "MIXPANEL_PROJECT_ID",
+      "MIXPANEL_PROJECT_TOKEN",
+      "VERYFRONT_EXPERIMENTAL_INTEGRATIONS",
+    ];
     // The generated token store keeps its in-memory default only under test.
     const original = new Map(
       [...envNames, "NODE_ENV"].map((name) => [name, Deno.env.get(name)]),
@@ -347,10 +356,11 @@ describe("createProject", () => {
     Deno.env.set("NODE_ENV", "test");
 
     try {
+      Deno.env.set("VERYFRONT_EXPERIMENTAL_INTEGRATIONS", "mixpanel");
       await createProject({
         ...baseRequest(parentDir),
         name: "env-status",
-        integrations: ["sentry", "github", "harvest"],
+        integrations: ["sentry", "github", "harvest", "mixpanel"],
       });
 
       // Sentry's client reads both, so the scaffold must list both.
@@ -391,6 +401,20 @@ describe("createProject", () => {
       assertEquals(set.github?.connected, false);
       // Harvest ships no client, so an empty env contract is not connected.
       assertEquals(set.harvest?.connected, false);
+
+      Deno.env.set("MIXPANEL_PROJECT_ID", "12345");
+      Deno.env.set("MIXPANEL_PROJECT_TOKEN", "synthetic-project-token");
+      assertEquals((await readStatus()).mixpanel?.connected, false);
+      Deno.env.set("MIXPANEL_SERVICE_ACCOUNT_USERNAME", "synthetic-user");
+      assertEquals((await readStatus()).mixpanel?.connected, false);
+      Deno.env.set("MIXPANEL_API_SECRET", "synthetic-legacy-secret");
+      assertEquals((await readStatus()).mixpanel?.connected, true);
+      Deno.env.delete("MIXPANEL_PROJECT_TOKEN");
+      assertEquals((await readStatus()).mixpanel?.connected, false);
+      Deno.env.set("MIXPANEL_PROJECT_TOKEN", "synthetic-project-token");
+      Deno.env.delete("MIXPANEL_API_SECRET");
+      Deno.env.set("MIXPANEL_SERVICE_ACCOUNT_SECRET", "synthetic-service-secret");
+      assertEquals((await readStatus()).mixpanel?.connected, true);
     } finally {
       for (const [name, value] of original) {
         if (value === undefined) Deno.env.delete(name);

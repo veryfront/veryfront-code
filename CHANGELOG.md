@@ -6,6 +6,13 @@ versions are listed at
 
 ## Unreleased
 
+### Fixed: preview rendering recovers from a source snapshot change
+
+When your preview source changes during rendering, eligible document requests
+now reach the runtime's existing one-replay recovery rule. Repeated source
+changes still return `503`, and requests that have started project middleware
+are not replayed.
+
 ### Breaking: eval cost budgets and gateway usage are measured in credits
 
 `metrics.ops.cost` takes `maxCredits` and reads the gateway `costCredits` of a

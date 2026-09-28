@@ -895,7 +895,8 @@ export function createVeryfrontHandler(
                 });
 
               const executeRegistry = async () =>
-                (await registry.execute(request, ctx)) ?? undefined;
+                (await registry.execute(request, ctx, { propagateSourceSnapshotChanges: true })) ??
+                  undefined;
               const executeRegistryWithRetainedSnapshot = () =>
                 runInFilesystemContext(() =>
                   runWithRetainedPreviewDocumentSourceSnapshot(

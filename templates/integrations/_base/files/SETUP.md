@@ -230,6 +230,9 @@ MONDAY_CLIENT_SECRET=your-client-secret
 
 ### Trello
 
+The CLI does not scaffold this integration because its OAuth provider adapter is not implemented.
+Experimental integration flags do not enable it. The settings below apply to a custom provider adapter.
+
 1. Go to [Trello Power-Ups Admin](https://trello.com/power-ups/admin)
 2. Create new Power-Up
 3. Configure OAuth redirect: `http://localhost:3000/api/auth/trello/callback`
@@ -352,6 +355,9 @@ POSTHOG_HOST=https://app.posthog.com
 ## CRM & Sales
 
 ### Salesforce
+
+The CLI does not scaffold this integration because its OAuth provider adapter is not implemented.
+Experimental integration flags do not enable it. The settings below apply to a custom provider adapter.
 
 1. Go to [Salesforce Setup](https://login.salesforce.com/) > App Manager
 2. Create **New Connected App**
@@ -571,6 +577,9 @@ TWITTER_CLIENT_SECRET=your-client-secret
 
 ### Shopify
 
+The CLI does not scaffold this integration because its OAuth provider adapter is not implemented.
+Experimental integration flags do not enable it. The settings below apply to a custom provider adapter.
+
 1. Go to [Shopify Partners](https://partners.shopify.com/)
 2. Create new app
 3. App URL and redirect: `http://localhost:3000/api/auth/shopify/callback`
@@ -598,7 +607,10 @@ ANTHROPIC_ADMIN_API_KEY=your-admin-api-key
 
 ### Mixpanel
 
-Uses a service account for query and export APIs. Regional projects must use
+Use a service account for query and export APIs. If your local scaffold uses a legacy
+project API secret, set `MIXPANEL_API_SECRET` instead of the service-account username
+and secret. Both credential paths require `MIXPANEL_PROJECT_ID` and
+`MIXPANEL_PROJECT_TOKEN` for the complete scaffold. Regional projects must use
 their matching API and export hosts.
 
 1. Go to [Mixpanel Project Settings](https://mixpanel.com/settings/project)
