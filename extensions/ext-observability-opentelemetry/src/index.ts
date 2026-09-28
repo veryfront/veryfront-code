@@ -19,10 +19,56 @@ import type {
   NodeTelemetryInitializeOptions,
   NodeTelemetryLogRecord,
   NodeTelemetryProvider,
+  ProjectTraceProvider,
+  ProjectTraceProviderOptions,
   SpanData,
   TracingExporter,
 } from "veryfront/extensions/observability";
 import { VERSION } from "veryfront/utils";
+
+// Captured when the extension loads, before application execution.
+const ProviderSet = Set;
+const apply = Reflect.apply;
+const providerSetAdd = Set.prototype.add;
+const providerSetDelete = Set.prototype.delete;
+const providerSetForEach = Set.prototype.forEach;
+const defineProperty = Object.defineProperty;
+const arrayShift = Array.prototype.shift;
+const SpanWeakSet = WeakSet;
+const spanSetAdd = WeakSet.prototype.add;
+const spanSetHas = WeakSet.prototype.has;
+const typedArrayByteLength = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  "byteLength",
+)!.get!;
+const projectSpanOperations = Object.freeze({
+  createSpanOwners() {
+    const spans = new SpanWeakSet<import("@opentelemetry/api").Span>();
+    return Object.freeze({
+      add: (span: import("@opentelemetry/api").Span) => {
+        apply(spanSetAdd, spans, [span]);
+      },
+      has: (span: unknown): boolean => apply(spanSetHas, spans, [span]),
+    });
+  },
+  clone: structuredClone,
+  byteLength(value: Uint8Array): number {
+    return apply(typedArrayByteLength, value, []);
+  },
+  append<T>(values: T[], value: T): void {
+    const property = {
+      __proto__: null,
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    };
+    defineProperty(values, values.length, property);
+  },
+  shift<T>(values: T[]): T | undefined {
+    return apply(arrayShift, values, []);
+  },
+});
 
 /**
  * The TracerProvider interface as expected by the core shim.
@@ -799,6 +845,24 @@ class FilteringSpanExporter {
 }
 
 class OtlpTracingExporter implements TracingExporter {
+  private projectProviders = new ProviderSet<ProjectTraceProvider>();
+
+  async createProjectProvider(options: ProjectTraceProviderOptions): Promise<ProjectTraceProvider> {
+    const { createProjectTraceProvider } = await import("./project-provider.ts");
+    const session = createProjectTraceProvider(options, projectSpanOperations);
+    const handle: ProjectTraceProvider = Object.freeze({
+      ...session,
+      shutdown: async (discard: boolean) => {
+        try {
+          await session.shutdown(discard);
+        } finally {
+          apply(providerSetDelete, this.projectProviders, [handle]);
+        }
+      },
+    });
+    apply(providerSetAdd, this.projectProviders, [handle]);
+    return handle;
+  }
   private sdkProvider: SdkTracerProvider | null = null;
   private meterProvider: SdkMeterProvider | null = null;
   private logProvider: SdkLoggerProvider | null = null;
@@ -985,6 +1049,11 @@ class OtlpTracingExporter implements TracingExporter {
   }
 
   async shutdown(): Promise<void> {
+    const pending: Promise<void>[] = [];
+    apply(providerSetForEach, this.projectProviders, [(provider: ProjectTraceProvider) => {
+      projectSpanOperations.append(pending, provider.shutdown(true));
+    }]);
+    await Promise.allSettled(pending);
     if (this.logProvider) {
       try {
         await this.logProvider.shutdown();

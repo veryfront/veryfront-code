@@ -4,6 +4,7 @@
  * @module observability/tracing
  */
 
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   createPublicContext,
@@ -12,6 +13,13 @@ import {
   unwrapPublicSpan,
 } from "./api-shim.ts";
 import { tracingManager } from "./manager.ts";
+import { getProjectTraceHelpers } from "./project-trace-helpers.ts";
+import {
+  getContextProjectProvider,
+  getSpanProjectProvider,
+  runWithProjectTraceProvider,
+} from "./project-trace-scope.ts";
+import type { SpanOperations } from "./span-operations.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 
 export type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
@@ -30,7 +38,7 @@ export async function initTracing(
 
 /** Check whether tracing is enabled. */
 export function isTracingEnabled(): boolean {
-  return tracingManager.isEnabled();
+  return getProjectTraceHelpers() !== undefined || tracingManager.isEnabled();
 }
 
 export function isTracingDegraded(): boolean {
@@ -46,15 +54,26 @@ export function getTracingState(): ReturnType<typeof tracingManager.getState> {
   return tracingManager.getState();
 }
 
-function getSpanOps(): ReturnType<typeof tracingManager.getSpanOperations> {
-  return tracingManager.getSpanOperations();
+function getSpanOps(span?: Span | null): ReturnType<typeof tracingManager.getSpanOperations> {
+  const owner = span ? getSpanProjectProvider(span) : undefined;
+  if (owner) return getProjectTraceHelpers(owner)!.spans;
+  return (span ? spanOwners.get(span) : undefined) ??
+    getProjectTraceHelpers()?.spans ?? tracingManager.getSpanOperations();
 }
 
-function getContextProp(): ReturnType<typeof tracingManager.getContextPropagation> {
-  return tracingManager.getContextPropagation();
+function getContextProp(
+  context?: Context,
+): ReturnType<typeof tracingManager.getContextPropagation> {
+  const owner = context ? getContextProjectProvider(context) : undefined;
+  if (owner) return getProjectTraceHelpers(owner)!.context;
+  return getProjectTraceHelpers()?.context ?? tracingManager.getContextPropagation();
 }
+
+const spanOwners = createPrivateWeakStore<Span, SpanOperations>();
 
 function exposeSpan(span: Span | null): Span | null {
+  const operations = getSpanOps();
+  if (span && operations) spanOwners.set(span, operations);
   return span ? createPublicSpan(span) : null;
 }
 
@@ -77,14 +96,26 @@ function restoreSpanOptions(options: SpanOptions): SpanOptions {
   return parent === options.parent ? options : { ...options, parent };
 }
 
+function withParentProvider<T>(options: SpanOptions, operation: () => T): T {
+  const parent = restoreSpanOptions(options).parent;
+  const owner = parent
+    ? getSpanProjectProvider(parent) ?? getContextProjectProvider(parent)
+    : undefined;
+  return owner ? runWithProjectTraceProvider(owner, operation) : operation();
+}
+
 /** Starts span. */
 export function startSpan(name: string, options: SpanOptions = {}): Span | null {
-  return exposeSpan(getSpanOps()?.startSpan(name, restoreSpanOptions(options)) ?? null);
+  return withParentProvider(
+    options,
+    () => exposeSpan(getSpanOps()?.startSpan(name, restoreSpanOptions(options)) ?? null),
+  );
 }
 
 /** End an active tracing span. */
 export function endSpan(span: Span | null, ...failure: [] | [error: unknown]): void {
-  getSpanOps()?.endSpan(restoreSpan(span), ...failure);
+  const raw = restoreSpan(span);
+  getSpanOps(raw)?.endSpan(raw, ...failure);
 }
 
 /** Sets span attributes. */
@@ -92,7 +123,8 @@ export function setSpanAttributes(
   span: Span | null,
   attributes: Record<string, string | number | boolean>,
 ): void {
-  getSpanOps()?.setAttributes(restoreSpan(span), attributes);
+  const raw = restoreSpan(span);
+  getSpanOps(raw)?.setAttributes(raw, attributes);
 }
 
 /** Event emitted for add span. */
@@ -101,7 +133,8 @@ export function addSpanEvent(
   name: string,
   attributes?: Record<string, string | number | boolean>,
 ): void {
-  getSpanOps()?.addEvent(restoreSpan(span), name, attributes);
+  const raw = restoreSpan(span);
+  getSpanOps(raw)?.addEvent(raw, name, attributes);
 }
 
 /** Create child span. */
@@ -110,6 +143,18 @@ export function createChildSpan(
   name: string,
   options: SpanOptions = {},
 ): Span | null {
+  const raw = restoreSpan(parentSpan);
+  const owner = raw ? getSpanProjectProvider(raw) : undefined;
+  if (owner) {
+    return runWithProjectTraceProvider(owner, () =>
+      exposeSpan(
+        getProjectTraceHelpers(owner)!.spans.createChildSpan(
+          raw,
+          name,
+          restoreSpanOptions(options),
+        ),
+      ));
+  }
   return exposeSpan(
     getSpanOps()?.createChildSpan(
       restoreSpan(parentSpan),
@@ -126,7 +171,8 @@ export function extractContext(headers: Headers): Context | undefined {
 
 /** Context for inject. */
 export function injectContext(context: Context, headers: Headers): void {
-  getContextProp()?.injectContext(restoreContext(context), headers);
+  const raw = restoreContext(context);
+  getContextProp(raw)?.injectContext(raw, headers);
 }
 
 /** Context for get active. */
@@ -136,6 +182,14 @@ export function getActiveContext(): Context | undefined {
 
 /** Applies active span. */
 export async function withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
+  const raw = restoreSpan(span);
+  const owner = raw ? getSpanProjectProvider(raw) : undefined;
+  if (owner) {
+    return runWithProjectTraceProvider(
+      owner,
+      () => getProjectTraceHelpers(owner)!.context.withActiveSpan(raw, fn),
+    );
+  }
   const contextProp = getContextProp();
   if (!contextProp) return fn();
   return contextProp.withActiveSpan(restoreSpan(span), fn);
@@ -147,20 +201,22 @@ export async function withSpan<T>(
   fn: (span: Span | null) => Promise<T>,
   options: SpanOptions = {},
 ): Promise<T> {
-  const contextProp = getContextProp();
-  const spanOps = getSpanOps();
+  return withParentProvider(options, () => {
+    const contextProp = getContextProp();
+    const spanOps = getSpanOps();
 
-  if (!contextProp || !spanOps) return fn(null);
+    if (!contextProp || !spanOps) return fn(null);
 
-  return contextProp.withSpanAsync(
-    name,
-    (span) => fn(exposeSpan(span)),
-    (n) => spanOps.startSpan(n, restoreSpanOptions(options)),
-    (s: Span | null, ...failure: [] | [error: unknown]) => {
-      if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
-      else spanOps.endSpan(s);
-    },
-  );
+    return contextProp.withSpanAsync(
+      name,
+      (span) => fn(exposeSpan(span)),
+      (n) => spanOps.startSpan(n, restoreSpanOptions(options)),
+      (s: Span | null, ...failure: [] | [error: unknown]) => {
+        if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
+        else spanOps.endSpan(s);
+      },
+    );
+  });
 }
 
 /** Applies span sync. */
@@ -169,20 +225,22 @@ export function withSpanSync<T>(
   fn: (span: Span | null) => T,
   options: SpanOptions = {},
 ): T {
-  const contextProp = getContextProp();
-  const spanOps = getSpanOps();
+  return withParentProvider(options, () => {
+    const contextProp = getContextProp();
+    const spanOps = getSpanOps();
 
-  if (!contextProp || !spanOps) return fn(null);
+    if (!contextProp || !spanOps) return fn(null);
 
-  return contextProp.withSpan(
-    name,
-    (span) => fn(exposeSpan(span)),
-    (n) => spanOps.startSpan(n, restoreSpanOptions(options)),
-    (s: Span | null, ...failure: [] | [error: unknown]) => {
-      if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
-      else spanOps.endSpan(s);
-    },
-  );
+    return contextProp.withSpan(
+      name,
+      (span) => fn(exposeSpan(span)),
+      (n) => spanOps.startSpan(n, restoreSpanOptions(options)),
+      (s: Span | null, ...failure: [] | [error: unknown]) => {
+        if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
+        else spanOps.endSpan(s);
+      },
+    );
+  });
 }
 
 export { tracingManager } from "./manager.ts";

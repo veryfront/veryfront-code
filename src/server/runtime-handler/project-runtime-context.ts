@@ -491,7 +491,9 @@ export async function resolveProjectRuntimeContext(
   const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
     adapterRes.config?.integrations,
   );
-  const projectTraceConfig: ProjectTraceConfigResult = !adapterRes.isLocalProject && reqCtx.token
+  const projectTraceConfig: ProjectTraceConfigResult = adapterRes.configOutcome === "deferred"
+    ? { status: "deferred" }
+    : !adapterRes.isLocalProject && reqCtx.token
     ? await resolveProjectTraceConfig(
       { projectId: projectRes.projectId ?? "", environmentId: environmentId ?? "" },
       adapterRes.config?.extensions ?? [],

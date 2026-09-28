@@ -10,7 +10,7 @@
 import type { Agent, AgentResponse } from "../types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { AGENT_ERROR } from "#veryfront/errors";
-import { setActiveSpanAttributes } from "#veryfront/observability";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
