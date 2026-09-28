@@ -10,6 +10,7 @@ function getCoreSkillsDir(): string {
 
 export async function loadSkill(
   directory: string,
+  options: { references?: boolean } = {},
 ): Promise<LoadedSkill | null> {
   const fs = createFileSystem();
 
@@ -18,7 +19,9 @@ export async function loadSkill(
     const parsed = await parseSkillFrontmatter(content);
     const metadata = validateSkillMetadata(parsed.frontmatter, basename(directory));
     const skill: LoadedSkill = { metadata, skillMd: parsed.body.trimStart(), directory };
-    const references = await loadReferences(`${directory}/references`);
+    const references = options.references
+      ? await loadReferences(`${directory}/references`)
+      : undefined;
     if (references) skill.references = references;
     return skill;
   } catch {
@@ -57,7 +60,7 @@ export async function listCoreSkills(
   try {
     for await (const entry of fs.readDir(skillsDir)) {
       if (!entry.isDirectory) continue;
-      const skill = await loadSkill(`${skillsDir}/${entry.name}`);
+      const skill = await loadSkill(`${skillsDir}/${entry.name}`, { references: true });
       if (skill) skills.push(skill);
     }
   } catch {
@@ -109,6 +112,20 @@ export async function listLocalSkills(baseDir: string = cwd()): Promise<LoadedSk
   }
 
   return skills;
+}
+
+/**
+ * Find a skill by name, local skills first, with its reference documents.
+ * Listing leaves out local references; only the selected skill reads them.
+ */
+export async function findSkill(
+  name: string,
+  baseDir: string = cwd(),
+): Promise<LoadedSkill | null> {
+  const found = (await listAllSkills(baseDir)).find((s) => s.metadata.name === name);
+  if (!found) return null;
+  if (found.directory.startsWith("core:")) return found;
+  return await loadSkill(found.directory, { references: true });
 }
 
 /**

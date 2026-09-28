@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename, join } from "#std/path.ts";
 import { CORE_SKILLS } from "./core-skills.generated.ts";
 import {
+  findSkill,
   listAllSkills,
   listCoreSkills,
   listLocalSkills,
@@ -93,7 +94,7 @@ describe("Skill Loader", () => {
       "skills/code-review/references/A.md": "# A",
       "skills/code-review/references/notes.txt": "ignored",
     }, async (dir) => {
-      const skill = await loadSkill(join(dir, "skills", "code-review"));
+      const skill = await loadSkill(join(dir, "skills", "code-review"), { references: true });
 
       assertEquals(skill?.references, {
         "references/A.md": "# A",
@@ -115,10 +116,42 @@ describe("Skill Loader", () => {
       "skills/code-review/SKILL.md": PROJECT_SKILL,
       "skills/code-review/references/notes.txt": "ignored",
     }, async (dir) => {
-      const skill = await loadSkill(join(dir, "skills", "code-review"));
+      const skill = await loadSkill(join(dir, "skills", "code-review"), { references: true });
 
       assertEquals(skill !== null && "references" in skill, false);
     });
+  });
+
+  it("does not read reference bodies when listing project-local skills", async () => {
+    await withTempDir({
+      "skills/code-review/SKILL.md": PROJECT_SKILL,
+      "skills/code-review/references/A.md": "# A",
+    }, async (dir) => {
+      const [skill] = await listLocalSkills(dir);
+
+      assertEquals(skill !== undefined && "references" in skill, false);
+    });
+  });
+
+  it("findSkill returns a project-local skill with its references", async () => {
+    await withTempDir({
+      "skills/code-review/SKILL.md": PROJECT_SKILL,
+      "skills/code-review/references/A.md": "# A",
+    }, async (dir) => {
+      const skill = await findSkill("code-review", dir);
+
+      assertEquals(skill?.references, { "references/A.md": "# A" });
+    });
+  });
+
+  it("findSkill returns a bundled skill with its references", async () => {
+    const skill = await findSkill("veryfront", "/nonexistent-project");
+
+    assertEquals(skill?.references?.["references/INTEGRATIONS.md"] !== undefined, true);
+  });
+
+  it("findSkill returns null for an unknown skill", async () => {
+    assertEquals(await findSkill("unknown-skill", "/nonexistent-project"), null);
   });
 
   it("lists project-local skills from skills/<id>/SKILL.md", async () => {
