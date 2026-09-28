@@ -1749,6 +1749,36 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     }
   });
 
+  it("does not reread an inherited body getter on neutral routes", async () => {
+    let reads = 0;
+    let sent = "";
+    installMockFetch(async (input, init) => {
+      sent = await new Request(input, init).text();
+      return Response.json({ ok: true });
+    });
+    try {
+      const wrapped = createVeryfrontCloudFetch(
+        "vf_test_provider",
+        "https://api.veryfront.com/ai/v1",
+        undefined,
+        { wireModelProvider: "openai" },
+      );
+      const init = Object.create({
+        get body() {
+          reads++;
+          return JSON.stringify({ model: reads === 1 ? "original" : "changed" });
+        },
+      });
+      init.method = "POST";
+      const response = await wrapped("https://api.veryfront.com/ai/v1/chat/completions", init);
+      await response.text();
+      assertEquals(reads, 1);
+      assertEquals(JSON.parse(sent).model, "openai/original");
+    } finally {
+      restoreMockFetch();
+    }
+  });
+
   it("passes an error body larger than the refusal read limit through untouched", async () => {
     // Refusal-shaped, but padded past the bounded read: it must not be buffered and rewritten.
     const body = JSON.stringify({

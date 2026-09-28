@@ -710,7 +710,9 @@ export function createVeryfrontCloudFetch(
           request,
           headers,
           wireModelProvider,
-          init && "body" in init ? init.body : undefined,
+          init && IntrinsicReflectApply(ObjectHasOwn, undefined, [init, "body"])
+            ? init.body
+            : undefined,
         )
         : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
           new NativeRequest(request, { headers }),
