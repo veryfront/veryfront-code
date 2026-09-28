@@ -102,8 +102,7 @@ export async function connectGmail(
   await untilDeadline(presentConnectUrl(handoff.connect_url, handoff.expires_at), deadline);
 
   while (true) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    deadline.throwIfAborted();
+    await untilDeadline(new Promise((resolve) => setTimeout(resolve, 3000)), deadline);
     const current = identity(await client.status("gmail", scope));
     if (!current || current === before) continue;
     for await (const row of client.listConnections("gmail")) {
@@ -120,7 +119,7 @@ identity in that scope, not proof that this particular handoff succeeded: a
 concurrent connect in the same scope can produce it too. Confirm the account
 with the person before relying on it. The client-level abort signal ends every
 request, including `connect`, at the deadline, and `untilDeadline` stops waiting
-for `presentConnectUrl` at the same deadline. A new `connection_generation_id`
+for `presentConnectUrl` and for the polling delay at the same deadline. A new `connection_generation_id`
 on an existing `id` means the same account was reconnected. `veryfront integration connect` performs the same check for you and
 returns `connection_observed` with the confirmed row. If the callback arrives
 but inventory does not show a new generation within its short confirmation
