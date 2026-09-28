@@ -162,6 +162,8 @@ type ResolvedProjectMetadata =
       redirectUrl?: string;
       discardToken?: boolean;
     };
+    /** Set when the lookup resolved the project before the request was refused. */
+    projectId?: string;
   };
 
 type VerifySignedInternalControlPlaneBinding = (
@@ -632,6 +634,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           message: "Control-plane project binding failed",
           discardToken: true,
         },
+        projectId: lookupResult.id,
       };
     }
 
@@ -646,7 +649,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       logContext,
       isSignedInternalControlPlaneRequest: signedInternalControlPlaneRequest,
     });
-    if (protectionError) return { error: protectionError };
+    if (protectionError) return { error: protectionError, projectId: lookupResult.id };
 
     return {
       projectId: lookupResult.id,
@@ -758,6 +761,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
               message: "Control-plane project binding failed",
               discardToken: true,
             },
+            projectId: routingResult.id,
           };
         }
 
@@ -772,7 +776,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           logContext,
           isSignedInternalControlPlaneRequest: signedInternalControlPlaneRequest,
         });
-        if (protectionError) return { error: protectionError };
+        if (protectionError) return { error: protectionError, projectId: routingResult.id };
 
         return {
           projectId: routingResult.id,
@@ -1141,7 +1145,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         );
 
         if ("error" in resolved) {
-          return createProxyErrorContext(base, {
+          return createProxyErrorContext({ ...base, projectId: resolved.projectId }, {
             status: resolved.error.status,
             message: resolved.error.message,
             token: resolved.error.discardToken ? undefined : token,
@@ -1184,7 +1188,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         );
 
         if ("error" in resolved) {
-          return createProxyErrorContext(base, {
+          return createProxyErrorContext({ ...base, projectId: resolved.projectId }, {
             status: resolved.error.status,
             message: resolved.error.message,
             token: resolved.error.discardToken ? undefined : token,
@@ -1227,7 +1231,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         );
 
         if ("error" in resolved) {
-          return createProxyErrorContext(base, {
+          return createProxyErrorContext({ ...base, projectId: resolved.projectId }, {
             status: resolved.error.status,
             message: resolved.error.message,
             token: resolved.error.discardToken ? undefined : token,
@@ -1255,8 +1259,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
     }
 
+    // Errors past this point still belong to the resolved project's traces.
+    const resolvedBase = { ...base, projectId };
+
     if (signedInternalControlPlaneCandidate && !signedInternalControlPlaneRequest) {
-      return createProxyErrorContext(base, {
+      return createProxyErrorContext(resolvedBase, {
         status: 401,
         message: "Control-plane project binding failed",
       });
@@ -1283,7 +1290,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             host,
             pathname: "/api/control-plane/runs/<RUN_ID>/stream",
           });
-          return createProxyErrorContext(base, {
+          return createProxyErrorContext(resolvedBase, {
             status: error.status,
             message: error.message,
           });
@@ -1299,7 +1306,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         host,
         environment: scope,
       });
-      return createReleaseNotFoundProxyContext(base, token);
+      return createReleaseNotFoundProxyContext(resolvedBase, token);
     }
 
     const contentSourceId = computeContentSourceId(

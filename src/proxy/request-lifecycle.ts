@@ -3,6 +3,8 @@ import { ensureError } from "#veryfront/errors";
 
 export interface ProxyRequestLifecycle {
   end(statusCode: number, error?: Error): void;
+  /** Stamp the proxy-resolved project id so project trace search finds this request. */
+  setProjectId(projectId: string | undefined): void;
 }
 
 export interface RunProxyRequestLifecycleOptions {
@@ -32,6 +34,9 @@ export async function runProxyRequestLifecycle(
       if (ended) return;
       ended = true;
       options.endSpan(spanInfo?.span, statusCode, error);
+    },
+    setProjectId(projectId) {
+      if (projectId) spanInfo?.span.setAttribute("project.id", projectId);
     },
   };
 

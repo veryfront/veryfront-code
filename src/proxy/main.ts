@@ -497,6 +497,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
         "proxy.resolve_request",
         () => proxyHandler.processRequest(req, { url, timing: proxyTiming }),
       );
+      lifecycle.setProjectId(ctx.projectId);
 
       return runWithProxyRequestContext(
         {

@@ -44,6 +44,53 @@ describe("proxy request lifecycle", () => {
     ]);
   });
 
+  it("stamps the resolved project id on the root server span only when it is set", async () => {
+    for (const projectId of ["proj-123", undefined]) {
+      const req = new Request("https://example.com/docs");
+      const attributes: Record<string, unknown> = {};
+      const span = {
+        setAttribute(key: string, value: unknown) {
+          attributes[key] = value;
+          return span;
+        },
+      } as unknown as Span;
+
+      await runProxyRequestLifecycle({
+        req,
+        url: new URL(req.url),
+        extractContext: () => undefined,
+        startServerSpan: () => ({ span, context: {} as Context }),
+        withContext: (_context, fn) => fn(),
+        endSpan: () => {},
+        handle: async (lifecycle) => {
+          lifecycle.setProjectId(projectId);
+          return new Response("ok");
+        },
+      });
+
+      assertEquals(attributes, projectId ? { "project.id": projectId } : {});
+    }
+  });
+
+  it("ignores the project id when tracing is disabled", async () => {
+    const req = new Request("https://example.com/docs");
+
+    const response = await runProxyRequestLifecycle({
+      req,
+      url: new URL(req.url),
+      extractContext: () => undefined,
+      startServerSpan: () => null,
+      withContext: (_context, fn) => fn(),
+      endSpan: () => {},
+      handle: async (lifecycle) => {
+        lifecycle.setProjectId("proj-123");
+        return new Response("ok");
+      },
+    });
+
+    assertEquals(response.status, 200);
+  });
+
   it("honors an explicit lifecycle end and does not end the span twice", async () => {
     const req = new Request("https://example.com/protected");
     const span = {} as Span;

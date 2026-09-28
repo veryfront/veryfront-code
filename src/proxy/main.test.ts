@@ -96,6 +96,25 @@ describe("proxy main request URL parsing", () => {
     assertStringIncludes(helper, "${host.length} chars");
   });
 
+  it("stamps the resolved project id on the proxy root span", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    // Project trace search matches only `project.id` (veryfront-issue-inbox#1884).
+    // The value must come from the proxy's own resolution, never from the
+    // client request, or a caller could plant spans in another project's search.
+    const resolveIndex = source.indexOf(
+      "proxyHandler.processRequest(req, { url, timing: proxyTiming })",
+    );
+    const stampIndex = source.indexOf("lifecycle.setProjectId(ctx.projectId);");
+    assertEquals(resolveIndex >= 0, true);
+    // The stamp must directly follow the resolution, before any early return.
+    assertEquals(
+      source.slice(resolveIndex, stampIndex).split("\n").length <= 3,
+      true,
+      "project.id must be set from the resolved ctx",
+    );
+  });
+
   it("uses an independent request body for every upstream attempt", async () => {
     const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
 
