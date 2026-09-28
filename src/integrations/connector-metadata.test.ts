@@ -132,6 +132,33 @@ describe("connector setup and side-effect metadata", () => {
     assertStringIncludes(notes, "/docs/code/guides/integrations/salesforce#use-a-service-account");
   });
 
+  it("matches the Salesforce setup metadata to the published Salesforce guide", () => {
+    const salesforce = getConnector("salesforce");
+    const required = Object.fromEntries(
+      (salesforce.envVars ?? []).map((envVar) => [envVar.name, envVar.required]),
+    );
+    // Hosted OAuth uses the installed Veryfront package; the service-account
+    // variables are required together only when a run uses that mode.
+    assertEquals(required, {
+      SALESFORCE_CLIENT_ID: false,
+      SALESFORCE_CLIENT_SECRET: false,
+      SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID: false,
+      SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET: false,
+      SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL: false,
+    });
+
+    const guide = salesforce.setupGuide;
+    assertExists(guide);
+    const text = JSON.stringify(guide);
+    assertStringIncludes(text, "installPackage.apexp?p0=04tfj000000RX37AAG");
+    assertStringIncludes(text, "External Client App Manager");
+    assertStringIncludes(text, "https://api.veryfront.com/oauth/callback/salesforce");
+    assertStringIncludes(text, "My Domain");
+    assert(!text.includes("Connected App Setup"));
+    assertEquals(guide.steps.at(-1)?.title, "Verify access");
+    assertStringIncludes(guide.steps.at(-1)?.description ?? "", "Find Customer");
+  });
+
   it("does not require the Twilio sender number for the read tools", () => {
     const twilio = getConnector("twilio");
     const phoneNumber = twilio.envVars?.find((envVar) => envVar.name === "TWILIO_PHONE_NUMBER");
