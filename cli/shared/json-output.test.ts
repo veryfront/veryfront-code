@@ -2,7 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { refreshLoggerConfig } from "#cli/logger-config";
+import {
+  __subscribeLogRecordEmitter,
+  LogLevel,
+  refreshLoggerConfig,
+  serverLogger,
+  setLogLevel,
+} from "#cli/logger-config";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -32,6 +38,35 @@ describe("json-output", () => {
       setJsonMode(false);
       assertEquals(isJsonMode(), false);
     });
+
+    for (const originalLevel of [undefined, "WARN"]) {
+      it(`reapplies JSON suppression while retaining ${originalLevel ?? "absent"} original level`, () => {
+        setJsonMode(false);
+        const saved = getEnv("LOG_LEVEL");
+        const messages: string[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => messages.push(entry.message));
+        try {
+          if (originalLevel === undefined) deleteEnv("LOG_LEVEL");
+          else setEnv("LOG_LEVEL", originalLevel);
+          setJsonMode(true);
+          for (const verbosity of [LogLevel.DEBUG, LogLevel.WARN]) {
+            setLogLevel(verbosity);
+            setJsonMode(true);
+            serverLogger.info("json-repeat-info");
+            serverLogger.warn("json-repeat-warning");
+          }
+          assertEquals(messages, []);
+          setJsonMode(false);
+          assertEquals(getEnv("LOG_LEVEL"), originalLevel);
+        } finally {
+          unsubscribe();
+          setJsonMode(false);
+          if (saved === undefined) deleteEnv("LOG_LEVEL");
+          else setEnv("LOG_LEVEL", saved);
+          refreshLoggerConfig();
+        }
+      });
+    }
 
     it("restores an absent LOG_LEVEL after leaving JSON mode", () => {
       setJsonMode(false);

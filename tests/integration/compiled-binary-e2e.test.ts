@@ -139,14 +139,14 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
     try {
       await Deno.mkdir(join(projectDir, "app"));
       await Deno.writeTextFile(join(projectDir, "veryfront.config.mjs"), "export default {};");
-      for (const flag of ["--json", "-j"]) {
+      for (const flags of [["--json"], ["-j"], ["--json", "--verbose"], ["-j", "--verbose"]]) {
         for (const valid of [true, false]) {
           await Deno.writeTextFile(
             join(projectDir, "app/page.mdx"),
             valid ? "# JSON build fixture\n" : "# Broken\n\n<Foo\n",
           );
           const result = await new Deno.Command(BINARY_PATH, {
-            args: ["build", "--preset", "embedded", flag],
+            args: ["build", "--preset", "embedded", ...flags],
             cwd: projectDir,
             env: { LOG_LEVEL: "INFO", LOG_FORMAT: "text", VERYFRONT_NO_UPDATE_CHECK: "1" },
             stdin: "null",
