@@ -3,7 +3,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createIntegrationClient } from "#veryfront/integrations/client.ts";
-import { runIntegrationOperation } from "#cli/commands/integration/command";
+// No #cli alias exists for this module, and aliases need a caller in cli/ or src/
+// (tests/integration/deno-config-cli-aliases.test.ts), so tests import it like
+// tests/integration/cli/integration/error-context.test.ts imports cli/router.ts.
+import { runIntegrationOperation } from "../../../../cli/commands/integration/command.ts";
 
 // veryfront-api pins the REST detail with a golden and checks GraphQL and MCP
 // against it. `veryfront integration get` is the CLI projection of the same

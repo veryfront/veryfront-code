@@ -410,7 +410,6 @@
     "#cli/logger-config": "./src/utils/logger/logger.ts",
     "#cli/runtime-adapter": "./src/platform/adapters/registry.ts",
     "#cli/commands/files/command": "./cli/commands/files/command.ts",
-    "#cli/commands/integration/command": "./cli/commands/integration/command.ts",
     "#cli/commands/knowledge/command": "./cli/commands/knowledge/command.ts",
     "#cli/commands/knowledge/result": "./cli/commands/knowledge/result.ts",
     "#cli/commands/serve/command": "./cli/commands/serve/command.ts",
