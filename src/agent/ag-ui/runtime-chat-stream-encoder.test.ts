@@ -321,6 +321,14 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
       undefined,
     );
     assertEquals(shareFor({ cacheCreationInputTokens: 500, cacheCreation1hInputTokens: 600 }), 500);
+    assertEquals(
+      shareFor({
+        inputTokenDetails: { cacheWriteTokens: 1.5 },
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      }),
+      600,
+    );
   });
 
   it("can suppress reasoning deltas while preserving reasoning lifecycle markers", () => {
