@@ -373,6 +373,7 @@ jobs:
             tests/integration/semantic-unit-boundary/src/transforms/esm/package-registry-metadata-history.test.ts \
             tests/integration/semantic-unit-boundary/src/config/host-api-base.test.ts \
             tests/integration/platform/runtime-request-context.test.ts \
+            tests/integration/runtime/compat/esbuild-cleanup.test.ts \
             tests/integration/server/shared-agent-bootstrap.test.ts \
             tests/integration/observability/project-otlp-transport-policy.test.ts \
             tests/integration/observability/project-provider.test.ts \
