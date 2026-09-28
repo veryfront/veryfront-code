@@ -106,6 +106,12 @@ Store `OTEL_EXPORTER_OTLP_HEADERS` as a project secret when the collector requir
 
 On hosted runtimes containing project trace export support, dedicated and shared apps use these project settings without replacing platform telemetry. Each project environment has separate credentials, resources and export buffers. HTTP request spans and custom spans created through `trace` or the tracing helpers from `veryfront/observability` use the active project. You do not install another global OpenTelemetry SDK.
 
+Project tracing follows the runtime's execution boundary. Shared host execution
+requires an operator grant and does not isolate application memory or JavaScript
+globals between projects. Separate exporters and request context do not turn that
+mode into a tenant sandbox. Unrelated tenants require isolated project execution,
+as described in the [runtime security guide](../../src/security/README.md#operator-granted-shared-execution).
+
 The request span starts a project trace and can link to the platform request. Project recording does not depend on the platform sampling decision. Internal framework spans are not automatically copied to the project collector. Raw third-party SDK installation, automatic instrumentation, background execution, logs and metrics are outside this hosted project export path.
 
 Set `OTEL_TRACES_ENABLED=false` or disable the extension declaration to stop project export. Updated settings take effect after the existing project environment cache refreshes (normally up to 60 seconds). A refreshed disable revokes queued/in-flight delivery. Credential rotation gives active requests a bounded drain period; it does not restart other projects. Removing the project trace settings rolls back this feature without changing platform telemetry.
