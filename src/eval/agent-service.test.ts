@@ -595,6 +595,14 @@ describe("eval/agent-service", () => {
         },
         4,
       ],
+      [
+        {
+          cacheCreationInputTokens: 1.5,
+          cache_creation_input_tokens: 6,
+          cache_creation_1h_input_tokens: 4,
+        },
+        4,
+      ],
     ];
     for (const [metadata, expected] of cases) {
       const adapter = createAgentServiceEvalAdapter({
@@ -623,11 +631,11 @@ describe("eval/agent-service", () => {
         },
       );
 
-      assertEquals(
-        report.records[0]?.usage?.cacheCreation1hInputTokens,
-        expected,
-        JSON.stringify(metadata),
-      );
+      const usage = report.records[0]?.usage;
+      assertEquals(usage?.cacheCreation1hInputTokens, expected, JSON.stringify(metadata));
+      if (expected !== undefined) {
+        assertEquals(usage?.cacheCreationInputTokens, 6, JSON.stringify(metadata));
+      }
     }
   });
 
