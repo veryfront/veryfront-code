@@ -47435,7 +47435,7 @@ export const connectors: IntegrationConfig[] = [
       "description":
         "Service account: the org's My Domain origin, for example https://acme.my.salesforce.com. Generic login hosts are rejected.",
       "required": false,
-      "sensitive": false,
+      "sensitive": true,
       "docsUrl":
         "https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account",
     }],
