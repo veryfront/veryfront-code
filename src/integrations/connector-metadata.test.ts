@@ -8,6 +8,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { connectors } from "./_data.ts";
 import { SUPPORTED_INTEGRATION_NAMES } from "./feature-flags.ts";
+import { loadIntegrationConfig } from "../../templates/integration-loader.ts";
 
 function getConnector(name: string) {
   const connector = connectors.find((item) => item.name === name);
@@ -42,15 +43,22 @@ describe("connector setup and side-effect metadata", () => {
     assertEquals(withoutGuide, []);
   });
 
-  it("gives every default OAuth guide its callbacks, client variables, scopes and a read-only check", () => {
-    const gaps = SUPPORTED_INTEGRATION_NAMES.flatMap((name) => {
+  it("gives every default OAuth guide its callbacks, client variables, scopes and a read-only check", async () => {
+    const gaps: string[] = [];
+    for (const name of SUPPORTED_INTEGRATION_NAMES) {
       const connector = getConnector(name);
       const guide = connector.setupGuide;
-      if (!guide || connector.auth.type !== "oauth2") return [];
+      if (!guide || connector.auth.type !== "oauth2") continue;
+      // The generated catalog drops callbackPath, so read it from connector.json.
+      const localCallback = (await loadIntegrationConfig(name))?.auth.callbackPath;
+      if (!localCallback) {
+        gaps.push(`${name}: connector.json declares no callbackPath`);
+        continue;
+      }
       const text = JSON.stringify(guide);
       const expected = [
         `https://api.veryfront.com/oauth/callback/${name}`,
-        connector.auth.callbackPath ?? "",
+        localCallback,
         ...(connector.envVars ?? [])
           .map((envVar) => envVar.name)
           .filter((envVar) => /_CLIENT_(ID|SECRET)$/.test(envVar)),
@@ -72,8 +80,8 @@ describe("connector setup and side-effect metadata", () => {
       ) {
         missing.push("a final Verify access step that names a read-only tool");
       }
-      return missing.map((value) => `${name}: ${value}`);
-    });
+      gaps.push(...missing.map((value) => `${name}: ${value}`));
+    }
 
     assertEquals(gaps, []);
   });
