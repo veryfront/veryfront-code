@@ -38,6 +38,40 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("keeps provider handles private when shared Set methods are replaced", async () => {
+    const owner = new OtlpTracingExporter();
+    // Load the SDK before installing the hook so this targets provider bookkeeping.
+    const options = {
+      resource: { "service.name": "private-handles" },
+      createTransport: () => ({
+        send: () => Promise.resolve({ status: "success" as const }),
+        shutdown() {},
+      }),
+    };
+    await owner.createProjectProvider(options);
+    const add = Set.prototype.add;
+    const remove = Set.prototype.delete;
+    let exposed = 0;
+    try {
+      Set.prototype.add = function (value) {
+        if (value?.getProvider && value?.shutdown) exposed++;
+        return Reflect.apply(add, this, [value]);
+      };
+      Set.prototype.delete = function (value) {
+        if (value?.getProvider && value?.shutdown) exposed++;
+        return Reflect.apply(remove, this, [value]);
+      };
+      const session = await owner.createProjectProvider(options);
+      await session.shutdown(true);
+      await owner.shutdown();
+    } finally {
+      Set.prototype.add = add;
+      Set.prototype.delete = remove;
+      await owner.shutdown();
+    }
+    assertEquals(exposed, 0);
+  });
+
   it("snapshots span, event and link attribute arrays before queueing", async () => {
     const owner = new OtlpTracingExporter();
     const captures: string[] = [];

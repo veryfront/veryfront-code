@@ -26,6 +26,14 @@ import type {
 } from "veryfront/extensions/observability";
 import { VERSION } from "veryfront/utils";
 
+// Captured when the extension loads, before application execution.
+const ProviderSet = Set;
+const apply = Reflect.apply;
+const providerSetAdd = Set.prototype.add;
+const providerSetDelete = Set.prototype.delete;
+const providerSetForEach = Set.prototype.forEach;
+const defineProperty = Object.defineProperty;
+
 /**
  * The TracerProvider interface as expected by the core shim.
  * Using structural typing because the real SDK provider satisfies this shape.
@@ -796,7 +804,7 @@ class FilteringSpanExporter {
 }
 
 class OtlpTracingExporter implements TracingExporter {
-  private projectProviders = new Set<ProjectTraceProvider>();
+  private projectProviders = new ProviderSet<ProjectTraceProvider>();
 
   async createProjectProvider(options: ProjectTraceProviderOptions): Promise<ProjectTraceProvider> {
     const { createProjectTraceProvider } = await import("./project-provider.ts");
@@ -807,11 +815,11 @@ class OtlpTracingExporter implements TracingExporter {
         try {
           await session.shutdown(discard);
         } finally {
-          this.projectProviders.delete(handle);
+          apply(providerSetDelete, this.projectProviders, [handle]);
         }
       },
     });
-    this.projectProviders.add(handle);
+    apply(providerSetAdd, this.projectProviders, [handle]);
     return handle;
   }
   private sdkProvider: SdkTracerProvider | null = null;
@@ -998,7 +1006,18 @@ class OtlpTracingExporter implements TracingExporter {
   }
 
   async shutdown(): Promise<void> {
-    await Promise.allSettled([...this.projectProviders].map((provider) => provider.shutdown(true)));
+    const pending: Promise<void>[] = [];
+    apply(providerSetForEach, this.projectProviders, [(provider: ProjectTraceProvider) => {
+      const property = {
+        __proto__: null,
+        value: provider.shutdown(true),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      };
+      defineProperty(pending, pending.length, property);
+    }]);
+    await Promise.allSettled(pending);
     if (this.logProvider) {
       try {
         await this.logProvider.shutdown();

@@ -1,3 +1,6 @@
+import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { filterPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ProjectTraceConfig } from "#veryfront/server/project-env/telemetry-config.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 
@@ -26,8 +29,8 @@ export interface ProjectTraceLease<T> {
 
 /** Bounded, process-local ownership of project exporter generations. */
 export class ProjectTraceRegistry<T extends ProjectTraceSession> {
-  private readonly current = new Map<string, Entry<T>>();
-  private readonly entries = new Set<Entry<T>>();
+  private readonly current = createPrivateMap<string, Entry<T>>();
+  private readonly entries = createPrivateSet<Entry<T>>();
   private readonly maxEntries: number;
   private readonly idleMs: number;
   private readonly drainMs: number;
@@ -159,10 +162,16 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
     if (!entry) {
       // Entries being initialized/drained still count against the process budget.
       if (this.entries.size >= this.maxEntries) {
-        const idle = [...this.entries].find((candidate) =>
-          candidate.users === 0 && candidate.session && !candidate.session.hasActiveSpans?.() &&
-          candidate.state !== "closed"
-        );
+        let idle: Entry<T> | undefined;
+        for (const candidate of this.entries) {
+          if (
+            candidate.users === 0 && candidate.session && !candidate.session.hasActiveSpans?.() &&
+            candidate.state !== "closed"
+          ) {
+            idle = candidate;
+            break;
+          }
+        }
         if (idle) await this.bounded(this.stop(idle, true), this.drainMs, () => {});
       }
       if (this.closed || this.entries.size >= this.maxEntries) return undefined;
@@ -216,8 +225,9 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
 
   async disable(projectId: string, environmentId: string): Promise<void> {
     const key = this.key(projectId, environmentId);
-    const stopping = [...this.entries].filter((entry) => entry.key === key).map((entry) =>
-      this.stop(entry, true)
+    const stopping = mapPrivateArray(
+      filterPrivateArray([...this.entries], (entry) => entry.key === key),
+      (entry) => this.stop(entry, true),
     );
     await this.bounded(Promise.all(stopping), this.drainMs, () => {});
   }
@@ -226,7 +236,7 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
     this.closed = true;
     const entries = [...this.entries];
     await this.bounded(
-      Promise.all(entries.map((entry) => this.stop(entry, false))),
+      Promise.all(mapPrivateArray(entries, (entry) => this.stop(entry, false))),
       this.drainMs,
       () => {
         for (const entry of entries) void this.stop(entry, true);
@@ -235,7 +245,7 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
   }
 
   async flush(operation: (session: T) => Promise<void>): Promise<void> {
-    await Promise.all([...this.entries].map(async (entry) => {
+    await Promise.all(mapPrivateArray([...this.entries], async (entry) => {
       const session = await entry.ready;
       if (session && entry.state !== "closed") await operation(session);
     }));
