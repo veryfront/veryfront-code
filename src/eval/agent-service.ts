@@ -7,7 +7,7 @@ import {
   parseAgUiSseResponse,
   type ParseAgUiSseResponseOptions,
 } from "#veryfront/agent";
-import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
+import { readCacheWrite1hShare, readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import type {
   EvalAgentAdapter,
   EvalAgentAdapterContext,
@@ -597,8 +597,10 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
   const cacheCreationInputTokens = readNonNegativeNumber(record.cacheCreationInputTokens) ??
     readNonNegativeNumber(record.cacheCreationTokens) ??
     readNonNegativeNumber(record.cache_creation_input_tokens);
-  const cacheCreation1hInputTokens = readNonNegativeNumber(record.cacheCreation1hInputTokens) ??
-    readNonNegativeNumber(record.cache_creation_1h_input_tokens);
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    cacheCreationInputTokens,
+    record.cacheCreation1hInputTokens ?? record.cache_creation_1h_input_tokens,
+  );
   const cacheReadInputTokens = readNonNegativeNumber(record.cacheReadInputTokens) ??
     readNonNegativeNumber(record.cacheReadTokens) ??
     readNonNegativeNumber(record.cache_read_input_tokens);

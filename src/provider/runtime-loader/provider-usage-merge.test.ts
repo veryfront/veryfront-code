@@ -698,4 +698,65 @@ describe("provider/runtime-loader/provider-usage one-hour cache-write share", ()
     const sanitized = sanitizeRuntimeUsage({ cacheCreation1hInputTokens: -5, inputTokens: 1 });
     assertEquals(sanitized !== undefined && "cacheCreation1hInputTokens" in sanitized, false);
   });
+
+  it("drops the share without a valid cache-write total and caps it at that total", () => {
+    for (const total of [undefined, 1.5, -1, Number.MAX_SAFE_INTEGER + 1]) {
+      const sanitized = sanitizeRuntimeUsage({
+        inputTokens: 1,
+        ...(total === undefined ? {} : { cacheCreationInputTokens: total }),
+        cacheCreation1hInputTokens: 1,
+      });
+      assertEquals(sanitized !== undefined && "cacheCreationInputTokens" in sanitized, false);
+      assertEquals(sanitized !== undefined && "cacheCreation1hInputTokens" in sanitized, false);
+    }
+    assertEquals(
+      sanitizeRuntimeUsage({ cacheCreationInputTokens: 500, cacheCreation1hInputTokens: 600 })
+        ?.cacheCreation1hInputTokens,
+      500,
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          cache_creation_input_tokens: 1.5,
+          cache_creation: { ephemeral_1h_input_tokens: 1 },
+        },
+      })?.cacheCreation1hInputTokens,
+      undefined,
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          cache_creation_input_tokens: 500,
+          cache_creation: { ephemeral_1h_input_tokens: 600 },
+        },
+      })?.cacheCreation1hInputTokens,
+      500,
+    );
+  });
+
+  it("keeps a merged share within the merged cache-write total", () => {
+    const current = { cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 600 };
+    assertEquals(
+      mergeUsage(current, { cacheCreationInputTokens: 1000 })?.cacheCreation1hInputTokens,
+      600,
+    );
+    assertEquals(
+      mergeUsage(current, { cacheCreationInputTokens: 400 })?.cacheCreation1hInputTokens,
+      400,
+    );
+    assertEquals(
+      mergeUsage({ cacheCreation1hInputTokens: 600 }, { inputTokens: 1 })
+        ?.cacheCreation1hInputTokens,
+      undefined,
+    );
+    assertEquals(
+      mergeUsage(current, { cacheCreationInputTokens: 1.5, cacheCreation1hInputTokens: 1 })
+        ?.cacheCreation1hInputTokens,
+      600,
+    );
+    assertEquals(
+      mergeUsage(current, { cacheCreation1hInputTokens: 5 })?.cacheCreation1hInputTokens,
+      600,
+    );
+  });
 });

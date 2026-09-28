@@ -6,6 +6,7 @@ import {
 import type { AgUiRuntimeStreamEvent } from "./encoder.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { mapFinishReason, toRenderableCustomChunk } from "../../chat/ag-ui-helpers.ts";
+import { readCacheWrite1hShare } from "#veryfront/provider/runtime-usage.ts";
 
 /** Usage metadata captured from an AG-UI runtime finish event. */
 export type AgUiRuntimeChatStreamUsage = {
@@ -173,7 +174,10 @@ function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsa
     getNumberField(usage, "cachedInputTokens");
   const cacheWriteTokens = getNumberField(inputTokenDetails, "cacheWriteTokens") ??
     getNumberField(usage, "cacheCreationInputTokens");
-  const cacheCreation1hInputTokens = getNumberField(usage, "cacheCreation1hInputTokens");
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    cacheWriteTokens,
+    usage.cacheCreation1hInputTokens,
+  );
   const reasoningTokens = getNumberField(outputTokenDetails, "reasoningTokens") ??
     getNumberField(usage, "reasoningTokens");
 

@@ -510,10 +510,14 @@ export function addAnthropicUsage(
     sanitizedCurrent.cacheCreationInputTokens,
     sanitizedNext.cacheCreationInputTokens,
   );
-  const cacheCreation1hInputTokens = addOptionalTokenCount(
-    sanitizedCurrent.cacheCreation1hInputTokens,
-    sanitizedNext.cacheCreation1hInputTokens,
-  );
+  // Each sanitized share is at most its own total, so the summed share stays
+  // within the summed total; it is dropped when that total is not a token count.
+  const cacheCreation1hInputTokens = cacheCreationInputTokens === undefined
+    ? undefined
+    : addOptionalTokenCount(
+      sanitizedCurrent.cacheCreation1hInputTokens,
+      sanitizedNext.cacheCreation1hInputTokens,
+    );
   const cacheReadInputTokens = addOptionalTokenCount(
     sanitizedCurrent.cacheReadInputTokens,
     sanitizedNext.cacheReadInputTokens,

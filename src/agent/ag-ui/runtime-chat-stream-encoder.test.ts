@@ -297,6 +297,32 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     assertEquals("cacheCreation1hInputTokens" in (withoutShare.state.totalUsage ?? {}), false);
   });
 
+  it("keeps the one-hour cache-write share only beside a valid total, capped at it", () => {
+    const shareFor = (usage: Record<string, unknown>) => {
+      const encoder = createAgUiRuntimeChatStreamEncoder({ responseMessageId: "msg-1" });
+      encoder.encode({
+        type: "message-finish",
+        totalUsage: { inputTokens: 12, outputTokens: 8, ...usage },
+      });
+      return encoder.state.totalUsage?.cacheCreation1hInputTokens;
+    };
+
+    assertEquals(shareFor({ cacheCreation1hInputTokens: 600 }), undefined);
+    assertEquals(
+      shareFor({ cacheCreationInputTokens: 1.5, cacheCreation1hInputTokens: 1 }),
+      undefined,
+    );
+    assertEquals(
+      shareFor({ cacheCreationInputTokens: -1, cacheCreation1hInputTokens: 1 }),
+      undefined,
+    );
+    assertEquals(
+      shareFor({ cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 1.5 }),
+      undefined,
+    );
+    assertEquals(shareFor({ cacheCreationInputTokens: 500, cacheCreation1hInputTokens: 600 }), 500);
+  });
+
   it("can suppress reasoning deltas while preserving reasoning lifecycle markers", () => {
     const encoder = createAgUiRuntimeChatStreamEncoder({
       responseMessageId: "msg-1",

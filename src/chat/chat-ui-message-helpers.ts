@@ -1,4 +1,5 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "./protocol.ts";
+import { readCacheWrite1hShare } from "#veryfront/provider/runtime-usage.ts";
 
 type StreamChunkMetadataPart = {
   type: string;
@@ -117,9 +118,10 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
     : isNonNegativeInteger(inputTokenDetails?.cacheWriteTokens)
     ? inputTokenDetails.cacheWriteTokens
     : undefined;
-  const cacheCreation1hInputTokens = isNonNegativeInteger(value.cacheCreation1hInputTokens)
-    ? value.cacheCreation1hInputTokens
-    : undefined;
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    cacheCreationInputTokens,
+    value.cacheCreation1hInputTokens,
+  );
   const cacheReadInputTokens = isNonNegativeInteger(value.cacheReadInputTokens)
     ? value.cacheReadInputTokens
     : isNonNegativeInteger(inputTokenDetails?.cacheReadTokens)

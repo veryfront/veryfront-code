@@ -272,6 +272,33 @@ describe("chat/chat-ui-message-helpers", () => {
     assertEquals("cacheCreation1hInputTokens" in (unreported?.usage ?? {}), false);
   });
 
+  it("keeps the one-hour cache-write share only beside a valid total, capped at it", () => {
+    const shareFor = (totalUsage: Record<string, unknown>) =>
+      buildChatStreamChunkMessageMetadata({
+        agentId: "agent-1",
+        modelId: "anthropic/claude-sonnet-4-6",
+        part: { type: "finish", totalUsage: { inputTokens: 4, ...totalUsage } },
+      })?.usage?.cacheCreation1hInputTokens;
+
+    assertEquals(shareFor({ cacheCreation1hInputTokens: 600 }), undefined);
+    assertEquals(
+      shareFor({ inputTokenDetails: { cacheWriteTokens: 1.5 }, cacheCreation1hInputTokens: 1 }),
+      undefined,
+    );
+    assertEquals(
+      shareFor({ cacheCreationInputTokens: -1, cacheCreation1hInputTokens: 1 }),
+      undefined,
+    );
+    assertEquals(
+      shareFor({ cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 1.5 }),
+      undefined,
+    );
+    assertEquals(
+      shareFor({ cacheCreationInputTokens: 500, cacheCreation1hInputTokens: 600 }),
+      500,
+    );
+  });
+
   it("normalizes lifecycle UI chunks onto canonical message metadata", () => {
     assertEquals(
       normalizeChatUiMessageChunk({
