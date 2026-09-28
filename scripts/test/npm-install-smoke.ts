@@ -975,7 +975,9 @@ async function checkInitIntegrations(workDir: string): Promise<void> {
     ]
   ) {
     if (!(await pathExists(`${workDir}/integration-demo/${path}`))) {
-      fail(`init --integrations linear did not write ${path}\n${init.combined}`);
+      fail(
+        `init --integrations linear did not write ${path}\n${init.combined}`,
+      );
     }
   }
   await Deno.remove(`${workDir}/integration-demo`, { recursive: true });

@@ -78,6 +78,15 @@ async function collectSortedFiles(
   );
 }
 
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isFile;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
 async function directoryExists(path: string): Promise<boolean> {
   try {
     const stat = await Deno.stat(path);
@@ -121,13 +130,24 @@ async function generateManifest(): Promise<TemplateManifest> {
 
     const integrationName = entry.name;
     const integrationPath = `${integrationsDir}/${integrationName}/files`;
+    const hasFiles = await directoryExists(integrationPath);
 
-    try {
-      const stat = await Deno.stat(integrationPath);
-      if (!stat.isDirectory) continue;
-    } catch {
-      continue; // No files directory
+    // `init --integrations` also reads the connector config, and the npm
+    // package carries templates only through this manifest, so ship the
+    // configs of the scaffolded and default integrations here.
+    if (
+      hasFiles ||
+      SUPPORTED_INTEGRATION_NAMES.some((name) => name === integrationName)
+    ) {
+      const configPath = `${integrationsDir}/${integrationName}/connector.json`;
+      if (await fileExists(configPath)) {
+        manifest.templates[`connector:${integrationName}`] = {
+          files: { "connector.json": await Deno.readTextFile(configPath) },
+        };
+      }
     }
+
+    if (!hasFiles) continue;
 
     const files: Record<string, string> = {};
 
@@ -141,23 +161,6 @@ async function generateManifest(): Promise<TemplateManifest> {
     if (Object.keys(files).length === 0) continue;
 
     manifest.templates[`integration:${integrationName}`] = { files };
-  }
-
-  // `init --integrations` also reads each connector config. The npm package
-  // carries templates only through this manifest, so ship the configs of the
-  // scaffolded and default integrations here.
-  const connectorNames = new Set<string>(SUPPORTED_INTEGRATION_NAMES);
-  for (const key of Object.keys(manifest.templates)) {
-    if (key.startsWith("integration:")) connectorNames.add(key.slice("integration:".length));
-  }
-  for (const integrationName of [...connectorNames].sort()) {
-    manifest.templates[`connector:${integrationName}`] = {
-      files: {
-        "connector.json": await Deno.readTextFile(
-          `${integrationsDir}/${integrationName}/connector.json`,
-        ),
-      },
-    };
   }
 
   // Process auth templates. Each preset layers the shared base files first,
