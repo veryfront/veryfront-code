@@ -1,3 +1,9 @@
+import {
+  allPrivatePromises,
+  chainPrivatePromise,
+  createPrivateDeferred,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { filterPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
@@ -70,13 +76,15 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
     // below still closes any session it eventually produces.
     if (!entry.session) this.entries.delete(entry);
     if (entry.stopping) {
-      if (discard && entry.session) void entry.session.shutdown(true).catch(() => {});
+      if (discard && entry.session) {
+        void chainPrivatePromise(entry.session.shutdown(true), () => {}, () => {});
+      }
       return entry.stopping;
     }
-    entry.stopping = entry.ready.then(async (session) => {
+    const stopped = chainPrivatePromise(entry.ready, async (session) => {
       if (!session) return;
       const force = setTimeout(() => {
-        void session.shutdown(true).catch(() => {});
+        void chainPrivatePromise(session.shutdown(true), () => {}, () => {});
       }, this.drainMs);
       unrefTimer(force);
       try {
@@ -84,7 +92,11 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
       } finally {
         clearTimeout(force);
       }
-    }).catch(() => {}).finally(() => this.entries.delete(entry));
+    });
+    const finish = () => {
+      this.entries.delete(entry);
+    };
+    entry.stopping = chainPrivatePromise(stopped, finish, finish);
     return entry.stopping;
   }
 
@@ -121,19 +133,16 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
     milliseconds: number,
     expired: () => void,
   ): Promise<R | undefined> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const completion = createPrivateDeferred<R | undefined>();
+    const timer = setTimeout(() => {
+      expired();
+      completion.resolve(undefined);
+    }, milliseconds);
+    void chainPrivatePromise(promise, completion.resolve, completion.reject);
     try {
-      return await Promise.race([
-        promise,
-        new Promise<undefined>((resolve) => {
-          timer = setTimeout(() => {
-            expired();
-            resolve(undefined);
-          }, milliseconds);
-        }),
-      ]);
+      return await completion.promise;
     } finally {
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
     }
   }
 
@@ -147,7 +156,7 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
       entry.users++;
       return this.lease(entry, entry.session);
     }
-    void this.acquire(config).then((lease) => lease?.release(), () => {});
+    void chainPrivatePromise(this.acquire(config), (lease) => lease?.release(), () => {});
     return undefined;
   }
 
@@ -185,13 +194,17 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
           users: 0,
           state: "current",
           discard: false,
-          ready: Promise.resolve().then(() => this.create(config)).then((session) => {
-            created.session = session;
-            return session;
-          }).catch(() => {
-            void this.stop(created, true);
-            return undefined;
-          }),
+          ready: chainPrivatePromise(
+            chainPrivatePromise(resolvePrivatePromise(), () => this.create(config)),
+            (session): T | undefined => {
+              created.session = session;
+              return session;
+            },
+            () => {
+              void this.stop(created, true);
+              return undefined;
+            },
+          ),
         };
         this.entries.add(created);
         this.current.set(key, created);
@@ -229,14 +242,14 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
       filterPrivateArray([...this.entries], (entry) => entry.key === key),
       (entry) => this.stop(entry, true),
     );
-    await this.bounded(Promise.all(stopping), this.drainMs, () => {});
+    await this.bounded(allPrivatePromises(stopping), this.drainMs, () => {});
   }
 
   async shutdown(): Promise<void> {
     this.closed = true;
     const entries = [...this.entries];
     await this.bounded(
-      Promise.all(mapPrivateArray(entries, (entry) => this.stop(entry, false))),
+      allPrivatePromises(mapPrivateArray(entries, (entry) => this.stop(entry, false))),
       this.drainMs,
       () => {
         for (const entry of entries) void this.stop(entry, true);
@@ -245,7 +258,7 @@ export class ProjectTraceRegistry<T extends ProjectTraceSession> {
   }
 
   async flush(operation: (session: T) => Promise<void>): Promise<void> {
-    await Promise.all(mapPrivateArray([...this.entries], async (entry) => {
+    await allPrivatePromises(mapPrivateArray([...this.entries], async (entry) => {
       const session = await entry.ready;
       if (session && entry.state !== "closed") await operation(session);
     }));

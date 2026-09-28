@@ -17,6 +17,40 @@ function config(projectId: string, revision = "one"): ProjectTraceConfig {
 }
 
 describe("project trace registry collection ownership", () => {
+  it("keeps sessions private from replaced Promise callbacks throughout their lifecycle", async () => {
+    const completed = Promise.resolve();
+    const session = { shutdown: () => completed };
+    const ready = Promise.resolve(session);
+    const registry = new ProjectTraceRegistry(() => ready);
+    const then = Promise.prototype.then;
+    let exposed = 0;
+    try {
+      Promise.prototype.then = function (fulfilled, rejected) {
+        return Reflect.apply(then, this, [
+          fulfilled && ((value: unknown) => {
+            if (
+              value === session ||
+              (typeof value === "object" && value !== null && "session" in value &&
+                value.session === session)
+            ) exposed++;
+            return fulfilled(value);
+          }),
+          rejected,
+        ]);
+      };
+      const lease = await registry.acquire(config("a"));
+      lease?.release();
+      registry.tryAcquire(config("a"))?.release();
+      await registry.flush(() => completed);
+      await registry.disable("a", "production");
+      await registry.shutdown();
+    } finally {
+      Promise.prototype.then = then;
+      await registry.shutdown();
+    }
+    assertEquals(exposed, 0);
+  });
+
   it("keeps registry entries private when shared Map and Set methods are replaced", async () => {
     const registry = new ProjectTraceRegistry(() =>
       Promise.resolve({
