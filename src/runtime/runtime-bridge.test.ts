@@ -1277,6 +1277,40 @@ describe("runtime-bridge", () => {
     }
   });
 
+  it("keeps the one-hour cache-write share only next to its total and never above it", async () => {
+    const generateUsage = async (usage: Record<string, number>) => {
+      const model = createGenerateModel("test", "test/cache-1h-invariant", async () => ({
+        content: [{ type: "text", text: "cached" }],
+        finishReason: "stop",
+        usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7, ...usage },
+      }));
+      return (await generateText({ model, messages: [{ role: "user", content: "Hello" }] }))
+        .usage;
+    };
+
+    assertEquals(
+      await generateUsage({ cacheCreation1hInputTokens: 20 }),
+      { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      "a share without its cache-write total is dropped",
+    );
+    assertEquals(
+      await generateUsage({ cacheCreationInputTokens: 10, cacheCreation1hInputTokens: 20 }),
+      {
+        inputTokens: 3,
+        outputTokens: 4,
+        totalTokens: 7,
+        cacheCreationInputTokens: 10,
+        cacheCreation1hInputTokens: 10,
+      },
+      "a share above its total is capped",
+    );
+    assertEquals(
+      await generateUsage({ cacheCreationInputTokens: 10, cacheCreation1hInputTokens: 1.5 }),
+      { inputTokens: 3, outputTokens: 4, totalTokens: 7, cacheCreationInputTokens: 10 },
+      "an invalid share is dropped",
+    );
+  });
+
   it("forwards provider cost and billing telemetry from the flat usage branch", async () => {
     const model = createGenerateModel("test", "test/flat-usage-billing", async () => ({
       content: [{ type: "text", text: "billed" }],

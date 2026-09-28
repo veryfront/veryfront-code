@@ -516,6 +516,16 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     billingMode?: unknown;
     usageCaptureStatus?: unknown;
   };
+  // The one-hour share is part of the cache-write total: keep it only next to
+  // that total and never above it.
+  const cacheCreation1hInputTokens = typeof flatUsage.cacheCreationInputTokens === "number" &&
+      Number.isSafeInteger(flatUsage.cacheCreation1hInputTokens) &&
+      (flatUsage.cacheCreation1hInputTokens as number) >= 0
+    ? Math.min(
+      flatUsage.cacheCreation1hInputTokens as number,
+      flatUsage.cacheCreationInputTokens,
+    )
+    : undefined;
   const costSource = flatUsage.costSource;
   const billingMode = flatUsage.billingMode;
   const usageCaptureStatus = flatUsage.usageCaptureStatus;
@@ -527,9 +537,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     ...(typeof flatUsage.cacheCreationInputTokens === "number"
       ? { cacheCreationInputTokens: flatUsage.cacheCreationInputTokens }
       : {}),
-    ...(typeof flatUsage.cacheCreation1hInputTokens === "number"
-      ? { cacheCreation1hInputTokens: flatUsage.cacheCreation1hInputTokens }
-      : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(typeof flatUsage.cacheReadInputTokens === "number"
       ? { cacheReadInputTokens: flatUsage.cacheReadInputTokens }
       : {}),

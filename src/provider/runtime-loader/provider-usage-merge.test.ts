@@ -704,5 +704,18 @@ describe("provider/runtime-loader/provider-usage one-hour cache-write share", ()
       sanitizeRuntimeUsage({ cacheCreationInputTokens: 50, cacheCreation1hInputTokens: -1 }),
       { cacheCreationInputTokens: 50 },
     );
+    assertEquals(
+      sanitizeRuntimeUsage({ inputTokens: 1, cacheCreation1hInputTokens: 20 }),
+      { inputTokens: 1, totalTokens: 1 },
+      "a share without its cache-write total is dropped",
+    );
+    assertEquals(
+      mergeUsage(
+        { cacheCreationInputTokens: 50, cacheCreation1hInputTokens: 40 },
+        { cacheCreationInputTokens: 30 },
+      ),
+      { cacheCreationInputTokens: 30, cacheCreation1hInputTokens: 30 },
+      "a retained share never exceeds a newer, smaller total",
+    );
   });
 });

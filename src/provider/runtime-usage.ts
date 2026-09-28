@@ -266,6 +266,19 @@ export function mergeRuntimeUsage(
     normalizedNumbers.cacheReadInputTokens = cacheReadInputTokens;
   }
 
+  // The one-hour share is part of the cache-write total: drop it without that
+  // total and never report more than it.
+  if (normalizedNumbers.cacheCreation1hInputTokens !== undefined) {
+    if (normalizedNumbers.cacheCreationInputTokens === undefined) {
+      delete normalizedNumbers.cacheCreation1hInputTokens;
+    } else {
+      normalizedNumbers.cacheCreation1hInputTokens = Math.min(
+        normalizedNumbers.cacheCreation1hInputTokens,
+        normalizedNumbers.cacheCreationInputTokens,
+      );
+    }
+  }
+
   const reportedTotal = latestValidValue(
     incoming.totalTokens,
     previous.totalTokens,
