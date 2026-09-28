@@ -38,6 +38,66 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("sets trusted resource attributes without inherited setters", async () => {
+    const owner = new OtlpTracingExporter();
+    const exported: Payload[] = [];
+    const session = await owner.createProjectProvider({
+      resource: { "project.id": "owner", "environment.id": "preview" },
+      createTransport: () => ({
+        send: (data) => {
+          exported.push(JSON.parse(new TextDecoder().decode(data)));
+          return Promise.resolve({ status: "success" as const });
+        },
+        shutdown() {},
+      }),
+    });
+    const tracer = session.getProvider().getTracer(
+      "app",
+    ) as import("npm:@opentelemetry/api@1.9.1").Tracer;
+    const span = tracer.startSpan("resource.private", {
+      attributes: { marker: "synthetic-private" },
+    });
+    const keys = ["project.id", "environment.id"];
+    const originals = keys.map((key) => Object.getOwnPropertyDescriptor(Object.prototype, key));
+    let exposed = 0;
+    try {
+      for (const key of keys) {
+        Object.defineProperty(Object.prototype, key, {
+          configurable: true,
+          set(value) {
+            if (this.marker === "synthetic-private") exposed++;
+            Object.defineProperty(this, key, {
+              value,
+              enumerable: true,
+              configurable: true,
+              writable: true,
+            });
+          },
+        });
+      }
+      span.end();
+    } finally {
+      for (let index = 0; index < keys.length; index++) {
+        const descriptor = originals[index];
+        if (descriptor) Object.defineProperty(Object.prototype, keys[index]!, descriptor);
+        else Reflect.deleteProperty(Object.prototype, keys[index]!);
+      }
+      try {
+        await session.forceFlush();
+      } finally {
+        await owner.shutdown();
+      }
+    }
+    assertEquals(exposed, 0);
+    assertEquals(exported.length, 1);
+    const attributes = exported[0]!.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes;
+    assertEquals(attributes.find(({ key }) => key === "project.id")?.value.stringValue, "owner");
+    assertEquals(
+      attributes.find(({ key }) => key === "environment.id")?.value.stringValue,
+      "preview",
+    );
+  });
+
   it("measures queued payloads without a replaceable byteLength getter", async () => {
     const owner = new OtlpTracingExporter();
     const session = await owner.createProjectProvider({

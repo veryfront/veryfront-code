@@ -44,7 +44,15 @@ class ProjectSpanProcessor implements SpanProcessor {
 
   private snapshot(span: ReadableSpan): ReadableSpan {
     const context = span.spanContext();
-    const attributes = this.operations.clone(span.attributes);
+    const attributes = {
+      ...this.operations.clone(span.attributes),
+      ...(this.resource["project.id"] !== undefined
+        ? { "project.id": this.resource["project.id"] }
+        : {}),
+      ...(this.resource["environment.id"] !== undefined
+        ? { "environment.id": this.resource["environment.id"] }
+        : {}),
+    };
     const links: ReadableSpan["links"] = [];
     for (let index = 0; index < span.links.length; index++) {
       const link = span.links[index]!;
@@ -53,9 +61,6 @@ class ProjectSpanProcessor implements SpanProcessor {
         context: { ...link.context },
         attributes: link.attributes && this.operations.clone(link.attributes),
       });
-    }
-    for (const key of ["project.id", "environment.id"]) {
-      if (this.resource[key] !== undefined) attributes[key] = this.resource[key];
     }
     // Do not retain the mutable SDK span or let caller attributes replace ownership.
     return {
