@@ -290,7 +290,27 @@ const outcome = await client.call(
 console.log(outcome.status, Object.keys(outcome.result.structuredContent ?? {}));
 ```
 
-The script runs under Deno or Node.js with the `veryfront` package installed.
+To run the script with Node.js 22.18 or later, create an ES module project.
+`npm init -y` alone creates a CommonJS project, and Node then rejects the
+script's `import` with `SyntaxError: Cannot use import statement outside a module`:
+
+```bash
+mkdir first-call && cd first-call
+npm init -y
+npm pkg set type=module
+npm install veryfront
+```
+
+Save the script as `first-call.ts` in that directory and run it:
+
+```bash
+node first-call.ts
+```
+
+If you keep the project as CommonJS, name the file `first-call.mts` and run
+`node first-call.mts` instead. With Deno, run
+`deno run --allow-net first-call.ts` from the same directory.
+
 `client.connect("gmail", { redirectUri })` starts the same OAuth handoff as the
 CLI and returns a one-time `connect_url` with an `expires_at` deadline.
 

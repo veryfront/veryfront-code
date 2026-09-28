@@ -5,6 +5,10 @@
  * - `ts` fences: `deno check` against this checkout's public exports.
  * - `bash` fences: `bash -n`, no unquoted `<PLACEHOLDER>` tokens, and every
  *   `<<'GRAPHQL'` document validated against the checked-in schema snapshot.
+ * - The integrations guide's TypeScript first-call script: run under Node in a
+ *   clean directory set up with the guide's own commands, against a local
+ *   `veryfront` package, and again without `npm pkg set type=module`, which
+ *   must fail.
  * - Integration guides, bundled skills and install templates: no
  *   credential-shaped literals and only released `veryfront integration`
  *   subcommands.
@@ -15,11 +19,13 @@
 import {
   extractFences,
   extractGraphqlHeredocs,
+  extractNodeFirstCall,
   findSecretLiterals,
   findUnknownIntegrationSubcommands,
   findUnquotedInlineCommands,
   findUnquotedPlaceholders,
   type GraphqlSchemaSnapshot,
+  nodeFirstCallScript,
   parseSubcommandUsage,
   rewritePublicImports,
   validateGraphqlOperation,
@@ -62,6 +68,77 @@ async function run(command: string, args: string[], stdin?: string) {
     text: new TextDecoder().decode(output.stdout) +
       new TextDecoder().decode(output.stderr),
   };
+}
+
+const PACKAGE_REACHED = "veryfront/integrations loaded";
+const COMMONJS_IMPORT_ERROR = "Cannot use import statement outside a module";
+
+/**
+ * Run the guide's Node setup and the first-call script in a fresh directory.
+ * The local `veryfront` package throws PACKAGE_REACHED from
+ * `createIntegrationClient`, so reaching it proves the import resolved.
+ */
+async function runNodeFirstCall(
+  guide: string,
+  dir: string,
+): Promise<string[]> {
+  const call = extractNodeFirstCall(
+    await Deno.readTextFile(new URL(guide, ROOT)),
+  );
+  const pkg = `${dir}/veryfront-package`;
+  const snippet = `${dir}/first-call-snippet.ts`;
+  await Deno.mkdir(pkg, { recursive: true });
+  await Deno.writeTextFile(
+    `${pkg}/package.json`,
+    JSON.stringify({
+      name: "veryfront",
+      version: "0.0.0",
+      type: "module",
+      exports: { "./integrations": "./integrations.js" },
+    }),
+  );
+  await Deno.writeTextFile(
+    `${pkg}/integrations.js`,
+    `export async function createIntegrationClient() {\n  throw new Error(${
+      JSON.stringify(PACKAGE_REACHED)
+    });\n}\n`,
+  );
+  await Deno.writeTextFile(snippet, call.script);
+
+  const runIn = async (name: string, dropModuleType: boolean) => {
+    const cwd = `${dir}/${name}`;
+    await Deno.mkdir(cwd);
+    const child = new Deno.Command("bash", {
+      cwd,
+      env: { VERYFRONT_PACKAGE: pkg, SNIPPET: snippet },
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+    const writer = child.stdin.getWriter();
+    await writer.write(
+      new TextEncoder().encode(nodeFirstCallScript(call, { dropModuleType })),
+    );
+    await writer.close();
+    const output = await child.output();
+    return new TextDecoder().decode(output.stdout) +
+      new TextDecoder().decode(output.stderr);
+  };
+
+  const problems: string[] = [];
+  const asPrinted = await runIn("as-printed", false);
+  if (!asPrinted.includes(PACKAGE_REACHED)) {
+    problems.push(
+      `Node did not reach veryfront/integrations with the guide's setup:\n${asPrinted.trim()}`,
+    );
+  }
+  const commonjs = await runIn("commonjs", true);
+  if (!commonjs.includes(COMMONJS_IMPORT_ERROR)) {
+    problems.push(
+      `Without "npm pkg set type=module" Node should fail with "${COMMONJS_IMPORT_ERROR}":\n${commonjs.trim()}`,
+    );
+  }
+  return problems;
 }
 
 async function listMarkdown(dir: string): Promise<string[]> {
@@ -145,6 +222,19 @@ try {
     }
   }
 
+  try {
+    for (
+      const problem of await runNodeFirstCall(
+        "docs/guides/integrations.md",
+        `${tempDir}/node-first-call`,
+      )
+    ) {
+      report("docs/guides/integrations.md", 0, problem);
+    }
+  } catch (error) {
+    report("docs/guides/integrations.md", 0, (error as Error).message);
+  }
+
   for (const dir of GUIDANCE_DIRS) {
     for (const file of await listMarkdown(dir)) {
       const text = await Deno.readTextFile(new URL(file, ROOT));
@@ -186,5 +276,5 @@ if (issues.length > 0) {
   Deno.exit(1);
 }
 console.log(
-  `Guide snippets passed: ${tsFiles.length} TypeScript, bash, GraphQL, secret and CLI checks.`,
+  `Guide snippets passed: ${tsFiles.length} TypeScript, bash, GraphQL, Node first-call, secret and CLI checks.`,
 );
