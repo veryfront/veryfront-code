@@ -217,6 +217,17 @@ describe("project telemetry configuration", () => {
     assertEquals(await resolveProjectTraceConfig(scope, declarations, hostile), {
       status: "disabled",
     });
+    const accessorEndpoint = { OTEL_TRACES_ENABLED: "true" };
+    Object.defineProperty(accessorEndpoint, "OTEL_EXPORTER_OTLP_ENDPOINT", {
+      enumerable: true,
+      get() {
+        throw new Error("must not read accessor");
+      },
+    });
+    assertEquals(await resolveProjectTraceConfig(scope, declarations, accessorEndpoint), {
+      status: "invalid",
+      reason: "endpoint",
+    });
     assertEquals(await resolveProjectTraceConfig(scope, [Object.create(declarations[0])], env), {
       status: "disabled",
     });
