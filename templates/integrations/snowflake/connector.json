@@ -28,6 +28,7 @@
       "name": "SNOWFLAKE_ACCOUNT",
       "description": "Your Snowflake account identifier (e.g., xy12345.us-east-1)",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-account-identifier"
     },

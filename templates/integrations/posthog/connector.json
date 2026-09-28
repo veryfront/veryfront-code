@@ -25,6 +25,13 @@
       "docsUrl": "https://posthog.com/docs/api/overview"
     },
     {
+      "name": "POSTHOG_PROJECT_API_KEY",
+      "description": "PostHog project API key (phc_...) the local scaffold's capture-event tool sends. Event ingestion rejects personal API keys.",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://posthog.com/docs/api/capture"
+    },
+    {
       "name": "POSTHOG_HOST",
       "description": "PostHog API host or HTTPS origin: us.posthog.com for US Cloud (default; https://app.posthog.com is the legacy US alias) or eu.posthog.com for EU Cloud",
       "required": false,

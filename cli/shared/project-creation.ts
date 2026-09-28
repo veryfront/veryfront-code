@@ -158,13 +158,45 @@ const INTEGRATION_ICONS: Record<string, string> = {
   aws: "cloud",
 };
 
+function hasOAuthRoute(integration: ResolvedIntegration): boolean {
+  const authRoute = `app/api/auth/${integration.config.name}/route.ts`;
+  return integration.files.some((file) => file.path === authRoute);
+}
+
+const OAUTH_CLIENT_ENV_VAR = /_CLIENT_(ID|SECRET)$/;
+
+/**
+ * The env contract of an integration's local scaffold. A variable its client
+ * needs is required even when the hosted connector does not read it, and an
+ * OAuth client credential is not required when the scaffold has no OAuth route.
+ */
+function scaffoldEnvVars(integration: ResolvedIntegration): EnvVarConfig[] {
+  const usesOAuth = hasOAuthRoute(integration);
+  return (integration.config.envVars ?? []).map(({ scaffoldRequired, ...envVar }) => ({
+    ...envVar,
+    required: scaffoldRequired === true ||
+      (envVar.required && (usesOAuth || !OAUTH_CLIENT_ENV_VAR.test(envVar.name))),
+  }));
+}
+
+/**
+ * Env vars that make an env-backed scaffold usable, or null when the scaffold
+ * connects through its own `/api/auth/<id>` OAuth route.
+ */
+function requiredSetupEnvVars(integration: ResolvedIntegration): string[] | null {
+  if (hasOAuthRoute(integration)) return null;
+  return scaffoldEnvVars(integration)
+    .filter((envVar) => envVar.required && envVar.default === undefined)
+    .map((envVar) => envVar.name);
+}
+
 function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): string {
   const integrationEntries = integrations
     .map((integration) => {
       const icon = INTEGRATION_ICONS[integration.config.name] ?? "default";
       return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}", scopes: ${
         JSON.stringify(integration.config.auth.scopes ?? [])
-      } },`;
+      }, envVars: ${JSON.stringify(requiredSetupEnvVars(integration))} },`;
     })
     .join("\n");
 
@@ -177,11 +209,20 @@ function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): s
  * This file is auto-generated based on the integrations you selected.
  */
 
+import { getEnv } from "../../../../lib/env.ts";
 import { tokenStore } from "../../../../lib/token-store.ts";
 import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";
 
-// Integrations configured for this project
-const INTEGRATIONS = [
+// Integrations configured for this project. \`envVars\` lists the variables an
+// env-backed integration needs; it is null for integrations that connect
+// through OAuth at /api/auth/<id>.
+const INTEGRATIONS: Array<{
+  id: string;
+  name: string;
+  icon: string;
+  scopes: string[];
+  envVars: string[] | null;
+}> = [
 ${integrationEntries}
 ];
 
@@ -193,13 +234,17 @@ export async function GET(req: Request): Promise<Response> {
 
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {
-      const connected = await tokenStore.isConnected(userId, integration.id, integration.scopes);
+      const { envVars } = integration;
+      const connected = envVars
+        ? envVars.every((name) => Boolean(getEnv(name)))
+        : await tokenStore.isConnected(userId, integration.id, integration.scopes);
       return {
         id: integration.id,
         name: integration.name,
         icon: integration.icon,
         connected,
-        connectUrl: \`/api/auth/\${integration.id}\`,
+        connectUrl: envVars ? null : \`/api/auth/\${integration.id}\`,
+        envVars,
       };
     }),
   );
@@ -333,7 +378,7 @@ async function assembleIntegrationFiles(
   files = mergeFiles(files, integrationFiles);
 
   for (const integration of loadedIntegrations) {
-    if (integration.config.envVars) allEnvVars.push(...integration.config.envVars);
+    allEnvVars.push(...scaffoldEnvVars(integration));
   }
 
   files = mergeFiles(files, [

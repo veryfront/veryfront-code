@@ -225,6 +225,12 @@ export const getEnvVarSchema = defineSchema((v) =>
     name: v.string(),
     description: v.string(),
     required: v.boolean(),
+    /**
+     * Required by the local `veryfront init --integrations` scaffold's client
+     * even though the hosted connector does not read it. The scaffold marks it
+     * required in `.env.example` and its setup status checks it.
+     */
+    scaffoldRequired: v.boolean().optional(),
     sensitive: v.boolean().optional(),
     placeholder: v.string().optional(),
     docsUrl: v.string().optional(),

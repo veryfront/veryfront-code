@@ -446,13 +446,17 @@ export default function SetupPage(): React.JSX.Element {
                                     <span className="w-2 h-2 bg-green-500 rounded-full" />
                                     Connected
                                   </span>
-                                ) : (
+                                ) : integration.connectUrl ? (
                                   <a
                                     href={integration.connectUrl}
                                     className="px-4 py-2 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl text-sm font-medium hover:opacity-90 transition-opacity"
                                   >
                                     Connect
                                   </a>
+                                ) : (
+                                  <span className="px-4 py-2 text-sm text-neutral-600 dark:text-neutral-400">
+                                    Set {integration.envVars?.join(", ") ?? "its env vars"} in .env
+                                  </span>
                                 )}
                               </div>
                             </div>
