@@ -31,21 +31,21 @@
     {
       "name": "SUPABASE_URL",
       "description": "Your Supabase project URL (e.g., https://xxxxx.supabase.co)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys"
     },
     {
       "name": "SUPABASE_ANON_KEY",
       "description": "Supabase anonymous/public API key for client-side operations",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys"
     },
     {
       "name": "SUPABASE_SERVICE_KEY",
       "description": "Supabase service role key for server-side operations (bypasses RLS)",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys"
     }

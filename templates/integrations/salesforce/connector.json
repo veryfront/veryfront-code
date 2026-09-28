@@ -26,17 +26,38 @@
   "envVars": [
     {
       "name": "SALESFORCE_CLIENT_ID",
-      "description": "Salesforce OAuth Consumer Key (from your Connected App)",
-      "required": true,
+      "description": "Optional: consumer key of your own Salesforce OAuth app. Hosted Veryfront uses the installed Veryfront package instead.",
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm"
     },
     {
       "name": "SALESFORCE_CLIENT_SECRET",
-      "description": "Salesforce OAuth Consumer Secret",
-      "required": true,
+      "description": "Optional: consumer secret of your own Salesforce OAuth app",
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm"
+    },
+    {
+      "name": "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
+      "description": "Service account: consumer key of an External Client App that uses the Client Credentials Flow. Set it together with the secret and login URL.",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account"
+    },
+    {
+      "name": "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",
+      "description": "Service account: consumer secret of the Client Credentials Flow app",
+      "required": false,
+      "sensitive": true,
+      "docsUrl": "https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account"
+    },
+    {
+      "name": "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
+      "description": "Service account: the org's My Domain origin, for example https://acme.my.salesforce.com. Generic login hosts are rejected.",
+      "required": false,
+      "sensitive": true,
+      "docsUrl": "https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account"
     }
   ],
   "tools": [
@@ -512,40 +533,46 @@
     "calendar"
   ],
   "setupGuide": {
-    "title": "Salesforce Connected App Setup",
+    "title": "Salesforce setup",
     "steps": [
       {
         "step": 1,
-        "title": "Create a Salesforce test org",
-        "description": "Use a sandbox or free Developer Edition org for staging. Enable Service Cloud, Cases, and Knowledge if the demo needs support workflows."
+        "title": "Choose how Veryfront reaches Salesforce",
+        "description": "Per-user OAuth acts as each connected Salesforce user; hosted Veryfront provides the OAuth app through the Veryfront Salesforce Integration package, so no environment variables are needed. A service account runs scheduled or project-owned automation as a dedicated integration user without browser consent.",
+        "docsUrl": "https://veryfront.com/docs/code/guides/integrations/salesforce"
       },
       {
         "step": 2,
-        "title": "Create a Connected App",
-        "description": "In Salesforce Setup, create a Connected App with OAuth enabled. Add the Veryfront callback URL for the target environment.",
-        "docsUrl": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm"
+        "title": "Install the Veryfront package",
+        "description": "As a Salesforce administrator, install the Veryfront Salesforce Integration beta package in each org users connect, choosing Install for Admins Only. Salesforce rejects authorization from an org without it. Try a sandbox or test org first.",
+        "url": "https://login.salesforce.com/packaging/installPackage.apexp?p0=04tfj000000RX37AAG"
       },
       {
         "step": 3,
-        "title": "Configure OAuth scopes",
-        "description": "Add api, refresh_token, and offline_access scopes. Use the Web Server Flow with a client secret for Veryfront API environments."
+        "title": "Enable the Veryfront app",
+        "description": "In Setup, open External Client App Manager, select Veryfront and confirm it is Packaged (Installed) and Enabled. Under Policies, restrict the permitted users to the profiles or permission sets that should connect."
       },
       {
         "step": 4,
-        "title": "Store Veryfront environment credentials",
-        "description": "Set SALESFORCE_CLIENT_ID and SALESFORCE_CLIENT_SECRET for the matching Veryfront environment. Keep staging and production credentials separate."
+        "title": "Connect a Salesforce user",
+        "description": "In Veryfront, start the Salesforce connection from the project's integrations, sign in to the org where the package is installed and approve consent. No integration policy is needed before the first call. Only when you use your own OAuth app instead of the package, register https://api.veryfront.com/oauth/callback/salesforce as its callback URL and set SALESFORCE_CLIENT_ID and SALESFORCE_CLIENT_SECRET."
       },
       {
         "step": 5,
-        "title": "Grant least-privilege Salesforce permissions",
-        "description": "Assign the connected user access to Account, Contact, Case, CaseComment, Opportunity, Lead, and Knowledge objects required by the enabled tools."
+        "title": "Or configure a service account",
+        "description": "Create a dedicated integration user with the least object, field and API permissions the tools need, and an External Client App with the Client Credentials Flow, the api scope and that user as Run As user. Set SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID, SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET and SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL (the org's My Domain origin). All three are required in this mode; if one is missing, runs fail closed instead of falling back to a user connection.",
+        "docsUrl": "https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account"
+      },
+      {
+        "step": 6,
+        "title": "Verify access",
+        "description": "Run Find Customer (read-only). With its default query it returns the most recently changed contacts and their accounts from the target org without changing them. For a service account, confirm the Salesforce audit trail attributes the request to the integration user."
       }
     ],
     "notes": [
-      "Staging callback: https://api.veryfront.org/oauth/callback/salesforce",
-      "Production callback: https://api.veryfront.com/oauth/callback/salesforce",
-      "Write tools should be explicitly enabled for an agent or project; read tools are the default demo surface.",
-      "Non-interactive runs can use a service account instead of a user connection: set SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID, SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET and SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL (the My Domain origin) from an External Client App that uses the Client Credentials Flow with a dedicated Run As user. All three are required; see https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account"
+      "The user connection requests api, refresh_token and offline_access.",
+      "Non-interactive runs can use a service account instead of a user connection: set SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID, SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET and SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL (the My Domain origin) from an External Client App that uses the Client Credentials Flow with a dedicated Run As user. All three are required; see https://veryfront.com/docs/code/guides/integrations/salesforce#use-a-service-account",
+      "Tools that create, update or delete records are marked as writes and need write authority; the other tools are read-only."
     ],
     "documentation": "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_rest.htm"
   }

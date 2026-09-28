@@ -1,4 +1,30 @@
-import { getAnonKey, getServiceKey, getSupabaseUrl } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function requireEnv(key: string): string {
+  const value = getEnv(key);
+  if (!value) throw new Error(`${key} is not set`);
+  return value;
+}
+
+function getSupabaseUrl(): string {
+  return requireEnv("SUPABASE_URL");
+}
+
+function getAnonKey(): string {
+  return requireEnv("SUPABASE_ANON_KEY");
+}
+
+function getServiceKey(): string {
+  return requireEnv("SUPABASE_SERVICE_KEY");
+}
 
 interface TableInfo {
   table_name: string;

@@ -12,6 +12,7 @@ import {
 const before: IntegrationConnectionStatus = {
   connected: true,
   integration: "github",
+  scope: "user",
   connection_id: "account",
   connection_generation_id: "old",
 };
@@ -154,6 +155,25 @@ describe("bounded connection wait", () => {
     assertEquals(reads(), 0);
   });
 
+  it("rejects a baseline from another scope or without scope before polling", async () => {
+    const { client, reads } = fakeClient(() => "new");
+    for (
+      const baseline of [{ ...before, scope: "project" as const }, { ...before, scope: undefined }]
+    ) {
+      await assertRejects(
+        () =>
+          waitForIntegrationConnection(client, "github", {
+            scope: "user",
+            before: baseline,
+            timeoutMs: 5000,
+          }),
+        TypeError,
+        "same scope",
+      );
+    }
+    assertEquals(reads(), 0);
+  });
+
   it("observes the new generation through the project-bound client", async () => {
     const project = { id: "11111111-1111-4111-8111-111111111111", slug: "test-project" };
     const id = "22222222-2222-4222-8222-222222222222";
@@ -176,6 +196,7 @@ describe("bounded connection wait", () => {
         return Response.json({
           connected: true,
           integration: "github",
+          scope: "project",
           connection_id: id,
           connection_generation_id: generations[Math.min(statusReads - 1, 1)],
         });
@@ -197,6 +218,14 @@ describe("bounded connection wait", () => {
         projectReference: project.id,
       });
       const pre = await client.status("github", "user");
+      assertEquals(pre.scope, "user");
+      await assertRejects(
+        () =>
+          client.waitForConnection("github", { scope: "project", before: pre, timeoutMs: 5000 }),
+        TypeError,
+        "same scope",
+      );
+      assertEquals(statusReads, 1);
       const outcome = await client.waitForConnection("github", {
         scope: "user",
         before: pre,

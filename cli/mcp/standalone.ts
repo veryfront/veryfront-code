@@ -322,25 +322,16 @@ export class StandaloneMCPServer {
   private async handlePromptsGet(params: unknown): Promise<unknown> {
     const { name } = PromptsGetParamsSchema.parse(params);
 
-    const filePath = name === "veryfront"
-      ? "./skills/veryfront/SKILL.md"
-      : name === "flywheel"
-      ? "./skills/flywheel/SKILL.md"
-      : undefined;
+    if (name !== "veryfront" && name !== "flywheel") throw new Error(`Unknown prompt: ${name}`);
 
-    if (!filePath) throw new Error(`Unknown prompt: ${name}`);
+    const { readCoreSkillDocument } = await import("../skills/loader.ts");
+    const content = await readCoreSkillDocument(name, "SKILL.md");
+    if (content === undefined) throw new Error(`Failed to read prompt: ${name}`);
 
-    try {
-      const fullPath = new URL(filePath, import.meta.url).pathname;
-      const content = await readTextFile(fullPath);
-
-      return {
-        description: `Veryfront skill: ${name}`,
-        messages: [{ role: "user", content: { type: "text", text: content } }],
-      };
-    } catch {
-      throw new Error(`Failed to read prompt: ${name}`);
-    }
+    return {
+      description: `Veryfront skill: ${name}`,
+      messages: [{ role: "user", content: { type: "text", text: content } }],
+    };
   }
 
   private createTools(): StandaloneTool[] {

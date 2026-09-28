@@ -53,6 +53,9 @@ export async function waitForIntegrationConnection(
   if (before && before.integration !== integration) {
     throw new TypeError("The baseline status must describe the same integration");
   }
+  if (before && before.scope !== scope) {
+    throw new TypeError("The baseline status must describe the same scope");
+  }
   const baseline = before ? identity(before) : undefined;
   if (before?.connected && (!baseline?.id || !baseline.generation)) {
     throw new TypeError("A connected baseline must include its connection id and generation");

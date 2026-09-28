@@ -8,36 +8,13 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { connectors } from "./_data.ts";
 import { SUPPORTED_INTEGRATION_NAMES } from "./feature-flags.ts";
+import { loadIntegrationConfig } from "../../templates/integration-loader.ts";
 
 function getConnector(name: string) {
   const connector = connectors.find((item) => item.name === name);
   assertExists(connector, `Expected connector ${name} to exist`);
   return connector;
 }
-
-// Default connectors that still publish no setup guide. Shrink this list as
-// guides land; a new default connector must ship with one.
-const DEFAULT_CONNECTORS_WITHOUT_SETUP_GUIDE = [
-  "airtable",
-  "asana",
-  "calendar",
-  "confluence",
-  "figma",
-  "github",
-  "gitlab",
-  "harvest",
-  "hubspot",
-  "jira",
-  "linear",
-  "notion",
-  "onedrive",
-  "outlook",
-  "sentry",
-  "sharepoint",
-  "sheets",
-  "slack",
-  "teams",
-];
 
 describe("connector setup and side-effect metadata", () => {
   it("declares requiresWrite on every endpoint-backed tool", () => {
@@ -50,6 +27,23 @@ describe("connector setup and side-effect metadata", () => {
     assertEquals(undeclared, []);
   });
 
+  it("requires only environment variables that auth or an endpoint reads", () => {
+    // Descriptions may mention a variable without the executor reading it.
+    const withoutProse = (value: unknown) =>
+      JSON.stringify(value, (key, item) => key === "description" ? undefined : item);
+    const unread = connectors.flatMap((connector) => {
+      const read = withoutProse(connector.auth) +
+        withoutProse(connector.tools.map((tool) => tool.endpoint ?? null));
+      return (connector.envVars ?? [])
+        .filter((envVar) => envVar.required && envVar.default === undefined)
+        .filter((envVar) => !/_CLIENT_(ID|SECRET)$/.test(envVar.name))
+        .filter((envVar) => !read.includes(envVar.name))
+        .map((envVar) => `${connector.name}:${envVar.name}`);
+    });
+
+    assertEquals(unread, []);
+  });
+
   it("gives every default connector a category", () => {
     const uncategorized = SUPPORTED_INTEGRATION_NAMES.filter((name) =>
       !getConnector(name).category
@@ -58,12 +52,55 @@ describe("connector setup and side-effect metadata", () => {
     assertEquals(uncategorized, []);
   });
 
-  it("publishes a setup guide for every default connector outside the pending list", () => {
+  it("publishes a setup guide for every default connector", () => {
     const withoutGuide = SUPPORTED_INTEGRATION_NAMES.filter((name) =>
       !getConnector(name).setupGuide
     );
 
-    assertEquals(withoutGuide, DEFAULT_CONNECTORS_WITHOUT_SETUP_GUIDE);
+    assertEquals(withoutGuide, []);
+  });
+
+  it("gives every default OAuth guide its callbacks, client variables, scopes and a read-only check", async () => {
+    const gaps: string[] = [];
+    for (const name of SUPPORTED_INTEGRATION_NAMES) {
+      const connector = getConnector(name);
+      const guide = connector.setupGuide;
+      if (!guide || connector.auth.type !== "oauth2") continue;
+      // The generated catalog drops callbackPath, so read it from connector.json.
+      const localCallback = (await loadIntegrationConfig(name))?.auth.callbackPath;
+      if (!localCallback) {
+        gaps.push(`${name}: connector.json declares no callbackPath`);
+        continue;
+      }
+      const text = JSON.stringify(guide);
+      const expected = [
+        `https://api.veryfront.com/oauth/callback/${name}`,
+        localCallback,
+        ...(connector.envVars ?? [])
+          .map((envVar) => envVar.name)
+          .filter((envVar) => /_CLIENT_(ID|SECRET)$/.test(envVar)),
+      ];
+      const missing = expected.filter((value) => !text.includes(value));
+      // Google scope URLs may be named by their last segment, e.g. gmail.readonly.
+      for (const scope of connector.auth.scopes ?? []) {
+        const shortName = scope.split("/").filter(Boolean).at(-1) ?? scope;
+        if (!text.includes(scope) && !text.includes(shortName)) missing.push(scope);
+      }
+
+      const check = guide.steps.at(-1);
+      const readTools = connector.tools
+        .filter((tool) => tool.requiresWrite === false)
+        .map((tool) => tool.name);
+      if (
+        check?.title !== "Verify access" ||
+        !readTools.some((tool) => check.description.includes(tool))
+      ) {
+        missing.push("a final Verify access step that names a read-only tool");
+      }
+      gaps.push(...missing.map((value) => `${name}: ${value}`));
+    }
+
+    assertEquals(gaps, []);
   });
 
   it("documents Gmail's OAuth app ownership, consent restrictions and a read-only check", () => {
@@ -93,6 +130,33 @@ describe("connector setup and side-effect metadata", () => {
       assertStringIncludes(notes, name);
     }
     assertStringIncludes(notes, "/docs/code/guides/integrations/salesforce#use-a-service-account");
+  });
+
+  it("matches the Salesforce setup metadata to the published Salesforce guide", () => {
+    const salesforce = getConnector("salesforce");
+    const required = Object.fromEntries(
+      (salesforce.envVars ?? []).map((envVar) => [envVar.name, envVar.required]),
+    );
+    // Hosted OAuth uses the installed Veryfront package; the service-account
+    // variables are required together only when a run uses that mode.
+    assertEquals(required, {
+      SALESFORCE_CLIENT_ID: false,
+      SALESFORCE_CLIENT_SECRET: false,
+      SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID: false,
+      SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET: false,
+      SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL: false,
+    });
+
+    const guide = salesforce.setupGuide;
+    assertExists(guide);
+    const text = JSON.stringify(guide);
+    assertStringIncludes(text, "installPackage.apexp?p0=04tfj000000RX37AAG");
+    assertStringIncludes(text, "External Client App Manager");
+    assertStringIncludes(text, "https://api.veryfront.com/oauth/callback/salesforce");
+    assertStringIncludes(text, "My Domain");
+    assert(!text.includes("Connected App Setup"));
+    assertEquals(guide.steps.at(-1)?.title, "Verify access");
+    assertStringIncludes(guide.steps.at(-1)?.description ?? "", "Find Customer");
   });
 
   it("does not require the Twilio sender number for the read tools", () => {

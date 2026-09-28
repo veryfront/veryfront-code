@@ -412,21 +412,10 @@ export class MCPDevServer {
       "cli.mcp.handleResourcesRead",
       async () => {
         if (uri === "veryfront://skill") {
-          try {
-            const skillPath = new URL("./skills/veryfront/SKILL.md", import.meta.url).pathname;
-            const content = await readTextFile(skillPath);
-            return {
-              contents: [
-                {
-                  uri,
-                  mimeType: "text/markdown",
-                  text: content,
-                },
-              ],
-            };
-          } catch {
-            throw new Error("Skill file not found");
-          }
+          const { readCoreSkillDocument } = await import("../skills/loader.ts");
+          const content = await readCoreSkillDocument("veryfront", "SKILL.md");
+          if (content === undefined) throw new Error("Skill file not found");
+          return { contents: [{ uri, mimeType: "text/markdown", text: content }] };
         }
 
         if (uri === "veryfront://errors") {
@@ -588,36 +577,25 @@ export class MCPDevServer {
     return withSpan(
       "cli.mcp.handlePromptsGet",
       async () => {
-        const promptFiles: Record<string, string> = {
-          veryfront: "./skills/veryfront/SKILL.md",
-          "veryfront-routing": "./skills/veryfront/references/ROUTES.md",
-          "veryfront-ai-tools": "./skills/veryfront/references/AI-TOOLS.md",
-          "veryfront-components": "./skills/veryfront/references/COMPONENTS.md",
-          flywheel: "./skills/flywheel/SKILL.md",
+        const promptDocuments: Record<string, [skill: string, path: string]> = {
+          veryfront: ["veryfront", "SKILL.md"],
+          "veryfront-routing": ["veryfront", "references/ROUTES.md"],
+          "veryfront-ai-tools": ["veryfront", "references/AI-TOOLS.md"],
+          "veryfront-components": ["veryfront", "references/COMPONENTS.md"],
+          flywheel: ["flywheel", "SKILL.md"],
         };
 
-        const filePath = promptFiles[name];
-        if (!filePath) throw new Error(`Unknown prompt: ${name}`);
+        const document = promptDocuments[name];
+        if (!document) throw new Error(`Unknown prompt: ${name}`);
 
-        try {
-          const fullPath = new URL(filePath, import.meta.url).pathname;
-          const content = await readTextFile(fullPath);
+        const { readCoreSkillDocument } = await import("../skills/loader.ts");
+        const content = await readCoreSkillDocument(...document);
+        if (content === undefined) throw new Error(`Failed to read prompt: ${name}`);
 
-          return {
-            description: `Veryfront skill: ${name}`,
-            messages: [
-              {
-                role: "user",
-                content: {
-                  type: "text",
-                  text: content,
-                },
-              },
-            ],
-          };
-        } catch {
-          throw new Error(`Failed to read prompt: ${name}`);
-        }
+        return {
+          description: `Veryfront skill: ${name}`,
+          messages: [{ role: "user", content: { type: "text", text: content } }],
+        };
       },
       { "mcp.prompt.name": name },
     );

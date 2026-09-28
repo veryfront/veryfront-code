@@ -39,6 +39,43 @@
       "docsUrl": "https://api.slack.com/apps"
     }
   ],
+  "setupGuide": {
+    "title": "Slack setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Slack OAuth app",
+        "description": "On hosted Veryfront, Slack uses the Veryfront-managed Slack OAuth app: connect Slack from the project's integrations and approve the Slack consent screen, no environment variables needed. Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET only to use your own Slack OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create a Slack app",
+        "description": "In the Slack API dashboard, create an app from scratch in a workspace you manage.",
+        "url": "https://api.slack.com/apps"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URLs and scopes",
+        "description": "Under OAuth & Permissions, add these bot token scopes: channels:history, channels:read, chat:write, groups:history, groups:read, im:history, im:read, mpim:history, mpim:read and users:read. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/slack for hosted Veryfront, or your app origin followed by /api/auth/slack/callback for a local or self-hosted app. Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Distribute the app",
+        "description": "To connect workspaces other than the one that owns the app, turn on public distribution under Manage Distribution."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Channels (read-only). It returns channels in the connected workspace without changing anything."
+      }
+    ],
+    "notes": [
+      "The connection requests channels:history, channels:read, chat:write, groups:history, groups:read, im:history, im:read, mpim:history, mpim:read and users:read. The scopes are bot token scopes: the connection acts as the app's bot, which must be added to a channel before it can read that channel's history.",
+      "chat:write is only needed by the tools that post messages.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://docs.slack.dev/authentication/installing-with-oauth"
+  },
   "tools": [
     {
       "id": "slack__list_channels",

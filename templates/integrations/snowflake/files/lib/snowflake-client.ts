@@ -1,11 +1,39 @@
-import {
-  getSnowflakeAccount,
-  getSnowflakeDatabase,
-  getSnowflakePassword,
-  getSnowflakeSchema,
-  getSnowflakeUsername,
-  getSnowflakeWarehouse,
-} from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function requireEnv(key: string): string {
+  const value = getEnv(key);
+  if (!value) throw new Error(`${key} is not set`);
+  return value;
+}
+
+function getSnowflakeAccount(): string {
+  return requireEnv("SNOWFLAKE_ACCOUNT");
+}
+
+/** Programmatic access token, sent as a Bearer token to the SQL API. */
+function getSnowflakePat(): string {
+  return requireEnv("SNOWFLAKE_PAT");
+}
+
+function getSnowflakeWarehouse(): string | undefined {
+  return getEnv("SNOWFLAKE_WAREHOUSE");
+}
+
+function getSnowflakeDatabase(): string | undefined {
+  return getEnv("SNOWFLAKE_DATABASE");
+}
+
+function getSnowflakeSchema(): string | undefined {
+  return getEnv("SNOWFLAKE_SCHEMA");
+}
 
 interface SnowflakeStatementResponse {
   statementHandle: string;
@@ -114,19 +142,17 @@ async function snowflakeFetch<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const account = getSnowflakeAccount();
-  const username = getSnowflakeUsername();
-  const password = getSnowflakePassword();
+  const pat = getSnowflakePat();
 
   const baseUrl = `https://${account}.snowflakecomputing.com/api/v2`;
-  const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
 
   const response = await fetch(`${baseUrl}${endpoint}`, {
     ...options,
     headers: {
-      Authorization: authHeader,
+      Authorization: `Bearer ${pat}`,
       "Content-Type": "application/json",
       Accept: "application/json",
-      "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
+      "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
       ...options.headers,
     },
   });

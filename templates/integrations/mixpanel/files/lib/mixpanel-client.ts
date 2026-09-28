@@ -1,4 +1,30 @@
-import { getApiSecret, getProjectId, getProjectToken } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+/** Service account credentials, or the legacy project API secret as a fallback. */
+function getBasicCredentials(): string | undefined {
+  const username = getEnv("MIXPANEL_SERVICE_ACCOUNT_USERNAME");
+  const secret = getEnv("MIXPANEL_SERVICE_ACCOUNT_SECRET");
+  if (username && secret) return `${username}:${secret}`;
+
+  const apiSecret = getEnv("MIXPANEL_API_SECRET");
+  return apiSecret ? `${apiSecret}:` : undefined;
+}
+
+function getProjectId(): string | undefined {
+  return getEnv("MIXPANEL_PROJECT_ID");
+}
+
+function getProjectToken(): string | undefined {
+  return getEnv("MIXPANEL_PROJECT_TOKEN");
+}
 
 const MIXPANEL_API_BASE = "https://mixpanel.com/api";
 const MIXPANEL_TRACK_BASE = "https://api.mixpanel.com";
@@ -64,15 +90,14 @@ interface MixpanelError {
 }
 
 function getAuthHeader(): string {
-  const apiSecret = getApiSecret();
-  if (!apiSecret) {
+  const credentials = getBasicCredentials();
+  if (!credentials) {
     throw new Error(
-      "Not authenticated with Mixpanel. Please set MIXPANEL_API_SECRET.",
+      "Not authenticated with Mixpanel. Please set MIXPANEL_SERVICE_ACCOUNT_USERNAME and MIXPANEL_SERVICE_ACCOUNT_SECRET.",
     );
   }
 
-  // Mixpanel uses Basic auth with API secret as username and empty password
-  return `Basic ${btoa(`${apiSecret}:`)}`;
+  return `Basic ${btoa(credentials)}`;
 }
 
 async function mixpanelFetch<T>(
@@ -93,6 +118,11 @@ async function mixpanelFetch<T>(
 
   if (baseUrl === MIXPANEL_DATA_BASE || baseUrl === MIXPANEL_API_BASE) {
     headers.Authorization = getAuthHeader();
+    // Service accounts must name the project on every Query and Export call.
+    const projectId = getProjectId();
+    if (projectId && !url.searchParams.has("project_id")) {
+      url.searchParams.set("project_id", projectId);
+    }
   }
 
   const response = await fetch(url.toString(), { ...options, headers });

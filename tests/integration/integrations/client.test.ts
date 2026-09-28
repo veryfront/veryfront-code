@@ -207,7 +207,7 @@ describe("explicit integration client", () => {
       return projectOr(url, status);
     }, async () => {
       const client = await createIntegrationClient(context);
-      assertEquals(await client.status("github", "user"), status);
+      assertEquals(await client.status("github", "user"), { ...status, scope: "user" });
     });
   });
 

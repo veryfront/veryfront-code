@@ -34,7 +34,7 @@
     {
       "name": "GORGIAS_ACCOUNT_DOMAIN",
       "description": "Your Gorgias account subdomain, e.g. 'acme' for acme.gorgias.com — passed as the accountDomain parameter on every tool",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://developers.gorgias.com/reference/authentication"
     }

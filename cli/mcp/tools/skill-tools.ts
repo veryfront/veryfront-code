@@ -4,63 +4,20 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { join } from "veryfront/platform/path";
-import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import type { MCPTool } from "../tools.ts";
-import { directoryExists, fileExists, formatError, getFs } from "./helpers.ts";
+import { formatError } from "./helpers.ts";
+import { listCoreSkills, readCoreSkillDocument } from "../../skills/loader.ts";
+import type { LoadedSkill } from "../../skills/types.ts";
 
-function parseSkillFrontmatter(
-  content: string,
-): { metadata: Record<string, unknown>; body: string } {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return { metadata: {}, body: content };
-
-  const [, yamlContent = "", body = ""] = match;
-  const metadata: Record<string, unknown> = {};
-
-  for (const line of yamlContent.split("\n")) {
-    const colonIndex = line.indexOf(":");
-    if (colonIndex === -1) continue;
-
-    const key = line.slice(0, colonIndex).trim();
-    let value: unknown = line.slice(colonIndex + 1).trim();
-
-    if (typeof value === "string" && value.startsWith('"') && value.endsWith('"')) {
-      value = value.slice(1, -1);
-    }
-
-    metadata[key] = value;
-  }
-
-  return { metadata, body: body.trim() };
-}
-
-function getSkillsDir(): string {
-  return join(cwd(), "cli/mcp/skills");
-}
-
-function parseToolsFromMetadata(metadata: Record<string, unknown>): string[] | undefined {
-  const tools = (metadata.metadata as Record<string, unknown> | undefined)?.tools;
-  if (!tools) return undefined;
-  return String(tools)
-    .split(",")
-    .map((t) => t.trim());
-}
-
-async function getSkillReferences(skillName: string): Promise<string[] | undefined> {
-  const fs = getFs();
-  const refsDir = join(getSkillsDir(), skillName, "references");
-  if (!await directoryExists(refsDir)) return undefined;
-
-  const references: string[] = [];
-  for await (const entry of fs.readDir(refsDir)) {
-    if (entry.isFile && entry.name.endsWith(".md")) {
-      references.push(`references/${entry.name}`);
-    }
-  }
-
-  return references.length ? references : undefined;
+function toSkillMetadata({ metadata }: LoadedSkill): SkillMetadata {
+  return {
+    name: metadata.name,
+    description: metadata.description,
+    license: metadata.license,
+    compatibility: metadata.compatibility,
+    tools: metadata.metadata?.tools?.split(",").map((tool) => tool.trim()),
+  };
 }
 
 const getSkillsInput = lazySchema(defineSchema((v) =>
@@ -103,54 +60,21 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
     withSpan(
       "cli.mcp.tool.vf_get_skills",
       async () => {
-        const fs = getFs();
-        const skillsDir = getSkillsDir();
-
         try {
-          if (input.name) {
-            const skillPath = join(skillsDir, input.name, "SKILL.md");
-            const content = await fs.readTextFile(skillPath);
-            const { metadata, body } = parseSkillFrontmatter(content);
+          const skills = await listCoreSkills();
+          if (!input.name) return { skills: skills.map(toSkillMetadata) };
 
-            return {
-              skill: {
-                name: String(metadata.name || input.name),
-                description: String(metadata.description || ""),
-                license: metadata.license ? String(metadata.license) : undefined,
-                compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-                tools: parseToolsFromMetadata(metadata),
-                content: body,
-                references: await getSkillReferences(input.name),
-              },
-            };
-          }
+          const skill = skills.find((s) => s.metadata.name === input.name);
+          if (!skill) return { error: `Skill not found: ${input.name}` };
 
-          if (!await directoryExists(skillsDir)) return { skills: [] };
-
-          const skills: SkillMetadata[] = [];
-          for await (const entry of fs.readDir(skillsDir)) {
-            if (!entry.isDirectory) continue;
-
-            const skillPath = join(skillsDir, entry.name, "SKILL.md");
-            if (!await fileExists(skillPath)) continue;
-
-            try {
-              const content = await fs.readTextFile(skillPath);
-              const { metadata } = parseSkillFrontmatter(content);
-
-              skills.push({
-                name: String(metadata.name || entry.name),
-                description: String(metadata.description || "No description"),
-                license: metadata.license ? String(metadata.license) : undefined,
-                compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-                tools: parseToolsFromMetadata(metadata),
-              });
-            } catch {
-              // Skip invalid skills
-            }
-          }
-
-          return { skills };
+          const references = Object.keys(skill.references ?? {});
+          return {
+            skill: {
+              ...toSkillMetadata(skill),
+              content: skill.skillMd,
+              references: references.length ? references : undefined,
+            },
+          };
         } catch (error) {
           return { error: formatError(error) };
         }
@@ -181,14 +105,10 @@ export const vfGetSkillReference: MCPTool<GetSkillReferenceInput, GetSkillRefere
     "Use this when you need to load a specific reference document from a skill. Returns the document content as text. Do not use for skill discovery. Use vf_get_skills instead.",
   inputSchema: getSkillReferenceInput,
   execute: async (input) => {
-    const fs = getFs();
-    const refPath = join(getSkillsDir(), input.skill, input.reference);
-
-    try {
-      const content = await fs.readTextFile(refPath);
-      return { content };
-    } catch (error) {
-      return { error: formatError(error) };
+    const content = await readCoreSkillDocument(input.skill, input.reference);
+    if (content === undefined) {
+      return { error: `Reference not found: ${input.skill}/${input.reference}` };
     }
+    return { content };
   },
 };

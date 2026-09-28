@@ -20,6 +20,8 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "anthropic/claude-sonnet-4-6": 64_000,
   "anthropic/claude-haiku-4-5-20251001": 64_000,
   "openai/gpt-5.5": 128_000,
+  "openai/gpt-6-sol": 128_000,
+  "openai/gpt-6-luna": 128_000,
   "openai/gpt-5.4": 128_000,
   "openai/gpt-5.4-mini": 128_000,
   "openai/gpt-5.4-nano": 128_000,

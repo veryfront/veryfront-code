@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createIntegrationClient, IntegrationApiError } from "../../../src/integrations/client.ts";
+import { safeJsonErrorContext } from "../../../cli/router.ts";
 
 const project = { id: "11111111-1111-4111-8111-111111111111", slug: "test-project" };
 const connectionId = "22222222-2222-4222-8222-222222222222";
@@ -68,8 +69,14 @@ describe("published client generation preconditions", () => {
   }
 });
 
-describe("published client stale generation refusal", () => {
-  for (const slug of ["integration-connection-stale", "validation-failed"] as const) {
+describe("client and CLI selection failure identity", () => {
+  for (
+    const slug of [
+      "integration-connection-stale",
+      "resource-not-found",
+      "validation-failed",
+    ] as const
+  ) {
     it(`types ${slug} without replaying the call`, async () => {
       let calls = 0;
       await withMockFetch(async (input) => {
@@ -81,11 +88,18 @@ describe("published client stale generation refusal", () => {
         });
         if (!path.endsWith("/call")) return Response.json({ tools: [] }, { headers });
         calls++;
-        const status = slug === "integration-connection-stale" ? 409 : 400;
-        return Response.json({ slug, status, title: "Refused" }, {
-          status,
-          headers: { "content-type": "application/problem+json" },
-        });
+        const status = slug === "integration-connection-stale"
+          ? 409
+          : slug === "resource-not-found"
+          ? 404
+          : 400;
+        return Response.json(
+          { slug, status, title: "Refused", detail: "synthetic-private-detail" },
+          {
+            status,
+            headers: { "content-type": "application/problem+json" },
+          },
+        );
       }, async () => {
         const client = await createIntegrationClient(context);
         const error = await assertRejects(
@@ -97,6 +111,15 @@ describe("published client stale generation refusal", () => {
           IntegrationApiError,
         ) as IntegrationApiError;
         assertEquals(error.outcomeUnknown, false);
+        const status = slug === "integration-connection-stale"
+          ? 409
+          : slug === "resource-not-found"
+          ? 404
+          : 400;
+        assertEquals(error.httpProblem, { slug, status });
+        const cliContext = safeJsonErrorContext(error.context, error);
+        assertEquals(cliContext?.httpProblem, { slug, status });
+        assertEquals(JSON.stringify(cliContext).includes("synthetic-private-detail"), false);
         assertEquals(
           error.condition,
           slug === "integration-connection-stale"

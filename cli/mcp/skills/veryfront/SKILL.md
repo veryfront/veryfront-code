@@ -170,8 +170,34 @@ vf_run_lint()                             → lint the project
 vf_run_tests()                            → run the test suite
 ```
 
+## Integrations
+
+Provider tools such as `gmail__list_emails` run through a connected account.
+`veryfront login` signs you in to Veryfront; `veryfront integration connect`
+authorizes a provider account and needs a person in a browser. Always pass the
+project. Check `credential_requirement.mode` with
+`veryfront integration get "<NAME>" --project "<PROJECT_SLUG>" --json` first. For
+`oauth_connection`, select the connection from inventory. `<TOOL>` is a
+canonical name from `integration tools`, and `<ARGS_JSON>` follows its input
+schema:
+
+```
+veryfront integration tools "<NAME>" --project "<PROJECT_SLUG>" --json
+veryfront integration connections "<NAME>" --project "<PROJECT_SLUG>" --json
+veryfront integration call "<TOOL>" --project "<PROJECT_SLUG>" --connection "<CONNECTION_ID>" --expected-generation "<CONNECTION_GENERATION_ID>" --args '<ARGS_JSON>' --json
+```
+
+For `project_credentials` connectors (API key, Basic, client credentials), call
+with `--project` only; they have no connection inventory.
+
+Call once. Never repeat a write whose outcome is unknown, never switch accounts,
+and never handle provider secrets in chat. See
+[references/INTEGRATIONS.md](references/INTEGRATIONS.md) for readiness, other
+surfaces, and recovery.
+
 ## See Also
 
 - [references/ROUTES.md](references/ROUTES.md) - Full routing docs
 - [references/AI-TOOLS.md](references/AI-TOOLS.md) - AI tool patterns
 - [references/COMPONENTS.md](references/COMPONENTS.md) - Component patterns
+- [references/INTEGRATIONS.md](references/INTEGRATIONS.md) - Integration calls and recovery

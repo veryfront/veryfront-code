@@ -1,4 +1,16 @@
-import { getApiKey } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function getApiKey(): string | undefined {
+  return getEnv("STRIPE_SECRET_KEY");
+}
 
 const STRIPE_API_VERSION = "2024-12-18.acacia";
 const STRIPE_BASE_URL = "https://api.stripe.com/v1";
