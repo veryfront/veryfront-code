@@ -116,6 +116,41 @@ describe("selected readiness client", () => {
   }
 });
 
+for (const scope of ["user", "project"] as const) {
+  it(`accepts recorded account metadata for ${scope} connections`, async () => {
+    const account = {
+      state: "recorded",
+      id: "provider-test-account",
+      display_name: "Test account",
+      evidence: "stored_metadata",
+    };
+    await withMockFetch((url) => {
+      const path = new URL(String(url));
+      if (path.pathname.endsWith("/tools/list")) {
+        return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
+      }
+      if (!path.pathname.includes("/integrations/")) return Response.json(project);
+      const data = response();
+      return Response.json({
+        selected_readiness: { ...data, selection: { ...data.selection, scope }, account },
+      });
+    }, async () => {
+      const client = await createIntegrationClient({
+        apiBaseUrl: "https://api.example.test",
+        authToken: "synthetic-token",
+        projectReference: project.id,
+      });
+      const readiness = await client.readiness("github__get_current_user", {
+        connectionId,
+        expectedConnectionGenerationId: generation,
+      });
+      assertEquals(readiness.account, account);
+      assertEquals(readiness.selection.scope, scope);
+      assertEquals(readiness.provider_verification.state, "not_checked");
+    });
+  });
+}
+
 it("keeps out-of-order readiness reads isolated by project and credential", async () => {
   const second = { id: "44444444-4444-4444-8444-444444444444", slug: "second-project" };
   const secondConnection = "55555555-5555-4555-8555-555555555555";
