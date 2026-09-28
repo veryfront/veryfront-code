@@ -166,9 +166,18 @@ function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): s
   const integrationEntries = integrations
     .map((integration) => {
       const icon = INTEGRATION_ICONS[integration.config.name] ?? "default";
+      const envVars = requiredSetupEnvVars(integration);
+      const envVarAlternatives = integration.config.name === "mixpanel" && envVars
+        ? [[
+          ...envVars.filter((name) => !name.startsWith("MIXPANEL_SERVICE_ACCOUNT_")),
+          "MIXPANEL_API_SECRET",
+        ]]
+        : [];
       return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}", scopes: ${
         JSON.stringify(integration.config.auth.scopes ?? [])
-      }, envVars: ${JSON.stringify(requiredSetupEnvVars(integration))} },`;
+      }, envVars: ${JSON.stringify(envVars)}, envVarAlternatives: ${
+        JSON.stringify(envVarAlternatives)
+      } },`;
     })
     .join("\n");
 
@@ -194,6 +203,7 @@ const INTEGRATIONS: Array<{
   icon: string;
   scopes: string[];
   envVars: string[] | null;
+  envVarAlternatives: string[][];
 }> = [
 ${integrationEntries}
 ];
@@ -206,11 +216,16 @@ export async function GET(req: Request): Promise<Response> {
 
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {
-      const { envVars } = integration;
+      const { envVars, envVarAlternatives } = integration;
+      const configuredEnvVars = envVars
+        ? [envVars, ...envVarAlternatives].find((names) =>
+          names.length > 0 && names.every((name) => Boolean(getEnv(name)))
+        )
+        : undefined;
       // An empty contract is not a working setup: an integration without
       // scaffold files (harvest, hubspot) has no local client to connect.
       const connected = envVars
-        ? envVars.length > 0 && envVars.every((name) => Boolean(getEnv(name)))
+        ? Boolean(configuredEnvVars)
         : await tokenStore.isConnected(userId, integration.id, integration.scopes);
       return {
         id: integration.id,
@@ -218,7 +233,7 @@ export async function GET(req: Request): Promise<Response> {
         icon: integration.icon,
         connected,
         connectUrl: envVars ? null : \`/api/auth/\${integration.id}\`,
-        envVars,
+        envVars: configuredEnvVars ?? envVars,
       };
     }),
   );
