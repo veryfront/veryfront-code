@@ -75,7 +75,10 @@ export type PresentConnectUrl = (url: string, expiresAt: string) => Promise<void
 function untilDeadline<T>(work: Promise<T>, deadline: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(deadline.reason);
-    if (deadline.aborted) return abort();
+    if (deadline.aborted) {
+      void work.catch(() => {}); // A late rejection from `work` has no one to report to.
+      return abort();
+    }
     deadline.addEventListener("abort", abort, { once: true });
     work.then(resolve, reject).finally(() => deadline.removeEventListener("abort", abort));
   });
