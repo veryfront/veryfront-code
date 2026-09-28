@@ -191,8 +191,12 @@ with `outcomeUnknown === true`, or the CLI envelope reports
 **Effect:** The provider may have completed the write.
 
 **Next step:** Check the provider for the result before you repeat anything.
-The TypeScript client and the CLI never replay the call. Read-only tools report
-`execution_failed` instead, which you can retry once the provider recovers.
+The TypeScript client and the CLI never replay the call. A read-only tool that
+fails at the provider returns a tool result instead of throwing. The result has
+`isError: true` and `structuredContent.error` set to `execution_failed`;
+`client.call` returns it with `status: "tool_error"`.
+Because a read changes nothing, you can call it once more after the provider
+recovers.
 
 ## Verify it worked
 
