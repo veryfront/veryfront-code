@@ -253,6 +253,142 @@ export function createProjectTraceProvider(
     },
   });
   return Object.freeze({
+    importSpans(records: string, parent: api.SpanContext) {
+      if (closed || records.length > 256 * 1024) return;
+      try {
+        const decoded: unknown = JSON.parse(records);
+        if (!Array.isArray(decoded) || decoded.length > 128) return;
+        const ids = new Set<string>();
+        for (const record of decoded) {
+          if (
+            !record || typeof record !== "object" || typeof record.spanId !== "string" ||
+            !/^[0-9a-f]{16}$/.test(record.spanId) || /^0+$/.test(record.spanId) ||
+            record.spanId === parent.spanId || ids.has(record.spanId)
+          ) return;
+          ids.add(record.spanId);
+        }
+        const time = (
+          milliseconds: number,
+        ): [number, number] => [Math.floor(milliseconds / 1000), (milliseconds % 1000) * 1e6];
+        const attributes = (input: unknown): api.Attributes => {
+          const result: api.Attributes = {};
+          if (!input || typeof input !== "object" || Array.isArray(input)) return result;
+          for (const [key, value] of Object.entries(input).slice(0, 32)) {
+            if (key.length > 256) continue;
+            if (
+              Array.isArray(value) && value.length <= 128 &&
+              value.every((item) =>
+                typeof item === "string" || typeof item === "boolean" ||
+                typeof item === "number" && Number.isFinite(item)
+              )
+            ) {
+              Object.defineProperty(result, key, {
+                value: value.map((item) => typeof item === "string" ? item.slice(0, 512) : item),
+                enumerable: true,
+              });
+            } else if (typeof value === "string") {
+              Object.defineProperty(result, key, { value: value.slice(0, 512), enumerable: true });
+            } else if (
+              typeof value === "boolean" || typeof value === "number" && Number.isFinite(value)
+            ) Object.defineProperty(result, key, { value, enumerable: true });
+          }
+          return result;
+        };
+        for (const record of decoded) {
+          if (
+            typeof record.name !== "string" || !Number.isFinite(record.startTime) ||
+            !Number.isFinite(record.endTime) || record.startTime < 0 ||
+            record.endTime < record.startTime || record.endTime > Date.now() + 60_000
+          ) continue;
+          const parentSpanId =
+            typeof record.parentSpanId === "string" && /^[0-9a-f]{16}$/.test(record.parentSpanId) &&
+              !/^0+$/.test(record.parentSpanId)
+              ? record.parentSpanId
+              : parent.spanId;
+          // Correlation IDs are data, not authority. The provider fixes project ownership and destination.
+          const traceId =
+            typeof record.traceId === "string" && /^[0-9a-f]{32}$/.test(record.traceId) &&
+              !/^0+$/.test(record.traceId)
+              ? record.traceId
+              : parent.traceId;
+          const spanContext = { ...parent, traceId, spanId: record.spanId };
+          const startTime = time(record.startTime);
+          const endTime = time(record.endTime);
+          const span: ReadableSpan = {
+            name: record.name.slice(0, 256),
+            kind: Number.isInteger(record.kind) && record.kind >= 0 && record.kind <= 4
+              ? record.kind
+              : 0,
+            spanContext: () => spanContext,
+            parentSpanContext: record.root === true
+              ? undefined
+              : { ...parent, traceId, spanId: parentSpanId },
+            startTime,
+            endTime,
+            duration: time(record.endTime - record.startTime),
+            ended: true,
+            attributes: attributes(record.attributes),
+            status: {
+              code: record.status?.code === 1 || record.status?.code === 2 ? record.status.code : 0,
+              message: typeof record.status?.message === "string"
+                ? record.status.message.slice(0, 512)
+                : undefined,
+            },
+            events: Array.isArray(record.events)
+              ? record.events.slice(0, 8).filter((event: { name?: unknown; time?: unknown }) =>
+                typeof event?.name === "string" && Number.isFinite(event.time)
+              ).map((event: { name: string; time: number; attributes: unknown }) => ({
+                name: event.name.slice(0, 256),
+                time: time(event.time),
+                attributes: attributes(event.attributes),
+              }))
+              : [],
+            links: Array.isArray(record.links)
+              ? record.links.slice(0, 8).flatMap(
+                (
+                  link: {
+                    context?: { traceId?: unknown; spanId?: unknown; traceFlags?: unknown };
+                    attributes?: unknown;
+                  },
+                ) => {
+                  const context = link?.context;
+                  if (
+                    !context || typeof context.traceId !== "string" ||
+                    !/^[0-9a-f]{32}$/.test(context.traceId) || /^0+$/.test(context.traceId) ||
+                    typeof context.spanId !== "string" || !/^[0-9a-f]{16}$/.test(context.spanId) ||
+                    /^0+$/.test(context.spanId)
+                  ) return [];
+                  return [{
+                    context: {
+                      traceId: context.traceId,
+                      spanId: context.spanId,
+                      traceFlags: typeof context.traceFlags === "number"
+                        ? context.traceFlags & 255
+                        : 0,
+                    },
+                    attributes: attributes(link.attributes),
+                  }];
+                },
+              )
+              : [],
+            resource: resourceFromAttributes(options.resource),
+            instrumentationScope: {
+              name: typeof record.scopeName === "string"
+                ? record.scopeName.slice(0, 256)
+                : "veryfront.application.worker",
+              version: typeof record.scopeVersion === "string"
+                ? record.scopeVersion.slice(0, 128)
+                : undefined,
+            },
+            droppedAttributesCount: 0,
+            droppedEventsCount: 0,
+            droppedLinksCount: 0,
+          };
+          processor.onStart();
+          processor.onEnd(span);
+        }
+      } catch { /* Invalid worker telemetry must not affect the application response. */ }
+    },
     ownsSpan: (span: unknown) => ownedSpans.has(span),
     hasActiveSpans: () => processor.hasActiveSpans(),
     getProvider: () => provider,

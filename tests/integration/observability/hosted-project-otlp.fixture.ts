@@ -17,6 +17,7 @@ for (const key of Object.keys(Deno.env.toObject())) {
 }
 const dedicated = Deno.args[0]!.startsWith("dedicated");
 const auth = Deno.args[0]!.endsWith("-auth");
+const appRouter = Deno.args[0]!.endsWith("-app");
 Deno.env.set("OTEL_TRACES_ENABLED", "false");
 Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
 Deno.env.set("PROXY_MODE", "1");
@@ -97,7 +98,7 @@ adapter.fs.files.set(
   `${projectDir}/veryfront.config.ts`,
   `
   import extOpenTelemetry from "@veryfront/ext-observability-opentelemetry";
-  export default { router: "pages", extensions: [extOpenTelemetry()],
+  export default { router: "${appRouter ? "app" : "pages"}", extensions: [extOpenTelemetry()],
     ${
     auth
       ? 'security: { auth: { oidc: { issuerEnvVar: "OIDC_ISSUER", clientIdEnvVar: "OIDC_CLIENT_ID", clientSecretEnvVar: "OIDC_CLIENT_SECRET", sessionSecretEnvVar: "OIDC_SESSION_SECRET", scopes: ["openid"] } } },'
@@ -107,7 +108,7 @@ adapter.fs.files.set(
 `,
 );
 adapter.fs.files.set(
-  `${projectDir}/pages/api/hello.ts`,
+  `${projectDir}/${appRouter ? "app/api/hello/route.ts" : "pages/api/hello.ts"}`,
   `
   import { trace, withSpan } from "veryfront/observability";
   const tracer = trace.getTracer("fixture-app");
@@ -195,6 +196,26 @@ try {
     assertEquals(spans.filter((s) => s.name === "app.work").length, auth ? 0 : 100);
     assertEquals(spans.filter((s) => s.name === "app.custom").length, auth ? 0 : 100);
     assertEquals(spans.length, auth ? 100 : 300);
+    if (!auth) {
+      for (const work of spans.filter((span) => span.name === "app.work")) {
+        assertEquals(
+          spans.some((span) =>
+            span.name === "http.server.request" && span.traceId === work.traceId &&
+            span.spanId === work.parentSpanId
+          ),
+          true,
+        );
+      }
+      for (const child of spans.filter((span) => span.name === "app.custom")) {
+        assertEquals(
+          spans.some((span) =>
+            span.name === "app.work" && span.traceId === child.traceId &&
+            span.spanId === child.parentSpanId
+          ),
+          true,
+        );
+      }
+    }
     if (auth) {
       for (const status of [302, 401]) {
         assertEquals(

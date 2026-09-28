@@ -1,5 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createWorkerTraceRecorder } from "#veryfront/observability/tracing/worker-trace-recorder.ts";
 import { OtlpTracingExporter } from "../../../extensions/ext-observability-opentelemetry/src/index.ts";
 import {
   _resetShimForTests,
@@ -36,6 +37,11 @@ type Payload = {
         name: string;
         spanId: string;
         parentSpanId?: string;
+        links?: {
+          traceId: string;
+          spanId: string;
+          attributes: { key: string; value: { stringValue?: string } }[];
+        }[];
         events?: { name: string }[];
         traceId: string;
         attributes: { key: string; value: { stringValue?: string } }[];
@@ -45,6 +51,134 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("preserves a retained child when its worker root ends after request closure", async () => {
+    const owner = new OtlpTracingExporter();
+    const received: Payload[] = [];
+    const session = await owner.createProjectProvider({
+      resource: { "project.id": "host-project" },
+      createTransport: () => ({
+        send: (data) => {
+          received.push(JSON.parse(new TextDecoder().decode(data)));
+          return Promise.resolve({ status: "success" as const });
+        },
+        shutdown() {},
+      }),
+    });
+    const parent = { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 };
+    const recorder = createWorkerTraceRecorder(`00-${parent.traceId}-${parent.spanId}-01`)!;
+    let rootContext: { traceId: string; spanId: string } | undefined;
+    try {
+      recorder.run(() =>
+        trace.getTracer("app").startActiveSpan(
+          "unfinished-root",
+          { root: true } as import("#veryfront/observability/tracing/api-shim.ts").SpanStartOptions,
+          (root) => {
+            rootContext = root.spanContext();
+            trace.getTracer("app").startSpan("retained-child").end();
+          },
+        )
+      );
+      session.importSpans!(recorder.finish(), parent);
+      await session.forceFlush();
+      const child = received[0]!.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+      assertEquals(child.traceId, rootContext!.traceId);
+      assertEquals(child.parentSpanId, rootContext!.spanId);
+      assertEquals(
+        child.attributes.find((a) => a.key === "project.id")?.value.stringValue,
+        "host-project",
+      );
+    } finally {
+      await owner.shutdown();
+    }
+  });
+
+  it("preserves bounded worker span links through host export", async () => {
+    const owner = new OtlpTracingExporter();
+    const received: Payload[] = [];
+    const session = await owner.createProjectProvider({
+      resource: { "service.name": "worker-links" },
+      createTransport: () => ({
+        send: (data) => {
+          received.push(JSON.parse(new TextDecoder().decode(data)));
+          return Promise.resolve({ status: "success" as const });
+        },
+        shutdown() {},
+      }),
+    });
+    const parent = { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 };
+    const link = {
+      context: { traceId: "3".repeat(32), spanId: "4".repeat(16), traceFlags: 1 },
+      attributes: { reason: "cause" },
+    };
+    const recorder = createWorkerTraceRecorder(`00-${parent.traceId}-${parent.spanId}-01`)!;
+    try {
+      recorder.run(() =>
+        trace.getTracer("linked-app").startSpan("linked", { links: Array(12).fill(link) }).end()
+      );
+      session.importSpans!(recorder.finish(), parent);
+      await session.forceFlush();
+      const span = received[0]!.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+      assertEquals(span.links?.length, 8);
+      assertEquals(span.links?.[0]?.traceId, link.context.traceId);
+      assertEquals(span.links?.[0]?.spanId, link.context.spanId);
+      assertEquals(span.links?.[0]?.attributes[0]?.value.stringValue, "cause");
+    } finally {
+      await owner.shutdown();
+    }
+  });
+
+  it("imports bounded worker spans only under the host request identity", async () => {
+    const owner = new OtlpTracingExporter();
+    const received: Payload[] = [];
+    const session = await owner.createProjectProvider({
+      resource: { "project.id": "host-project", "environment.id": "host-env" },
+      createTransport: () => ({
+        send: (data) => {
+          received.push(JSON.parse(new TextDecoder().decode(data)));
+          return Promise.resolve({ status: "success" as const });
+        },
+        shutdown() {},
+      }),
+    });
+    const parent = { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 };
+    const record = {
+      name: "worker.custom",
+      spanId: "3".repeat(16),
+      parentSpanId: "invalid",
+      traceId: "invalid",
+      kind: 0,
+      startTime: Date.now(),
+      endTime: Date.now(),
+      attributes: { "project.id": "spoofed", "environment.id": "spoofed", value: "kept" },
+    };
+    try {
+      session.importSpans!("invalid json", parent);
+      session.importSpans!(JSON.stringify([record, record]), parent);
+      session.importSpans!(" ".repeat(256 * 1024 + 1), parent);
+      session.importSpans!(JSON.stringify([record]), parent);
+      await session.forceFlush();
+      const spans = received.flatMap((p) =>
+        p.resourceSpans.flatMap((r) => r.scopeSpans.flatMap((s) => s.spans))
+      );
+      assertEquals(spans.length, 1);
+      assertEquals(spans[0]!.traceId, parent.traceId);
+      assertEquals(spans[0]!.parentSpanId, parent.spanId);
+      assertEquals(
+        spans[0]!.attributes.find((a) => a.key === "project.id")?.value.stringValue,
+        "host-project",
+      );
+      assertEquals(
+        spans[0]!.attributes.find((a) => a.key === "environment.id")?.value.stringValue,
+        "host-env",
+      );
+      await session.shutdown(true);
+      session.importSpans!(JSON.stringify([record]), parent);
+      assertEquals(received.length, 1);
+    } finally {
+      await owner.shutdown();
+    }
+  });
+
   it("does not adopt a foreign provider span or its context", async () => {
     const owner = new OtlpTracingExporter();
     const options = {

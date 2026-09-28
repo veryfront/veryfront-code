@@ -112,6 +112,13 @@ globals between projects. Separate exporters and request context do not turn tha
 mode into a tenant sandbox. Unrelated tenants require isolated project execution,
 as described in the [runtime security guide](../../src/security/README.md#operator-granted-shared-execution).
 
+Isolated Deno API workers receive only the request trace parent. Their custom
+spans are returned to the host for validation and export; collector destinations
+and credentials stay in the host. This applies to Pages and App Router API routes.
+Each worker request retains at most 128 ended spans and 262,144 characters of serialized JSON
+records. Spans ending after the worker response is serialized are discarded;
+worker termination can also lose buffered records.
+
 The request span starts a project trace and can link to the platform request. Project recording does not depend on the platform sampling decision. Internal framework spans are not automatically copied to the project collector. Raw third-party SDK installation, automatic instrumentation, background execution, logs and metrics are outside this hosted project export path.
 
 Set `OTEL_TRACES_ENABLED=false` or disable the extension declaration to stop project export. Updated settings take effect after the existing project environment cache refreshes (normally up to 60 seconds). A refreshed disable revokes queued/in-flight delivery. Credential rotation gives active requests a bounded drain period; it does not restart other projects. Removing the project trace settings rolls back this feature without changing platform telemetry.

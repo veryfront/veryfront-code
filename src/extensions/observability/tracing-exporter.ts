@@ -18,6 +18,11 @@ export interface TracerProvider {
 export interface ProjectTraceProvider {
   /** True only for raw spans created by this provider. */
   ownsSpan(span: unknown): boolean;
+  /** Import bounded worker records under a host-owned request parent. */
+  importSpans?(
+    records: string,
+    parent: { traceId: string; spanId: string; traceFlags: number },
+  ): void;
   hasActiveSpans(): boolean;
   getProvider(): TracerProvider;
   getTraceAPI(): {
