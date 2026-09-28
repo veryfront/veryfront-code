@@ -315,6 +315,17 @@ describe("mcp/standalone", () => {
       assertEquals(resp.error, undefined);
     });
 
+    it("prompts/get returns the bundled veryfront skill", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "prompts/get", { name: "veryfront" });
+      const result = resp.result as { messages: { content: { text: string } }[] };
+
+      assertEquals(
+        result.messages[0]?.content.text.includes("veryfront integration connect"),
+        true,
+      );
+    });
+
     it("unknown method returns error", async () => {
       const server = new StandaloneMCPServer();
       const resp = await dispatch(server, "nonexistent/method");

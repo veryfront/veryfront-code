@@ -3,7 +3,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename, join } from "#std/path.ts";
 import { CORE_SKILLS } from "./core-skills.generated.ts";
-import { listAllSkills, listCoreSkills, listLocalSkills, loadSkill } from "./loader.ts";
+import {
+  listAllSkills,
+  listCoreSkills,
+  listLocalSkills,
+  loadSkill,
+  readCoreSkillDocument,
+} from "./loader.ts";
 
 async function withTempDir(
   files: Record<string, string>,
@@ -56,7 +62,7 @@ describe("Core Skills Embedded Data", () => {
     assertEquals(
       CORE_SKILLS,
       onDisk,
-      "cli/skills/core-skills.generated.ts is stale; run deno task generate:core-skills",
+      "cli/skills/core-skills.generated.ts is stale; run deno task generate",
     );
   });
 
@@ -136,6 +142,21 @@ describe("Skill Loader", () => {
       veryfront?.references?.["references/INTEGRATIONS.md"]?.includes("## Recovery"),
       true,
     );
+  });
+
+  it("readCoreSkillDocument returns SKILL.md or a reference from the embedded skills", async () => {
+    const missingDir = "/nonexistent/cli/mcp/skills";
+
+    assertEquals(
+      (await readCoreSkillDocument("flywheel", "SKILL.md", missingDir))?.startsWith("# "),
+      true,
+    );
+    assertEquals(
+      (await readCoreSkillDocument("veryfront", "references/ROUTES.md", missingDir))?.length! > 0,
+      true,
+    );
+    assertEquals(await readCoreSkillDocument("veryfront", "../../x.md", missingDir), undefined);
+    assertEquals(await readCoreSkillDocument("unknown", "SKILL.md", missingDir), undefined);
   });
 
   it("listAllSkills deduplicates by name with local skills overriding core", async () => {

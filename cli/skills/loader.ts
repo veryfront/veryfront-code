@@ -76,6 +76,20 @@ export async function listCoreSkills(
 }
 
 /**
+ * Read a core skill's SKILL.md body or one of its references, such as
+ * `references/ROUTES.md`. Works in the npm package and compiled binary too.
+ */
+export async function readCoreSkillDocument(
+  skillName: string,
+  path: string,
+  skillsDir: string = getCoreSkillsDir(),
+): Promise<string | undefined> {
+  const skill = (await listCoreSkills(skillsDir)).find((s) => s.metadata.name === skillName);
+  if (!skill) return undefined;
+  return path === "SKILL.md" ? skill.skillMd : skill.references?.[path];
+}
+
+/**
  * Scan the provided project directory for local skill directories.
  * A local skill is any skills/<id>/ directory containing a SKILL.md file.
  */
