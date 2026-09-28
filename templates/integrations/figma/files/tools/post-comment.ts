@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { postComment } from "../lib/figma-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "figma-post-comment",
@@ -17,14 +18,15 @@ export default tool({
     x: v.number().optional().describe("X coordinate for comment placement (0-1, relative to canvas)"),
     y: v.number().optional().describe("Y coordinate for comment placement (0-1, relative to canvas)"),
   }))(),
-  async execute({ fileKey, message, parentId, nodeId, x, y }) {
+  async execute({ fileKey, message, parentId, nodeId, x, y }, context) {
+    const userId = requireUserIdFromContext(context);
     const clientMeta: { x?: number; y?: number; node_id?: string[] } = {};
 
     if (x !== undefined) clientMeta.x = x;
     if (y !== undefined) clientMeta.y = y;
     if (nodeId) clientMeta.node_id = [nodeId];
 
-    const comment = await postComment(fileKey, message, {
+    const comment = await postComment(userId, fileKey, message, {
       client_meta: Object.keys(clientMeta).length ? clientMeta : undefined,
       parent_id: parentId,
     });

@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildRouteRegistrySpanAttributes, RouteRegistry } from "./registry.ts";
 import type { Handler, HandlerContext, HandlerResult } from "./types.ts";
-import { CONFIG_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import {
+  CONFIG_NOT_FOUND,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
+} from "#veryfront/errors/error-registry.ts";
+import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import { __registerLogRecordEmitter, refreshLoggerConfig } from "#veryfront/utils/logger/logger.ts";
 import {
   BasicTracerProvider,
@@ -154,6 +158,34 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(attributes["release.id"], "rel-123");
       assertEquals("branch.id" in attributes, false);
       assertEquals("branch.name" in attributes, false);
+    });
+
+    it("leaves serving identity off direct-to-pod cancel and resume only", () => {
+      const ctx: HandlerContext = {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "production",
+        environmentName: "Production",
+        releaseId: "rel-unverified",
+      };
+      const attributesFor = (method: string, path: string) => {
+        const req = new Request(`https://example.com${path}`, { method });
+        return buildRouteRegistrySpanAttributes(req, new URL(req.url), ctx);
+      };
+
+      const cancel = attributesFor("DELETE", "/api/control-plane/runs/run_1");
+      const resume = attributesFor("POST", "/api/control-plane/runs/run_1/resume");
+      const stream = attributesFor("POST", "/api/control-plane/runs/run_1/stream");
+      const get = attributesFor("GET", "/api/control-plane/runs/run_1");
+
+      for (const attributes of [cancel, resume]) {
+        assertEquals(attributes["project.id"], "proj-123");
+        assertEquals("release.id" in attributes, false);
+        assertEquals("veryfront.environment_name" in attributes, false);
+      }
+      for (const attributes of [stream, get]) {
+        assertEquals(attributes["release.id"], "rel-unverified");
+      }
     });
 
     it("tags a signed default-branch run on a production domain with the branch, not the release", () => {
@@ -440,6 +472,38 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(body.detail, "Test config error");
       assertEquals(body.suggestion?.includes("veryfront.config.ts"), true);
       assertEquals(body.suggestion?.includes("vf init"), false);
+    });
+
+    it("propagates snapshot changes only when the caller owns recovery", async () => {
+      const error = createSourceSnapshotChangedError("Source changed during rendering");
+      const registry = new RouteRegistry();
+      registry.register({
+        metadata: { name: "changing-source", priority: 100 },
+        handle: () => Promise.reject(error),
+      });
+
+      const response = await registry.execute(makeReq(), makeCtx());
+      assertEquals(response?.status, 503);
+      const thrown = await assertRejects(() =>
+        registry.execute(makeReq(), makeCtx(), { propagateSourceSnapshotChanges: true })
+      );
+      assertEquals(thrown, error);
+    });
+
+    it("keeps snapshot capability failures as HTTP errors when recovery is enabled", async () => {
+      const registry = new RouteRegistry();
+      registry.register({
+        metadata: { name: "incapable-source", priority: 100 },
+        handle: () =>
+          Promise.reject(SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+            detail: "The adapter cannot identify its source snapshot",
+          })),
+      });
+
+      const response = await registry.execute(makeReq(), makeCtx(), {
+        propagateSourceSnapshotChanges: true,
+      });
+      assertEquals(response?.status, 503);
     });
 
     it("should return null on empty registry", async () => {

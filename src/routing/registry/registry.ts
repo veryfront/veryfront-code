@@ -2,6 +2,8 @@ import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { errorToRFC9457Response } from "#veryfront/errors";
+import { isSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
+import { isDirectToPodRunRoute } from "#veryfront/channels/control-plane-routes.ts";
 
 const logger = serverLogger.component("route-registry");
 
@@ -32,7 +34,15 @@ export function buildRouteRegistrySpanAttributes(
   }
 
   if (!projectSlug && !projectId) return attributes;
+  // Cancel and resume handlers stamp the identity recorded when the run's stream started.
+  if (isDirectToPodRunRoute(req.method, url.pathname)) return attributes;
 
+  return { ...attributes, ...buildServingSpanAttributes(ctx) };
+}
+
+/** The environment name plus the release or branch a request was served from. */
+export function buildServingSpanAttributes(ctx: HandlerContext): SpanAttributes {
+  const attributes: SpanAttributes = {};
   if (ctx.environmentName) attributes["veryfront.environment_name"] = ctx.environmentName;
 
   const signedBranchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;
@@ -80,7 +90,11 @@ export class RouteRegistry {
     return this;
   }
 
-  execute(req: Request, ctx: HandlerContext): Promise<Response | null> {
+  execute(
+    req: Request,
+    ctx: HandlerContext,
+    options: { propagateSourceSnapshotChanges?: boolean } = {},
+  ): Promise<Response | null> {
     const url = new URL(req.url);
     const debug = Boolean(this.config.debug || ctx.debug);
 
@@ -137,6 +151,12 @@ export class RouteRegistry {
               break;
             }
           } catch (error) {
+            // The runtime owns bounded replay and the middleware side-effect
+            // guard. Converting this error to a response here hides it from
+            // that boundary. Other callers retain the HTTP error contract.
+            if (options.propagateSourceSnapshotChanges && isSourceSnapshotChangedError(error)) {
+              throw error;
+            }
             // Always log handler errors - they should never be silently swallowed
             serverLogger.error(
               `[RouteRegistry] Handler ${handler.metadata.name} threw an error`,

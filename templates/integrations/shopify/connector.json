@@ -35,7 +35,7 @@
     {
       "name": "SHOPIFY_SHOP_DOMAIN",
       "description": "Your Shopify store domain (e.g., mystore.myshopify.com)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://shopify.dev/docs/apps/auth/oauth"
     }

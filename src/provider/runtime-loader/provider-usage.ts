@@ -1,5 +1,6 @@
 import {
   mergeRuntimeUsage,
+  readCacheWrite1hShare,
   readRuntimeTokenCount as readTokenCount,
   type RuntimeUsage,
   sumRuntimeTokenCounts as sumTokenCounts,
@@ -24,6 +25,10 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
   const inputTokens = readTokenCount(usage.input_tokens);
   const outputTokens = readTokenCount(usage.output_tokens);
   const cacheCreationInputTokens = readTokenCount(usage.cache_creation_input_tokens);
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    cacheCreationInputTokens,
+    readRecord(usage.cache_creation)?.ephemeral_1h_input_tokens,
+  );
   const cacheReadInputTokens = readTokenCount(usage.cache_read_input_tokens);
 
   return {
@@ -31,6 +36,7 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
     outputTokens,
     totalTokens: sumTokenCounts(inputTokens, outputTokens),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
 }

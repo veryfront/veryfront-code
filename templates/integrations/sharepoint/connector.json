@@ -3,6 +3,7 @@
   "displayName": "SharePoint",
   "icon": "sharepoint.svg",
   "description": "Access and manage SharePoint sites, document libraries, and files",
+  "category": "files",
   "auth": {
     "type": "oauth2",
     "provider": "microsoft",
@@ -40,6 +41,48 @@
       "docsUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
     }
   ],
+  "setupGuide": {
+    "title": "SharePoint setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Microsoft OAuth app",
+        "description": "On hosted Veryfront, SharePoint uses the Veryfront-managed Microsoft OAuth app: connect SharePoint from the project's integrations and approve the Microsoft consent screen, no environment variables needed. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET only to use your own Microsoft OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Register an app in Microsoft Entra",
+        "description": "In the Microsoft Entra admin center, open App registrations and register a new application. For Supported account types, choose accounts in any organizational directory. SharePoint needs a work or school account.",
+        "url": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+      },
+      {
+        "step": 3,
+        "title": "Add the redirect URIs",
+        "description": "Under Authentication, add a Web platform. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/sharepoint for hosted Veryfront, or your app origin followed by /api/auth/sharepoint/callback for a local or self-hosted app."
+      },
+      {
+        "step": 4,
+        "title": "Add Microsoft Graph permissions",
+        "description": "Under API permissions, add these delegated Microsoft Graph permissions: Sites.Read.All, Sites.ReadWrite.All, Files.Read.All, Files.ReadWrite.All, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+        "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference"
+      },
+      {
+        "step": 5,
+        "title": "Create a client secret",
+        "description": "Under Certificates & secrets, create a client secret. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET from the app's credentials. Client secrets expire, so rotate MICROSOFT_CLIENT_SECRET before the expiry date you choose."
+      },
+      {
+        "step": 6,
+        "title": "Verify access",
+        "description": "Run List SharePoint Sites (read-only). It returns sites the connected user can open without changing them."
+      }
+    ],
+    "notes": [
+      "The connection requests Sites.Read.All, Sites.ReadWrite.All, Files.Read.All, Files.ReadWrite.All and offline_access. offline_access lets the connection refresh its access token.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2"
+  },
   "tools": [
     {
       "id": "sharepoint__list_sites",

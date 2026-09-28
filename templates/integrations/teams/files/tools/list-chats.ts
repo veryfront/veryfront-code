@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getChatDisplayName, listChats } from "../lib/teams-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "teams-list-chats",
@@ -18,8 +19,9 @@ export default tool({
       .default(false)
       .describe("Include chat member information"),
   }))(),
-  async execute({ limit, expandMembers }) {
-    const chats = await listChats({
+  async execute({ limit, expandMembers }, context) {
+    const userId = requireUserIdFromContext(context);
+    const chats = await listChats(userId, {
       limit,
       expand: expandMembers ? ["members"] : undefined,
     });

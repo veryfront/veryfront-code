@@ -6,6 +6,25 @@ versions are listed at
 
 ## Unreleased
 
+### Fixed: preview rendering recovers from a source snapshot change
+
+When your preview source changes during rendering, eligible document requests
+now reach the runtime's existing one-replay recovery rule. Repeated source
+changes still return `503`, and requests that have started project middleware
+are not replayed.
+
+### Breaking: eval cost budgets and gateway usage are measured in credits
+
+`metrics.ops.cost` takes `maxCredits` and reads the gateway `costCredits` of a
+record; its evidence carries `costCredits` and `maxCredits`, and the Markdown
+eval report's examples table drops its `Billed USD` column. `maxUsd` is
+removed: `metrics.ops.cost({ maxUsd })` throws at construction and names
+`maxCredits`. Gateway usage envelopes and AG-UI run metadata contribute
+`costCredits` only: `cost_usd`, `provider_*_cost_usd`, `veryfront_*_charge_usd`
+and `veryfront_billed_usd` are no longer copied into runtime or eval usage, and
+eval billing finalization parses `charged_credits`, `target_credits` and
+`adjustment_credits` without requiring the USD keys the API stops sending.
+
 ### Changed: API handlers that cannot be parsed are rejected
 
 Veryfront validates every API handler module with its parser
@@ -74,9 +93,9 @@ unchanged.
 
 ### Changed: Veryfront Cloud models call the vendor-neutral endpoints
 
-`veryfront-cloud/*` models that speak the OpenAI protocol now send requests to
-`<api>/ai/v1`, and models that speak the Anthropic protocol send them to
-`<api>/ai/anthropic/v1`. The request body names the model as
+`veryfront-cloud/*` models now send requests under `<api>/ai/v1`: models that
+speak the OpenAI protocol use `/chat/completions` or `/responses`, and models
+that speak the Anthropic protocol use `/messages`. The request body names the model as
 `<provider>/<model>`. Google models keep their existing route. Authentication,
 project and billing headers are unchanged, and platform refusals such as
 insufficient credits or a missing project are reported as before.

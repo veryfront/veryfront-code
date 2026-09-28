@@ -18,6 +18,7 @@ const getUsageSchema = defineSchema((v) => {
     cachedInputTokens: count,
     cacheReadInputTokens: count,
     cacheCreationInputTokens: count,
+    cacheCreation1hInputTokens: count,
     billableInputTokens: count,
     billableOutputTokens: count,
     costUsd: count,

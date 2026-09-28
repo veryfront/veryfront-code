@@ -77,6 +77,12 @@ curl https://api.veryfront.com/ai/v1/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
 
+Install the clients for the examples you want to run:
+
+```bash
+npm install openai @anthropic-ai/sdk
+```
+
 Use a model that supports Chat Completions with the OpenAI client at
 `https://api.veryfront.com/ai/v1`. Models supporting other operations use their
 corresponding endpoints. Model identifiers can include vendors this SDK has no
@@ -111,7 +117,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
   baseURL: "https://api.veryfront.com/ai",
-  apiKey: process.env.VERYFRONT_API_KEY,
+  authToken: process.env.VERYFRONT_API_KEY,
 });
 
 const message = await client.messages.create({
@@ -123,14 +129,15 @@ const message = await client.messages.create({
 
 ```bash
 curl https://api.veryfront.com/ai/v1/messages \
-  -H "x-api-key: $VERYFRONT_API_KEY" \
+  -H "Authorization: Bearer $VERYFRONT_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
   -H "Content-Type: application/json" \
   -d '{"model":"anthropic/claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"Say hello."}]}'
 ```
 
 Inside a Veryfront agent, use a `veryfront-cloud/<provider>/<model>` string
-instead. The SDK picks the same endpoints for you.
+instead. The SDK routes through Veryfront's project runtime gateway for the
+selected provider and model.
 
 ## Runtime conventions (recommended)
 

@@ -3,6 +3,7 @@
   "displayName": "Google Docs",
   "icon": "docs-google.svg",
   "description": "Read, create, and manage Google Docs documents",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "google",
@@ -40,6 +41,50 @@
       "docsUrl": "https://console.cloud.google.com/apis/credentials"
     }
   ],
+  "setupGuide": {
+    "title": "Google Docs setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
+        "description": "On hosted Veryfront, Google Docs uses the Veryfront-managed Google OAuth app: connect Google Docs from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Enable the Google Docs API",
+        "description": "In the Google Cloud project that owns your OAuth app, enable the Google Docs API.",
+        "url": "https://console.cloud.google.com/apis/library/docs.googleapis.com"
+      },
+      {
+        "step": 3,
+        "title": "Enable the Google Drive API",
+        "description": "In the Google Cloud project that owns your OAuth app, enable the Google Drive API.",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com"
+      },
+      {
+        "step": 4,
+        "title": "Configure the OAuth consent screen",
+        "description": "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. drive.readonly is a restricted scope, so publishing the app to external users requires Google's OAuth app verification.",
+        "url": "https://console.cloud.google.com/auth/overview"
+      },
+      {
+        "step": 5,
+        "title": "Create an OAuth client",
+        "description": "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/docs-google for hosted Veryfront, or your app origin followed by /api/auth/docs-google/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the app's credentials.",
+        "url": "https://console.cloud.google.com/apis/credentials"
+      },
+      {
+        "step": 6,
+        "title": "Verify access",
+        "description": "Run List Documents (read-only). It returns documents from the connected Google account without changing them."
+      }
+    ],
+    "notes": [
+      "The connection requests https://www.googleapis.com/auth/documents and https://www.googleapis.com/auth/drive.readonly. drive.readonly lets the tools list and search documents; documents lets them read, create and edit them.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://developers.google.com/workspace/docs/api/how-tos/overview"
+  },
   "tools": [
     {
       "id": "docs-google__list_documents",
@@ -215,48 +260,5 @@
     "calendar",
     "drive",
     "sheets"
-  ],
-  "setupGuide": {
-    "title": "Google Docs Integration Setup",
-    "steps": [
-      {
-        "title": "Create or select a Google Cloud project",
-        "description": "Open the Google Cloud Console and select the project that will own the OAuth client.",
-        "url": "https://console.cloud.google.com/projectcreate"
-      },
-      {
-        "title": "Enable the Google Docs API",
-        "description": "Enable the Docs API used to read, create, and edit documents.",
-        "url": "https://console.cloud.google.com/apis/library/docs.googleapis.com"
-      },
-      {
-        "title": "Enable the Google Drive API",
-        "description": "Enable the Drive API used to list and search Google Docs files.",
-        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com"
-      },
-      {
-        "title": "Configure the OAuth consent screen",
-        "description": "Authorize exactly https://www.googleapis.com/auth/documents and https://www.googleapis.com/auth/drive.readonly.",
-        "url": "https://console.cloud.google.com/apis/credentials/consent"
-      },
-      {
-        "title": "Create a web OAuth client",
-        "description": "Create an OAuth 2.0 Client ID for a web application and register http://localhost:3000/api/auth/docs-google/callback for local development plus the matching HTTPS callback for each deployed environment.",
-        "url": "https://console.cloud.google.com/apis/credentials"
-      },
-      {
-        "title": "Configure credentials",
-        "description": "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the application environment. Keep the client secret out of source control."
-      },
-      {
-        "title": "Connect Google Docs",
-        "description": "Start the application and open /api/auth/docs-google to complete the OAuth flow."
-      }
-    ],
-    "notes": [
-      "The same Google OAuth client can serve Gmail, Calendar, Drive, Docs, and Sheets when all required APIs, scopes, and callback URLs are configured.",
-      "Production deployments must use the application's durable OAuth token store and verified user identity resolver."
-    ],
-    "documentation": "https://developers.google.com/workspace/docs/api/auth"
-  }
+  ]
 }

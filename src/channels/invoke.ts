@@ -168,6 +168,7 @@ export const getChannelInvokeResponseSchema = defineSchema((v) =>
       totalTokens: v.number().int().nonnegative().optional(),
       cachedInputTokens: v.number().int().nonnegative().optional(),
       cacheCreationInputTokens: v.number().int().nonnegative().optional(),
+      cacheCreation1hInputTokens: v.number().int().nonnegative().optional(),
       cacheReadInputTokens: v.number().int().nonnegative().optional(),
       reasoningTokens: v.number().int().nonnegative().optional(),
     }).optional(),
@@ -485,6 +486,9 @@ export async function executeChannelInvoke(
             : {}),
           ...(typeof result.usage.cacheCreationInputTokens === "number"
             ? { cacheCreationInputTokens: result.usage.cacheCreationInputTokens }
+            : {}),
+          ...(typeof result.usage.cacheCreation1hInputTokens === "number"
+            ? { cacheCreation1hInputTokens: result.usage.cacheCreation1hInputTokens }
             : {}),
           ...(typeof result.usage.cacheReadInputTokens === "number"
             ? { cacheReadInputTokens: result.usage.cacheReadInputTokens }

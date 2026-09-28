@@ -8,16 +8,13 @@
  * - Prompt/action loading
  */
 
-import { createFileSystem, join } from "veryfront/fs";
 import { filterVisibleIntegrations } from "../src/integrations/feature-flags.ts";
 import { ALL_INTEGRATION_NAMES } from "../src/integrations/schema.ts";
-import { loadTemplateFromDirectory } from "./loader.ts";
+import { loadIntegrationConnectorSource, loadTemplateFromDirectory } from "./loader.ts";
 import {
-  buildIntegrationDirectory,
   buildUnknownIntegrationErrors,
   mergeIntegrationFiles,
   namespaceIntegrationTemplateFiles,
-  resolveIntegrationModuleDir,
 } from "./integration-loader-helpers.ts";
 import type {
   IntegrationConfig,
@@ -113,35 +110,17 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
   },
 };
 
-function getModuleDir(): string {
-  return resolveIntegrationModuleDir(import.meta.url);
-}
-
 /**
- * Get the directory path for an integration
- */
-export function getIntegrationDirectory(integrationName: string): string {
-  return buildIntegrationDirectory(getModuleDir(), integrationName);
-}
-
-/**
- * Load integration configuration from connector.json
+ * Load integration configuration from its connector.json, which ships in the
+ * template manifest so it also resolves from the npm package. The manifest
+ * copy leaves out the tool list and setup guide, which scaffolding never reads;
+ * the hosted catalog in `src/integrations/_data.ts` carries those.
  */
 export async function loadIntegrationConfig(
   integrationName: IntegrationName,
 ): Promise<IntegrationConfig | null> {
-  const fs = createFileSystem();
-  const configPath = join(
-    getIntegrationDirectory(integrationName),
-    "connector.json",
-  );
-
-  try {
-    const content = await fs.readTextFile(configPath);
-    return JSON.parse(content) as IntegrationConfig;
-  } catch {
-    return null;
-  }
+  const content = await loadIntegrationConnectorSource(integrationName);
+  return content === null ? null : JSON.parse(content) as IntegrationConfig;
 }
 
 /**
@@ -206,15 +185,7 @@ export async function loadIntegrations(
  * Check if an integration exists
  */
 export async function integrationExists(integrationName: string): Promise<boolean> {
-  const fs = createFileSystem();
-  const integrationDir = getIntegrationDirectory(integrationName);
-
-  try {
-    const stat = await fs.stat(integrationDir);
-    return stat.isDirectory;
-  } catch {
-    return false;
-  }
+  return (await loadIntegrationConnectorSource(integrationName)) !== null;
 }
 
 /**

@@ -27,28 +27,29 @@
     {
       "name": "SNOWFLAKE_ACCOUNT",
       "description": "Your Snowflake account identifier (e.g., xy12345.us-east-1)",
-      "required": true,
+      "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-account-identifier"
     },
     {
       "name": "SNOWFLAKE_USERNAME",
       "description": "Snowflake username for authentication",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management"
     },
     {
       "name": "SNOWFLAKE_PASSWORD",
       "description": "Snowflake password for authentication",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management"
     },
     {
       "name": "SNOWFLAKE_WAREHOUSE",
       "description": "Default warehouse to use for queries (e.g., COMPUTE_WH)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://docs.snowflake.com/en/user-guide/warehouses"
     },

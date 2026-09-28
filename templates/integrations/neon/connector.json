@@ -28,13 +28,15 @@
     {
       "name": "DATABASE_URL",
       "description": "PostgreSQL connection string for database queries",
-      "required": true,
+      "required": false,
+      "scaffoldRequired": true,
       "sensitive": true,
       "docsUrl": "https://neon.tech/docs/connect/connect-from-any-app"
     }
   ],
   "npmDependencies": {
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "@types/pg": "^8.11.10"
   },
   "tools": [
     {

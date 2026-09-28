@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { addComment } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "linear-add-comment",
@@ -9,8 +10,9 @@ export default tool({
     issueId: v.string().describe("Linear issue ID"),
     body: v.string().min(1).describe("Comment body in markdown"),
   }))(),
-  async execute({ issueId, body }) {
-    const comment = await addComment({ issueId, body });
+  async execute({ issueId, body }, context) {
+    const userId = requireUserIdFromContext(context);
+    const comment = await addComment(userId, { issueId, body });
 
     return {
       id: comment.id,

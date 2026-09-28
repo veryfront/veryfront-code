@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { addComment, extractDescriptionText } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "jira-add-comment",
@@ -11,8 +12,9 @@ export default tool({
       body: v.string().min(1).describe("Comment body text"),
     })
   )(),
-  async execute({ issueKey, body }) {
-    const comment = await addComment(issueKey, body);
+  async execute({ issueKey, body }, context) {
+    const userId = requireUserIdFromContext(context);
+    const comment = await addComment(userId, issueKey, body);
 
     return {
       success: true,

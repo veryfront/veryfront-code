@@ -1,28 +1,4 @@
-import { join } from "veryfront/fs";
-import type { IntegrationName, TemplateFile } from "./types.ts";
-
-export function resolveIntegrationModuleDir(
-  moduleUrl: string,
-  platform = typeof process !== "undefined" ? process.platform : undefined,
-): string {
-  const normalizedModuleUrl = new URL(".", moduleUrl);
-
-  if (normalizedModuleUrl.protocol !== "file:") return normalizedModuleUrl.href;
-
-  let moduleDir = normalizedModuleUrl.pathname;
-  if (platform === "win32" && moduleDir.startsWith("/")) {
-    moduleDir = moduleDir.slice(1);
-  }
-
-  return moduleDir;
-}
-
-export function buildIntegrationDirectory(
-  moduleDir: string,
-  integrationName: string,
-): string {
-  return join(moduleDir, "integrations", integrationName);
-}
+import type { EnvVarConfig, IntegrationName, ResolvedIntegration, TemplateFile } from "./types.ts";
 
 export function buildUnknownIntegrationErrors(
   integrations: IntegrationName[],
@@ -83,4 +59,43 @@ export function mergeIntegrationFiles(
   }
 
   return [...fileMap.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export function hasOAuthRoute(integration: Pick<ResolvedIntegration, "config" | "files">): boolean {
+  const authRoute = `app/api/auth/${integration.config.name}/route.ts`;
+  return integration.files.some((file) => file.path === authRoute);
+}
+
+const OAUTH_CLIENT_ENV_VAR = /_CLIENT_(ID|SECRET)$/;
+
+/**
+ * The env contract of an integration's local scaffold. `scaffoldRequired`,
+ * when set, overrides the hosted connector's `required`: the local client may
+ * need a variable the hosted connector does not read, or the reverse. An OAuth
+ * client credential is not required when the scaffold has no OAuth route.
+ */
+export function scaffoldEnvVars(
+  integration: Pick<ResolvedIntegration, "config" | "files">,
+): EnvVarConfig[] {
+  // Without scaffold files there is no local client to read any variable.
+  if (!integration.files.length) return [];
+  const usesOAuth = hasOAuthRoute(integration);
+  return (integration.config.envVars ?? []).map(({ scaffoldRequired, ...envVar }) => ({
+    ...envVar,
+    required: scaffoldRequired ??
+      (envVar.required && (usesOAuth || !OAUTH_CLIENT_ENV_VAR.test(envVar.name))),
+  }));
+}
+
+/**
+ * Env vars that make an env-backed scaffold usable, or null when the scaffold
+ * connects through its own `/api/auth/<id>` OAuth route.
+ */
+export function requiredSetupEnvVars(
+  integration: Pick<ResolvedIntegration, "config" | "files">,
+): string[] | null {
+  if (hasOAuthRoute(integration)) return null;
+  return scaffoldEnvVars(integration)
+    .filter((envVar) => envVar.required && envVar.default === undefined)
+    .map((envVar) => envVar.name);
 }

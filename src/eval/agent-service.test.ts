@@ -441,6 +441,8 @@ describe("eval/agent-service", () => {
                 costSource: "gateway",
                 cacheReadInputTokens: 3,
                 cachedInputTokens: 3,
+                cacheCreationInputTokens: 6,
+                cacheCreation1hInputTokens: 4,
                 reasoningTokens: 2,
                 usageCaptureStatus: "complete",
               },
@@ -533,18 +535,12 @@ describe("eval/agent-service", () => {
       totalTokens: 20,
       billableInputTokens: 12,
       billableOutputTokens: 10,
-      costUsd: 0.002,
-      providerInputCostUsd: 0.0004,
-      providerOutputCostUsd: 0.0006,
-      providerCostUsd: 0.001,
-      veryfrontInputChargeUsd: 0.001,
-      veryfrontOutputChargeUsd: 0.0015,
-      veryfrontChargeUsd: 0.0025,
-      veryfrontBilledUsd: 0.1,
       costCredits: 1,
       costSource: "gateway",
       cacheReadInputTokens: 3,
       cachedInputTokens: 3,
+      cacheCreationInputTokens: 6,
+      cacheCreation1hInputTokens: 4,
       reasoningTokens: 2,
       usageCaptureStatus: "complete",
     });
@@ -554,23 +550,77 @@ describe("eval/agent-service", () => {
       totalTokens: 20,
       billableInputTokens: 12,
       billableOutputTokens: 10,
-      costUsd: 0.002,
-      providerInputCostUsd: 0.0004,
-      providerOutputCostUsd: 0.0006,
-      providerCostUsd: 0.001,
-      veryfrontInputChargeUsd: 0.001,
-      veryfrontOutputChargeUsd: 0.0015,
-      veryfrontChargeUsd: 0.0025,
-      veryfrontBilledUsd: 0.1,
       costCredits: 1,
       costSource: "gateway",
       cacheReadInputTokens: 3,
       cachedInputTokens: 3,
+      cacheCreationInputTokens: 6,
+      cacheCreation1hInputTokens: 4,
       reasoningTokens: 2,
       usageCaptureStatus: "complete",
     });
     assertEquals(record.durationMs, 0);
     assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
+  });
+
+  it("keeps the one-hour cache-write share only beside a valid total, capped at it", async () => {
+    const cases: Array<[Record<string, unknown>, number | undefined]> = [
+      [{ cacheCreation1hInputTokens: 4 }, undefined],
+      [{ cacheCreationInputTokens: 1.5, cacheCreation1hInputTokens: 1 }, undefined],
+      [{ cacheCreationInputTokens: 6, cacheCreation1hInputTokens: 1.5 }, undefined],
+      [{ cacheCreationInputTokens: 6, cacheCreation1hInputTokens: -1 }, undefined],
+      [{ cacheCreationInputTokens: 6, cacheCreation1hInputTokens: 9 }, 6],
+      [{ cache_creation_input_tokens: 6, cache_creation_1h_input_tokens: 4 }, 4],
+      [
+        {
+          cacheCreationInputTokens: 6,
+          cacheCreation1hInputTokens: 1.5,
+          cache_creation_1h_input_tokens: 4,
+        },
+        4,
+      ],
+      [
+        {
+          cacheCreationInputTokens: 1.5,
+          cache_creation_input_tokens: 6,
+          cache_creation_1h_input_tokens: 4,
+        },
+        4,
+      ],
+    ];
+    for (const [metadata, expected] of cases) {
+      const adapter = createAgentServiceEvalAdapter({
+        endpoint: "http://127.0.0.1:4311/api/ag-ui",
+        authToken: "token",
+        fetch: async () =>
+          createSseResponse([
+            { event: "RunStarted", data: { runId: "run_123" } },
+            { event: "TextMessageContent", data: { delta: "Done" } },
+            {
+              event: "RunFinished",
+              data: { metadata: { inputTokens: 1, outputTokens: 1, ...metadata } },
+            },
+          ]),
+        now: () => 1_000,
+      });
+      const report = await runEval(
+        evalAgent({
+          id: "eval:service-1h-share",
+          target: "agent:veryfront",
+          dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+        }),
+        {
+          adapters: { agent: adapter },
+          now: () => new Date("2026-06-20T10:00:00.000Z"),
+        },
+      );
+
+      const usage = report.records[0]?.usage;
+      assertEquals(usage?.cacheCreation1hInputTokens, expected, JSON.stringify(metadata));
+      if (expected !== undefined) {
+        assertEquals(usage?.cacheCreationInputTokens, 6, JSON.stringify(metadata));
+      }
+    }
   });
 
   it("rejects remote eval agent overrides that public AG-UI cannot honor", () => {
@@ -674,11 +724,49 @@ describe("eval/agent-service", () => {
       inputTokens: 12,
       outputTokens: 8,
       totalTokens: 20,
-      costUsd: 0.001,
-      providerCostUsd: 0.001,
-      veryfrontChargeUsd: 0.0025,
-      veryfrontBilledUsd: 0.1,
       costCredits: 1,
+      costSource: "gateway",
+    });
+  });
+
+  it("reads credits from usage metadata that carries no USD amounts", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          { event: "TextMessageContent", data: { delta: "Done" } },
+          {
+            event: "RunFinished",
+            data: {
+              metadata: {
+                input_tokens: 12,
+                output_tokens: 8,
+                cost_credits: "1.5000000000",
+                cost_source: "gateway",
+              },
+            },
+          },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-credit-usage",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "List files" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(result.usage, {
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+      costCredits: 1.5,
       costSource: "gateway",
     });
   });

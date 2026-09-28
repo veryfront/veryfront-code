@@ -1,0 +1,6 @@
+# Salesforce Integration
+# Create a Connected App in Setup > App Manager
+SALESFORCE_CLIENT_ID=your_client_id_here
+SALESFORCE_CLIENT_SECRET=your_client_secret_here
+# Your org's My Domain URL
+SALESFORCE_INSTANCE_URL=https://your-domain.my.salesforce.com

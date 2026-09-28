@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getBase } from "../lib/airtable-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "airtable-get-base",
@@ -9,8 +10,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     baseId: v.string().describe('The ID of the Airtable base (starts with "app")'),
   }))(),
-  async execute({ baseId }) {
-    const { tables } = await getBase(baseId);
+  async execute({ baseId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const { tables } = await getBase(userId, baseId);
 
     return {
       tables: tables.map((table) => ({

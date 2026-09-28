@@ -1274,13 +1274,18 @@ export const metrics = {
       }, limits);
     },
 
-    cost(options: { maxUsd: number }): EvalMetric {
-      const maxUsd = normalizeBudgetLimit(options?.maxUsd, "ops.cost maxUsd");
+    cost(options: { maxCredits: number }): EvalMetric {
+      if (options && "maxUsd" in options) {
+        throw createEvalValidationError(
+          "ops.cost maxUsd was removed; budget cost in credits with maxCredits",
+        );
+      }
+      const maxCredits = normalizeBudgetLimit(options?.maxCredits, "ops.cost maxCredits");
       return createMetric("ops.cost", "ops", (record) => {
-        const costUsd = record.usage.veryfrontBilledUsd ?? record.usage.veryfrontChargeUsd ??
-          record.usage.costUsd ?? record.usage.providerCostUsd;
-        const measured = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0;
-        const pass = measured && costUsd <= maxUsd;
+        const costCredits = record.usage.costCredits;
+        const measured = costCredits !== undefined && Number.isFinite(costCredits) &&
+          costCredits >= 0;
+        const pass = measured && costCredits <= maxCredits;
         return {
           name: "ops.cost",
           family: "ops",
@@ -1289,12 +1294,12 @@ export const metrics = {
           pass,
           ...(!measured ? { explanation: "Eval cost was not measured." } : {}),
           evidence: {
-            ...(costUsd === undefined ? {} : { costUsd }),
-            maxUsd,
+            ...(costCredits === undefined ? {} : { costCredits }),
+            maxCredits,
             ...(record.usage.costSource ? { costSource: record.usage.costSource } : {}),
           },
         };
-      }, { maxUsd });
+      }, { maxCredits });
     },
   },
 

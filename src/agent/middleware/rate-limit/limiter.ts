@@ -1,5 +1,5 @@
 import { createError, toError } from "#veryfront/errors";
-import { setActiveSpanAttributes } from "#veryfront/observability";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface RateLimitConfig {

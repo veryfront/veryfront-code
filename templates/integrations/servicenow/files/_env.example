@@ -1,5 +1,5 @@
-# ServiceNow OAuth Configuration
-# Get these from your ServiceNow instance: System OAuth > Application Registry
+# ServiceNow Integration
+# Your instance host, without https://
 SERVICENOW_INSTANCE=your-instance.service-now.com
-SERVICENOW_CLIENT_ID=your_client_id
-SERVICENOW_CLIENT_SECRET=your_client_secret
+# OAuth access token for the Table API, sent as a Bearer token
+SERVICENOW_ACCESS_TOKEN=your_access_token

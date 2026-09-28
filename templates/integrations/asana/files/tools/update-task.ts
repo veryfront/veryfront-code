@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { updateTask } from "../lib/asana-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "asana-update-task",
@@ -13,8 +14,9 @@ export default tool({
     dueOn: v.string().optional().describe("New due date in YYYY-MM-DD format"),
     assigneeGid: v.string().optional().describe("GID of the user to reassign the task to"),
   }))(),
-  async execute({ taskGid, ...updates }) {
-    const task = await updateTask(taskGid, updates);
+  async execute({ taskGid, ...updates }, context) {
+    const userId = requireUserIdFromContext(context);
+    const task = await updateTask(userId, taskGid, updates);
 
     return {
       success: true,

@@ -269,6 +269,8 @@ describe("agent provider transport hooks", () => {
         outputTokens: 8,
         totalTokens: 20,
         costCredits: 0.25,
+        cacheCreationInputTokens: 6,
+        cacheCreation1hInputTokens: 2,
       },
     });
 

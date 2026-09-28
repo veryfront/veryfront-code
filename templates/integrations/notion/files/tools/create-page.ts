@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createPage, getPageTitle } from "../lib/notion-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "notion-create-page",
@@ -17,8 +18,9 @@ export default tool({
         "Initial content for the page (plain text, paragraphs separated by double newlines)",
       ),
   }))(),
-  async execute({ parentId, parentType, title, content }) {
-    const page = await createPage({ parentId, parentType, title, content });
+  async execute({ parentId, parentType, title, content }, context) {
+    const userId = requireUserIdFromContext(context);
+    const page = await createPage(userId, { parentId, parentType, title, content });
 
     return {
       id: page.id,

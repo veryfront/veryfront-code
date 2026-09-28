@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createIssue } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "jira-create-issue",
@@ -38,8 +39,10 @@ export default tool({
       assigneeId,
       labels,
     },
+    context,
   ) {
-    const { key, id, fields } = await createIssue({
+    const userId = requireUserIdFromContext(context);
+    const { key, id, fields } = await createIssue(userId, {
       projectKey,
       summary,
       issueType,

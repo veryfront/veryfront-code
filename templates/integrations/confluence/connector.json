@@ -3,6 +3,7 @@
   "displayName": "Confluence",
   "icon": "confluence.svg",
   "description": "Search, read, and create documentation in Confluence",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "atlassian",
@@ -54,6 +55,48 @@
       "docsUrl": "https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/#get-list-of-resources"
     }
   ],
+  "setupGuide": {
+    "title": "Confluence setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Atlassian OAuth app",
+        "description": "On hosted Veryfront, Confluence uses the Veryfront-managed Atlassian OAuth app: connect Confluence from the project's integrations and approve the Atlassian consent screen, no environment variables needed. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET only to use your own Atlassian OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth 2.0 integration",
+        "description": "In the Atlassian developer console, create an OAuth 2.0 integration.",
+        "url": "https://developer.atlassian.com/console/myapps/"
+      },
+      {
+        "step": 3,
+        "title": "Add the Confluence API permissions",
+        "description": "Under Permissions, add the Confluence API and select these scopes: read:confluence-content.all, write:confluence-content, read:confluence-space.summary, read:confluence-user, search:confluence, read:page:confluence, write:page:confluence. offline_access is requested at authorization time so the connection can refresh its token."
+      },
+      {
+        "step": 4,
+        "title": "Add the callback URLs",
+        "description": "Under Authorization, choose OAuth 2.0 (3LO). Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/confluence for hosted Veryfront, or your app origin followed by /api/auth/confluence/callback for a local or self-hosted app. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 5,
+        "title": "Share the app",
+        "description": "Under Distribution, set the app to sharing so users outside your own Atlassian account can authorize it."
+      },
+      {
+        "step": 6,
+        "title": "Verify access",
+        "description": "Run List Atlassian Sites (read-only) to find the site's cloud ID, then run Search Confluence (read-only) against that site. Neither call changes anything."
+      }
+    ],
+    "notes": [
+      "The connection requests read:confluence-content.all, write:confluence-content, read:confluence-space.summary, read:confluence-user, search:confluence, read:page:confluence, write:page:confluence and offline_access.",
+      "If the user can reach more than one Atlassian site, set CONFLUENCE_CLOUD_ID to the target site's cloud ID from List Atlassian Sites.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/"
+  },
   "tools": [
     {
       "id": "confluence__list_sites",

@@ -84,7 +84,11 @@ import {
 } from "#veryfront/runtime/model-call-context.ts";
 import { stampAgUiEventTiming } from "#veryfront/agent/ag-ui/encoder.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
-import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
+import {
+  AgentRunCancelledError,
+  type AgentRunSessionManager,
+  type RunServingIdentity,
+} from "./session-manager.ts";
 import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -184,6 +188,8 @@ function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
 
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
+  /** Recorded on the run session so direct-to-pod cancel and resume spans can carry it. */
+  servingIdentity?: RunServingIdentity;
   localTools?: Record<string, Tool | boolean>;
   projectAgentSandbox?: {
     apiUrl?: string;
@@ -1096,6 +1102,7 @@ export async function createRuntimeAgentStreamResponse(
   const abortSignal = deps.sessionManager.startRun({
     runId: input.runId,
     threadId: input.threadId,
+    servingIdentity: deps.servingIdentity,
   });
 
   let completedResponse: AgentResponse | null = null;

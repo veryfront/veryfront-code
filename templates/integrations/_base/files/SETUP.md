@@ -129,14 +129,16 @@ MICROSOFT_TENANT_ID=common
    - Name: Your app name
    - Callback URL: `http://localhost:3000/api/auth/jira/callback`
 4. Add required scopes in **Permissions**
-5. Get your Cloud ID: Visit `https://your-domain.atlassian.net/_edge/tenant_info`
+5. (Optional) To pick a site other than the first one your token can access, get its Cloud ID from `https://your-domain.atlassian.net/_edge/tenant_info`
 
 ### Environment Variables
 
 ```env
 ATLASSIAN_CLIENT_ID=your-client-id
 ATLASSIAN_CLIENT_SECRET=your-client-secret
-ATLASSIAN_CLOUD_ID=your-cloud-id
+# Optional; defaults to the first accessible site
+JIRA_CLOUD_ID=your-cloud-id
+CONFLUENCE_CLOUD_ID=your-cloud-id
 ```
 
 ### Required Scopes
@@ -322,24 +324,26 @@ FIGMA_CLIENT_SECRET=your-client-secret
 
 ### Sentry
 
-1. Go to [Sentry Developer Settings](https://sentry.io/settings/developer-settings/)
-2. Create new public integration
-3. Redirect URL: `http://localhost:3000/api/auth/sentry/callback`
+Uses an auth token (no OAuth).
+
+1. Go to [Sentry Auth Tokens](https://sentry.io/settings/account/api/auth-tokens/)
+2. Create a token with `org:read`, `project:read`, `event:read` and `event:write`
 
 ```env
-SENTRY_CLIENT_ID=your-client-id
-SENTRY_CLIENT_SECRET=your-client-secret
+SENTRY_AUTH_TOKEN=your-auth-token
+SENTRY_ORG=your-organization-slug
 ```
 
 ### PostHog
 
 Uses API key authentication (no OAuth).
 
-1. Go to your PostHog project settings
-2. Create a personal API key
+1. Create a personal API key in your PostHog account settings
+2. Copy the project API key from your project settings; the capture-event tool sends it
 
 ```env
 POSTHOG_API_KEY=phx_your-api-key
+POSTHOG_PROJECT_API_KEY=phc_your-project-api-key
 POSTHOG_HOST=https://app.posthog.com
 ```
 
@@ -357,6 +361,7 @@ POSTHOG_HOST=https://app.posthog.com
 ```env
 SALESFORCE_CLIENT_ID=your-consumer-key
 SALESFORCE_CLIENT_SECRET=your-consumer-secret
+SALESFORCE_INSTANCE_URL=https://your-domain.my.salesforce.com
 ```
 
 ### Pipedrive
@@ -420,7 +425,7 @@ Uses API key (no OAuth needed).
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_SERVICE_KEY=your-service-role-key
 ```
 
 ### Neon
@@ -432,7 +437,7 @@ Uses API key authentication.
 
 ```env
 NEON_API_KEY=your-api-key
-NEON_PROJECT_ID=your-project-id
+DATABASE_URL=postgres://user:password@your-endpoint.neon.tech/dbname?sslmode=require
 ```
 
 ### Airtable
@@ -450,16 +455,14 @@ AIRTABLE_CLIENT_SECRET=your-client-secret
 
 ### Snowflake
 
-Uses account credentials (key-pair or password).
+Uses a programmatic access token (PAT) with the SQL API.
 
 1. Get your Snowflake account identifier
-2. Create a user with appropriate permissions
-3. (Optional) Set up key-pair authentication
+2. Create a programmatic access token for a user with appropriate permissions
 
 ```env
+SNOWFLAKE_PAT=your-programmatic-access-token
 SNOWFLAKE_ACCOUNT=your-account-identifier
-SNOWFLAKE_USERNAME=your-username
-SNOWFLAKE_PASSWORD=your-password
 SNOWFLAKE_WAREHOUSE=your-warehouse
 SNOWFLAKE_DATABASE=your-database
 ```

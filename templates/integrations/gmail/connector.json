@@ -3,6 +3,7 @@
   "displayName": "Gmail",
   "icon": "gmail.svg",
   "description": "Read and send emails via Gmail API",
+  "category": "communication",
   "auth": {
     "type": "oauth2",
     "provider": "google",
@@ -40,6 +41,45 @@
       "docsUrl": "https://console.cloud.google.com/apis/credentials"
     }
   ],
+  "setupGuide": {
+    "title": "Gmail setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
+        "description": "On hosted Veryfront, Gmail uses the Veryfront-managed Google OAuth app: connect Gmail from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Enable the Gmail API",
+        "description": "In the Google Cloud project that owns your OAuth app, enable the Gmail API.",
+        "url": "https://console.cloud.google.com/apis/library/gmail.googleapis.com"
+      },
+      {
+        "step": 3,
+        "title": "Configure the OAuth consent screen",
+        "description": "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. Publishing an app that requests Gmail's restricted scopes to external users requires Google's OAuth app verification.",
+        "docsUrl": "https://developers.google.com/workspace/gmail/api/auth/scopes"
+      },
+      {
+        "step": 4,
+        "title": "Create an OAuth client",
+        "description": "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/gmail for hosted Veryfront, or your app origin followed by /api/auth/gmail/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the client.",
+        "url": "https://console.cloud.google.com/apis/credentials"
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Emails (read-only). It returns message summaries for the connected mailbox without changing it."
+      }
+    ],
+    "notes": [
+      "The connection requests gmail.readonly, gmail.send, gmail.modify, gmail.labels, gmail.compose and the full-access https://mail.google.com/ scope. The full-access scope is what allows the permanent delete tools; the read tools only need gmail.readonly.",
+      "Every list, get and search tool is read-only. Tools that send, draft, label, archive, trash or delete mail are marked as writes and need write authority.",
+      "Each Gmail connection belongs to the Google account that approved consent; the tools act on that mailbox only."
+    ],
+    "documentation": "https://developers.google.com/workspace/gmail/api/guides"
+  },
   "tools": [
     {
       "id": "gmail__list_emails",

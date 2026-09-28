@@ -16,18 +16,26 @@ export function isEventStreamResponse(response: Response): boolean {
  * or its inbound request is aborted. Bodyless responses are already settled
  * and are returned unchanged so transport-specific response identity survives.
  * `strategy` controls wrapper buffering; omitted preserves the stream default.
+ * Options restore deferred request context and optionally bound the cancellation wait
+ * before resource release, without changing the source cancellation promise.
  */
 export function completeOnResponseBodyConsumption(
   response: Response,
   onComplete: () => void,
   signal?: AbortSignal,
   strategy?: QueuingStrategy<Uint8Array>,
+  options: {
+    runDeferredOperation?: <T>(operation: () => Promise<T>) => Promise<T>;
+    cancellationTimeoutMs?: number;
+  } = {},
 ): Response {
   if (!response.body) {
     onComplete();
     return response;
   }
 
+  const runDeferredOperation = options.runDeferredOperation ?? ((operation) => operation());
+  let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
   let completed = false;
   let abortBody = (): void => {};
   let cancellationPending = false;
@@ -35,6 +43,7 @@ export function completeOnResponseBodyConsumption(
   const complete = (): void => {
     if (completed) return;
     completed = true;
+    clearTimeout(cancellationTimer);
     signal?.removeEventListener("abort", abortBody);
     onComplete();
   };
@@ -50,7 +59,10 @@ export function completeOnResponseBodyConsumption(
   const cancelBody = (reason: unknown): Promise<void> => {
     if (cancellationPromise) return cancellationPromise;
     cancellationPending = true;
-    cancellationPromise = reader.cancel(reason).then(
+    if (options.cancellationTimeoutMs !== undefined) {
+      cancellationTimer = setTimeout(complete, options.cancellationTimeoutMs);
+    }
+    cancellationPromise = runDeferredOperation(() => reader.cancel(reason)).then(
       () => complete(),
       (error) => {
         complete();
@@ -85,7 +97,7 @@ export function completeOnResponseBodyConsumption(
     body = new ReadableStream<Uint8Array>({
       async pull(controller) {
         try {
-          const result = await reader.read();
+          const result = await runDeferredOperation(() => reader.read());
           if (result.done) {
             if (!cancellationPending) complete();
             controller.close();

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createTask } from "../lib/asana-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "asana-create-task",
@@ -12,8 +13,9 @@ export default tool({
     dueOn: v.string().optional().describe("Due date in YYYY-MM-DD format"),
     assigneeGid: v.string().optional().describe("GID of the user to assign the task to"),
   }))(),
-  async execute({ projectGid, name, notes, dueOn, assigneeGid }) {
-    const task = await createTask({
+  async execute({ projectGid, name, notes, dueOn, assigneeGid }, context) {
+    const userId = requireUserIdFromContext(context);
+    const task = await createTask(userId, {
       projectGid,
       name,
       notes,

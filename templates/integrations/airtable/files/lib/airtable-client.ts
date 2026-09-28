@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { airtableConfig, OAuthService } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const airtableService = new OAuthService(airtableConfig, tokenStore);
 
 const AIRTABLE_BASE_URL = "https://api.airtable.com/v0";
 const AIRTABLE_META_BASE_URL = "https://api.airtable.com/v0/meta";
@@ -58,19 +62,20 @@ export interface AirtableTableDefinition {
   }>;
 }
 
-function getTokenOrThrow(): string {
-  const token = getAccessToken();
+async function getTokenOrThrow(userId: string): Promise<string> {
+  const token = await airtableService.getAccessToken(userId);
   if (token) return token;
   throw new Error("Not authenticated with Airtable. Please connect your account.");
 }
 
 async function apiFetch<T>(
+  userId: string,
   baseUrl: string,
   endpoint: string,
   options: RequestInit,
   errorPrefix: string,
 ): Promise<T> {
-  const token = getTokenOrThrow();
+  const token = await getTokenOrThrow(userId);
 
   const response = await fetch(`${baseUrl}${endpoint}`, {
     ...options,
@@ -91,24 +96,25 @@ async function apiFetch<T>(
   return response.json() as Promise<T>;
 }
 
-function airtableFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  return apiFetch<T>(AIRTABLE_BASE_URL, endpoint, options, "Airtable API error");
+function airtableFetch<T>(userId: string, endpoint: string, options: RequestInit = {}): Promise<T> {
+  return apiFetch<T>(userId, AIRTABLE_BASE_URL, endpoint, options, "Airtable API error");
 }
 
-function metaFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  return apiFetch<T>(AIRTABLE_META_BASE_URL, endpoint, options, "Airtable Meta API error");
+function metaFetch<T>(userId: string, endpoint: string, options: RequestInit = {}): Promise<T> {
+  return apiFetch<T>(userId, AIRTABLE_META_BASE_URL, endpoint, options, "Airtable Meta API error");
 }
 
-export async function listBases(): Promise<AirtableBase[]> {
-  const response = await metaFetch<{ bases: AirtableBase[] }>("/bases");
+export async function listBases(userId: string): Promise<AirtableBase[]> {
+  const response = await metaFetch<{ bases: AirtableBase[] }>(userId, "/bases");
   return response.bases ?? [];
 }
 
-export function getBase(baseId: string): Promise<AirtableBaseSchema> {
-  return metaFetch<AirtableBaseSchema>(`/bases/${baseId}/tables`);
+export function getBase(userId: string, baseId: string): Promise<AirtableBaseSchema> {
+  return metaFetch<AirtableBaseSchema>(userId, `/bases/${baseId}/tables`);
 }
 
 export async function listRecords(
+  userId: string,
   baseId: string,
   tableIdOrName: string,
   options?: {
@@ -139,40 +145,45 @@ export async function listRecords(
     queryString ? `?${queryString}` : ""
   }`;
 
-  const response = await airtableFetch<AirtableResponse<AirtableRecord>>(endpoint);
+  const response = await airtableFetch<AirtableResponse<AirtableRecord>>(userId, endpoint);
 
   return { records: response.records ?? [], offset: response.offset };
 }
 
 export function getRecord(
+  userId: string,
   baseId: string,
   tableIdOrName: string,
   recordId: string,
 ): Promise<AirtableRecord> {
   return airtableFetch<AirtableRecord>(
+    userId,
     `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
   );
 }
 
 export function createRecord(
+  userId: string,
   baseId: string,
   tableIdOrName: string,
   fields: Record<string, unknown>,
   options?: { typecast?: boolean },
 ): Promise<AirtableRecord> {
-  return airtableFetch<AirtableRecord>(`/${baseId}/${encodeURIComponent(tableIdOrName)}`, {
+  return airtableFetch<AirtableRecord>(userId, `/${baseId}/${encodeURIComponent(tableIdOrName)}`, {
     method: "POST",
     body: JSON.stringify({ fields, typecast: options?.typecast }),
   });
 }
 
 export async function createRecords(
+  userId: string,
   baseId: string,
   tableIdOrName: string,
   records: Array<{ fields: Record<string, unknown> }>,
   options?: { typecast?: boolean },
 ): Promise<AirtableRecord[]> {
   const response = await airtableFetch<{ records: AirtableRecord[] }>(
+    userId,
     `/${baseId}/${encodeURIComponent(tableIdOrName)}`,
     {
       method: "POST",
@@ -184,6 +195,7 @@ export async function createRecords(
 }
 
 export function updateRecord(
+  userId: string,
   baseId: string,
   tableIdOrName: string,
   recordId: string,
@@ -191,6 +203,7 @@ export function updateRecord(
   options?: { destructive?: boolean; typecast?: boolean },
 ): Promise<AirtableRecord> {
   return airtableFetch<AirtableRecord>(
+    userId,
     `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
     {
       method: options?.destructive ? "PUT" : "PATCH",
@@ -200,45 +213,51 @@ export function updateRecord(
 }
 
 export function deleteRecord(
+  userId: string,
   baseId: string,
   tableIdOrName: string,
   recordId: string,
 ): Promise<{ id: string; deleted: boolean }> {
   return airtableFetch<{ id: string; deleted: boolean }>(
+    userId,
     `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
     { method: "DELETE" },
   );
 }
 
 export function createTable(
+  userId: string,
   baseId: string,
   name: string,
   fields: AirtableFieldDefinition[],
   options?: { description?: string },
 ): Promise<AirtableTableDefinition> {
-  return metaFetch<AirtableTableDefinition>(`/bases/${baseId}/tables`, {
+  return metaFetch<AirtableTableDefinition>(userId, `/bases/${baseId}/tables`, {
     method: "POST",
     body: JSON.stringify({ name, description: options?.description, fields }),
   });
 }
 
 export function updateTable(
+  userId: string,
   baseId: string,
   tableId: string,
   updates: { name?: string; description?: string },
 ): Promise<AirtableTableDefinition> {
-  return metaFetch<AirtableTableDefinition>(`/bases/${baseId}/tables/${tableId}`, {
+  return metaFetch<AirtableTableDefinition>(userId, `/bases/${baseId}/tables/${tableId}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
   });
 }
 
 export function createField(
+  userId: string,
   baseId: string,
   tableId: string,
   field: AirtableFieldDefinition,
 ): Promise<AirtableFieldDefinition & { id: string }> {
   return metaFetch<AirtableFieldDefinition & { id: string }>(
+    userId,
     `/bases/${baseId}/tables/${tableId}/fields`,
     {
       method: "POST",

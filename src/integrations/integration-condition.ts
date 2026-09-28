@@ -44,3 +44,19 @@ export function readIntegrationFailureCondition(
       : {}),
   };
 }
+
+/** Registered API refusal for an explicit selection whose connection generation was replaced. */
+const INTEGRATION_CONNECTION_STALE_SLUG = "integration-connection-stale";
+
+/**
+ * @internal REST Problems carry no retryability flag. The API registers this refusal as a
+ * non-retryable precondition failure: repeating the same generation cannot succeed.
+ */
+export function readStaleConnectionCondition(
+  value: unknown,
+): IntegrationFailureCondition | undefined {
+  const problem = readIntegrationHttpProblem(value);
+  return problem?.slug === INTEGRATION_CONNECTION_STALE_SLUG && problem.status === 409
+    ? { ...problem, retryable: false }
+    : undefined;
+}

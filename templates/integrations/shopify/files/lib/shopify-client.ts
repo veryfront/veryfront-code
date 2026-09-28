@@ -1,8 +1,17 @@
-import { getAccessToken } from "./token-store.ts";
+import { shopifyConfig } from "veryfront/oauth";
+import { getEnv } from "./env.ts";
+import { getValidToken, providerFromConfig } from "./oauth.ts";
 
-const SHOPIFY_SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? "shop.myshopify.com";
+const SHOPIFY_SHOP_DOMAIN = getEnv("SHOPIFY_SHOP_DOMAIN") ?? "shop.myshopify.com";
 const SHOPIFY_API_VERSION = "2024-01";
 const SHOPIFY_BASE_URL = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}`;
+
+// The generic OAuthService does not support Shopify, so tokens resolve through
+// the base scaffold's getValidToken(). Offline Shopify tokens do not expire.
+const shopifyOAuthProvider = providerFromConfig(shopifyConfig, {
+  authorizationUrl: `https://${SHOPIFY_SHOP_DOMAIN}/admin/oauth/authorize`,
+  tokenUrl: `https://${SHOPIFY_SHOP_DOMAIN}/admin/oauth/access_token`,
+});
 
 interface ShopifyProduct {
   id: number;
@@ -93,8 +102,12 @@ function buildQuery(params: URLSearchParams): string {
   return query ? `?${query}` : "";
 }
 
-async function shopifyFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+async function shopifyFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await getValidToken(shopifyOAuthProvider, userId, "shopify");
   if (!token) {
     throw new Error("Not authenticated with Shopify. Please connect your account.");
   }
@@ -123,7 +136,7 @@ async function shopifyFetch<T>(endpoint: string, options: RequestInit = {}): Pro
   return response.json();
 }
 
-export async function listProducts(options?: {
+export async function listProducts(userId: string, options?: {
   limit?: number;
   status?: "active" | "archived" | "draft";
   productType?: string;
@@ -134,17 +147,24 @@ export async function listProducts(options?: {
   if (options?.productType) params.set("product_type", options.productType);
 
   const { products } = await shopifyFetch<{ products: ShopifyProduct[] }>(
+    userId,
     `/products.json${buildQuery(params)}`,
   );
   return products;
 }
 
-export async function getProduct(productId: number | string): Promise<ShopifyProduct> {
-  const { product } = await shopifyFetch<{ product: ShopifyProduct }>(`/products/${productId}.json`);
+export async function getProduct(
+  userId: string,
+  productId: number | string,
+): Promise<ShopifyProduct> {
+  const { product } = await shopifyFetch<{ product: ShopifyProduct }>(
+    userId,
+    `/products/${productId}.json`,
+  );
   return product;
 }
 
-export async function listOrders(options?: {
+export async function listOrders(userId: string, options?: {
   limit?: number;
   status?: "open" | "closed" | "cancelled" | "any";
   financialStatus?: "pending" | "authorized" | "paid" | "refunded" | "voided";
@@ -157,17 +177,18 @@ export async function listOrders(options?: {
   if (options?.fulfillmentStatus) params.set("fulfillment_status", options.fulfillmentStatus);
 
   const { orders } = await shopifyFetch<{ orders: ShopifyOrder[] }>(
+    userId,
     `/orders.json${buildQuery(params)}`,
   );
   return orders;
 }
 
-export async function getOrder(orderId: number | string): Promise<ShopifyOrder> {
-  const { order } = await shopifyFetch<{ order: ShopifyOrder }>(`/orders/${orderId}.json`);
+export async function getOrder(userId: string, orderId: number | string): Promise<ShopifyOrder> {
+  const { order } = await shopifyFetch<{ order: ShopifyOrder }>(userId, `/orders/${orderId}.json`);
   return order;
 }
 
-export async function listCustomers(options?: {
+export async function listCustomers(userId: string, options?: {
   limit?: number;
   query?: string;
 }): Promise<ShopifyCustomer[]> {
@@ -176,19 +197,24 @@ export async function listCustomers(options?: {
   if (options?.query) params.set("query", options.query);
 
   const { customers } = await shopifyFetch<{ customers: ShopifyCustomer[] }>(
+    userId,
     `/customers.json${buildQuery(params)}`,
   );
   return customers;
 }
 
-export async function getCustomer(customerId: number | string): Promise<ShopifyCustomer> {
+export async function getCustomer(
+  userId: string,
+  customerId: number | string,
+): Promise<ShopifyCustomer> {
   const { customer } = await shopifyFetch<{ customer: ShopifyCustomer }>(
+    userId,
     `/customers/${customerId}.json`,
   );
   return customer;
 }
 
-export async function getShopInfo(): Promise<{
+export async function getShopInfo(userId: string): Promise<{
   id: number;
   name: string;
   email: string;
@@ -205,7 +231,7 @@ export async function getShopInfo(): Promise<{
       currency: string;
       timezone: string;
     };
-  }>("/shop.json");
+  }>(userId, "/shop.json");
 
   return shop;
 }

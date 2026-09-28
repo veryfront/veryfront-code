@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listTeams } from "../lib/teams-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "teams-list-teams",
@@ -14,8 +15,9 @@ export default tool({
       .default(25)
       .describe("Maximum number of teams to return (1-50)"),
   }))(),
-  async execute({ limit }) {
-    const teams = await listTeams({ limit });
+  async execute({ limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const teams = await listTeams(userId, { limit });
 
     return teams.map((team) => ({
       id: team.id,

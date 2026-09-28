@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { OAuthService, oneDriveConfig } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const onedriveService = new OAuthService(oneDriveConfig, tokenStore);
 
 const GRAPH_API_URL = "https://graph.microsoft.com/v1.0";
 
@@ -58,16 +62,20 @@ export interface SearchResult {
   "@odata.nextLink"?: string;
 }
 
-async function getTokenOrThrow(): Promise<string> {
-  const token = await getAccessToken();
+async function getTokenOrThrow(userId: string): Promise<string> {
+  const token = await onedriveService.getAccessToken(userId);
   if (!token) {
     throw new Error("Not authenticated with OneDrive. Please connect your account.");
   }
   return token;
 }
 
-async function onedriveFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getTokenOrThrow();
+async function onedriveFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await getTokenOrThrow(userId);
   const url = endpoint.startsWith("http") ? endpoint : `${GRAPH_API_URL}${endpoint}`;
 
   const response = await fetch(url, {
@@ -90,6 +98,7 @@ async function onedriveFetch<T>(endpoint: string, options: RequestInit = {}): Pr
 }
 
 export function listFiles(
+  userId: string,
   folderId: string = "root",
   options?: {
     orderBy?: string;
@@ -106,18 +115,18 @@ export function listFiles(
   const queryString = params.toString();
   const endpoint = `/me/drive/items/${folderId}/children${queryString ? `?${queryString}` : ""}`;
 
-  return onedriveFetch<ListFilesResult>(endpoint);
+  return onedriveFetch<ListFilesResult>(userId, endpoint);
 }
 
-export function getFile(itemId: string): Promise<DriveItem> {
-  return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`);
+export function getFile(userId: string, itemId: string): Promise<DriveItem> {
+  return onedriveFetch<DriveItem>(userId, `/me/drive/items/${itemId}`);
 }
 
-export async function downloadFile(itemId: string): Promise<{
+export async function downloadFile(userId: string, itemId: string): Promise<{
   content: string;
   metadata: FileMetadata;
 }> {
-  const item = await getFile(itemId);
+  const item = await getFile(userId, itemId);
 
   if (!item.file) throw new Error("Item is not a file");
 
@@ -145,11 +154,12 @@ export async function downloadFile(itemId: string): Promise<{
 }
 
 export async function uploadFile(
+  userId: string,
   fileName: string,
   content: string,
   parentFolderId: string = "root",
 ): Promise<DriveItem> {
-  const token = await getTokenOrThrow();
+  const token = await getTokenOrThrow(userId);
   const endpoint = `${GRAPH_API_URL}/me/drive/items/${parentFolderId}:/${fileName}:/content`;
 
   const response = await fetch(endpoint, {
@@ -170,10 +180,11 @@ export async function uploadFile(
 }
 
 export function createFolder(
+  userId: string,
   folderName: string,
   parentFolderId: string = "root",
 ): Promise<DriveItem> {
-  return onedriveFetch<DriveItem>(`/me/drive/items/${parentFolderId}/children`, {
+  return onedriveFetch<DriveItem>(userId, `/me/drive/items/${parentFolderId}/children`, {
     method: "POST",
     body: JSON.stringify({
       name: folderName,
@@ -184,6 +195,7 @@ export function createFolder(
 }
 
 export function searchFiles(
+  userId: string,
   query: string,
   options?: {
     top?: number;
@@ -193,12 +205,13 @@ export function searchFiles(
   if (options?.top) params.set("$top", options.top.toString());
 
   return onedriveFetch<SearchResult>(
+    userId,
     `/me/drive/root/search(q='${encodeURIComponent(query)}')?${params.toString()}`,
   );
 }
 
-export async function deleteFile(itemId: string): Promise<void> {
-  const token = await getTokenOrThrow();
+export async function deleteFile(userId: string, itemId: string): Promise<void> {
+  const token = await getTokenOrThrow(userId);
 
   const response = await fetch(`${GRAPH_API_URL}/me/drive/items/${itemId}`, {
     method: "DELETE",
@@ -212,6 +225,7 @@ export async function deleteFile(itemId: string): Promise<void> {
 }
 
 export function moveFile(
+  userId: string,
   itemId: string,
   newParentId: string,
   newName?: string,
@@ -221,7 +235,7 @@ export function moveFile(
     ...(newName ? { name: newName } : {}),
   };
 
-  return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`, {
+  return onedriveFetch<DriveItem>(userId, `/me/drive/items/${itemId}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });

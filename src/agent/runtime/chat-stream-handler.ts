@@ -44,7 +44,8 @@ import {
 } from "../streaming/stream-outcome.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
+import { SpanKind } from "#veryfront/observability";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { withToolInputStatusTransitions } from "#veryfront/provider/runtime-loader/tool-input-status.ts";
@@ -367,6 +368,7 @@ export interface ChatStreamState {
     totalTokens: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreation1hInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -395,6 +397,7 @@ export interface ChatStreamCallbacks {
     totalTokens?: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreation1hInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -1705,6 +1708,7 @@ export function processStreamInternal(
               const output = typedPart.totalUsage.outputTokens ?? 0;
               const cacheReadInputTokens = typedPart.totalUsage.cacheReadInputTokens;
               const cacheCreationInputTokens = typedPart.totalUsage.cacheCreationInputTokens;
+              const cacheCreation1hInputTokens = typedPart.totalUsage.cacheCreation1hInputTokens;
               const cachedInputTokens = typedPart.totalUsage.cachedInputTokens ??
                 cacheReadInputTokens;
               state.usage = {
@@ -1713,6 +1717,7 @@ export function processStreamInternal(
                 totalTokens: typedPart.totalUsage.totalTokens ?? input + output,
                 ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
                 ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+                ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
                 ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
                 ...(typedPart.totalUsage.reasoningTokens !== undefined
                   ? { reasoningTokens: typedPart.totalUsage.reasoningTokens }

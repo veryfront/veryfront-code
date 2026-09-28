@@ -1,8 +1,8 @@
+import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../lib/servicenow-client.ts";
-import { isServiceNowConnected } from "../lib/token-store.ts";
 
-export default defineTool({
+export default tool({
   id: "servicenow-create-incident",
   description: "Create a new incident in ServiceNow",
   inputSchema: defineSchema((v) => v.object({
@@ -20,14 +20,6 @@ export default defineTool({
     subcategory: v.string().optional().describe("Incident subcategory"),
   }))(),
   async execute(input) {
-    const connected = await isServiceNowConnected();
-    if (!connected) {
-      return {
-        error: "ServiceNow not connected",
-        action: "Please connect ServiceNow via /api/auth/servicenow",
-      };
-    }
-
     try {
       const client = getServiceNowClient();
       const incident = await client.createIncident(input);

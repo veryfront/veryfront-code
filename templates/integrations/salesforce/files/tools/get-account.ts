@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { formatAddress, getAccount } from "../lib/salesforce-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "salesforce-get-account",
@@ -17,8 +18,9 @@ export default tool({
         "Additional fields to retrieve (e.g., Description, Owner.Name, ParentId)",
       ),
   }))(),
-  async execute({ accountId, fields }) {
-    const account = await getAccount(accountId, fields);
+  async execute({ accountId, fields }, context) {
+    const userId = requireUserIdFromContext(context);
+    const account = await getAccount(userId, accountId, fields);
 
     const billingAddress =
       formatAddress(

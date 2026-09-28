@@ -9,7 +9,7 @@ const getModifyLabelsInput = defineSchema((v) => v
     addLabelIds: v.array(v.string().min(1)).optional().describe("Label IDs to add"),
     removeLabelIds: v.array(v.string().min(1)).optional().describe("Label IDs to remove"),
   })
-  .refine((value) => value.addLabelIds?.length || value.removeLabelIds?.length, {
+  .refine((value) => Boolean(value.addLabelIds?.length || value.removeLabelIds?.length), {
     message: "At least one label must be added or removed",
   }));
 

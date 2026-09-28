@@ -34,7 +34,7 @@
     {
       "name": "CHARGEBEE_SITE",
       "description": "Chargebee site name (the subdomain of your Chargebee account, e.g. acme or acme-test)",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://apidocs.chargebee.com/docs/api"
     }

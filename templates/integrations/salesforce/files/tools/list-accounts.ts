@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listAccounts } from "../lib/salesforce-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "salesforce-list-accounts",
@@ -25,8 +26,9 @@ export default tool({
         "Additional fields to retrieve (e.g., Description, Owner.Name, ParentId)",
       ),
   }))(),
-  async execute({ limit, offset, fields }) {
-    const response = await listAccounts({ limit, offset, fields });
+  async execute({ limit, offset, fields }, context) {
+    const userId = requireUserIdFromContext(context);
+    const response = await listAccounts(userId, { limit, offset, fields });
 
     return {
       accounts: response.records.map((account) => {

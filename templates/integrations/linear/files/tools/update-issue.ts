@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { updateIssue } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "linear-update-issue",
@@ -44,8 +45,9 @@ export default tool({
     assigneeId,
     projectId,
     labelIds,
-  }) {
-    const issue = await updateIssue(issueId, {
+  }, context) {
+    const userId = requireUserIdFromContext(context);
+    const issue = await updateIssue(userId, issueId, {
       title,
       description,
       priority,

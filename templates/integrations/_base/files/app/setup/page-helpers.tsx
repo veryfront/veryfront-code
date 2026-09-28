@@ -5,7 +5,9 @@ export interface Integration {
   name: string;
   icon: string;
   connected: boolean;
-  connectUrl: string;
+  /** Null for integrations configured through env vars instead of OAuth. */
+  connectUrl: string | null;
+  envVars?: string[] | null;
 }
 
 export interface SetupStep {
@@ -285,20 +287,23 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     title: "Sentry Setup",
     category: "development",
     steps: [
-      "Go to Sentry Settings > Developer Settings",
-      "Create new integration",
-      "Add redirect URL: http://localhost:3000/api/auth/sentry/callback",
-      "Copy Client ID and Secret to .env",
+      "Go to Sentry Settings > Auth Tokens",
+      "Create a token with org:read, project:read, event:read and event:write",
+      "Add the token and your organization slug to .env",
     ],
-    link: "https://sentry.io/settings/developer-settings/",
-    envVars: ["SENTRY_CLIENT_ID", "SENTRY_CLIENT_SECRET"],
+    link: "https://sentry.io/settings/account/api/auth-tokens/",
+    envVars: ["SENTRY_AUTH_TOKEN", "SENTRY_ORG"],
   },
   posthog: {
     title: "PostHog Setup",
     category: "development",
-    steps: ["Go to PostHog Project Settings", "Copy your Project API Key", "Add to .env file"],
+    steps: [
+      "Create a personal API key in your PostHog account settings",
+      "Copy your project API key from PostHog Project Settings (for capturing events)",
+      "Add both to .env file",
+    ],
     link: "https://app.posthog.com/project/settings",
-    envVars: ["POSTHOG_API_KEY", "POSTHOG_HOST"],
+    envVars: ["POSTHOG_API_KEY", "POSTHOG_PROJECT_API_KEY", "POSTHOG_HOST"],
   },
   mixpanel: {
     title: "Mixpanel Setup",
@@ -430,31 +435,31 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Add to .env file",
     ],
     link: "https://supabase.com/dashboard",
-    envVars: ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
+    envVars: ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_KEY"],
   },
   neon: {
     title: "Neon Database Setup",
     category: "infrastructure",
     steps: [
       "Go to Neon Console",
-      "Create new project",
+      "Create an API key in Account Settings",
       "Copy connection string from Dashboard",
       "Add to .env file",
     ],
     link: "https://console.neon.tech/",
-    envVars: ["DATABASE_URL"],
+    envVars: ["NEON_API_KEY", "DATABASE_URL"],
   },
   snowflake: {
     title: "Snowflake Setup",
     category: "infrastructure",
     steps: [
       "Go to Snowflake Console",
-      "Create a service account or use existing credentials",
+      "Create a programmatic access token (PAT) for your user",
       "Note your account identifier, warehouse, database",
       "Add credentials to .env",
     ],
     link: "https://app.snowflake.com/",
-    envVars: ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD", "SNOWFLAKE_WAREHOUSE"],
+    envVars: ["SNOWFLAKE_PAT", "SNOWFLAKE_ACCOUNT", "SNOWFLAKE_WAREHOUSE"],
   },
   aws: {
     title: "AWS Setup",
@@ -481,7 +486,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Copy Consumer Key and Secret to .env",
     ],
     link: "https://login.salesforce.com/",
-    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET"],
+    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET", "SALESFORCE_INSTANCE_URL"],
   },
   pipedrive: {
     title: "Pipedrive OAuth Setup",
@@ -533,16 +538,15 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     envVars: ["FRESHDESK_CLIENT_ID", "FRESHDESK_CLIENT_SECRET", "FRESHDESK_DOMAIN"],
   },
   servicenow: {
-    title: "ServiceNow OAuth Setup",
+    title: "ServiceNow Setup",
     category: "support",
     steps: [
-      "Go to ServiceNow System OAuth > Application Registry",
-      "Create OAuth API endpoint for external clients",
-      "Add redirect URL: http://localhost:3000/api/auth/servicenow/callback",
-      "Copy Client ID and Secret to .env",
+      "Note your instance host, such as your-instance.service-now.com",
+      "Get an OAuth access token for the Table API from your instance",
+      "Add the instance and token to .env",
     ],
     link: "https://docs.servicenow.com/",
-    envVars: ["SERVICENOW_CLIENT_ID", "SERVICENOW_CLIENT_SECRET", "SERVICENOW_INSTANCE"],
+    envVars: ["SERVICENOW_INSTANCE", "SERVICENOW_ACCESS_TOKEN"],
   },
   stripe: {
     title: "Stripe Setup",

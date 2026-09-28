@@ -64,6 +64,7 @@
     "@opentelemetry/sdk-node": "npm:@opentelemetry/sdk-node@0.220.0",
     "@opentelemetry/sdk-trace-base": "npm:@opentelemetry/sdk-trace-base@2.9.0",
     "@opentelemetry/exporter-trace-otlp-http": "npm:@opentelemetry/exporter-trace-otlp-http@0.220.0",
+    "@opentelemetry/otlp-transformer": "npm:@opentelemetry/otlp-transformer@0.220.0",
     "@opentelemetry/resources": "npm:@opentelemetry/resources@2.9.0",
     "@opentelemetry/semantic-conventions": "npm:@opentelemetry/semantic-conventions@1.43.0",
     "gaxios": "npm:gaxios@7.2.0",

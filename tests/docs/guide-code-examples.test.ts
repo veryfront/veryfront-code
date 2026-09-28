@@ -5,6 +5,7 @@ import {
   assert,
   assertEquals,
   assertExists,
+  assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -120,6 +121,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "deploy-project.md",
   "integrations.md",
   "integrations/salesforce.md",
+  "integrations/recovery.md",
   "move-studio-changes-to-git.md",
   "pages-and-routing.md",
   "project-knowledge.md",
@@ -1108,6 +1110,49 @@ describe("Guide: integrations.md", () => {
 
       assertEquals(Object.keys(integrationTools), ["salesforce__find_customer"]);
     });
+  });
+});
+
+describe("Guide: integrations/recovery.md", () => {
+  it("handles the presenter promise when the URL deadline has already passed", async () => {
+    const guide = await readGuide("integrations/recovery.md");
+    const start = guide.indexOf("function untilDeadline");
+    const end = guide.indexOf("\n}\n", start) + 2;
+    assert(start >= 0, "recovery.md no longer defines untilDeadline");
+    const source = `${guide.slice(start, end)}\nexport { untilDeadline };\n`;
+    const { untilDeadline } = await import(
+      `data:application/typescript,${encodeURIComponent(source)}`
+    ) as {
+      untilDeadline: <T>(work: Promise<T>, deadline: AbortSignal) => Promise<T>;
+    };
+
+    class WatchedPromise<T> extends Promise<T> {
+      static override get [Symbol.species]() {
+        return Promise;
+      }
+      handled = false;
+      override then<A = T, B = never>(
+        onFulfilled?: ((value: T) => A | PromiseLike<A>) | null,
+        onRejected?: ((reason: unknown) => B | PromiseLike<B>) | null,
+      ): Promise<A | B> {
+        this.handled = true;
+        return super.then(onFulfilled, onRejected);
+      }
+    }
+    let rejectPresenter: (reason: Error) => void = () => {};
+    const presenter = new WatchedPromise<void>((_, reject) => {
+      rejectPresenter = reject;
+    });
+    const expired = new Error("connect URL expired");
+
+    await assertRejects(
+      () => untilDeadline(presenter, AbortSignal.abort(expired)),
+      Error,
+      "connect URL expired",
+    );
+    rejectPresenter(new Error("presenter failed after the deadline"));
+
+    assertEquals(presenter.handled, true);
   });
 });
 

@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mergeUsage, type RuntimeUsage, sanitizeRuntimeUsage } from "./provider-usage.ts";
+import {
+  extractAnthropicUsage,
+  mergeUsage,
+  type RuntimeUsage,
+  sanitizeRuntimeUsage,
+} from "./provider-usage.ts";
 import { readGatewayUsageCosts, readRuntimeAmount, readRuntimeCost } from "../runtime-usage.ts";
 
 describe("provider/runtime-loader/provider-usage mergeUsage", () => {
@@ -552,37 +557,24 @@ describe("provider/runtime-usage amount readers", () => {
     assertEquals(readRuntimeCost("-0.0000000001"), undefined);
   });
 
-  it("reads a gateway usage envelope in either shape and skips invalid amounts", () => {
+  it("reads gateway credits in either shape and leaves the USD cost facts behind", () => {
     assertEquals(readGatewayUsageCosts(undefined), {});
     assertEquals(
       readGatewayUsageCosts({
         cost_usd: 0.002,
-        provider_input_cost_usd: "0.0004000000",
-        provider_output_cost_usd: "0.0006000000",
         provider_cost_usd: "0.0010000000",
-        veryfront_input_charge_usd: 0.001,
-        veryfront_output_charge_usd: "0.0015000000",
         veryfront_charge_usd: "0.0025000000",
         veryfront_billed_usd: "0.1000000000",
         cost_credits: "1.0000000000",
         billable_input_tokens: "8",
         pricing_source: "catalog",
       }),
-      {
-        costUsd: 0.002,
-        providerInputCostUsd: 0.0004,
-        providerOutputCostUsd: 0.0006,
-        providerCostUsd: 0.001,
-        veryfrontInputChargeUsd: 0.001,
-        veryfrontOutputChargeUsd: 0.0015,
-        veryfrontChargeUsd: 0.0025,
-        veryfrontBilledUsd: 0.1,
-        costCredits: 1,
-      },
+      { costCredits: 1 },
     );
+    assertEquals(readGatewayUsageCosts({ cost_credits: 0.25 }), { costCredits: 0.25 });
     assertEquals(
       readGatewayUsageCosts({
-        provider_cost_usd: "-1",
+        provider_cost_usd: "0.0010000000",
         cost_credits: "1 credit",
         veryfront_billed_usd: Number.NaN,
       }),
@@ -595,9 +587,9 @@ describe("provider/runtime-usage amount readers", () => {
     let getterCalls = 0;
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       Object.prototype,
-      "providerCostUsd",
+      "costCredits",
     );
-    Object.defineProperty(Object.prototype, "providerCostUsd", {
+    Object.defineProperty(Object.prototype, "costCredits", {
       configurable: true,
       get() {
         getterCalls++;
@@ -607,7 +599,7 @@ describe("provider/runtime-usage amount readers", () => {
         setterCalls++;
       },
     });
-    Object.defineProperty(Object.prototype, "cost_usd", {
+    Object.defineProperty(Object.prototype, "cost_credits", {
       configurable: true,
       get() {
         getterCalls++;
@@ -619,21 +611,139 @@ describe("provider/runtime-usage amount readers", () => {
       const costs = readGatewayUsageCosts({ provider_cost_usd: "0.0010000000" });
 
       assertEquals(Object.getPrototypeOf(costs), null);
-      assertEquals(Object.hasOwn(costs, "providerCostUsd"), true);
-      assertEquals(costs.providerCostUsd, 0.001);
-      assertEquals(costs.costUsd, undefined);
-      assertEquals(JSON.stringify(costs), '{"providerCostUsd":0.001}');
+      assertEquals(Object.hasOwn(costs, "costCredits"), false);
+      assertEquals(costs.costCredits, undefined);
+      assertEquals(JSON.stringify(costs), "{}");
+      assertEquals(readGatewayUsageCosts({ cost_credits: "1.0000000000" }).costCredits, 1);
       assertEquals(Object.getPrototypeOf(readGatewayUsageCosts(undefined)), null);
     } finally {
       if (originalDescriptor) {
-        Object.defineProperty(Object.prototype, "providerCostUsd", originalDescriptor);
+        Object.defineProperty(Object.prototype, "costCredits", originalDescriptor);
       } else {
-        delete (Object.prototype as Record<string, unknown>).providerCostUsd;
+        delete (Object.prototype as Record<string, unknown>).costCredits;
       }
-      delete (Object.prototype as Record<string, unknown>).cost_usd;
+      delete (Object.prototype as Record<string, unknown>).cost_credits;
     }
 
     assertEquals(setterCalls, 0);
     assertEquals(getterCalls, 0);
+  });
+});
+
+describe("provider/runtime-loader/provider-usage one-hour cache-write share", () => {
+  it("reads the one-hour share of cache writes from Anthropic usage", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation_input_tokens: 1000,
+          cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+        },
+      }),
+      {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      },
+    );
+  });
+
+  it("omits the share when the provider does not report it", () => {
+    for (
+      const cacheCreation of [
+        undefined,
+        {},
+        { ephemeral_5m_input_tokens: 1000 },
+        { ephemeral_1h_input_tokens: -1 },
+        { ephemeral_1h_input_tokens: 1.5 },
+      ]
+    ) {
+      const usage = extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          cache_creation_input_tokens: 1000,
+          ...(cacheCreation === undefined ? {} : { cache_creation: cacheCreation }),
+        },
+      });
+      assertEquals(usage?.cacheCreationInputTokens, 1000);
+      assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+    }
+  });
+
+  it("keeps the share through merge and sanitize without touching the cache-write total", () => {
+    const merged = mergeUsage(
+      { inputTokens: 8, cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 600 },
+      { outputTokens: 5 },
+    );
+    assertEquals(merged?.cacheCreationInputTokens, 1000);
+    assertEquals(merged?.cacheCreation1hInputTokens, 600);
+    assertEquals(merged?.totalTokens, 13);
+
+    const sanitized = sanitizeRuntimeUsage({ cacheCreation1hInputTokens: -5, inputTokens: 1 });
+    assertEquals(sanitized !== undefined && "cacheCreation1hInputTokens" in sanitized, false);
+  });
+
+  it("drops the share without a valid cache-write total and caps it at that total", () => {
+    for (const total of [undefined, 1.5, -1, Number.MAX_SAFE_INTEGER + 1]) {
+      const sanitized = sanitizeRuntimeUsage({
+        inputTokens: 1,
+        ...(total === undefined ? {} : { cacheCreationInputTokens: total }),
+        cacheCreation1hInputTokens: 1,
+      });
+      assertEquals(sanitized !== undefined && "cacheCreationInputTokens" in sanitized, false);
+      assertEquals(sanitized !== undefined && "cacheCreation1hInputTokens" in sanitized, false);
+    }
+    assertEquals(
+      sanitizeRuntimeUsage({ cacheCreationInputTokens: 500, cacheCreation1hInputTokens: 600 })
+        ?.cacheCreation1hInputTokens,
+      500,
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          cache_creation_input_tokens: 1.5,
+          cache_creation: { ephemeral_1h_input_tokens: 1 },
+        },
+      })?.cacheCreation1hInputTokens,
+      undefined,
+    );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          cache_creation_input_tokens: 500,
+          cache_creation: { ephemeral_1h_input_tokens: 600 },
+        },
+      })?.cacheCreation1hInputTokens,
+      500,
+    );
+  });
+
+  it("keeps a merged share within the merged cache-write total", () => {
+    const current = { cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 600 };
+    assertEquals(
+      mergeUsage(current, { cacheCreationInputTokens: 1000 })?.cacheCreation1hInputTokens,
+      600,
+    );
+    assertEquals(
+      mergeUsage(current, { cacheCreationInputTokens: 400 })?.cacheCreation1hInputTokens,
+      400,
+    );
+    assertEquals(
+      mergeUsage({ cacheCreation1hInputTokens: 600 }, { inputTokens: 1 })
+        ?.cacheCreation1hInputTokens,
+      undefined,
+    );
+    assertEquals(
+      mergeUsage(current, { cacheCreationInputTokens: 1.5, cacheCreation1hInputTokens: 1 })
+        ?.cacheCreation1hInputTokens,
+      600,
+    );
+    assertEquals(
+      mergeUsage(current, { cacheCreation1hInputTokens: 5 })?.cacheCreation1hInputTokens,
+      600,
+    );
   });
 });

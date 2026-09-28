@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listCards } from "../lib/trello-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "trello-list-cards",
@@ -20,12 +21,13 @@ export default tool({
       .default(50)
       .describe("Maximum number of cards to return"),
   }))(),
-  async execute({ boardId, listId, includeArchived, limit }) {
+  async execute({ boardId, listId, includeArchived, limit }, context) {
+    const userId = requireUserIdFromContext(context);
     if (!boardId && !listId) {
       return { cards: [], message: "Please specify either a boardId or listId" };
     }
 
-    const cards = await listCards({ boardId, listId, limit });
+    const cards = await listCards(userId, { boardId, listId, limit });
     const visibleCards = includeArchived
       ? cards
       : cards.filter((card) => !card.closed);

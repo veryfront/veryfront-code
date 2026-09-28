@@ -28,6 +28,7 @@ export interface RuntimeGenerateUsage {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
@@ -150,6 +151,7 @@ export type RuntimeStreamPart =
       outputTokens?: number;
       totalTokens?: number;
       cacheCreationInputTokens?: number;
+      cacheCreation1hInputTokens?: number;
       cacheReadInputTokens?: number;
       cachedInputTokens?: number;
       reasoningTokens?: number;

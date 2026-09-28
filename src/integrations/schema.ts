@@ -225,6 +225,13 @@ export const getEnvVarSchema = defineSchema((v) =>
     name: v.string(),
     description: v.string(),
     required: v.boolean(),
+    /**
+     * Overrides `required` for the local `veryfront init --integrations`
+     * scaffold, whose client may need a variable the hosted connector does not
+     * read (true) or not need one the hosted connector requires (false). The
+     * scaffold's `.env.example` and setup status follow it.
+     */
+    scaffoldRequired: v.boolean().optional(),
     sensitive: v.boolean().optional(),
     placeholder: v.string().optional(),
     docsUrl: v.string().optional(),
@@ -334,6 +341,10 @@ export const getIntegrationEndpointBodyFieldSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // Sends `default` on every call, ignores caller input and stays out of the
+    // model-facing schema. Pins provider safety switches such as a read-only
+    // access mode on a tool published as read-only.
+    fixed: v.boolean().optional(),
     // "base64": the string value is base64-decoded before sending. With
     // bodyMode "form-data" the field becomes a binary part; with "raw" the
     // decoded bytes become the request body.

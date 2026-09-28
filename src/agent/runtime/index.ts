@@ -75,7 +75,7 @@ import {
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
+import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import {
   attachProviderMetadata,
@@ -336,6 +336,10 @@ import {
   revokeModelRuntimeResolver,
 } from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes, type RuntimeUsageTraceInput } from "./trace-usage.ts";
+import {
+  pickDefinedUsageFields,
+  RUNTIME_USAGE_OPTIONAL_TAIL_FIELDS,
+} from "#veryfront/provider/runtime-usage.ts";
 import {
   createToolExposureCheckpoint,
   createToolExposureState,
@@ -1305,48 +1309,7 @@ function buildStreamFinishUsage(
     inputTokens: usage.promptTokens,
     outputTokens: usage.completionTokens,
     totalTokens: usage.totalTokens,
-    ...(usage.cachedInputTokens !== undefined
-      ? { cachedInputTokens: usage.cachedInputTokens }
-      : {}),
-    ...(usage.cacheCreationInputTokens !== undefined
-      ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
-      : {}),
-    ...(usage.cacheReadInputTokens !== undefined
-      ? { cacheReadInputTokens: usage.cacheReadInputTokens }
-      : {}),
-    ...(usage.reasoningTokens !== undefined ? { reasoningTokens: usage.reasoningTokens } : {}),
-    ...(usage.billableInputTokens !== undefined
-      ? { billableInputTokens: usage.billableInputTokens }
-      : {}),
-    ...(usage.billableOutputTokens !== undefined
-      ? { billableOutputTokens: usage.billableOutputTokens }
-      : {}),
-    ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
-    ...(usage.providerInputCostUsd !== undefined
-      ? { providerInputCostUsd: usage.providerInputCostUsd }
-      : {}),
-    ...(usage.providerOutputCostUsd !== undefined
-      ? { providerOutputCostUsd: usage.providerOutputCostUsd }
-      : {}),
-    ...(usage.providerCostUsd !== undefined ? { providerCostUsd: usage.providerCostUsd } : {}),
-    ...(usage.veryfrontInputChargeUsd !== undefined
-      ? { veryfrontInputChargeUsd: usage.veryfrontInputChargeUsd }
-      : {}),
-    ...(usage.veryfrontOutputChargeUsd !== undefined
-      ? { veryfrontOutputChargeUsd: usage.veryfrontOutputChargeUsd }
-      : {}),
-    ...(usage.veryfrontChargeUsd !== undefined
-      ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
-      : {}),
-    ...(usage.veryfrontBilledUsd !== undefined
-      ? { veryfrontBilledUsd: usage.veryfrontBilledUsd }
-      : {}),
-    ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
-    ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
-    ...(usage.billingMode !== undefined ? { billingMode: usage.billingMode } : {}),
-    ...(usage.usageCaptureStatus !== undefined
-      ? { usageCaptureStatus: usage.usageCaptureStatus }
-      : {}),
+    ...pickDefinedUsageFields(usage, RUNTIME_USAGE_OPTIONAL_TAIL_FIELDS),
   };
 }
 
@@ -2990,6 +2953,7 @@ export class AgentRuntime {
             cachedInputTokens: response.usage.cachedInputTokens ??
               response.usage.cacheReadInputTokens,
             cacheCreationInputTokens: response.usage.cacheCreationInputTokens,
+            cacheCreation1hInputTokens: response.usage.cacheCreation1hInputTokens,
             cacheReadInputTokens: response.usage.cacheReadInputTokens,
             reasoningTokens: response.usage.reasoningTokens,
             billableInputTokens: response.usage.billableInputTokens,

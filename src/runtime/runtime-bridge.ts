@@ -15,6 +15,7 @@ import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { serverLogger } from "#veryfront/utils";
+import { readCacheWrite1hShare } from "#veryfront/provider/runtime-usage.ts";
 import type {
   RuntimeGenerateTextResult,
   RuntimeStreamPart,
@@ -119,6 +120,7 @@ type DirectGenerateUsage = {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
@@ -496,6 +498,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     outputTokens?: number;
     totalTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreation1hInputTokens?: number;
     cacheReadInputTokens?: number;
     cachedInputTokens?: number;
     reasoningTokens?: number;
@@ -517,6 +520,10 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
   const costSource = flatUsage.costSource;
   const billingMode = flatUsage.billingMode;
   const usageCaptureStatus = flatUsage.usageCaptureStatus;
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    flatUsage.cacheCreationInputTokens,
+    flatUsage.cacheCreation1hInputTokens,
+  );
 
   return {
     inputTokens: flatUsage.inputTokens,
@@ -525,6 +532,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     ...(typeof flatUsage.cacheCreationInputTokens === "number"
       ? { cacheCreationInputTokens: flatUsage.cacheCreationInputTokens }
       : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(typeof flatUsage.cacheReadInputTokens === "number"
       ? { cacheReadInputTokens: flatUsage.cacheReadInputTokens }
       : {}),
@@ -917,6 +925,9 @@ function streamUsageToGenerateUsage(
     ...(totalTokens !== undefined ? { totalTokens } : {}),
     ...(totalUsage.cacheCreationInputTokens !== undefined
       ? { cacheCreationInputTokens: totalUsage.cacheCreationInputTokens }
+      : {}),
+    ...(totalUsage.cacheCreation1hInputTokens !== undefined
+      ? { cacheCreation1hInputTokens: totalUsage.cacheCreation1hInputTokens }
       : {}),
     ...(totalUsage.cacheReadInputTokens !== undefined
       ? { cacheReadInputTokens: totalUsage.cacheReadInputTokens }

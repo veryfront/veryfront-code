@@ -9,12 +9,65 @@ Provides distributed tracing, OTLP log export, OTLP metrics export, the OpenTele
 Add the extension to your project's `veryfront.config.ts`:
 
 ```ts
+import { defineConfig } from "veryfront";
 import extOpenTelemetry from "@veryfront/ext-observability-opentelemetry";
 
 export default defineConfig({
   extensions: [extOpenTelemetry()],
 });
 ```
+
+## Local tracing
+
+With an OTLP/HTTP collector listening on port 4318, start your local app with:
+
+```sh
+OTEL_TRACES_ENABLED=true \
+OTEL_SERVICE_NAME=my-application \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+veryfront dev
+```
+
+If your collector requires authentication, set `OTEL_EXPORTER_OTLP_HEADERS` in your
+local environment before starting the app. Its format is `Authorization=Bearer <TOKEN>`
+for a collector using bearer authentication. Do not commit credentials.
+
+You can add custom spans using the public tracing API:
+
+```ts
+import { trace } from "veryfront/observability";
+
+const tracer = trace.getTracer("my-application");
+
+export function GET() {
+  return tracer.startActiveSpan("app.greeting", (span) => {
+    try {
+      return Response.json({ message: "Hello" });
+    } finally {
+      span.end();
+    }
+  });
+}
+```
+
+Place this handler in an API route and request it. Look for the application service
+and `app.greeting` span in your collector. Export is batched, so delivery is not
+synchronous with the HTTP response. Restart with `OTEL_TRACES_ENABLED=false` to
+disable trace export. Settings are read when the extension starts.
+
+The local integration fixture is tested on Deno 2.7.7. It verifies real OTLP/HTTP
+delivery, authentication headers, service identity, request/custom span correlation,
+disabled export, and unchanged app responses when the collector rejects exports.
+
+This setup exports traces over OTLP/HTTP; use a collector HTTP endpoint, not a gRPC
+endpoint. Delivery uses the SDK's in-memory batch queue. Queue overflow, collector
+failure, or abrupt process termination can lose spans. `OTEL_BSP_MAX_QUEUE_SIZE`
+and `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` configure the SDK buffer and batch limits.
+Restart the app after changing these settings. To roll back, set
+`OTEL_TRACES_ENABLED=false` and restart; this does not remove traces already stored
+by your collector.
+
+For managed hosting, use the project settings described below.
 
 ## Environment variables
 
@@ -37,7 +90,42 @@ The extension reads the standard OpenTelemetry env vars at setup time:
 | `OTEL_METRIC_EXPORT_INTERVAL`                             | No               | Metric export interval in milliseconds                            |
 | `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` | No               | Metrics temporality. Dedicated service defaults to `delta`.       |
 
-Configuration is read from process `OTEL_*` environment variables. In shared Veryfront runtimes these are platform-owned host env vars. The extension does not accept `ctx.config.otel` exporter endpoint, header, service name, or enable-flag overrides because project config is tenant controlled in shared runtimes.
+Platform export reads process `OTEL_*` environment variables. Hosted application trace export uses a separate authenticated project environment snapshot, as described below. The extension does not accept `ctx.config.otel` overrides for the platform exporter.
+
+## Hosted application traces
+
+Declare `extOpenTelemetry()` in your app configuration and set these project environment variables:
+
+```dotenv
+OTEL_TRACES_ENABLED=true
+OTEL_SERVICE_NAME=my-application
+OTEL_EXPORTER_OTLP_ENDPOINT=https://<COLLECTOR_HOST>/otlp
+```
+
+Store `OTEL_EXPORTER_OTLP_HEADERS` as a project secret when the collector requires authentication. Collectors with configured headers require HTTPS unless their HTTP origin is explicitly allowlisted by the host operator. Signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` take precedence. A trace-specific URL is used as supplied; a base URL receives `/v1/traces`.
+
+On hosted runtimes containing project trace export support, dedicated and shared apps use these project settings without replacing platform telemetry. Each project environment has separate credentials, resources and export buffers. HTTP request spans and custom spans created through `trace` or the tracing helpers from `veryfront/observability` use the active project. You do not install another global OpenTelemetry SDK.
+
+Project tracing follows the runtime's execution boundary. Shared host execution
+requires an operator grant and does not isolate application memory or JavaScript
+globals between projects. Separate exporters and request context do not turn that
+mode into a tenant sandbox. Unrelated tenants require isolated project execution,
+as described in the [runtime security guide](../../src/security/README.md#operator-granted-shared-execution).
+
+Isolated Deno API workers receive only the request trace parent. Their custom
+spans are returned to the host for validation and export; collector destinations
+and credentials stay in the host. This applies to Pages and App Router API routes.
+Each worker request retains at most 128 ended spans and 262,144 characters of serialized JSON
+records. Spans ending after the worker response is serialized are discarded;
+worker termination can also lose buffered records.
+
+The request span starts a project trace and can link to the platform request. Project recording does not depend on the platform sampling decision. Internal framework spans are not automatically copied to the project collector. Raw third-party SDK installation, automatic instrumentation, background execution, logs and metrics are outside this hosted project export path.
+
+Set `OTEL_TRACES_ENABLED=false` or disable the extension declaration to stop project export. Updated settings take effect after the existing project environment cache refreshes (normally up to 60 seconds). A refreshed disable revokes queued/in-flight delivery. Credential rotation gives active requests a bounded drain period; it does not restart other projects. Removing the project trace settings rolls back this feature without changing platform telemetry.
+
+Export is best effort: requests arriving while an exporter starts or rotates run without project traces. Requests do not wait for exporter initialization or collector delivery, retries are bounded, and queue overflow or process termination can lose spans. At most 32 exporter generations are retained per process, with a 1 MiB queued serialized-span budget per generation. Collector requests must pass the runtime's existing outbound policy; redirects are rejected. Private collectors require explicit operator authorization.
+
+The hosted integration fixtures exercise the runtime HTTP handler, project authorization/settings fetch, and real collectors for shared and dedicated configurations on Deno 2.7.7. They are repository evidence, not proof that a particular managed deployment already runs this version. Verify your deployed runtime version before relying on this behavior.
 
 ## Factory configuration
 
@@ -45,7 +133,7 @@ Configuration is read from process `OTEL_*` environment variables. In shared Ver
 extOpenTelemetry();
 ```
 
-Exporter configuration is process-level. Dedicated runtimes can use project-specific collector endpoints by running the project in its own process with its own process environment.
+Standalone export uses process settings. Hosted application export uses project settings and the runtime-owned execution context; factory options do not configure it.
 
 ## Metrics
 

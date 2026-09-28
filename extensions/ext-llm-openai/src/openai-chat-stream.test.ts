@@ -286,12 +286,6 @@ describe("ext-llm-openai/openai-chat-stream", () => {
           reasoningTokens: 1,
           billableInputTokens: 3,
           billableOutputTokens: 4,
-          providerInputCostUsd: 0.0004,
-          providerOutputCostUsd: 0.0006,
-          providerCostUsd: 0.001,
-          veryfrontInputChargeUsd: 0.001,
-          veryfrontOutputChargeUsd: 0.0015,
-          veryfrontChargeUsd: 0.0025,
           costSource: "gateway",
           billingMode: "deferred",
           usageCaptureStatus: "complete",
@@ -950,6 +944,91 @@ describe("ext-llm-openai/openai-chat-stream", () => {
         { type: "text-delta", delta: "Hi" },
         { type: "finish", finishReason: "stop" },
       ],
+    );
+  });
+
+  it("skips Azure content-filter annotation frames around the finish reason", async () => {
+    // Frame shapes from the Azure OpenAI deployment behind veryfront-cloud
+    // (`gpt-5.5`, observed on staging 2026-09-28; identifiers are synthetic):
+    // after the finish chunk, Azure reports its output content-filter result for the streamed text as
+    // a choice with no delta, a null finish reason, and no id or model. The
+    // report is informational and must not fail an otherwise complete stream.
+    const annotation = {
+      choices: [{
+        content_filter_offsets: { check_offset: 39, start_offset: 36, end_offset: 39 },
+        content_filter_results: {
+          hate: { filtered: false, severity: "safe" },
+          protected_material_code: { detected: false, filtered: false },
+          self_harm: { filtered: false, severity: "safe" },
+          sexual: { filtered: false, severity: "safe" },
+          violence: { filtered: false, severity: "safe" },
+        },
+        finish_reason: null,
+        index: 0,
+      }],
+      created: 0,
+      id: "",
+      model: "",
+      object: "",
+    };
+    const chunk = (choice: Record<string, unknown>) => ({
+      choices: [{ content_filter_results: {}, index: 0, logprobs: null, ...choice }],
+      created: 1790597867,
+      id: "chatcmpl-azure-annotation-fixture",
+      model: "gpt-5.5-2026-04-24",
+      object: "chat.completion.chunk",
+    });
+
+    assertEquals(
+      await collectParts(streamFromText([
+        data(
+          chunk({ delta: { content: "", refusal: null, role: "assistant" }, finish_reason: null }),
+        ),
+        data(annotation),
+        data(chunk({ delta: { content: "Hi" }, finish_reason: null })),
+        data(chunk({ delta: {}, finish_reason: "stop" })),
+        data(annotation),
+        data({
+          choices: [],
+          id: "chatcmpl-azure-annotation-fixture",
+          usage: { prompt_tokens: 8, completion_tokens: 5, total_tokens: 13 },
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join(""))),
+      [
+        { type: "text-delta", delta: "Hi" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          usage: { inputTokens: 8, outputTokens: 5, totalTokens: 13 },
+        },
+      ],
+    );
+  });
+
+  it("still rejects a delta-free choice that is not a content-filter annotation", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+          data({ choices: [{ index: 0, finish_reason: null, logprobs: null }] }),
+          "data: [DONE]\r\n\r\n",
+        ].join(""))),
+      ProviderRequestError,
+      "choice data after its finish reason",
+    );
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            index: 0,
+            finish_reason: null,
+            content_filter_results: {},
+            delta: { content: 1 },
+          }],
+        }))),
+      ProviderRequestError,
+      "choice delta content had an invalid type",
     );
   });
 

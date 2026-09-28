@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { extractPlainText, getPageContent } from "../lib/confluence-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "confluence-get-page",
@@ -9,8 +10,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     pageId: v.string().describe("The ID of the Confluence page to retrieve"),
   }))(),
-  async execute({ pageId }) {
-    const page = await getPageContent(pageId);
+  async execute({ pageId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const page = await getPageContent(userId, pageId);
 
     const htmlContent = page.body?.storage?.value ?? page.body?.view?.value ?? "";
     const content = extractPlainText(htmlContent);

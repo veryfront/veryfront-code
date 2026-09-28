@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getIssue } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "linear-get-issue",
@@ -13,8 +14,9 @@ export default tool({
         'The ID or identifier of the issue (e.g., "ENG-123" or full UUID)',
       ),
   }))(),
-  async execute({ issueId }) {
-    const issue = await getIssue(issueId);
+  async execute({ issueId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const issue = await getIssue(userId, issueId);
 
     return {
       id: issue.id,

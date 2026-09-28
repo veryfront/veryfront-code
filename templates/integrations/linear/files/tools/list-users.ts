@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listUsers } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "linear-list-users",
@@ -14,8 +15,9 @@ export default tool({
       .default(50)
       .describe("Maximum number of users to return"),
   }))(),
-  async execute({ limit }) {
-    const users = await listUsers({ limit });
+  async execute({ limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const users = await listUsers(userId, { limit });
 
     return users.map((user) => ({
       id: user.id,

@@ -14,6 +14,41 @@ export interface TracerProvider {
   getTracer(name: string, version?: string): unknown;
 }
 
+/** Project-owned SDK instance. It must not replace process-global telemetry. */
+export interface ProjectTraceProvider {
+  /** True only for raw spans created by this provider. */
+  ownsSpan(span: unknown): boolean;
+  /** Import bounded worker records under a host-owned request parent. */
+  importSpans?(
+    records: string,
+    parent: { traceId: string; spanId: string; traceFlags: number },
+  ): void;
+  hasActiveSpans(): boolean;
+  getProvider(): TracerProvider;
+  getTraceAPI(): {
+    getActiveSpan(): unknown;
+    getSpan(ctx: unknown): unknown;
+    setSpan(ctx: unknown, span: unknown): unknown;
+  };
+  getContextAPI(): { active(): unknown; with<T>(ctx: unknown, fn: () => T): T };
+  getPropagator(): unknown;
+  forceFlush(): Promise<void>;
+  shutdown(discard: boolean): Promise<void>;
+}
+
+/** Runtime-owned resource identity and guarded transport for a project trace provider. */
+export interface ProjectTraceProviderOptions {
+  resource: Readonly<Record<string, string>>;
+  createTransport(
+    suppress: <T>(operation: () => Promise<T>) => Promise<T>,
+  ): {
+    send(data: Uint8Array, timeoutMillis: number): Promise<
+      { status: "success" } | { status: "failure"; error: Error }
+    >;
+    shutdown(): void;
+  };
+}
+
 /** Data describing a single trace span. */
 export interface SpanData {
   /** Unique span identifier. */
@@ -44,6 +79,8 @@ export interface SpanData {
  * TracerProvider so the core shim can delegate to it.
  */
 export interface TracingExporter {
+  /** Optional hosted project export, independently configured from the host pipeline. */
+  createProjectProvider?(options: ProjectTraceProviderOptions): Promise<ProjectTraceProvider>;
   /**
    * Initialize the SDK provider and exporter.
    * Called during extension setup.
@@ -86,6 +123,17 @@ export interface TracingExporter {
   getContextAPI?(): {
     active(): unknown;
     with<T>(ctx: unknown, fn: () => T): T;
+  } | null;
+
+  /**
+   * Return the W3C trace-context propagator so the core shim can join an incoming
+   * request to its caller's trace and pass the context on to outgoing requests.
+   * Returns `null` when tracing is disabled.
+   */
+  getPropagator?(): {
+    inject(ctx: unknown, carrier: unknown, setter?: unknown): void;
+    extract(ctx: unknown, carrier: unknown, getter?: unknown): unknown;
+    fields(): string[];
   } | null;
 
   /**

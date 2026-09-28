@@ -74,17 +74,25 @@ function statusDenial(status: number): EvalModelAccessDenial | undefined {
 
 /**
  * Model gateway routes under a Veryfront API base URL: the vendor-neutral
- * OpenAI- and Anthropic-protocol routes, and the vendor-scoped route.
+ * OpenAI-, Anthropic- and Google-protocol routes, the vendor-scoped route
+ * (still reached under `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor`), and the earlier
+ * Anthropic-protocol prefix, which recorded failures from previous releases can still carry.
  */
-const GATEWAY_ROUTE_PREFIXES: readonly string[] = ["/ai/v1/", "/ai/anthropic/v1/", "/ai/gateway/"];
+const GATEWAY_ROUTE_PREFIXES: readonly string[] = [
+  "/ai/v1/",
+  "/ai/anthropic/v1/",
+  "/ai/v1beta/",
+  "/ai/gateway/",
+];
 
 /**
  * Gateway provenance for a 401, 403, or project-required 400, whose bodies do
  * not prove where they came from: the failed request targeted a model gateway
- * route (`<api base>/ai/v1/`, `<api base>/ai/anthropic/v1/` or
- * `<api base>/ai/gateway/`) under a configured Veryfront API base URL. A
- * direct or BYOK provider, even one behind a reverse proxy that shares the API
- * origin, uses a different route and stays a record failure.
+ * route (`<api base>/ai/v1/`, `<api base>/ai/anthropic/v1/`,
+ * `<api base>/ai/v1beta/` or `<api base>/ai/gateway/`) under a
+ * configured Veryfront API base URL. A direct or BYOK provider, even one behind
+ * a reverse proxy that shares the API origin, uses a different route and stays
+ * a record failure.
  */
 function isVeryfrontGatewayRoute(requestUrl: string | undefined): boolean {
   if (requestUrl === undefined) return false;

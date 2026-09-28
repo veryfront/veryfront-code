@@ -20,6 +20,14 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  getContextProjectProvider,
+  getProjectTraceProvider,
+  getSpanProjectProvider,
+  rememberProjectContext,
+  rememberProjectSpan,
+  runWithProjectTraceProvider,
+} from "./project-trace-scope.ts";
 import { runSyncWithContextFallback } from "./context-callback.ts";
 
 const IntrinsicObjectFreeze = Object.freeze;
@@ -657,6 +665,7 @@ function weakMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): 
 
 /** @internal Wrap a provider-owned span before returning it to project code. */
 export function createPublicSpan(providerSpan: Span): Span {
+  rememberProjectSpan(providerSpan);
   const existing = weakMapGet(publicSpanFacades, providerSpan);
   if (existing) return existing;
 
@@ -733,6 +742,7 @@ function restoreKnownProviderValue(value: unknown): unknown {
 
 /** @internal Wrap a provider-owned context before returning it to project code. */
 export function createPublicContext(providerContext: Context): Context {
+  rememberProjectContext(providerContext);
   const existing = weakMapGet(publicContextFacades, providerContext);
   if (existing) return existing;
 
@@ -752,10 +762,12 @@ export function createPublicContext(providerContext: Context): Context {
         key,
         restoreKnownProviderValue(value),
       ]) as Context;
+      rememberProjectContext(next, getContextProjectProvider(providerContext));
       return createPublicContext(next);
     },
     deleteValue(key: symbol): Context {
       const next = IntrinsicReflectApply(deleteValue, providerContext, [key]) as Context;
+      rememberProjectContext(next, getContextProjectProvider(providerContext));
       return createPublicContext(next);
     },
   });
@@ -767,6 +779,11 @@ export function createPublicContext(providerContext: Context): Context {
 /** @internal Restore a provider-owned context at an internal tracing boundary. */
 export function unwrapPublicContext<T extends object>(ctx: T): T | Context {
   return weakMapGet(publicContextTargets, ctx) ?? ctx;
+}
+
+function withPublicContextProvider<T>(ctx: Context | undefined, operation: () => T): T {
+  const owner = ctx ? getContextProjectProvider(unwrapPublicContext(ctx)) : undefined;
+  return owner ? runWithProjectTraceProvider(owner, operation) : operation();
 }
 
 /**
@@ -781,61 +798,81 @@ export const publicTrace: Readonly<
   Pick<typeof trace, "getActiveSpan" | "getSpan" | "getTracer" | "setSpan">
 > = IntrinsicObjectFreeze({
   getTracer(name: string, version?: string): Tracer {
-    const providerTracer = telemetryState.tracerProvider.getTracer(name, version);
+    const platformTracer = telemetryState.tracerProvider.getTracer(name, version);
+    const selectTracer = (): Tracer =>
+      (getProjectTraceProvider()?.getProvider().getTracer(name, version) as Tracer | undefined) ??
+        platformTracer;
     const startActiveSpan = ((
       spanName: string,
       second: unknown,
       third?: unknown,
       fourth?: unknown,
     ): unknown => {
-      if (fourth !== undefined) {
-        const callback = fourth as (span: Span) => unknown;
+      return withPublicContextProvider(fourth !== undefined ? third as Context : undefined, () => {
+        const providerTracer = selectTracer();
+        if (fourth !== undefined) {
+          const callback = fourth as (span: Span) => unknown;
+          return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
+            spanName,
+            second,
+            unwrapPublicContext(third as Context),
+            (span: Span) => callback(createPublicSpan(span)),
+          ]);
+        }
+        if (third !== undefined) {
+          const callback = third as (span: Span) => unknown;
+          return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
+            spanName,
+            second,
+            (span: Span) => callback(createPublicSpan(span)),
+          ]);
+        }
+        const callback = second as (span: Span) => unknown;
         return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
           spanName,
-          second,
-          unwrapPublicContext(third as Context),
           (span: Span) => callback(createPublicSpan(span)),
         ]);
-      }
-      if (third !== undefined) {
-        const callback = third as (span: Span) => unknown;
-        return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
-          spanName,
-          second,
-          (span: Span) => callback(createPublicSpan(span)),
-        ]);
-      }
-      const callback = second as (span: Span) => unknown;
-      return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
-        spanName,
-        (span: Span) => callback(createPublicSpan(span)),
-      ]);
+      });
     }) as Tracer["startActiveSpan"];
 
     return IntrinsicObjectFreeze({
       startSpan(spanName: string, options?: SpanStartOptions, activeContext?: Context): Span {
-        return createPublicSpan(
-          IntrinsicReflectApply(providerTracer.startSpan, providerTracer, [
-            spanName,
-            options,
-            activeContext ? unwrapPublicContext(activeContext) : activeContext,
-          ]) as Span,
-        );
+        return withPublicContextProvider(activeContext, () => {
+          const providerTracer = selectTracer();
+          return createPublicSpan(
+            IntrinsicReflectApply(providerTracer.startSpan, providerTracer, [
+              spanName,
+              options,
+              activeContext ? unwrapPublicContext(activeContext) : activeContext,
+            ]) as Span,
+          );
+        });
       },
       startActiveSpan,
     });
   },
   setSpan(ctx: Context, span: Span): Context {
-    return createPublicContext(
-      trace.setSpan(unwrapPublicContext(ctx), unwrapPublicSpan(span)),
-    );
+    const raw = unwrapPublicSpan(span);
+    const context = unwrapPublicContext(ctx);
+    const owner = getSpanProjectProvider(raw) ?? getContextProjectProvider(context) ??
+      getProjectTraceProvider();
+    return runWithProjectTraceProvider(owner, () =>
+      createPublicContext(
+        (owner?.getTraceAPI() ?? trace).setSpan(context, raw) as Context,
+      ));
   },
   getSpan(ctx: Context): Span | undefined {
-    const span = trace.getSpan(unwrapPublicContext(ctx));
-    return span ? createPublicSpan(span) : undefined;
+    return withPublicContextProvider(ctx, () => {
+      const span = (getProjectTraceProvider()?.getTraceAPI() ?? trace).getSpan(
+        unwrapPublicContext(ctx),
+      ) as Span | undefined;
+      return span ? createPublicSpan(span) : undefined;
+    });
   },
   getActiveSpan(): Span | undefined {
-    const span = trace.getActiveSpan();
+    const span = (getProjectTraceProvider()?.getTraceAPI() ?? trace).getActiveSpan() as
+      | Span
+      | undefined;
     return span ? createPublicSpan(span) : undefined;
   },
 });
@@ -845,18 +882,23 @@ export const publicTrace: Readonly<
 // ---------------------------------------------------------------------------
 
 export const propagation = {
-  setGlobalPropagator(p: TextMapPropagator): void {
+  setGlobalPropagator(p: TextMapPropagator | null): void {
     updateTelemetryState({ propagator: p });
   },
+  // Like the OTel API, a record carrier needs no accessors: SDK propagators require them.
   extract<C>(ctx: Context, carrier: C, getter?: TextMapGetter<C>): Context {
     const propagator = telemetryState.propagator;
     if (!propagator) return ctx;
-    return propagator.extract(ctx, carrier, getter as TextMapGetter<unknown> | undefined);
+    return propagator.extract(
+      ctx,
+      carrier,
+      (getter ?? defaultTextMapGetter) as TextMapGetter<unknown>,
+    );
   },
   inject<C>(ctx: Context, carrier: C, setter?: TextMapSetter<C>): void {
     const propagator = telemetryState.propagator;
     if (!propagator) return;
-    propagator.inject(ctx, carrier, setter as TextMapSetter<unknown> | undefined);
+    propagator.inject(ctx, carrier, (setter ?? defaultTextMapSetter) as TextMapSetter<unknown>);
   },
 };
 

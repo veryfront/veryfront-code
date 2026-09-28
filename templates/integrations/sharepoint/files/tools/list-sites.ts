@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listSites } from "../lib/sharepoint-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "sharepoint-list-sites",
@@ -18,8 +19,9 @@ export default tool({
       .default(20)
       .describe("Maximum number of sites to return"),
   }))(),
-  async execute({ search, limit }) {
-    const sites = await listSites({ search, limit });
+  async execute({ search, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const sites = await listSites(userId, { search, limit });
 
     return sites.map((site) => ({
       id: site.id,

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { sendChannelMessage, sendChatMessage } from "../lib/teams-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "teams-send-message",
@@ -26,13 +27,16 @@ export default tool({
     })
     .refine(
       (data) =>
-        (data.chatId && !data.teamId && !data.channelId) ||
-        (!data.chatId && data.teamId && data.channelId),
+        Boolean(
+          (data.chatId && !data.teamId && !data.channelId) ||
+            (!data.chatId && data.teamId && data.channelId),
+        ),
       { message: "Either provide chatId OR both teamId and channelId" },
     ))(),
-  async execute({ chatId, teamId, channelId, content, contentType, subject }) {
+  async execute({ chatId, teamId, channelId, content, contentType, subject }, context) {
+    const userId = requireUserIdFromContext(context);
     if (chatId) {
-      const message = await sendChatMessage(chatId, content, contentType);
+      const message = await sendChatMessage(userId, chatId, content, contentType);
       return {
         success: true,
         messageId: message.id,
@@ -47,7 +51,14 @@ export default tool({
       throw new Error("Invalid parameters: provide either chatId or both teamId and channelId");
     }
 
-    const message = await sendChannelMessage(teamId, channelId, content, contentType, subject);
+    const message = await sendChannelMessage(
+      userId,
+      teamId,
+      channelId,
+      content,
+      contentType,
+      subject,
+    );
     return {
       success: true,
       messageId: message.id,

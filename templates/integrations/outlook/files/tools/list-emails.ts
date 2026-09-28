@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listEmails, summarizeContact, summarizeContacts } from "../lib/outlook-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "outlook-list-emails",
@@ -23,8 +24,9 @@ export default tool({
       .default("receivedDateTime desc")
       .describe("Sort order for emails"),
   }))(),
-  async execute({ folderId, limit, unreadOnly, orderBy }) {
-    const messages = await listEmails({
+  async execute({ folderId, limit, unreadOnly, orderBy }, context) {
+    const userId = requireUserIdFromContext(context);
+    const messages = await listEmails(userId, {
       folderId,
       top: limit,
       filter: unreadOnly ? "isRead eq false" : undefined,

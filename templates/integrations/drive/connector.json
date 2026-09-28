@@ -3,6 +3,7 @@
   "displayName": "Google Drive",
   "icon": "drive.svg",
   "description": "Access, search, and manage files and folders in Google Drive",
+  "category": "files",
   "auth": {
     "type": "oauth2",
     "provider": "google",
@@ -36,6 +37,44 @@
       "docsUrl": "https://console.cloud.google.com/apis/credentials"
     }
   ],
+  "setupGuide": {
+    "title": "Google Drive setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
+        "description": "On hosted Veryfront, Google Drive uses the Veryfront-managed Google OAuth app: connect Google Drive from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Enable the Google Drive API",
+        "description": "In the Google Cloud project that owns your OAuth app, enable the Google Drive API.",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com"
+      },
+      {
+        "step": 3,
+        "title": "Configure the OAuth consent screen",
+        "description": "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. drive.readonly is a restricted scope, so publishing the app to external users requires Google's OAuth app verification.",
+        "url": "https://console.cloud.google.com/auth/overview"
+      },
+      {
+        "step": 4,
+        "title": "Create an OAuth client",
+        "description": "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/drive for hosted Veryfront, or your app origin followed by /api/auth/drive/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the app's credentials.",
+        "url": "https://console.cloud.google.com/apis/credentials"
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Files (read-only). It returns files from the connected Google account without changing them."
+      }
+    ],
+    "notes": [
+      "The connection requests https://www.googleapis.com/auth/drive.readonly and https://www.googleapis.com/auth/drive.file. drive.file limits uploads and changes to files the app created or opened.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://developers.google.com/workspace/drive/api/guides/about-sdk"
+  },
   "tools": [
     {
       "id": "drive__list_files",
@@ -345,44 +384,5 @@
     "gmail",
     "calendar",
     "sheets"
-  ],
-  "setupGuide": {
-    "title": "Google Drive Integration Setup",
-    "steps": [
-      {
-        "title": "Create a Google Cloud Project",
-        "description": "Go to the Google Cloud Console and create a new project",
-        "url": "https://console.cloud.google.com/projectcreate"
-      },
-      {
-        "title": "Enable the Google Drive API",
-        "description": "Navigate to APIs & Services > Library and enable the Google Drive API",
-        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com"
-      },
-      {
-        "title": "Configure OAuth Consent Screen",
-        "description": "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scopes: drive.readonly and drive.file",
-        "url": "https://console.cloud.google.com/apis/credentials/consent"
-      },
-      {
-        "title": "Create OAuth 2.0 Client ID",
-        "description": "Go to APIs & Services > Credentials. Click 'Create Credentials' > 'OAuth client ID'. Choose 'Web application'. Add authorized redirect URI: http://localhost:3000/api/auth/drive/callback (adjust port/domain for production)",
-        "url": "https://console.cloud.google.com/apis/credentials"
-      },
-      {
-        "title": "Copy Credentials to .env",
-        "description": "Copy the Client ID and Client Secret to your .env file as GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"
-      },
-      {
-        "title": "Test the Integration",
-        "description": "Start your application and navigate to /api/auth/drive to initiate the OAuth flow"
-      }
-    ],
-    "notes": [
-      "The same Google OAuth credentials work for all Google services (Gmail, Calendar, Sheets, Drive)",
-      "In production, make sure to add your production callback URL to authorized redirect URIs",
-      "The drive.file scope limits file changes to files created or opened by this app",
-      "You may need to verify your app if you plan to distribute it publicly"
-    ]
-  }
+  ]
 }

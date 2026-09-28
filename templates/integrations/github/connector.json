@@ -3,6 +3,7 @@
   "displayName": "GitHub",
   "icon": "github.svg",
   "description": "Manage repositories, issues, and pull requests",
+  "category": "development",
   "auth": {
     "type": "oauth2",
     "provider": "github",
@@ -31,6 +32,38 @@
       "docsUrl": "https://github.com/settings/developers"
     }
   ],
+  "setupGuide": {
+    "title": "GitHub setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the GitHub OAuth app",
+        "description": "On hosted Veryfront, GitHub uses the Veryfront-managed GitHub OAuth app: connect GitHub from the project's integrations and approve the GitHub consent screen, no environment variables needed. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET only to use your own GitHub OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth App",
+        "description": "In GitHub Developer settings, create an OAuth App.",
+        "url": "https://github.com/settings/developers"
+      },
+      {
+        "step": 3,
+        "title": "Set the callback URL",
+        "description": "An OAuth App has one authorization callback URL, so create one app per environment. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/github for hosted Veryfront, or your app origin followed by /api/auth/github/callback for a local or self-hosted app. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Get Current User (read-only). It returns the connected GitHub user without changing anything."
+      }
+    ],
+    "notes": [
+      "The connection requests repo, read:user and read:org. repo grants read and write access to the user's public and private repositories.",
+      "Organizations that restrict third-party OAuth apps must approve the app before its tools can reach their repositories.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app"
+  },
   "tools": [
     {
       "id": "github__get_current_user",

@@ -28,7 +28,7 @@
     {
       "name": "WORKABLE_SUBDOMAIN",
       "description": "Your Workable account subdomain ({subdomain}.workable.com), shown in your company profile settings",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://workable.readme.io/reference/generate-an-access-token"
     }

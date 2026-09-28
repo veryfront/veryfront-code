@@ -1,4 +1,16 @@
-import { getApiKey } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function getApiKey(): string | undefined {
+  return getEnv("POSTHOG_API_KEY");
+}
 
 const DEFAULT_POSTHOG_HOST = "https://app.posthog.com";
 
@@ -96,8 +108,10 @@ interface PostHogError {
   detail?: string;
 }
 
+/** POSTHOG_HOST may be a bare host such as us.posthog.com or a full origin. */
 function getPostHogHost(): string {
-  return process.env.POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST;
+  const host = (getEnv("POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST).replace(/\/+$/, "");
+  return /^https?:\/\//.test(host) ? host : `https://${host}`;
 }
 
 function buildParams(
@@ -217,8 +231,13 @@ export function getPerson(personId: string): Promise<PostHogPerson> {
 }
 
 export function captureEvent(event: PostHogEvent): Promise<{ status: number }> {
+  // Ingestion authenticates with the project API key, not the personal key.
+  const projectApiKey = getEnv("POSTHOG_PROJECT_API_KEY");
+  if (!projectApiKey) {
+    return Promise.reject(new Error("POSTHOG_PROJECT_API_KEY is not set"));
+  }
   const body = {
-    api_key: getApiKey(),
+    api_key: projectApiKey,
     event: event.event,
     distinct_id: event.distinct_id,
     properties: event.properties ?? {},
@@ -236,11 +255,9 @@ export function formatDate(dateString: string): string {
 }
 
 export function calculateConversionRate(funnel: PostHogFunnel): number {
-  if (funnel.steps.length < 2) return 0;
-
   const firstStep = funnel.steps[0];
-  if (firstStep.count === 0) return 0;
+  const lastStep = funnel.steps.at(-1);
+  if (funnel.steps.length < 2 || !firstStep || !lastStep || firstStep.count === 0) return 0;
 
-  const lastStep = funnel.steps[funnel.steps.length - 1];
   return (lastStep.count / firstStep.count) * 100;
 }

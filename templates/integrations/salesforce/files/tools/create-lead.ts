@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createLead, formatLeadName } from "../lib/salesforce-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type Output = {
   id: string;
@@ -47,8 +48,9 @@ export default tool({
     description: v.string().optional().describe("Description or notes about the lead"),
     rating: v.string().optional().describe('Lead rating (e.g., "Hot", "Warm", "Cold")'),
   }))(),
-  async execute(input): Promise<Output> {
-    const leadData: Record<string, unknown> = {
+  async execute(input, context): Promise<Output> {
+    const userId = requireUserIdFromContext(context);
+    const leadData: Parameters<typeof createLead>[1] = {
       LastName: input.lastName,
       Company: input.company,
     };
@@ -77,7 +79,7 @@ export default tool({
       if (value) leadData[sfKey] = value;
     }
 
-    const result = await createLead(leadData);
+    const result = await createLead(userId, leadData);
 
     if (!result.success) {
       throw new Error(`Failed to create lead: ${JSON.stringify(result.errors)}`);

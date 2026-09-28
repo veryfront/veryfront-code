@@ -25,7 +25,7 @@ import {
   runWithRequestContextAsync,
 } from "./request-context.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
-import { VERSION } from "../version.ts";
+import { SERVICE_VERSION, VERSION } from "../version.ts";
 
 function captureConsoleLog(): { getOutput: () => string; reset: () => void; restore: () => void } {
   const originalLog = console.log;
@@ -256,6 +256,7 @@ describe("logger", () => {
     const entry = JSON.parse(getOutput()) as LogEntry;
     assertEquals(entry.message, "[REDACTED]");
     assertEquals(entry.component, undefined);
+    assertEquals(entry.service_version, SERVICE_VERSION);
   });
 
   describe("getDefaultLevel", () => {
@@ -672,6 +673,7 @@ describe("logger", () => {
           assertEquals(entry.veryfrontVersion, VERSION);
           assertEquals(typeof entry.veryfrontVersion, "string");
           assertEquals(entry.veryfrontVersion.length > 0, true);
+          assertEquals(entry.service_version, SERVICE_VERSION);
         });
       } finally {
         restore();

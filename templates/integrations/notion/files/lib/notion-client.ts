@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { notionConfig, OAuthService } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const notionService = new OAuthService(notionConfig, tokenStore);
 
 const NOTION_API_VERSION = "2022-06-28";
 const NOTION_BASE_URL = "https://api.notion.com/v1";
@@ -24,6 +28,7 @@ interface NotionDatabase {
   id: string;
   object: "database";
   title: Array<{ plain_text: string }>;
+  url: string;
   properties: Record<string, { type: string }>;
 }
 
@@ -40,8 +45,12 @@ interface NotionProperty {
   [key: string]: unknown;
 }
 
-async function notionFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+async function notionFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await notionService.getAccessToken(userId);
   if (!token) {
     throw new Error("Not authenticated with Notion. Please connect your account.");
   }
@@ -69,6 +78,7 @@ async function notionFetch<T>(endpoint: string, options: RequestInit = {}): Prom
 }
 
 export async function searchNotion(
+  userId: string,
   query: string,
   options?: {
     filter?: { property: "object"; value: "page" | "database" };
@@ -81,24 +91,32 @@ export async function searchNotion(
     ...(options?.pageSize ? { page_size: options.pageSize } : {}),
   };
 
-  const response = await notionFetch<NotionResponse<NotionPage | NotionDatabase>>("/search", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  const response = await notionFetch<NotionResponse<NotionPage | NotionDatabase>>(
+    userId,
+    "/search",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
 
   return response.results ?? [];
 }
 
-export function getPage(pageId: string): Promise<NotionPage> {
-  return notionFetch<NotionPage>(`/pages/${pageId}`);
+export function getPage(userId: string, pageId: string): Promise<NotionPage> {
+  return notionFetch<NotionPage>(userId, `/pages/${pageId}`);
 }
 
-export async function getPageContent(pageId: string): Promise<NotionBlock[]> {
-  const response = await notionFetch<NotionResponse<NotionBlock>>(`/blocks/${pageId}/children`);
+export async function getPageContent(userId: string, pageId: string): Promise<NotionBlock[]> {
+  const response = await notionFetch<NotionResponse<NotionBlock>>(
+    userId,
+    `/blocks/${pageId}/children`,
+  );
   return response.results ?? [];
 }
 
 export async function queryDatabase(
+  userId: string,
   databaseId: string,
   options?: {
     filter?: Record<string, unknown>;
@@ -113,6 +131,7 @@ export async function queryDatabase(
   };
 
   const response = await notionFetch<NotionResponse<NotionPage>>(
+    userId,
     `/databases/${databaseId}/query`,
     { method: "POST", body: JSON.stringify(body) },
   );
@@ -120,7 +139,7 @@ export async function queryDatabase(
   return response.results ?? [];
 }
 
-export function createPage(options: {
+export function createPage(userId: string, options: {
   parentId: string;
   parentType: "database" | "page";
   title: string;
@@ -163,7 +182,7 @@ export function createPage(options: {
     });
   }
 
-  return notionFetch<NotionPage>("/pages", {
+  return notionFetch<NotionPage>(userId, "/pages", {
     method: "POST",
     body: JSON.stringify({
       parent,
@@ -195,16 +214,17 @@ export function getPageTitle(page: NotionPage): string {
   return "Untitled";
 }
 
-export function getDatabase(databaseId: string): Promise<NotionDatabase> {
-  return notionFetch<NotionDatabase>(`/databases/${databaseId}`);
+export function getDatabase(userId: string, databaseId: string): Promise<NotionDatabase> {
+  return notionFetch<NotionDatabase>(userId, `/databases/${databaseId}`);
 }
 
-export async function appendBlocks(options: {
+export async function appendBlocks(userId: string, options: {
   blockId: string;
   children: Array<Record<string, unknown>>;
   after?: string;
 }): Promise<NotionBlock[]> {
   const response = await notionFetch<NotionResponse<NotionBlock>>(
+    userId,
     `/blocks/${options.blockId}/children`,
     {
       method: "PATCH",
@@ -218,14 +238,14 @@ export async function appendBlocks(options: {
   return response.results ?? [];
 }
 
-export function updatePage(options: {
+export function updatePage(userId: string, options: {
   pageId: string;
   properties?: Record<string, unknown>;
   archived?: boolean;
   icon?: Record<string, unknown>;
   cover?: Record<string, unknown>;
 }): Promise<NotionPage> {
-  return notionFetch<NotionPage>(`/pages/${options.pageId}`, {
+  return notionFetch<NotionPage>(userId, `/pages/${options.pageId}`, {
     method: "PATCH",
     body: JSON.stringify({
       properties: options.properties,

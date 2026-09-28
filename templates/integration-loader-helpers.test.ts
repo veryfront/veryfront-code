@@ -2,37 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  buildIntegrationDirectory,
   buildUnknownIntegrationErrors,
   mergeIntegrationFiles,
   namespaceIntegrationTemplateFiles,
-  resolveIntegrationModuleDir,
+  requiredSetupEnvVars,
+  scaffoldEnvVars,
 } from "./integration-loader-helpers.ts";
+import { ALL_AVAILABLE_INTEGRATIONS, loadIntegration } from "./integration-loader.ts";
 
 describe("templates/integration-loader-helpers", () => {
-  it("resolves file module directories for unix and windows paths", () => {
-    assertEquals(
-      resolveIntegrationModuleDir(
-        "file:///Users/test/veryfront-code/templates/integration-loader.ts",
-      ),
-      "/Users/test/veryfront-code/templates/",
-    );
-    assertEquals(
-      resolveIntegrationModuleDir(
-        "file:///C:/veryfront/templates/integration-loader.ts",
-        "win32",
-      ),
-      "C:/veryfront/templates/",
-    );
-  });
-
-  it("builds integration directories from the module directory", () => {
-    assertEquals(
-      buildIntegrationDirectory("/Users/test/veryfront-code/templates/", "github"),
-      "/Users/test/veryfront-code/templates/integrations/github",
-    );
-  });
-
   it("reports unknown integrations with a stable available list", () => {
     assertEquals(
       buildUnknownIntegrationErrors(
@@ -108,5 +86,35 @@ describe("templates/integration-loader-helpers", () => {
       Error,
       "Invalid integration template namespace",
     );
+  });
+});
+
+describe("integration scaffold env contract", () => {
+  it("gives an integration without scaffold files an empty contract", async () => {
+    const integration = await loadIntegration(
+      "algolia" as (typeof ALL_AVAILABLE_INTEGRATIONS)[number],
+    );
+    assertEquals(integration?.files, []);
+    assertEquals(requiredSetupEnvVars(integration!), []);
+    assertEquals(scaffoldEnvVars(integration!), []);
+  });
+
+  it("requires only env vars an env-backed scaffold's own client reads", async () => {
+    const unread: string[] = [];
+    for (const name of ALL_AVAILABLE_INTEGRATIONS) {
+      const integration = await loadIntegration(name);
+      if (!integration?.files.length) continue;
+      const required = requiredSetupEnvVars(integration);
+      if (!required) continue;
+      const source = integration.files
+        .filter((file) => /^(lib|tools)\//.test(file.path))
+        .map((file) => file.content)
+        .join("\n");
+      unread.push(
+        ...required.filter((envVar) => !source.includes(envVar)).map((v) => `${name}:${v}`),
+      );
+    }
+
+    assertEquals(unread, []);
   });
 });

@@ -190,6 +190,71 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     );
   });
 
+  it("reports the one-hour cache-write share only when the provider reports it", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation_input_tokens: 1000,
+          cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+        },
+      }),
+      {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      },
+    );
+
+    for (const cacheCreation of [undefined, {}, { ephemeral_5m_input_tokens: 1000 }]) {
+      const usage = extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation_input_tokens: 1000,
+          ...(cacheCreation === undefined ? {} : { cache_creation: cacheCreation }),
+        },
+      });
+      assertEquals(usage?.cacheCreationInputTokens, 1000);
+      assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+    }
+  });
+
+  it("emits the one-hour share only beside a valid cache-write total, capped at it", () => {
+    const extract = (total: unknown, share: unknown) =>
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          ...(total === undefined ? {} : { cache_creation_input_tokens: total }),
+          cache_creation: { ephemeral_1h_input_tokens: share },
+        },
+      });
+
+    for (const total of [1.5, -1, "1000", Number.MAX_SAFE_INTEGER + 1, undefined]) {
+      const usage = extract(total, 1);
+      assertEquals(usage !== undefined && "cacheCreationInputTokens" in usage, false);
+      assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+    }
+    for (const share of [1.5, -1, "600"]) {
+      const usage = extract(1000, share);
+      assertEquals(usage?.cacheCreationInputTokens, 1000);
+      assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+    }
+    assertEquals(extract(500, 600)?.cacheCreation1hInputTokens, 500);
+  });
+
+  it("drops an aggregated one-hour share that has no cache-write total", () => {
+    const usage = addAnthropicUsage(
+      { inputTokens: 1 },
+      { inputTokens: 2, cacheCreation1hInputTokens: 5 },
+    );
+    assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+  });
+
   it("reads gateway amounts sent as decimal strings at the extraction boundary", () => {
     assertEquals(
       extractAnthropicUsage({
@@ -208,8 +273,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         inputTokens: 8,
         outputTokens: 2,
         totalTokens: 10,
-        providerCostUsd: 0.001,
-        veryfrontBilledUsd: 0.1,
         costCredits: 1,
         costSource: "gateway",
       },
@@ -283,6 +346,63 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       }),
       undefined,
     );
+  });
+
+  it("adds the one-hour cache-write share across continuations without inventing one", () => {
+    assertEquals(
+      addAnthropicUsage(
+        { inputTokens: 8, cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 600 },
+        { inputTokens: 9, cacheCreationInputTokens: 500, cacheCreation1hInputTokens: 500 },
+      ),
+      {
+        inputTokens: 17,
+        totalTokens: 17,
+        cacheCreationInputTokens: 1500,
+        cacheCreation1hInputTokens: 1100,
+      },
+    );
+    const withoutShare = addAnthropicUsage(
+      { inputTokens: 8, cacheCreationInputTokens: 1000 },
+      { inputTokens: 9, cacheCreationInputTokens: 500 },
+    );
+    assertEquals(withoutShare?.cacheCreationInputTokens, 1500);
+    assertEquals(withoutShare !== undefined && "cacheCreation1hInputTokens" in withoutShare, false);
+  });
+
+  it("carries the one-hour cache-write share from message_start into the finish usage", async () => {
+    const parts = await collectParts(streamFromText([
+      data({
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 8,
+            cache_creation_input_tokens: 1000,
+            cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+          },
+        },
+      }),
+      data({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+      data({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } }),
+      data({ type: "content_block_stop", index: 0 }),
+      data({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 5 },
+      }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      usage: {
+        inputTokens: 8,
+        outputTokens: 5,
+        totalTokens: 13,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      },
+    });
   });
 
   it("preserves thinking, text, tool-call assembly, usage, and finish events", async () => {
@@ -822,12 +942,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           cachedInputTokens: 3,
           billableInputTokens: 8,
           billableOutputTokens: 5,
-          providerInputCostUsd: 0.0004,
-          providerOutputCostUsd: 0.0006,
-          providerCostUsd: 0.001,
-          veryfrontInputChargeUsd: 0.001,
-          veryfrontOutputChargeUsd: 0.0015,
-          veryfrontChargeUsd: 0.0025,
           costSource: "gateway",
           billingMode: "deferred",
           usageCaptureStatus: "complete",
@@ -1418,9 +1532,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           totalTokens: 14,
           billableInputTokens: 10,
           billableOutputTokens: 4,
-          providerCostUsd: 0.001,
-          veryfrontChargeUsd: 0.0025,
-          veryfrontBilledUsd: 0.1,
           costCredits: 1,
           costSource: "gateway",
           usageCaptureStatus: "complete",

@@ -59,6 +59,7 @@ const ObjectHasOwn = Object.hasOwn;
 const PromisePrototypeThen = Promise.prototype.then;
 const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")?.get;
 const RequestPrototypeText = NativeRequest.prototype.text;
+const SetPrototypeHas = Set.prototype.has;
 const ResponseHeadersGet = Object.getOwnPropertyDescriptor(Response.prototype, "headers")?.get;
 const ResponsePrototypeClone = Response.prototype.clone;
 const ResponseStatusGet = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
@@ -364,22 +365,36 @@ export const VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV = "VERYFRONT_CLOUD_GATEWAY_ROUTE
 
 /**
  * Vendor-neutral gateway paths, keyed by the wire protocol a model speaks
- * (`resolveVeryfrontCloudSurface`). A protocol with no entry (Google) keeps its
+ * (`resolveVeryfrontCloudSurface`). A protocol with no entry keeps its
  * vendor-scoped path.
  */
 const NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL: ReadonlyMap<string, string> = new Map([
   ["openai", "ai/v1"],
-  ["anthropic", "ai/anthropic/v1"],
+  ["anthropic", "ai/v1"],
+  ["google", "ai/v1beta"],
 ]);
+
+/**
+ * Protocols whose requests name the model in the URL
+ * (`models/{model}:{method}`), not in the body. The builder's bare model id is
+ * already what the neutral route accepts, so the body is sent unchanged.
+ */
+const PATH_ADDRESSED_PROTOCOLS: ReadonlySet<string> = new Set(["google"]);
 
 /** Where a Veryfront Cloud model's requests go, and how the body names the model. */
 export interface VeryfrontCloudGatewayRoute {
   /** Base URL the request builder appends its operation path to. */
   baseURL: string;
   /**
-   * Set on a vendor-neutral route: the body's `model` is sent as
-   * `<provider>/<model>`, because one neutral path serves many providers.
-   * Unset on a vendor-scoped route, whose path already names the provider.
+   * Set on a vendor-neutral route, whose Veryfront refusals arrive in the
+   * protocol's native error envelope and are read back in the vendor-route shape.
+   */
+  neutral?: true;
+  /**
+   * Set on a vendor-neutral route whose body names the model: the body's
+   * `model` is sent as `<provider>/<model>`, because one neutral path serves
+   * many providers. Unset on a vendor-scoped route, whose path already names
+   * the provider, and on a route that names the model in its URL (Google).
    */
   wireModelProvider?: VeryfrontCloudProviderId;
 }
@@ -407,9 +422,9 @@ function getVeryfrontCloudVendorGatewayBaseUrl(
 }
 
 /**
- * Gateway route for a provider. OpenAI-protocol providers use `<api>/ai/v1`,
- * Anthropic-protocol providers use `<api>/ai/anthropic/v1`, and Google keeps
- * its vendor-scoped path. {@link VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV} set to
+ * Gateway route for a provider. OpenAI- and Anthropic-protocol providers both
+ * use `<api>/ai/v1` (`/chat/completions`, `/responses` or `/messages`), and Google uses
+ * `<api>/ai/v1beta`. {@link VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV} set to
  * `vendor` restores the vendor-scoped path for every provider.
  */
 export function resolveVeryfrontCloudGatewayRoute(
@@ -418,11 +433,21 @@ export function resolveVeryfrontCloudGatewayRoute(
 ): VeryfrontCloudGatewayRoute {
   const providerId = resolveVeryfrontCloudProviderId(provider);
   if (providerId && !usesVendorGatewayRoutes()) {
+    const protocol = resolveVeryfrontCloudSurface(providerId);
     const neutralPath = IntrinsicReflectApply(MapPrototypeGet, NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL, [
-      resolveVeryfrontCloudSurface(providerId),
+      protocol,
     ]) as string | undefined;
-    if (neutralPath) {
-      return { baseURL: joinUrl(apiBaseUrl, neutralPath), wireModelProvider: providerId };
+    const pathAddressed = IntrinsicReflectApply(SetPrototypeHas, PATH_ADDRESSED_PROTOCOLS, [
+      protocol,
+    ]);
+    // A path-addressed route names only the model, so a provider other than
+    // the protocol's own would be indistinguishable there from another provider
+    // with the same upstream id. Such providers keep their vendor-scoped route.
+    if (neutralPath && (!pathAddressed || providerId === protocol)) {
+      const baseURL = joinUrl(apiBaseUrl, neutralPath);
+      return pathAddressed
+        ? { baseURL, neutral: true }
+        : { baseURL, neutral: true, wireModelProvider: providerId };
     }
   }
   return { baseURL: getVeryfrontCloudVendorGatewayBaseUrl(apiBaseUrl, provider) };
@@ -476,16 +501,17 @@ function toNeutralRouteRequest(
 
 /**
  * Send a request on a vendor-neutral route: the body's `model` becomes
- * `<provider>/<model>`, and a Veryfront refusal is read back in the vendor
- * route's shape. A string body, which every request builder sends, is
- * rewritten before the send starts, so the request leaves as promptly as on a
- * vendor-scoped route; any other body is read first.
+ * `<provider>/<model>` when the route names one, and a Veryfront refusal is
+ * read back in the vendor route's shape. A string body, which every request
+ * builder sends, is rewritten before the send starts, so the request leaves as
+ * promptly as on a vendor-scoped route; any other body is read first. A route
+ * that names the model in its URL sends the body unchanged.
  */
 function sendOnNeutralRoute(
   apiBaseUrl: string,
   request: Request,
   headers: Headers,
-  wireModelProvider: string,
+  wireModelProvider: string | undefined,
   initBody: unknown,
 ): Promise<Response> {
   const send = (outbound: Request): Promise<Response> =>
@@ -502,7 +528,9 @@ function sendOnNeutralRoute(
   const method = RequestMethodGet
     ? IntrinsicReflectApply(RequestMethodGet, request, []) as string
     : request.method;
-  if (method === "GET" || method === "HEAD") return send(new NativeRequest(request, { headers }));
+  if (method === "GET" || method === "HEAD" || wireModelProvider === undefined) {
+    return send(new NativeRequest(request, { headers }));
+  }
   if (typeof initBody === "string") {
     return send(toNeutralRouteRequest(request, headers, initBody, wireModelProvider));
   }
@@ -553,18 +581,45 @@ const NEUTRAL_REFUSAL_SHAPES: ReadonlyMap<
   }],
 ]);
 
+/** `ErrorInfo.domain` the Google neutral surface names on a Veryfront refusal. */
+const GOOGLE_REFUSAL_DOMAIN = "veryfront.com";
+const GOOGLE_ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo";
+
+/**
+ * The refusal code of a Google `google.rpc.Status` error: the `reason` of its
+ * Veryfront `ErrorInfo` detail. Google's own errors carry `ErrorInfo` details
+ * under Google's domains, which never match.
+ */
+function readGoogleRefusalCode(error: Record<string, unknown>): string | undefined {
+  const details = readOwn(error, "details");
+  if (!Array.isArray(details)) return undefined;
+  for (const detail of details) {
+    if (
+      isJsonRecord(detail) &&
+      readOwn(detail, "@type") === GOOGLE_ERROR_INFO_TYPE &&
+      readOwn(detail, "domain") === GOOGLE_REFUSAL_DOMAIN
+    ) {
+      const reason = readOwn(detail, "reason");
+      return typeof reason === "string" ? reason : undefined;
+    }
+  }
+  return undefined;
+}
+
 /**
  * The vendor-route problem body for a Veryfront refusal a neutral surface sent
  * in its native envelope (`{error: {code, message, veryfront}}`, Anthropic's
- * wrapped in `{type: "error"}`), or undefined for any other body, including
+ * wrapped in `{type: "error"}`, Google's a `google.rpc.Status` whose code is a
+ * Veryfront `ErrorInfo` reason), or undefined for any other body, including
  * every upstream provider error, which is left exactly as it arrived.
  */
 function toVendorRouteRefusal(body: unknown): Record<string, unknown> | undefined {
   if (!isJsonRecord(body)) return undefined;
   const error = readOwn(body, "error");
   if (!isJsonRecord(error)) return undefined;
-  const code = readOwn(error, "code");
-  if (typeof code !== "string") return undefined;
+  const envelopeCode = readOwn(error, "code");
+  const code = typeof envelopeCode === "string" ? envelopeCode : readGoogleRefusalCode(error);
+  if (code === undefined) return undefined;
   const shape = IntrinsicReflectApply(MapPrototypeGet, NEUTRAL_REFUSAL_SHAPES, [code]) as
     | { field: "code" | "slug"; value: string; renames?: ReadonlyMap<string, string> }
     | undefined;
@@ -664,6 +719,12 @@ export function createVeryfrontCloudFetch(
      * refusal in the neutral envelope is read back in the vendor-route shape.
      */
     wireModelProvider?: string;
+    /**
+     * The route's {@link VeryfrontCloudGatewayRoute.neutral}: a Veryfront
+     * refusal in the neutral envelope is read back in the vendor-route shape.
+     * Implied by `wireModelProvider`.
+     */
+    neutralRoute?: boolean;
   },
 ): typeof fetch {
   const trustedApiToken = options?.inferenceCredential
@@ -704,8 +765,16 @@ export function createVeryfrontCloudFetch(
     const wireModelProvider = options?.wireModelProvider;
     const responsePromise = IntrinsicReflectApply(
       PromisePrototypeThen,
-      wireModelProvider
-        ? sendOnNeutralRoute(apiBaseUrl, request, headers, wireModelProvider, init?.body)
+      wireModelProvider || options?.neutralRoute
+        ? sendOnNeutralRoute(
+          apiBaseUrl,
+          request,
+          headers,
+          wireModelProvider,
+          init && IntrinsicReflectApply(ObjectHasOwn, undefined, [init, "body"])
+            ? init.body
+            : undefined,
+        )
         : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
           new NativeRequest(request, { headers }),
         ),

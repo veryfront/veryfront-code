@@ -16,6 +16,8 @@ import {
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
+import { SSRHandler } from "../handlers/request/ssr/index.ts";
+import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snapshot-change.ts";
 import {
   getTrustedProjectEnvIdentity,
   runWithProjectEnv,
@@ -746,6 +748,89 @@ describe("server/runtime-handler/index", () => {
       false,
     );
   });
+
+  for (
+    const scenario of [
+      {
+        name: "replays a settled document snapshot change",
+        failures: 1,
+        middleware: false,
+        method: "GET",
+        status: 200,
+        calls: 2,
+      },
+      {
+        name: "bounds replay when the document snapshot keeps changing",
+        failures: 2,
+        middleware: false,
+        method: "GET",
+        status: 503,
+        calls: 2,
+      },
+      {
+        name: "does not replay a document after project middleware starts",
+        failures: 1,
+        middleware: true,
+        method: "GET",
+        status: 503,
+        calls: 1,
+      },
+      {
+        name: "does not replay a POST after a downstream snapshot change",
+        failures: 1,
+        middleware: false,
+        method: "POST",
+        status: 503,
+        calls: 1,
+      },
+    ]
+  ) {
+    it(scenario.name, async () => {
+      const originalHandle = SSRHandler.prototype.handle;
+      let renderCalls = 0;
+      let middlewareCalls = 0;
+      const otelRequests = captureOtelHttpRequestCount();
+      SSRHandler.prototype.handle = () => {
+        renderCalls++;
+        if (renderCalls <= scenario.failures) {
+          return Promise.reject(
+            createSourceSnapshotChangedError("Source changed during rendering"),
+          );
+        }
+        return Promise.resolve({ response: new Response("saved project") });
+      };
+      try {
+        const middleware: MiddlewareFunction = async (_context, next) => {
+          middlewareCalls++;
+          return await next();
+        };
+        const handler = createVeryfrontHandler("/tmp/test-project", createRouteMockAdapter(), {
+          projectDir: "/tmp/test-project",
+          defaultProjectSlug: "snapshot-replay",
+          config: {
+            ...(scenario.middleware ? { middleware: { custom: [middleware] } } : {}),
+            // Exercise the replay guard after request admission for POST too.
+            security: { csrf: false },
+          },
+          allowHostProjectCodeExecution: true,
+        });
+
+        const response = await handler(
+          new Request("http://localhost/dashboard", { method: scenario.method }),
+        );
+
+        assertEquals(response.status, scenario.status, await response.clone().text());
+        assertEquals(renderCalls, scenario.calls);
+        assertEquals(middlewareCalls, scenario.middleware ? 1 : 0);
+        assertEquals(createSnapshot().requests, 1);
+        assertEquals(otelRequests.count(), 1);
+        if (response.ok) assertEquals(await response.text(), "saved project");
+        else assertEquals((await response.json()).status, 503);
+      } finally {
+        SSRHandler.prototype.handle = originalHandle;
+      }
+    });
+  }
 
   it("retains an unmatched OPTIONS admission snapshot through middleware dispatch", async () => {
     let sourceVersion = 1;

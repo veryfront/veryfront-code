@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { formatFileSize, isFile, isFolder, listFiles } from "../lib/onedrive-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "onedrive-list-files",
@@ -22,8 +23,9 @@ export default tool({
       .default(100)
       .describe("Maximum number of items to return"),
   }))(),
-  async execute({ folderId, orderBy, limit }) {
-    const result = await listFiles(folderId, { orderBy, top: limit });
+  async execute({ folderId, orderBy, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const result = await listFiles(userId, folderId, { orderBy, top: limit });
 
     const items = result.value.map((item) => {
       const baseInfo = {

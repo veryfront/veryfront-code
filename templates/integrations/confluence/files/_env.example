@@ -2,3 +2,6 @@
 # Get these from: https://developer.atlassian.com/console/myapps/
 ATLASSIAN_CLIENT_ID=your_client_id_here
 ATLASSIAN_CLIENT_SECRET=your_client_secret_here
+# Optional: your site's cloud ID (https://<your-site>.atlassian.net/_edge/tenant_info).
+# Without it, the client uses the first site the token can access.
+CONFLUENCE_CLOUD_ID=your_cloud_id_here

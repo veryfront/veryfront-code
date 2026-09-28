@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { gitlabConfig, OAuthService } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const gitlabService = new OAuthService(gitlabConfig, tokenStore);
 
 const GITLAB_BASE_URL = "https://gitlab.com/api/v4";
 
@@ -123,10 +127,11 @@ function buildQuery(params: URLSearchParams): string {
 }
 
 async function gitlabFetch<T>(
+  userId: string,
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await getAccessToken();
+  const token = await gitlabService.getAccessToken(userId);
   if (!token) {
     throw new Error(
       "Not authenticated with GitLab. Please connect your account.",
@@ -155,11 +160,11 @@ async function gitlabFetch<T>(
   return (await response.json()) as T;
 }
 
-export function getCurrentUser(): Promise<GitLabUser> {
-  return gitlabFetch<GitLabUser>("/user");
+export function getCurrentUser(userId: string): Promise<GitLabUser> {
+  return gitlabFetch<GitLabUser>(userId, "/user");
 }
 
-export function listProjects(options?: {
+export function listProjects(userId: string, options?: {
   membership?: boolean;
   search?: string;
   orderBy?: "id" | "name" | "created_at" | "updated_at" | "last_activity_at";
@@ -174,14 +179,14 @@ export function listProjects(options?: {
   if (options?.sort) params.set("sort", options.sort);
   if (options?.perPage) params.set("per_page", options.perPage.toString());
 
-  return gitlabFetch<GitLabProject[]>(`/projects${buildQuery(params)}`);
+  return gitlabFetch<GitLabProject[]>(userId, `/projects${buildQuery(params)}`);
 }
 
-export function getProject(projectId: number | string): Promise<GitLabProject> {
-  return gitlabFetch<GitLabProject>(`/projects/${encodeProjectId(projectId)}`);
+export function getProject(userId: string, projectId: number | string): Promise<GitLabProject> {
+  return gitlabFetch<GitLabProject>(userId, `/projects/${encodeProjectId(projectId)}`);
 }
 
-export function searchIssues(options: {
+export function searchIssues(userId: string, options: {
   scope?: "created_by_me" | "assigned_to_me" | "all";
   state?: "opened" | "closed" | "all";
   labels?: string[];
@@ -201,19 +206,22 @@ export function searchIssues(options: {
     ? `/projects/${encodeProjectId(options.projectId)}/issues`
     : "/issues";
 
-  return gitlabFetch<GitLabIssue[]>(`${base}${buildQuery(params)}`);
+  return gitlabFetch<GitLabIssue[]>(userId, `${base}${buildQuery(params)}`);
 }
 
 export function getIssue(
+  userId: string,
   projectId: number | string,
   issueIid: number,
 ): Promise<GitLabIssue> {
   return gitlabFetch<GitLabIssue>(
+    userId,
     `/projects/${encodeProjectId(projectId)}/issues/${issueIid}`,
   );
 }
 
 export function createIssue(
+  userId: string,
   projectId: number | string,
   options: {
     title: string;
@@ -232,16 +240,14 @@ export function createIssue(
   if (options.milestoneId) body.milestone_id = options.milestoneId;
   if (options.dueDate) body.due_date = options.dueDate;
 
-  return gitlabFetch<GitLabIssue>(
-    `/projects/${encodeProjectId(projectId)}/issues`,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
-  );
+  return gitlabFetch<GitLabIssue>(userId, `/projects/${encodeProjectId(projectId)}/issues`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function updateIssue(
+  userId: string,
   projectId: number | string,
   issueIid: number,
   options: {
@@ -263,6 +269,7 @@ export function updateIssue(
   if (options.assigneeIds) body.assignee_ids = options.assigneeIds;
 
   return gitlabFetch<GitLabIssue>(
+    userId,
     `/projects/${encodeProjectId(projectId)}/issues/${issueIid}`,
     {
       method: "PUT",
@@ -272,6 +279,7 @@ export function updateIssue(
 }
 
 export function addIssueComment(
+  userId: string,
   projectId: number | string,
   issueIid: number,
   options: { body: string; confidential?: boolean },
@@ -282,6 +290,7 @@ export function addIssueComment(
   }
 
   return gitlabFetch<GitLabNote>(
+    userId,
     `/projects/${encodeProjectId(projectId)}/issues/${issueIid}/notes`,
     {
       method: "POST",
@@ -290,7 +299,7 @@ export function addIssueComment(
   );
 }
 
-export function listMergeRequests(options?: {
+export function listMergeRequests(userId: string, options?: {
   scope?: "created_by_me" | "assigned_to_me" | "all";
   state?: "opened" | "closed" | "merged" | "all";
   labels?: string[];
@@ -308,19 +317,22 @@ export function listMergeRequests(options?: {
     ? `/projects/${encodeProjectId(options.projectId)}/merge_requests`
     : "/merge_requests";
 
-  return gitlabFetch<GitLabMergeRequest[]>(`${base}${buildQuery(params)}`);
+  return gitlabFetch<GitLabMergeRequest[]>(userId, `${base}${buildQuery(params)}`);
 }
 
 export function getMergeRequest(
+  userId: string,
   projectId: number | string,
   mrIid: number,
 ): Promise<GitLabMergeRequest> {
   return gitlabFetch<GitLabMergeRequest>(
+    userId,
     `/projects/${encodeProjectId(projectId)}/merge_requests/${mrIid}`,
   );
 }
 
 export function addMergeRequestComment(
+  userId: string,
   projectId: number | string,
   mrIid: number,
   options: { body: string; internal?: boolean },
@@ -329,6 +341,7 @@ export function addMergeRequestComment(
   if (options.internal !== undefined) body.internal = options.internal;
 
   return gitlabFetch<GitLabNote>(
+    userId,
     `/projects/${encodeProjectId(projectId)}/merge_requests/${mrIid}/notes`,
     {
       method: "POST",

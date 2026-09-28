@@ -24,6 +24,12 @@ export interface RuntimeUsage {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  /**
+   * The share of {@link RuntimeUsage.cacheCreationInputTokens} written with a
+   * one-hour cache lifetime. A subset of that total, never added to it. Absent
+   * when the provider does not report the split.
+   */
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   /** Compatibility alias for {@link RuntimeUsage.cacheReadInputTokens}. */
   cachedInputTokens?: number;
@@ -49,6 +55,7 @@ const RUNTIME_USAGE_NUMERIC_FIELDS = [
   ["outputTokens", "token"],
   ["totalTokens", "total"],
   ["cacheCreationInputTokens", "token"],
+  ["cacheCreation1hInputTokens", "token"],
   ["cacheReadInputTokens", "token"],
   ["reasoningTokens", "token"],
   ["billableInputTokens", "token"],
@@ -74,6 +81,58 @@ const RUNTIME_USAGE_FIELDS = [
   "usageCaptureStatus",
 ] as const satisfies readonly (keyof RuntimeUsage)[];
 
+/**
+ * Optional usage fields shared by every "cache + billing" usage projection
+ * across the agent runtime, AG-UI, and streaming lifecycle layers.
+ *
+ * Excludes the token totals (`inputTokens`/`outputTokens`/`totalTokens`):
+ * each call site sources those from a different mandatory field (some alias
+ * them as `promptTokens`/`completionTokens`) and assigns them
+ * unconditionally, never through this list.
+ */
+export const RUNTIME_USAGE_OPTIONAL_TAIL_FIELDS = [
+  "cachedInputTokens",
+  "cacheCreationInputTokens",
+  "cacheCreation1hInputTokens",
+  "cacheReadInputTokens",
+  "reasoningTokens",
+  "billableInputTokens",
+  "billableOutputTokens",
+  "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
+  "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+  "costSource",
+  "billingMode",
+  "usageCaptureStatus",
+] as const satisfies readonly (keyof RuntimeUsage)[];
+
+/**
+ * Copies each named field from `source` into a new object, omitting any
+ * field whose value is `undefined` rather than assigning it explicitly.
+ *
+ * Shared by usage projections that otherwise repeat the same
+ * `...(x.field !== undefined ? { field: x.field } : {})` chain per field.
+ */
+export function pickDefinedUsageFields<T extends object, K extends keyof T>(
+  source: T,
+  fields: readonly K[],
+): Pick<T, K> {
+  const result = {} as Pick<T, K>;
+  for (const field of fields) {
+    const value = source[field];
+    if (value !== undefined) {
+      result[field] = value;
+    }
+  }
+  return result;
+}
+
 /** Read a non-negative safe-integer token counter. */
 export function readRuntimeTokenCount(value: unknown): number | undefined {
   return typeof value === "number" &&
@@ -82,6 +141,20 @@ export function readRuntimeTokenCount(value: unknown): number | undefined {
       value >= 0
     ? value
     : undefined;
+}
+
+/**
+ * Read the one-hour cache-write share of a cache-write total.
+ *
+ * Both values must be non-negative safe integers. The share is absent without
+ * a valid total and never exceeds it.
+ */
+export function readCacheWrite1hShare(total: unknown, share: unknown): number | undefined {
+  const validTotal = readRuntimeTokenCount(total);
+  const validShare = readRuntimeTokenCount(share);
+  return validTotal === undefined || validShare === undefined
+    ? undefined
+    : Math.min(validShare, validTotal);
 }
 
 /**
@@ -117,22 +190,16 @@ export function readRuntimeCost(value: unknown): number | undefined {
 }
 
 const GATEWAY_USAGE_COST_FIELDS = [
-  ["costUsd", "cost_usd"],
-  ["providerInputCostUsd", "provider_input_cost_usd"],
-  ["providerOutputCostUsd", "provider_output_cost_usd"],
-  ["providerCostUsd", "provider_cost_usd"],
-  ["veryfrontInputChargeUsd", "veryfront_input_charge_usd"],
-  ["veryfrontOutputChargeUsd", "veryfront_output_charge_usd"],
-  ["veryfrontChargeUsd", "veryfront_charge_usd"],
-  ["veryfrontBilledUsd", "veryfront_billed_usd"],
   ["costCredits", "cost_credits"],
 ] as const satisfies readonly (readonly [keyof RuntimeUsage, string])[];
 
 /**
- * Read the cost and credit amounts of a gateway `veryfront` usage envelope.
+ * Read the credit amount of a gateway `veryfront` usage envelope.
  *
- * The result is a null-prototype data record so a polluted `Object.prototype`
- * can neither intercept the writes nor surface absent fields.
+ * Credits are the unit of account; the envelope's USD keys are provider-cost
+ * facts the runtime does not surface. The result is a null-prototype data
+ * record so a polluted `Object.prototype` can neither intercept the writes nor
+ * surface absent fields.
  */
 export function readGatewayUsageCosts(
   envelope: Record<string, unknown> | undefined,
@@ -240,7 +307,11 @@ export function mergeRuntimeUsage(
   const normalizedNumbers = Object.create(null) as RuntimeUsage;
 
   for (const [field, kind] of RUNTIME_USAGE_NUMERIC_FIELDS) {
-    if (kind === "total" || field === "cacheReadInputTokens") continue;
+    if (
+      kind === "total" ||
+      field === "cacheReadInputTokens" ||
+      field === "cacheCreation1hInputTokens"
+    ) continue;
     const read = kind === "token" ? readRuntimeTokenCount : readRuntimeCost;
     const value = latestValidValue(
       incoming[field],
@@ -250,6 +321,17 @@ export function mergeRuntimeUsage(
     if (value !== undefined) {
       normalizedNumbers[field] = value;
     }
+  }
+
+  // The one-hour share is valid only beside a valid total in its own snapshot,
+  // and never exceeds the merged cache-write total.
+  const cacheCreation1hInputTokens = readCacheWrite1hShare(
+    normalizedNumbers.cacheCreationInputTokens,
+    readCacheWrite1hShare(incoming.cacheCreationInputTokens, incoming.cacheCreation1hInputTokens) ??
+      readCacheWrite1hShare(previous.cacheCreationInputTokens, previous.cacheCreation1hInputTokens),
+  );
+  if (cacheCreation1hInputTokens !== undefined) {
+    normalizedNumbers.cacheCreation1hInputTokens = cacheCreation1hInputTokens;
   }
 
   const cacheReadInputTokens = readRuntimeTokenCount(incoming.cacheReadInputTokens) ??

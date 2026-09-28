@@ -7,7 +7,11 @@ import {
   parseAgUiSseResponse,
   type ParseAgUiSseResponseOptions,
 } from "#veryfront/agent";
-import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
+import {
+  readCacheWrite1hShare,
+  readRuntimeCost,
+  readRuntimeTokenCount,
+} from "#veryfront/provider/runtime-usage.ts";
 import type {
   EvalAgentAdapter,
   EvalAgentAdapterContext,
@@ -594,35 +598,24 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     readNonNegativeNumber(record.billable_output_tokens);
   const cachedInputTokens = readNonNegativeNumber(record.cachedInputTokens) ??
     readNonNegativeNumber(record.cached_input_tokens);
-  const cacheCreationInputTokens = readNonNegativeNumber(record.cacheCreationInputTokens) ??
+  // Prefer a token-count alias so the one-hour share can pair with the total.
+  const cacheCreationInputTokens = readRuntimeTokenCount(record.cacheCreationInputTokens) ??
+    readRuntimeTokenCount(record.cacheCreationTokens) ??
+    readRuntimeTokenCount(record.cache_creation_input_tokens) ??
+    readNonNegativeNumber(record.cacheCreationInputTokens) ??
     readNonNegativeNumber(record.cacheCreationTokens) ??
     readNonNegativeNumber(record.cache_creation_input_tokens);
+  const cacheCreation1hInputTokens =
+    readCacheWrite1hShare(cacheCreationInputTokens, record.cacheCreation1hInputTokens) ??
+      readCacheWrite1hShare(cacheCreationInputTokens, record.cache_creation_1h_input_tokens);
   const cacheReadInputTokens = readNonNegativeNumber(record.cacheReadInputTokens) ??
     readNonNegativeNumber(record.cacheReadTokens) ??
     readNonNegativeNumber(record.cache_read_input_tokens);
   const reasoningTokens = readNonNegativeNumber(record.reasoningTokens) ??
     readNonNegativeNumber(record.reasoning_output_tokens) ??
     readNonNegativeNumber(record.reasoning_tokens);
-  const providerInputCostUsd = readRuntimeCost(record.providerInputCostUsd) ??
-    readRuntimeCost(record.provider_input_cost_usd);
-  const providerOutputCostUsd = readRuntimeCost(record.providerOutputCostUsd) ??
-    readRuntimeCost(record.provider_output_cost_usd);
-  const providerCostUsd = readRuntimeCost(record.providerCostUsd) ??
-    readRuntimeCost(record.provider_cost_usd);
-  const veryfrontInputChargeUsd = readRuntimeCost(record.veryfrontInputChargeUsd) ??
-    readRuntimeCost(record.veryfront_input_charge_usd);
-  const veryfrontOutputChargeUsd = readRuntimeCost(record.veryfrontOutputChargeUsd) ??
-    readRuntimeCost(record.veryfront_output_charge_usd);
-  const veryfrontChargeUsd = readRuntimeCost(record.veryfrontChargeUsd) ??
-    readRuntimeCost(record.veryfront_charge_usd);
-  const veryfrontBilledUsd = readRuntimeCost(record.veryfrontBilledUsd) ??
-    readRuntimeCost(record.veryfront_billed_usd);
   const costCredits = readRuntimeCost(record.costCredits) ??
     readRuntimeCost(record.cost_credits);
-  const costUsd = readRuntimeCost(record.costUsd) ??
-    readRuntimeCost(record.totalCostUsd) ??
-    readRuntimeCost(record.total_cost_usd) ??
-    providerCostUsd;
   const costSource = readUsageCostSource(record.costSource ?? record.cost_source);
   const billingMode = readUsageBillingMode(record.billingMode ?? record.billing_mode);
   const usageCaptureStatus = readUsageCaptureStatus(
@@ -637,16 +630,9 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
-    ...(costUsd !== undefined ? { costUsd } : {}),
-    ...(providerInputCostUsd !== undefined ? { providerInputCostUsd } : {}),
-    ...(providerOutputCostUsd !== undefined ? { providerOutputCostUsd } : {}),
-    ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
-    ...(veryfrontInputChargeUsd !== undefined ? { veryfrontInputChargeUsd } : {}),
-    ...(veryfrontOutputChargeUsd !== undefined ? { veryfrontOutputChargeUsd } : {}),
-    ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
-    ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
     ...(costCredits !== undefined ? { costCredits } : {}),
     ...(costSource !== undefined ? { costSource } : {}),
     ...(billingMode !== undefined ? { billingMode } : {}),

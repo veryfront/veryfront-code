@@ -655,6 +655,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "agent source",
       "There is no project integration policy",
+      "Make your first call",
+      "executeIntegrationTool",
+      "/projects/<PROJECT_SLUG>/mcp",
+      "expected_connection_generation_id",
       "Connection inventory",
       "veryfront.config.ts",
       "Managed OAuth",
@@ -663,6 +667,30 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "integrations.allow only narrows",
       "never sends local credentials to Veryfront",
       "Available integrations",
+    ],
+  },
+  "guides/integrations/recovery.md": {
+    references: ["../../api-reference/veryfront/integrations.md"],
+    snippets: [
+      "access_denied",
+      "Invalid or expired OAuth connect session",
+      "reconnect_required",
+      "integration-connection-stale",
+      "connection_stale",
+      "execution_outcome_unknown",
+      "Never replay a write automatically",
+    ],
+  },
+  "guides/integrations/credentials.md": {
+    references: ["../integrations.md"],
+    snippets: [
+      "Platform login and provider authorization",
+      "Credentials versus grants",
+      "project_credentials",
+      "missing_credentials",
+      "VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS",
+      "endUser",
+      "connection_generation_id",
     ],
   },
   "guides/integrations/github.md": {

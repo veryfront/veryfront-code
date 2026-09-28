@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { asanaConfig, OAuthService } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const asanaService = new OAuthService(asanaConfig, tokenStore);
 
 const ASANA_BASE_URL = "https://app.asana.com/api/1.0";
 
@@ -33,8 +37,12 @@ interface AsanaWorkspace {
   name: string;
 }
 
-async function asanaFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+async function asanaFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await asanaService.getAccessToken(userId);
   if (!token) {
     throw new Error("Not authenticated with Asana. Please connect your account.");
   }
@@ -65,19 +73,20 @@ async function asanaFetch<T>(endpoint: string, options: RequestInit = {}): Promi
   throw new Error(`Asana API error: ${response.status} ${message}`);
 }
 
-export async function listWorkspaces(): Promise<AsanaWorkspace[]> {
-  const { data } = await asanaFetch<AsanaResponse<AsanaWorkspace[]>>("/workspaces");
+export async function listWorkspaces(userId: string): Promise<AsanaWorkspace[]> {
+  const { data } = await asanaFetch<AsanaResponse<AsanaWorkspace[]>>(userId, "/workspaces");
   return data;
 }
 
-export async function listProjects(workspaceGid: string): Promise<AsanaProject[]> {
+export async function listProjects(userId: string, workspaceGid: string): Promise<AsanaProject[]> {
   const { data } = await asanaFetch<AsanaResponse<AsanaProject[]>>(
+    userId,
     `/workspaces/${workspaceGid}/projects?opt_fields=name,notes,created_at,modified_at`,
   );
   return data;
 }
 
-export async function listTasks(options: {
+export async function listTasks(userId: string, options: {
   projectGid?: string;
   assigneeGid?: string;
   workspaceGid?: string;
@@ -99,18 +108,19 @@ export async function listTasks(options: {
     params.set("workspace", options.workspaceGid);
   }
 
-  const { data } = await asanaFetch<AsanaResponse<AsanaTask[]>>(`${endpoint}?${params}`);
+  const { data } = await asanaFetch<AsanaResponse<AsanaTask[]>>(userId, `${endpoint}?${params}`);
   return data;
 }
 
-export async function getTask(taskGid: string): Promise<AsanaTask> {
+export async function getTask(userId: string, taskGid: string): Promise<AsanaTask> {
   const { data } = await asanaFetch<AsanaResponse<AsanaTask>>(
+    userId,
     `/tasks/${taskGid}?opt_fields=name,notes,completed,due_on,assignee.name,projects.name,created_at,modified_at`,
   );
   return data;
 }
 
-export async function createTask(options: {
+export async function createTask(userId: string, options: {
   projectGid: string;
   name: string;
   notes?: string;
@@ -126,7 +136,7 @@ export async function createTask(options: {
   if (options.dueOn) body.due_on = options.dueOn;
   if (options.assigneeGid) body.assignee = options.assigneeGid;
 
-  const { data } = await asanaFetch<AsanaResponse<AsanaTask>>("/tasks", {
+  const { data } = await asanaFetch<AsanaResponse<AsanaTask>>(userId, "/tasks", {
     method: "POST",
     body: JSON.stringify({ data: body }),
   });
@@ -135,6 +145,7 @@ export async function createTask(options: {
 }
 
 export async function updateTask(
+  userId: string,
   taskGid: string,
   updates: {
     name?: string;
@@ -152,7 +163,7 @@ export async function updateTask(
   if (updates.dueOn !== undefined) body.due_on = updates.dueOn;
   if (updates.assigneeGid !== undefined) body.assignee = updates.assigneeGid;
 
-  const { data } = await asanaFetch<AsanaResponse<AsanaTask>>(`/tasks/${taskGid}`, {
+  const { data } = await asanaFetch<AsanaResponse<AsanaTask>>(userId, `/tasks/${taskGid}`, {
     method: "PUT",
     body: JSON.stringify({ data: body }),
   });
@@ -160,8 +171,9 @@ export async function updateTask(
   return data;
 }
 
-export async function getMe(): Promise<{ gid: string; name: string; email: string }> {
+export async function getMe(userId: string): Promise<{ gid: string; name: string; email: string }> {
   const { data } = await asanaFetch<AsanaResponse<{ gid: string; name: string; email: string }>>(
+    userId,
     "/users/me",
   );
   return data;
@@ -187,7 +199,7 @@ interface AsanaStory {
   created_by?: { gid: string; name: string };
 }
 
-export async function listUsers(options: {
+export async function listUsers(userId: string, options: {
   workspaceGid: string;
   teamGid?: string;
 }): Promise<AsanaUser[]> {
@@ -198,22 +210,24 @@ export async function listUsers(options: {
 
   if (options.teamGid) params.set("team", options.teamGid);
 
-  const { data } = await asanaFetch<AsanaResponse<AsanaUser[]>>(`/users?${params}`);
+  const { data } = await asanaFetch<AsanaResponse<AsanaUser[]>>(userId, `/users?${params}`);
   return data;
 }
 
-export async function listTeams(workspaceGid: string): Promise<AsanaTeam[]> {
+export async function listTeams(userId: string, workspaceGid: string): Promise<AsanaTeam[]> {
   const { data } = await asanaFetch<AsanaResponse<AsanaTeam[]>>(
+    userId,
     `/workspaces/${workspaceGid}/teams?opt_fields=gid,name,description`,
   );
   return data;
 }
 
-export async function addTaskComment(options: {
+export async function addTaskComment(userId: string, options: {
   taskGid: string;
   text: string;
 }): Promise<AsanaStory> {
   const { data } = await asanaFetch<AsanaResponse<AsanaStory>>(
+    userId,
     `/tasks/${options.taskGid}/stories`,
     {
       method: "POST",
@@ -223,11 +237,12 @@ export async function addTaskComment(options: {
   return data;
 }
 
-export async function listTaskComments(taskGid: string): Promise<AsanaStory[]> {
+export async function listTaskComments(userId: string, taskGid: string): Promise<AsanaStory[]> {
   const params = new URLSearchParams({
     opt_fields: "gid,type,text,created_at,created_by.name",
   });
   const { data } = await asanaFetch<AsanaResponse<AsanaStory[]>>(
+    userId,
     `/tasks/${taskGid}/stories?${params}`,
   );
   return data.filter((story) => story.type === "comment");

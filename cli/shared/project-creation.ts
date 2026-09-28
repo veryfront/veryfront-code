@@ -35,6 +35,10 @@ import {
   loadIntegrations,
   validateIntegrations,
 } from "../../templates/integration-loader.ts";
+import {
+  requiredSetupEnvVars,
+  scaffoldEnvVars,
+} from "../../templates/integration-loader-helpers.ts";
 import { mergeFiles } from "../../templates/loader.ts";
 import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import type {
@@ -164,7 +168,7 @@ function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): s
       const icon = INTEGRATION_ICONS[integration.config.name] ?? "default";
       return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}", scopes: ${
         JSON.stringify(integration.config.auth.scopes ?? [])
-      } },`;
+      }, envVars: ${JSON.stringify(requiredSetupEnvVars(integration))} },`;
     })
     .join("\n");
 
@@ -177,11 +181,20 @@ function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): s
  * This file is auto-generated based on the integrations you selected.
  */
 
+import { getEnv } from "../../../../lib/env.ts";
 import { tokenStore } from "../../../../lib/token-store.ts";
 import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";
 
-// Integrations configured for this project
-const INTEGRATIONS = [
+// Integrations configured for this project. \`envVars\` lists the variables an
+// env-backed integration needs; it is null for integrations that connect
+// through OAuth at /api/auth/<id>.
+const INTEGRATIONS: Array<{
+  id: string;
+  name: string;
+  icon: string;
+  scopes: string[];
+  envVars: string[] | null;
+}> = [
 ${integrationEntries}
 ];
 
@@ -193,13 +206,19 @@ export async function GET(req: Request): Promise<Response> {
 
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {
-      const connected = await tokenStore.isConnected(userId, integration.id, integration.scopes);
+      const { envVars } = integration;
+      // An empty contract is not a working setup: an integration without
+      // scaffold files (harvest, hubspot) has no local client to connect.
+      const connected = envVars
+        ? envVars.length > 0 && envVars.every((name) => Boolean(getEnv(name)))
+        : await tokenStore.isConnected(userId, integration.id, integration.scopes);
       return {
         id: integration.id,
         name: integration.name,
         icon: integration.icon,
         connected,
-        connectUrl: \`/api/auth/\${integration.id}\`,
+        connectUrl: envVars ? null : \`/api/auth/\${integration.id}\`,
+        envVars,
       };
     }),
   );
@@ -333,7 +352,7 @@ async function assembleIntegrationFiles(
   files = mergeFiles(files, integrationFiles);
 
   for (const integration of loadedIntegrations) {
-    if (integration.config.envVars) allEnvVars.push(...integration.config.envVars);
+    allEnvVars.push(...scaffoldEnvVars(integration));
   }
 
   files = mergeFiles(files, [
@@ -347,9 +366,15 @@ async function assembleIntegrationFiles(
     `Loaded ${loadedIntegrations.length} integrations with ${integrationFiles.length} files`,
   );
 
-  tips.push(`Integrations loaded: ${integrations.join(", ")}`);
-  tips.push("Visit /setup for guided OAuth app setup");
-  tips.push("Connect services at /api/auth/<service>");
+  if (loadedIntegrations.length) {
+    tips.push(
+      `Integrations loaded: ${
+        loadedIntegrations.map((integration) => integration.config.name).join(", ")
+      }`,
+    );
+    tips.push("Visit /setup for guided OAuth app setup");
+    tips.push("Connect services at /api/auth/<service>");
+  }
 
   return { files, loadedIntegrations, tips };
 }

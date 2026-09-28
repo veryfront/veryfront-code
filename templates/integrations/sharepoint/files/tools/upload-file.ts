@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createFolder, uploadFile } from "../lib/sharepoint-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "sharepoint-upload-file",
@@ -34,8 +35,10 @@ export default tool({
     folderId,
     createFolderIfNeeded,
     folderPath,
-  }) {
+  }, context) {
+    const userId = requireUserIdFromContext(context);
     const targetFolderId = await resolveTargetFolderId({
+      userId,
       siteId,
       driveId,
       folderId,
@@ -43,7 +46,7 @@ export default tool({
       folderPath,
     });
 
-    const file = await uploadFile(siteId, driveId, fileName, content, targetFolderId);
+    const file = await uploadFile(userId, siteId, driveId, fileName, content, targetFolderId);
 
     return {
       id: file.id,
@@ -61,12 +64,14 @@ export default tool({
 });
 
 async function resolveTargetFolderId({
+  userId,
   siteId,
   driveId,
   folderId,
   createFolderIfNeeded,
   folderPath,
 }: {
+  userId: string;
   siteId: string;
   driveId: string;
   folderId?: string;
@@ -80,7 +85,7 @@ async function resolveTargetFolderId({
 
   for (const folderName of folders) {
     try {
-      const folder = await createFolder(siteId, driveId, folderName, currentFolderId);
+      const folder = await createFolder(userId, siteId, driveId, folderName, currentFolderId);
       currentFolderId = folder.id;
     } catch (error) {
       console.warn(`Note: Could not create folder "${folderName}":`, error);

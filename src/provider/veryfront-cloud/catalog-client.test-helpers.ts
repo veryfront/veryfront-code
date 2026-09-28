@@ -111,6 +111,42 @@ export const SERVED_MODEL_ROWS = [
     },
   },
   {
+    "id": "gpt-6-sol",
+    "modelId": "openai/gpt-6-sol",
+    "provider": "openai",
+    "surface": "openai",
+    "operations": [
+      "responses",
+      "chat-completions",
+    ],
+    "aliases": [
+      "openai/gpt-6-sol",
+      "gpt-6-sol",
+    ],
+    "capabilities": {
+      "thinking": true,
+      "reasoning": true,
+    },
+  },
+  {
+    "id": "gpt-6-luna",
+    "modelId": "openai/gpt-6-luna",
+    "provider": "openai",
+    "surface": "openai",
+    "operations": [
+      "responses",
+      "chat-completions",
+    ],
+    "aliases": [
+      "openai/gpt-6-luna",
+      "gpt-6-luna",
+    ],
+    "capabilities": {
+      "thinking": true,
+      "reasoning": true,
+    },
+  },
+  {
     "id": "gpt-5.4-mini",
     "modelId": "openai/gpt-5.4-mini",
     "provider": "openai",

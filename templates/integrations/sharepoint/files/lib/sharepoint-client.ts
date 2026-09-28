@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { OAuthService, sharePointConfig } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const sharepointService = new OAuthService(sharePointConfig, tokenStore);
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
@@ -71,14 +75,18 @@ interface GraphResponse<T> {
   "@odata.nextLink"?: string;
 }
 
-async function requireAccessToken(): Promise<string> {
-  const token = await getAccessToken();
+async function requireAccessToken(userId: string): Promise<string> {
+  const token = await sharepointService.getAccessToken(userId);
   if (!token) throw new Error("Not authenticated with Microsoft. Please connect your account.");
   return token;
 }
 
-async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await requireAccessToken();
+async function graphFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await requireAccessToken(userId);
 
   const response = await fetch(`${GRAPH_BASE_URL}${endpoint}`, {
     ...options,
@@ -97,7 +105,7 @@ async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promi
   );
 }
 
-export async function listSites(options?: {
+export async function listSites(userId: string, options?: {
   search?: string;
   limit?: number;
 }): Promise<SharePointSite[]> {
@@ -105,28 +113,36 @@ export async function listSites(options?: {
     ? `/sites?search=${encodeURIComponent(options.search)}`
     : "/sites?search=*";
 
-  const { value = [] } = await graphFetch<GraphResponse<SharePointSite>>(endpoint);
+  const { value = [] } = await graphFetch<GraphResponse<SharePointSite>>(userId, endpoint);
   return options?.limit ? value.slice(0, options.limit) : value;
 }
 
-export function getSite(siteId: string): Promise<SharePointSite> {
-  return graphFetch<SharePointSite>(`/sites/${siteId}`);
+export function getSite(userId: string, siteId: string): Promise<SharePointSite> {
+  return graphFetch<SharePointSite>(userId, `/sites/${siteId}`);
 }
 
-export function getSiteByPath(hostname: string, sitePath: string): Promise<SharePointSite> {
-  return graphFetch<SharePointSite>(`/sites/${hostname}:${sitePath}`);
+export function getSiteByPath(
+  userId: string,
+  hostname: string,
+  sitePath: string,
+): Promise<SharePointSite> {
+  return graphFetch<SharePointSite>(userId, `/sites/${hostname}:${sitePath}`);
 }
 
-export async function listDrives(siteId: string): Promise<SharePointDrive[]> {
-  const { value = [] } = await graphFetch<GraphResponse<SharePointDrive>>(`/sites/${siteId}/drives`);
+export async function listDrives(userId: string, siteId: string): Promise<SharePointDrive[]> {
+  const { value = [] } = await graphFetch<GraphResponse<SharePointDrive>>(
+    userId,
+    `/sites/${siteId}/drives`,
+  );
   return value;
 }
 
-export function getDefaultDrive(siteId: string): Promise<SharePointDrive> {
-  return graphFetch<SharePointDrive>(`/sites/${siteId}/drive`);
+export function getDefaultDrive(userId: string, siteId: string): Promise<SharePointDrive> {
+  return graphFetch<SharePointDrive>(userId, `/sites/${siteId}/drive`);
 }
 
 export async function listFiles(
+  userId: string,
   siteId: string,
   driveId: string,
   folderId?: string,
@@ -145,31 +161,41 @@ export async function listFiles(
 
   const endpoint = params.size ? `${baseEndpoint}?${params.toString()}` : baseEndpoint;
 
-  const { value = [] } = await graphFetch<GraphResponse<SharePointFile>>(endpoint);
+  const { value = [] } = await graphFetch<GraphResponse<SharePointFile>>(userId, endpoint);
   return value;
 }
 
-export function getFile(siteId: string, driveId: string, itemId: string): Promise<SharePointFile> {
-  return graphFetch<SharePointFile>(`/sites/${siteId}/drives/${driveId}/items/${itemId}`);
+export function getFile(
+  userId: string,
+  siteId: string,
+  driveId: string,
+  itemId: string,
+): Promise<SharePointFile> {
+  return graphFetch<SharePointFile>(userId, `/sites/${siteId}/drives/${driveId}/items/${itemId}`);
 }
 
 export function getFileByPath(
+  userId: string,
   siteId: string,
   driveId: string,
   path: string,
 ): Promise<SharePointFile> {
   const encodedPath = encodeURIComponent(path);
-  return graphFetch<SharePointFile>(`/sites/${siteId}/drives/${driveId}/root:/${encodedPath}`);
+  return graphFetch<SharePointFile>(
+    userId,
+    `/sites/${siteId}/drives/${driveId}/root:/${encodedPath}`,
+  );
 }
 
 export async function downloadFile(
+  userId: string,
   siteId: string,
   driveId: string,
   itemId: string,
 ): Promise<ArrayBuffer> {
-  const token = await requireAccessToken();
+  const token = await requireAccessToken(userId);
 
-  await getFile(siteId, driveId, itemId);
+  await getFile(userId, siteId, driveId, itemId);
 
   const response = await fetch(
     `${GRAPH_BASE_URL}/sites/${siteId}/drives/${driveId}/items/${itemId}/content`,
@@ -182,29 +208,31 @@ export async function downloadFile(
 }
 
 export async function downloadFileAsText(
+  userId: string,
   siteId: string,
   driveId: string,
   itemId: string,
 ): Promise<string> {
-  const buffer = await downloadFile(siteId, driveId, itemId);
+  const buffer = await downloadFile(userId, siteId, driveId, itemId);
   return new TextDecoder().decode(buffer);
 }
 
 export async function uploadFile(
+  userId: string,
   siteId: string,
   driveId: string,
   fileName: string,
   content: string | ArrayBuffer | Blob,
   folderId?: string,
 ): Promise<SharePointFile> {
-  const token = await requireAccessToken();
+  const token = await requireAccessToken(userId);
 
   const encodedFileName = encodeURIComponent(fileName);
   const endpoint = folderId
     ? `/sites/${siteId}/drives/${driveId}/items/${folderId}:/${encodedFileName}:/content`
     : `/sites/${siteId}/drives/${driveId}/root:/${encodedFileName}:/content`;
 
-  let body: ArrayBuffer;
+  let body: BodyInit;
   if (typeof content === "string") {
     body = new TextEncoder().encode(content);
   } else if (content instanceof Blob) {
@@ -229,6 +257,7 @@ export async function uploadFile(
 }
 
 export function createFolder(
+  userId: string,
   siteId: string,
   driveId: string,
   folderName: string,
@@ -238,7 +267,7 @@ export function createFolder(
     ? `/sites/${siteId}/drives/${driveId}/items/${parentFolderId}/children`
     : `/sites/${siteId}/drives/${driveId}/root/children`;
 
-  return graphFetch<SharePointFile>(endpoint, {
+  return graphFetch<SharePointFile>(userId, endpoint, {
     method: "POST",
     body: JSON.stringify({
       name: folderName,
@@ -249,6 +278,7 @@ export function createFolder(
 }
 
 export async function searchFiles(
+  userId: string,
   siteId: string,
   query: string,
   options?: {
@@ -258,15 +288,23 @@ export async function searchFiles(
   const baseEndpoint = `/sites/${siteId}/drive/root/search(q='${encodeURIComponent(query)}')`;
   const endpoint = options?.limit ? `${baseEndpoint}?$top=${options.limit}` : baseEndpoint;
 
-  const { value = [] } = await graphFetch<GraphResponse<SharePointFile>>(endpoint);
+  const { value = [] } = await graphFetch<GraphResponse<SharePointFile>>(userId, endpoint);
   return value;
 }
 
-export async function deleteItem(siteId: string, driveId: string, itemId: string): Promise<void> {
-  await graphFetch<void>(`/sites/${siteId}/drives/${driveId}/items/${itemId}`, { method: "DELETE" });
+export async function deleteItem(
+  userId: string,
+  siteId: string,
+  driveId: string,
+  itemId: string,
+): Promise<void> {
+  await graphFetch<void>(userId, `/sites/${siteId}/drives/${driveId}/items/${itemId}`, {
+    method: "DELETE",
+  });
 }
 
 export function moveItem(
+  userId: string,
   siteId: string,
   driveId: string,
   itemId: string,
@@ -278,13 +316,14 @@ export function moveItem(
     ...(newName ? { name: newName } : {}),
   };
 
-  return graphFetch<SharePointFile>(`/sites/${siteId}/drives/${driveId}/items/${itemId}`, {
+  return graphFetch<SharePointFile>(userId, `/sites/${siteId}/drives/${driveId}/items/${itemId}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
 }
 
 export async function copyItem(
+  userId: string,
   siteId: string,
   driveId: string,
   itemId: string,
@@ -296,7 +335,7 @@ export async function copyItem(
     ...(newName ? { name: newName } : {}),
   };
 
-  await graphFetch<void>(`/sites/${siteId}/drives/${driveId}/items/${itemId}/copy`, {
+  await graphFetch<void>(userId, `/sites/${siteId}/drives/${driveId}/items/${itemId}/copy`, {
     method: "POST",
     body: JSON.stringify(body),
   });

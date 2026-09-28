@@ -1,4 +1,30 @@
-import { getAnonKey, getServiceKey, getSupabaseUrl } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function requireEnv(key: string): string {
+  const value = getEnv(key);
+  if (!value) throw new Error(`${key} is not set`);
+  return value;
+}
+
+function getSupabaseUrl(): string {
+  return requireEnv("SUPABASE_URL");
+}
+
+function getAnonKey(): string {
+  return requireEnv("SUPABASE_ANON_KEY");
+}
+
+function getServiceKey(): string {
+  return requireEnv("SUPABASE_SERVICE_KEY");
+}
 
 interface TableInfo {
   table_name: string;
@@ -153,8 +179,9 @@ export async function insertRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result?.length) throw new Error("Insert operation did not return data");
-  return result[0];
+  const row = result?.[0];
+  if (!row) throw new Error("Insert operation did not return data");
+  return row;
 }
 
 /**
@@ -173,8 +200,9 @@ export async function updateRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result?.length) throw new Error(`No row found with id ${id}`);
-  return result[0];
+  const row = result?.[0];
+  if (!row) throw new Error(`No row found with id ${id}`);
+  return row;
 }
 
 /**
@@ -212,8 +240,9 @@ export async function deleteRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result?.length) throw new Error(`No row found with id ${id}`);
-  return result[0];
+  const row = result?.[0];
+  if (!row) throw new Error(`No row found with id ${id}`);
+  return row;
 }
 
 /**

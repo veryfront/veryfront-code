@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listFiles, searchFiles } from "../lib/sharepoint-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "sharepoint-list-files",
@@ -32,10 +33,11 @@ export default tool({
       .default(50)
       .describe("Maximum number of items to return"),
   }))(),
-  async execute({ siteId, driveId, folderId, search, orderBy, limit }) {
+  async execute({ siteId, driveId, folderId, search, orderBy, limit }, context) {
+    const userId = requireUserIdFromContext(context);
     const files = search
-      ? await searchFiles(siteId, search, { limit })
-      : await listFiles(siteId, driveId, folderId, { limit, orderBy });
+      ? await searchFiles(userId, siteId, search, { limit })
+      : await listFiles(userId, siteId, driveId, folderId, { limit, orderBy });
 
     return files.map((file) => ({
       id: file.id,

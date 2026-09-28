@@ -7,6 +7,7 @@ export type RuntimeUsageTraceInput = {
   completionTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
@@ -63,6 +64,9 @@ export function buildRuntimeUsageTraceAttributes(
       "gen_ai.usage.total_tokens": totalTokens,
       "gen_ai.usage.cache_creation.input_tokens": usageNumber(
         usage?.cacheCreationInputTokens,
+      ),
+      "gen_ai.usage.cache_creation_1h.input_tokens": usageNumber(
+        usage?.cacheCreation1hInputTokens,
       ),
       "gen_ai.usage.cache_read.input_tokens": cacheReadInputTokens,
       "gen_ai.usage.reasoning.output_tokens": usageNumber(usage?.reasoningTokens),
