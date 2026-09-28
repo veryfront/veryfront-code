@@ -7,22 +7,8 @@ import { tmpdir } from "node:os";
 import process from "node:process";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { isDenoCompiled } from "./runtime.ts";
+import { registerExtractedEsbuildCleanup } from "./esbuild-cleanup.ts";
 import { ESBUILD_VERSION, getEsbuildBinaryName, getVFSBasePath } from "./esbuild-shared.ts";
-
-function cleanupExtractedEsbuildBinary(targetPath: string, extractionDir: string): void {
-  for (const path of [targetPath, extractionDir]) {
-    try {
-      Deno.removeSync(path);
-    } catch (cleanupError) {
-      if (cleanupError instanceof Deno.errors.NotFound) continue;
-      serverLogger.warn("[esbuild] Failed to clean up extracted binary", {
-        extractionDir,
-        path,
-        cleanupError,
-      });
-    }
-  }
-}
 
 async function findEsbuildInVFS(): Promise<string | null> {
   const binaryName = getEsbuildBinaryName();
@@ -66,7 +52,7 @@ async function extractEsbuildBinary(): Promise<string | null> {
       mode: 0o755,
     });
     serverLogger.info("[esbuild] Extracted binary from VFS", { targetPath });
-    process.once("exit", () => cleanupExtractedEsbuildBinary(targetPath, extractionDir));
+    registerExtractedEsbuildCleanup(targetPath, extractionDir);
     return targetPath;
   } catch (error) {
     try {

@@ -16,11 +16,9 @@ export function getArgs(): string[] {
 
 /** Exit the process with an optional code (cross-runtime: Deno.exit or process.exit). */
 export function exit(code?: number): never {
-  // Deno.exit bypasses node:process exit listeners, including cleanup of
-  // process-owned native binaries extracted by the compiled CLI.
-  if (runtimeProcess) runtimeProcess.exit(code);
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) deno.exit(code);
+  if (runtimeProcess) runtimeProcess.exit(code);
   throw new Error("exit() is not supported in this runtime");
 }
 
