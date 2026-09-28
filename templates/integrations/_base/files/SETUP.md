@@ -420,7 +420,7 @@ Uses API key (no OAuth needed).
 ```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_SERVICE_KEY=your-service-role-key
 ```
 
 ### Neon
@@ -432,7 +432,7 @@ Uses API key authentication.
 
 ```env
 NEON_API_KEY=your-api-key
-NEON_PROJECT_ID=your-project-id
+DATABASE_URL=postgres://user:password@your-endpoint.neon.tech/dbname?sslmode=require
 ```
 
 ### Airtable
@@ -450,16 +450,14 @@ AIRTABLE_CLIENT_SECRET=your-client-secret
 
 ### Snowflake
 
-Uses account credentials (key-pair or password).
+Uses a programmatic access token (PAT) with the SQL API.
 
 1. Get your Snowflake account identifier
-2. Create a user with appropriate permissions
-3. (Optional) Set up key-pair authentication
+2. Create a programmatic access token for a user with appropriate permissions
 
 ```env
+SNOWFLAKE_PAT=your-programmatic-access-token
 SNOWFLAKE_ACCOUNT=your-account-identifier
-SNOWFLAKE_USERNAME=your-username
-SNOWFLAKE_PASSWORD=your-password
 SNOWFLAKE_WAREHOUSE=your-warehouse
 SNOWFLAKE_DATABASE=your-database
 ```
