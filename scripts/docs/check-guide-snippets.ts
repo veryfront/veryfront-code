@@ -26,6 +26,7 @@ import {
   findUnquotedPlaceholders,
   type GraphqlSchemaSnapshot,
   nodeFirstCallScript,
+  nodeStripsTypes,
   parseSubcommandUsage,
   rewritePublicImports,
   validateGraphqlOperation,
@@ -222,17 +223,27 @@ try {
     }
   }
 
-  try {
-    for (
-      const problem of await runNodeFirstCall(
-        "docs/guides/integrations.md",
-        `${tempDir}/node-first-call`,
-      )
-    ) {
-      report("docs/guides/integrations.md", 0, problem);
+  const nodeVersion = await run("node", ["--version"]).catch(() => undefined);
+  if (!nodeVersion?.success || !nodeStripsTypes(nodeVersion.text)) {
+    const message = `The Node first-call check needs Node.js 22.18 or later; found ${
+      nodeVersion?.success ? nodeVersion.text.trim() : "no node"
+    }.`;
+    // CI must run it; a contributor with an older Node gets a warning.
+    if (Deno.env.get("CI")) report("docs/guides/integrations.md", 0, message);
+    else console.warn(`Skipped: ${message}`);
+  } else {
+    try {
+      for (
+        const problem of await runNodeFirstCall(
+          "docs/guides/integrations.md",
+          `${tempDir}/node-first-call`,
+        )
+      ) {
+        report("docs/guides/integrations.md", 0, problem);
+      }
+    } catch (error) {
+      report("docs/guides/integrations.md", 0, (error as Error).message);
     }
-  } catch (error) {
-    report("docs/guides/integrations.md", 0, (error as Error).message);
   }
 
   for (const dir of GUIDANCE_DIRS) {

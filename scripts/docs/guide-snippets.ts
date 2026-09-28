@@ -492,3 +492,14 @@ export function nodeFirstCallScript(
     "",
   ].join("\n");
 }
+
+/** Whether `node --version` output names a release that strips types by default (22.18+, 23.6+). */
+export function nodeStripsTypes(version: string): boolean {
+  const match = /^v(\d+)\.(\d+)\./.exec(version.trim());
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major === 22) return minor >= 18;
+  if (major === 23) return minor >= 6;
+  return major > 23;
+}

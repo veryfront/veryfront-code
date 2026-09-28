@@ -10,6 +10,7 @@ import {
   findUnquotedPlaceholders,
   type GraphqlSchemaSnapshot,
   nodeFirstCallScript,
+  nodeStripsTypes,
   parseSubcommandUsage,
   rewritePublicImports,
   validateGraphqlOperation,
@@ -228,5 +229,14 @@ describe("guide snippet checks", () => {
     const control = nodeFirstCallScript(call, { commonjs: true });
     assertEquals(control.includes("npm pkg set type=module"), false);
     assertEquals(control.includes("npm pkg set type=commonjs"), true);
+  });
+
+  it("knows which Node versions run .ts files without flags", () => {
+    for (const version of ["v22.18.0", "v22.23.2", "v23.6.0", "v24.0.0", "v25.9.0"]) {
+      assertEquals(nodeStripsTypes(version), true, version);
+    }
+    for (const version of ["v20.19.0", "v22.3.0", "v22.17.1", "v23.5.0", "not a version"]) {
+      assertEquals(nodeStripsTypes(version), false, version);
+    }
   });
 });
