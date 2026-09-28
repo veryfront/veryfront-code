@@ -18,8 +18,8 @@ let _previousLogLevel: string | undefined | null = null;
 let _outputPath: string | null = null;
 
 export function setJsonMode(enabled: boolean): void {
-  if (enabled && !_jsonMode) {
-    _previousLogLevel = getEnv("LOG_LEVEL");
+  if (enabled) {
+    if (!_jsonMode) _previousLogLevel = getEnv("LOG_LEVEL");
     setEnv("LOG_LEVEL", "ERROR");
     refreshLoggerConfig();
   } else if (!enabled && _jsonMode) {
