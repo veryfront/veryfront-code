@@ -16,6 +16,8 @@ export interface TracerProvider {
 
 /** Project-owned SDK instance. It must not replace process-global telemetry. */
 export interface ProjectTraceProvider {
+  /** True only for raw spans created by this provider. */
+  ownsSpan(span: object): boolean;
   hasActiveSpans(): boolean;
   getProvider(): TracerProvider;
   getTraceAPI(): {

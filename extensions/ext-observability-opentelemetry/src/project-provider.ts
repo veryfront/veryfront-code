@@ -16,6 +16,7 @@ import type {
 } from "veryfront/extensions/observability";
 
 interface ProjectSpanOperations {
+  createSpanOwners(): { add(span: object): void; has(span: object): boolean };
   clone<T>(value: T): T;
   byteLength(value: Uint8Array): number;
   append<T>(values: T[], value: T): void;
@@ -175,6 +176,7 @@ export function createProjectTraceProvider(
   options: ProjectTraceProviderOptions,
   operations: ProjectSpanOperations,
 ): ProjectTraceProvider {
+  const ownedSpans = operations.createSpanOwners();
   const manager = new AsyncLocalStorageContextManager().enable();
   const transport = options.createTransport((operation) =>
     manager.with(
@@ -222,10 +224,16 @@ export function createProjectTraceProvider(
         spanName: string,
         spanOptions?: api.SpanOptions,
         parent?: api.Context,
-      ): api.Span =>
-        closed
-          ? api.trace.wrapSpanContext(api.INVALID_SPAN_CONTEXT)
-          : captured.startSpan(spanName.slice(0, 256), spanOptions, parent ?? manager.active());
+      ): api.Span => {
+        if (closed) return api.trace.wrapSpanContext(api.INVALID_SPAN_CONTEXT);
+        const span = captured.startSpan(
+          spanName.slice(0, 256),
+          spanOptions,
+          parent ?? manager.active(),
+        );
+        ownedSpans.add(span);
+        return span;
+      };
       const startActiveSpan =
         ((spanName: string, second: unknown, third?: unknown, fourth?: unknown): unknown => {
           const fn = typeof second === "function"
@@ -245,6 +253,7 @@ export function createProjectTraceProvider(
     },
   });
   return Object.freeze({
+    ownsSpan: (span: object) => ownedSpans.has(span),
     hasActiveSpans: () => processor.hasActiveSpans(),
     getProvider: () => provider,
     getContextAPI: () => ({

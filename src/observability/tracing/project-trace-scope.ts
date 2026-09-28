@@ -14,7 +14,7 @@ const weakSet = WeakMap.prototype.set;
 /** Retain ownership when a public span handle outlives its request context. */
 export function rememberProjectSpan(span: Span): void {
   const provider = getProjectTraceProvider();
-  if (provider && !apply(weakGet, spanProviders, [span])) {
+  if (provider && provider.ownsSpan(span) && !apply(weakGet, spanProviders, [span])) {
     apply(weakSet, spanProviders, [span, provider]);
   }
 }
@@ -32,6 +32,7 @@ export function rememberProjectContext(
   if (!provider) return;
   const span = provider.getTraceAPI().getSpan(context);
   if (!span || typeof span !== "object") return;
+  if (!apply(weakGet, spanProviders, [span]) && !provider.ownsSpan(span)) return;
   const owner = (apply(weakGet, spanProviders, [span]) as ProjectTraceProvider | undefined) ??
     provider;
   if (!apply(weakGet, spanProviders, [span])) apply(weakSet, spanProviders, [span, owner]);

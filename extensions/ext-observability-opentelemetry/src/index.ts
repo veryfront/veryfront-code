@@ -34,11 +34,23 @@ const providerSetDelete = Set.prototype.delete;
 const providerSetForEach = Set.prototype.forEach;
 const defineProperty = Object.defineProperty;
 const arrayShift = Array.prototype.shift;
+const SpanWeakSet = WeakSet;
+const spanSetAdd = WeakSet.prototype.add;
+const spanSetHas = WeakSet.prototype.has;
 const typedArrayByteLength = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype),
   "byteLength",
 )!.get!;
 const projectSpanOperations = Object.freeze({
+  createSpanOwners() {
+    const spans = new SpanWeakSet<object>();
+    return Object.freeze({
+      add: (span: object) => {
+        apply(spanSetAdd, spans, [span]);
+      },
+      has: (span: object): boolean => apply(spanSetHas, spans, [span]),
+    });
+  },
   clone: structuredClone,
   byteLength(value: Uint8Array): number {
     return apply(typedArrayByteLength, value, []);

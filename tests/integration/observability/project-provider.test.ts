@@ -3,7 +3,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { OtlpTracingExporter } from "../../../extensions/ext-observability-opentelemetry/src/index.ts";
 import {
   _resetShimForTests,
+  createPublicSpan,
   setGlobalTracerProvider,
+  type Span,
   trace as platformTrace,
   type TracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
@@ -19,7 +21,12 @@ import {
   withActiveSpan,
   withSpanSync,
 } from "veryfront/observability";
-import { runWithProjectTraceProvider } from "#veryfront/observability/tracing/project-trace-scope.ts";
+import {
+  getContextProjectProvider,
+  getSpanProjectProvider,
+  rememberProjectContext,
+  runWithProjectTraceProvider,
+} from "#veryfront/observability/tracing/project-trace-scope.ts";
 
 type Payload = {
   resourceSpans: {
@@ -38,6 +45,38 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("does not adopt a foreign provider span or its context", async () => {
+    const owner = new OtlpTracingExporter();
+    const options = {
+      resource: { "service.name": "ownership" },
+      createTransport: () => ({
+        send: () => Promise.resolve({ status: "success" as const }),
+        shutdown() {},
+      }),
+    };
+    const project = await owner.createProjectProvider(options);
+    const foreign = await owner.createProjectProvider(options);
+    const foreignTracer = foreign.getProvider().getTracer(
+      "platform",
+    ) as import("npm:@opentelemetry/api@1.9.1").Tracer;
+    const raw = foreignTracer.startSpan("platform.request") as unknown as Span;
+    try {
+      runWithProjectTraceProvider(project, () => {
+        createPublicSpan(raw);
+        const context = project.getTraceAPI().setSpan(
+          project.getContextAPI().active(),
+          raw,
+        ) as import("#veryfront/observability/tracing/api-shim.ts").Context;
+        rememberProjectContext(context);
+        assertEquals(getSpanProjectProvider(raw), undefined);
+        assertEquals(getContextProjectProvider(context), undefined);
+      });
+    } finally {
+      raw.end();
+      await owner.shutdown();
+    }
+  });
+
   it("sets trusted resource attributes without inherited setters", async () => {
     const owner = new OtlpTracingExporter();
     const exported: Payload[] = [];
