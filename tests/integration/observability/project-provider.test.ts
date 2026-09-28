@@ -38,6 +38,36 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("keeps processor queue entries private from replaced array methods", async () => {
+    const owner = new OtlpTracingExporter();
+    const session = await owner.createProjectProvider({
+      resource: { "service.name": "queue-repro" },
+      createTransport: () => ({
+        send: () => Promise.resolve({ status: "success" as const }),
+        shutdown() {},
+      }),
+    });
+    const tracer = session.getProvider().getTracer(
+      "app",
+    ) as import("npm:@opentelemetry/api@1.9.1").Tracer;
+    const span = tracer.startSpan("victim.private");
+    const push = Array.prototype.push;
+    const apply = Reflect.apply;
+    let queueExposures = 0;
+    try {
+      Array.prototype.push = function (...items) {
+        for (let index = 0; index < items.length; index++) {
+          if (items[index]?.span?.name === "victim.private") queueExposures++;
+        }
+        return apply(push, this, items);
+      };
+      span.end();
+    } finally {
+      Array.prototype.push = push;
+      await owner.shutdown();
+    }
+    assertEquals(queueExposures, 0);
+  });
   it("keeps provider handles private when shared Set methods are replaced", async () => {
     const owner = new OtlpTracingExporter();
     // Load the SDK before installing the hook so this targets provider bookkeeping.

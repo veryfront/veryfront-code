@@ -33,6 +33,22 @@ const providerSetAdd = Set.prototype.add;
 const providerSetDelete = Set.prototype.delete;
 const providerSetForEach = Set.prototype.forEach;
 const defineProperty = Object.defineProperty;
+const arrayShift = Array.prototype.shift;
+const projectArrayOperations = Object.freeze({
+  append<T>(values: T[], value: T): void {
+    const property = {
+      __proto__: null,
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    };
+    defineProperty(values, values.length, property);
+  },
+  shift<T>(values: T[]): T | undefined {
+    return apply(arrayShift, values, []);
+  },
+});
 
 /**
  * The TracerProvider interface as expected by the core shim.
@@ -808,7 +824,7 @@ class OtlpTracingExporter implements TracingExporter {
 
   async createProjectProvider(options: ProjectTraceProviderOptions): Promise<ProjectTraceProvider> {
     const { createProjectTraceProvider } = await import("./project-provider.ts");
-    const session = createProjectTraceProvider(options);
+    const session = createProjectTraceProvider(options, projectArrayOperations);
     const handle: ProjectTraceProvider = Object.freeze({
       ...session,
       shutdown: async (discard: boolean) => {
@@ -1008,14 +1024,7 @@ class OtlpTracingExporter implements TracingExporter {
   async shutdown(): Promise<void> {
     const pending: Promise<void>[] = [];
     apply(providerSetForEach, this.projectProviders, [(provider: ProjectTraceProvider) => {
-      const property = {
-        __proto__: null,
-        value: provider.shutdown(true),
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      };
-      defineProperty(pending, pending.length, property);
+      projectArrayOperations.append(pending, provider.shutdown(true));
     }]);
     await Promise.allSettled(pending);
     if (this.logProvider) {
