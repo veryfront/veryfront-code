@@ -82,22 +82,23 @@ interface SnowflakeQueryStatusResponse {
   };
 }
 
-interface DatabaseInfo {
+// Type aliases, not interfaces, so query rows (Record<string, unknown>) can be cast to them.
+type DatabaseInfo = {
   name: string;
   created_on: string;
   owner: string;
   comment?: string;
-}
+};
 
-interface SchemaInfo {
+type SchemaInfo = {
   name: string;
   database_name: string;
   created_on: string;
   owner: string;
   comment?: string;
-}
+};
 
-interface TableInfo {
+type TableInfo = {
   name: string;
   database_name: string;
   schema_name: string;
@@ -107,9 +108,9 @@ interface TableInfo {
   bytes?: number;
   owner: string;
   comment?: string;
-}
+};
 
-interface ColumnInfo {
+type ColumnInfo = {
   name: string;
   type: string;
   kind: string;
@@ -120,7 +121,7 @@ interface ColumnInfo {
   check?: string;
   expression?: string;
   comment?: string;
-}
+};
 
 interface SnowflakeError extends Error {
   code?: string;
@@ -275,13 +276,13 @@ export async function runQuery(
 
 export async function listDatabases(): Promise<DatabaseInfo[]> {
   const result = await runQuery("SHOW DATABASES");
-  return result.rows as unknown as DatabaseInfo[];
+  return result.rows as DatabaseInfo[];
 }
 
 export async function listSchemas(database: string): Promise<SchemaInfo[]> {
   validateIdentifier(database, "database name");
   const result = await runQuery(`SHOW SCHEMAS IN DATABASE ${database}`);
-  return result.rows as unknown as SchemaInfo[];
+  return result.rows as SchemaInfo[];
 }
 
 export async function listTables(
@@ -291,7 +292,7 @@ export async function listTables(
   validateIdentifier(database, "database name");
   validateIdentifier(schema, "schema name");
   const result = await runQuery(`SHOW TABLES IN ${database}.${schema}`);
-  return result.rows as unknown as TableInfo[];
+  return result.rows as TableInfo[];
 }
 
 export async function describeTable(
@@ -307,7 +308,7 @@ export async function describeTable(
   validateIdentifier(table, "table name");
   const result = await runQuery(`DESCRIBE TABLE ${database}.${schema}.${table}`);
 
-  const columns = result.rows as unknown as ColumnInfo[];
+  const columns = result.rows as ColumnInfo[];
   const primaryKeys = columns
     .filter((col) => col.primary_key === "Y")
     .map((col) => col.name);
