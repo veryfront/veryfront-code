@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getTask } from "../lib/asana-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "asana-get-task",
@@ -8,8 +9,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     taskGid: v.string().describe("The GID of the task to retrieve"),
   }))(),
-  async execute({ taskGid }) {
-    const task = await getTask(taskGid);
+  async execute({ taskGid }, context) {
+    const userId = requireUserIdFromContext(context);
+    const task = await getTask(userId, taskGid);
 
     return {
       gid: task.gid,

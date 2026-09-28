@@ -1,14 +1,16 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listProjects } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "jira-list-projects",
   description:
     "List all accessible Jira projects in the connected site. Returns project keys, names, and basic information.",
   inputSchema: defineSchema((v) => v.object({}))(),
-  async execute() {
-    const projects = await listProjects();
+  async execute(_input, context) {
+    const userId = requireUserIdFromContext(context);
+    const projects = await listProjects(userId);
 
     return {
       total: projects.length,

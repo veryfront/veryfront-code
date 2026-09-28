@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { extractDescriptionText, getIssue } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "jira-get-issue",
@@ -11,8 +12,9 @@ export default tool({
       issueKey: v.string().describe('The issue key (e.g., "PROJ-123") or ID'),
     })
   )(),
-  async execute({ issueKey }) {
-    const issue = await getIssue(issueKey);
+  async execute({ issueKey }, context) {
+    const userId = requireUserIdFromContext(context);
+    const issue = await getIssue(userId, issueKey);
     const { fields } = issue;
 
     const priority = fields.priority

@@ -203,6 +203,7 @@ export const getAgentResponseSchema = defineSchema((v) =>
         totalTokens: v.number().int().nonnegative(),
         cachedInputTokens: v.number().int().nonnegative().optional(),
         cacheCreationInputTokens: v.number().int().nonnegative().optional(),
+        cacheCreation1hInputTokens: v.number().int().nonnegative().optional(),
         cacheReadInputTokens: v.number().int().nonnegative().optional(),
         reasoningTokens: v.number().int().nonnegative().optional(),
         billableInputTokens: v.number().int().nonnegative().optional(),

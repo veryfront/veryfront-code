@@ -193,6 +193,21 @@ function isToolCallsFinishReason(
   return typeof value === "object" && value?.unified === "tool-calls";
 }
 
+/**
+ * Azure OpenAI reports its output content-filter result for streamed text as
+ * a choice with no delta and no finish reason, only `content_filter_results`
+ * (and `content_filter_offsets`). It can arrive between content chunks or
+ * after the finish chunk. It carries no content, so it is skipped like the
+ * `prompt_filter_results` preamble. A choice that also names a delta or a
+ * finish reason is ordinary content and is validated as such.
+ */
+function isContentFilterAnnotation(choice: Record<string, unknown>): boolean {
+  if (choice.delta !== undefined && choice.delta !== null) return false;
+  if (choice.finish_reason !== undefined && choice.finish_reason !== null) return false;
+  return readRecord(choice.content_filter_results) !== undefined ||
+    readRecord(choice.content_filter_offsets) !== undefined;
+}
+
 export async function* streamOpenAICompatibleParts(
   stream: ReadableStream<Uint8Array>,
   context: OpenAIChatStreamContext = {},
@@ -253,11 +268,13 @@ export async function* streamOpenAICompatibleParts(
     if (record.choices.length === 0) {
       return;
     }
+    const choice = readRecord(record.choices[0]);
+    if (choice && isContentFilterAnnotation(choice)) {
+      return;
+    }
     if (sawFinishReason) {
       throw invalidOpenAIStream(context, "stream contained choice data after its finish reason");
     }
-
-    const choice = readRecord(record.choices[0]);
     if (!choice) {
       throw invalidOpenAIStream(context, "first choice was not an object");
     }

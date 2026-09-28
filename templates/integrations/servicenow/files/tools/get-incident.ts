@@ -2,9 +2,9 @@
  * Get ServiceNow Incident Tool
  */
 
+import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../lib/servicenow-client.ts";
-import { isServiceNowConnected } from "../lib/token-store.ts";
 
 function getDisplayValue(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
@@ -12,7 +12,7 @@ function getDisplayValue(value: unknown): unknown {
   return (value as { display_value: unknown }).display_value;
 }
 
-export default defineTool({
+export default tool({
   id: "servicenow-get-incident",
   description:
     "Get details of a specific ServiceNow incident by number (e.g., INC0010001) or sys_id",
@@ -20,13 +20,6 @@ export default defineTool({
     id: v.string().describe("Incident number (INC0010001) or sys_id"),
   }))(),
   async execute(input) {
-    if (!(await isServiceNowConnected())) {
-      return {
-        error: "ServiceNow not connected",
-        action: "Please connect ServiceNow via /api/auth/servicenow",
-      };
-    }
-
     try {
       const client = getServiceNowClient();
       const incident = await client.getIncident(input.id);

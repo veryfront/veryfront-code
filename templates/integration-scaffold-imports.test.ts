@@ -10,28 +10,6 @@ import {
 import { mergeFiles } from "./loader.ts";
 import type { TemplateFile } from "./types.ts";
 
-// Integration scaffolds whose files still import names that no scaffolded
-// module exports. Shrink this list as scaffolds are fixed; a new scaffold must
-// resolve every named import.
-const SCAFFOLDS_WITH_UNRESOLVED_IMPORTS = [
-  "airtable",
-  "asana",
-  "confluence",
-  "figma",
-  "gitlab",
-  "jira",
-  "linear",
-  "notion",
-  "onedrive",
-  "outlook",
-  "salesforce",
-  "servicenow",
-  "sharepoint",
-  "shopify",
-  "teams",
-  "trello",
-];
-
 const NAMED_IMPORT = /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'](\.{1,2}\/[^"']+)["']/g;
 const DECLARED_EXPORT =
   /export\s+(?:declare\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
@@ -91,16 +69,12 @@ async function scaffoldFiles(
 }
 
 describe("integration scaffold imports", () => {
-  it("resolves every named import between the Twilio scaffold's files", async () => {
-    assertEquals(unresolvedImports(await scaffoldFiles("twilio")), []);
-  });
-
-  it("resolves every named import in each scaffold outside the pending list", async () => {
+  it("resolves every named import between each scaffold's files", async () => {
     const broken: string[] = [];
     for (const name of ALL_AVAILABLE_INTEGRATIONS) {
-      if (unresolvedImports(await scaffoldFiles(name)).length > 0) broken.push(name);
+      broken.push(...unresolvedImports(await scaffoldFiles(name)).map((p) => `${name}: ${p}`));
     }
 
-    assertEquals(broken.sort(), SCAFFOLDS_WITH_UNRESOLVED_IMPORTS);
+    assertEquals(broken, []);
   });
 });

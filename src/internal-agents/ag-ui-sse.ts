@@ -108,6 +108,7 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
         totalTokens: v.number().int().nonnegative().optional(),
         cachedInputTokens: v.number().int().nonnegative().optional(),
         cacheCreationInputTokens: v.number().int().nonnegative().optional(),
+        cacheCreation1hInputTokens: v.number().int().nonnegative().optional(),
         cacheReadInputTokens: v.number().int().nonnegative().optional(),
         reasoningTokens: v.number().int().nonnegative().optional(),
         billableInputTokens: v.number().int().nonnegative().optional(),

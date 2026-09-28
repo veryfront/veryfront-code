@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { downloadFile, formatFileSize } from "../lib/onedrive-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "onedrive-download-file",
@@ -12,8 +13,9 @@ export default tool({
       .default(false)
       .describe("If true, return only first 1000 characters as preview"),
   }))(),
-  async execute({ itemId, preview }) {
-    const { content, metadata } = await downloadFile(itemId);
+  async execute({ itemId, preview }, context) {
+    const userId = requireUserIdFromContext(context);
+    const { content, metadata } = await downloadFile(userId, itemId);
 
     const shouldTruncate = preview && content.length > 1000;
 

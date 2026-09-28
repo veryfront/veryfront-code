@@ -375,9 +375,13 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
   });
   // Builders keep the upstream model id; on a vendor-neutral route the fetch
   // wrapper sends it as `<provider>/<id>`.
-  const { baseURL, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(apiBaseUrl, provider);
+  const { baseURL, neutral, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(
+    apiBaseUrl,
+    provider,
+  );
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
     inferenceCredential: inferenceCredential !== undefined,
+    ...(neutral ? { neutralRoute: true } : {}),
     ...(wireModelProvider ? { wireModelProvider } : {}),
     ...(options.assertCredentialActive || options.assertInferenceCredentialActive
       ? {

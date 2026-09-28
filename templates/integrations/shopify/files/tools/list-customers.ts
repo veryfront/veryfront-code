@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listCustomers } from "../lib/shopify-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "shopify-list-customers",
@@ -17,8 +18,9 @@ export default tool({
       .optional()
       .describe("Search query to filter customers (e.g., email, name)"),
   }))(),
-  async execute({ limit, query }) {
-    const customers = await listCustomers({ limit, query });
+  async execute({ limit, query }, context) {
+    const userId = requireUserIdFromContext(context);
+    const customers = await listCustomers(userId, { limit, query });
 
     return customers.map((customer) => ({
       id: customer.id,

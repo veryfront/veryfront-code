@@ -1,4 +1,9 @@
-import { getAccessToken } from "./token-store.ts";
+import { trelloConfig } from "veryfront/oauth";
+import { getValidToken, providerFromConfig } from "./oauth.ts";
+
+// The generic OAuthService does not support Trello, so tokens resolve through
+// the base scaffold's getValidToken().
+const trelloOAuthProvider = providerFromConfig(trelloConfig);
 
 const TRELLO_BASE_URL = "https://api.trello.com/1";
 
@@ -49,8 +54,12 @@ interface TrelloMember {
   avatarUrl: string;
 }
 
-async function trelloFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+async function trelloFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await getValidToken(trelloOAuthProvider, userId, "trello");
   if (!token) {
     throw new Error("Not authenticated with Trello. Please connect your account.");
   }
@@ -87,25 +96,28 @@ async function trelloFetch<T>(endpoint: string, options: RequestInit = {}): Prom
   return response.json();
 }
 
-export async function listBoards(): Promise<TrelloBoard[]> {
+export async function listBoards(userId: string): Promise<TrelloBoard[]> {
   return trelloFetch<TrelloBoard[]>(
+    userId,
     "/members/me/boards?fields=name,desc,closed,url,prefs,dateLastActivity",
   );
 }
 
-export async function getBoard(boardId: string): Promise<TrelloBoard> {
+export async function getBoard(userId: string, boardId: string): Promise<TrelloBoard> {
   return trelloFetch<TrelloBoard>(
+    userId,
     `/boards/${boardId}?fields=name,desc,closed,url,prefs,dateLastActivity`,
   );
 }
 
-export async function listLists(boardId: string): Promise<TrelloList[]> {
+export async function listLists(userId: string, boardId: string): Promise<TrelloList[]> {
   return trelloFetch<TrelloList[]>(
+    userId,
     `/boards/${boardId}/lists?fields=name,closed,idBoard,pos`,
   );
 }
 
-export async function listCards(options: {
+export async function listCards(userId: string, options: {
   boardId?: string;
   listId?: string;
   limit?: number;
@@ -117,12 +129,14 @@ export async function listCards(options: {
 
   if (listId) {
     return trelloFetch<TrelloCard[]>(
+      userId,
       `/lists/${listId}/cards?fields=${fields}&limit=${limit}`,
     );
   }
 
   if (boardId) {
     return trelloFetch<TrelloCard[]>(
+      userId,
       `/boards/${boardId}/cards?fields=${fields}&limit=${limit}`,
     );
   }
@@ -130,14 +144,15 @@ export async function listCards(options: {
   throw new Error("Either boardId or listId must be provided");
 }
 
-export async function getCard(cardId: string): Promise<TrelloCard> {
+export async function getCard(userId: string, cardId: string): Promise<TrelloCard> {
   return trelloFetch<TrelloCard>(
+    userId,
     "/cards/" +
       `${cardId}?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity`,
   );
 }
 
-export async function createCard(options: {
+export async function createCard(userId: string, options: {
   listId: string;
   name: string;
   desc?: string;
@@ -157,10 +172,11 @@ export async function createCard(options: {
   if (options.idMembers) params.set("idMembers", options.idMembers.join(","));
   if (options.idLabels) params.set("idLabels", options.idLabels.join(","));
 
-  return trelloFetch<TrelloCard>(`/cards?${params}`, { method: "POST" });
+  return trelloFetch<TrelloCard>(userId, `/cards?${params}`, { method: "POST" });
 }
 
 export async function updateCard(
+  userId: string,
   cardId: string,
   updates: {
     name?: string;
@@ -186,9 +202,9 @@ export async function updateCard(
   if (updates.idLabels !== undefined) params.set("idLabels", updates.idLabels.join(","));
   if (updates.pos !== undefined) params.set("pos", String(updates.pos));
 
-  return trelloFetch<TrelloCard>(`/cards/${cardId}?${params}`, { method: "PUT" });
+  return trelloFetch<TrelloCard>(userId, `/cards/${cardId}?${params}`, { method: "PUT" });
 }
 
-export async function getMe(): Promise<TrelloMember> {
-  return trelloFetch<TrelloMember>("/members/me?fields=fullName,username,avatarUrl");
+export async function getMe(userId: string): Promise<TrelloMember> {
+  return trelloFetch<TrelloMember>(userId, "/members/me?fields=fullName,username,avatarUrl");
 }

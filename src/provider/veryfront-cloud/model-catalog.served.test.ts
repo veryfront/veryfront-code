@@ -44,6 +44,7 @@ import {
   VERYFRONT_CLOUD_PROVIDER_ROUTING,
 } from "./model-catalog.data.ts";
 import { isOpenAIReasoningModel } from "../shared/openai-reasoning.ts";
+import { resolveVeryfrontCloudGatewayRoute } from "./shared.ts";
 
 type ServedRow = {
   id: string;
@@ -318,6 +319,21 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
 
       assertEquals(resolveVeryfrontCloudProviderId("vendor-studio"), "vendor");
       assertEquals(resolveVeryfrontCloudProviderRouting("vendor-studio").surface, "google");
+    });
+
+    it("keeps a non-Google provider on the Google surface on its vendor-scoped route", () => {
+      __setVeryfrontCloudCatalogForTests(payload([
+        row("vendor-studio/vendor-model", { provider: "vendor", surface: "google" }),
+      ]));
+
+      assertEquals(
+        resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", "vendor-studio"),
+        { baseURL: "https://api.veryfront.com/ai/gateway/vendor/v1beta" },
+      );
+      assertEquals(
+        resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", "google"),
+        { baseURL: "https://api.veryfront.com/ai/v1beta", neutral: true },
+      );
     });
 
     it("uses the default model the catalog names", () => {

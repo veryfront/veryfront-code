@@ -17,6 +17,8 @@ export type AgUiRuntimeChatStreamUsage = {
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
   };
+  /** One-hour-lifetime share of `cacheWriteTokens`; a subset, never added to it. */
+  cacheCreation1hInputTokens?: number;
   outputTokenDetails: {
     textTokens?: number;
     reasoningTokens?: number;
@@ -171,6 +173,7 @@ function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsa
     getNumberField(usage, "cachedInputTokens");
   const cacheWriteTokens = getNumberField(inputTokenDetails, "cacheWriteTokens") ??
     getNumberField(usage, "cacheCreationInputTokens");
+  const cacheCreation1hInputTokens = getNumberField(usage, "cacheCreation1hInputTokens");
   const reasoningTokens = getNumberField(outputTokenDetails, "reasoningTokens") ??
     getNumberField(usage, "reasoningTokens");
 
@@ -185,6 +188,7 @@ function getFinishUsage(event: AgUiRuntimeStreamEvent): AgUiRuntimeChatStreamUsa
       ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
       ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
     },
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     outputTokenDetails: {
       ...(getNumberField(outputTokenDetails, "textTokens") !== undefined
         ? { textTokens: getNumberField(outputTokenDetails, "textTokens") }

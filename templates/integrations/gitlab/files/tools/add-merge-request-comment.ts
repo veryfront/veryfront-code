@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { addMergeRequestComment } from "../lib/gitlab-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "gitlab-add-merge-request-comment",
@@ -21,8 +22,9 @@ export default tool({
       ),
     })
   )(),
-  async execute({ projectId, mergeRequestIid, body, internal }) {
-    const note = await addMergeRequestComment(projectId, mergeRequestIid, {
+  async execute({ projectId, mergeRequestIid, body, internal }, context) {
+    const userId = requireUserIdFromContext(context);
+    const note = await addMergeRequestComment(userId, projectId, mergeRequestIid, {
       body,
       internal,
     });

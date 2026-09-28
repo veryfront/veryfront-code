@@ -24,6 +24,7 @@ export type AgentTraceUsage = {
   totalTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
   billableInputTokens?: number;

@@ -117,6 +117,9 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
     : isNonNegativeInteger(inputTokenDetails?.cacheWriteTokens)
     ? inputTokenDetails.cacheWriteTokens
     : undefined;
+  const cacheCreation1hInputTokens = isNonNegativeInteger(value.cacheCreation1hInputTokens)
+    ? value.cacheCreation1hInputTokens
+    : undefined;
   const cacheReadInputTokens = isNonNegativeInteger(value.cacheReadInputTokens)
     ? value.cacheReadInputTokens
     : isNonNegativeInteger(inputTokenDetails?.cacheReadTokens)
@@ -137,6 +140,7 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
 

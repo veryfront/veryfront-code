@@ -182,6 +182,9 @@ function buildConversationHostedLifecycleUsage(
     ...(usage.cachedInputTokens !== undefined
       ? { cachedInputTokens: usage.cachedInputTokens }
       : {}),
+    ...(usage.cacheCreation1hInputTokens !== undefined
+      ? { cacheCreation1hInputTokens: usage.cacheCreation1hInputTokens }
+      : {}),
   };
 }
 

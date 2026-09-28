@@ -54,6 +54,9 @@ export function createAgUiFinalizeTracker<TChunk>(
       if (typeof nextMetadata.cacheCreationInputTokens === "number") {
         metadata.cacheCreationInputTokens = nextMetadata.cacheCreationInputTokens;
       }
+      if (typeof nextMetadata.cacheCreation1hInputTokens === "number") {
+        metadata.cacheCreation1hInputTokens = nextMetadata.cacheCreation1hInputTokens;
+      }
       if (typeof nextMetadata.cacheReadInputTokens === "number") {
         metadata.cacheReadInputTokens = nextMetadata.cacheReadInputTokens;
       }

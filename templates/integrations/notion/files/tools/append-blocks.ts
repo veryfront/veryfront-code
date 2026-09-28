@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { appendBlocks } from "../lib/notion-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "notion-append-blocks",
@@ -10,8 +11,9 @@ export default tool({
     children: v.array(v.record(v.string(), v.unknown())).describe("Notion block objects to append"),
     after: v.string().optional().describe("Optional existing child block ID after which to append"),
   }))(),
-  async execute({ blockId, children, after }) {
-    const blocks = await appendBlocks({ blockId, children, after });
+  async execute({ blockId, children, after }, context) {
+    const userId = requireUserIdFromContext(context);
+    const blocks = await appendBlocks(userId, { blockId, children, after });
 
     return blocks.map((block) => ({
       id: block.id,

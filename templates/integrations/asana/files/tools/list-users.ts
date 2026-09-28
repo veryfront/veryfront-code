@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listUsers } from "../lib/asana-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "asana-list-users",
@@ -9,8 +10,9 @@ export default tool({
     workspaceGid: v.string().describe("Asana workspace GID"),
     teamGid: v.string().optional().describe("Optional Asana team GID"),
   }))(),
-  async execute({ workspaceGid, teamGid }) {
-    const users = await listUsers({ workspaceGid, teamGid });
+  async execute({ workspaceGid, teamGid }, context) {
+    const userId = requireUserIdFromContext(context);
+    const users = await listUsers(userId, { workspaceGid, teamGid });
     return users.map(({ gid, name, email }) => ({ gid, name, email }));
   },
 });

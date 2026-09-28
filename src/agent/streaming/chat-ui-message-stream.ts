@@ -36,6 +36,8 @@ export type ChatUiMessageStreamFinishPart = {
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
     };
+    /** One-hour-lifetime share of `cacheWriteTokens`; a subset, never added to it. */
+    cacheCreation1hInputTokens?: number;
     outputTokenDetails: {
       textTokens?: number;
       reasoningTokens?: number;

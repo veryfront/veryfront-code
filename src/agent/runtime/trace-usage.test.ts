@@ -11,6 +11,7 @@ describe("runtime trace usage attributes", () => {
         outputTokens: 5,
         totalTokens: 15,
         cacheCreationInputTokens: 3,
+        cacheCreation1hInputTokens: 1,
         cacheReadInputTokens: 7,
         reasoningTokens: 2,
       }),
@@ -19,10 +20,18 @@ describe("runtime trace usage attributes", () => {
         "gen_ai.usage.output_tokens": 5,
         "gen_ai.usage.total_tokens": 15,
         "gen_ai.usage.cache_creation.input_tokens": 3,
+        "gen_ai.usage.cache_creation_1h.input_tokens": 1,
         "gen_ai.usage.cache_read.input_tokens": 7,
         "gen_ai.usage.reasoning.output_tokens": 2,
       },
     );
+  });
+
+  it("omits the 1h cache-creation attribute when the share is not reported", () => {
+    const attributes = buildRuntimeUsageTraceAttributes({
+      cacheCreationInputTokens: 3,
+    });
+    assertEquals("gen_ai.usage.cache_creation_1h.input_tokens" in attributes, false);
   });
 
   it("accepts accumulated runtime usage aliases", () => {

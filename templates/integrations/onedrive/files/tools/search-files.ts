@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { formatFileSize, isFile, isFolder, searchFiles } from "../lib/onedrive-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "onedrive-search-files",
@@ -15,8 +16,9 @@ export default tool({
       .default(20)
       .describe("Maximum number of results to return"),
   }))(),
-  async execute({ query, maxResults }) {
-    const result = await searchFiles(query, { top: maxResults });
+  async execute({ query, maxResults }, context) {
+    const userId = requireUserIdFromContext(context);
+    const result = await searchFiles(userId, query, { top: maxResults });
 
     const matches = result.value.map((item) => {
       const baseInfo = {

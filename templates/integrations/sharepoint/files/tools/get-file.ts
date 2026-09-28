@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { downloadFileAsText, getFile } from "../lib/sharepoint-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "sharepoint-get-file",
@@ -17,8 +18,9 @@ export default tool({
         "Whether to download and include the file content (only works for text-based files)",
       ),
   }))(),
-  async execute({ siteId, driveId, itemId, includeContent }) {
-    const file = await getFile(siteId, driveId, itemId);
+  async execute({ siteId, driveId, itemId, includeContent }, context) {
+    const userId = requireUserIdFromContext(context);
+    const file = await getFile(userId, siteId, driveId, itemId);
 
     const result: Record<string, unknown> = {
       id: file.id,
@@ -64,7 +66,7 @@ export default tool({
     }
 
     try {
-      const content = await downloadFileAsText(siteId, driveId, itemId);
+      const content = await downloadFileAsText(userId, siteId, driveId, itemId);
       result.content = content;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";

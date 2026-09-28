@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listSpaces } from "../lib/confluence-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "confluence-list-spaces",
@@ -17,8 +18,9 @@ export default tool({
       .default(25)
       .describe("Maximum number of spaces to return"),
   }))(),
-  async execute({ type, limit }) {
-    const spaces = await listSpaces({
+  async execute({ type, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const spaces = await listSpaces(userId, {
       type: type === "all" ? undefined : type,
       limit,
     });

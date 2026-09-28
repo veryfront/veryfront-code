@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getPageTitle, queryDatabase } from "../lib/notion-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "notion-query-database",
@@ -14,8 +15,9 @@ export default tool({
       .describe("Sort direction"),
     limit: v.number().min(1).max(50).default(20).describe("Maximum number of results"),
   }))(),
-  async execute({ databaseId, sortProperty, sortDirection, limit }) {
-    const results = await queryDatabase(databaseId, {
+  async execute({ databaseId, sortProperty, sortDirection, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const results = await queryDatabase(userId, databaseId, {
       sorts: sortProperty ? [{ property: sortProperty, direction: sortDirection }] : undefined,
       pageSize: limit,
     });

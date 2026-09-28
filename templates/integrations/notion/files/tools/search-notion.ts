@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getPageTitle, searchNotion } from "../lib/notion-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "notion-search-notion",
@@ -19,9 +20,10 @@ export default tool({
       .default(10)
       .describe("Maximum number of results to return"),
   }))(),
-  async execute({ query, type, limit }) {
+  async execute({ query, type, limit }, context) {
+    const userId = requireUserIdFromContext(context);
     const filter = type === "all" ? undefined : { property: "object", value: type };
-    const results = await searchNotion(query, { filter, pageSize: limit });
+    const results = await searchNotion(userId, query, { filter, pageSize: limit });
 
     return results.map((item) => {
       if (item.object === "page") {

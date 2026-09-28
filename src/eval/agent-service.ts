@@ -597,6 +597,8 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
   const cacheCreationInputTokens = readNonNegativeNumber(record.cacheCreationInputTokens) ??
     readNonNegativeNumber(record.cacheCreationTokens) ??
     readNonNegativeNumber(record.cache_creation_input_tokens);
+  const cacheCreation1hInputTokens = readNonNegativeNumber(record.cacheCreation1hInputTokens) ??
+    readNonNegativeNumber(record.cache_creation_1h_input_tokens);
   const cacheReadInputTokens = readNonNegativeNumber(record.cacheReadInputTokens) ??
     readNonNegativeNumber(record.cacheReadTokens) ??
     readNonNegativeNumber(record.cache_read_input_tokens);
@@ -637,6 +639,7 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),

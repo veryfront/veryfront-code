@@ -129,14 +129,16 @@ MICROSOFT_TENANT_ID=common
    - Name: Your app name
    - Callback URL: `http://localhost:3000/api/auth/jira/callback`
 4. Add required scopes in **Permissions**
-5. Get your Cloud ID: Visit `https://your-domain.atlassian.net/_edge/tenant_info`
+5. (Optional) To pick a site other than the first one your token can access, get its Cloud ID from `https://your-domain.atlassian.net/_edge/tenant_info`
 
 ### Environment Variables
 
 ```env
 ATLASSIAN_CLIENT_ID=your-client-id
 ATLASSIAN_CLIENT_SECRET=your-client-secret
-ATLASSIAN_CLOUD_ID=your-cloud-id
+# Optional; defaults to the first accessible site
+JIRA_CLOUD_ID=your-cloud-id
+CONFLUENCE_CLOUD_ID=your-cloud-id
 ```
 
 ### Required Scopes
@@ -357,6 +359,7 @@ POSTHOG_HOST=https://app.posthog.com
 ```env
 SALESFORCE_CLIENT_ID=your-consumer-key
 SALESFORCE_CLIENT_SECRET=your-consumer-secret
+SALESFORCE_INSTANCE_URL=https://your-domain.my.salesforce.com
 ```
 
 ### Pipedrive

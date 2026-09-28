@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { linearConfig, OAuthService } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const linearService = new OAuthService(linearConfig, tokenStore);
 
 const LINEAR_API_URL = "https://api.linear.app/graphql";
 
@@ -106,8 +110,12 @@ interface GraphQLResponse<T> {
   }>;
 }
 
-async function linearFetch<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
-  const token = await getAccessToken();
+async function linearFetch<T>(
+  userId: string,
+  query: string,
+  variables?: Record<string, unknown>,
+): Promise<T> {
+  const token = await linearService.getAccessToken(userId);
   if (!token) {
     throw new Error("Not authenticated with Linear. Please connect your account.");
   }
@@ -140,6 +148,7 @@ async function linearFetch<T>(query: string, variables?: Record<string, unknown>
 }
 
 export async function searchIssues(
+  userId: string,
   query: string,
   options?: {
     limit?: number;
@@ -190,7 +199,7 @@ export async function searchIssues(
     }
   `;
 
-  const data = await linearFetch<{ issueSearch: { nodes: LinearIssue[] } }>(gqlQuery, {
+  const data = await linearFetch<{ issueSearch: { nodes: LinearIssue[] } }>(userId, gqlQuery, {
     query,
     first: options?.limit ?? 10,
     includeArchived: options?.includeArchived ?? false,
@@ -199,7 +208,7 @@ export async function searchIssues(
   return data.issueSearch.nodes;
 }
 
-export async function getIssue(issueId: string): Promise<LinearIssue> {
+export async function getIssue(userId: string, issueId: string): Promise<LinearIssue> {
   const query = `
     query GetIssue($id: String!) {
       issue(id: $id) {
@@ -242,11 +251,11 @@ export async function getIssue(issueId: string): Promise<LinearIssue> {
     }
   `;
 
-  const data = await linearFetch<{ issue: LinearIssue }>(query, { id: issueId });
+  const data = await linearFetch<{ issue: LinearIssue }>(userId, query, { id: issueId });
   return data.issue;
 }
 
-export async function createIssue(options: {
+export async function createIssue(userId: string, options: {
   teamId: string;
   title: string;
   description?: string;
@@ -313,9 +322,13 @@ export async function createIssue(options: {
   if (options.projectId) input.projectId = options.projectId;
   if (options.labelIds?.length) input.labelIds = options.labelIds;
 
-  const data = await linearFetch<{ issueCreate: { success: boolean; issue: LinearIssue } }>(mutation, {
-    input,
-  });
+  const data = await linearFetch<{ issueCreate: { success: boolean; issue: LinearIssue } }>(
+    userId,
+    mutation,
+    {
+      input,
+    },
+  );
 
   if (!data.issueCreate.success) {
     throw new Error("Failed to create issue");
@@ -325,6 +338,7 @@ export async function createIssue(options: {
 }
 
 export async function updateIssue(
+  userId: string,
   issueId: string,
   options: {
     title?: string;
@@ -391,10 +405,14 @@ export async function updateIssue(
   if (options.projectId) input.projectId = options.projectId;
   if (options.labelIds) input.labelIds = options.labelIds;
 
-  const data = await linearFetch<{ issueUpdate: { success: boolean; issue: LinearIssue } }>(mutation, {
-    id: issueId,
-    input,
-  });
+  const data = await linearFetch<{ issueUpdate: { success: boolean; issue: LinearIssue } }>(
+    userId,
+    mutation,
+    {
+      id: issueId,
+      input,
+    },
+  );
 
   if (!data.issueUpdate.success) {
     throw new Error("Failed to update issue");
@@ -403,7 +421,7 @@ export async function updateIssue(
   return data.issueUpdate.issue;
 }
 
-export async function listProjects(options?: {
+export async function listProjects(userId: string, options?: {
   limit?: number;
   includeArchived?: boolean;
 }): Promise<LinearProject[]> {
@@ -435,7 +453,7 @@ export async function listProjects(options?: {
     }
   `;
 
-  const data = await linearFetch<{ projects: { nodes: LinearProject[] } }>(query, {
+  const data = await linearFetch<{ projects: { nodes: LinearProject[] } }>(userId, query, {
     first: options?.limit ?? 20,
     includeArchived: options?.includeArchived ?? false,
   });
@@ -443,7 +461,7 @@ export async function listProjects(options?: {
   return data.projects.nodes;
 }
 
-export async function getTeams(): Promise<LinearTeam[]> {
+export async function getTeams(userId: string): Promise<LinearTeam[]> {
   const query = `
     query GetTeams {
       teams {
@@ -456,11 +474,14 @@ export async function getTeams(): Promise<LinearTeam[]> {
     }
   `;
 
-  const data = await linearFetch<{ teams: { nodes: LinearTeam[] } }>(query);
+  const data = await linearFetch<{ teams: { nodes: LinearTeam[] } }>(userId, query);
   return data.teams.nodes;
 }
 
-export async function getWorkflowStates(teamId: string): Promise<LinearWorkflowState[]> {
+export async function getWorkflowStates(
+  userId: string,
+  teamId: string,
+): Promise<LinearWorkflowState[]> {
   const query = `
     query GetWorkflowStates($teamId: String!) {
       team(id: $teamId) {
@@ -475,14 +496,18 @@ export async function getWorkflowStates(teamId: string): Promise<LinearWorkflowS
     }
   `;
 
-  const data = await linearFetch<{ team: { states: { nodes: LinearWorkflowState[] } } }>(query, {
-    teamId,
-  });
+  const data = await linearFetch<{ team: { states: { nodes: LinearWorkflowState[] } } }>(
+    userId,
+    query,
+    {
+      teamId,
+    },
+  );
 
   return data.team.states.nodes;
 }
 
-export async function listUsers(options?: {
+export async function listUsers(userId: string, options?: {
   limit?: number;
 }): Promise<LinearUser[]> {
   const query = `
@@ -500,14 +525,14 @@ export async function listUsers(options?: {
     }
   `;
 
-  const data = await linearFetch<{ users: { nodes: LinearUser[] } }>(query, {
+  const data = await linearFetch<{ users: { nodes: LinearUser[] } }>(userId, query, {
     first: options?.limit ?? 50,
   });
 
   return data.users.nodes;
 }
 
-export async function addComment(options: {
+export async function addComment(userId: string, options: {
   issueId: string;
   body: string;
 }): Promise<LinearComment> {
@@ -534,6 +559,7 @@ export async function addComment(options: {
   `;
 
   const data = await linearFetch<{ commentCreate: { success: boolean; comment: LinearComment } }>(
+    userId,
     mutation,
     options,
   );

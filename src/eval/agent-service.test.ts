@@ -441,6 +441,7 @@ describe("eval/agent-service", () => {
                 costSource: "gateway",
                 cacheReadInputTokens: 3,
                 cachedInputTokens: 3,
+                cacheCreation1hInputTokens: 4,
                 reasoningTokens: 2,
                 usageCaptureStatus: "complete",
               },
@@ -545,6 +546,7 @@ describe("eval/agent-service", () => {
       costSource: "gateway",
       cacheReadInputTokens: 3,
       cachedInputTokens: 3,
+      cacheCreation1hInputTokens: 4,
       reasoningTokens: 2,
       usageCaptureStatus: "complete",
     });
@@ -566,6 +568,7 @@ describe("eval/agent-service", () => {
       costSource: "gateway",
       cacheReadInputTokens: 3,
       cachedInputTokens: 3,
+      cacheCreation1hInputTokens: 4,
       reasoningTokens: 2,
       usageCaptureStatus: "complete",
     });

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getDatabase } from "../lib/notion-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "notion-get-database",
@@ -8,8 +9,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     databaseId: v.string().describe("The ID of the Notion database to retrieve"),
   }))(),
-  async execute({ databaseId }) {
-    const database = await getDatabase(databaseId);
+  async execute({ databaseId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const database = await getDatabase(userId, databaseId);
 
     return {
       id: database.id,

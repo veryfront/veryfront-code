@@ -1,6 +1,6 @@
+import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../lib/servicenow-client.ts";
-import { isServiceNowConnected } from "../lib/token-store.ts";
 
 const stateMap: Record<string, string> = {
   new: "1",
@@ -10,7 +10,7 @@ const stateMap: Record<string, string> = {
   closed: "7",
 };
 
-export default defineTool({
+export default tool({
   id: "servicenow-list-incidents",
   description:
     "List incidents from ServiceNow with optional filters for state, priority, or search query",
@@ -27,13 +27,6 @@ export default defineTool({
     query: v.string().optional().describe("Search query for incident short description"),
   }))(),
   async execute(input) {
-    if (!(await isServiceNowConnected())) {
-      return {
-        error: "ServiceNow not connected",
-        action: "Please connect ServiceNow via /api/auth/servicenow",
-      };
-    }
-
     try {
       const client = getServiceNowClient();
       const incidents = await client.listIncidents({

@@ -156,6 +156,32 @@ describe("input-utils", () => {
       assertEquals(total.totalTokens, 0);
     });
 
+    it("sums the one-hour cache-write share across steps as a subset of cache writes", () => {
+      const total: UsageTotal = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      accumulateUsage(total, {
+        promptTokens: 10,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      });
+      accumulateUsage(total, { promptTokens: 10, cacheCreationInputTokens: 200 });
+      accumulateUsage(total, {
+        promptTokens: 10,
+        cacheCreationInputTokens: 500,
+        cacheCreation1hInputTokens: 500,
+      });
+      assertEquals(total.promptTokens, 30);
+      assertEquals(total.cacheCreationInputTokens, 1700);
+      assertEquals(total.cacheCreation1hInputTokens, 1100);
+    });
+
+    it("leaves the one-hour cache-write share absent when no step reports it", () => {
+      const total: UsageTotal = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      accumulateUsage(total, { promptTokens: 10, cacheCreationInputTokens: 1000 });
+      accumulateUsage(total, { promptTokens: 10, cacheCreationInputTokens: 500 });
+      assertEquals(total.cacheCreationInputTokens, 1500);
+      assertEquals("cacheCreation1hInputTokens" in total, false);
+    });
+
     it("accumulates provider cost and billing amounts", () => {
       const total: UsageTotal = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
       accumulateUsage(total, {

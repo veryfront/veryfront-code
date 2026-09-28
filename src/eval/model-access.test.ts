@@ -271,6 +271,7 @@ describe("eval/model-access", () => {
         "/ai/v1/messages/count_tokens",
         // The earlier Anthropic-protocol prefix, still carried by recorded failures.
         "/ai/anthropic/v1/messages",
+        "/ai/v1beta/models/gemini-3.5-flash:streamGenerateContent",
       ]
     ) {
       assertEquals(
@@ -290,7 +291,8 @@ describe("eval/model-access", () => {
     // Look-alike paths on the API origin are not gateway routes.
     for (
       const path of [
-        "/ai/v1beta/models",
+        "/ai/v1betax/models",
+        "/ai/google/v1beta/models",
         "/ai/anthropicx/v1/messages",
         "/ai/anthropic/v2/messages",
         "/ai/other/v1",

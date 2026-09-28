@@ -130,6 +130,7 @@ export function accumulateUsage(
     totalTokens: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreation1hInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -153,6 +154,7 @@ export function accumulateUsage(
     totalTokens?: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreation1hInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -180,6 +182,10 @@ export function accumulateUsage(
   if (typeof usage.cacheCreationInputTokens === "number") {
     total.cacheCreationInputTokens = (total.cacheCreationInputTokens ?? 0) +
       usage.cacheCreationInputTokens;
+  }
+  if (typeof usage.cacheCreation1hInputTokens === "number") {
+    total.cacheCreation1hInputTokens = (total.cacheCreation1hInputTokens ?? 0) +
+      usage.cacheCreation1hInputTokens;
   }
   if (typeof usage.cacheReadInputTokens === "number") {
     total.cacheReadInputTokens = (total.cacheReadInputTokens ?? 0) + usage.cacheReadInputTokens;

@@ -13,6 +13,7 @@ describe("agent/ag-ui-finalize-tracker", () => {
         billableOutputTokens?: number;
         cachedInputTokens?: number;
         cacheCreationInputTokens?: number;
+        cacheCreation1hInputTokens?: number;
         cacheReadInputTokens?: number;
         reasoningTokens?: number;
       };
@@ -33,6 +34,7 @@ describe("agent/ag-ui-finalize-tracker", () => {
         billableOutputTokens: chunk.usage?.billableOutputTokens,
         cachedInputTokens: chunk.usage?.cachedInputTokens,
         cacheCreationInputTokens: chunk.usage?.cacheCreationInputTokens,
+        cacheCreation1hInputTokens: chunk.usage?.cacheCreation1hInputTokens,
         cacheReadInputTokens: chunk.usage?.cacheReadInputTokens,
         reasoningTokens: chunk.usage?.reasoningTokens,
         providerCostUsd: chunk.providerCostUsd,
@@ -56,6 +58,7 @@ describe("agent/ag-ui-finalize-tracker", () => {
         billableOutputTokens: 6,
         cachedInputTokens: 2,
         cacheCreationInputTokens: 4,
+        cacheCreation1hInputTokens: 3,
         cacheReadInputTokens: 2,
         reasoningTokens: 1,
       },
@@ -83,6 +86,7 @@ describe("agent/ag-ui-finalize-tracker", () => {
         billableOutputTokens: 6,
         cachedInputTokens: 2,
         cacheCreationInputTokens: 4,
+        cacheCreation1hInputTokens: 3,
         cacheReadInputTokens: 2,
         reasoningTokens: 1,
         providerInputCostUsd: 0.0004,
@@ -100,6 +104,7 @@ describe("agent/ag-ui-finalize-tracker", () => {
         billableOutputTokens: 6,
         cachedInputTokens: 2,
         cacheCreationInputTokens: 4,
+        cacheCreation1hInputTokens: 3,
         cacheReadInputTokens: 2,
         costCredits: 1,
         costSource: "gateway",

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listProjects } from "../lib/gitlab-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "gitlab-list-projects",
@@ -24,8 +25,9 @@ export default tool({
       ),
     })
   )(),
-  async execute({ search, membership, orderBy, sort, limit }) {
-    const projects = await listProjects({
+  async execute({ search, membership, orderBy, sort, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const projects = await listProjects(userId, {
       search,
       membership,
       orderBy,

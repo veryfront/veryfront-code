@@ -54,6 +54,9 @@ function mergeMetadata(
   if (typeof metadata.cacheCreationInputTokens === "number") {
     target.cacheCreationInputTokens = metadata.cacheCreationInputTokens;
   }
+  if (typeof metadata.cacheCreation1hInputTokens === "number") {
+    target.cacheCreation1hInputTokens = metadata.cacheCreation1hInputTokens;
+  }
   if (typeof metadata.cacheReadInputTokens === "number") {
     target.cacheReadInputTokens = metadata.cacheReadInputTokens;
   }
