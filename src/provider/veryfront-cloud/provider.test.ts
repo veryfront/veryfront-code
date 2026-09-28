@@ -1133,7 +1133,7 @@ describe("provider/veryfront-cloud", () => {
     await drainStream(stream);
 
     assertEquals(
-      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/gateway/google/v1beta"),
+      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/v1beta"),
       true,
       "the google runtime must be pointed at the Veryfront Cloud google gateway",
     );
@@ -1293,7 +1293,7 @@ describe("provider/veryfront-cloud", () => {
       ],
       [
         "google-ai-studio/gemini-3.5-flash",
-        "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+        "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
         "google",
       ],
       [
@@ -1586,14 +1586,28 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     }
   });
 
-  it("keeps Google on its vendor-scoped route with the model id in the path", async () => {
+  it("sends Google to its vendor-neutral route with the model id in the path", async () => {
     setCloudBootstrap();
-    const request = await captureGatewayRequest("google-ai-studio/gemini-3.5-flash");
+    const neutral = await captureGatewayRequest("google-ai-studio/gemini-3.5-flash");
     assertEquals(
-      request.url,
+      neutral.url,
+      "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+    );
+    assertEquals(JSON.parse(neutral.body).model, undefined);
+
+    const vendor = await withEnv(
+      { VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" },
+      () => captureGatewayRequest("google-ai-studio/gemini-3.5-flash"),
+    );
+    assertEquals(
+      vendor.url,
       "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
     );
-    assertEquals(JSON.parse(request.body).model, undefined);
+    // The body, auth and project headers are identical on both routes.
+    assertEquals(
+      [vendor.body, vendor.authorization, vendor.projectSlug],
+      [neutral.body, neutral.authorization, neutral.projectSlug],
+    );
   });
 
   it("restores the vendor-scoped URL and the builder's exact body under the opt-out", async () => {
@@ -1653,6 +1667,37 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
         url: "https://api.veryfront.com/ai/gateway/openai/v1/embeddings",
         model: "text-embedding-3-small",
       },
+    );
+  });
+
+  it("sends Google embeddings to the vendor-neutral route, and back under the opt-out", async () => {
+    setCloudBootstrap();
+    async function captureEmbeddingUrl(): Promise<string> {
+      let captured: string | undefined;
+      installMockFetch(
+        ((input: URL | Request | string, init?: RequestInit) => {
+          captured ??= new Request(input, init).url;
+          return Promise.resolve(Response.json({ embedding: { values: [0.1, 0.2] } }));
+        }) as typeof fetch,
+      );
+      try {
+        const model = resolveEmbeddingModel("veryfront-cloud/google/gemini-embedding-001");
+        await model.doEmbed({ values: ["hello"] });
+      } finally {
+        restoreMockFetch();
+        clearEmbeddingProviders();
+      }
+      if (!captured) throw new Error("no embedding request captured");
+      return captured;
+    }
+
+    assertEquals(
+      await captureEmbeddingUrl(),
+      "https://api.veryfront.com/ai/v1beta/models/gemini-embedding-001:embedContent",
+    );
+    assertEquals(
+      await withEnv({ VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" }, captureEmbeddingUrl),
+      "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-embedding-001:embedContent",
     );
   });
 
@@ -1747,6 +1792,107 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
       assertEquals(isVeryfrontGatewayResponse(response), true);
       assertEquals(await response.json(), vendorBody);
     }
+  });
+
+  it("reads a Veryfront refusal in the Google envelope as the vendor route's body", async () => {
+    const googleUrl = "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:generateContent";
+    const body = '{"contents":[{"role":"user","parts":[{"text":"Hi"}]}]}';
+    const cases: ReadonlyArray<readonly [number, unknown, Record<string, unknown>]> = [
+      [
+        402,
+        {
+          error: {
+            code: 402,
+            message: "AI credit limit exceeded",
+            status: "FAILED_PRECONDITION",
+            details: [{
+              "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+              reason: "insufficient-credits",
+              domain: "veryfront.com",
+            }],
+            veryfront: { balance_credits: 0, required_credits: 0.25 },
+          },
+        },
+        {
+          error: "AI credit limit exceeded",
+          balance: 0,
+          required: 0.25,
+          slug: "insufficient-credits",
+        },
+      ],
+      [
+        400,
+        {
+          error: {
+            code: 400,
+            message: "A project is required to use Veryfront-managed AI inference",
+            status: "INVALID_ARGUMENT",
+            details: [{
+              "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+              reason: "gateway_project_required",
+              domain: "veryfront.com",
+            }],
+          },
+        },
+        {
+          error: "A project is required to use Veryfront-managed AI inference",
+          code: "gateway_project_required",
+        },
+      ],
+    ];
+
+    for (const [status, envelope, vendorBody] of cases) {
+      const sent: string[] = [];
+      installMockFetch(async (input, init) => {
+        sent.push(await new Request(input, init).text());
+        return Response.json(envelope, { status });
+      });
+      const wrappedFetch = createVeryfrontCloudFetch(
+        "vf_test_provider",
+        "https://api.veryfront.com/ai/v1beta",
+        undefined,
+        { neutralRoute: true },
+      );
+      const response = await wrappedFetch(googleUrl, { method: "POST", body });
+      restoreMockFetch();
+      assertEquals(sent, [body]);
+      assertEquals(response.status, status);
+      assertEquals(isVeryfrontGatewayResponse(response), true);
+      assertEquals(await response.json(), vendorBody);
+    }
+  });
+
+  it("forwards a Google upstream error untouched from the Google neutral route", async () => {
+    // Google's own ErrorInfo names a Google domain, never the Veryfront one.
+    const body = JSON.stringify({
+      error: {
+        code: 429,
+        message: "Resource has been exhausted",
+        status: "RESOURCE_EXHAUSTED",
+        details: [{
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          reason: "RATE_LIMIT_EXCEEDED",
+          domain: "googleapis.com",
+        }],
+      },
+    });
+    installMockFetch(() =>
+      Promise.resolve(
+        new Response(body, { status: 429, headers: { "content-type": "application/json" } }),
+      )
+    );
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      "https://api.veryfront.com/ai/v1beta",
+      undefined,
+      { neutralRoute: true },
+    );
+    const response = await wrappedFetch(
+      "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:generateContent",
+      { method: "POST", body: "{}" },
+    );
+    restoreMockFetch();
+    assertEquals([response.status, await response.text()], [429, body]);
   });
 
   it("passes an error body larger than the refusal read limit through untouched", async () => {

@@ -380,7 +380,10 @@ ignored and the host's own setting stands.
 `/responses`, and models that speak the Anthropic protocol use `/messages`. The
 request body names the
 model as `<provider>/<model>`, for example `anthropic/claude-sonnet-4-6`.
-Google models keep their existing route.
+Google models use the Gemini-compatible `/ai/v1beta` path, where the model is
+named in the URL (`/ai/v1beta/models/<model>:generateContent`). A provider the
+catalog serves on the Google surface under another name keeps its
+provider-scoped route, so models with the same upstream id stay distinct.
 
 | Variable                         | Default | Effect                                                                                 |
 | -------------------------------- | ------- | -------------------------------------------------------------------------------------- |
