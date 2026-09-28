@@ -1,10 +1,11 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("compiled Deno compiler cleanup", () => {
   for (const code of [undefined, 0, 7]) {
     it(`removes its private extraction after ${code === undefined ? "natural exit" : `exit(${code})`}`, async () => {
-      const root = await Deno.makeTempDir();
+      const root = await makeTempDir();
       const target = `${root}/esbuild`;
       const cleanup = new URL(
         "../../../../src/platform/compat/esbuild-cleanup.ts",
