@@ -177,12 +177,14 @@ Provider tools such as `gmail__list_emails` run through a connected account.
 authorizes a provider account and needs a person in a browser. Always pass the
 project. Check `credential_requirement.mode` with
 `veryfront integration get "<NAME>" --project "<PROJECT_SLUG>" --json` first. For
-`oauth_connection`, select the connection from inventory:
+`oauth_connection`, select the connection from inventory. `<TOOL>` is a
+canonical name from `integration tools`, and `<ARGS_JSON>` follows its input
+schema:
 
 ```
-veryfront integration tools gmail --project "<PROJECT_SLUG>" --json
-veryfront integration connections gmail --project "<PROJECT_SLUG>" --json
-veryfront integration call gmail__list_emails --project "<PROJECT_SLUG>" --connection "<CONNECTION_ID>" --expected-generation "<CONNECTION_GENERATION_ID>" --args '{"q":"in:inbox","maxResults":1}' --json
+veryfront integration tools "<NAME>" --project "<PROJECT_SLUG>" --json
+veryfront integration connections "<NAME>" --project "<PROJECT_SLUG>" --json
+veryfront integration call "<TOOL>" --project "<PROJECT_SLUG>" --connection "<CONNECTION_ID>" --expected-generation "<CONNECTION_GENERATION_ID>" --args '<ARGS_JSON>' --json
 ```
 
 For `project_credentials` connectors (API key, Basic, client credentials), call

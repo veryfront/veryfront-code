@@ -22,15 +22,20 @@ different project or account. This procedure is for OAuth connectors
 `veryfront integration get "<NAME>" --project "<PROJECT_SLUG>" --json`). For
 project-credentials connectors, see [Non-OAuth connectors](#non-oauth-connectors).
 
+`<NAME>` is the integration, such as `gmail`, and `<TOOL>` is a canonical tool
+name from `integration tools`, such as `gmail__list_emails`. Build `<ARGS_JSON>`
+from that tool's input schema, for example `{"q":"in:inbox","maxResults":1}` for
+`gmail__list_emails`:
+
 ```bash
-veryfront integration tools gmail --project "<PROJECT_SLUG>" --json
-veryfront integration connections gmail --project "<PROJECT_SLUG>" --json
-veryfront integration status gmail --project "<PROJECT_SLUG>" \
-  --tool gmail__list_emails --connection "<CONNECTION_ID>" \
+veryfront integration tools "<NAME>" --project "<PROJECT_SLUG>" --json
+veryfront integration connections "<NAME>" --project "<PROJECT_SLUG>" --json
+veryfront integration status "<NAME>" --project "<PROJECT_SLUG>" \
+  --tool "<TOOL>" --connection "<CONNECTION_ID>" \
   --expected-generation "<CONNECTION_GENERATION_ID>" --json
-veryfront integration call gmail__list_emails --project "<PROJECT_SLUG>" \
+veryfront integration call "<TOOL>" --project "<PROJECT_SLUG>" \
   --connection "<CONNECTION_ID>" --expected-generation "<CONNECTION_GENERATION_ID>" \
-  --args '{"q":"in:inbox","maxResults":1}' --json
+  --args '<ARGS_JSON>' --json
 ```
 
 1. Discover the tool and its input schema with `integration tools`.
@@ -41,7 +46,7 @@ veryfront integration call gmail__list_emails --project "<PROJECT_SLUG>" \
 4. Call once with `--connection` and `--expected-generation` from that row.
 
 When no connection exists, ask the person to run
-`veryfront integration connect gmail --project "<PROJECT_SLUG>"` (add
+`veryfront integration connect "<NAME>" --project "<PROJECT_SLUG>"` (add
 `--scope project` only for a shared connection). The command waits at most
 `--timeout` seconds and confirms the new row. Do not poll in a loop yourself.
 
