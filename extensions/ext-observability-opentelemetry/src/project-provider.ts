@@ -17,6 +17,7 @@ import type {
 
 interface ProjectSpanOperations {
   clone<T>(value: T): T;
+  byteLength(value: Uint8Array): number;
   append<T>(values: T[], value: T): void;
   shift<T>(values: T[]): T | undefined;
 }
@@ -91,7 +92,8 @@ class ProjectSpanProcessor implements SpanProcessor {
     if (this.closed) return;
     try {
       span = this.snapshot(span);
-      const bytes = JsonTraceSerializer.serializeRequest([span])?.byteLength ?? 0;
+      const serialized = JsonTraceSerializer.serializeRequest([span]);
+      const bytes = serialized ? this.operations.byteLength(serialized) : 0;
       if (
         !bytes || bytes > MAX_SPAN_BYTES || this.queue.length >= 512 ||
         this.bytes + bytes > MAX_QUEUE_BYTES

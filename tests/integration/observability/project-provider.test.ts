@@ -38,6 +38,42 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("measures queued payloads without a replaceable byteLength getter", async () => {
+    const owner = new OtlpTracingExporter();
+    const session = await owner.createProjectProvider({
+      resource: { "service.name": "private-byte-length" },
+      createTransport: () => ({
+        send: () => Promise.resolve({ status: "success" as const }),
+        shutdown() {},
+      }),
+    });
+    const tracer = session.getProvider().getTracer(
+      "app",
+    ) as import("npm:@opentelemetry/api@1.9.1").Tracer;
+    const span = tracer.startSpan("size.private");
+    const descriptor = Object.getOwnPropertyDescriptor(Uint8Array.prototype, "byteLength");
+    const nativeLength = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(Uint8Array.prototype),
+      "byteLength",
+    )!.get!;
+    let exposed = 0;
+    try {
+      Object.defineProperty(Uint8Array.prototype, "byteLength", {
+        configurable: true,
+        get() {
+          exposed++;
+          return Reflect.apply(nativeLength, this, []);
+        },
+      });
+      span.end();
+    } finally {
+      if (descriptor) Object.defineProperty(Uint8Array.prototype, "byteLength", descriptor);
+      else delete (Uint8Array.prototype as { byteLength?: number }).byteLength;
+      await owner.shutdown();
+    }
+    assertEquals(exposed, 0);
+  });
+
   it("keeps public span and helper ownership private from WeakMap hooks", async () => {
     const owner = new OtlpTracingExporter();
     const session = await owner.createProjectProvider({

@@ -34,8 +34,15 @@ const providerSetDelete = Set.prototype.delete;
 const providerSetForEach = Set.prototype.forEach;
 const defineProperty = Object.defineProperty;
 const arrayShift = Array.prototype.shift;
+const typedArrayByteLength = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  "byteLength",
+)!.get!;
 const projectSpanOperations = Object.freeze({
   clone: structuredClone,
+  byteLength(value: Uint8Array): number {
+    return apply(typedArrayByteLength, value, []);
+  },
   append<T>(values: T[], value: T): void {
     const property = {
       __proto__: null,
