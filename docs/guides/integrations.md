@@ -315,20 +315,22 @@ veryfront integration call gmail__list_emails --project "$VERYFRONT_PROJECT" \
 Point MCP clients at the project endpoint `/projects/<PROJECT_SLUG>/mcp`. The
 unscoped `/mcp` endpoint serves platform tools but cannot call integration tools
 because it has no project. Integration tools are listed by their canonical
-names. Select a connection with `_meta`, not with tool arguments. When
-`initialize` returns an `Mcp-Session-Id` header, send it on later requests, and
-send `notifications/initialized` before other requests:
+names. Select a connection with `_meta`, not with tool arguments. The
+example requests protocol revision `2025-11-25`, which the API supports, and
+sends it as `MCP-Protocol-Version` on every request. When `initialize` returns
+an `Mcp-Session-Id` header, send it on later requests, and send
+`notifications/initialized` before other requests:
 
 ```bash
 MCP_URL="$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/mcp"
 MCP_SESSION=""
 mcp() {
   curl -sS -X POST "$MCP_URL" -H "$AUTH" -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
+    -H "Accept: application/json, text/event-stream" -H "MCP-Protocol-Version: 2025-11-25" \
     ${MCP_SESSION:+-H "Mcp-Session-Id: $MCP_SESSION"} "$@"
 }
 
-MCP_SESSION=$(mcp -D - -o /dev/null --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"integration-example","version":"1.0.0"}}}' |
+MCP_SESSION=$(mcp -D - -o /dev/null --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"integration-example","version":"1.0.0"}}}' |
   awk 'tolower($1) == "mcp-session-id:" { print $2 }' | tr -d '\r')
 mcp --data '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null
 mcp --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' |
