@@ -4,6 +4,7 @@
  * @module observability/tracing
  */
 
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   createPublicContext,
@@ -68,7 +69,7 @@ function getContextProp(
   return getProjectTraceHelpers()?.context ?? tracingManager.getContextPropagation();
 }
 
-const spanOwners = new WeakMap<Span, SpanOperations>();
+const spanOwners = createPrivateWeakStore<Span, SpanOperations>();
 
 function exposeSpan(span: Span | null): Span | null {
   const operations = getSpanOps();

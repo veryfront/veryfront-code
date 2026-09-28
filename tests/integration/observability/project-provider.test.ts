@@ -38,6 +38,46 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("keeps public span and helper ownership private from WeakMap hooks", async () => {
+    const owner = new OtlpTracingExporter();
+    const session = await owner.createProjectProvider({
+      resource: { "service.name": "private-owners" },
+      createTransport: () => ({
+        send: () => Promise.resolve({ status: "success" as const }),
+        shutdown() {},
+      }),
+    });
+    const get = WeakMap.prototype.get;
+    const set = WeakMap.prototype.set;
+    let exposed = 0;
+    try {
+      WeakMap.prototype.get = function (key) {
+        if (
+          key === session ||
+          (typeof key === "object" && key !== null && "name" in key && key.name === "owner.private")
+        ) exposed++;
+        return Reflect.apply(get, this, [key]);
+      };
+      WeakMap.prototype.set = function (key, value) {
+        if (
+          key === session ||
+          (typeof key === "object" && key !== null && "name" in key && key.name === "owner.private")
+        ) exposed++;
+        return Reflect.apply(set, this, [key, value]);
+      };
+      runWithProjectTraceProvider(session, () => {
+        const span = startSpan("owner.private");
+        assertExists(span);
+        endSpan(span);
+      });
+    } finally {
+      WeakMap.prototype.get = get;
+      WeakMap.prototype.set = set;
+      await owner.shutdown();
+    }
+    assertEquals(exposed, 0);
+  });
+
   it("does not expose cached SDK tracers through replaced Map methods", async () => {
     const owner = new OtlpTracingExporter();
     const session = await owner.createProjectProvider({

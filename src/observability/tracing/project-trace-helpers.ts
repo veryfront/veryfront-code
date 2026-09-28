@@ -1,3 +1,4 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { ProjectTraceProvider } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   type Context,
@@ -13,7 +14,7 @@ import { ContextPropagation } from "./context-propagation.ts";
 import { SpanOperations } from "./span-operations.ts";
 import type { OpenTelemetryAPI } from "./types.ts";
 
-const helpers = new WeakMap<
+const helpers = createPrivateWeakStore<
   ProjectTraceProvider,
   { spans: SpanOperations; context: ContextPropagation }
 >();
