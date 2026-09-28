@@ -137,6 +137,11 @@ curl -sS "$VERYFRONT_API_URL/projects/$VERYFRONT_PROJECT/integrations/gmail/conn
   -H "$AUTH"
 ```
 
+The inventory is paginated. While `page_info.next` is not `null`, repeat the
+request with `cursor` set to that value, so that you see every row before you
+choose. `veryfront integration connections` and the TypeScript client follow
+every page for you.
+
 Copy the `id` and `connection_generation_id` of the `connected` row you want
 to use:
 
