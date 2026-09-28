@@ -123,8 +123,8 @@ for (const scope of ["user", "project"] as const) {
       id: "provider-test-account",
       display_name: "Test account",
       evidence: "stored_metadata",
-    };
-    await withMockFetch((url) => {
+    } as const;
+    await withMockFetch(async (url) => {
       const path = new URL(String(url));
       if (path.pathname.endsWith("/tools/list")) {
         return Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } });
