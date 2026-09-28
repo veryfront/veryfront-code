@@ -11,10 +11,13 @@ versions are listed at
 `veryfront-cloud/*` models always call the vendor-neutral endpoints:
 `<api>/ai/v1` for the OpenAI and Anthropic protocols and `<api>/ai/v1beta` for
 Google. `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor` no longer restores the
-per-provider routes, which the platform has retired, and the variable is
-ignored. A provider other than Google served on the Google surface now fails
-with `NOT_SUPPORTED` instead of calling a per-provider route. Remove the
-variable from your environment.
+per-provider routes, and the variable is ignored. The API announced those
+routes with a `Sunset: 2026-12-31` deprecation contract. API deployments that
+have removed the vendor-scoped inference paths return `410 Gone` and name the
+neutral replacement. This SDK no longer selects them even while an API
+deployment is still serving the deprecation window. A provider other than
+Google served on the Google surface now fails with `NOT_SUPPORTED` instead of
+calling a per-provider route. Remove the variable from your environment.
 
 ### Fixed: preview rendering recovers from a source snapshot change
 

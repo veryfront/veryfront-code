@@ -92,24 +92,6 @@ export const VERYFRONT_CLOUD_PROVIDER_ROUTING: ReadonlyArray<
 /** Surface used for a provider the routing table does not list. */
 export const DEFAULT_VERYFRONT_CLOUD_SURFACE = "openai";
 
-/** Leading gateway path segments, shared by every surface. */
-export const VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX = "ai/gateway";
-
-/**
- * Gateway API version per surface, appended after the provider segment.
- * Frozen entries; build a Map locally if lookup-by-key is needed.
- */
-export const VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS: ReadonlyArray<
-  readonly [string, string]
-> = Object.freeze([
-  Object.freeze(["anthropic", "v1"] as const),
-  Object.freeze(["openai", "v1"] as const),
-  Object.freeze(["google", "v1beta"] as const),
-]);
-
-/** Gateway API version used for a surface without its own entry. */
-export const DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION = "v1";
-
 /**
  * Transport capabilities keyed by canonical provider/model ID. Both
  * provider-specific and provider-neutral option resolution consult this table

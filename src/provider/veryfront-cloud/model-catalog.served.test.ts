@@ -339,6 +339,19 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
       );
     });
 
+    it("refuses a served provider on a future wire surface without a vendor-route fallback", () => {
+      __setVeryfrontCloudCatalogForTests(payload([
+        row("future-labs/future-model", { surface: "a-later-wire-format" }),
+      ]));
+
+      const error = assertThrows(
+        () => resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", "future-labs"),
+        VeryfrontError,
+        'Veryfront Cloud wire surface "a-later-wire-format" is not supported',
+      );
+      assertEquals((error as VeryfrontError).slug, "not-supported");
+    });
+
     it("uses the default model the catalog names", () => {
       __setVeryfrontCloudCatalogForTests(
         payload([row("anthropic/claude-sonnet-4-6")], "anthropic/claude-sonnet-4-6"),

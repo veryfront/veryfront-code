@@ -61,23 +61,6 @@ describe("provider/veryfront-cloud/model-catalog.data frozen state", () => {
     );
   });
 
-  it("rejects runtime mutation of the gateway API version entries", () => {
-    assertThrows(
-      () => {
-        // deno-lint-ignore no-explicit-any
-        (catalogData.VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS as any).push(["x", "v1"]);
-      },
-      TypeError,
-    );
-    assertThrows(
-      () => {
-        // deno-lint-ignore no-explicit-any
-        (catalogData.VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS as any)[0] = ["x", "v1"];
-      },
-      TypeError,
-    );
-  });
-
   it("rejects runtime mutation of the transport capabilities entries", () => {
     assertThrows(
       () => {

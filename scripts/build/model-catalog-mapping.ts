@@ -63,9 +63,6 @@ export type ModelCatalogData = {
   readonly providerAliases: readonly (readonly [string, string])[];
   readonly providerRouting: readonly (readonly [string, ProviderRouting])[];
   readonly defaultSurface: string;
-  readonly gatewayPathPrefix: string;
-  readonly surfaceGatewayApiVersions: readonly (readonly [string, string])[];
-  readonly defaultGatewayApiVersion: string;
   readonly modelTransportCapabilities:
     readonly (readonly [string, TransportCapabilities])[];
   readonly chatModels: readonly ChatModelEntry[];
@@ -203,9 +200,9 @@ const GATEWAY_MODEL_PREFIX = "veryfront-cloud/";
  * This is the conjunction of every step a generated id passes through on its
  * way to a constructed model: `resolveVeryfrontCloudProviderFromModelId` and
  * `resolveVeryfrontCloudProviderId` in `model-catalog.ts`, then
- * `parseVeryfrontCloudModelId` in `shared.ts`, whose result feeds
- * `resolveVeryfrontCloudGatewayPath`. An id that fails any of them is
- * published and unusable, so the generator refuses it here instead.
+ * `parseVeryfrontCloudModelId` in `shared.ts`, whose result feeds the neutral
+ * gateway request builder. An id that fails any of them is published and
+ * unusable, so the generator refuses it here instead.
  *
  * The upstream segment is checked for exactly what `parseVeryfrontCloudModelId`
  * requires of it, which is that it is non-empty and carries no surrounding
@@ -821,9 +818,6 @@ export function buildModelCatalogData(
         }] as const,
     ),
     defaultSurface: overlay.defaultSurface,
-    gatewayPathPrefix: overlay.gatewayPathPrefix,
-    surfaceGatewayApiVersions: overlay.surfaceGatewayApiVersions,
-    defaultGatewayApiVersion: overlay.defaultGatewayApiVersion,
     modelTransportCapabilities: transportCapabilities,
     chatModels: facts.chatModels,
     providerLabels,
@@ -871,10 +865,6 @@ function findDuplicates(keys: readonly string[]): readonly string[] {
 export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
   const tables: ReadonlyArray<readonly [string, readonly string[]]> = [
     ["nativeProviders", overlay.nativeProviders],
-    [
-      "surfaceGatewayApiVersions",
-      overlay.surfaceGatewayApiVersions.map(([key]) => key),
-    ],
     ...overlayModelKeyTables(overlay),
     [
       "retainedProviderAliases",
@@ -922,27 +912,6 @@ export function assertOverlayInvariants(overlay: ModelCatalogOverlay): void {
       }`,
     );
   }
-  // The runtime builds the gateway URL as
-  // `${gatewayPathPrefix}/${provider}/${apiVersion}` by plain interpolation, so
-  // an empty or malformed component yields a URL that points somewhere else.
-  const badPrefix = describeUnusablePathComponent(
-    overlay.gatewayPathPrefix,
-    true,
-  );
-  if (badPrefix !== undefined) {
-    fail(`overlay gatewayPathPrefix ${badPrefix}`);
-  }
-  for (
-    const [surface, version] of [
-      ...overlay.surfaceGatewayApiVersions,
-      ["(default)", overlay.defaultGatewayApiVersion] as const,
-    ]
-  ) {
-    const badVersion = describeUnusablePathComponent(version, false);
-    if (badVersion !== undefined) {
-      fail(`overlay gateway API version for ${surface} ${badVersion}`);
-    }
-  }
 }
 
 /**
@@ -976,48 +945,6 @@ function assertRetainedThinkingModes(
       );
     }
   }
-}
-
-/**
- * The characters a gateway path segment may carry: RFC 3986's unreserved set.
- * An allowlist, not a list of the characters `URL.pathname` is known to
- * rewrite (`\\`, `%`, `?`, `#`, whitespace, ...): the assembled route is
- * assigned to `URL.pathname`, and anything outside this set is either
- * transformed there or has a meaning of its own in a URL.
- */
-const PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._~-]+$/;
-
-/**
- * Why a value cannot be a component of the gateway path, or undefined when it
- * can: non-empty, no leading or trailing slash, no empty, `.` or `..`
- * segment, every segment within the unreserved characters; a single segment
- * unless `allowSegments`.
- */
-function describeUnusablePathComponent(
-  value: string,
-  allowSegments: boolean,
-): string | undefined {
-  if (value === "") return "is empty";
-  if (value.startsWith("/") || value.endsWith("/")) {
-    return `starts or ends with a slash: ${quote(value)}`;
-  }
-  const segments = value.split("/");
-  if (!allowSegments && segments.length > 1) {
-    return `must be a single path segment: ${quote(value)}`;
-  }
-  if (
-    segments.some((segment) =>
-      segment === "" || segment === "." || segment === ".."
-    )
-  ) {
-    return `has an empty or relative segment: ${quote(value)}`;
-  }
-  if (segments.some((segment) => !PATH_SEGMENT_PATTERN.test(segment))) {
-    return `has a segment outside the unreserved URL characters (letters, digits, "-", ".", "_", "~"): ${
-      quote(value)
-    }`;
-  }
-  return undefined;
 }
 
 /**
@@ -1201,13 +1128,6 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
       data.providerRouting.map(([provider]) => provider),
       "provider routing declared twice for",
     ],
-    // This table is read through a Map too, so a surface declared twice keeps
-    // one version and discards the other without saying which.
-    [
-      "surfaceGatewayApiVersions",
-      data.surfaceGatewayApiVersions.map(([surface]) => surface),
-      "gateway API version declared twice for",
-    ],
   ];
   for (const [table, keys, message] of uniqueKeyTables) {
     const duplicates = describeDuplicatePositions(table, keys);
@@ -1272,21 +1192,6 @@ export function assertCatalogInvariants(data: ModelCatalogData): void {
     fail(
       `the default model names ${defaults.length} entries, not exactly one`,
     );
-  }
-
-  // `resolveVeryfrontCloudGatewayPath` reads the version for the surface a
-  // provider routes on and falls back to the default version for a surface the
-  // table does not list. The default SURFACE is this package's own value, so a
-  // missing version for it is a repository mistake and is refused here. A
-  // SERVED surface with no version is not: the catalog may name a surface a
-  // later release builds requests for, and refusing it would make adding a
-  // vendor a code change again. Such a request is refused at call time, by
-  // `requireVeryfrontCloudWireSurface`, before a path is used.
-  const versioned = new Set(
-    data.surfaceGatewayApiVersions.map(([surface]) => surface),
-  );
-  if (!versioned.has(data.defaultSurface)) {
-    fail("no gateway API version for the default surface");
   }
 }
 
@@ -1503,27 +1408,6 @@ export function renderModelCatalogModule(data: ModelCatalogData): string {
     `export const DEFAULT_VERYFRONT_CLOUD_SURFACE = ${
       quote(data.defaultSurface)
     };`,
-    "",
-    "/** Leading gateway path segments, shared by every surface. */",
-    `export const VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX = ${
-      quote(data.gatewayPathPrefix)
-    };`,
-    "",
-    "/**",
-    " * Gateway API version per surface, appended after the provider segment.",
-    " * Frozen entries; build a Map locally if lookup-by-key is needed.",
-    " */",
-    "export const VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS: ReadonlyArray<",
-    "  readonly [string, string]",
-    "> = Object.freeze([",
-    ...data.surfaceGatewayApiVersions.map(([surface, version]) =>
-      frozenTuple(surface, quote(version))
-    ),
-    "]);",
-    "",
-    "/** Gateway API version used for a surface without its own entry. */",
-    "export const DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION = " +
-    `${quote(data.defaultGatewayApiVersion)};`,
     "",
     "/**",
     " * Transport capabilities keyed by canonical provider/model ID. Both",

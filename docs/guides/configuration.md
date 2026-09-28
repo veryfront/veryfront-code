@@ -386,6 +386,15 @@ other than Google that the catalog serves on the Google surface is refused with
 a `NOT_SUPPORTED` error, because that route names only the model and could not
 tell it apart from a Google model with the same id.
 
+The SDK no longer supports `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor`; the
+variable is ignored. The API announced the vendor-scoped routes with a
+`Sunset: 2026-12-31` deprecation contract. An API deployment may still serve
+the routes during its deprecation window, but this SDK will not select them.
+An API deployment that has removed the vendor-scoped inference paths returns
+`410 Gone` and names the neutral replacement. The separate
+`/ai/gateway/billing/finalize` endpoint is not a vendor inference route and
+remains available.
+
 ## SSR transform cache
 
 Veryfront compiles every page and its local import tree before it can render on
