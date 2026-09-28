@@ -14,9 +14,20 @@ function getEnv(key: string): string | undefined {
   return undefined;
 }
 
-/** The Atlassian site's cloud ID, from JIRA_CLOUD_ID. */
-function getCloudId(): string | undefined {
-  return getEnv("JIRA_CLOUD_ID");
+/**
+ * The Atlassian site's cloud ID: JIRA_CLOUD_ID when set, otherwise the first site the
+ * token can access.
+ */
+async function getCloudId(token: string): Promise<string | undefined> {
+  const configured = getEnv("JIRA_CLOUD_ID");
+  if (configured) return configured;
+
+  const response = await fetch("https://api.atlassian.com/oauth/token/accessible-resources", {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  if (!response.ok) return undefined;
+  const sites = (await response.json()) as Array<{ id: string }>;
+  return sites[0]?.id;
 }
 
 const JIRA_API_VERSION = "3";
@@ -151,9 +162,9 @@ async function jiraFetch<T>(
     );
   }
 
-  const cloudId = getCloudId();
+  const cloudId = await getCloudId(token);
   if (!cloudId) {
-    throw new Error("Jira cloud ID not configured. Please set JIRA_CLOUD_ID.");
+    throw new Error("No Jira site found for this account. Set JIRA_CLOUD_ID to choose one.");
   }
 
   const baseUrl =

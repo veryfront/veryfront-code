@@ -15,9 +15,20 @@ function getEnv(key: string): string | undefined {
   return undefined;
 }
 
-/** The Atlassian site's cloud ID, from CONFLUENCE_CLOUD_ID. */
-function getCloudId(): string | undefined {
-  return getEnv("CONFLUENCE_CLOUD_ID");
+/**
+ * The Atlassian site's cloud ID: CONFLUENCE_CLOUD_ID when set, otherwise the first site the
+ * token can access.
+ */
+async function getCloudId(token: string): Promise<string | undefined> {
+  const configured = getEnv("CONFLUENCE_CLOUD_ID");
+  if (configured) return configured;
+
+  const response = await fetch("https://api.atlassian.com/oauth/token/accessible-resources", {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  if (!response.ok) return undefined;
+  const sites = (await response.json()) as Array<{ id: string }>;
+  return sites[0]?.id;
 }
 
 const CONFLUENCE_API_BASE = "https://api.atlassian.com/ex/confluence";
@@ -112,13 +123,16 @@ async function confluenceFetch<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const [token, cloudId] = await Promise.all([
-    confluenceService.getAccessToken(userId),
-    getCloudId(),
-  ]);
-
-  if (!token || !cloudId) {
+  const token = await confluenceService.getAccessToken(userId);
+  if (!token) {
     throw new Error("Not authenticated with Confluence. Please connect your Atlassian account.");
+  }
+
+  const cloudId = await getCloudId(token);
+  if (!cloudId) {
+    throw new Error(
+      "No Confluence site found for this account. Set CONFLUENCE_CLOUD_ID to choose one.",
+    );
   }
 
   const url = `${CONFLUENCE_API_BASE}/${cloudId}${endpoint}`;

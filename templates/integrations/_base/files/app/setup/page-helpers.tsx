@@ -175,7 +175,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Copy Client ID and Secret to .env",
     ],
     link: "https://developer.atlassian.com/console/myapps/",
-    envVars: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET", "JIRA_CLOUD_ID"],
+    envVars: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"],
   },
   confluence: {
     title: "Atlassian Confluence Setup",
@@ -186,7 +186,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Add callback URL: http://localhost:3000/api/auth/confluence/callback",
     ],
     link: "https://developer.atlassian.com/console/myapps/",
-    envVars: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET", "CONFLUENCE_CLOUD_ID"],
+    envVars: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"],
   },
   bitbucket: {
     title: "Atlassian Bitbucket Setup",
@@ -481,7 +481,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Copy Consumer Key and Secret to .env",
     ],
     link: "https://login.salesforce.com/",
-    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET", "SALESFORCE_INSTANCE_URL"],
+    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET"],
   },
   pipedrive: {
     title: "Pipedrive OAuth Setup",
