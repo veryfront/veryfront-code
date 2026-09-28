@@ -53734,6 +53734,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "SUPABASE_ACCESS_TOKEN",
       "description": "Supabase personal access token for the Management API (starts with sbp_)",
       "required": true,
+      "scaffoldRequired": false,
       "sensitive": true,
       "docsUrl": "https://supabase.com/dashboard/account/tokens",
     }, {

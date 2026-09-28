@@ -35,6 +35,10 @@ import {
   loadIntegrations,
   validateIntegrations,
 } from "../../templates/integration-loader.ts";
+import {
+  requiredSetupEnvVars,
+  scaffoldEnvVars,
+} from "../../templates/integration-loader-helpers.ts";
 import { mergeFiles } from "../../templates/loader.ts";
 import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import type {
@@ -158,38 +162,6 @@ const INTEGRATION_ICONS: Record<string, string> = {
   aws: "cloud",
 };
 
-function hasOAuthRoute(integration: ResolvedIntegration): boolean {
-  const authRoute = `app/api/auth/${integration.config.name}/route.ts`;
-  return integration.files.some((file) => file.path === authRoute);
-}
-
-const OAUTH_CLIENT_ENV_VAR = /_CLIENT_(ID|SECRET)$/;
-
-/**
- * The env contract of an integration's local scaffold. A variable its client
- * needs is required even when the hosted connector does not read it, and an
- * OAuth client credential is not required when the scaffold has no OAuth route.
- */
-function scaffoldEnvVars(integration: ResolvedIntegration): EnvVarConfig[] {
-  const usesOAuth = hasOAuthRoute(integration);
-  return (integration.config.envVars ?? []).map(({ scaffoldRequired, ...envVar }) => ({
-    ...envVar,
-    required: scaffoldRequired === true ||
-      (envVar.required && (usesOAuth || !OAUTH_CLIENT_ENV_VAR.test(envVar.name))),
-  }));
-}
-
-/**
- * Env vars that make an env-backed scaffold usable, or null when the scaffold
- * connects through its own `/api/auth/<id>` OAuth route.
- */
-function requiredSetupEnvVars(integration: ResolvedIntegration): string[] | null {
-  if (hasOAuthRoute(integration)) return null;
-  return scaffoldEnvVars(integration)
-    .filter((envVar) => envVar.required && envVar.default === undefined)
-    .map((envVar) => envVar.name);
-}
-
 function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): string {
   const integrationEntries = integrations
     .map((integration) => {
@@ -235,8 +207,10 @@ export async function GET(req: Request): Promise<Response> {
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {
       const { envVars } = integration;
+      // An empty contract is not a working setup: harvest and hubspot ship no
+      // client at all, so nothing can be connected.
       const connected = envVars
-        ? envVars.every((name) => Boolean(getEnv(name)))
+        ? envVars.length > 0 && envVars.every((name) => Boolean(getEnv(name)))
         : await tokenStore.isConnected(userId, integration.id, integration.scopes);
       return {
         id: integration.id,

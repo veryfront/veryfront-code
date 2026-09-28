@@ -350,7 +350,7 @@ describe("createProject", () => {
       await createProject({
         ...baseRequest(parentDir),
         name: "env-status",
-        integrations: ["sentry", "github"],
+        integrations: ["sentry", "github", "harvest"],
       });
 
       // Sentry's client reads both, so the scaffold must list both.
@@ -389,6 +389,8 @@ describe("createProject", () => {
       assertEquals(set.sentry?.connected, true);
       assertEquals(set.sentry?.connectUrl, null);
       assertEquals(set.github?.connected, false);
+      // Harvest ships no client, so an empty env contract is not connected.
+      assertEquals(set.harvest?.connected, false);
     } finally {
       for (const [name, value] of original) {
         if (value === undefined) Deno.env.delete(name);
