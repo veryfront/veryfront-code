@@ -99,6 +99,7 @@ async function handleSkillInfo(args: ParsedArgs): Promise<void> {
         ...skill.metadata,
         content: skill.skillMd,
         directory: skill.directory,
+        references: skill.references,
       }),
     );
     return;

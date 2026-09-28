@@ -500,6 +500,7 @@
     "build:prepare": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run -A scripts/build/prepare-framework-sources.ts",
     "build": "deno task build:prepare && deno run -A scripts/build/compile-binary.ts --output ./bin/veryfront",
     "build:proxy-lock": "deno cache --node-modules-dir=none --lock scripts/build/proxy-deno.lock cli/proxy-main.ts",
+    "generate:core-skills": "deno run -A scripts/build/generate-core-skills.ts",
     "build:npm": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno task lint:dnt-meta-properties && deno run --config=scripts/test.deno.json --frozen -A scripts/build/build-npm-dnt.ts",
     "verify:dist": "deno task build && deno task build:npm",
     "release": "deno run -A scripts/release.ts",

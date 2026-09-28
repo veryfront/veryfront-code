@@ -86,6 +86,23 @@ describe("Skills Command", () => {
     });
   });
 
+  describe("info JSON output for the bundled veryfront skill", () => {
+    it("returns the skill content and its reference documents", async () => {
+      const result = await runSkillsInfo(["veryfront"]);
+      const envelope = JSON.parse(result.stdout);
+
+      assertEquals(result.code, 0);
+      assertEquals(envelope.data.name, "veryfront");
+      assertEquals(envelope.data.content.includes("veryfront integration connect"), true);
+      assertEquals(Object.keys(envelope.data.references), [
+        "references/AI-TOOLS.md",
+        "references/COMPONENTS.md",
+        "references/INTEGRATIONS.md",
+        "references/ROUTES.md",
+      ]);
+    });
+  });
+
   describe("listSkills", () => {
     it("returns an array", async () => {
       const skills = await listSkills();

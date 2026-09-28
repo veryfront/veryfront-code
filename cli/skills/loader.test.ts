@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#std/path.ts";
-import { CORE_SKILLS } from "./core-skills.ts";
+import { basename, join } from "#std/path.ts";
+import { CORE_SKILLS } from "./core-skills.generated.ts";
 import { listAllSkills, listCoreSkills, listLocalSkills, loadSkill } from "./loader.ts";
 
 async function withTempDir(
@@ -48,6 +48,18 @@ describe("Core Skills Embedded Data", () => {
     }
   });
 
+  it("embeds every cli/mcp/skills directory, references included", async () => {
+    const onDisk = (await listCoreSkills())
+      .map((skill) => ({ ...skill, directory: `core:${basename(skill.directory)}` }))
+      .sort((a, b) => a.directory.localeCompare(b.directory));
+
+    assertEquals(
+      CORE_SKILLS,
+      onDisk,
+      "cli/skills/core-skills.generated.ts is stale; run deno task generate:core-skills",
+    );
+  });
+
   it("all embedded skills have unique names", () => {
     const names = CORE_SKILLS.map((s) => s.metadata.name);
     const unique = new Set(names);
@@ -65,6 +77,30 @@ describe("Skill Loader", () => {
       assertEquals(skill?.metadata.allowedTools, ["load_skill", "load_skill_reference"]);
       assertEquals(skill?.metadata.metadata?.version, "1.0");
       assertEquals(skill?.skillMd.includes("# Code Review"), true);
+    });
+  });
+
+  it("loads references/*.md next to SKILL.md", async () => {
+    await withTempDir({
+      "skills/code-review/SKILL.md": PROJECT_SKILL,
+      "skills/code-review/references/B.md": "# B",
+      "skills/code-review/references/A.md": "# A",
+      "skills/code-review/references/notes.txt": "ignored",
+    }, async (dir) => {
+      const skill = await loadSkill(join(dir, "skills", "code-review"));
+
+      assertEquals(skill?.references, {
+        "references/A.md": "# A",
+        "references/B.md": "# B",
+      });
+    });
+  });
+
+  it("omits references when a skill has none", async () => {
+    await withTempDir({ "skills/code-review/SKILL.md": PROJECT_SKILL }, async (dir) => {
+      const skill = await loadSkill(join(dir, "skills", "code-review"));
+
+      assertEquals(skill !== null && "references" in skill, false);
     });
   });
 
@@ -88,6 +124,18 @@ describe("Skill Loader", () => {
     assertEquals(names.includes("scaffold-ai-app"), true);
     assertEquals(names.includes("flywheel"), true);
     assertEquals(names.includes("veryfront"), true);
+  });
+
+  it("listCoreSkills falls back to the embedded skills when cli/mcp/skills is not shipped", async () => {
+    const skills = await listCoreSkills("/nonexistent/cli/mcp/skills");
+    const veryfront = skills.find((skill) => skill.metadata.name === "veryfront");
+
+    assertEquals(veryfront?.directory, "core:veryfront");
+    assertEquals(veryfront?.skillMd.includes("veryfront integration connect"), true);
+    assertEquals(
+      veryfront?.references?.["references/INTEGRATIONS.md"]?.includes("## Recovery"),
+      true,
+    );
   });
 
   it("listAllSkills deduplicates by name with local skills overriding core", async () => {

@@ -3,7 +3,6 @@ import { cwd } from "veryfront/platform";
 import { basename } from "veryfront/platform/path";
 import { parseSkillFrontmatter, validateSkillMetadata } from "veryfront/skill";
 import type { LoadedSkill } from "./types.ts";
-import { CORE_SKILLS } from "./core-skills.ts";
 
 function getCoreSkillsDir(): string {
   return new URL("../mcp/skills", import.meta.url).pathname;
@@ -18,16 +17,42 @@ export async function loadSkill(
     const content = await fs.readTextFile(`${directory}/SKILL.md`);
     const parsed = await parseSkillFrontmatter(content);
     const metadata = validateSkillMetadata(parsed.frontmatter, basename(directory));
-    return { metadata, skillMd: parsed.body.trimStart(), directory };
+    const skill: LoadedSkill = { metadata, skillMd: parsed.body.trimStart(), directory };
+    const references = await loadReferences(`${directory}/references`);
+    if (references) skill.references = references;
+    return skill;
   } catch {
     return null;
   }
 }
 
-export async function listCoreSkills(): Promise<LoadedSkill[]> {
+async function loadReferences(
+  directory: string,
+): Promise<Record<string, string> | undefined> {
+  const fs = createFileSystem();
+  const names: string[] = [];
+
+  try {
+    for await (const entry of fs.readDir(directory)) {
+      if (entry.isFile && entry.name.endsWith(".md")) names.push(entry.name);
+    }
+  } catch {
+    return undefined;
+  }
+  if (names.length === 0) return undefined;
+
+  const references: Record<string, string> = {};
+  for (const name of names.sort()) {
+    references[`references/${name}`] = await fs.readTextFile(`${directory}/${name}`);
+  }
+  return references;
+}
+
+export async function listCoreSkills(
+  skillsDir: string = getCoreSkillsDir(),
+): Promise<LoadedSkill[]> {
   const fs = createFileSystem();
   const skills: LoadedSkill[] = [];
-  const skillsDir = getCoreSkillsDir();
 
   try {
     for await (const entry of fs.readDir(skillsDir)) {
@@ -39,8 +64,11 @@ export async function listCoreSkills(): Promise<LoadedSkill[]> {
     // Filesystem skills not available in compiled binaries. Use embedded skills.
   }
 
-  // Fall back to embedded core skills if none loaded from filesystem
+  // The npm package and compiled binaries do not ship cli/mcp/skills/, so fall
+  // back to the copy embedded at build time. Loaded lazily so the generator,
+  // which imports loadSkill, can run before the embedded copy exists.
   if (skills.length === 0) {
+    const { CORE_SKILLS } = await import("./core-skills.generated.ts");
     return CORE_SKILLS;
   }
 
