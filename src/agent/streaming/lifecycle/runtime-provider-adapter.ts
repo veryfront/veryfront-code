@@ -2,6 +2,10 @@ import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isDynamicTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
 import {
+  pickDefinedUsageFields,
+  RUNTIME_USAGE_OPTIONAL_TAIL_FIELDS,
+} from "#veryfront/provider/runtime-usage.ts";
+import {
   getToolResultError,
   isIntegrationAuthenticationActionResult,
 } from "#veryfront/tool/result.ts";
@@ -482,6 +486,13 @@ function normalizeFinishReason(
   }
 }
 
+// `cachedInputTokens` is handled above with its `cacheReadInputTokens`
+// fallback, so it is excluded here to avoid picking the raw (fallback-less)
+// field a second time.
+const RUNTIME_USAGE_TAIL_FIELDS_WITHOUT_CACHED_INPUT = RUNTIME_USAGE_OPTIONAL_TAIL_FIELDS.filter(
+  (field) => field !== "cachedInputTokens",
+);
+
 function normalizeRuntimeUsage(
   usage: NonNullable<
     Extract<RuntimeStreamPart, { type: "finish" }>["totalUsage"]
@@ -496,47 +507,6 @@ function normalizeRuntimeUsage(
     outputTokens,
     totalTokens: usage.totalTokens ?? inputTokens + outputTokens,
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
-    ...(usage.cacheCreationInputTokens !== undefined
-      ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
-      : {}),
-    ...(usage.cacheCreation1hInputTokens !== undefined
-      ? { cacheCreation1hInputTokens: usage.cacheCreation1hInputTokens }
-      : {}),
-    ...(usage.cacheReadInputTokens !== undefined
-      ? { cacheReadInputTokens: usage.cacheReadInputTokens }
-      : {}),
-    ...(usage.reasoningTokens !== undefined ? { reasoningTokens: usage.reasoningTokens } : {}),
-    ...(usage.billableInputTokens !== undefined
-      ? { billableInputTokens: usage.billableInputTokens }
-      : {}),
-    ...(usage.billableOutputTokens !== undefined
-      ? { billableOutputTokens: usage.billableOutputTokens }
-      : {}),
-    ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
-    ...(usage.providerInputCostUsd !== undefined
-      ? { providerInputCostUsd: usage.providerInputCostUsd }
-      : {}),
-    ...(usage.providerOutputCostUsd !== undefined
-      ? { providerOutputCostUsd: usage.providerOutputCostUsd }
-      : {}),
-    ...(usage.providerCostUsd !== undefined ? { providerCostUsd: usage.providerCostUsd } : {}),
-    ...(usage.veryfrontInputChargeUsd !== undefined
-      ? { veryfrontInputChargeUsd: usage.veryfrontInputChargeUsd }
-      : {}),
-    ...(usage.veryfrontOutputChargeUsd !== undefined
-      ? { veryfrontOutputChargeUsd: usage.veryfrontOutputChargeUsd }
-      : {}),
-    ...(usage.veryfrontChargeUsd !== undefined
-      ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
-      : {}),
-    ...(usage.veryfrontBilledUsd !== undefined
-      ? { veryfrontBilledUsd: usage.veryfrontBilledUsd }
-      : {}),
-    ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
-    ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
-    ...(usage.billingMode !== undefined ? { billingMode: usage.billingMode } : {}),
-    ...(usage.usageCaptureStatus !== undefined
-      ? { usageCaptureStatus: usage.usageCaptureStatus }
-      : {}),
+    ...pickDefinedUsageFields(usage, RUNTIME_USAGE_TAIL_FIELDS_WITHOUT_CACHED_INPUT),
   };
 }

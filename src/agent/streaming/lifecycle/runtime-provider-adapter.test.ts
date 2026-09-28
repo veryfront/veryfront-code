@@ -59,6 +59,46 @@ describe("runtime stream Provider Adapter", () => {
     );
   });
 
+  it("normalizes a finish part's total usage, including the one-hour cache-write share", () => {
+    assertEquals(
+      decodeRuntimeStreamPart(
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: {
+            inputTokens: 12,
+            outputTokens: 8,
+            cacheCreationInputTokens: 5,
+            cacheCreation1hInputTokens: 3,
+            cacheReadInputTokens: 2,
+            costCredits: 0.5,
+          },
+        },
+        snapshot,
+        options,
+      ),
+      [
+        {
+          kind: "usage",
+          usage: {
+            inputTokens: 12,
+            outputTokens: 8,
+            totalTokens: 20,
+            cachedInputTokens: 2,
+            cacheCreationInputTokens: 5,
+            cacheCreation1hInputTokens: 3,
+            cacheReadInputTokens: 2,
+            costCredits: 0.5,
+          },
+        },
+        {
+          kind: "protocol",
+          event: { type: "step_finish", finishReason: "stop" },
+        },
+      ],
+    );
+  });
+
   it("normalizes result and output payload names", () => {
     const toolSnapshot = {
       ...snapshot,

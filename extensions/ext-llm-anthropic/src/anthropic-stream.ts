@@ -623,6 +623,30 @@ export function normalizeAnthropicFinishReason(
   }
 }
 
+/** Reads a valid Anthropic usage cost source, or `undefined` for anything else. */
+function readAnthropicUsageCostSource(
+  value: unknown,
+): "gateway" | "missing" | "partial" | undefined {
+  return value === "gateway" || value === "missing" || value === "partial" ? value : undefined;
+}
+
+/** Reads a valid Anthropic usage capture status, or `undefined` for anything else. */
+function readAnthropicUsageCaptureStatus(
+  value: unknown,
+): "complete" | "partial" | "missing" | undefined {
+  return value === "complete" || value === "partial" || value === "missing" ? value : undefined;
+}
+
+/** Sums two optional token counts, staying `undefined` only when both are. */
+function sumAnthropicTokenCounts(
+  inputTokens: number | undefined,
+  outputTokens: number | undefined,
+): number | undefined {
+  return inputTokens === undefined && outputTokens === undefined
+    ? undefined
+    : (inputTokens ?? 0) + (outputTokens ?? 0);
+}
+
 export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
   const record = readRecord(payload);
   const usage = readRecord(record?.usage);
@@ -630,23 +654,20 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
     return undefined;
   }
 
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
+  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
+  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
   const cacheCreationInputTokens = usage.cache_creation_input_tokens;
   const cacheCreation1hInputTokens = readRecord(usage.cache_creation)?.ephemeral_1h_input_tokens;
   const cacheReadInputTokens = usage.cache_read_input_tokens;
   const veryfront = readRecord(usage.veryfront);
-  const costSource = veryfront?.cost_source;
+  const costSource = readAnthropicUsageCostSource(veryfront?.cost_source);
   const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
-  const usageCaptureStatus = veryfront?.usage_capture_status;
+  const usageCaptureStatus = readAnthropicUsageCaptureStatus(veryfront?.usage_capture_status);
 
   return sanitizeUsage({
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
-      ? (typeof inputTokens === "number" ? inputTokens : 0) +
-        (typeof outputTokens === "number" ? outputTokens : 0)
-      : undefined,
+    inputTokens,
+    outputTokens,
+    totalTokens: sumAnthropicTokenCounts(inputTokens, outputTokens),
     ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
     ...(typeof cacheCreation1hInputTokens === "number" ? { cacheCreation1hInputTokens } : {}),
     ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
@@ -657,15 +678,9 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
       ? { billableOutputTokens: veryfront.billable_output_tokens }
       : {}),
     ...readGatewayUsageCosts(veryfront),
-    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
-      ? { costSource }
-      : {}),
+    ...(costSource !== undefined ? { costSource } : {}),
     ...(billingMode !== undefined ? { billingMode } : {}),
-    ...(usageCaptureStatus === "complete" ||
-        usageCaptureStatus === "missing" ||
-        usageCaptureStatus === "partial"
-      ? { usageCaptureStatus }
-      : {}),
+    ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),
   });
 }
 

@@ -3,8 +3,34 @@ import type {
   StreamOutcome,
   StreamUsage,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import { pickDefinedUsageFields } from "#veryfront/provider/runtime-usage.ts";
 import type { AgUiEncodedEvent, AgUiRunFinishedMetadata } from "./encoder.ts";
 import { buildNativeRunEventFrame, buildToolCallStatusChangedEvent } from "./native-run-events.ts";
+
+/**
+ * `StreamUsage`/`AgUiRunFinishedMetadata` cache and billing fields this
+ * adapter forwards verbatim. A narrower list than the runtime's full usage
+ * tail (`RUNTIME_USAGE_OPTIONAL_TAIL_FIELDS`): AG-UI run-finished metadata
+ * only ever reports the combined provider/veryfront cost and charge totals
+ * here, not their input/output splits.
+ */
+const AG_UI_USAGE_METADATA_TAIL_FIELDS = [
+  "cachedInputTokens",
+  "cacheCreationInputTokens",
+  "cacheCreation1hInputTokens",
+  "cacheReadInputTokens",
+  "reasoningTokens",
+  "billableInputTokens",
+  "billableOutputTokens",
+  "costUsd",
+  "providerCostUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+  "costSource",
+  "billingMode",
+  "usageCaptureStatus",
+] as const satisfies readonly (keyof StreamUsage & keyof AgUiRunFinishedMetadata)[];
 
 /** Formatting-only state kept by the lifecycle AG-UI adapter. */
 export interface LifecycleAgUiState {
@@ -50,39 +76,7 @@ function mergeUsageMetadata(
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     totalTokens: usage.totalTokens,
-    ...(usage.cachedInputTokens !== undefined
-      ? { cachedInputTokens: usage.cachedInputTokens }
-      : {}),
-    ...(usage.cacheCreationInputTokens !== undefined
-      ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
-      : {}),
-    ...(usage.cacheCreation1hInputTokens !== undefined
-      ? { cacheCreation1hInputTokens: usage.cacheCreation1hInputTokens }
-      : {}),
-    ...(usage.cacheReadInputTokens !== undefined
-      ? { cacheReadInputTokens: usage.cacheReadInputTokens }
-      : {}),
-    ...(usage.reasoningTokens !== undefined ? { reasoningTokens: usage.reasoningTokens } : {}),
-    ...(usage.billableInputTokens !== undefined
-      ? { billableInputTokens: usage.billableInputTokens }
-      : {}),
-    ...(usage.billableOutputTokens !== undefined
-      ? { billableOutputTokens: usage.billableOutputTokens }
-      : {}),
-    ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
-    ...(usage.providerCostUsd !== undefined ? { providerCostUsd: usage.providerCostUsd } : {}),
-    ...(usage.veryfrontChargeUsd !== undefined
-      ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
-      : {}),
-    ...(usage.veryfrontBilledUsd !== undefined
-      ? { veryfrontBilledUsd: usage.veryfrontBilledUsd }
-      : {}),
-    ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
-    ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
-    ...(usage.billingMode !== undefined ? { billingMode: usage.billingMode } : {}),
-    ...(usage.usageCaptureStatus !== undefined
-      ? { usageCaptureStatus: usage.usageCaptureStatus }
-      : {}),
+    ...pickDefinedUsageFields(usage, AG_UI_USAGE_METADATA_TAIL_FIELDS),
   };
 }
 
