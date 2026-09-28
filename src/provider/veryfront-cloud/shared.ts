@@ -437,9 +437,15 @@ export function resolveVeryfrontCloudGatewayRoute(
     const neutralPath = IntrinsicReflectApply(MapPrototypeGet, NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL, [
       protocol,
     ]) as string | undefined;
-    if (neutralPath) {
+    const pathAddressed = IntrinsicReflectApply(SetPrototypeHas, PATH_ADDRESSED_PROTOCOLS, [
+      protocol,
+    ]);
+    // A path-addressed route names only the model, so a provider other than
+    // the protocol's own would be indistinguishable there from another provider
+    // with the same upstream id. Such providers keep their vendor-scoped route.
+    if (neutralPath && (!pathAddressed || providerId === protocol)) {
       const baseURL = joinUrl(apiBaseUrl, neutralPath);
-      return IntrinsicReflectApply(SetPrototypeHas, PATH_ADDRESSED_PROTOCOLS, [protocol])
+      return pathAddressed
         ? { baseURL, neutral: true }
         : { baseURL, neutral: true, wireModelProvider: providerId };
     }
