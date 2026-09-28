@@ -6,6 +6,19 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: `VERYFRONT_CLOUD_GATEWAY_ROUTES` is removed
+
+`veryfront-cloud/*` models always call the vendor-neutral endpoints:
+`<api>/ai/v1` for the OpenAI and Anthropic protocols and `<api>/ai/v1beta` for
+Google. `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor` no longer restores the
+per-provider routes, and the variable is ignored. The API announced those
+routes with a `Sunset: 2026-12-31` deprecation contract. API deployments that
+have removed the vendor-scoped inference paths return `410 Gone` and name the
+neutral replacement. This SDK no longer selects them even while an API
+deployment is still serving the deprecation window. A provider other than
+Google served on the Google surface now fails with `NOT_SUPPORTED` instead of
+calling a per-provider route. Remove the variable from your environment.
+
 ### Fixed: preview rendering recovers from a source snapshot change
 
 When your preview source changes during rendering, eligible document requests
@@ -99,10 +112,6 @@ that speak the Anthropic protocol use `/messages`. The request body names the mo
 `<provider>/<model>`. Google models keep their existing route. Authentication,
 project and billing headers are unchanged, and platform refusals such as
 insufficient credits or a missing project are reported as before.
-
-To keep the previous per-provider routes and request bodies for one release,
-set `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor` in the environment. The opt-out is
-temporary and a later release removes it.
 
 ### Changed: model IDs naming a provider this package does not list now route through Veryfront Cloud
 

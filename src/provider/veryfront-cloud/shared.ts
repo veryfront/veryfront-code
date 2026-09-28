@@ -1,4 +1,4 @@
-import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
+import { CONFIG_INVALID, createError, NOT_SUPPORTED, toError } from "#veryfront/errors";
 import {
   getVeryfrontCloudBootstrap,
   normalizeVeryfrontApiBaseUrl,
@@ -22,7 +22,6 @@ import {
   createRetiredVeryfrontCloudModelError,
   isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
-  resolveVeryfrontCloudGatewayPath,
   resolveVeryfrontCloudProviderId,
   resolveVeryfrontCloudSurface,
   type VeryfrontCloudProviderId,
@@ -355,18 +354,9 @@ export async function loadVeryfrontCloudModelCatalog(
 }
 
 /**
- * Host environment variable that restores the vendor-scoped gateway routes.
- *
- * Temporary: it exists for one release so a deployment can move back to the
- * previous request URLs and bodies while it migrates, and is then removed.
- * Only the value `vendor` changes anything.
- */
-export const VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV = "VERYFRONT_CLOUD_GATEWAY_ROUTES";
-
-/**
  * Vendor-neutral gateway paths, keyed by the wire protocol a model speaks
- * (`resolveVeryfrontCloudSurface`). A protocol with no entry keeps its
- * vendor-scoped path.
+ * (`resolveVeryfrontCloudSurface`). A protocol with no entry has no route
+ * this package can send to.
  */
 const NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL: ReadonlyMap<string, string> = new Map([
   ["openai", "ai/v1"],
@@ -386,71 +376,65 @@ export interface VeryfrontCloudGatewayRoute {
   /** Base URL the request builder appends its operation path to. */
   baseURL: string;
   /**
-   * Set on a vendor-neutral route, whose Veryfront refusals arrive in the
-   * protocol's native error envelope and are read back in the vendor-route shape.
+   * Always set: every route is vendor-neutral, and its Veryfront refusals
+   * arrive in the protocol's native error envelope and are read back in the
+   * vendor-route shape.
    */
-  neutral?: true;
+  neutral: true;
   /**
-   * Set on a vendor-neutral route whose body names the model: the body's
-   * `model` is sent as `<provider>/<model>`, because one neutral path serves
-   * many providers. Unset on a vendor-scoped route, whose path already names
-   * the provider, and on a route that names the model in its URL (Google).
+   * Set on a route whose body names the model: the body's `model` is sent as
+   * `<provider>/<model>`, because one neutral path serves many providers.
+   * Unset on a route that names the model in its URL (Google).
    */
   wireModelProvider?: VeryfrontCloudProviderId;
-}
-
-function usesVendorGatewayRoutes(): boolean {
-  const value = getHostEnv(VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV);
-  if (value === undefined) return false;
-  const normalized = IntrinsicReflectApply(
-    StringPrototypeToLowerCase,
-    IntrinsicReflectApply(StringPrototypeTrim, value, []),
-    [],
-  );
-  return normalized === "vendor";
-}
-
-function getVeryfrontCloudVendorGatewayBaseUrl(
-  apiBaseUrl: string,
-  provider: VeryfrontCloudProviderId,
-): string {
-  const gatewayPath = resolveVeryfrontCloudGatewayPath(provider);
-  if (!gatewayPath) {
-    throw new TypeError(`Unsupported Veryfront Cloud provider "${String(provider)}"`);
-  }
-  return joinUrl(apiBaseUrl, gatewayPath);
 }
 
 /**
  * Gateway route for a provider. OpenAI- and Anthropic-protocol providers both
  * use `<api>/ai/v1` (`/chat/completions`, `/responses` or `/messages`), and Google uses
- * `<api>/ai/v1beta`. {@link VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV} set to
- * `vendor` restores the vendor-scoped path for every provider.
+ * `<api>/ai/v1beta`.
+ *
+ * Throws for a provider no route can address: an unknown provider id, a
+ * protocol this package builds no requests for, or a provider other than
+ * Google on the Google protocol, whose route names only the model.
  */
 export function resolveVeryfrontCloudGatewayRoute(
   apiBaseUrl: string,
   provider: VeryfrontCloudProviderId,
 ): VeryfrontCloudGatewayRoute {
   const providerId = resolveVeryfrontCloudProviderId(provider);
-  if (providerId && !usesVendorGatewayRoutes()) {
-    const protocol = resolveVeryfrontCloudSurface(providerId);
-    const neutralPath = IntrinsicReflectApply(MapPrototypeGet, NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL, [
-      protocol,
-    ]) as string | undefined;
-    const pathAddressed = IntrinsicReflectApply(SetPrototypeHas, PATH_ADDRESSED_PROTOCOLS, [
-      protocol,
-    ]);
-    // A path-addressed route names only the model, so a provider other than
-    // the protocol's own would be indistinguishable there from another provider
-    // with the same upstream id. Such providers keep their vendor-scoped route.
-    if (neutralPath && (!pathAddressed || providerId === protocol)) {
-      const baseURL = joinUrl(apiBaseUrl, neutralPath);
-      return pathAddressed
-        ? { baseURL, neutral: true }
-        : { baseURL, neutral: true, wireModelProvider: providerId };
-    }
+  if (!providerId) {
+    throw new TypeError(`Unsupported Veryfront Cloud provider "${String(provider)}"`);
   }
-  return { baseURL: getVeryfrontCloudVendorGatewayBaseUrl(apiBaseUrl, provider) };
+  const protocol = resolveVeryfrontCloudSurface(providerId);
+  const neutralPath = IntrinsicReflectApply(MapPrototypeGet, NEUTRAL_GATEWAY_PATHS_BY_PROTOCOL, [
+    protocol,
+  ]) as string | undefined;
+  if (neutralPath === undefined) {
+    throw NOT_SUPPORTED.create({
+      detail: `Veryfront Cloud wire surface "${protocol}" is not supported by this package version`,
+    });
+  }
+  const pathAddressed = IntrinsicReflectApply(SetPrototypeHas, PATH_ADDRESSED_PROTOCOLS, [
+    protocol,
+  ]);
+  if (!pathAddressed) {
+    return {
+      baseURL: joinUrl(apiBaseUrl, neutralPath),
+      neutral: true,
+      wireModelProvider: providerId,
+    };
+  }
+  // A path-addressed route names only the model, so a provider other than the
+  // protocol's own would be indistinguishable there from another provider with
+  // the same upstream id.
+  if (providerId !== protocol) {
+    throw NOT_SUPPORTED.create({
+      detail:
+        `Veryfront Cloud provider "${providerId}" speaks the ${protocol} protocol, whose gateway route addresses only ${protocol} models; this package version cannot send requests for it`,
+    });
+  }
+  return { baseURL: joinUrl(apiBaseUrl, neutralPath), neutral: true };
 }
 
 export function getVeryfrontCloudGatewayBaseUrl(

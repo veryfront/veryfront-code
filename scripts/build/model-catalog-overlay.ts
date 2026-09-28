@@ -17,8 +17,8 @@
  * The catalog now serves a surface per model, so the generator derives the
  * routing table from it and this file no longer names a vendor's surface. What
  * remains below is client-side: which providers this package may use a native
- * transport with, the surface it assumes for a provider the catalog says
- * nothing about, and the gateway path it builds.
+ * transport with and the surface it assumes for a provider the catalog says
+ * nothing about.
  *
  * @module scripts/build/model-catalog-overlay
  */
@@ -47,12 +47,6 @@ export type ModelCatalogOverlay = {
    * platform's.
    */
   readonly defaultSurface: string;
-  /** Leading gateway path segments, shared by every surface. */
-  readonly gatewayPathPrefix: string;
-  /** Gateway API version per surface. */
-  readonly surfaceGatewayApiVersions: readonly (readonly [string, string])[];
-  /** Gateway API version used for a surface without its own entry. */
-  readonly defaultGatewayApiVersion: string;
   /**
    * Entry ID published for a model whose served ID is not the short ID users
    * type. The served payload lists accepted aliases but designates none of
@@ -101,13 +95,6 @@ export type ModelCatalogOverlay = {
 export const MODEL_CATALOG_OVERLAY: ModelCatalogOverlay = {
   nativeProviders: ["anthropic", "openai", "google"],
   defaultSurface: "openai",
-  gatewayPathPrefix: "ai/gateway",
-  surfaceGatewayApiVersions: [
-    ["anthropic", "v1"],
-    ["openai", "v1"],
-    ["google", "v1beta"],
-  ],
-  defaultGatewayApiVersion: "v1",
   entryIds: [
     ["anthropic/claude-opus-4-8", "opus"],
     ["anthropic/claude-sonnet-4-6", "sonnet"],

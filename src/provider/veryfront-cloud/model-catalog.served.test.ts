@@ -45,6 +45,7 @@ import {
 } from "./model-catalog.data.ts";
 import { isOpenAIReasoningModel } from "../shared/openai-reasoning.ts";
 import { resolveVeryfrontCloudGatewayRoute } from "./shared.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 type ServedRow = {
   id: string;
@@ -321,19 +322,34 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
       assertEquals(resolveVeryfrontCloudProviderRouting("vendor-studio").surface, "google");
     });
 
-    it("keeps a non-Google provider on the Google surface on its vendor-scoped route", () => {
+    it("refuses a non-Google provider on the Google surface instead of reaching a retired route", () => {
       __setVeryfrontCloudCatalogForTests(payload([
         row("vendor-studio/vendor-model", { provider: "vendor", surface: "google" }),
       ]));
 
-      assertEquals(
-        resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", "vendor-studio"),
-        { baseURL: "https://api.veryfront.com/ai/gateway/vendor/v1beta" },
+      const error = assertThrows(
+        () => resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", "vendor-studio"),
+        VeryfrontError,
+        'Veryfront Cloud provider "vendor" speaks the google protocol',
       );
+      assertEquals((error as VeryfrontError).slug, "not-supported");
       assertEquals(
         resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", "google"),
         { baseURL: "https://api.veryfront.com/ai/v1beta", neutral: true },
       );
+    });
+
+    it("refuses a served provider on a future wire surface without a vendor-route fallback", () => {
+      __setVeryfrontCloudCatalogForTests(payload([
+        row("future-labs/future-model", { surface: "a-later-wire-format" }),
+      ]));
+
+      const error = assertThrows(
+        () => resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", "future-labs"),
+        VeryfrontError,
+        'Veryfront Cloud wire surface "a-later-wire-format" is not supported',
+      );
+      assertEquals((error as VeryfrontError).slug, "not-supported");
     });
 
     it("uses the default model the catalog names", () => {

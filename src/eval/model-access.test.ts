@@ -58,7 +58,7 @@ async function rejectedRequest(
 ): Promise<unknown> {
   try {
     await requestJson({
-      url: `${origin}${options.path ?? "/ai/gateway/anthropic/v1/messages"}`,
+      url: `${origin}${options.path ?? "/ai/v1/messages"}`,
       fetchImpl: () => Promise.resolve(jsonResponse(status, options.body ?? { error: "Rejected" })),
       init: { method: "POST", body: "{}" },
       providerLabel: "veryfront-cloud",
@@ -296,6 +296,8 @@ describe("eval/model-access", () => {
         "/ai/anthropicx/v1/messages",
         "/ai/anthropic/v2/messages",
         "/ai/other/v1",
+        // The retired vendor-scoped route: this package no longer calls it.
+        "/ai/gateway/anthropic/v1/messages",
       ]
     ) {
       assertEquals(
@@ -385,7 +387,7 @@ describe("eval/model-access", () => {
     const classifyStatus = async (status: number) => {
       try {
         await requestJson({
-          url: "https://93.184.216.40/ai/gateway/anthropic/v1/messages",
+          url: "https://93.184.216.40/ai/v1/messages",
           fetchImpl: () =>
             Promise.resolve(
               markVeryfrontGatewayResponse(jsonResponse(status, { error: "Rejected" })),
@@ -411,7 +413,7 @@ describe("eval/model-access", () => {
     const refuse = async (status: number, body: Record<string, unknown>) => {
       try {
         await requestJson({
-          url: `${veryfrontApiOrigin()}/ai/gateway/openai/v1/chat/completions`,
+          url: `${veryfrontApiOrigin()}/ai/v1/chat/completions`,
           fetchImpl: () =>
             Promise.resolve(markVeryfrontGatewayResponse(jsonResponse(status, body))),
           init: { method: "POST", body: "{}" },
@@ -640,7 +642,7 @@ describe("eval/model-access", () => {
   it("classifies a gateway request the egress guard blocks for a private DNS answer", async () => {
     const apiHost = new URL(veryfrontApiOrigin()).hostname;
     const blocked = await blockedModelRequest(
-      `${veryfrontApiOrigin()}/ai/gateway/openai/v1/chat/completions`,
+      `${veryfrontApiOrigin()}/ai/v1/chat/completions`,
       ["10.255.128.3"],
     );
     const denial = classifyEvalModelAccessDenial(new Error("agent failed", { cause: blocked }));
@@ -669,7 +671,7 @@ describe("eval/model-access", () => {
     // local provider.
     for (
       const url of [
-        `${api.protocol}//${api.hostname}:8443/ai/gateway/openai/v1/chat/completions`,
+        `${api.protocol}//${api.hostname}:8443/ai/v1/chat/completions`,
         `${api.origin}/v1/chat/completions`,
         "http://localhost:11434/v1/chat/completions",
       ]
@@ -685,7 +687,7 @@ describe("eval/model-access", () => {
   it("ignores a private-address block outside a model request", async () => {
     // A tool, agent tool, or custom metric calling a private endpoint through a
     // guarded transport fails only its own record, even on the gateway route.
-    const gatewayUrl = `${veryfrontApiOrigin()}/ai/gateway/openai/v1/chat/completions`;
+    const gatewayUrl = `${veryfrontApiOrigin()}/ai/v1/chat/completions`;
     const toolBlock = await captureRejection(() =>
       blockingGuardedFetch(veryfrontApiOrigin(), ["10.255.128.3"])(gatewayUrl)
     );
@@ -701,7 +703,7 @@ describe("eval/model-access", () => {
   it("ignores egress refusals that are not a private-address block", async () => {
     const crossOrigin = await captureRejection(() =>
       requestJson({
-        url: `https://other.example/ai/gateway/openai/v1/chat/completions`,
+        url: `https://other.example/ai/v1/chat/completions`,
         fetchImpl: blockingGuardedFetch("https://api.example", ["93.184.216.34"]),
         init: { method: "POST", body: "{}" },
         providerLabel: "veryfront-cloud",
@@ -737,7 +739,7 @@ describe("eval/model-access", () => {
     // matches. The gateway fetch marks what it throws, so provenance holds.
     const explicitGateway = "https://run-scoped.example:8443";
     const blocked = await blockedModelRequest(
-      `${explicitGateway}/ai/gateway/openai/v1/chat/completions`,
+      `${explicitGateway}/ai/v1/chat/completions`,
       ["10.255.128.3"],
     );
     assertEquals(classifyEvalModelAccessDenial(blocked), undefined);

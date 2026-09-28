@@ -27,9 +27,6 @@ import type { ModelCatalogOverlay } from "./model-catalog-overlay.ts";
 const OVERLAY: ModelCatalogOverlay = {
   nativeProviders: ["acme-labs"],
   defaultSurface: "openai",
-  gatewayPathPrefix: "ai/gateway",
-  surfaceGatewayApiVersions: [["openai", "v1"], ["anthropic", "v1"]],
-  defaultGatewayApiVersion: "v1",
   // Keyed by the CANONICAL id: mystery-1 is served as `acme-labs-api/mystery-1`
   // (an alias prefix), so these rows also prove the lookup normalizes the key.
   entryIds: [["acme-labs/mystery-1", "mystery"]],
@@ -761,9 +758,6 @@ describe("scripts/build/model-catalog-mapping", () => {
       "VERYFRONT_CLOUD_PROVIDER_ALIASES",
       "VERYFRONT_CLOUD_PROVIDER_ROUTING",
       "DEFAULT_VERYFRONT_CLOUD_SURFACE",
-      "VERYFRONT_CLOUD_GATEWAY_PATH_PREFIX",
-      "VERYFRONT_CLOUD_SURFACE_GATEWAY_API_VERSIONS",
-      "DEFAULT_VERYFRONT_CLOUD_GATEWAY_API_VERSION",
       "VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES",
       "VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES",
       // The order precedes the labels: the label table is typed by the
@@ -1017,72 +1011,6 @@ describe("scripts/build/model-catalog-mapping", () => {
       Error,
       "conflicting display labels",
     );
-  });
-
-  it("rejects gateway path components the runtime would interpolate into a wrong URL", () => {
-    for (
-      const prefix of [
-        "",
-        "/ai/gateway",
-        "ai/gateway/",
-        "ai//gateway",
-        "ai/../gateway",
-        "ai gateway",
-        // `URL.pathname` turns the backslash into a slash: two segments.
-        "ai\\gateway",
-        // `URL.pathname` decodes and then removes the dot segment.
-        "ai/%2e%2e/gateway",
-        // `URL.pathname` rewrites these to `%3F` / `%23`; a route with them
-        // would target an endpoint that does not exist.
-        "ai/gateway?x",
-        "ai#gateway",
-        "ai/gätewäy",
-      ]
-    ) {
-      assertThrows(
-        () =>
-          assertOverlayInvariants({ ...OVERLAY, gatewayPathPrefix: prefix }),
-        Error,
-        "overlay gatewayPathPrefix",
-      );
-    }
-    for (
-      const version of [
-        "",
-        "v1/",
-        "v1/beta",
-        " v1",
-        "v1\\beta",
-        "%2E%2e",
-        "v%31",
-        "v1?beta",
-        "v1#beta",
-      ]
-    ) {
-      assertThrows(
-        () =>
-          assertOverlayInvariants({
-            ...OVERLAY,
-            surfaceGatewayApiVersions: [["openai", version], [
-              "anthropic",
-              "v1",
-            ]],
-          }),
-        Error,
-        "overlay gateway API version for openai",
-      );
-      assertThrows(
-        () =>
-          assertOverlayInvariants({
-            ...OVERLAY,
-            defaultGatewayApiVersion: version,
-          }),
-        Error,
-        "overlay gateway API version for (default)",
-      );
-    }
-    // The real overlay and the fixture pass.
-    assertOverlayInvariants(OVERLAY);
   });
 
   it("rejects two entries that the runtime would resolve to one model", () => {
@@ -1741,22 +1669,6 @@ describe("scripts/build/model-catalog-mapping", () => {
       (data) => ({ ...data, defaultModelId: "not-a-published-id" }),
       "default model",
     ],
-    [
-      "a gateway API version declared twice for one surface",
-      (data) => ({
-        ...data,
-        surfaceGatewayApiVersions: [
-          ...data.surfaceGatewayApiVersions,
-          ["openai", "v2"],
-        ],
-      }),
-      "gateway API version declared twice",
-    ],
-    [
-      "a default surface with no gateway API version",
-      (data) => ({ ...data, defaultSurface: "a-new-surface" }),
-      "no gateway API version for the default surface",
-    ],
   ];
 
   it("names broken invariants by position, never by a served value", () => {
@@ -1817,26 +1729,6 @@ describe("scripts/build/model-catalog-mapping", () => {
     });
   }
 
-  it("accepts a routed surface with no gateway API version of its own", () => {
-    // The default surface is this package's own value and must be versioned.
-    // A SERVED surface need not be: the path falls back to the default
-    // version, and a request on a surface this package cannot speak is
-    // refused before one is built. Requiring a version here would make a new
-    // surface a code change, which is what deriving routing removed.
-    const data = buildModelCatalogData(
-      payloadWithSurface("acme-labs", "carrier-pigeon"),
-      OVERLAY,
-    );
-
-    assertEquals(
-      data.surfaceGatewayApiVersions.some(([surface]) =>
-        surface === "carrier-pigeon"
-      ),
-      false,
-    );
-    assertCatalogInvariants(data);
-  });
-
   it("accepts the data generated from a well-formed payload", () => {
     const data = buildModelCatalogData(fakePayload(), OVERLAY);
 
@@ -1854,9 +1746,6 @@ describe("scripts/build/model-catalog-mapping", () => {
       "providerAliases",
       "providerRouting",
       "defaultSurface",
-      "gatewayPathPrefix",
-      "surfaceGatewayApiVersions",
-      "defaultGatewayApiVersion",
       "modelTransportCapabilities",
       "chatModels",
       "providerLabels",

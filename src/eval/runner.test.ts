@@ -67,7 +67,7 @@ function blockedModelRequest(): Promise<unknown> {
   const apiBaseUrl = getVeryfrontCloudBootstrap().apiBaseUrl.replace(/\/+$/, "");
   const apiOrigin = new URL(apiBaseUrl).origin;
   return requestJson({
-    url: `${apiBaseUrl}/ai/gateway/openai/v1/responses`,
+    url: `${apiBaseUrl}/ai/v1/responses`,
     fetchImpl: blockingGuardedFetch(apiOrigin, ["10.255.128.3"]),
     init: { method: "POST", body: "{}" },
     providerLabel: "veryfront-cloud",
@@ -693,9 +693,7 @@ describe("eval/runner", () => {
             agent: async () => {
               adapterCalls += 1;
               return await requestJson({
-                url: `${
-                  new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin
-                }/ai/gateway/anthropic/v1/messages`,
+                url: `${new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin}/ai/v1/messages`,
                 fetchImpl: () =>
                   Promise.resolve(
                     new Response(
@@ -738,9 +736,7 @@ describe("eval/runner", () => {
             agent: async () => {
               adapterCalls += 1;
               return await requestJson({
-                url: `${
-                  new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin
-                }/ai/gateway/anthropic/v1/messages`,
+                url: `${new URL(getVeryfrontCloudBootstrap().apiBaseUrl).origin}/ai/v1/messages`,
                 fetchImpl: () =>
                   Promise.resolve(new Response('{"error":"Unauthorized"}', { status: 401 })),
                 init: { method: "POST", body: "{}" },

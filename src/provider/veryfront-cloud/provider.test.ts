@@ -30,12 +30,7 @@ import { loadVeryfrontCloudModelCatalog } from "./shared.ts";
 import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import type { AgentRunEvent } from "#veryfront/runtime/model-call-context.ts";
-import {
-  createVeryfrontCloudFetch,
-  getVeryfrontCloudGatewayBaseUrl,
-  resolveVeryfrontCloudGatewayRoute,
-  VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV,
-} from "./shared.ts";
+import { createVeryfrontCloudFetch, getVeryfrontCloudGatewayBaseUrl } from "./shared.ts";
 import {
   isVeryfrontGatewayResponse,
   markVeryfrontGatewayResponse,
@@ -146,7 +141,7 @@ describe("provider/veryfront-cloud", () => {
   it("keeps gateway provenance marks working when WeakSet methods are replaced", async () => {
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
-      "https://93.184.216.34/ai/gateway/openai/v1",
+      "https://93.184.216.34/ai/v1",
     );
     const originalAdd = WeakSet.prototype.add;
     const originalHas = WeakSet.prototype.has;
@@ -160,7 +155,7 @@ describe("provider/veryfront-cloud", () => {
         throw new Error("poisoned has");
       };
       response = await wrappedFetch(
-        "https://93.184.216.34/ai/gateway/openai/v1/chat/completions",
+        "https://93.184.216.34/ai/v1/chat/completions",
       );
       assertEquals(isVeryfrontGatewayResponse(response), true);
     } finally {
@@ -175,7 +170,7 @@ describe("provider/veryfront-cloud", () => {
     const originalDefineProperty = Object.defineProperty;
     let rejection: unknown;
     const request = requestJson({
-      url: "https://93.184.216.34/ai/gateway/openai/v1/chat/completions",
+      url: "https://93.184.216.34/ai/v1/chat/completions",
       fetchImpl: () =>
         Promise.resolve(
           markVeryfrontGatewayResponse(new Response('{"error":"Unauthorized"}', { status: 401 })),
@@ -1503,68 +1498,34 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     return captured;
   }
 
-  /** [model, neutral URL, vendor-scoped URL, upstream id the builder sends]. */
-  const PROTOCOL_CASES: ReadonlyArray<readonly [string, string, string, string]> = [
-    [
-      "anthropic/claude-sonnet-4-6",
-      "https://api.veryfront.com/ai/v1/messages",
-      "https://api.veryfront.com/ai/gateway/anthropic/v1/messages",
-      "claude-sonnet-4-6",
-    ],
-    [
-      "openai/gpt-5.5",
-      "https://api.veryfront.com/ai/v1/chat/completions",
-      "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
-      "gpt-5.5",
-    ],
-    [
-      "openai/gpt-5-nano",
-      "https://api.veryfront.com/ai/v1/responses",
-      "https://api.veryfront.com/ai/gateway/openai/v1/responses",
-      "gpt-5-nano",
-    ],
-    [
-      "mistral/mistral-small-2503",
-      "https://api.veryfront.com/ai/v1/chat/completions",
-      "https://api.veryfront.com/ai/gateway/mistral/v1/chat/completions",
-      "mistral-small-2503",
-    ],
-    [
-      "acme-labs/mystery-1",
-      "https://api.veryfront.com/ai/v1/chat/completions",
-      "https://api.veryfront.com/ai/gateway/acme-labs/v1/chat/completions",
-      "mystery-1",
-    ],
+  /** [model, neutral URL]. */
+  const PROTOCOL_CASES: ReadonlyArray<readonly [string, string]> = [
+    ["anthropic/claude-sonnet-4-6", "https://api.veryfront.com/ai/v1/messages"],
+    ["openai/gpt-5.5", "https://api.veryfront.com/ai/v1/chat/completions"],
+    ["openai/gpt-5-nano", "https://api.veryfront.com/ai/v1/responses"],
+    ["mistral/mistral-small-2503", "https://api.veryfront.com/ai/v1/chat/completions"],
+    ["acme-labs/mystery-1", "https://api.veryfront.com/ai/v1/chat/completions"],
   ];
 
-  it("restores every vendor-scoped route when the opt-out is set", async () => {
-    for (const value of ["vendor", " Vendor "]) {
-      await withEnv({ [VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV]: value }, () => {
-        assertEquals(
-          ["anthropic", "openai", "google", "mistral", "moonshotai", "acme-labs"].map((
-            provider,
-          ) => resolveVeryfrontCloudGatewayRoute("https://api.veryfront.com", provider)),
-          [
-            { baseURL: "https://api.veryfront.com/ai/gateway/anthropic/v1" },
-            { baseURL: "https://api.veryfront.com/ai/gateway/openai/v1" },
-            { baseURL: "https://api.veryfront.com/ai/gateway/google/v1beta" },
-            { baseURL: "https://api.veryfront.com/ai/gateway/mistral/v1" },
-            { baseURL: "https://api.veryfront.com/ai/gateway/moonshotai/v1" },
-            { baseURL: "https://api.veryfront.com/ai/gateway/acme-labs/v1" },
-          ],
-        );
-        return Promise.resolve();
-      });
-    }
-  });
-
-  it("keeps the vendor-neutral routes for any other opt-out value", async () => {
-    await withEnv({ [VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV]: "neutral" }, () => {
+  it("ignores the removed VERYFRONT_CLOUD_GATEWAY_ROUTES opt-out", async () => {
+    setCloudBootstrap();
+    await withEnv({ VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" }, async () => {
       assertEquals(
-        getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com", "anthropic"),
-        "https://api.veryfront.com/ai/v1",
+        ["anthropic", "openai", "google", "mistral", "moonshotai", "acme-labs"].map((
+          provider,
+        ) => getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com", provider)),
+        [
+          "https://api.veryfront.com/ai/v1",
+          "https://api.veryfront.com/ai/v1",
+          "https://api.veryfront.com/ai/v1beta",
+          "https://api.veryfront.com/ai/v1",
+          "https://api.veryfront.com/ai/v1",
+          "https://api.veryfront.com/ai/v1",
+        ],
       );
-      return Promise.resolve();
+      for (const [modelId, neutralUrl] of PROTOCOL_CASES) {
+        assertEquals((await captureGatewayRequest(modelId)).url, neutralUrl, modelId);
+      }
     });
   });
 
@@ -1588,45 +1549,9 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
       "https://api.veryfront.com/ai/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
     );
     assertEquals(JSON.parse(neutral.body).model, undefined);
-
-    const vendor = await withEnv(
-      { VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" },
-      () => captureGatewayRequest("google-ai-studio/gemini-3.5-flash"),
-    );
-    assertEquals(
-      vendor.url,
-      "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
-    );
-    // The body, auth and project headers are identical on both routes.
-    assertEquals(
-      [vendor.body, vendor.authorization, vendor.projectSlug],
-      [neutral.body, neutral.authorization, neutral.projectSlug],
-    );
   });
 
-  it("restores the vendor-scoped URL and the builder's exact body under the opt-out", async () => {
-    setCloudBootstrap();
-    for (const [modelId, , vendorUrl, upstreamId] of PROTOCOL_CASES) {
-      const neutral = await captureGatewayRequest(modelId);
-      const vendor = await withEnv(
-        { VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" },
-        () => captureGatewayRequest(modelId),
-      );
-      assertEquals(vendor.url, vendorUrl, modelId);
-      assertEquals(JSON.parse(vendor.body).model, upstreamId, modelId);
-      // Everything but `model` is byte-identical: the builder's body is sent
-      // untouched under the opt-out, and only `model` changes on a neutral route.
-      assertEquals(
-        JSON.stringify({ ...JSON.parse(neutral.body), model: upstreamId }),
-        vendor.body,
-        modelId,
-      );
-      assertEquals(vendor.authorization, neutral.authorization, modelId);
-      assertEquals(vendor.projectSlug, neutral.projectSlug, modelId);
-    }
-  });
-
-  it("sends OpenAI embeddings to the vendor-neutral route, and back under the opt-out", async () => {
+  it("sends OpenAI embeddings to the vendor-neutral route", async () => {
     setCloudBootstrap();
     async function captureEmbeddingRequest(): Promise<{ url: string; model: unknown }> {
       let captured: { url: string; model: unknown } | undefined;
@@ -1655,16 +1580,9 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
       url: "https://api.veryfront.com/ai/v1/embeddings",
       model: "openai/text-embedding-3-small",
     });
-    assertEquals(
-      await withEnv({ VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" }, captureEmbeddingRequest),
-      {
-        url: "https://api.veryfront.com/ai/gateway/openai/v1/embeddings",
-        model: "text-embedding-3-small",
-      },
-    );
   });
 
-  it("sends Google embeddings to the vendor-neutral route, and back under the opt-out", async () => {
+  it("sends Google embeddings to the vendor-neutral route", async () => {
     setCloudBootstrap();
     async function captureEmbeddingUrl(): Promise<string> {
       let captured: string | undefined;
@@ -1688,10 +1606,6 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     assertEquals(
       await captureEmbeddingUrl(),
       "https://api.veryfront.com/ai/v1beta/models/gemini-embedding-001:embedContent",
-    );
-    assertEquals(
-      await withEnv({ VERYFRONT_CLOUD_GATEWAY_ROUTES: "vendor" }, captureEmbeddingUrl),
-      "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-embedding-001:embedContent",
     );
   });
 

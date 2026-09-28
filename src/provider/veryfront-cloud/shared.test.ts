@@ -166,7 +166,7 @@ describe("provider/veryfront-cloud/shared", () => {
         () =>
           createVeryfrontCloudFetch(
             token,
-            "https://93.184.216.34/ai/gateway/openai/v1",
+            "https://93.184.216.34/ai/v1",
           ),
         TypeError,
         "Veryfront Cloud API token",
@@ -182,7 +182,7 @@ describe("provider/veryfront-cloud/shared", () => {
       ["file:///tmp/gateway", "HTTP or HTTPS"],
       ["javascript:alert(1)", "HTTP or HTTPS"],
       [
-        "https://user:private-password@api.veryfront.com/ai/gateway/openai/v1",
+        "https://user:private-password@api.veryfront.com/ai/v1",
         "must not contain embedded credentials",
       ],
     ] as const;
@@ -229,7 +229,7 @@ describe("provider/veryfront-cloud/shared", () => {
 
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
-      "https://93.184.216.34/ai/gateway/openai/v1",
+      "https://93.184.216.34/ai/v1",
     );
 
     await withMockFetch(
@@ -238,7 +238,7 @@ describe("provider/veryfront-cloud/shared", () => {
         return new Response(null, { status: 204 });
       },
       () =>
-        wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions", {
+        wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
           headers: {
             Authorization: "Bearer upstream-token",
             "x-api-key": "anthropic-key",
@@ -261,7 +261,7 @@ describe("provider/veryfront-cloud/shared", () => {
   it("aborts an in-flight gateway request when the caller signal aborts (#1815)", async () => {
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
-      "https://93.184.216.34/ai/gateway/anthropic/v1",
+      "https://93.184.216.34/ai/v1",
     );
     const caller = new AbortController();
     let transportSignal: AbortSignal | undefined;
@@ -277,7 +277,7 @@ describe("provider/veryfront-cloud/shared", () => {
       },
       () =>
         assertRejects(() =>
-          wrappedFetch("https://93.184.216.34/ai/gateway/anthropic/v1/messages", {
+          wrappedFetch("https://93.184.216.34/ai/v1/messages", {
             method: "POST",
             body: "{}",
             signal: caller.signal,
@@ -297,7 +297,7 @@ describe("provider/veryfront-cloud/shared", () => {
 
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
-      "https://93.184.216.34/ai/gateway/openai/v1",
+      "https://93.184.216.34/ai/v1",
       "trusted-project",
     );
 
@@ -310,7 +310,7 @@ describe("provider/veryfront-cloud/shared", () => {
         runWithVeryfrontCloudContext(
           { billingGroupId: "evalrun_20260628_kimi" },
           () =>
-            wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions", {
+            wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
               headers: {
                 "x-veryfront-project-slug": "spoofed-project",
                 "x-veryfront-billing-group-id": "spoofed-billing-group",
@@ -332,7 +332,7 @@ describe("provider/veryfront-cloud/shared", () => {
   it("records whether a billed gateway request got past admission", async () => {
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
-      "https://93.184.216.34/ai/gateway/openai/v1",
+      "https://93.184.216.34/ai/v1",
       "trusted-project",
     );
     const admittedFor = async (status: number) => {
@@ -342,7 +342,7 @@ describe("provider/veryfront-cloud/shared", () => {
         () =>
           runWithVeryfrontCloudContext(
             context,
-            () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+            () => wrappedFetch("https://93.184.216.34/ai/v1/chat/completions"),
           ),
       );
       // Every gateway response is marked, so provider errors keep its provenance.
@@ -361,7 +361,7 @@ describe("provider/veryfront-cloud/shared", () => {
     const seen: Request[] = [];
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
-      "https://93.184.216.34/ai/gateway/openai/v1",
+      "https://93.184.216.34/ai/v1",
     );
 
     await withMockFetch(
@@ -374,7 +374,7 @@ describe("provider/veryfront-cloud/shared", () => {
       },
       () =>
         assertRejects(
-          () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+          () => wrappedFetch("https://93.184.216.34/ai/v1/chat/completions"),
           Error,
           "redirect",
         ),
@@ -387,7 +387,7 @@ describe("provider/veryfront-cloud/shared", () => {
     const seen: Request[] = [];
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
-      "https://93.184.216.34/ai/gateway/openai/v1",
+      "https://93.184.216.34/ai/v1",
     );
 
     await withMockFetch(
