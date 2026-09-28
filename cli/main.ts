@@ -18,12 +18,19 @@ if (Deno.args[0] === "__veryfront_internal_scaffold_writer") {
 const { setLoggerPreset } = await import("#cli/logger-config");
 setLoggerPreset("cli");
 
+// Establish machine-output mode before startup modules can emit diagnostics.
+const { parseCliArgs } = await import("./shared/args.ts");
+const args = parseCliArgs(Deno.args);
+if (args.json || args.j) {
+  const { setJsonMode } = await import("./shared/json-output.ts");
+  setJsonMode(true);
+}
+
 // Extract the esbuild binary before importing feature modules that may load esbuild.
 await import("veryfront/platform/esbuild-init");
 await import("veryfront/discovery/runtime-modules-bootstrap");
 
 // All imports below must be dynamic to ensure esbuild init completes first
-const { getArgs } = await import("veryfront/platform");
 const { hasEnvLoaded, loadEnv, markEnvLoaded, supportsEnvFiles } = await import(
   "veryfront/utils/env-loader"
 );
@@ -52,10 +59,8 @@ async function ensureEnvLoaded(): Promise<void> {
 }
 
 await ensureEnvLoaded();
-const args = getArgs();
-const { parseCliArgs } = await import("./shared/args.ts");
 const { routeCommand } = await import("./router.ts");
-await routeCommand(parseCliArgs(args));
+await routeCommand(args);
 
 // Exit cleanly after one-shot commands. Long-running commands (dev, start, mcp)
 // never return from routeCommand, so this only runs for commands like deploy, push, init, build.

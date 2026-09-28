@@ -26,6 +26,7 @@ import {
   assertMatch,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
@@ -130,6 +131,40 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
       await Deno.remove(BINARY_HASH_PATH);
     } catch {
       // Ignore errors - binary may not exist or may already be cleaned up
+    }
+  });
+
+  it("emits only JSON events when compiled build initialization runs", async () => {
+    const projectDir = await makeTempDir({ prefix: "compiled-build-json-" });
+    try {
+      await Deno.mkdir(join(projectDir, "app"));
+      await Deno.writeTextFile(join(projectDir, "veryfront.config.mjs"), "export default {};");
+      for (const flag of ["--json", "-j"]) {
+        for (const valid of [true, false]) {
+          await Deno.writeTextFile(
+            join(projectDir, "app/page.mdx"),
+            valid ? "# JSON build fixture\n" : "# Broken\n\n<Foo\n",
+          );
+          const result = await new Deno.Command(BINARY_PATH, {
+            args: ["build", "--preset", "embedded", flag],
+            cwd: projectDir,
+            env: { LOG_LEVEL: "INFO", LOG_FORMAT: "text", VERYFRONT_NO_UPDATE_CHECK: "1" },
+            stdin: "null",
+            stdout: "piped",
+            stderr: "piped",
+            signal: AbortSignal.timeout(120_000),
+          }).output();
+          assertEquals(result.code, valid ? 0 : 1, new TextDecoder().decode(result.stderr));
+          const events = new TextDecoder().decode(result.stdout).trim().split("\n").map((line) =>
+            JSON.parse(line)
+          );
+          const results = events.filter((event) => event.type === "result");
+          assertEquals(results.length, 1);
+          assertEquals(results[0].success, valid);
+        }
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
     }
   });
 
