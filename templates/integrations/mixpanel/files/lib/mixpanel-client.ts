@@ -118,6 +118,11 @@ async function mixpanelFetch<T>(
 
   if (baseUrl === MIXPANEL_DATA_BASE || baseUrl === MIXPANEL_API_BASE) {
     headers.Authorization = getAuthHeader();
+    // Service accounts must name the project on every Query and Export call.
+    const projectId = getProjectId();
+    if (projectId && !url.searchParams.has("project_id")) {
+      url.searchParams.set("project_id", projectId);
+    }
   }
 
   const response = await fetch(url.toString(), { ...options, headers });
