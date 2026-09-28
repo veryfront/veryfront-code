@@ -77,6 +77,15 @@ async function collectSortedFiles(
   );
 }
 
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isFile;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
 async function directoryExists(path: string): Promise<boolean> {
   try {
     const stat = await Deno.stat(path);
@@ -120,13 +129,25 @@ async function generateManifest(): Promise<TemplateManifest> {
 
     const integrationName = entry.name;
     const integrationPath = `${integrationsDir}/${integrationName}/files`;
+    const hasFiles = await directoryExists(integrationPath);
 
-    try {
-      const stat = await Deno.stat(integrationPath);
-      if (!stat.isDirectory) continue;
-    } catch {
-      continue; // No files directory
+    // `init --integrations` also reads the connector config, and the npm
+    // package carries templates only through this manifest, so ship every
+    // config here, without the tool and setup-guide metadata init never reads.
+    const configPath = `${integrationsDir}/${integrationName}/connector.json`;
+    if (await fileExists(configPath)) {
+      const {
+        tools: _tools,
+        setupGuide: _setupGuide,
+        SETUP_GUIDE: _legacySetupGuide,
+        ...config
+      } = JSON.parse(await Deno.readTextFile(configPath));
+      manifest.templates[`connector:${integrationName}`] = {
+        files: { "connector.json": JSON.stringify({ ...config, tools: [] }) },
+      };
     }
+
+    if (!hasFiles) continue;
 
     const files: Record<string, string> = {};
 

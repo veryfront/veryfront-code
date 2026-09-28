@@ -13,6 +13,8 @@
  *   6. `veryfront/scaffold` resolves by its published subpath and materializes
  *      a project, so a hosted "create project" flow never has to walk into the
  *      package's build output to reach the starter templates
+ *  6b. `veryfront init --integrations linear` writes the Linear client, tools
+ *      and auth route from the packed template manifest
  *   7. TypeScript config graphs and CommonJS requires build at the Node 22.3
  *      minimum without native type stripping or staging-directory resolution
  *   8. the packed ai-agent starter starts under Node, renders a page, and
@@ -948,6 +950,39 @@ async function checkScaffoldExport(workDir: string): Promise<void> {
   }
 }
 
+async function checkInitIntegrations(workDir: string): Promise<void> {
+  console.log("== 6b. init --integrations writes the integration scaffold");
+  const init = await run("node", [
+    "node_modules/veryfront/bin/veryfront.js",
+    "init",
+    "integration-demo",
+    "--integrations",
+    "linear",
+    "--skip-install",
+    "--skip-env-prompt",
+  ], { cwd: workDir, timeoutMs: 120_000 });
+  if (init.code !== 0) {
+    fail(`init --integrations linear failed\n${init.combined}`);
+  }
+  if (init.combined.includes("Integration not found")) {
+    fail(`init --integrations skipped linear\n${init.combined}`);
+  }
+  for (
+    const path of [
+      "lib/linear-client.ts",
+      "tools/linear-create-issue.ts",
+      "app/api/auth/linear/route.ts",
+    ]
+  ) {
+    if (!(await pathExists(`${workDir}/integration-demo/${path}`))) {
+      fail(
+        `init --integrations linear did not write ${path}\n${init.combined}`,
+      );
+    }
+  }
+  await Deno.remove(`${workDir}/integration-demo`, { recursive: true });
+}
+
 async function writeFixtureTree(
   files: Record<string, string>,
 ): Promise<void> {
@@ -1622,6 +1657,7 @@ async function runSmoke(workDir: string): Promise<void> {
     await checkAuthExtensionLoads(workDir, plan);
     await checkBrokenTransitiveDependency(workDir);
     await checkScaffoldExport(workDir);
+    await checkInitIntegrations(workDir);
     await checkNodeTypeScriptConfig(workDir);
 
     await writeStarterFixtures(workDir);
