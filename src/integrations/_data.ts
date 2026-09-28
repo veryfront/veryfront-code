@@ -34207,6 +34207,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "MIXPANEL_PROJECT_TOKEN",
       "description": "Mixpanel Project Token for event tracking",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": true,
       "docsUrl": "https://docs.mixpanel.com/docs/tracking/how-tos/api-credentials",
     }, {
@@ -34221,6 +34222,7 @@ export const connectors: IntegrationConfig[] = [
       "description":
         "Mixpanel Project ID (found in project settings; pass it as the project_id parameter on query tools)",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.mixpanel.com/docs/admin/organizations-projects/manage-projects",
     }, {
@@ -35811,6 +35813,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "DATABASE_URL",
       "description": "PostgreSQL connection string for database queries",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": true,
       "docsUrl": "https://neon.tech/docs/connect/connect-from-any-app",
     }],
