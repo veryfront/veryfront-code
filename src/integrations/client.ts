@@ -587,7 +587,7 @@ export async function createIntegrationClient(
         throw new TypeError("OAuth status requires an explicit user or project scope");
       }
       const params = new URLSearchParams({ project_reference: selectedProject.id, scope });
-      return requireShape<IntegrationConnectionStatus>(
+      const status = requireShape<IntegrationConnectionStatus>(
         await request(`/oauth/status/${integrationPath(integration)}?${params}`, {
           signal: options.abortSignal,
         }),
@@ -601,6 +601,7 @@ export async function createIntegrationClient(
             item.connectionGenerationId === undefined ||
             item.connection_generation_id === item.connectionGenerationId),
       );
+      return { ...status, scope };
     },
     async call(
       toolName: string,

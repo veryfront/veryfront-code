@@ -49,10 +49,12 @@ export type IntegrationClientConnection = IntegrationJsonObject & {
   status: "connected" | "expired" | "disconnected";
 };
 
-/** The existing OAuth status response, without invented readiness or expiry fields. */
+/** The OAuth status response, with the requested scope recorded by the client. */
 export type IntegrationConnectionStatus = IntegrationJsonObject & {
   connected: boolean;
   integration: string;
+  /** Scope of the status request. Required when using this status as a consent baseline. */
+  readonly scope?: "user" | "project";
   connection_id?: string;
   connection_generation_id?: string;
   connectionId?: string;
@@ -123,6 +125,7 @@ export type IntegrationConnectOutcome = IntegrationOAuthHandoff | {
 /**
  * Bounded wait for consent completion. Read `status()` before starting consent and pass it
  * as `before`, so the unchanged prior connection is never mistaken for the new one.
+ * The baseline must include the same scope, as recorded by `status()`.
  */
 export interface IntegrationConnectionWaitOptions {
   readonly scope: "user" | "project";
