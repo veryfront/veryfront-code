@@ -29,3 +29,7 @@ Prefer Veryfront scaffold tools over hand-written boilerplate. Keep app routes, 
 ## Inference
 
 Agent routes need model inference. Use a provider API key such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, configure an OpenAI-compatible local server, or run `veryfront login` to use the optional Veryfront Cloud gateway.
+
+## Integrations
+
+Integration tools such as `gmail__list_emails` use a provider account connected to a Veryfront project. `veryfront login` authenticates you to Veryfront and never connects a provider; `veryfront integration connect "<NAME>" --project "<PROJECT_SLUG>"` asks a person to authorize the provider account. Pass `--project` explicitly. For OAuth connectors (`credential_requirement.mode` is `oauth_connection`), select the account with `--connection` and `--expected-generation` from `veryfront integration connections`; project-credentials connectors use the project environment variables and take no connection selector. Never switch to another account or project to make a call succeed. Call once: never repeat a write whose outcome is unknown. Keep Veryfront tokens and provider secrets out of prompts, tool arguments, files, and output. Guide: https://veryfront.com/docs/code/guides/integrations
