@@ -225,7 +225,8 @@ describe("guide snippet checks", () => {
     assertEquals(script.includes('cp "$SNIPPET" first-call.ts'), true);
     assertEquals(script.trimEnd().endsWith("node first-call.ts"), true);
 
-    const control = nodeFirstCallScript(call, { dropModuleType: true });
+    const control = nodeFirstCallScript(call, { commonjs: true });
     assertEquals(control.includes("npm pkg set type=module"), false);
+    assertEquals(control.includes("npm pkg set type=commonjs"), true);
   });
 });

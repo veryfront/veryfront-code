@@ -291,8 +291,9 @@ console.log(outcome.status, Object.keys(outcome.result.structuredContent ?? {}))
 ```
 
 To run the script with Node.js 22.18 or later, create an ES module project.
-`npm init -y` alone creates a CommonJS project, and Node then rejects the
-script's `import` with `SyntaxError: Cannot use import statement outside a module`:
+Recent npm versions write `"type": "commonjs"` in `npm init -y`, and Node then
+rejects the script's `import` with
+`SyntaxError: Cannot use import statement outside a module`:
 
 ```bash
 mkdir first-call && cd first-call

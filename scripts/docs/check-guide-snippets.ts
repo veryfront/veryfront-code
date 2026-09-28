@@ -7,8 +7,8 @@
  *   `<<'GRAPHQL'` document validated against the checked-in schema snapshot.
  * - The integrations guide's TypeScript first-call script: run under Node in a
  *   clean directory set up with the guide's own commands, against a local
- *   `veryfront` package, and again without `npm pkg set type=module`, which
- *   must fail.
+ *   `veryfront` package, and again with `type=commonjs` in place of
+ *   `type=module`, which must fail.
  * - Integration guides, bundled skills and install templates: no
  *   credential-shaped literals and only released `veryfront integration`
  *   subcommands.
@@ -105,7 +105,7 @@ async function runNodeFirstCall(
   );
   await Deno.writeTextFile(snippet, call.script);
 
-  const runIn = async (name: string, dropModuleType: boolean) => {
+  const runIn = async (name: string, commonjs: boolean) => {
     const cwd = `${dir}/${name}`;
     await Deno.mkdir(cwd);
     const child = new Deno.Command("bash", {
@@ -117,7 +117,7 @@ async function runNodeFirstCall(
     }).spawn();
     const writer = child.stdin.getWriter();
     await writer.write(
-      new TextEncoder().encode(nodeFirstCallScript(call, { dropModuleType })),
+      new TextEncoder().encode(nodeFirstCallScript(call, { commonjs })),
     );
     await writer.close();
     const output = await child.output();
@@ -135,7 +135,7 @@ async function runNodeFirstCall(
   const commonjs = await runIn("commonjs", true);
   if (!commonjs.includes(COMMONJS_IMPORT_ERROR)) {
     problems.push(
-      `Without "npm pkg set type=module" Node should fail with "${COMMONJS_IMPORT_ERROR}":\n${commonjs.trim()}`,
+      `With "npm pkg set type=commonjs" Node should fail with "${COMMONJS_IMPORT_ERROR}":\n${commonjs.trim()}`,
     );
   }
   return problems;

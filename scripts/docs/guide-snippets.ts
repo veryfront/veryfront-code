@@ -463,17 +463,19 @@ export function extractNodeFirstCall(
  * Build a bash script that runs the guide's Node setup and run commands as
  * printed. `npm install veryfront` installs the local package at
  * `$VERYFRONT_PACKAGE` so the check needs no registry, and the script file is
- * copied from `$SNIPPET`. `dropModuleType` removes `npm pkg set type=module`
- * to show that the check fails without it.
+ * copied from `$SNIPPET`. `commonjs` replaces `npm pkg set type=module` with
+ * `npm pkg set type=commonjs`, the default recent npm versions write, to show
+ * that the check fails without the guide's step.
  */
 export function nodeFirstCallScript(
   call: NodeFirstCall,
-  options: { dropModuleType?: boolean } = {},
+  options: { commonjs?: boolean } = {},
 ): string {
-  const setup = options.dropModuleType
-    ? call.setup.split("\n").filter((line) =>
-      line.trim() !== "npm pkg set type=module"
-    ).join("\n")
+  const setup = options.commonjs
+    ? call.setup.replace(
+      /^npm pkg set type=module$/m,
+      "npm pkg set type=commonjs",
+    )
     : call.setup;
   return [
     "set -euo pipefail",
