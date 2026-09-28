@@ -367,6 +367,7 @@ export interface ChatStreamState {
     totalTokens: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreation1hInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -395,6 +396,7 @@ export interface ChatStreamCallbacks {
     totalTokens?: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheCreation1hInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -1705,6 +1707,7 @@ export function processStreamInternal(
               const output = typedPart.totalUsage.outputTokens ?? 0;
               const cacheReadInputTokens = typedPart.totalUsage.cacheReadInputTokens;
               const cacheCreationInputTokens = typedPart.totalUsage.cacheCreationInputTokens;
+              const cacheCreation1hInputTokens = typedPart.totalUsage.cacheCreation1hInputTokens;
               const cachedInputTokens = typedPart.totalUsage.cachedInputTokens ??
                 cacheReadInputTokens;
               state.usage = {
@@ -1713,6 +1716,7 @@ export function processStreamInternal(
                 totalTokens: typedPart.totalUsage.totalTokens ?? input + output,
                 ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
                 ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+                ...(cacheCreation1hInputTokens !== undefined ? { cacheCreation1hInputTokens } : {}),
                 ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
                 ...(typedPart.totalUsage.reasoningTokens !== undefined
                   ? { reasoningTokens: typedPart.totalUsage.reasoningTokens }

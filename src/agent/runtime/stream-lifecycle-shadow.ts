@@ -229,6 +229,7 @@ function equalUsage(
     legacy.totalTokens === usage.totalTokens &&
     legacy.cachedInputTokens === usage.cachedInputTokens &&
     legacy.cacheCreationInputTokens === usage.cacheCreationInputTokens &&
+    legacy.cacheCreation1hInputTokens === usage.cacheCreation1hInputTokens &&
     legacy.cacheReadInputTokens === usage.cacheReadInputTokens &&
     legacy.reasoningTokens === usage.reasoningTokens &&
     legacy.billableInputTokens === usage.billableInputTokens &&

@@ -649,6 +649,48 @@ describe("channels/invoke", () => {
       });
     });
 
+    it("reports the one-hour cache-write share in token usage only when the runtime has it", async () => {
+      const invokeWithUsage = async (usage: AgentResponse["usage"]) => {
+        const agent = createAgent({
+          generate: async () => createAgentResponse("Runtime answer", { usage }),
+        });
+        const deps: ChannelInvokeDeps = {
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: (id) => id === "agent-1" ? agent : undefined,
+          getAllAgentIds: () => ["agent-1"],
+        };
+        return await executeChannelInvoke(createPayload(), createHandlerContext(), deps);
+      };
+
+      const reported = await invokeWithUsage({
+        promptTokens: 12,
+        completionTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      });
+      assertEquals(reported.tokenUsage, {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      });
+
+      const unreported = await invokeWithUsage({
+        promptTokens: 12,
+        completionTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 1000,
+      });
+      assertEquals(unreported.tokenUsage, {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        cacheCreationInputTokens: 1000,
+      });
+    });
+
     it("returns a structured provider error when no AI runtime is available", async () => {
       const agent = createAgent({
         generate: async () => {

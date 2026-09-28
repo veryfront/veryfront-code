@@ -33,6 +33,7 @@ const USAGE_NUMERIC_KEYS = [
   "billableOutputTokens",
   "cachedInputTokens",
   "cacheCreationInputTokens",
+  "cacheCreation1hInputTokens",
   "cacheReadInputTokens",
   "reasoningTokens",
   "costUsd",

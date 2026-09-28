@@ -815,6 +815,11 @@ function usageMetrics(
       timestamp,
     ),
     mlflowMetric(
+      "cache_creation_1h_input_tokens",
+      usage.cacheCreation1hInputTokens,
+      timestamp,
+    ),
+    mlflowMetric(
       "cache_read_input_tokens",
       usage.cacheReadInputTokens,
       timestamp,

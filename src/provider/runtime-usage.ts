@@ -24,6 +24,12 @@ export interface RuntimeUsage {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  /**
+   * The share of {@link RuntimeUsage.cacheCreationInputTokens} written with a
+   * one-hour cache lifetime. A subset of that total, never added to it. Absent
+   * when the provider does not report the split.
+   */
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   /** Compatibility alias for {@link RuntimeUsage.cacheReadInputTokens}. */
   cachedInputTokens?: number;
@@ -49,6 +55,7 @@ const RUNTIME_USAGE_NUMERIC_FIELDS = [
   ["outputTokens", "token"],
   ["totalTokens", "total"],
   ["cacheCreationInputTokens", "token"],
+  ["cacheCreation1hInputTokens", "token"],
   ["cacheReadInputTokens", "token"],
   ["reasoningTokens", "token"],
   ["billableInputTokens", "token"],
@@ -73,6 +80,58 @@ const RUNTIME_USAGE_FIELDS = [
   "billingMode",
   "usageCaptureStatus",
 ] as const satisfies readonly (keyof RuntimeUsage)[];
+
+/**
+ * Optional usage fields shared by every "cache + billing" usage projection
+ * across the agent runtime, AG-UI, and streaming lifecycle layers.
+ *
+ * Excludes the token totals (`inputTokens`/`outputTokens`/`totalTokens`):
+ * each call site sources those from a different mandatory field (some alias
+ * them as `promptTokens`/`completionTokens`) and assigns them
+ * unconditionally, never through this list.
+ */
+export const RUNTIME_USAGE_OPTIONAL_TAIL_FIELDS = [
+  "cachedInputTokens",
+  "cacheCreationInputTokens",
+  "cacheCreation1hInputTokens",
+  "cacheReadInputTokens",
+  "reasoningTokens",
+  "billableInputTokens",
+  "billableOutputTokens",
+  "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
+  "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+  "costSource",
+  "billingMode",
+  "usageCaptureStatus",
+] as const satisfies readonly (keyof RuntimeUsage)[];
+
+/**
+ * Copies each named field from `source` into a new object, omitting any
+ * field whose value is `undefined` rather than assigning it explicitly.
+ *
+ * Shared by usage projections that otherwise repeat the same
+ * `...(x.field !== undefined ? { field: x.field } : {})` chain per field.
+ */
+export function pickDefinedUsageFields<T extends object, K extends keyof T>(
+  source: T,
+  fields: readonly K[],
+): Pick<T, K> {
+  const result = {} as Pick<T, K>;
+  for (const field of fields) {
+    const value = source[field];
+    if (value !== undefined) {
+      result[field] = value;
+    }
+  }
+  return result;
+}
 
 /** Read a non-negative safe-integer token counter. */
 export function readRuntimeTokenCount(value: unknown): number | undefined {

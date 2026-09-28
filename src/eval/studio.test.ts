@@ -180,6 +180,7 @@ describe("eval/studio", () => {
           outputTokens: 5,
           totalTokens: 15,
           costUsd: 0.002,
+          cacheCreation1hInputTokens: 4,
         },
         gateFailures: [
           {

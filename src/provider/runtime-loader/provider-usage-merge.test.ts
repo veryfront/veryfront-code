@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mergeUsage, type RuntimeUsage, sanitizeRuntimeUsage } from "./provider-usage.ts";
+import {
+  extractAnthropicUsage,
+  mergeUsage,
+  type RuntimeUsage,
+  sanitizeRuntimeUsage,
+} from "./provider-usage.ts";
 import { readGatewayUsageCosts, readRuntimeAmount, readRuntimeCost } from "../runtime-usage.ts";
 
 describe("provider/runtime-loader/provider-usage mergeUsage", () => {
@@ -635,5 +640,62 @@ describe("provider/runtime-usage amount readers", () => {
 
     assertEquals(setterCalls, 0);
     assertEquals(getterCalls, 0);
+  });
+});
+
+describe("provider/runtime-loader/provider-usage one-hour cache-write share", () => {
+  it("reads the one-hour share of cache writes from Anthropic usage", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation_input_tokens: 1000,
+          cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+        },
+      }),
+      {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      },
+    );
+  });
+
+  it("omits the share when the provider does not report it", () => {
+    for (
+      const cacheCreation of [
+        undefined,
+        {},
+        { ephemeral_5m_input_tokens: 1000 },
+        { ephemeral_1h_input_tokens: -1 },
+        { ephemeral_1h_input_tokens: 1.5 },
+      ]
+    ) {
+      const usage = extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          cache_creation_input_tokens: 1000,
+          ...(cacheCreation === undefined ? {} : { cache_creation: cacheCreation }),
+        },
+      });
+      assertEquals(usage?.cacheCreationInputTokens, 1000);
+      assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+    }
+  });
+
+  it("keeps the share through merge and sanitize without touching the cache-write total", () => {
+    const merged = mergeUsage(
+      { inputTokens: 8, cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 600 },
+      { outputTokens: 5 },
+    );
+    assertEquals(merged?.cacheCreationInputTokens, 1000);
+    assertEquals(merged?.cacheCreation1hInputTokens, 600);
+    assertEquals(merged?.totalTokens, 13);
+
+    const sanitized = sanitizeRuntimeUsage({ cacheCreation1hInputTokens: -5, inputTokens: 1 });
+    assertEquals(sanitized !== undefined && "cacheCreation1hInputTokens" in sanitized, false);
   });
 });

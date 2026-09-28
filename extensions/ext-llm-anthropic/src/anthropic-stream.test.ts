@@ -190,6 +190,39 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     );
   });
 
+  it("reports the one-hour cache-write share only when the provider reports it", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation_input_tokens: 1000,
+          cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+        },
+      }),
+      {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      },
+    );
+
+    for (const cacheCreation of [undefined, {}, { ephemeral_5m_input_tokens: 1000 }]) {
+      const usage = extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          cache_creation_input_tokens: 1000,
+          ...(cacheCreation === undefined ? {} : { cache_creation: cacheCreation }),
+        },
+      });
+      assertEquals(usage?.cacheCreationInputTokens, 1000);
+      assertEquals(usage !== undefined && "cacheCreation1hInputTokens" in usage, false);
+    }
+  });
+
   it("reads gateway amounts sent as decimal strings at the extraction boundary", () => {
     assertEquals(
       extractAnthropicUsage({
@@ -283,6 +316,63 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       }),
       undefined,
     );
+  });
+
+  it("adds the one-hour cache-write share across continuations without inventing one", () => {
+    assertEquals(
+      addAnthropicUsage(
+        { inputTokens: 8, cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 600 },
+        { inputTokens: 9, cacheCreationInputTokens: 500, cacheCreation1hInputTokens: 500 },
+      ),
+      {
+        inputTokens: 17,
+        totalTokens: 17,
+        cacheCreationInputTokens: 1500,
+        cacheCreation1hInputTokens: 1100,
+      },
+    );
+    const withoutShare = addAnthropicUsage(
+      { inputTokens: 8, cacheCreationInputTokens: 1000 },
+      { inputTokens: 9, cacheCreationInputTokens: 500 },
+    );
+    assertEquals(withoutShare?.cacheCreationInputTokens, 1500);
+    assertEquals(withoutShare !== undefined && "cacheCreation1hInputTokens" in withoutShare, false);
+  });
+
+  it("carries the one-hour cache-write share from message_start into the finish usage", async () => {
+    const parts = await collectParts(streamFromText([
+      data({
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 8,
+            cache_creation_input_tokens: 1000,
+            cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+          },
+        },
+      }),
+      data({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+      data({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } }),
+      data({ type: "content_block_stop", index: 0 }),
+      data({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 5 },
+      }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      usage: {
+        inputTokens: 8,
+        outputTokens: 5,
+        totalTokens: 13,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      },
+    });
   });
 
   it("preserves thinking, text, tool-call assembly, usage, and finish events", async () => {

@@ -910,6 +910,32 @@ describe("agent/ag-ui-encoder", () => {
     );
   });
 
+  it("reports the one-hour cache-write share in RunFinished only when usage carries it", () => {
+    const finish = (usage: Record<string, number>) => {
+      const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+      mapRuntimeStreamEventToAgUiEvents(state, { type: "message-start", messageId: "a-1" });
+      mapRuntimeStreamEventToAgUiEvents(state, { type: "text-start", id: "t-1" });
+      const events = finalizeAgUiEvents(state, {
+        text: "done",
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+        usage: { promptTokens: 12, completionTokens: 8, totalTokens: 20, ...usage },
+      });
+      return events.find((event) => event.event === "RunFinished")?.payload as {
+        metadata: Record<string, unknown>;
+      };
+    };
+
+    const reported = finish({ cacheCreationInputTokens: 1000, cacheCreation1hInputTokens: 600 });
+    assertEquals(reported.metadata.cacheCreationInputTokens, 1000);
+    assertEquals(reported.metadata.cacheCreation1hInputTokens, 600);
+
+    const unreported = finish({ cacheCreationInputTokens: 1000 });
+    assertEquals(unreported.metadata.cacheCreationInputTokens, 1000);
+    assertEquals("cacheCreation1hInputTokens" in unreported.metadata, false);
+  });
+
   it("preserves a runtime terminal error code in RunError", () => {
     const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
 

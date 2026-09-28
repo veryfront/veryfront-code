@@ -415,6 +415,8 @@ describe("lifecycle AG-UI adapter", () => {
               costCredits: 2,
               billingMode: "deferred",
               usageCaptureStatus: "complete",
+              cacheCreationInputTokens: 5,
+              cacheCreation1hInputTokens: 3,
             },
           },
         },
@@ -436,6 +438,8 @@ describe("lifecycle AG-UI adapter", () => {
         costCredits: 2,
         billingMode: "deferred",
         usageCaptureStatus: "complete",
+        cacheCreationInputTokens: 5,
+        cacheCreation1hInputTokens: 3,
       },
       "RunFinished metadata must carry the merged usage including billing fields",
     );

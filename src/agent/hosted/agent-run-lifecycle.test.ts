@@ -144,6 +144,7 @@ describe("hosted-agent-run-lifecycle", () => {
         inputTokens: 10,
         outputTokens: 5,
         cachedInputTokens: 2,
+        cacheCreation1hInputTokens: 3,
         cacheReadInputTokens: 2,
         reasoningTokens: 1,
       },
@@ -163,6 +164,7 @@ describe("hosted-agent-run-lifecycle", () => {
     assertEquals(span.attributes["gen_ai.usage.output_tokens"], 5);
     assertEquals(span.attributes["gen_ai.usage.total_tokens"], 15);
     assertEquals(span.attributes["gen_ai.usage.cache_read.input_tokens"], 2);
+    assertEquals(span.attributes["gen_ai.usage.cache_creation_1h.input_tokens"], 3);
     assertEquals(span.attributes["gen_ai.usage.reasoning.output_tokens"], 1);
   });
 
