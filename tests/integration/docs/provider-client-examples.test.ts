@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type RecordedRequest = {
   url: string;
@@ -11,10 +12,14 @@ type RecordedRequest = {
 async function runSnippetsWithOfficialClients(
   snippets: string[],
 ): Promise<RecordedRequest[]> {
-  const tempDir = await Deno.makeTempDir({ prefix: "vf-provider-docs-" });
+  const tempDir = await makeTempDir({ prefix: "vf-provider-docs-" });
   try {
     const modulePath = `${tempDir}/provider-snippets.ts`;
     const lockPath = `${tempDir}/deno.lock`;
+    await Deno.copyFile(
+      new URL("./provider-client-examples.deno.lock", import.meta.url),
+      lockPath,
+    );
     const configPath = `${tempDir}/deno.json`;
     await Deno.writeTextFile(
       configPath,
@@ -33,6 +38,7 @@ async function runSnippetsWithOfficialClients(
       args: [
         "run",
         "--quiet",
+        "--frozen",
         "--config",
         configPath,
         "--allow-env",
