@@ -326,6 +326,12 @@ describe("mcp/standalone", () => {
       );
     });
 
+    it("prompts/get rejects an unknown prompt", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "prompts/get", { name: "unknown-prompt" });
+      assertExists(resp.error);
+    });
+
     it("unknown method returns error", async () => {
       const server = new StandaloneMCPServer();
       const resp = await dispatch(server, "nonexistent/method");

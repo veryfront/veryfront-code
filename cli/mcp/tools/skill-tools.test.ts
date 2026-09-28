@@ -34,6 +34,15 @@ describe("mcp/tools/skill-tools", () => {
       assertEquals(result.skill?.references?.includes("references/INTEGRATIONS.md"), true);
     });
 
+    it("returns a skill without references and rejects an unknown one", async () => {
+      const contribute = await vfGetSkills.execute({ name: "contribute" });
+      const unknown = await vfGetSkills.execute({ name: "unknown-skill" });
+
+      assertEquals(contribute.skill?.name, "contribute");
+      assertEquals(contribute.skill?.references, undefined);
+      assertEquals(unknown, { error: "Skill not found: unknown-skill" });
+    });
+
     it("lists the bundled skills", async () => {
       const result = await vfGetSkills.execute({});
       const names = result.skills?.map((skill) => skill.name) ?? [];

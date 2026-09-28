@@ -42,7 +42,7 @@ async function loadReferences(
   if (names.length === 0) return undefined;
 
   const references: Record<string, string> = {};
-  for (const name of names.sort()) {
+  for (const name of names.sort((a, b) => a.localeCompare(b))) {
     references[`references/${name}`] = await fs.readTextFile(`${directory}/${name}`);
   }
   return references;

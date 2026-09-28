@@ -110,6 +110,17 @@ describe("Skill Loader", () => {
     });
   });
 
+  it("omits references when the references directory has no Markdown files", async () => {
+    await withTempDir({
+      "skills/code-review/SKILL.md": PROJECT_SKILL,
+      "skills/code-review/references/notes.txt": "ignored",
+    }, async (dir) => {
+      const skill = await loadSkill(join(dir, "skills", "code-review"));
+
+      assertEquals(skill !== null && "references" in skill, false);
+    });
+  });
+
   it("lists project-local skills from skills/<id>/SKILL.md", async () => {
     await withTempDir({ "skills/code-review/SKILL.md": PROJECT_SKILL }, async (dir) => {
       const skills = await listLocalSkills(dir);

@@ -22,7 +22,7 @@ for await (const entry of Deno.readDir(skillsDir)) {
 }
 
 const skills: LoadedSkill[] = [];
-for (const name of names.sort()) {
+for (const name of names.sort((a, b) => a.localeCompare(b))) {
   const skill = await loadSkill(join(skillsDir, name));
   if (!skill) throw new Error(`cli/mcp/skills/${name}/SKILL.md is missing or invalid`);
   skills.push({ ...skill, directory: `core:${name}` });
