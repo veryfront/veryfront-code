@@ -1,28 +1,4 @@
-import { join } from "veryfront/fs";
 import type { IntegrationName, TemplateFile } from "./types.ts";
-
-export function resolveIntegrationModuleDir(
-  moduleUrl: string,
-  platform = typeof process !== "undefined" ? process.platform : undefined,
-): string {
-  const normalizedModuleUrl = new URL(".", moduleUrl);
-
-  if (normalizedModuleUrl.protocol !== "file:") return normalizedModuleUrl.href;
-
-  let moduleDir = normalizedModuleUrl.pathname;
-  if (platform === "win32" && moduleDir.startsWith("/")) {
-    moduleDir = moduleDir.slice(1);
-  }
-
-  return moduleDir;
-}
-
-export function buildIntegrationDirectory(
-  moduleDir: string,
-  integrationName: string,
-): string {
-  return join(moduleDir, "integrations", integrationName);
-}
 
 export function buildUnknownIntegrationErrors(
   integrations: IntegrationName[],

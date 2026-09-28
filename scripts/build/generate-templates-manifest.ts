@@ -12,6 +12,7 @@
 
 import { walk } from "#std/fs/walk";
 import { relative } from "#std/path";
+import { SUPPORTED_INTEGRATION_NAMES } from "../../src/integrations/feature-flags.ts";
 import { encodeBase64Bytes } from "../../src/utils/base64url.ts";
 
 interface TemplateManifest {
@@ -140,6 +141,23 @@ async function generateManifest(): Promise<TemplateManifest> {
     if (Object.keys(files).length === 0) continue;
 
     manifest.templates[`integration:${integrationName}`] = { files };
+  }
+
+  // `init --integrations` also reads each connector config. The npm package
+  // carries templates only through this manifest, so ship the configs of the
+  // scaffolded and default integrations here.
+  const connectorNames = new Set<string>(SUPPORTED_INTEGRATION_NAMES);
+  for (const key of Object.keys(manifest.templates)) {
+    if (key.startsWith("integration:")) connectorNames.add(key.slice("integration:".length));
+  }
+  for (const integrationName of [...connectorNames].sort()) {
+    manifest.templates[`connector:${integrationName}`] = {
+      files: {
+        "connector.json": await Deno.readTextFile(
+          `${integrationsDir}/${integrationName}/connector.json`,
+        ),
+      },
+    };
   }
 
   // Process auth templates. Each preset layers the shared base files first,

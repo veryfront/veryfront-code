@@ -347,9 +347,15 @@ async function assembleIntegrationFiles(
     `Loaded ${loadedIntegrations.length} integrations with ${integrationFiles.length} files`,
   );
 
-  tips.push(`Integrations loaded: ${integrations.join(", ")}`);
-  tips.push("Visit /setup for guided OAuth app setup");
-  tips.push("Connect services at /api/auth/<service>");
+  if (loadedIntegrations.length) {
+    tips.push(
+      `Integrations loaded: ${
+        loadedIntegrations.map((integration) => integration.config.name).join(", ")
+      }`,
+    );
+    tips.push("Visit /setup for guided OAuth app setup");
+    tips.push("Connect services at /api/auth/<service>");
+  }
 
   return { files, loadedIntegrations, tips };
 }

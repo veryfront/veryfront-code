@@ -95,6 +95,14 @@ export async function getIntegrationTemplate(
   return getSortedFiles(entry);
 }
 
+/** Raw `connector.json` for an integration (or `_base`), or null when none ships. */
+export async function loadIntegrationConnectorSource(
+  integrationName: string,
+): Promise<string | null> {
+  const entry = (await getManifest()).templates[`connector:${integrationName}`];
+  return entry?.files["connector.json"] ?? null;
+}
+
 export async function getAuthTemplate(
   presetName: string,
 ): Promise<TemplateFile[] | null> {
@@ -106,7 +114,9 @@ export async function getAuthTemplate(
 
 export async function listTemplates(): Promise<string[]> {
   return Object.keys((await getManifest()).templates).filter(
-    (name) => !name.startsWith("integration:") && !name.startsWith("auth:"),
+    (name) =>
+      !name.startsWith("integration:") && !name.startsWith("auth:") &&
+      !name.startsWith("connector:"),
   );
 }
 

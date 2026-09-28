@@ -2,37 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  buildIntegrationDirectory,
   buildUnknownIntegrationErrors,
   mergeIntegrationFiles,
   namespaceIntegrationTemplateFiles,
-  resolveIntegrationModuleDir,
 } from "./integration-loader-helpers.ts";
 
 describe("templates/integration-loader-helpers", () => {
-  it("resolves file module directories for unix and windows paths", () => {
-    assertEquals(
-      resolveIntegrationModuleDir(
-        "file:///Users/test/veryfront-code/templates/integration-loader.ts",
-      ),
-      "/Users/test/veryfront-code/templates/",
-    );
-    assertEquals(
-      resolveIntegrationModuleDir(
-        "file:///C:/veryfront/templates/integration-loader.ts",
-        "win32",
-      ),
-      "C:/veryfront/templates/",
-    );
-  });
-
-  it("builds integration directories from the module directory", () => {
-    assertEquals(
-      buildIntegrationDirectory("/Users/test/veryfront-code/templates/", "github"),
-      "/Users/test/veryfront-code/templates/integrations/github",
-    );
-  });
-
   it("reports unknown integrations with a stable available list", () => {
     assertEquals(
       buildUnknownIntegrationErrors(

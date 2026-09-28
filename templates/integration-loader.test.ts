@@ -1,13 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../src/integrations/feature-flags.ts";
+import {
+  EXPERIMENTAL_INTEGRATIONS_ENV,
+  SUPPORTED_INTEGRATION_NAMES,
+} from "../src/integrations/feature-flags.ts";
 import {
   ALL_AVAILABLE_INTEGRATIONS,
   getAvailableIntegrations,
+  loadIntegrationConfig,
   loadIntegrations,
   validateIntegrations,
 } from "./integration-loader.ts";
+import { listIntegrations } from "./loader.ts";
+import type { IntegrationName } from "./types.ts";
 
 describe("templates/integration-loader feature gates", () => {
   afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
@@ -85,5 +91,26 @@ describe("templates/integration-loader file namespacing", () => {
 
     assertEquals(toolPaths.length, expectedToolCount);
     assertEquals(new Set(toolPaths).size, expectedToolCount);
+  });
+});
+
+describe("templates/integration-loader connector configs", () => {
+  it("resolves the connector config of every scaffolded or default integration from the manifest", async () => {
+    // The npm package carries templates only through the compressed manifest,
+    // so a connector config read from disk is missing there (inbox #2010).
+    const names = new Set<string>([...SUPPORTED_INTEGRATION_NAMES, ...await listIntegrations()]);
+    const missing: string[] = [];
+    for (const name of names) {
+      const config = await loadIntegrationConfig(name as IntegrationName);
+      if (config?.name !== name) missing.push(name);
+    }
+
+    assertEquals(missing, []);
+  });
+
+  it("does not write connector configs into scaffolded projects", async () => {
+    const { files } = await loadIntegrations(["linear"]);
+    assertEquals(files.some((file) => file.path.endsWith("connector.json")), false);
+    assertEquals(files.some((file) => file.path === "lib/linear-client.ts"), true);
   });
 });
