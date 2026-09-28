@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { extractDescriptionText, listComments } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "jira-list-comments",
@@ -14,8 +15,9 @@ export default tool({
       ),
     })
   )(),
-  async execute({ issueKey, startAt, maxResults }) {
-    const result = await listComments(issueKey, { startAt, maxResults });
+  async execute({ issueKey, startAt, maxResults }, context) {
+    const userId = requireUserIdFromContext(context);
+    const result = await listComments(userId, issueKey, { startAt, maxResults });
 
     return {
       total: result.total,

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createIssue } from "../lib/gitlab-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "gitlab-create-issue",
@@ -37,8 +38,10 @@ export default tool({
       milestoneId,
       dueDate,
     },
+    context,
   ) {
-    const issue = await createIssue(projectId, {
+    const userId = requireUserIdFromContext(context);
+    const issue = await createIssue(userId, projectId, {
       title,
       description,
       labels,

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createPage, formatAsStorage } from "../lib/confluence-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "confluence-create-page",
@@ -25,13 +26,14 @@ export default tool({
       .default("page")
       .describe("Type of content to create"),
   }))(),
-  async execute({ spaceKey, title, content, parentId, type }) {
+  async execute({ spaceKey, title, content, parentId, type }, context) {
+    const userId = requireUserIdFromContext(context);
     const trimmedContent = content.trim();
     const storageContent = trimmedContent.startsWith("<")
       ? trimmedContent
       : formatAsStorage(trimmedContent);
 
-    const page = await createPage({
+    const page = await createPage(userId, {
       spaceKey,
       title,
       content: storageContent,

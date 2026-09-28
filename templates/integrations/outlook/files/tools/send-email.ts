@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { sendEmail } from "../lib/outlook-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "outlook-send-email",
@@ -21,8 +22,9 @@ export default tool({
       .default("text")
       .describe("Body content type (text or html)"),
   }))(),
-  async execute({ to, subject, body, cc, bcc, importance, bodyType }) {
-    await sendEmail({ to, subject, body, cc, bcc, importance, bodyType });
+  async execute({ to, subject, body, cc, bcc, importance, bodyType }, context) {
+    const userId = requireUserIdFromContext(context);
+    await sendEmail(userId, { to, subject, body, cc, bcc, importance, bodyType });
 
     return {
       success: true,

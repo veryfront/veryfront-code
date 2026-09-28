@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getThread, summarizeContact, summarizeContacts } from "../lib/outlook-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "outlook-get-thread",
@@ -18,8 +19,9 @@ export default tool({
       .default(25)
       .describe("Maximum messages to return for the thread"),
   }))(),
-  async execute({ thread_id, limit }) {
-    const messages = await getThread(thread_id, limit);
+  async execute({ thread_id, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const messages = await getThread(userId, thread_id, limit);
     const firstMessage = messages[0];
 
     return {

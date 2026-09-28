@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getMe, listTasks, listWorkspaces } from "../lib/asana-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "asana-list-tasks",
@@ -15,7 +16,8 @@ export default tool({
     includeCompleted: v.boolean().default(false).describe("Include completed tasks"),
     limit: v.number().min(1).max(50).default(20).describe("Maximum number of tasks to return"),
   }))(),
-  async execute({ projectGid, assignedToMe, includeCompleted, limit }) {
+  async execute({ projectGid, assignedToMe, includeCompleted, limit }, context) {
+    const userId = requireUserIdFromContext(context);
     const completedSince = includeCompleted ? undefined : "now";
 
     if (!assignedToMe && !projectGid) {
@@ -28,21 +30,21 @@ export default tool({
     let tasks;
 
     if (assignedToMe) {
-      const me = await getMe();
-      const workspaces = await listWorkspaces();
+      const me = await getMe(userId);
+      const workspaces = await listWorkspaces(userId);
       const workspaceGid = workspaces[0]?.gid;
 
       if (!workspaceGid) {
         return { tasks: [], message: "No workspaces found" };
       }
 
-      tasks = await listTasks({
+      tasks = await listTasks(userId, {
         assigneeGid: me.gid,
         workspaceGid,
         completedSince,
       });
     } else {
-      tasks = await listTasks({
+      tasks = await listTasks(userId, {
         projectGid,
         completedSince,
       });

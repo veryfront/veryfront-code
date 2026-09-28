@@ -6,6 +6,7 @@ import {
   getFile,
   getFileSummary,
 } from "../lib/figma-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "figma-get-file",
@@ -25,8 +26,9 @@ export default tool({
       .optional()
       .describe("Depth of nodes to traverse (default: all)"),
   }))(),
-  async execute({ fileKey, includeComponents, includeStyles, depth }) {
-    const file = await getFile(fileKey, { depth });
+  async execute({ fileKey, includeComponents, includeStyles, depth }, context) {
+    const userId = requireUserIdFromContext(context);
+    const file = await getFile(userId, fileKey, { depth });
 
     return {
       summary: getFileSummary(file),

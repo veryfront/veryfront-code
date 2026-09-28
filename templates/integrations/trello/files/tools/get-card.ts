@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getCard } from "../lib/trello-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "trello-get-card",
@@ -8,8 +9,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     cardId: v.string().describe("The ID of the card to retrieve"),
   }))(),
-  async execute({ cardId }) {
-    const card = await getCard(cardId);
+  async execute({ cardId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const card = await getCard(userId, cardId);
 
     return {
       id: card.id,

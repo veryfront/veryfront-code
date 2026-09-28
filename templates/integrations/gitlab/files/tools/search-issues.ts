@@ -4,6 +4,7 @@ import {
   formatIssueForDisplay,
   searchIssues,
 } from "../lib/gitlab-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "gitlab-search-issues",
@@ -34,8 +35,9 @@ export default tool({
       ),
     })
   )(),
-  async execute({ scope, state, search, labels, projectId, limit }) {
-    const issues = await searchIssues({
+  async execute({ scope, state, search, labels, projectId, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const issues = await searchIssues(userId, {
       scope,
       state,
       search,

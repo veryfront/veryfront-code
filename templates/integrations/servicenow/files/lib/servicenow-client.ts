@@ -1,12 +1,11 @@
-import { getServiceNowTokens } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
 
-function getEnv(name: string): string | undefined {
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
-    return Deno.env.get(name);
-  }
-  // @ts-ignore: Node process
-  return globalThis.process?.env?.[name];
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
 }
 
 export interface ServiceNowIncident {
@@ -62,21 +61,19 @@ export class ServiceNowClient {
     return `https://${this.instance}/api/now`;
   }
 
-  async ensureAuthenticated(): Promise<void> {
-    const tokens = await getServiceNowTokens();
-    if (!tokens) {
-      throw new Error(
-        "ServiceNow not connected. Please connect via /api/auth/servicenow",
-      );
+  ensureAuthenticated(): void {
+    const accessToken = getEnv("SERVICENOW_ACCESS_TOKEN");
+    if (!accessToken) {
+      throw new Error("ServiceNow not configured. Please set SERVICENOW_ACCESS_TOKEN.");
     }
-    this.accessToken = tokens.accessToken;
+    this.accessToken = accessToken;
   }
 
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    await this.ensureAuthenticated();
+    this.ensureAuthenticated();
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       ...options,

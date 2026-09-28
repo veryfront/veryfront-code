@@ -1,4 +1,23 @@
-import { getAccessToken, getCloudId } from "./token-store.ts";
+import { jiraConfig, OAuthService } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const jiraService = new OAuthService(jiraConfig, tokenStore);
+
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+/** The Atlassian site's cloud ID, from JIRA_CLOUD_ID. */
+function getCloudId(): string | undefined {
+  return getEnv("JIRA_CLOUD_ID");
+}
 
 const JIRA_API_VERSION = "3";
 
@@ -121,19 +140,20 @@ function buildAdfDescription(text: string): Record<string, unknown> {
 }
 
 async function jiraFetch<T>(
+  userId: string,
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await getAccessToken();
+  const token = await jiraService.getAccessToken(userId);
   if (!token) {
     throw new Error(
       "Not authenticated with Jira. Please connect your account.",
     );
   }
 
-  const cloudId = await getCloudId();
+  const cloudId = getCloudId();
   if (!cloudId) {
-    throw new Error("Jira cloud ID not found. Please reconnect your account.");
+    throw new Error("Jira cloud ID not configured. Please set JIRA_CLOUD_ID.");
   }
 
   const baseUrl =
@@ -167,6 +187,7 @@ async function jiraFetch<T>(
 }
 
 export async function searchIssues(
+  userId: string,
   jql: string,
   options?: {
     fields?: string[];
@@ -184,9 +205,7 @@ export async function searchIssues(
     params.set("fields", options.fields.join(","));
   }
 
-  const response = await jiraFetch<JiraResponse<JiraIssue>>(
-    `/search?${params.toString()}`,
-  );
+  const response = await jiraFetch<JiraResponse<JiraIssue>>(userId, `/search?${params.toString()}`);
 
   return {
     issues: response.issues ?? [],
@@ -194,11 +213,11 @@ export async function searchIssues(
   };
 }
 
-export function getIssue(issueIdOrKey: string): Promise<JiraIssue> {
-  return jiraFetch<JiraIssue>(`/issue/${issueIdOrKey}`);
+export function getIssue(userId: string, issueIdOrKey: string): Promise<JiraIssue> {
+  return jiraFetch<JiraIssue>(userId, `/issue/${issueIdOrKey}`);
 }
 
-export async function createIssue(options: {
+export async function createIssue(userId: string, options: {
   projectKey: string;
   summary: string;
   description?: string;
@@ -229,18 +248,16 @@ export async function createIssue(options: {
     fields.labels = options.labels;
   }
 
-  const response = await jiraFetch<{ id: string; key: string; self: string }>(
-    "/issue",
-    {
-      method: "POST",
-      body: JSON.stringify({ fields }),
-    },
-  );
+  const response = await jiraFetch<{ id: string; key: string; self: string }>(userId, "/issue", {
+    method: "POST",
+    body: JSON.stringify({ fields }),
+  });
 
-  return getIssue(response.key);
+  return getIssue(userId, response.key);
 }
 
 export async function listComments(
+  userId: string,
   issueIdOrKey: string,
   options?: { startAt?: number; maxResults?: number },
 ): Promise<
@@ -261,7 +278,7 @@ export async function listComments(
     total?: number;
     startAt?: number;
     maxResults?: number;
-  }>(`/issue/${issueIdOrKey}/comment?${params.toString()}`);
+  }>(userId, `/issue/${issueIdOrKey}/comment?${params.toString()}`);
 
   return {
     comments: response.comments ?? [],
@@ -272,16 +289,18 @@ export async function listComments(
 }
 
 export function addComment(
+  userId: string,
   issueIdOrKey: string,
   body: string,
 ): Promise<JiraComment> {
-  return jiraFetch<JiraComment>(`/issue/${issueIdOrKey}/comment`, {
+  return jiraFetch<JiraComment>(userId, `/issue/${issueIdOrKey}/comment`, {
     method: "POST",
     body: JSON.stringify({ body: buildAdfDescription(body) }),
   });
 }
 
 export function updateIssue(
+  userId: string,
   issueIdOrKey: string,
   updates: {
     summary?: string;
@@ -313,43 +332,47 @@ export function updateIssue(
     fields.labels = updates.labels;
   }
 
-  return jiraFetch<void>(`/issue/${issueIdOrKey}`, {
+  return jiraFetch<void>(userId, `/issue/${issueIdOrKey}`, {
     method: "PUT",
     body: JSON.stringify({ fields }),
   });
 }
 
 export async function transitionIssue(
+  userId: string,
   issueIdOrKey: string,
   transitionId: string,
 ): Promise<void> {
-  await jiraFetch<void>(`/issue/${issueIdOrKey}/transitions`, {
+  await jiraFetch<void>(userId, `/issue/${issueIdOrKey}/transitions`, {
     method: "POST",
     body: JSON.stringify({ transition: { id: transitionId } }),
   });
 }
 
 export async function getIssueTransitions(
+  userId: string,
   issueIdOrKey: string,
 ): Promise<JiraTransition[]> {
   const response = await jiraFetch<{ transitions: JiraTransition[] }>(
+    userId,
     `/issue/${issueIdOrKey}/transitions`,
   );
   return response.transitions ?? [];
 }
 
-export async function listProjects(): Promise<JiraProject[]> {
-  return jiraFetch<JiraProject[]>("/project");
+export async function listProjects(userId: string): Promise<JiraProject[]> {
+  return jiraFetch<JiraProject[]>(userId, "/project");
 }
 
-export function getProject(projectIdOrKey: string): Promise<JiraProject> {
-  return jiraFetch<JiraProject>(`/project/${projectIdOrKey}`);
+export function getProject(userId: string, projectIdOrKey: string): Promise<JiraProject> {
+  return jiraFetch<JiraProject>(userId, `/project/${projectIdOrKey}`);
 }
 
 export async function getProjectIssueTypes(
+  userId: string,
   projectIdOrKey: string,
 ): Promise<JiraIssueType[]> {
-  return jiraFetch<JiraIssueType[]>(`/project/${projectIdOrKey}/statuses`);
+  return jiraFetch<JiraIssueType[]>(userId, `/project/${projectIdOrKey}/statuses`);
 }
 
 export function extractDescriptionText(description: unknown): string {

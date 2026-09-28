@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listProjects, listWorkspaces } from "../lib/asana-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "asana-list-projects",
@@ -13,14 +14,15 @@ export default tool({
       .default(20)
       .describe("Maximum number of projects to return"),
   }))(),
-  async execute({ limit }) {
-    const [workspace] = await listWorkspaces();
+  async execute({ limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const [workspace] = await listWorkspaces(userId);
 
     if (!workspace) {
       return { projects: [], message: "No workspaces found" };
     }
 
-    const projects = await listProjects(workspace.gid);
+    const projects = await listProjects(userId, workspace.gid);
 
     return projects.slice(0, limit).map(({ gid, name, notes, created_at }) => ({
       gid,

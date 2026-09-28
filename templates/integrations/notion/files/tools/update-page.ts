@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getPageTitle, updatePage } from "../lib/notion-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "notion-update-page",
@@ -12,8 +13,9 @@ export default tool({
     icon: v.record(v.string(), v.unknown()).optional().describe("Optional page icon object"),
     cover: v.record(v.string(), v.unknown()).optional().describe("Optional page cover object"),
   }))(),
-  async execute({ pageId, properties, archived, icon, cover }) {
-    const page = await updatePage({ pageId, properties, archived, icon, cover });
+  async execute({ pageId, properties, archived, icon, cover }, context) {
+    const userId = requireUserIdFromContext(context);
+    const page = await updatePage(userId, { pageId, properties, archived, icon, cover });
 
     return {
       id: page.id,

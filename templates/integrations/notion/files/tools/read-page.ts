@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { extractPlainText, getPage, getPageContent, getPageTitle } from "../lib/notion-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "notion-read-page",
@@ -8,7 +9,7 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     pageId: v.string().describe("The ID of the Notion page to read"),
   }))(),
-  async execute({ pageId }): Promise<{
+  async execute({ pageId }, context): Promise<{
     id: string;
     title: string;
     url: string;
@@ -16,7 +17,11 @@ export default tool({
     lastEdited: string;
     createdAt: string;
   }> {
-    const [page, blocks] = await Promise.all([getPage(pageId), getPageContent(pageId)]);
+    const userId = requireUserIdFromContext(context);
+    const [page, blocks] = await Promise.all([
+      getPage(userId, pageId),
+      getPageContent(userId, pageId),
+    ]);
 
     return {
       id: page.id,

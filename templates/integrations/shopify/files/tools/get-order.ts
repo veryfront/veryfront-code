@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getOrder } from "../lib/shopify-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "shopify-get-order",
@@ -8,8 +9,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     orderId: v.union([v.number(), v.string()]).describe("The ID of the order to retrieve"),
   }))(),
-  async execute({ orderId }) {
-    const order = await getOrder(orderId);
+  async execute({ orderId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const order = await getOrder(userId, orderId);
 
     return {
       id: order.id,

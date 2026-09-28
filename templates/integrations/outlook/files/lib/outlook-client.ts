@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { OAuthService, outlookConfig } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const outlookService = new OAuthService(outlookConfig, tokenStore);
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
@@ -60,8 +64,12 @@ export interface CreateDraftOptions extends SendEmailOptions {
   categories?: string[];
 }
 
-async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+async function graphFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await outlookService.getAccessToken(userId);
   if (!token) {
     throw new Error("Not authenticated with Microsoft. Please connect your account.");
   }
@@ -85,7 +93,7 @@ async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promi
   return response.json();
 }
 
-export async function listEmails(options?: {
+export async function listEmails(userId: string, options?: {
   folderId?: string;
   top?: number;
   skip?: number;
@@ -106,18 +114,18 @@ export async function listEmails(options?: {
   const queryString = params.toString();
   const endpoint = queryString ? `${folderPath}?${queryString}` : folderPath;
 
-  const response = await graphFetch<GraphResponse<OutlookMessage>>(endpoint);
+  const response = await graphFetch<GraphResponse<OutlookMessage>>(userId, endpoint);
   return response.value ?? [];
 }
 
-export function getEmail(messageId: string): Promise<OutlookMessage> {
-  return graphFetch<OutlookMessage>(`/messages/${messageId}`);
+export function getEmail(userId: string, messageId: string): Promise<OutlookMessage> {
+  return graphFetch<OutlookMessage>(userId, `/messages/${messageId}`);
 }
 
-export async function sendEmail(options: SendEmailOptions): Promise<void> {
+export async function sendEmail(userId: string, options: SendEmailOptions): Promise<void> {
   const message = buildMessage(options);
 
-  await graphFetch("/sendMail", {
+  await graphFetch(userId, "/sendMail", {
     method: "POST",
     body: JSON.stringify({ message }),
   });
@@ -147,14 +155,17 @@ function buildMessage(options: CreateDraftOptions) {
   };
 }
 
-export async function createDraft(options: CreateDraftOptions): Promise<OutlookMessage> {
-  return graphFetch<OutlookMessage>("/messages", {
+export async function createDraft(
+  userId: string,
+  options: CreateDraftOptions,
+): Promise<OutlookMessage> {
+  return graphFetch<OutlookMessage>(userId, "/messages", {
     method: "POST",
     body: JSON.stringify(buildMessage(options)),
   });
 }
 
-export async function searchEmails(options: {
+export async function searchEmails(userId: string, options: {
   query: string;
   top?: number;
   skip?: number;
@@ -164,22 +175,25 @@ export async function searchEmails(options: {
   if (options.top != null) params.set("$top", options.top.toString());
   if (options.skip != null) params.set("$skip", options.skip.toString());
 
-  const response = await graphFetch<GraphResponse<OutlookMessage>>(`/messages?${params.toString()}`);
+  const response = await graphFetch<GraphResponse<OutlookMessage>>(
+    userId,
+    `/messages?${params.toString()}`,
+  );
   return response.value ?? [];
 }
 
-export async function listFolders(): Promise<OutlookFolder[]> {
-  const response = await graphFetch<GraphResponse<OutlookFolder>>("/mailFolders");
+export async function listFolders(userId: string): Promise<OutlookFolder[]> {
+  const response = await graphFetch<GraphResponse<OutlookFolder>>(userId, "/mailFolders");
   return response.value ?? [];
 }
 
-export async function listThreads(options?: {
+export async function listThreads(userId: string, options?: {
   folderId?: string;
   top?: number;
   filter?: string;
   orderBy?: string;
 }): Promise<OutlookMessage[]> {
-  const messages = await listEmails({
+  const messages = await listEmails(userId, {
     folderId: options?.folderId ?? "inbox",
     top: options?.top,
     filter: options?.filter,
@@ -195,7 +209,11 @@ export async function listThreads(options?: {
   });
 }
 
-export async function getThread(threadId: string, limit = 25): Promise<OutlookMessage[]> {
+export async function getThread(
+  userId: string,
+  threadId: string,
+  limit = 25,
+): Promise<OutlookMessage[]> {
   const safeThreadId = threadId.replaceAll("'", "''");
   const params = new URLSearchParams({
     $filter: `conversationId eq '${safeThreadId}'`,
@@ -204,31 +222,35 @@ export async function getThread(threadId: string, limit = 25): Promise<OutlookMe
       "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag",
   });
 
-  const response = await graphFetch<GraphResponse<OutlookMessage>>(`/messages?${params}`);
+  const response = await graphFetch<GraphResponse<OutlookMessage>>(userId, `/messages?${params}`);
   return response.value ?? [];
 }
 
-async function setReadState(messageId: string, isRead: boolean): Promise<void> {
-  await graphFetch(`/messages/${messageId}`, {
+async function setReadState(userId: string, messageId: string, isRead: boolean): Promise<void> {
+  await graphFetch(userId, `/messages/${messageId}`, {
     method: "PATCH",
     body: JSON.stringify({ isRead }),
   });
 }
 
-export async function markAsRead(messageId: string): Promise<void> {
-  await setReadState(messageId, true);
+export async function markAsRead(userId: string, messageId: string): Promise<void> {
+  await setReadState(userId, messageId, true);
 }
 
-export async function markAsUnread(messageId: string): Promise<void> {
-  await setReadState(messageId, false);
+export async function markAsUnread(userId: string, messageId: string): Promise<void> {
+  await setReadState(userId, messageId, false);
 }
 
-export async function deleteEmail(messageId: string): Promise<void> {
-  await graphFetch(`/messages/${messageId}`, { method: "DELETE" });
+export async function deleteEmail(userId: string, messageId: string): Promise<void> {
+  await graphFetch(userId, `/messages/${messageId}`, { method: "DELETE" });
 }
 
-export async function moveEmail(messageId: string, destinationFolderId: string): Promise<void> {
-  await graphFetch(`/messages/${messageId}/move`, {
+export async function moveEmail(
+  userId: string,
+  messageId: string,
+  destinationFolderId: string,
+): Promise<void> {
+  await graphFetch(userId, `/messages/${messageId}/move`, {
     method: "POST",
     body: JSON.stringify({ destinationId: destinationFolderId }),
   });

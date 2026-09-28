@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listOrders } from "../lib/shopify-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "shopify-list-orders",
@@ -26,8 +27,9 @@ export default tool({
       .optional()
       .describe("Filter by fulfillment status"),
   }))(),
-  async execute({ limit, status, financialStatus, fulfillmentStatus }) {
-    const orders = await listOrders({
+  async execute({ limit, status, financialStatus, fulfillmentStatus }, context) {
+    const userId = requireUserIdFromContext(context);
+    const orders = await listOrders(userId, {
       limit,
       status,
       financialStatus,

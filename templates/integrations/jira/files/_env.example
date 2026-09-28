@@ -3,4 +3,4 @@
 ATLASSIAN_CLIENT_ID=your_client_id_here
 ATLASSIAN_CLIENT_SECRET=your_client_secret_here
 # Your site's cloud ID, from https://<your-site>.atlassian.net/_edge/tenant_info
-CONFLUENCE_CLOUD_ID=your_cloud_id_here
+JIRA_CLOUD_ID=your_cloud_id_here

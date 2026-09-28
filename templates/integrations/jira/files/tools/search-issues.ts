@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { extractDescriptionText, searchIssues } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "jira-search-issues",
@@ -27,8 +28,9 @@ export default tool({
         ),
     })
   )(),
-  async execute({ jql, maxResults, fields }) {
-    const result = await searchIssues(jql, { maxResults, fields });
+  async execute({ jql, maxResults, fields }, context) {
+    const userId = requireUserIdFromContext(context);
+    const result = await searchIssues(userId, jql, { maxResults, fields });
 
     return {
       total: result.total,

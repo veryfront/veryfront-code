@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getChatMessages, getPlainTextContent } from "../lib/teams-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "teams-get-messages",
@@ -19,8 +20,9 @@ export default tool({
       .default(false)
       .describe("Include HTML formatted content in addition to plain text"),
   }))(),
-  async execute({ chatId, limit, includeHtml }) {
-    const messages = await getChatMessages(chatId, {
+  async execute({ chatId, limit, includeHtml }, context) {
+    const userId = requireUserIdFromContext(context);
+    const messages = await getChatMessages(userId, chatId, {
       limit,
       orderBy: "createdDateTime desc",
     });

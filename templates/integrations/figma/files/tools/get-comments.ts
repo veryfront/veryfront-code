@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getComments } from "../lib/figma-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type FormattedComment = {
   id: string;
@@ -39,8 +40,9 @@ export default tool({
       .default(50)
       .describe("Maximum number of comments to return"),
   }))(),
-  async execute({ fileKey, includeResolved, limit }): Promise<Output> {
-    const response = await getComments(fileKey);
+  async execute({ fileKey, includeResolved, limit }, context): Promise<Output> {
+    const userId = requireUserIdFromContext(context);
+    const response = await getComments(userId, fileKey);
 
     const filteredComments = includeResolved
       ? response.comments

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listProducts } from "../lib/shopify-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "shopify-list-products",
@@ -19,8 +20,9 @@ export default tool({
       .describe("Filter by product status"),
     productType: v.string().optional().describe("Filter by product type"),
   }))(),
-  async execute({ limit, status, productType }) {
-    const products = await listProducts({ limit, status, productType });
+  async execute({ limit, status, productType }, context) {
+    const userId = requireUserIdFromContext(context);
+    const products = await listProducts(userId, { limit, status, productType });
 
     return products.map(
       ({

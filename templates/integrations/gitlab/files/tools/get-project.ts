@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getProject } from "../lib/gitlab-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "gitlab-get-project",
@@ -12,8 +13,9 @@ export default tool({
         .describe('Project ID or path (e.g., "gitlab-org/gitlab" or 278964)'),
     })
   )(),
-  async execute({ projectId }) {
-    const project = await getProject(projectId);
+  async execute({ projectId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const project = await getProject(userId, projectId);
 
     return {
       id: project.id,

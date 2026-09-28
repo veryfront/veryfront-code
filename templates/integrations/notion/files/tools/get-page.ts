@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getPage, getPageTitle } from "../lib/notion-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "notion-get-page",
@@ -8,8 +9,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     pageId: v.string().describe("The ID of the Notion page to retrieve"),
   }))(),
-  async execute({ pageId }) {
-    const page = await getPage(pageId);
+  async execute({ pageId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const page = await getPage(userId, pageId);
 
     return {
       id: page.id,
