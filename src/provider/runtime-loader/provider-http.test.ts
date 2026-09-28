@@ -852,7 +852,7 @@ describe("provider-http", () => {
       const error = await assertRejects(
         () =>
           requestJson({
-            url: "https://user:pass@gateway.test/ai/gateway/openai/v1/chat/completions?key=secret",
+            url: "https://user:pass@gateway.test/ai/v1/chat/completions?key=secret",
             fetchImpl: () => Promise.resolve(new Response(stalledBody, { status: 401 })),
             init: { method: "POST" },
             providerLabel: "veryfront-cloud",
@@ -865,7 +865,7 @@ describe("provider-http", () => {
 
       assertEquals(error.status, 401);
       assertEquals(error.message.includes("timed out"), false);
-      assertEquals(error.requestUrl, "https://gateway.test/ai/gateway/openai/v1/chat/completions");
+      assertEquals(error.requestUrl, "https://gateway.test/ai/v1/chat/completions");
       assertEquals(Object.keys(error).includes("requestUrl"), false);
     });
 

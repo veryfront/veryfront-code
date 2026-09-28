@@ -381,17 +381,10 @@ ignored and the host's own setting stands.
 request body names the
 model as `<provider>/<model>`, for example `anthropic/claude-sonnet-4-6`.
 Google models use the Gemini-compatible `/ai/v1beta` path, where the model is
-named in the URL (`/ai/v1beta/models/<model>:generateContent`). A provider the
-catalog serves on the Google surface under another name keeps its
-provider-scoped route, so models with the same upstream id stay distinct.
-
-| Variable                         | Default | Effect                                                                                 |
-| -------------------------------- | ------- | -------------------------------------------------------------------------------------- |
-| `VERYFRONT_CLOUD_GATEWAY_ROUTES` | unset   | `vendor` restores the previous per-provider routes and request bodies for every model. |
-
-The opt-out is temporary. It exists for one release so a deployment can move
-back while it migrates, and a later release removes it. Any value other than
-`vendor` keeps the vendor-neutral routes.
+named in the URL (`/ai/v1beta/models/<model>:generateContent`). A provider
+other than Google that the catalog serves on the Google surface is refused with
+a `NOT_SUPPORTED` error, because that route names only the model and could not
+tell it apart from a Google model with the same id.
 
 ## SSR transform cache
 

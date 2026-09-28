@@ -2,8 +2,7 @@
  * Golden record of Veryfront Cloud gateway routing.
  *
  * Every assertion here is a pure resolution: no environment, no transport. The
- * routes these tables describe, and the opt-out that restores the previous ones,
- * are exercised in provider.test.ts.
+ * routes these tables describe are exercised in provider.test.ts.
  */
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";

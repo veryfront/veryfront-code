@@ -1940,7 +1940,7 @@ describe("anthropic-provider", () => {
     });
     const runtime = createAnthropicModelRuntime({
       authToken: "vf_test_provider",
-      baseURL: "https://api.veryfront.com/ai/gateway/anthropic/v1",
+      baseURL: "https://api.veryfront.com/ai/v1",
       name: "veryfront-cloud",
       fetch: () =>
         Promise.resolve(

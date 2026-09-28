@@ -149,16 +149,6 @@ export function resolveVeryfrontCloudDefaultModelId(): VeryfrontCloudModelId {
     : DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID;
 }
 
-/** Leading gateway path segments of a vendor-scoped route, shared by every surface. */
-const VENDOR_GATEWAY_PATH_PREFIX = "ai/gateway";
-/** Vendor-scoped gateway API version per wire protocol. */
-const VENDOR_GATEWAY_API_VERSIONS: ReadonlyMap<string, string> = new Map([
-  ["anthropic", "v1"],
-  ["openai", "v1"],
-  ["google", "v1beta"],
-]);
-/** Vendor-scoped gateway API version for a protocol without its own entry. */
-const DEFAULT_VENDOR_GATEWAY_API_VERSION = "v1";
 /** Surface used for a provider the served catalog does not describe. */
 const DEFAULT_VERYFRONT_CLOUD_SURFACE = "openai";
 /**
@@ -433,22 +423,6 @@ export function requireVeryfrontCloudWireSurface(
   throw NOT_SUPPORTED.create({
     detail: `Veryfront Cloud wire surface "${surface}" is not supported by this package version`,
   });
-}
-
-/**
- * Gateway path for a provider, or undefined when the provider ID cannot be a
- * path segment. The surface decides the API version, so a provider the catalog
- * does not list resolves to a path of the same shape.
- */
-export function resolveVeryfrontCloudGatewayPath(
-  provider: string,
-): string | undefined {
-  const providerId = resolveVeryfrontCloudProviderId(provider);
-  if (!providerId) return undefined;
-  const apiVersion = VENDOR_GATEWAY_API_VERSIONS.get(
-    resolveVeryfrontCloudSurface(providerId),
-  ) ?? DEFAULT_VENDOR_GATEWAY_API_VERSION;
-  return `${VENDOR_GATEWAY_PATH_PREFIX}/${providerId}/${apiVersion}`;
 }
 
 /**
