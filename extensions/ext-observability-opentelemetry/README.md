@@ -55,9 +55,19 @@ and `app.greeting` span in your collector. Export is batched, so delivery is not
 synchronous with the HTTP response. Restart with `OTEL_TRACES_ENABLED=false` to
 disable trace export. Settings are read when the extension starts.
 
-Deno integration coverage verifies real OTLP/HTTP delivery, authentication headers, service identity, request/custom
-span correlation, and disabled export. Managed project settings require separate
-runtime integration; this local setup does not configure a shared host's exporter.
+The local integration fixture is tested on Deno 2.7.7. It verifies real OTLP/HTTP
+delivery, authentication headers, service identity, request/custom span correlation,
+disabled export, and unchanged app responses when the collector rejects exports.
+
+This setup exports traces over OTLP/HTTP; use a collector HTTP endpoint, not a gRPC
+endpoint. Delivery uses the SDK's in-memory batch queue. Queue overflow, collector
+failure, or abrupt process termination can lose spans. `OTEL_BSP_MAX_QUEUE_SIZE`
+and `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` configure the SDK buffer and batch limits.
+Restart the app after changing these settings. To roll back, set
+`OTEL_TRACES_ENABLED=false` and restart; this does not remove traces already stored
+by your collector.
+
+For managed hosting, use the project settings described below.
 
 ## Environment variables
 
