@@ -481,7 +481,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Copy Consumer Key and Secret to .env",
     ],
     link: "https://login.salesforce.com/",
-    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET"],
+    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET", "SALESFORCE_INSTANCE_URL"],
   },
   pipedrive: {
     title: "Pipedrive OAuth Setup",

@@ -359,7 +359,6 @@ POSTHOG_HOST=https://app.posthog.com
 ```env
 SALESFORCE_CLIENT_ID=your-consumer-key
 SALESFORCE_CLIENT_SECRET=your-consumer-secret
-# Optional; looked up from userinfo when unset
 SALESFORCE_INSTANCE_URL=https://your-domain.my.salesforce.com
 ```
 

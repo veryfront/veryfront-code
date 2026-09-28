@@ -6,20 +6,9 @@ import { getValidToken, providerFromConfig } from "./oauth.ts";
 // through the base scaffold's getValidToken().
 const salesforceOAuthProvider = providerFromConfig(salesforceConfig);
 
-/**
- * Your org's instance URL: SALESFORCE_INSTANCE_URL when set, otherwise the
- * REST URL the token's userinfo reports.
- */
-async function getInstanceUrl(token: string): Promise<string | undefined> {
-  const configured = getEnv("SALESFORCE_INSTANCE_URL");
-  if (configured) return configured.replace(/\/$/, "");
-
-  const response = await fetch("https://login.salesforce.com/services/oauth2/userinfo", {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-  });
-  if (!response.ok) return undefined;
-  const info = (await response.json()) as { urls?: { rest?: string } };
-  return info.urls?.rest ? new URL(info.urls.rest).origin : undefined;
+/** Your org's My Domain URL, from SALESFORCE_INSTANCE_URL. */
+function getInstanceUrl(): string | undefined {
+  return getEnv("SALESFORCE_INSTANCE_URL")?.replace(/\/$/, "");
 }
 
 const API_VERSION = "v59.0";
@@ -148,9 +137,9 @@ async function salesforceFetch<T>(
     throw new Error("Not authenticated with Salesforce. Please connect your account.");
   }
 
-  const instanceUrl = await getInstanceUrl(token);
+  const instanceUrl = getInstanceUrl();
   if (!instanceUrl) {
-    throw new Error("Salesforce instance URL not found. Please set SALESFORCE_INSTANCE_URL.");
+    throw new Error("Salesforce instance URL not configured. Please set SALESFORCE_INSTANCE_URL.");
   }
 
   const url = endpoint.startsWith("http")
