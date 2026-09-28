@@ -20,7 +20,7 @@
     {
       "name": "ZENDESK_SUBDOMAIN",
       "description": "Zendesk subdomain, for example example for example.zendesk.com",
-      "required": true
+      "required": false
     },
     {
       "name": "ZENDESK_ACCESS_TOKEN",

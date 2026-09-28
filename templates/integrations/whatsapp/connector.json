@@ -28,7 +28,7 @@
     {
       "name": "WHATSAPP_PHONE_NUMBER_ID",
       "description": "Phone number ID of the business phone number (from WhatsApp > API Setup in the Meta app dashboard); pass it as the phoneNumberId parameter of messaging tools",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
     },

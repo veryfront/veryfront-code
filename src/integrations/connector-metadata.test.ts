@@ -27,6 +27,23 @@ describe("connector setup and side-effect metadata", () => {
     assertEquals(undeclared, []);
   });
 
+  it("requires only environment variables that auth or an endpoint reads", () => {
+    // Descriptions may mention a variable without the executor reading it.
+    const withoutProse = (value: unknown) =>
+      JSON.stringify(value, (key, item) => key === "description" ? undefined : item);
+    const unread = connectors.flatMap((connector) => {
+      const read = withoutProse(connector.auth) +
+        withoutProse(connector.tools.map((tool) => tool.endpoint ?? null));
+      return (connector.envVars ?? [])
+        .filter((envVar) => envVar.required && envVar.default === undefined)
+        .filter((envVar) => !/_CLIENT_(ID|SECRET)$/.test(envVar.name))
+        .filter((envVar) => !read.includes(envVar.name))
+        .map((envVar) => `${connector.name}:${envVar.name}`);
+    });
+
+    assertEquals(unread, []);
+  });
+
   it("gives every default connector a category", () => {
     const uncategorized = SUPPORTED_INTEGRATION_NAMES.filter((name) =>
       !getConnector(name).category
