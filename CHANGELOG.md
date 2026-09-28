@@ -16,6 +16,13 @@ ignored. A provider other than Google served on the Google surface now fails
 with `NOT_SUPPORTED` instead of calling a per-provider route. Remove the
 variable from your environment.
 
+### Fixed: preview rendering recovers from a source snapshot change
+
+When your preview source changes during rendering, eligible document requests
+now reach the runtime's existing one-replay recovery rule. Repeated source
+changes still return `503`, and requests that have started project middleware
+are not replayed.
+
 ### Breaking: eval cost budgets and gateway usage are measured in credits
 
 `metrics.ops.cost` takes `maxCredits` and reads the gateway `costCredits` of a
