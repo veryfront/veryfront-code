@@ -42,6 +42,38 @@
       "docsUrl": "https://docs.sentry.io/api/organizations/"
     }
   ],
+  "setupGuide": {
+    "title": "Sentry setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Sentry OAuth app",
+        "description": "On hosted Veryfront, Sentry uses the Veryfront-managed Sentry OAuth app: connect Sentry from the project's integrations and approve the Sentry consent screen, no environment variables needed. Set SENTRY_CLIENT_ID only to use your own Sentry OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth application",
+        "description": "In Sentry, open User settings, then API applications, and create a new application.",
+        "url": "https://sentry.io/settings/account/api/applications/"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URIs",
+        "description": "Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/sentry for hosted Veryfront, or your app origin followed by /oauth/callback/sentry for a local or self-hosted app. Set SENTRY_CLIENT_ID from the app's credentials. The connector uses PKCE and sends no client secret."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Organizations (read-only). It returns the organizations the connected user belongs to without changing anything."
+      }
+    ],
+    "notes": [
+      "The connection requests org:read, project:read, event:read and event:write. event:write is only needed by the tools that update issues.",
+      "Set SENTRY_ORG to default the organization slug the tools use.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://docs.sentry.io/api/auth/"
+  },
   "tools": [
     {
       "id": "sentry__list_organizations",

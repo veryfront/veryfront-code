@@ -35,6 +35,37 @@
       "docsUrl": "https://www.notion.so/my-integrations"
     }
   ],
+  "setupGuide": {
+    "title": "Notion setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Notion OAuth app",
+        "description": "On hosted Veryfront, Notion uses the Veryfront-managed Notion OAuth app: connect Notion from the project's integrations and approve the Notion consent screen, no environment variables needed. Set NOTION_CLIENT_ID and NOTION_CLIENT_SECRET only to use your own Notion OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create a public integration",
+        "description": "In Notion's integration settings, create a public integration and choose the content capabilities the tools need (read, update and insert content).",
+        "url": "https://www.notion.so/my-integrations"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URIs",
+        "description": "Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/notion for hosted Veryfront, or your app origin followed by /api/auth/notion/callback for a local or self-hosted app. Set NOTION_CLIENT_ID and NOTION_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Search Notion (read-only). It returns pages the user shared during consent without changing them."
+      }
+    ],
+    "notes": [
+      "Notion has no OAuth scopes: the integration's capabilities decide what it can do, and during consent the user picks the pages it can reach. The tools see only those pages.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://developers.notion.com/docs/authorization"
+  },
   "tools": [
     {
       "id": "notion__search_notion",

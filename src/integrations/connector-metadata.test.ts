@@ -15,30 +15,6 @@ function getConnector(name: string) {
   return connector;
 }
 
-// Default connectors that still publish no setup guide. Shrink this list as
-// guides land; a new default connector must ship with one.
-const DEFAULT_CONNECTORS_WITHOUT_SETUP_GUIDE = [
-  "airtable",
-  "asana",
-  "calendar",
-  "confluence",
-  "figma",
-  "github",
-  "gitlab",
-  "harvest",
-  "hubspot",
-  "jira",
-  "linear",
-  "notion",
-  "onedrive",
-  "outlook",
-  "sentry",
-  "sharepoint",
-  "sheets",
-  "slack",
-  "teams",
-];
-
 describe("connector setup and side-effect metadata", () => {
   it("declares requiresWrite on every endpoint-backed tool", () => {
     const undeclared = connectors.flatMap((connector) =>
@@ -58,12 +34,48 @@ describe("connector setup and side-effect metadata", () => {
     assertEquals(uncategorized, []);
   });
 
-  it("publishes a setup guide for every default connector outside the pending list", () => {
+  it("publishes a setup guide for every default connector", () => {
     const withoutGuide = SUPPORTED_INTEGRATION_NAMES.filter((name) =>
       !getConnector(name).setupGuide
     );
 
-    assertEquals(withoutGuide, DEFAULT_CONNECTORS_WITHOUT_SETUP_GUIDE);
+    assertEquals(withoutGuide, []);
+  });
+
+  it("gives every default OAuth guide its callbacks, client variables, scopes and a read-only check", () => {
+    const gaps = SUPPORTED_INTEGRATION_NAMES.flatMap((name) => {
+      const connector = getConnector(name);
+      const guide = connector.setupGuide;
+      if (!guide || connector.auth.type !== "oauth2") return [];
+      const text = JSON.stringify(guide);
+      const expected = [
+        `https://api.veryfront.com/oauth/callback/${name}`,
+        connector.auth.callbackPath ?? "",
+        ...(connector.envVars ?? [])
+          .map((envVar) => envVar.name)
+          .filter((envVar) => /_CLIENT_(ID|SECRET)$/.test(envVar)),
+      ];
+      const missing = expected.filter((value) => !text.includes(value));
+      // Google scope URLs may be named by their last segment, e.g. gmail.readonly.
+      for (const scope of connector.auth.scopes ?? []) {
+        const shortName = scope.split("/").filter(Boolean).at(-1) ?? scope;
+        if (!text.includes(scope) && !text.includes(shortName)) missing.push(scope);
+      }
+
+      const check = guide.steps.at(-1);
+      const readTools = connector.tools
+        .filter((tool) => tool.requiresWrite === false)
+        .map((tool) => tool.name);
+      if (
+        check?.title !== "Verify access" ||
+        !readTools.some((tool) => check.description.includes(tool))
+      ) {
+        missing.push("a final Verify access step that names a read-only tool");
+      }
+      return missing.map((value) => `${name}: ${value}`);
+    });
+
+    assertEquals(gaps, []);
   });
 
   it("documents Gmail's OAuth app ownership, consent restrictions and a read-only check", () => {

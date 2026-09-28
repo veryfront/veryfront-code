@@ -38,6 +38,37 @@
       "docsUrl": "https://linear.app/settings/api"
     }
   ],
+  "setupGuide": {
+    "title": "Linear setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Linear OAuth app",
+        "description": "On hosted Veryfront, Linear uses the Veryfront-managed Linear OAuth app: connect Linear from the project's integrations and approve the Linear consent screen, no environment variables needed. Set LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET only to use your own Linear OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth application",
+        "description": "In Linear, open Settings, then API, and create a new OAuth application.",
+        "url": "https://linear.app/settings/api"
+      },
+      {
+        "step": 3,
+        "title": "Set the callback URLs",
+        "description": "Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/linear for hosted Veryfront, or your app origin followed by /api/auth/linear/callback for a local or self-hosted app. Set LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Teams (read-only). It returns the teams of the connected Linear workspace without changing anything."
+      }
+    ],
+    "notes": [
+      "The connection requests read and write. write is only needed by the tools that create or update issues and comments.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://linear.app/developers/oauth-2-0-authentication"
+  },
   "tools": [
     {
       "id": "linear__search_issues",

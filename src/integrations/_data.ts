@@ -1012,6 +1012,36 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["gmail", "slack", "notion"],
     "category": "data",
+    "setupGuide": {
+      "title": "Airtable setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Airtable OAuth app",
+        "description":
+          "On hosted Veryfront, Airtable uses the Veryfront-managed Airtable OAuth app: connect Airtable from the project's integrations and approve the Airtable consent screen, no environment variables needed. Set AIRTABLE_CLIENT_ID and AIRTABLE_CLIENT_SECRET only to use your own Airtable OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Register an OAuth integration",
+        "description": "In Airtable, register a new OAuth integration.",
+        "url": "https://airtable.com/create/oauth",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URL, scopes and secret",
+        "description":
+          "Add the scopes data.records:read, data.records:write, schema.bases:read and schema.bases:write. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/airtable for hosted Veryfront, or your app origin followed by /api/auth/airtable/callback for a local or self-hosted app. Generate a client secret, because the token exchange runs on a server. Set AIRTABLE_CLIENT_ID and AIRTABLE_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Bases (read-only). It returns the bases the user shared during consent without changing them.",
+      }],
+      "notes": [
+        "The connection requests data.records:read, data.records:write, schema.bases:read and schema.bases:write.",
+        "During consent the user picks which bases and workspaces the connection can reach; the tools see nothing else.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://airtable.com/developers/web/guides/oauth-integrations",
+    },
   },
   {
     "name": "algolia",
@@ -3038,6 +3068,40 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["slack", "notion", "calendar"],
     "category": "productivity",
+    "setupGuide": {
+      "title": "Asana setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Asana OAuth app",
+        "description":
+          "On hosted Veryfront, Asana uses the Veryfront-managed Asana OAuth app: connect Asana from the project's integrations and approve the Asana consent screen, no environment variables needed. Set ASANA_CLIENT_ID and ASANA_CLIENT_SECRET only to use your own Asana OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an app",
+        "description": "In the Asana developer console, create a new app.",
+        "url": "https://app.asana.com/0/my-apps",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URL",
+        "description":
+          "Under OAuth, add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/asana for hosted Veryfront, or your app origin followed by /api/auth/asana/callback for a local or self-hosted app. Set ASANA_CLIENT_ID and ASANA_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Make the app available",
+        "description":
+          "Under Manage distribution, make the app available in the workspaces whose users will connect; Asana refuses authorization from other workspaces.",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run List Workspaces (read-only). It returns the workspaces of the connected user without changing anything.",
+      }],
+      "notes": [
+        "The connection requests the default scope, which gives the app the full permissions of the user who authorizes it.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://developers.asana.com/docs/oauth",
+    },
   },
   {
     "name": "ashby",
@@ -9115,6 +9179,43 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["gmail", "slack"],
     "category": "scheduling",
+    "setupGuide": {
+      "title": "Google Calendar setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
+        "description":
+          "On hosted Veryfront, Google Calendar uses the Veryfront-managed Google OAuth app: connect Google Calendar from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Enable the Google Calendar API",
+        "description":
+          "In the Google Cloud project that owns your OAuth app, enable the Google Calendar API.",
+        "url": "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
+      }, {
+        "step": 3,
+        "title": "Configure the OAuth consent screen",
+        "description":
+          "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. Publishing the app to external users requires Google's OAuth app verification for these sensitive scopes.",
+        "url": "https://console.cloud.google.com/auth/overview",
+      }, {
+        "step": 4,
+        "title": "Create an OAuth client",
+        "description":
+          "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/calendar for hosted Veryfront, or your app origin followed by /api/auth/calendar/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the app's credentials.",
+        "url": "https://console.cloud.google.com/apis/credentials",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run List Calendars (read-only). It returns the calendars of the connected Google account without changing them.",
+      }],
+      "notes": [
+        "The connection requests https://www.googleapis.com/auth/calendar.readonly and https://www.googleapis.com/auth/calendar.events. calendar.readonly covers the read tools; calendar.events lets the write tools create, update and delete events.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://developers.google.com/workspace/calendar/api/guides/overview",
+    },
   },
   {
     "name": "calendly",
@@ -12405,6 +12506,46 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["jira", "slack", "notion"],
     "category": "productivity",
+    "setupGuide": {
+      "title": "Confluence setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Atlassian OAuth app",
+        "description":
+          "On hosted Veryfront, Confluence uses the Veryfront-managed Atlassian OAuth app: connect Confluence from the project's integrations and approve the Atlassian consent screen, no environment variables needed. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET only to use your own Atlassian OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an OAuth 2.0 integration",
+        "description": "In the Atlassian developer console, create an OAuth 2.0 integration.",
+        "url": "https://developer.atlassian.com/console/myapps/",
+      }, {
+        "step": 3,
+        "title": "Add the Confluence API permissions",
+        "description":
+          "Under Permissions, add the Confluence API and select these scopes: read:confluence-content.all, write:confluence-content, read:confluence-space.summary, read:confluence-user, search:confluence, read:page:confluence, write:page:confluence. offline_access is requested at authorization time so the connection can refresh its token.",
+      }, {
+        "step": 4,
+        "title": "Add the callback URLs",
+        "description":
+          "Under Authorization, choose OAuth 2.0 (3LO). Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/confluence for hosted Veryfront, or your app origin followed by /api/auth/confluence/callback for a local or self-hosted app. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 5,
+        "title": "Share the app",
+        "description":
+          "Under Distribution, set the app to sharing so users outside your own Atlassian account can authorize it.",
+      }, {
+        "step": 6,
+        "title": "Verify access",
+        "description":
+          "Run List Atlassian Sites (read-only) to find the site's cloud ID, then run Search Confluence (read-only) against that site. Neither call changes anything.",
+      }],
+      "notes": [
+        "The connection requests read:confluence-content.all, write:confluence-content, read:confluence-space.summary, read:confluence-user, search:confluence, read:page:confluence, write:page:confluence and offline_access.",
+        "If the user can reach more than one Atlassian site, set CONFLUENCE_CLOUD_ID to the target site's cloud ID from List Atlassian Sites.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/",
+    },
   },
   {
     "name": "customer-io",
@@ -15195,44 +15336,47 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "calendar", "drive", "sheets"],
     "category": "productivity",
     "setupGuide": {
-      "title": "Google Docs Integration Setup",
+      "title": "Google Docs setup",
       "steps": [{
-        "title": "Create or select a Google Cloud project",
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
         "description":
-          "Open the Google Cloud Console and select the project that will own the OAuth client.",
-        "url": "https://console.cloud.google.com/projectcreate",
+          "On hosted Veryfront, Google Docs uses the Veryfront-managed Google OAuth app: connect Google Docs from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs.",
       }, {
+        "step": 2,
         "title": "Enable the Google Docs API",
-        "description": "Enable the Docs API used to read, create, and edit documents.",
+        "description":
+          "In the Google Cloud project that owns your OAuth app, enable the Google Docs API.",
         "url": "https://console.cloud.google.com/apis/library/docs.googleapis.com",
       }, {
+        "step": 3,
         "title": "Enable the Google Drive API",
-        "description": "Enable the Drive API used to list and search Google Docs files.",
+        "description":
+          "In the Google Cloud project that owns your OAuth app, enable the Google Drive API.",
         "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
       }, {
+        "step": 4,
         "title": "Configure the OAuth consent screen",
         "description":
-          "Authorize exactly https://www.googleapis.com/auth/documents and https://www.googleapis.com/auth/drive.readonly.",
-        "url": "https://console.cloud.google.com/apis/credentials/consent",
+          "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. drive.readonly is a restricted scope, so publishing the app to external users requires Google's OAuth app verification.",
+        "url": "https://console.cloud.google.com/auth/overview",
       }, {
-        "title": "Create a web OAuth client",
+        "step": 5,
+        "title": "Create an OAuth client",
         "description":
-          "Create an OAuth 2.0 Client ID for a web application and register http://localhost:3000/api/auth/docs-google/callback for local development plus the matching HTTPS callback for each deployed environment.",
+          "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/docs-google for hosted Veryfront, or your app origin followed by /api/auth/docs-google/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the app's credentials.",
         "url": "https://console.cloud.google.com/apis/credentials",
       }, {
-        "title": "Configure credentials",
+        "step": 6,
+        "title": "Verify access",
         "description":
-          "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the application environment. Keep the client secret out of source control.",
-      }, {
-        "title": "Connect Google Docs",
-        "description":
-          "Start the application and open /api/auth/docs-google to complete the OAuth flow.",
+          "Run List Documents (read-only). It returns documents from the connected Google account without changing them.",
       }],
       "notes": [
-        "The same Google OAuth client can serve Gmail, Calendar, Drive, Docs, and Sheets when all required APIs, scopes, and callback URLs are configured.",
-        "Production deployments must use the application's durable OAuth token store and verified user identity resolver.",
+        "The connection requests https://www.googleapis.com/auth/documents and https://www.googleapis.com/auth/drive.readonly. drive.readonly lets the tools list and search documents; documents lets them read, create and edit them.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
       ],
-      "documentation": "https://developers.google.com/workspace/docs/api/auth",
+      "documentation": "https://developers.google.com/workspace/docs/api/how-tos/overview",
     },
   },
   {
@@ -15952,40 +16096,41 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "calendar", "sheets"],
     "category": "files",
     "setupGuide": {
-      "title": "Google Drive Integration Setup",
+      "title": "Google Drive setup",
       "steps": [{
-        "title": "Create a Google Cloud Project",
-        "description": "Go to the Google Cloud Console and create a new project",
-        "url": "https://console.cloud.google.com/projectcreate",
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
+        "description":
+          "On hosted Veryfront, Google Drive uses the Veryfront-managed Google OAuth app: connect Google Drive from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs.",
       }, {
+        "step": 2,
         "title": "Enable the Google Drive API",
-        "description": "Navigate to APIs & Services > Library and enable the Google Drive API",
+        "description":
+          "In the Google Cloud project that owns your OAuth app, enable the Google Drive API.",
         "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
       }, {
-        "title": "Configure OAuth Consent Screen",
+        "step": 3,
+        "title": "Configure the OAuth consent screen",
         "description":
-          "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scopes: drive.readonly and drive.file",
-        "url": "https://console.cloud.google.com/apis/credentials/consent",
+          "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. drive.readonly is a restricted scope, so publishing the app to external users requires Google's OAuth app verification.",
+        "url": "https://console.cloud.google.com/auth/overview",
       }, {
-        "title": "Create OAuth 2.0 Client ID",
+        "step": 4,
+        "title": "Create an OAuth client",
         "description":
-          "Go to APIs & Services > Credentials. Click 'Create Credentials' > 'OAuth client ID'. Choose 'Web application'. Add authorized redirect URI: http://localhost:3000/api/auth/drive/callback (adjust port/domain for production)",
+          "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/drive for hosted Veryfront, or your app origin followed by /api/auth/drive/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the app's credentials.",
         "url": "https://console.cloud.google.com/apis/credentials",
       }, {
-        "title": "Copy Credentials to .env",
+        "step": 5,
+        "title": "Verify access",
         "description":
-          "Copy the Client ID and Client Secret to your .env file as GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET",
-      }, {
-        "title": "Test the Integration",
-        "description":
-          "Start your application and navigate to /api/auth/drive to initiate the OAuth flow",
+          "Run List Files (read-only). It returns files from the connected Google account without changing them.",
       }],
       "notes": [
-        "The same Google OAuth credentials work for all Google services (Gmail, Calendar, Sheets, Drive)",
-        "In production, make sure to add your production callback URL to authorized redirect URIs",
-        "The drive.file scope limits file changes to files created or opened by this app",
-        "You may need to verify your app if you plan to distribute it publicly",
+        "The connection requests https://www.googleapis.com/auth/drive.readonly and https://www.googleapis.com/auth/drive.file. drive.file limits uploads and changes to files the app created or opened.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
       ],
+      "documentation": "https://developers.google.com/workspace/drive/api/guides/about-sdk",
     },
   },
   {
@@ -17467,6 +17612,40 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["linear", "slack", "notion"],
     "category": "productivity",
+    "setupGuide": {
+      "title": "Figma setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Figma OAuth app",
+        "description":
+          "On hosted Veryfront, Figma uses the Veryfront-managed Figma OAuth app: connect Figma from the project's integrations and approve the Figma consent screen, no environment variables needed. Set FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET only to use your own Figma OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an OAuth app",
+        "description": "In Figma, open My Apps and create a new app for your team or organization.",
+        "url": "https://www.figma.com/developers/apps",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URLs and scopes",
+        "description":
+          "Select the scopes current_user:read, file_content:read, file_comments:read and file_comments:write. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/figma for hosted Veryfront, or your app origin followed by /api/auth/figma/callback for a local or self-hosted app. Set FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Publish the app",
+        "description":
+          "While the app is a draft, only you and your plan admins can authorize it. Publish it privately for your team or organization, or publicly after Figma's review, so other users can connect.",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run Get Me (read-only). It returns the connected Figma user without changing anything.",
+      }],
+      "notes": [
+        "The connection requests current_user:read, file_content:read, file_comments:read and file_comments:write. file_comments:write is only needed by the tool that posts comments.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://developers.figma.com/docs/rest-api/oauth-apps/",
+    },
   },
   {
     "name": "finapi",
@@ -20872,6 +21051,37 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["jira", "slack"],
     "category": "development",
+    "setupGuide": {
+      "title": "GitHub setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the GitHub OAuth app",
+        "description":
+          "On hosted Veryfront, GitHub uses the Veryfront-managed GitHub OAuth app: connect GitHub from the project's integrations and approve the GitHub consent screen, no environment variables needed. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET only to use your own GitHub OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an OAuth App",
+        "description": "In GitHub Developer settings, create an OAuth App.",
+        "url": "https://github.com/settings/developers",
+      }, {
+        "step": 3,
+        "title": "Set the callback URL",
+        "description":
+          "An OAuth App has one authorization callback URL, so create one app per environment. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/github for hosted Veryfront, or your app origin followed by /api/auth/github/callback for a local or self-hosted app. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run Get Current User (read-only). It returns the connected GitHub user without changing anything.",
+      }],
+      "notes": [
+        "The connection requests repo, read:user and read:org. repo grants read and write access to the user's public and private repositories.",
+        "Organizations that restrict third-party OAuth apps must approve the app before its tools can reach their repositories.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation":
+        "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
+    },
   },
   {
     "name": "gitlab",
@@ -21214,6 +21424,36 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["github", "jira", "slack"],
     "category": "development",
+    "setupGuide": {
+      "title": "GitLab setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the GitLab OAuth app",
+        "description":
+          "On hosted Veryfront, GitLab uses the Veryfront-managed GitLab OAuth app: connect GitLab from the project's integrations and approve the GitLab consent screen, no environment variables needed. Set GITLAB_CLIENT_ID and GITLAB_CLIENT_SECRET only to use your own GitLab OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an application",
+        "description":
+          "In GitLab, open User settings, then Applications, and add a new application. Keep it confidential.",
+        "url": "https://gitlab.com/-/user_settings/applications",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URI and scopes",
+        "description":
+          "Select the scopes api, read_user and read_repository. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/gitlab for hosted Veryfront, or your app origin followed by /api/auth/gitlab/callback for a local or self-hosted app. Set GITLAB_CLIENT_ID and GITLAB_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Projects (read-only). It returns projects the connected user can see without changing them.",
+      }],
+      "notes": [
+        "The connection requests api, read_user and read_repository. The connector calls gitlab.com; api grants read and write access to the API.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://docs.gitlab.com/integration/oauth_provider/",
+    },
   },
   {
     "name": "gmail",
@@ -27510,6 +27750,37 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["github", "jira", "slack"],
     "category": "productivity",
+    "setupGuide": {
+      "title": "Harvest setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Harvest OAuth app",
+        "description":
+          "On hosted Veryfront, Harvest uses the Veryfront-managed Harvest OAuth app: connect Harvest from the project's integrations and approve the Harvest consent screen, no environment variables needed. Set HARVEST_CLIENT_ID and HARVEST_CLIENT_SECRET only to use your own Harvest OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an OAuth2 application",
+        "description": "In Harvest ID, open Developers and create an OAuth2 application.",
+        "url": "https://id.getharvest.com/developers",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URL",
+        "description":
+          "Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/harvest for hosted Veryfront, or your app origin followed by /api/auth/harvest/callback for a local or self-hosted app. Set HARVEST_CLIENT_ID and HARVEST_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Accounts (read-only). It returns the Harvest accounts the connected user can reach, with the account ID the other tools take, without changing anything.",
+      }],
+      "notes": [
+        "Harvest has no per-endpoint scopes: during consent the user chooses which Harvest accounts the connection can reach.",
+        "The time-entry and user tools take the account_id from List Accounts, which Harvest requires on every request.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation":
+        "https://help.getharvest.com/api-v2/authentication-api/authentication/authentication/",
+    },
   },
   {
     "name": "help-scout",
@@ -29281,6 +29552,36 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["sheets", "gmail", "slack"],
     "category": "sales",
+    "setupGuide": {
+      "title": "HubSpot setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the HubSpot OAuth app",
+        "description":
+          "On hosted Veryfront, HubSpot uses the Veryfront-managed HubSpot OAuth app: connect HubSpot from the project's integrations and approve the HubSpot consent screen, no environment variables needed. Set HUBSPOT_CLIENT_ID and HUBSPOT_CLIENT_SECRET only to use your own HubSpot OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create a public app",
+        "description": "In a HubSpot developer account, create an app that uses OAuth.",
+        "url": "https://app.hubspot.com/developer-projects",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URL and scopes",
+        "description":
+          "Add oauth and crm.objects.contacts.read as required scopes and forms, crm.objects.leads.read and crm.objects.leads.write as optional scopes. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/hubspot for hosted Veryfront, or your app origin followed by /oauth/callback/hubspot for a local or self-hosted app. Set HUBSPOT_CLIENT_ID and HUBSPOT_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run Search Contacts (read-only). It returns contacts from the connected HubSpot account without changing them.",
+      }],
+      "notes": [
+        "The connection requests oauth and crm.objects.contacts.read. The optional scopes forms, crm.objects.leads.read and crm.objects.leads.write are granted only when the installing account has access to them; the form and lead tools need them.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation":
+        "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/oauth",
+    },
   },
   {
     "name": "huggingface",
@@ -30564,6 +30865,47 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["github", "slack", "confluence"],
     "category": "development",
+    "setupGuide": {
+      "title": "Jira setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Atlassian OAuth app",
+        "description":
+          "On hosted Veryfront, Jira uses the Veryfront-managed Atlassian OAuth app: connect Jira from the project's integrations and approve the Atlassian consent screen, no environment variables needed. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET only to use your own Atlassian OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an OAuth 2.0 integration",
+        "description": "In the Atlassian developer console, create an OAuth 2.0 integration.",
+        "url": "https://developer.atlassian.com/console/myapps/",
+      }, {
+        "step": 3,
+        "title": "Add the Jira API permissions",
+        "description":
+          "Under Permissions, add the Jira API and select these scopes: read:jira-work, write:jira-work, read:jira-user. offline_access is requested at authorization time so the connection can refresh its token.",
+      }, {
+        "step": 4,
+        "title": "Add the callback URLs",
+        "description":
+          "Under Authorization, choose OAuth 2.0 (3LO). Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/jira for hosted Veryfront, or your app origin followed by /api/auth/jira/callback for a local or self-hosted app. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 5,
+        "title": "Share the app",
+        "description":
+          "Under Distribution, set the app to sharing so users outside your own Atlassian account can authorize it.",
+      }, {
+        "step": 6,
+        "title": "Verify access",
+        "description":
+          "Run List Atlassian Sites (read-only) to find the site's cloud ID, then run List Projects (read-only) against that site. Neither call changes anything.",
+      }],
+      "notes": [
+        "The connection requests read:jira-work, write:jira-work, read:jira-user and offline_access.",
+        "If the user can reach more than one Atlassian site, set JIRA_CLOUD_ID to the target site's cloud ID from List Atlassian Sites.",
+        "For project-owned or scheduled automation without browser consent, use a Jira service account instead: /docs/code/guides/integrations/jira",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/",
+    },
   },
   {
     "name": "jotform",
@@ -33073,6 +33415,35 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["github", "slack", "figma"],
     "category": "development",
+    "setupGuide": {
+      "title": "Linear setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Linear OAuth app",
+        "description":
+          "On hosted Veryfront, Linear uses the Veryfront-managed Linear OAuth app: connect Linear from the project's integrations and approve the Linear consent screen, no environment variables needed. Set LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET only to use your own Linear OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an OAuth application",
+        "description": "In Linear, open Settings, then API, and create a new OAuth application.",
+        "url": "https://linear.app/settings/api",
+      }, {
+        "step": 3,
+        "title": "Set the callback URLs",
+        "description":
+          "Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/linear for hosted Veryfront, or your app origin followed by /api/auth/linear/callback for a local or self-hosted app. Set LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Teams (read-only). It returns the teams of the connected Linear workspace without changing anything.",
+      }],
+      "notes": [
+        "The connection requests read and write. write is only needed by the tools that create or update issues and comments.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://linear.app/developers/oauth-2-0-authentication",
+    },
   },
   {
     "name": "mailchimp",
@@ -36718,6 +37089,36 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["gmail", "slack", "calendar"],
     "category": "productivity",
+    "setupGuide": {
+      "title": "Notion setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Notion OAuth app",
+        "description":
+          "On hosted Veryfront, Notion uses the Veryfront-managed Notion OAuth app: connect Notion from the project's integrations and approve the Notion consent screen, no environment variables needed. Set NOTION_CLIENT_ID and NOTION_CLIENT_SECRET only to use your own Notion OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create a public integration",
+        "description":
+          "In Notion's integration settings, create a public integration and choose the content capabilities the tools need (read, update and insert content).",
+        "url": "https://www.notion.so/my-integrations",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URIs",
+        "description":
+          "Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/notion for hosted Veryfront, or your app origin followed by /api/auth/notion/callback for a local or self-hosted app. Set NOTION_CLIENT_ID and NOTION_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run Search Notion (read-only). It returns pages the user shared during consent without changing them.",
+      }],
+      "notes": [
+        "Notion has no OAuth scopes: the integration's capabilities decide what it can do, and during consent the user picks the pages it can reach. The tools see only those pages.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://developers.notion.com/docs/authorization",
+    },
   },
   {
     "name": "onedrive",
@@ -36949,6 +37350,48 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["outlook", "teams", "sharepoint"],
     "category": "files",
+    "setupGuide": {
+      "title": "OneDrive setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Microsoft OAuth app",
+        "description":
+          "On hosted Veryfront, OneDrive uses the Veryfront-managed Microsoft OAuth app: connect OneDrive from the project's integrations and approve the Microsoft consent screen, no environment variables needed. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET only to use your own Microsoft OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Register an app in Microsoft Entra",
+        "description":
+          "In the Microsoft Entra admin center, open App registrations and register a new application. For Supported account types, choose accounts in any organizational directory and personal Microsoft accounts, because the connector signs in through the common endpoint.",
+        "url":
+          "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+      }, {
+        "step": 3,
+        "title": "Add the redirect URIs",
+        "description":
+          "Under Authentication, add a Web platform. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/onedrive for hosted Veryfront, or your app origin followed by /api/auth/onedrive/callback for a local or self-hosted app.",
+      }, {
+        "step": 4,
+        "title": "Add Microsoft Graph permissions",
+        "description":
+          "Under API permissions, add these delegated Microsoft Graph permissions: Files.Read, Files.ReadWrite, Files.Read.All, Files.ReadWrite.All, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+        "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference",
+      }, {
+        "step": 5,
+        "title": "Create a client secret",
+        "description":
+          "Under Certificates & secrets, create a client secret. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET from the app's credentials. Client secrets expire, so rotate MICROSOFT_CLIENT_SECRET before the expiry date you choose.",
+      }, {
+        "step": 6,
+        "title": "Verify access",
+        "description":
+          "Run List Files (read-only). It lists items in the connected user's OneDrive without changing them.",
+      }],
+      "notes": [
+        "The connection requests Files.Read, Files.ReadWrite, Files.Read.All, Files.ReadWrite.All and offline_access. offline_access lets the connection refresh its access token. The .All permissions reach files shared with the user, not only their own drive.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2",
+    },
   },
   {
     "name": "openai",
@@ -39568,6 +40011,48 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["teams", "calendar", "gmail"],
     "category": "communication",
+    "setupGuide": {
+      "title": "Outlook setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Microsoft OAuth app",
+        "description":
+          "On hosted Veryfront, Outlook uses the Veryfront-managed Microsoft OAuth app: connect Outlook from the project's integrations and approve the Microsoft consent screen, no environment variables needed. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET only to use your own Microsoft OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Register an app in Microsoft Entra",
+        "description":
+          "In the Microsoft Entra admin center, open App registrations and register a new application. For Supported account types, choose accounts in any organizational directory and personal Microsoft accounts, because the connector signs in through the common endpoint.",
+        "url":
+          "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+      }, {
+        "step": 3,
+        "title": "Add the redirect URIs",
+        "description":
+          "Under Authentication, add a Web platform. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/outlook for hosted Veryfront, or your app origin followed by /api/auth/outlook/callback for a local or self-hosted app.",
+      }, {
+        "step": 4,
+        "title": "Add Microsoft Graph permissions",
+        "description":
+          "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+        "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference",
+      }, {
+        "step": 5,
+        "title": "Create a client secret",
+        "description":
+          "Under Certificates & secrets, create a client secret. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET from the app's credentials. Client secrets expire, so rotate MICROSOFT_CLIENT_SECRET before the expiry date you choose.",
+      }, {
+        "step": 6,
+        "title": "Verify access",
+        "description":
+          "Run List Emails (read-only). It returns message summaries from the connected mailbox without changing it.",
+      }],
+      "notes": [
+        "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2",
+    },
   },
   {
     "name": "paddle",
@@ -48448,6 +48933,37 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["github", "slack", "linear"],
     "category": "development",
+    "setupGuide": {
+      "title": "Sentry setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Sentry OAuth app",
+        "description":
+          "On hosted Veryfront, Sentry uses the Veryfront-managed Sentry OAuth app: connect Sentry from the project's integrations and approve the Sentry consent screen, no environment variables needed. Set SENTRY_CLIENT_ID only to use your own Sentry OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create an OAuth application",
+        "description":
+          "In Sentry, open User settings, then API applications, and create a new application.",
+        "url": "https://sentry.io/settings/account/api/applications/",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URIs",
+        "description":
+          "Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/sentry for hosted Veryfront, or your app origin followed by /oauth/callback/sentry for a local or self-hosted app. Set SENTRY_CLIENT_ID from the app's credentials. The connector uses PKCE and sends no client secret.",
+      }, {
+        "step": 4,
+        "title": "Verify access",
+        "description":
+          "Run List Organizations (read-only). It returns the organizations the connected user belongs to without changing anything.",
+      }],
+      "notes": [
+        "The connection requests org:read, project:read, event:read and event:write. event:write is only needed by the tools that update issues.",
+        "Set SENTRY_ORG to default the organization slug the tools use.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://docs.sentry.io/api/auth/",
+    },
   },
   {
     "name": "serpapi",
@@ -49756,6 +50272,48 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["outlook", "teams", "onedrive"],
     "category": "files",
+    "setupGuide": {
+      "title": "SharePoint setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Microsoft OAuth app",
+        "description":
+          "On hosted Veryfront, SharePoint uses the Veryfront-managed Microsoft OAuth app: connect SharePoint from the project's integrations and approve the Microsoft consent screen, no environment variables needed. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET only to use your own Microsoft OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Register an app in Microsoft Entra",
+        "description":
+          "In the Microsoft Entra admin center, open App registrations and register a new application. For Supported account types, choose accounts in any organizational directory. SharePoint needs a work or school account.",
+        "url":
+          "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+      }, {
+        "step": 3,
+        "title": "Add the redirect URIs",
+        "description":
+          "Under Authentication, add a Web platform. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/sharepoint for hosted Veryfront, or your app origin followed by /api/auth/sharepoint/callback for a local or self-hosted app.",
+      }, {
+        "step": 4,
+        "title": "Add Microsoft Graph permissions",
+        "description":
+          "Under API permissions, add these delegated Microsoft Graph permissions: Sites.Read.All, Sites.ReadWrite.All, Files.Read.All, Files.ReadWrite.All, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+        "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference",
+      }, {
+        "step": 5,
+        "title": "Create a client secret",
+        "description":
+          "Under Certificates & secrets, create a client secret. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET from the app's credentials. Client secrets expire, so rotate MICROSOFT_CLIENT_SECRET before the expiry date you choose.",
+      }, {
+        "step": 6,
+        "title": "Verify access",
+        "description":
+          "Run List SharePoint Sites (read-only). It returns sites the connected user can open without changing them.",
+      }],
+      "notes": [
+        "The connection requests Sites.Read.All, Sites.ReadWrite.All, Files.Read.All, Files.ReadWrite.All and offline_access. offline_access lets the connection refresh its access token.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2",
+    },
   },
   {
     "name": "sheets",
@@ -50281,6 +50839,49 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["gmail", "calendar", "notion"],
     "category": "data",
+    "setupGuide": {
+      "title": "Google Sheets setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
+        "description":
+          "On hosted Veryfront, Google Sheets uses the Veryfront-managed Google OAuth app: connect Google Sheets from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Enable the Google Sheets API",
+        "description":
+          "In the Google Cloud project that owns your OAuth app, enable the Google Sheets API.",
+        "url": "https://console.cloud.google.com/apis/library/sheets.googleapis.com",
+      }, {
+        "step": 3,
+        "title": "Enable the Google Drive API",
+        "description":
+          "In the Google Cloud project that owns your OAuth app, enable the Google Drive API.",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
+      }, {
+        "step": 4,
+        "title": "Configure the OAuth consent screen",
+        "description":
+          "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. drive.readonly is a restricted scope, so publishing the app to external users requires Google's OAuth app verification.",
+        "url": "https://console.cloud.google.com/auth/overview",
+      }, {
+        "step": 5,
+        "title": "Create an OAuth client",
+        "description":
+          "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/sheets for hosted Veryfront, or your app origin followed by /api/auth/sheets/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the app's credentials.",
+        "url": "https://console.cloud.google.com/apis/credentials",
+      }, {
+        "step": 6,
+        "title": "Verify access",
+        "description":
+          "Run List Spreadsheets (read-only). It returns spreadsheets the connected Google account can open without changing them.",
+      }],
+      "notes": [
+        "The connection requests https://www.googleapis.com/auth/spreadsheets, https://www.googleapis.com/auth/drive.readonly and https://www.googleapis.com/auth/drive.file. The Drive scopes let List Spreadsheets find files; spreadsheets lets the tools read and write cell values.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://developers.google.com/workspace/sheets/api/guides/concepts",
+    },
   },
   {
     "name": "shopify",
@@ -51201,6 +51802,42 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["gmail", "calendar", "jira"],
     "category": "communication",
+    "setupGuide": {
+      "title": "Slack setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Slack OAuth app",
+        "description":
+          "On hosted Veryfront, Slack uses the Veryfront-managed Slack OAuth app: connect Slack from the project's integrations and approve the Slack consent screen, no environment variables needed. Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET only to use your own Slack OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Create a Slack app",
+        "description":
+          "In the Slack API dashboard, create an app from scratch in a workspace you manage.",
+        "url": "https://api.slack.com/apps",
+      }, {
+        "step": 3,
+        "title": "Set the redirect URLs and scopes",
+        "description":
+          "Under OAuth & Permissions, add these bot token scopes: channels:history, channels:read, chat:write, groups:history, groups:read, im:history, im:read, mpim:history, mpim:read and users:read. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/slack for hosted Veryfront, or your app origin followed by /api/auth/slack/callback for a local or self-hosted app. Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET from the app's credentials.",
+      }, {
+        "step": 4,
+        "title": "Distribute the app",
+        "description":
+          "To connect workspaces other than the one that owns the app, turn on public distribution under Manage Distribution.",
+      }, {
+        "step": 5,
+        "title": "Verify access",
+        "description":
+          "Run List Channels (read-only). It returns channels in the connected workspace without changing anything.",
+      }],
+      "notes": [
+        "The connection requests channels:history, channels:read, chat:write, groups:history, groups:read, im:history, im:read, mpim:history, mpim:read and users:read. The scopes are bot token scopes: the connection acts as the app's bot, which must be added to a channel before it can read that channel's history.",
+        "chat:write is only needed by the tools that post messages.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://docs.slack.dev/authentication/installing-with-oauth",
+    },
   },
   {
     "name": "snowflake",
@@ -54115,6 +54752,48 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["outlook", "slack", "calendar"],
     "category": "communication",
+    "setupGuide": {
+      "title": "Microsoft Teams setup",
+      "steps": [{
+        "step": 1,
+        "title": "Choose who owns the Microsoft OAuth app",
+        "description":
+          "On hosted Veryfront, Microsoft Teams uses the Veryfront-managed Microsoft OAuth app: connect Microsoft Teams from the project's integrations and approve the Microsoft consent screen, no environment variables needed. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET only to use your own Microsoft OAuth app, which is required for local and self-hosted runs.",
+      }, {
+        "step": 2,
+        "title": "Register an app in Microsoft Entra",
+        "description":
+          "In the Microsoft Entra admin center, open App registrations and register a new application. For Supported account types, choose accounts in any organizational directory. Teams needs a work or school account.",
+        "url":
+          "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+      }, {
+        "step": 3,
+        "title": "Add the redirect URIs",
+        "description":
+          "Under Authentication, add a Web platform. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/teams for hosted Veryfront, or your app origin followed by /api/auth/teams/callback for a local or self-hosted app.",
+      }, {
+        "step": 4,
+        "title": "Add Microsoft Graph permissions",
+        "description":
+          "Under API permissions, add these delegated Microsoft Graph permissions: Chat.Read, Chat.ReadWrite, ChannelMessage.Send, Channel.ReadBasic.All, Team.ReadBasic.All, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+        "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference",
+      }, {
+        "step": 5,
+        "title": "Create a client secret",
+        "description":
+          "Under Certificates & secrets, create a client secret. Set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET from the app's credentials. Client secrets expire, so rotate MICROSOFT_CLIENT_SECRET before the expiry date you choose.",
+      }, {
+        "step": 6,
+        "title": "Verify access",
+        "description":
+          "Run List Teams (read-only). It returns the teams the connected user belongs to without changing them.",
+      }],
+      "notes": [
+        "The connection requests Chat.Read, Chat.ReadWrite, ChannelMessage.Send, Channel.ReadBasic.All, Team.ReadBasic.All and offline_access. offline_access lets the connection refresh its access token.",
+        "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
+      ],
+      "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2",
+    },
   },
   {
     "name": "telegram",
