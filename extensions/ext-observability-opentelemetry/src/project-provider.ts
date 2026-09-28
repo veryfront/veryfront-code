@@ -193,17 +193,22 @@ export function createProjectTraceProvider(
   const propagator = new W3CTraceContextPropagator();
   let closed = false;
   let shutdown: Promise<void> | undefined;
-  const scopes = new Map<string, api.Tracer>();
+  // String keys need no observable collection methods or inherited properties.
+  let scopes: Record<string, api.Tracer | null | undefined> = { __proto__: null };
+  let scopeCount = 0;
   const fallback = sdk.getTracer("application");
   const provider = Object.freeze({
     getTracer(name: string, version?: string): api.Tracer {
       const boundedName = name.slice(0, 256);
       const boundedVersion = version?.slice(0, 128);
       const key = `${boundedName.length}:${boundedName}${boundedVersion ?? ""}`;
-      let tracer = scopes.get(key);
+      let tracer = scopes[key];
       if (!tracer) {
-        tracer = scopes.size < 64 ? sdk.getTracer(boundedName, boundedVersion) : fallback;
-        if (scopes.size < 64) scopes.set(key, tracer);
+        tracer = scopeCount < 64 ? sdk.getTracer(boundedName, boundedVersion) : fallback;
+        if (scopeCount < 64) {
+          scopes[key] = tracer;
+          scopeCount++;
+        }
       }
       const captured = tracer;
       const startSpan = (
@@ -253,7 +258,8 @@ export function createProjectTraceProvider(
       shutdown ??= sdk.shutdown().finally(() => {
         transport.shutdown();
         manager.disable();
-        scopes.clear();
+        scopes = { __proto__: null };
+        scopeCount = 0;
       });
       return shutdown;
     },

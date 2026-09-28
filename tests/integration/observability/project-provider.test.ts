@@ -38,6 +38,33 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("does not expose cached SDK tracers through replaced Map methods", async () => {
+    const owner = new OtlpTracingExporter();
+    const session = await owner.createProjectProvider({
+      resource: { "service.name": "private-tracer-cache" },
+      createTransport: () => ({
+        send: () => Promise.resolve({ status: "success" as const }),
+        shutdown() {},
+      }),
+    });
+    const provider = session.getProvider();
+    provider.getTracer("cached-app");
+    const get = Map.prototype.get;
+    let exposed = 0;
+    try {
+      Map.prototype.get = function (key) {
+        const value = Reflect.apply(get, this, [key]);
+        if (typeof value?.startSpan === "function") exposed++;
+        return value;
+      };
+      provider.getTracer("cached-app");
+    } finally {
+      Map.prototype.get = get;
+      await owner.shutdown();
+    }
+    assertEquals(exposed, 0);
+  });
+
   it("copies SDK snapshot data without consulting shared traversal methods", async () => {
     const owner = new OtlpTracingExporter();
     const session = await owner.createProjectProvider({
