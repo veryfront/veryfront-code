@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listThreads, summarizeContact } from "../lib/outlook-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "outlook-list-threads",
@@ -23,8 +24,9 @@ export default tool({
       .default("receivedDateTime desc")
       .describe("Sort order for representative messages"),
   }))(),
-  async execute({ folderId, limit, unreadOnly, orderBy }) {
-    const messages = await listThreads({
+  async execute({ folderId, limit, unreadOnly, orderBy }, context) {
+    const userId = requireUserIdFromContext(context);
+    const messages = await listThreads(userId, {
       folderId,
       top: limit,
       filter: unreadOnly ? "isRead eq false" : undefined,

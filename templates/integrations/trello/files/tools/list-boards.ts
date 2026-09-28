@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listBoards } from "../lib/trello-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "trello-list-boards",
@@ -17,8 +18,9 @@ export default tool({
       .default(20)
       .describe("Maximum number of boards to return"),
   }))(),
-  async execute({ includeArchived, limit }) {
-    const boards = await listBoards();
+  async execute({ includeArchived, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const boards = await listBoards(userId);
 
     const visibleBoards = includeArchived
       ? boards

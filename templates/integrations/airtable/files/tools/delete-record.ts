@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { deleteRecord } from "../lib/airtable-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "airtable-delete-record",
@@ -17,6 +18,6 @@ export default tool({
       ),
     })
   )(),
-  execute: async ({ baseId, tableIdOrName, recordId }) =>
-    deleteRecord(baseId, tableIdOrName, recordId),
+  execute: async ({ baseId, tableIdOrName, recordId }, context) =>
+    deleteRecord(requireUserIdFromContext(context), baseId, tableIdOrName, recordId),
 });

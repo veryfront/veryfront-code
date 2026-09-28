@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getEmail, summarizeContact, summarizeContacts } from "../lib/outlook-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "outlook-get-email",
@@ -13,8 +14,9 @@ export default tool({
       .default(true)
       .describe("Include full email body content"),
   }))(),
-  async execute({ messageId, includeBody }) {
-    const message = await getEmail(messageId);
+  async execute({ messageId, includeBody }, context) {
+    const userId = requireUserIdFromContext(context);
+    const message = await getEmail(userId, messageId);
 
     const body = includeBody
       ? {

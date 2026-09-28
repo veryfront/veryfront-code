@@ -1,8 +1,8 @@
+import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../lib/servicenow-client.ts";
-import { isServiceNowConnected } from "../lib/token-store.ts";
 
-export default defineTool({
+export default tool({
   id: "servicenow-search-knowledge",
   description: "Search the ServiceNow knowledge base for articles matching a query",
   inputSchema: defineSchema((v) => v.object({
@@ -10,13 +10,6 @@ export default defineTool({
     limit: v.number().optional().describe("Maximum number of articles to return (default: 10)"),
   }))(),
   async execute(input) {
-    if (!(await isServiceNowConnected())) {
-      return {
-        error: "ServiceNow not connected",
-        action: "Please connect ServiceNow via /api/auth/servicenow",
-      };
-    }
-
     try {
       const client = getServiceNowClient();
       const articles = await client.searchKnowledge(input.query, input.limit ?? 10);

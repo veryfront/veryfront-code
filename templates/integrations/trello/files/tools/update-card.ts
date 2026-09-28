@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { updateCard } from "../lib/trello-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "trello-update-card",
@@ -30,7 +31,8 @@ export default tool({
       .optional()
       .describe("Array of label IDs for the card (replaces existing)"),
   }))(),
-  async execute({ cardId, ...updates }) {
+  async execute({ cardId, ...updates }, context) {
+    const userId = requireUserIdFromContext(context);
     const {
       id,
       name,
@@ -41,7 +43,7 @@ export default tool({
       due,
       dueComplete,
       labels,
-    } = await updateCard(cardId, updates);
+    } = await updateCard(userId, cardId, updates);
 
     return {
       success: true,

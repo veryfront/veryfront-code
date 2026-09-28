@@ -481,7 +481,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Copy Consumer Key and Secret to .env",
     ],
     link: "https://login.salesforce.com/",
-    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET"],
+    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET", "SALESFORCE_INSTANCE_URL"],
   },
   pipedrive: {
     title: "Pipedrive OAuth Setup",
@@ -533,16 +533,15 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     envVars: ["FRESHDESK_CLIENT_ID", "FRESHDESK_CLIENT_SECRET", "FRESHDESK_DOMAIN"],
   },
   servicenow: {
-    title: "ServiceNow OAuth Setup",
+    title: "ServiceNow Setup",
     category: "support",
     steps: [
-      "Go to ServiceNow System OAuth > Application Registry",
-      "Create OAuth API endpoint for external clients",
-      "Add redirect URL: http://localhost:3000/api/auth/servicenow/callback",
-      "Copy Client ID and Secret to .env",
+      "Note your instance host, such as your-instance.service-now.com",
+      "Get an OAuth access token for the Table API from your instance",
+      "Add the instance and token to .env",
     ],
     link: "https://docs.servicenow.com/",
-    envVars: ["SERVICENOW_CLIENT_ID", "SERVICENOW_CLIENT_SECRET", "SERVICENOW_INSTANCE"],
+    envVars: ["SERVICENOW_INSTANCE", "SERVICENOW_ACCESS_TOKEN"],
   },
   stripe: {
     title: "Stripe Setup",

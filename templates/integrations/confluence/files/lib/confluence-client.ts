@@ -1,5 +1,26 @@
-import { getAccessToken, getCloudId } from "./token-store.ts";
+import { confluenceConfig, OAuthService } from "veryfront/oauth";
+import { getEnv } from "./env.ts";
+import { tokenStore } from "./token-store.ts";
 import { htmlToPlainText } from "./confluence-plain-text.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const confluenceService = new OAuthService(confluenceConfig, tokenStore);
+
+/**
+ * The Atlassian site's cloud ID: CONFLUENCE_CLOUD_ID when set, otherwise the first site the
+ * token can access.
+ */
+async function getCloudId(token: string): Promise<string | undefined> {
+  const configured = getEnv("CONFLUENCE_CLOUD_ID");
+  if (configured) return configured;
+
+  const response = await fetch("https://api.atlassian.com/oauth/token/accessible-resources", {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  if (!response.ok) return undefined;
+  const sites = (await response.json()) as Array<{ id: string }>;
+  return sites[0]?.id;
+}
 
 const CONFLUENCE_API_BASE = "https://api.atlassian.com/ex/confluence";
 
@@ -88,11 +109,21 @@ export class ConfluenceApiError extends Error {
   }
 }
 
-async function confluenceFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const [token, cloudId] = await Promise.all([getAccessToken(), getCloudId()]);
-
-  if (!token || !cloudId) {
+async function confluenceFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await confluenceService.getAccessToken(userId);
+  if (!token) {
     throw new Error("Not authenticated with Confluence. Please connect your Atlassian account.");
+  }
+
+  const cloudId = await getCloudId(token);
+  if (!cloudId) {
+    throw new Error(
+      "No Confluence site found for this account. Set CONFLUENCE_CLOUD_ID to choose one.",
+    );
   }
 
   const url = `${CONFLUENCE_API_BASE}/${cloudId}${endpoint}`;
@@ -124,7 +155,7 @@ function buildEndpoint(path: string, params?: URLSearchParams): string {
 }
 
 // Uses Confluence v2 — v1 /wiki/rest/api/space is deprecated alongside /content.
-export async function listSpaces(options?: {
+export async function listSpaces(userId: string, options?: {
   limit?: number;
   type?: "global" | "personal";
 }): Promise<ConfluenceSpace[]> {
@@ -134,6 +165,7 @@ export async function listSpaces(options?: {
   if (options?.type) params.set("type", options.type);
 
   const response = await confluenceFetch<ConfluenceResponse<ConfluenceSpace>>(
+    userId,
     buildEndpoint("/wiki/api/v2/spaces", params),
   );
 
@@ -142,12 +174,13 @@ export async function listSpaces(options?: {
 
 // Direct key lookup via v2 — avoids the v1 enumeration trap that capped at 250 spaces
 // and silently failed on enterprise tenancies with hundreds of spaces.
-async function getSpaceIdByKey(spaceKey: string): Promise<string> {
+async function getSpaceIdByKey(userId: string, spaceKey: string): Promise<string> {
   const params = new URLSearchParams();
   params.set("keys", spaceKey);
   params.set("limit", "1");
 
   const response = await confluenceFetch<ConfluenceResponse<ConfluenceSpace>>(
+    userId,
     buildEndpoint("/wiki/api/v2/spaces", params),
   );
 
@@ -159,6 +192,7 @@ async function getSpaceIdByKey(spaceKey: string): Promise<string> {
 }
 
 export async function searchContent(
+  userId: string,
   query: string,
   options?: {
     cql?: string;
@@ -175,6 +209,7 @@ export async function searchContent(
   if (options?.limit) params.set("limit", options.limit.toString());
 
   const response = await confluenceFetch<ConfluenceResponse<ConfluenceSearchResult>>(
+    userId,
     buildEndpoint("/wiki/rest/api/search", params),
   );
 
@@ -184,14 +219,16 @@ export async function searchContent(
 // v2 splits pages and blogposts into separate resources. Try /pages first;
 // fall back to /blogposts on 404 so search-content → get-page works for both
 // (searchContent returns mixed results and tools/get-page.ts has no type discriminator).
-export async function getPage(pageId: string): Promise<ConfluencePage> {
+export async function getPage(userId: string, pageId: string): Promise<ConfluencePage> {
   try {
     return await confluenceFetch<ConfluencePage>(
+      userId,
       `/wiki/api/v2/pages/${pageId}?body-format=storage`,
     );
   } catch (error) {
     if (error instanceof ConfluenceApiError && error.status === 404) {
       return await confluenceFetch<ConfluencePage>(
+        userId,
         `/wiki/api/v2/blogposts/${pageId}?body-format=storage`,
       );
     }
@@ -199,18 +236,18 @@ export async function getPage(pageId: string): Promise<ConfluencePage> {
   }
 }
 
-export function getPageContent(pageId: string): Promise<ConfluencePage> {
-  return getPage(pageId);
+export function getPageContent(userId: string, pageId: string): Promise<ConfluencePage> {
+  return getPage(userId, pageId);
 }
 
-export async function createPage(options: {
+export async function createPage(userId: string, options: {
   spaceKey: string;
   title: string;
   content: string;
   parentId?: string;
   type?: ConfluencePageType;
 }): Promise<ConfluencePage> {
-  const spaceId = await getSpaceIdByKey(options.spaceKey);
+  const spaceId = await getSpaceIdByKey(userId, options.spaceKey);
   const type: ConfluencePageType = options.type ?? "page";
 
   const body: Record<string, unknown> = {
@@ -228,7 +265,7 @@ export async function createPage(options: {
     if (options.parentId) {
       throw new Error("Confluence blogposts cannot have a parentId");
     }
-    return confluenceFetch<ConfluencePage>("/wiki/api/v2/blogposts", {
+    return confluenceFetch<ConfluencePage>(userId, "/wiki/api/v2/blogposts", {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -236,7 +273,7 @@ export async function createPage(options: {
 
   if (options.parentId) body.parentId = options.parentId;
 
-  return confluenceFetch<ConfluencePage>("/wiki/api/v2/pages", {
+  return confluenceFetch<ConfluencePage>(userId, "/wiki/api/v2/pages", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -247,6 +284,7 @@ export async function createPage(options: {
 // Mirrors getPage's pages-then-blogposts fallback so update-page works on either resource
 // (createPage with type='blogpost' returns a blogpost id that this must accept).
 export async function updatePage(
+  userId: string,
   pageId: string,
   options: {
     title: string;
@@ -275,10 +313,14 @@ export async function updatePage(
   };
 
   try {
-    return await confluenceFetch<ConfluencePage>(`/wiki/api/v2/pages/${pageId}`, init);
+    return await confluenceFetch<ConfluencePage>(userId, `/wiki/api/v2/pages/${pageId}`, init);
   } catch (error) {
     if (error instanceof ConfluenceApiError && error.status === 404) {
-      return await confluenceFetch<ConfluencePage>(`/wiki/api/v2/blogposts/${pageId}`, init);
+      return await confluenceFetch<ConfluencePage>(
+        userId,
+        `/wiki/api/v2/blogposts/${pageId}`,
+        init,
+      );
     }
     throw error;
   }

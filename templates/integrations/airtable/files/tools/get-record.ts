@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getRecord } from "../lib/airtable-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "airtable-get-record",
@@ -11,6 +12,6 @@ export default tool({
     tableIdOrName: v.string().describe("The ID or name of the table"),
     recordId: v.string().describe('The ID of the record to retrieve (starts with "rec")'),
   }))(),
-  execute: async ({ baseId, tableIdOrName, recordId }) =>
-    getRecord(baseId, tableIdOrName, recordId),
+  execute: async ({ baseId, tableIdOrName, recordId }, context) =>
+    getRecord(requireUserIdFromContext(context), baseId, tableIdOrName, recordId),
 });

@@ -1,5 +1,9 @@
-import { getAccessToken } from "./token-store.ts";
+import { OAuthService, teamsConfig } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
 import { htmlToPlainText } from "./teams-plain-text.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const teamsService = new OAuthService(teamsConfig, tokenStore);
 
 const GRAPH_API_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -100,8 +104,12 @@ function buildEndpoint(path: string, params?: URLSearchParams): string {
   return queryString ? `${path}?${queryString}` : path;
 }
 
-async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+async function graphFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await teamsService.getAccessToken(userId);
   if (!token) {
     throw new Error("Not authenticated with Microsoft Teams. Please connect your account.");
   }
@@ -127,16 +135,23 @@ async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promi
   return response.json();
 }
 
-export async function listChats(options?: { limit?: number; expand?: string[] }): Promise<TeamsChat[]> {
+export async function listChats(
+  userId: string,
+  options?: { limit?: number; expand?: string[] },
+): Promise<TeamsChat[]> {
   const params = new URLSearchParams();
   if (options?.limit) params.set("$top", options.limit.toString());
   if (options?.expand?.length) params.set("$expand", options.expand.join(","));
 
-  const response = await graphFetch<GraphResponse<TeamsChat>>(buildEndpoint("/me/chats", params));
+  const response = await graphFetch<GraphResponse<TeamsChat>>(
+    userId,
+    buildEndpoint("/me/chats", params),
+  );
   return response.value ?? [];
 }
 
 export async function getChatMessages(
+  userId: string,
   chatId: string,
   options?: { limit?: number; orderBy?: string },
 ): Promise<ChatMessage[]> {
@@ -145,41 +160,52 @@ export async function getChatMessages(
   params.set("$orderby", options?.orderBy ?? "createdDateTime desc");
 
   const response = await graphFetch<GraphResponse<ChatMessage>>(
+    userId,
     buildEndpoint(`/me/chats/${chatId}/messages`, params),
   );
   return response.value ?? [];
 }
 
 export function sendChatMessage(
+  userId: string,
   chatId: string,
   content: string,
   contentType: "text" | "html" = "text",
 ): Promise<ChatMessage> {
-  return graphFetch<ChatMessage>(`/me/chats/${chatId}/messages`, {
+  return graphFetch<ChatMessage>(userId, `/me/chats/${chatId}/messages`, {
     method: "POST",
     body: JSON.stringify({ body: { contentType, content } }),
   });
 }
 
-export async function listTeams(options?: { limit?: number }): Promise<Team[]> {
+export async function listTeams(userId: string, options?: { limit?: number }): Promise<Team[]> {
   const params = new URLSearchParams();
   if (options?.limit) params.set("$top", options.limit.toString());
 
-  const response = await graphFetch<GraphResponse<Team>>(buildEndpoint("/me/joinedTeams", params));
+  const response = await graphFetch<GraphResponse<Team>>(
+    userId,
+    buildEndpoint("/me/joinedTeams", params),
+  );
   return response.value ?? [];
 }
 
-export async function listChannels(teamId: string, options?: { limit?: number }): Promise<Channel[]> {
+export async function listChannels(
+  userId: string,
+  teamId: string,
+  options?: { limit?: number },
+): Promise<Channel[]> {
   const params = new URLSearchParams();
   if (options?.limit) params.set("$top", options.limit.toString());
 
   const response = await graphFetch<GraphResponse<Channel>>(
+    userId,
     buildEndpoint(`/teams/${teamId}/channels`, params),
   );
   return response.value ?? [];
 }
 
 export function sendChannelMessage(
+  userId: string,
   teamId: string,
   channelId: string,
   content: string,
@@ -189,13 +215,14 @@ export function sendChannelMessage(
   const body: Record<string, unknown> = { body: { contentType, content } };
   if (subject) body.subject = subject;
 
-  return graphFetch<ChatMessage>(`/teams/${teamId}/channels/${channelId}/messages`, {
+  return graphFetch<ChatMessage>(userId, `/teams/${teamId}/channels/${channelId}/messages`, {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
 export async function getChannelMessages(
+  userId: string,
   teamId: string,
   channelId: string,
   options?: { limit?: number; orderBy?: string },
@@ -205,18 +232,19 @@ export async function getChannelMessages(
   params.set("$orderby", options?.orderBy ?? "createdDateTime desc");
 
   const response = await graphFetch<GraphResponse<ChatMessage>>(
+    userId,
     buildEndpoint(`/teams/${teamId}/channels/${channelId}/messages`, params),
   );
   return response.value ?? [];
 }
 
-export function getCurrentUser(): Promise<{
+export function getCurrentUser(userId: string): Promise<{
   id: string;
   displayName: string;
   mail?: string;
   userPrincipalName?: string;
 }> {
-  return graphFetch("/me");
+  return graphFetch(userId, "/me");
 }
 
 export function getChatDisplayName(chat: TeamsChat): string {

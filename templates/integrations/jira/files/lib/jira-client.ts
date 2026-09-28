@@ -1,4 +1,25 @@
-import { getAccessToken, getCloudId } from "./token-store.ts";
+import { jiraConfig, OAuthService } from "veryfront/oauth";
+import { getEnv } from "./env.ts";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const jiraService = new OAuthService(jiraConfig, tokenStore);
+
+/**
+ * The Atlassian site's cloud ID: JIRA_CLOUD_ID when set, otherwise the first site the
+ * token can access.
+ */
+async function getCloudId(token: string): Promise<string | undefined> {
+  const configured = getEnv("JIRA_CLOUD_ID");
+  if (configured) return configured;
+
+  const response = await fetch("https://api.atlassian.com/oauth/token/accessible-resources", {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  if (!response.ok) return undefined;
+  const sites = (await response.json()) as Array<{ id: string }>;
+  return sites[0]?.id;
+}
 
 const JIRA_API_VERSION = "3";
 
@@ -121,19 +142,20 @@ function buildAdfDescription(text: string): Record<string, unknown> {
 }
 
 async function jiraFetch<T>(
+  userId: string,
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await getAccessToken();
+  const token = await jiraService.getAccessToken(userId);
   if (!token) {
     throw new Error(
       "Not authenticated with Jira. Please connect your account.",
     );
   }
 
-  const cloudId = await getCloudId();
+  const cloudId = await getCloudId(token);
   if (!cloudId) {
-    throw new Error("Jira cloud ID not found. Please reconnect your account.");
+    throw new Error("No Jira site found for this account. Set JIRA_CLOUD_ID to choose one.");
   }
 
   const baseUrl =
@@ -167,6 +189,7 @@ async function jiraFetch<T>(
 }
 
 export async function searchIssues(
+  userId: string,
   jql: string,
   options?: {
     fields?: string[];
@@ -184,9 +207,7 @@ export async function searchIssues(
     params.set("fields", options.fields.join(","));
   }
 
-  const response = await jiraFetch<JiraResponse<JiraIssue>>(
-    `/search?${params.toString()}`,
-  );
+  const response = await jiraFetch<JiraResponse<JiraIssue>>(userId, `/search?${params.toString()}`);
 
   return {
     issues: response.issues ?? [],
@@ -194,11 +215,11 @@ export async function searchIssues(
   };
 }
 
-export function getIssue(issueIdOrKey: string): Promise<JiraIssue> {
-  return jiraFetch<JiraIssue>(`/issue/${issueIdOrKey}`);
+export function getIssue(userId: string, issueIdOrKey: string): Promise<JiraIssue> {
+  return jiraFetch<JiraIssue>(userId, `/issue/${issueIdOrKey}`);
 }
 
-export async function createIssue(options: {
+export async function createIssue(userId: string, options: {
   projectKey: string;
   summary: string;
   description?: string;
@@ -229,18 +250,16 @@ export async function createIssue(options: {
     fields.labels = options.labels;
   }
 
-  const response = await jiraFetch<{ id: string; key: string; self: string }>(
-    "/issue",
-    {
-      method: "POST",
-      body: JSON.stringify({ fields }),
-    },
-  );
+  const response = await jiraFetch<{ id: string; key: string; self: string }>(userId, "/issue", {
+    method: "POST",
+    body: JSON.stringify({ fields }),
+  });
 
-  return getIssue(response.key);
+  return getIssue(userId, response.key);
 }
 
 export async function listComments(
+  userId: string,
   issueIdOrKey: string,
   options?: { startAt?: number; maxResults?: number },
 ): Promise<
@@ -261,7 +280,7 @@ export async function listComments(
     total?: number;
     startAt?: number;
     maxResults?: number;
-  }>(`/issue/${issueIdOrKey}/comment?${params.toString()}`);
+  }>(userId, `/issue/${issueIdOrKey}/comment?${params.toString()}`);
 
   return {
     comments: response.comments ?? [],
@@ -272,16 +291,18 @@ export async function listComments(
 }
 
 export function addComment(
+  userId: string,
   issueIdOrKey: string,
   body: string,
 ): Promise<JiraComment> {
-  return jiraFetch<JiraComment>(`/issue/${issueIdOrKey}/comment`, {
+  return jiraFetch<JiraComment>(userId, `/issue/${issueIdOrKey}/comment`, {
     method: "POST",
     body: JSON.stringify({ body: buildAdfDescription(body) }),
   });
 }
 
 export function updateIssue(
+  userId: string,
   issueIdOrKey: string,
   updates: {
     summary?: string;
@@ -313,43 +334,47 @@ export function updateIssue(
     fields.labels = updates.labels;
   }
 
-  return jiraFetch<void>(`/issue/${issueIdOrKey}`, {
+  return jiraFetch<void>(userId, `/issue/${issueIdOrKey}`, {
     method: "PUT",
     body: JSON.stringify({ fields }),
   });
 }
 
 export async function transitionIssue(
+  userId: string,
   issueIdOrKey: string,
   transitionId: string,
 ): Promise<void> {
-  await jiraFetch<void>(`/issue/${issueIdOrKey}/transitions`, {
+  await jiraFetch<void>(userId, `/issue/${issueIdOrKey}/transitions`, {
     method: "POST",
     body: JSON.stringify({ transition: { id: transitionId } }),
   });
 }
 
 export async function getIssueTransitions(
+  userId: string,
   issueIdOrKey: string,
 ): Promise<JiraTransition[]> {
   const response = await jiraFetch<{ transitions: JiraTransition[] }>(
+    userId,
     `/issue/${issueIdOrKey}/transitions`,
   );
   return response.transitions ?? [];
 }
 
-export async function listProjects(): Promise<JiraProject[]> {
-  return jiraFetch<JiraProject[]>("/project");
+export async function listProjects(userId: string): Promise<JiraProject[]> {
+  return jiraFetch<JiraProject[]>(userId, "/project");
 }
 
-export function getProject(projectIdOrKey: string): Promise<JiraProject> {
-  return jiraFetch<JiraProject>(`/project/${projectIdOrKey}`);
+export function getProject(userId: string, projectIdOrKey: string): Promise<JiraProject> {
+  return jiraFetch<JiraProject>(userId, `/project/${projectIdOrKey}`);
 }
 
 export async function getProjectIssueTypes(
+  userId: string,
   projectIdOrKey: string,
 ): Promise<JiraIssueType[]> {
-  return jiraFetch<JiraIssueType[]>(`/project/${projectIdOrKey}/statuses`);
+  return jiraFetch<JiraIssueType[]>(userId, `/project/${projectIdOrKey}/statuses`);
 }
 
 export function extractDescriptionText(description: unknown): string {

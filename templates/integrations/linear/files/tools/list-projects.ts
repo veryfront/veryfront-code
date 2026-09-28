@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listProjects } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "linear-list-projects",
@@ -18,8 +19,9 @@ export default tool({
       .default(false)
       .describe("Whether to include archived projects in results"),
   }))(),
-  async execute({ limit, includeArchived }) {
-    const projects = await listProjects({ limit, includeArchived });
+  async execute({ limit, includeArchived }, context) {
+    const userId = requireUserIdFromContext(context);
+    const projects = await listProjects(userId, { limit, includeArchived });
 
     return projects.map((project) => ({
       id: project.id,

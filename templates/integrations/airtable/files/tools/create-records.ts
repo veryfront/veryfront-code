@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createRecords } from "../lib/airtable-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "airtable-create-records",
@@ -24,8 +25,9 @@ export default tool({
       ),
     })
   )(),
-  async execute({ baseId, tableIdOrName, records, typecast }) {
-    const createdRecords = await createRecords(baseId, tableIdOrName, records, {
+  async execute({ baseId, tableIdOrName, records, typecast }, context) {
+    const userId = requireUserIdFromContext(context);
+    const createdRecords = await createRecords(userId, baseId, tableIdOrName, records, {
       typecast,
     });
 

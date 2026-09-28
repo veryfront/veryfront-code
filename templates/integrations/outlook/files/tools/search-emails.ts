@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { searchEmails, summarizeContact, summarizeContacts } from "../lib/outlook-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "outlook-search-emails",
@@ -18,8 +19,9 @@ export default tool({
       .default(10)
       .describe("Maximum number of results to return"),
   }))(),
-  async execute({ query, limit }) {
-    const messages = await searchEmails({ query, top: limit });
+  async execute({ query, limit }, context) {
+    const userId = requireUserIdFromContext(context);
+    const messages = await searchEmails(userId, { query, top: limit });
 
     return {
       totalResults: messages.length,

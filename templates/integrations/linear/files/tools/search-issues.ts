@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { searchIssues } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "linear-search-issues",
@@ -14,8 +15,9 @@ export default tool({
       .default(false)
       .describe("Whether to include archived issues in results"),
   }))(),
-  async execute({ query, limit, includeArchived }) {
-    const issues = await searchIssues(query, { limit, includeArchived });
+  async execute({ query, limit, includeArchived }, context) {
+    const userId = requireUserIdFromContext(context);
+    const issues = await searchIssues(userId, query, { limit, includeArchived });
 
     return issues.map((issue) => {
       const assignee = issue.assignee

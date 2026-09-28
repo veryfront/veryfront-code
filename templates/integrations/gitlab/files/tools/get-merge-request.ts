@@ -4,6 +4,7 @@ import {
   formatMergeRequestForDisplay,
   getMergeRequest,
 } from "../lib/gitlab-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "gitlab-get-merge-request",
@@ -21,8 +22,9 @@ export default tool({
         ),
     })
   )(),
-  async execute({ projectId, mergeRequestIid }) {
-    const mr = await getMergeRequest(projectId, mergeRequestIid);
+  async execute({ projectId, mergeRequestIid }, context) {
+    const userId = requireUserIdFromContext(context);
+    const mr = await getMergeRequest(userId, projectId, mergeRequestIid);
 
     return {
       id: mr.id,

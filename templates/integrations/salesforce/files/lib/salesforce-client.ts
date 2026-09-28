@@ -1,4 +1,15 @@
-import { getAccessToken, getInstanceUrl } from "./token-store.ts";
+import { salesforceConfig } from "veryfront/oauth";
+import { getEnv } from "./env.ts";
+import { getValidToken, providerFromConfig } from "./oauth.ts";
+
+// The generic OAuthService does not support Salesforce, so tokens refresh
+// through the base scaffold's getValidToken().
+const salesforceOAuthProvider = providerFromConfig(salesforceConfig);
+
+/** Your org's My Domain URL, from SALESFORCE_INSTANCE_URL. */
+function getInstanceUrl(): string | undefined {
+  return getEnv("SALESFORCE_INSTANCE_URL")?.replace(/\/$/, "");
+}
 
 const API_VERSION = "v59.0";
 
@@ -116,15 +127,19 @@ function validateFieldName(field: string): string {
   return field;
 }
 
-async function salesforceFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+async function salesforceFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await getValidToken(salesforceOAuthProvider, userId, "salesforce");
   if (!token) {
     throw new Error("Not authenticated with Salesforce. Please connect your account.");
   }
 
   const instanceUrl = getInstanceUrl();
   if (!instanceUrl) {
-    throw new Error("Salesforce instance URL not found. Please reconnect your account.");
+    throw new Error("Salesforce instance URL not configured. Please set SALESFORCE_INSTANCE_URL.");
   }
 
   const url = endpoint.startsWith("http")
@@ -149,8 +164,11 @@ async function salesforceFetch<T>(endpoint: string, options: RequestInit = {}): 
   return response.json();
 }
 
-export function query<T = any>(soql: string): Promise<SalesforceQueryResponse<T>> {
-  return salesforceFetch<SalesforceQueryResponse<T>>(`/query?q=${encodeURIComponent(soql)}`);
+export function query<T = any>(userId: string, soql: string): Promise<SalesforceQueryResponse<T>> {
+  return salesforceFetch<SalesforceQueryResponse<T>>(
+    userId,
+    `/query?q=${encodeURIComponent(soql)}`,
+  );
 }
 
 function buildListSoql(params: {
@@ -170,7 +188,7 @@ function buildListSoql(params: {
   return soql;
 }
 
-async function getSingleRecord<T>(params: {
+async function getSingleRecord<T>(userId: string, params: {
   object: string;
   id: string;
   fields: string[];
@@ -180,7 +198,7 @@ async function getSingleRecord<T>(params: {
   fields.forEach((f) => validateFieldName(f));
   validateSalesforceId(id, `${object} ID`);
   const soql = `SELECT ${fields.join(", ")} FROM ${object} WHERE Id = '${id}'`;
-  const result = await query<T>(soql);
+  const result = await query<T>(userId, soql);
 
   if (result.totalSize === 0) throw new Error(notFoundMessage);
   return result.records[0];
@@ -190,7 +208,7 @@ async function getSingleRecord<T>(params: {
 // ACCOUNTS
 // ============================================================================
 
-export function listAccounts(options?: {
+export function listAccounts(userId: string, options?: {
   limit?: number;
   offset?: number;
   fields?: string[];
@@ -213,10 +231,17 @@ export function listAccounts(options?: {
     "LastModifiedDate",
   ];
 
-  return query<SalesforceAccount>(buildListSoql({ object: "Account", fields, limit, offset }));
+  return query<SalesforceAccount>(
+    userId,
+    buildListSoql({ object: "Account", fields, limit, offset }),
+  );
 }
 
-export function getAccount(accountId: string, fields?: string[]): Promise<SalesforceAccount> {
+export function getAccount(
+  userId: string,
+  accountId: string,
+  fields?: string[],
+): Promise<SalesforceAccount> {
   const selectedFields = fields ?? [
     "Id",
     "Name",
@@ -236,7 +261,7 @@ export function getAccount(accountId: string, fields?: string[]): Promise<Salesf
     "LastModifiedDate",
   ];
 
-  return getSingleRecord<SalesforceAccount>({
+  return getSingleRecord<SalesforceAccount>(userId, {
     object: "Account",
     id: accountId,
     fields: selectedFields,
@@ -244,7 +269,7 @@ export function getAccount(accountId: string, fields?: string[]): Promise<Salesf
   });
 }
 
-export function createAccount(data: {
+export function createAccount(userId: string, data: {
   Name: string;
   Type?: string;
   Industry?: string;
@@ -260,7 +285,7 @@ export function createAccount(data: {
   Description?: string;
   [key: string]: any;
 }): Promise<{ id: string; success: boolean; errors: any[] }> {
-  return salesforceFetch("/sobjects/Account", {
+  return salesforceFetch(userId, "/sobjects/Account", {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -270,7 +295,7 @@ export function createAccount(data: {
 // CONTACTS
 // ============================================================================
 
-export function listContacts(options?: {
+export function listContacts(userId: string, options?: {
   limit?: number;
   offset?: number;
   fields?: string[];
@@ -298,10 +323,17 @@ export function listContacts(options?: {
     ? (validateSalesforceId(options.accountId, "accountId"), `AccountId = '${options.accountId}'`)
     : undefined;
 
-  return query<SalesforceContact>(buildListSoql({ object: "Contact", fields, where, limit, offset }));
+  return query<SalesforceContact>(
+    userId,
+    buildListSoql({ object: "Contact", fields, where, limit, offset }),
+  );
 }
 
-export function getContact(contactId: string, fields?: string[]): Promise<SalesforceContact> {
+export function getContact(
+  userId: string,
+  contactId: string,
+  fields?: string[],
+): Promise<SalesforceContact> {
   const selectedFields = fields ?? [
     "Id",
     "FirstName",
@@ -322,7 +354,7 @@ export function getContact(contactId: string, fields?: string[]): Promise<Salesf
     "LastModifiedDate",
   ];
 
-  return getSingleRecord<SalesforceContact>({
+  return getSingleRecord<SalesforceContact>(userId, {
     object: "Contact",
     id: contactId,
     fields: selectedFields,
@@ -330,7 +362,7 @@ export function getContact(contactId: string, fields?: string[]): Promise<Salesf
   });
 }
 
-export function createContact(data: {
+export function createContact(userId: string, data: {
   LastName: string;
   FirstName?: string;
   Email?: string;
@@ -347,7 +379,7 @@ export function createContact(data: {
   Description?: string;
   [key: string]: any;
 }): Promise<{ id: string; success: boolean; errors: any[] }> {
-  return salesforceFetch("/sobjects/Contact", {
+  return salesforceFetch(userId, "/sobjects/Contact", {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -357,7 +389,7 @@ export function createContact(data: {
 // OPPORTUNITIES
 // ============================================================================
 
-export function listOpportunities(options?: {
+export function listOpportunities(userId: string, options?: {
   limit?: number;
   offset?: number;
   fields?: string[];
@@ -387,11 +419,16 @@ export function listOpportunities(options?: {
     : undefined;
 
   return query<SalesforceOpportunity>(
+    userId,
     buildListSoql({ object: "Opportunity", fields, where, limit, offset }),
   );
 }
 
-export function getOpportunity(opportunityId: string, fields?: string[]): Promise<SalesforceOpportunity> {
+export function getOpportunity(
+  userId: string,
+  opportunityId: string,
+  fields?: string[],
+): Promise<SalesforceOpportunity> {
   const selectedFields = fields ?? [
     "Id",
     "Name",
@@ -411,7 +448,7 @@ export function getOpportunity(opportunityId: string, fields?: string[]): Promis
     "LastModifiedDate",
   ];
 
-  return getSingleRecord<SalesforceOpportunity>({
+  return getSingleRecord<SalesforceOpportunity>(userId, {
     object: "Opportunity",
     id: opportunityId,
     fields: selectedFields,
@@ -419,7 +456,7 @@ export function getOpportunity(opportunityId: string, fields?: string[]): Promis
   });
 }
 
-export function createOpportunity(data: {
+export function createOpportunity(userId: string, data: {
   Name: string;
   StageName: string;
   CloseDate: string;
@@ -432,7 +469,7 @@ export function createOpportunity(data: {
   NextStep?: string;
   [key: string]: any;
 }): Promise<{ id: string; success: boolean; errors: any[] }> {
-  return salesforceFetch("/sobjects/Opportunity", {
+  return salesforceFetch(userId, "/sobjects/Opportunity", {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -442,7 +479,7 @@ export function createOpportunity(data: {
 // LEADS
 // ============================================================================
 
-export function listLeads(options?: {
+export function listLeads(userId: string, options?: {
   limit?: number;
   offset?: number;
   fields?: string[];
@@ -471,10 +508,13 @@ export function listLeads(options?: {
 
   const where = options?.status ? `Status = '${escapeSoql(options.status)}'` : undefined;
 
-  return query<SalesforceLead>(buildListSoql({ object: "Lead", fields, where, limit, offset }));
+  return query<SalesforceLead>(
+    userId,
+    buildListSoql({ object: "Lead", fields, where, limit, offset }),
+  );
 }
 
-export function createLead(data: {
+export function createLead(userId: string, data: {
   LastName: string;
   Company: string;
   FirstName?: string;
@@ -495,7 +535,7 @@ export function createLead(data: {
   Rating?: string;
   [key: string]: any;
 }): Promise<{ id: string; success: boolean; errors: any[] }> {
-  return salesforceFetch("/sobjects/Lead", {
+  return salesforceFetch(userId, "/sobjects/Lead", {
     method: "POST",
     body: JSON.stringify({ ...data, Status: data.Status ?? "Open - Not Contacted" }),
   });

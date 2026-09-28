@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createCard } from "../lib/trello-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "trello-create-card",
@@ -26,8 +27,9 @@ export default tool({
       .optional()
       .describe("Array of label IDs to add to the card"),
   }))(),
-  async execute({ listId, name, desc, due, pos, idMembers, idLabels }) {
-    const card = await createCard({
+  async execute({ listId, name, desc, due, pos, idMembers, idLabels }, context) {
+    const userId = requireUserIdFromContext(context);
+    const card = await createCard(userId, {
       listId,
       name,
       desc,

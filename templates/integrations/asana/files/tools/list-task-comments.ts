@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { listTaskComments } from "../lib/asana-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "asana-list-task-comments",
@@ -8,8 +9,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     taskGid: v.string().describe("Asana task GID"),
   }))(),
-  async execute({ taskGid }) {
-    const comments = await listTaskComments(taskGid);
+  async execute({ taskGid }, context) {
+    const userId = requireUserIdFromContext(context);
+    const comments = await listTaskComments(userId, taskGid);
     return comments.map((story) => ({
       gid: story.gid,
       text: story.text,

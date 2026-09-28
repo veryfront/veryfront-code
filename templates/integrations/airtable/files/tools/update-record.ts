@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { updateRecord } from "../lib/airtable-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "airtable-update-record",
@@ -25,8 +26,9 @@ export default tool({
       ),
     })
   )(),
-  async execute({ baseId, tableIdOrName, recordId, fields, typecast }) {
-    const record = await updateRecord(baseId, tableIdOrName, recordId, fields, {
+  async execute({ baseId, tableIdOrName, recordId, fields, typecast }, context) {
+    const userId = requireUserIdFromContext(context);
+    const record = await updateRecord(userId, baseId, tableIdOrName, recordId, fields, {
       typecast,
     });
 

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { formatFileSize, uploadFile } from "../lib/onedrive-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "onedrive-upload-file",
@@ -16,7 +17,8 @@ export default tool({
       .default("root")
       .describe('Parent folder ID where the file should be uploaded (default: "root")'),
   }))(),
-  async execute({ fileName, content, parentFolderId }) {
+  async execute({ fileName, content, parentFolderId }, context) {
+    const userId = requireUserIdFromContext(context);
     const name = fileName.trim();
 
     if (!name) throw new Error("Filename cannot be empty");
@@ -24,7 +26,7 @@ export default tool({
       throw new Error("Filename cannot contain path separators");
     }
 
-    const result = await uploadFile(name, content, parentFolderId);
+    const result = await uploadFile(userId, name, content, parentFolderId);
     const size = result.size ?? 0;
 
     return {

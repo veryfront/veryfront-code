@@ -6,6 +6,7 @@ import {
   transitionIssue,
   updateIssue,
 } from "../lib/jira-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "jira-update-issue",
@@ -50,7 +51,8 @@ export default tool({
     assigneeId,
     labels,
     status,
-  }) {
+  }, context) {
+    const userId = requireUserIdFromContext(context);
     if (
       summary !== undefined ||
       description !== undefined ||
@@ -58,7 +60,7 @@ export default tool({
       assigneeId !== undefined ||
       labels !== undefined
     ) {
-      await updateIssue(issueKey, {
+      await updateIssue(userId, issueKey, {
         summary,
         description,
         priority,
@@ -68,7 +70,7 @@ export default tool({
     }
 
     if (status) {
-      const transitions = await getIssueTransitions(issueKey);
+      const transitions = await getIssueTransitions(userId, issueKey);
       const normalizedStatus = status.toLowerCase();
 
       const targetTransition = transitions.find((t) => {
@@ -85,10 +87,10 @@ export default tool({
         );
       }
 
-      await transitionIssue(issueKey, targetTransition.id);
+      await transitionIssue(userId, issueKey, targetTransition.id);
     }
 
-    const updatedIssue = await getIssue(issueKey);
+    const updatedIssue = await getIssue(userId, issueKey);
 
     return {
       key: updatedIssue.key,

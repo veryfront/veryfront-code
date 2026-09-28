@@ -1,4 +1,8 @@
-import { getAccessToken } from "./token-store.ts";
+import { figmaConfig, OAuthService } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
+
+// OAuthService refreshes expired tokens under the store's refresh lock.
+const figmaService = new OAuthService(figmaConfig, tokenStore);
 
 const FIGMA_BASE_URL = "https://api.figma.com/v1";
 
@@ -103,8 +107,12 @@ export interface FigmaUser {
   email?: string;
 }
 
-async function figmaFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = await getAccessToken();
+async function figmaFetch<T>(
+  userId: string,
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await figmaService.getAccessToken(userId);
   if (!token) {
     throw new Error("Not authenticated with Figma. Please connect your account.");
   }
@@ -128,11 +136,12 @@ async function figmaFetch<T>(endpoint: string, options: RequestInit = {}): Promi
   );
 }
 
-export function getMe(): Promise<FigmaUser> {
-  return figmaFetch<FigmaUser>("/me");
+export function getMe(userId: string): Promise<FigmaUser> {
+  return figmaFetch<FigmaUser>(userId, "/me");
 }
 
 export function getFile(
+  userId: string,
   fileKey: string,
   options?: {
     version?: string;
@@ -155,10 +164,11 @@ export function getFile(
   const query = params.toString();
   const url = query ? `/files/${fileKey}?${query}` : `/files/${fileKey}`;
 
-  return figmaFetch<FigmaFile>(url);
+  return figmaFetch<FigmaFile>(userId, url);
 }
 
 export function getFileNodes(
+  userId: string,
   fileKey: string,
   nodeIds: string[],
 ): Promise<{
@@ -169,10 +179,11 @@ export function getFileNodes(
   nodes: Record<string, { document: FigmaNode; components: Record<string, FigmaComponent> }>;
 }> {
   const params = new URLSearchParams({ ids: nodeIds.join(",") });
-  return figmaFetch(`/files/${fileKey}/nodes?${params.toString()}`);
+  return figmaFetch(userId, `/files/${fileKey}/nodes?${params.toString()}`);
 }
 
 export function getFileImages(
+  userId: string,
   fileKey: string,
   nodeIds: string[],
   options?: {
@@ -199,14 +210,18 @@ export function getFileImages(
   if (options?.use_absolute_bounds) params.set("use_absolute_bounds", "true");
   if (options?.version) params.set("version", options.version);
 
-  return figmaFetch(`/images/${fileKey}?${params.toString()}`);
+  return figmaFetch(userId, `/images/${fileKey}?${params.toString()}`);
 }
 
-export function getComments(fileKey: string): Promise<{ comments: FigmaComment[] }> {
-  return figmaFetch<{ comments: FigmaComment[] }>(`/files/${fileKey}/comments`);
+export function getComments(
+  userId: string,
+  fileKey: string,
+): Promise<{ comments: FigmaComment[] }> {
+  return figmaFetch<{ comments: FigmaComment[] }>(userId, `/files/${fileKey}/comments`);
 }
 
 export function postComment(
+  userId: string,
   fileKey: string,
   message: string,
   options?: {
@@ -214,7 +229,7 @@ export function postComment(
     parent_id?: string;
   },
 ): Promise<FigmaComment> {
-  return figmaFetch<FigmaComment>(`/files/${fileKey}/comments`, {
+  return figmaFetch<FigmaComment>(userId, `/files/${fileKey}/comments`, {
     method: "POST",
     body: JSON.stringify({
       message,

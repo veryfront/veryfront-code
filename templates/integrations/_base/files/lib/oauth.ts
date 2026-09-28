@@ -1,3 +1,5 @@
+import type { OAuthServiceConfig } from "veryfront/oauth";
+import { getEnv } from "./env.ts";
 import {
   getRefreshableAccessToken,
   type OAuthToken,
@@ -116,4 +118,24 @@ export async function getValidToken(
     provider.scopes,
     (refreshToken) => refreshAccessToken(provider, refreshToken),
   );
+}
+
+/**
+ * Build a provider from a veryfront/oauth config, with its client credentials
+ * from the config's env vars. Use it for providers the generic OAuthService
+ * does not support.
+ */
+export function providerFromConfig(
+  config: OAuthServiceConfig,
+  urls: Pick<OAuthProvider, "authorizationUrl" | "tokenUrl"> = config,
+): OAuthProvider {
+  return {
+    name: config.serviceId,
+    authorizationUrl: urls.authorizationUrl,
+    tokenUrl: urls.tokenUrl,
+    clientId: getEnv(config.clientIdEnvVar) ?? "",
+    clientSecret: getEnv(config.clientSecretEnvVar) ?? "",
+    scopes: [...config.defaultScopes],
+    callbackPath: `/api/auth/${config.serviceId}/callback`,
+  };
 }

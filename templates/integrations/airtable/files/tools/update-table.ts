@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { updateTable } from "../lib/airtable-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "airtable-update-table",
@@ -18,6 +19,6 @@ export default tool({
       description: v.string().optional().describe("New table description"),
     })
   )(),
-  execute: async ({ baseId, tableId, name, description }) =>
-    updateTable(baseId, tableId, { name, description }),
+  execute: async ({ baseId, tableId, name, description }, context) =>
+    updateTable(requireUserIdFromContext(context), baseId, tableId, { name, description }),
 });

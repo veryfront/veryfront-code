@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getSite, listDrives } from "../lib/sharepoint-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "sharepoint-get-site",
@@ -13,8 +14,9 @@ export default tool({
       .default(true)
       .describe("Whether to include the list of document libraries in the response"),
   }))(),
-  async execute({ siteId, includeDrives }): Promise<Record<string, unknown>> {
-    const site = await getSite(siteId);
+  async execute({ siteId, includeDrives }, context): Promise<Record<string, unknown>> {
+    const userId = requireUserIdFromContext(context);
+    const site = await getSite(userId, siteId);
 
     const result: Record<string, unknown> = {
       id: site.id,
@@ -28,7 +30,7 @@ export default tool({
 
     if (!includeDrives) return result;
 
-    const drives = await listDrives(siteId);
+    const drives = await listDrives(userId, siteId);
     result.documentLibraries = drives.map((drive) => {
       const quota = drive.quota;
       const percentUsed =

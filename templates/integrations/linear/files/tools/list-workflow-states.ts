@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { getWorkflowStates } from "../lib/linear-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "linear-list-workflow-states",
@@ -9,8 +10,9 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     teamId: v.string().describe("Linear team ID"),
   }))(),
-  async execute({ teamId }) {
-    const states = await getWorkflowStates(teamId);
+  async execute({ teamId }, context) {
+    const userId = requireUserIdFromContext(context);
+    const states = await getWorkflowStates(userId, teamId);
 
     return states.map((state) => ({
       id: state.id,
