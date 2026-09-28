@@ -179,8 +179,9 @@ export async function insertRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result?.length) throw new Error("Insert operation did not return data");
-  return result[0];
+  const row = result?.[0];
+  if (!row) throw new Error("Insert operation did not return data");
+  return row;
 }
 
 /**
@@ -199,8 +200,9 @@ export async function updateRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result?.length) throw new Error(`No row found with id ${id}`);
-  return result[0];
+  const row = result?.[0];
+  if (!row) throw new Error(`No row found with id ${id}`);
+  return row;
 }
 
 /**
@@ -238,8 +240,9 @@ export async function deleteRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result?.length) throw new Error(`No row found with id ${id}`);
-  return result[0];
+  const row = result?.[0];
+  if (!row) throw new Error(`No row found with id ${id}`);
+  return row;
 }
 
 /**

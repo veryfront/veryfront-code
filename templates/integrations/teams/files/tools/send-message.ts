@@ -27,8 +27,10 @@ export default tool({
     })
     .refine(
       (data) =>
-        (data.chatId && !data.teamId && !data.channelId) ||
-        (!data.chatId && data.teamId && data.channelId),
+        Boolean(
+          (data.chatId && !data.teamId && !data.channelId) ||
+            (!data.chatId && data.teamId && data.channelId),
+        ),
       { message: "Either provide chatId OR both teamId and channelId" },
     ))(),
   async execute({ chatId, teamId, channelId, content, contentType, subject }, context) {

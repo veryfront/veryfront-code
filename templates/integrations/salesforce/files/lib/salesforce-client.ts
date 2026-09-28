@@ -199,9 +199,10 @@ async function getSingleRecord<T>(userId: string, params: {
   validateSalesforceId(id, `${object} ID`);
   const soql = `SELECT ${fields.join(", ")} FROM ${object} WHERE Id = '${id}'`;
   const result = await query<T>(userId, soql);
+  const record = result.records[0];
 
-  if (result.totalSize === 0) throw new Error(notFoundMessage);
-  return result.records[0];
+  if (!record) throw new Error(notFoundMessage);
+  return record;
 }
 
 // ============================================================================
@@ -555,7 +556,9 @@ export function formatContactName(contact: SalesforceContact): string {
   return formatPersonName(contact.FirstName, contact.LastName, contact.Email, "Unnamed Contact");
 }
 
-export function formatLeadName(lead: SalesforceLead): string {
+export function formatLeadName(
+  lead: Pick<SalesforceLead, "FirstName" | "LastName" | "Email">,
+): string {
   return formatPersonName(lead.FirstName, lead.LastName, lead.Email, "Unnamed Lead");
 }
 

@@ -28,6 +28,7 @@ interface NotionDatabase {
   id: string;
   object: "database";
   title: Array<{ plain_text: string }>;
+  url: string;
   properties: Record<string, { type: string }>;
 }
 

@@ -22,7 +22,7 @@ export default tool({
   }))(),
   async execute({ query, type, limit }, context) {
     const userId = requireUserIdFromContext(context);
-    const filter = type === "all" ? undefined : { property: "object", value: type };
+    const filter = type === "all" ? undefined : { property: "object" as const, value: type };
     const results = await searchNotion(userId, query, { filter, pageSize: limit });
 
     return results.map((item) => {

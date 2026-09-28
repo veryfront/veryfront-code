@@ -33,13 +33,8 @@ export default tool({
       };
     }
 
-    let largest = cohorts[0];
-    let smallest = cohorts[0];
-
-    for (const c of cohorts) {
-      if (c.count > largest.count) largest = c;
-      if (c.count < smallest.count) smallest = c;
-    }
+    const largest = cohorts.reduce((max, c) => (c.count > max.count ? c : max));
+    const smallest = cohorts.reduce((min, c) => (c.count < min.count ? c : min));
 
     return {
       total: cohorts.length,

@@ -63,7 +63,7 @@
       "file": "tools/list-lambda-functions.ts"
     }
   ],
-  "dependencies": {
+  "npmDependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/client-ec2": "^3.600.0",
     "@aws-sdk/client-lambda": "^3.600.0",

@@ -50,7 +50,7 @@ export default tool({
   }))(),
   async execute(input, context): Promise<Output> {
     const userId = requireUserIdFromContext(context);
-    const leadData: Record<string, unknown> = {
+    const leadData: Parameters<typeof createLead>[1] = {
       LastName: input.lastName,
       Company: input.company,
     };

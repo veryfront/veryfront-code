@@ -5,7 +5,7 @@ import { formatAmount, getBalance } from "../lib/stripe-client.ts";
 type BalanceItem = {
   amount: number;
   currency: string;
-  source_types: unknown;
+  source_types?: Record<string, number>;
 };
 
 function mapBalanceItem(bal: BalanceItem): {

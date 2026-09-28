@@ -249,7 +249,7 @@ export async function getRetention(
     unit: "day",
   };
 
-  const response = await mixpanelFetch<Record<string, MixpanelRetention>>(
+  const response = await mixpanelFetch<Record<string, Omit<MixpanelRetention, "date">>>(
     MIXPANEL_DATA_BASE,
     "/retention",
     { params },

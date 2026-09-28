@@ -3758,6 +3758,12 @@ export const connectors: IntegrationConfig[] = [
       "required": true,
       "default": "us-east-1",
     }],
+    "npmDependencies": {
+      "@aws-sdk/client-s3": "^3.600.0",
+      "@aws-sdk/client-ec2": "^3.600.0",
+      "@aws-sdk/client-lambda": "^3.600.0",
+      "@aws-sdk/credential-providers": "^3.600.0",
+    },
     "tools": [{
       "name": "list-s3-buckets",
       "description": "List all S3 buckets in your AWS account",
@@ -3779,12 +3785,6 @@ export const connectors: IntegrationConfig[] = [
       "description": "List Lambda functions in your AWS account",
       "file": "tools/list-lambda-functions.ts",
     }],
-    "dependencies": {
-      "@aws-sdk/client-s3": "^3.600.0",
-      "@aws-sdk/client-ec2": "^3.600.0",
-      "@aws-sdk/client-lambda": "^3.600.0",
-      "@aws-sdk/credential-providers": "^3.600.0",
-    },
     "setupGuide": {
       "steps": [{
         "title": "Setup guide",
@@ -35814,7 +35814,7 @@ export const connectors: IntegrationConfig[] = [
       "sensitive": true,
       "docsUrl": "https://neon.tech/docs/connect/connect-from-any-app",
     }],
-    "npmDependencies": { "pg": "^8.13.1" },
+    "npmDependencies": { "pg": "^8.13.1", "@types/pg": "^8.11.10" },
     "tools": [{
       "id": "neon__list_projects",
       "name": "List Projects",

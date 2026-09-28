@@ -279,7 +279,7 @@ export function formatPhoneNumber(phone: string, defaultCountryCode = "+1"): str
 }
 
 export function formatDate(date: Date): string {
-  return date.toISOString().split("T")[0];
+  return date.toISOString().slice(0, 10);
 }
 
 export function parseDate(dateString: string): Date {
