@@ -207,8 +207,8 @@ export async function GET(req: Request): Promise<Response> {
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {
       const { envVars } = integration;
-      // An empty contract is not a working setup: harvest and hubspot ship no
-      // client at all, so nothing can be connected.
+      // An empty contract is not a working setup: an integration without
+      // scaffold files (harvest, hubspot) has no local client to connect.
       const connected = envVars
         ? envVars.length > 0 && envVars.every((name) => Boolean(getEnv(name)))
         : await tokenStore.isConnected(userId, integration.id, integration.scopes);

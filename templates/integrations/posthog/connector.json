@@ -28,6 +28,7 @@
       "name": "POSTHOG_PROJECT_API_KEY",
       "description": "PostHog project API key (phc_...) the local scaffold's capture-event tool sends. Event ingestion rejects personal API keys.",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://posthog.com/docs/api/capture"
     },

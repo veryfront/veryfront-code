@@ -43449,6 +43449,7 @@ export const connectors: IntegrationConfig[] = [
       "description":
         "PostHog project API key (phc_...) the local scaffold's capture-event tool sends. Event ingestion rejects personal API keys.",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://posthog.com/docs/api/capture",
     }, {
@@ -48790,6 +48791,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "SENTRY_ORG",
       "description": "Default Sentry organization slug for prompts that do not specify one",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.sentry.io/api/organizations/",
     }],

@@ -89,6 +89,14 @@ describe("templates/integration-loader-helpers", () => {
 });
 
 describe("integration scaffold env contract", () => {
+  it("gives an integration without scaffold files an empty contract", async () => {
+    const integration = await loadIntegration(
+      "algolia" as (typeof ALL_AVAILABLE_INTEGRATIONS)[number],
+    );
+    assertEquals(integration?.files, []);
+    assertEquals(requiredSetupEnvVars(integration!), []);
+  });
+
   it("requires only env vars an env-backed scaffold's own client reads", async () => {
     const unread: string[] = [];
     for (const name of ALL_AVAILABLE_INTEGRATIONS) {

@@ -46,6 +46,7 @@
       "name": "SENTRY_ORG",
       "description": "Default Sentry organization slug for prompts that do not specify one",
       "required": false,
+      "scaffoldRequired": true,
       "sensitive": false,
       "docsUrl": "https://docs.sentry.io/api/organizations/"
     }
