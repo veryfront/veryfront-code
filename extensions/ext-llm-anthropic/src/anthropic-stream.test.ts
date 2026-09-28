@@ -250,6 +250,17 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       { inputTokens: 8, totalTokens: 8, cacheCreationInputTokens: 10 },
       "an invalid share is dropped",
     );
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: 8,
+          cache_creation_input_tokens: 1.5,
+          cache_creation: { ephemeral_1h_input_tokens: 1 },
+        },
+      }),
+      { inputTokens: 8, totalTokens: 8 },
+      "a share whose cache-write total is invalid is dropped with it",
+    );
   });
 
   it("adds the one-hour cache-write share across continuations", () => {
