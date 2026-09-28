@@ -15,7 +15,8 @@ import type {
   ProjectTraceProviderOptions,
 } from "veryfront/extensions/observability";
 
-interface ProjectArrayOperations {
+interface ProjectSpanOperations {
+  clone<T>(value: T): T;
   append<T>(values: T[], value: T): void;
   shift<T>(values: T[]): T | undefined;
 }
@@ -23,15 +24,6 @@ interface ProjectArrayOperations {
 type Transport = ReturnType<ProjectTraceProviderOptions["createTransport"]>;
 const MAX_QUEUE_BYTES = 1024 * 1024;
 const MAX_SPAN_BYTES = 64 * 1024;
-
-function snapshotAttributes(attributes: api.Attributes): api.Attributes {
-  const snapshot: api.Attributes = {};
-  for (const key of Object.keys(attributes)) {
-    const value = attributes[key];
-    snapshot[key] = Array.isArray(value) ? value.slice() : value;
-  }
-  return snapshot;
-}
 
 /** The byte budget is measured with the SDK serializer before retaining ended spans. */
 class ProjectSpanProcessor implements SpanProcessor {
@@ -46,12 +38,21 @@ class ProjectSpanProcessor implements SpanProcessor {
   constructor(
     private readonly transport: Transport,
     private readonly resource: Readonly<Record<string, string>>,
-    private readonly arrays: ProjectArrayOperations,
+    private readonly operations: ProjectSpanOperations,
   ) {}
 
   private snapshot(span: ReadableSpan): ReadableSpan {
     const context = span.spanContext();
-    const attributes = snapshotAttributes(span.attributes);
+    const attributes = this.operations.clone(span.attributes);
+    const links: ReadableSpan["links"] = [];
+    for (let index = 0; index < span.links.length; index++) {
+      const link = span.links[index]!;
+      this.operations.append(links, {
+        ...link,
+        context: { ...link.context },
+        attributes: link.attributes && this.operations.clone(link.attributes),
+      });
+    }
     for (const key of ["project.id", "environment.id"]) {
       if (this.resource[key] !== undefined) attributes[key] = this.resource[key];
     }
@@ -67,16 +68,8 @@ class ProjectSpanProcessor implements SpanProcessor {
       ended: span.ended,
       status: { ...span.status },
       attributes,
-      events: span.events.map((event) => ({
-        ...event,
-        time: [...event.time],
-        attributes: event.attributes && snapshotAttributes(event.attributes),
-      })),
-      links: span.links.map((link) => ({
-        ...link,
-        context: { ...link.context },
-        attributes: link.attributes && snapshotAttributes(link.attributes),
-      })),
+      events: this.operations.clone(span.events),
+      links,
       resource: span.resource,
       instrumentationScope: span.instrumentationScope,
       droppedAttributesCount: span.droppedAttributesCount,
@@ -103,7 +96,7 @@ class ProjectSpanProcessor implements SpanProcessor {
         !bytes || bytes > MAX_SPAN_BYTES || this.queue.length >= 512 ||
         this.bytes + bytes > MAX_QUEUE_BYTES
       ) return;
-      this.arrays.append(this.queue, { span, bytes });
+      this.operations.append(this.queue, { span, bytes });
       this.bytes += bytes;
       if (this.queue.length >= 32) void this.pump();
       else if (!this.timer) {
@@ -140,10 +133,10 @@ class ProjectSpanProcessor implements SpanProcessor {
         this.queue.length && batch.length < 32 &&
         bytes + this.queue[0]!.bytes <= MAX_QUEUE_BYTES / 2
       ) {
-        const item = this.arrays.shift(this.queue)!;
+        const item = this.operations.shift(this.queue)!;
         this.bytes -= item.bytes;
         bytes += item.bytes;
-        this.arrays.append(batch, item.span);
+        this.operations.append(batch, item.span);
       }
       const data = JsonTraceSerializer.serializeRequest(batch);
       if (!data) continue;
@@ -173,7 +166,7 @@ class ProjectSpanProcessor implements SpanProcessor {
 /** Create private tracing APIs without installing a global provider or context manager. */
 export function createProjectTraceProvider(
   options: ProjectTraceProviderOptions,
-  arrays: ProjectArrayOperations,
+  operations: ProjectSpanOperations,
 ): ProjectTraceProvider {
   const manager = new AsyncLocalStorageContextManager().enable();
   const transport = options.createTransport((operation) =>
@@ -182,7 +175,7 @@ export function createProjectTraceProvider(
       () => api.context.with(suppressTracing(api.context.active()), operation),
     )
   );
-  const processor = new ProjectSpanProcessor(transport, options.resource, arrays);
+  const processor = new ProjectSpanProcessor(transport, options.resource, operations);
   const sdk = new BasicTracerProvider({
     resource: resourceFromAttributes(options.resource),
     // Project collection is independent of a sampled-out platform parent.

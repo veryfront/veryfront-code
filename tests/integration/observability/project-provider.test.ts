@@ -38,6 +38,45 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("copies SDK snapshot data without consulting shared traversal methods", async () => {
+    const owner = new OtlpTracingExporter();
+    const session = await owner.createProjectProvider({
+      resource: { "service.name": "snapshot-operations" },
+      createTransport: () => ({
+        send: () => Promise.resolve({ status: "success" as const }),
+        shutdown() {},
+      }),
+    });
+    const tracer = session.getProvider().getTracer(
+      "app",
+    ) as import("npm:@opentelemetry/api@1.9.1").Tracer;
+    const span = tracer.startSpan("snapshot.private", {
+      attributes: { marker: "synthetic-private-value" },
+    });
+    span.addEvent("snapshot.event", { marker: "synthetic-private-event" });
+    const sdkSpan =
+      span as unknown as import("npm:@opentelemetry/sdk-trace-base@2.9.0").ReadableSpan;
+    const keys = Object.keys;
+    const map = Array.prototype.map;
+    let exposed = 0;
+    try {
+      Object.keys = (value: object) => {
+        if (value === sdkSpan.attributes) exposed++;
+        return keys(value);
+      };
+      Array.prototype.map = function (callback, receiver) {
+        if (this === sdkSpan.events || this === sdkSpan.links) exposed++;
+        return Reflect.apply(map, this, [callback, receiver]);
+      };
+      span.end();
+    } finally {
+      Object.keys = keys;
+      Array.prototype.map = map;
+      await owner.shutdown();
+    }
+    assertEquals(exposed, 0);
+  });
+
   it("keeps processor queue entries private from replaced array methods", async () => {
     const owner = new OtlpTracingExporter();
     const session = await owner.createProjectProvider({

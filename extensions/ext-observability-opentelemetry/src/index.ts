@@ -34,7 +34,8 @@ const providerSetDelete = Set.prototype.delete;
 const providerSetForEach = Set.prototype.forEach;
 const defineProperty = Object.defineProperty;
 const arrayShift = Array.prototype.shift;
-const projectArrayOperations = Object.freeze({
+const projectSpanOperations = Object.freeze({
+  clone: structuredClone,
   append<T>(values: T[], value: T): void {
     const property = {
       __proto__: null,
@@ -824,7 +825,7 @@ class OtlpTracingExporter implements TracingExporter {
 
   async createProjectProvider(options: ProjectTraceProviderOptions): Promise<ProjectTraceProvider> {
     const { createProjectTraceProvider } = await import("./project-provider.ts");
-    const session = createProjectTraceProvider(options, projectArrayOperations);
+    const session = createProjectTraceProvider(options, projectSpanOperations);
     const handle: ProjectTraceProvider = Object.freeze({
       ...session,
       shutdown: async (discard: boolean) => {
@@ -1024,7 +1025,7 @@ class OtlpTracingExporter implements TracingExporter {
   async shutdown(): Promise<void> {
     const pending: Promise<void>[] = [];
     apply(providerSetForEach, this.projectProviders, [(provider: ProjectTraceProvider) => {
-      projectArrayOperations.append(pending, provider.shutdown(true));
+      projectSpanOperations.append(pending, provider.shutdown(true));
     }]);
     await Promise.allSettled(pending);
     if (this.logProvider) {
