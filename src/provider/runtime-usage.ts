@@ -24,6 +24,12 @@ export interface RuntimeUsage {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  /**
+   * The share of {@link RuntimeUsage.cacheCreationInputTokens} written with a
+   * one-hour cache lifetime. A subset of that total, never added to it. Absent
+   * when the provider does not report the split.
+   */
+  cacheCreation1hInputTokens?: number;
   cacheReadInputTokens?: number;
   /** Compatibility alias for {@link RuntimeUsage.cacheReadInputTokens}. */
   cachedInputTokens?: number;
@@ -49,6 +55,7 @@ const RUNTIME_USAGE_NUMERIC_FIELDS = [
   ["outputTokens", "token"],
   ["totalTokens", "total"],
   ["cacheCreationInputTokens", "token"],
+  ["cacheCreation1hInputTokens", "token"],
   ["cacheReadInputTokens", "token"],
   ["reasoningTokens", "token"],
   ["billableInputTokens", "token"],

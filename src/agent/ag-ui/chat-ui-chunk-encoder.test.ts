@@ -62,6 +62,30 @@ describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
     });
   });
 
+  it("carries the one-hour cache-write share into RunFinished metadata only when reported", () => {
+    const finishChunk = (usage: Record<string, number>): ChatUiMessageChunk => ({
+      type: "finish",
+      finishReason: "stop",
+      messageMetadata: { modelId: "custom/model", usage },
+    });
+
+    const reported = getAgUiChatUiMessageChunkMetadata(
+      finishChunk({
+        inputTokens: 12,
+        cacheCreationInputTokens: 1000,
+        cacheCreation1hInputTokens: 600,
+      }),
+    );
+    assertEquals(reported?.cacheCreationInputTokens, 1000);
+    assertEquals(reported?.cacheCreation1hInputTokens, 600);
+
+    const unreported = getAgUiChatUiMessageChunkMetadata(
+      finishChunk({ inputTokens: 12, cacheCreationInputTokens: 1000 }),
+    );
+    assertEquals(unreported?.cacheCreationInputTokens, 1000);
+    assertEquals("cacheCreation1hInputTokens" in (unreported ?? {}), false);
+  });
+
   it("extracts model, provider, usage, and finish reason from chat chunks", () => {
     const finishChunk: ChatUiMessageChunk = {
       type: "finish",

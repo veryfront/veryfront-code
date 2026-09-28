@@ -510,6 +510,10 @@ export function addAnthropicUsage(
     sanitizedCurrent.cacheCreationInputTokens,
     sanitizedNext.cacheCreationInputTokens,
   );
+  const cacheCreation1hInputTokens = addOptionalTokenCount(
+    sanitizedCurrent.cacheCreation1hInputTokens,
+    sanitizedNext.cacheCreation1hInputTokens,
+  );
   const cacheReadInputTokens = addOptionalTokenCount(
     sanitizedCurrent.cacheReadInputTokens,
     sanitizedNext.cacheReadInputTokens,
@@ -568,6 +572,7 @@ export function addAnthropicUsage(
     ...(outputTokens === undefined ? {} : { outputTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cacheCreationInputTokens === undefined ? {} : { cacheCreationInputTokens }),
+    ...(cacheCreation1hInputTokens === undefined ? {} : { cacheCreation1hInputTokens }),
     ...(cacheReadInputTokens === undefined ? {} : { cacheReadInputTokens }),
     ...(cacheReadInputTokens === undefined ? {} : { cachedInputTokens: cacheReadInputTokens }),
     ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
@@ -628,6 +633,7 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
   const inputTokens = usage.input_tokens;
   const outputTokens = usage.output_tokens;
   const cacheCreationInputTokens = usage.cache_creation_input_tokens;
+  const cacheCreation1hInputTokens = readRecord(usage.cache_creation)?.ephemeral_1h_input_tokens;
   const cacheReadInputTokens = usage.cache_read_input_tokens;
   const veryfront = readRecord(usage.veryfront);
   const costSource = veryfront?.cost_source;
@@ -642,6 +648,7 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
         (typeof outputTokens === "number" ? outputTokens : 0)
       : undefined,
     ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
+    ...(typeof cacheCreation1hInputTokens === "number" ? { cacheCreation1hInputTokens } : {}),
     ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
     ...(typeof veryfront?.billable_input_tokens === "number"
       ? { billableInputTokens: veryfront.billable_input_tokens }
