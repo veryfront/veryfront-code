@@ -19,6 +19,15 @@ type Transport = ReturnType<ProjectTraceProviderOptions["createTransport"]>;
 const MAX_QUEUE_BYTES = 1024 * 1024;
 const MAX_SPAN_BYTES = 64 * 1024;
 
+function snapshotAttributes(attributes: api.Attributes): api.Attributes {
+  const snapshot: api.Attributes = {};
+  for (const key of Object.keys(attributes)) {
+    const value = attributes[key];
+    snapshot[key] = Array.isArray(value) ? value.slice() : value;
+  }
+  return snapshot;
+}
+
 /** The byte budget is measured with the SDK serializer before retaining ended spans. */
 class ProjectSpanProcessor implements SpanProcessor {
   private queue: { span: ReadableSpan; bytes: number }[] = [];
@@ -36,7 +45,7 @@ class ProjectSpanProcessor implements SpanProcessor {
 
   private snapshot(span: ReadableSpan): ReadableSpan {
     const context = span.spanContext();
-    const attributes = { ...span.attributes };
+    const attributes = snapshotAttributes(span.attributes);
     for (const key of ["project.id", "environment.id"]) {
       if (this.resource[key] !== undefined) attributes[key] = this.resource[key];
     }
@@ -52,8 +61,16 @@ class ProjectSpanProcessor implements SpanProcessor {
       ended: span.ended,
       status: { ...span.status },
       attributes,
-      events: [...span.events],
-      links: [...span.links],
+      events: span.events.map((event) => ({
+        ...event,
+        time: [...event.time],
+        attributes: event.attributes && snapshotAttributes(event.attributes),
+      })),
+      links: span.links.map((link) => ({
+        ...link,
+        context: { ...link.context },
+        attributes: link.attributes && snapshotAttributes(link.attributes),
+      })),
       resource: span.resource,
       instrumentationScope: span.instrumentationScope,
       droppedAttributesCount: span.droppedAttributesCount,

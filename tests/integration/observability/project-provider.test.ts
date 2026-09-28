@@ -38,6 +38,65 @@ type Payload = {
 };
 
 describe("project trace SDK provider", () => {
+  it("snapshots span, event and link attribute arrays before queueing", async () => {
+    const owner = new OtlpTracingExporter();
+    const captures: string[] = [];
+    const session = await owner.createProjectProvider({
+      resource: { "service.name": "snapshot" },
+      createTransport: () => ({
+        send(data) {
+          captures.push(new TextDecoder().decode(data));
+          return Promise.resolve({ status: "success" });
+        },
+        shutdown() {},
+      }),
+    });
+    try {
+      const spanValues = [1];
+      const eventValues = [2];
+      const linkValues = [3];
+      const tracer = session.getProvider().getTracer(
+        "app",
+      ) as import("npm:@opentelemetry/api@1.9.1").Tracer;
+      const span = tracer.startSpan("snapshot.arrays", {
+        attributes: { spanValues },
+        links: [{
+          context: { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1 },
+          attributes: { linkValues },
+        }],
+      });
+      span.addEvent("event", { eventValues });
+      span.end();
+      // The SDK span remains reachable after end; queued data must be independent.
+      const ended =
+        span as unknown as import("npm:@opentelemetry/sdk-trace-base@2.9.0").ReadableSpan;
+      (ended.attributes.spanValues as number[]).push(999);
+      (ended.events[0]!.attributes!.eventValues as number[]).push(999);
+      (ended.links[0]!.attributes!.linkValues as number[]).push(999);
+      spanValues.push(...Array(10000).fill(999));
+      eventValues.push(...Array(10000).fill(999));
+      linkValues.push(...Array(10000).fill(999));
+      await session.forceFlush();
+      assertEquals(captures.length, 1);
+      assertEquals(new TextEncoder().encode(captures[0]).byteLength < 64 * 1024, true);
+      const payload = JSON.parse(captures[0]!);
+      const exported = payload.resourceSpans[0].scopeSpans[0].spans[0];
+      for (
+        const [attributes, key, expected] of [
+          [exported.attributes, "spanValues", 1],
+          [exported.events[0].attributes, "eventValues", 2],
+          [exported.links[0].attributes, "linkValues", 3],
+        ] as const
+      ) {
+        const attribute = attributes.find((item: { key: string }) => item.key === key);
+        assertEquals(attribute.value.arrayValue.values.length, 1);
+        assertEquals(Number(attribute.value.arrayValue.values[0].intValue), expected);
+      }
+    } finally {
+      await owner.shutdown();
+    }
+  });
+
   it("retains project ownership for explicit parent helpers outside the request scope", async () => {
     const owner = new OtlpTracingExporter();
     const received: Payload[] = [];
