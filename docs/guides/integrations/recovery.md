@@ -68,6 +68,16 @@ import {
 /** Shows the one-time URL to the signed-in person, for example in your UI. Never log it. */
 export type PresentConnectUrl = (url: string, expiresAt: string) => Promise<void>;
 
+/** Settles with `work`, or rejects when the deadline fires first. */
+function untilDeadline<T>(work: Promise<T>, deadline: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(deadline.reason);
+    if (deadline.aborted) return abort();
+    deadline.addEventListener("abort", abort, { once: true });
+    work.then(resolve, reject).finally(() => deadline.removeEventListener("abort", abort));
+  });
+}
+
 function identity(status: IntegrationConnectionStatus): string | undefined {
   const id = status.connection_id ?? status.connectionId;
   const generation = status.connection_generation_id ?? status.connectionGenerationId;
@@ -89,7 +99,7 @@ export async function connectGmail(
   const before = identity(await client.status("gmail", scope));
   const handoff = await client.connect("gmail", { scope, redirectUri: "<REDIRECT_URI>" });
   if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
-  await presentConnectUrl(handoff.connect_url, handoff.expires_at);
+  await untilDeadline(presentConnectUrl(handoff.connect_url, handoff.expires_at), deadline);
 
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -109,7 +119,8 @@ row from another scope is never accepted. The result is an observed connected
 identity in that scope, not proof that this particular handoff succeeded: a
 concurrent connect in the same scope can produce it too. Confirm the account
 with the person before relying on it. The client-level abort signal ends every
-request, including `connect`, at the deadline. A new `connection_generation_id`
+request, including `connect`, at the deadline, and `untilDeadline` stops waiting
+for `presentConnectUrl` at the same deadline. A new `connection_generation_id`
 on an existing `id` means the same account was reconnected. `veryfront integration connect` performs the same check for you and
 returns `connection_observed` with the confirmed row. If the callback arrives
 but inventory does not show a new generation within its short confirmation
