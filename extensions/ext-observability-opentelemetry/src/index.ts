@@ -43,12 +43,12 @@ const typedArrayByteLength = Object.getOwnPropertyDescriptor(
 )!.get!;
 const projectSpanOperations = Object.freeze({
   createSpanOwners() {
-    const spans = new SpanWeakSet<object>();
+    const spans = new SpanWeakSet<import("@opentelemetry/api").Span>();
     return Object.freeze({
-      add: (span: object) => {
+      add: (span: import("@opentelemetry/api").Span) => {
         apply(spanSetAdd, spans, [span]);
       },
-      has: (span: object): boolean => apply(spanSetHas, spans, [span]),
+      has: (span: unknown): boolean => apply(spanSetHas, spans, [span]),
     });
   },
   clone: structuredClone,

@@ -16,7 +16,7 @@ import type {
 } from "veryfront/extensions/observability";
 
 interface ProjectSpanOperations {
-  createSpanOwners(): { add(span: object): void; has(span: object): boolean };
+  createSpanOwners(): { add(span: api.Span): void; has(span: unknown): boolean };
   clone<T>(value: T): T;
   byteLength(value: Uint8Array): number;
   append<T>(values: T[], value: T): void;
@@ -253,7 +253,7 @@ export function createProjectTraceProvider(
     },
   });
   return Object.freeze({
-    ownsSpan: (span: object) => ownedSpans.has(span),
+    ownsSpan: (span: unknown) => ownedSpans.has(span),
     hasActiveSpans: () => processor.hasActiveSpans(),
     getProvider: () => provider,
     getContextAPI: () => ({
