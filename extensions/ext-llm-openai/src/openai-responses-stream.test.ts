@@ -85,8 +85,6 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         inputTokens: 8,
         outputTokens: 2,
         totalTokens: 10,
-        providerCostUsd: 0.001,
-        veryfrontBilledUsd: 0.1,
         costCredits: 1,
         costSource: "gateway",
       },
