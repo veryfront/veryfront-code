@@ -53,6 +53,29 @@ describe("project telemetry configuration", () => {
     }
   });
 
+  it("decodes resource attribute components and rejects malformed escapes", async () => {
+    const result = await resolveProjectTraceConfig(scope, declarations, {
+      ...env,
+      OTEL_RESOURCE_ATTRIBUTES:
+        "service%2Ename=checkout%2Capi,service.version=build%3D1,deployment.environment.name=pre%2520view",
+    });
+    assertEquals(result.status, "enabled");
+    if (result.status === "enabled") {
+      assertEquals(result.config.serviceName, "checkout,api");
+      assertEquals(result.config.serviceVersion, "build=1");
+      assertEquals(result.config.deploymentEnvironment, "pre%20view");
+    }
+    for (const value of ["service.name=bad%", "service%ZZname=app", "service.name=%FF"]) {
+      assertEquals(
+        await resolveProjectTraceConfig(scope, declarations, {
+          ...env,
+          OTEL_RESOURCE_ATTRIBUTES: value,
+        }),
+        { status: "invalid", reason: "resource" },
+      );
+    }
+  });
+
   it("requires a declaration and a project signal opt-in; disable wins", async () => {
     for (
       const [extensions, variables] of [
