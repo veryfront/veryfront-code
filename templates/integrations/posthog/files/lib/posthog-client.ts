@@ -1,4 +1,16 @@
-import { getApiKey } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function getApiKey(): string | undefined {
+  return getEnv("POSTHOG_API_KEY");
+}
 
 const DEFAULT_POSTHOG_HOST = "https://app.posthog.com";
 
@@ -97,7 +109,7 @@ interface PostHogError {
 }
 
 function getPostHogHost(): string {
-  return process.env.POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST;
+  return getEnv("POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST;
 }
 
 function buildParams(

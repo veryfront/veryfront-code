@@ -1,4 +1,24 @@
-import { getApiSecret, getProjectId, getProjectToken } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function getApiSecret(): string | undefined {
+  return getEnv("MIXPANEL_API_SECRET");
+}
+
+function getProjectId(): string | undefined {
+  return getEnv("MIXPANEL_PROJECT_ID");
+}
+
+function getProjectToken(): string | undefined {
+  return getEnv("MIXPANEL_PROJECT_TOKEN");
+}
 
 const MIXPANEL_API_BASE = "https://mixpanel.com/api";
 const MIXPANEL_TRACK_BASE = "https://api.mixpanel.com";

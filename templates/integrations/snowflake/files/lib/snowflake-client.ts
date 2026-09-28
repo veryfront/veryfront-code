@@ -1,11 +1,42 @@
-import {
-  getSnowflakeAccount,
-  getSnowflakeDatabase,
-  getSnowflakePassword,
-  getSnowflakeSchema,
-  getSnowflakeUsername,
-  getSnowflakeWarehouse,
-} from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function requireEnv(key: string): string {
+  const value = getEnv(key);
+  if (!value) throw new Error(`${key} is not set`);
+  return value;
+}
+
+function getSnowflakeAccount(): string {
+  return requireEnv("SNOWFLAKE_ACCOUNT");
+}
+
+function getSnowflakeUsername(): string {
+  return requireEnv("SNOWFLAKE_USERNAME");
+}
+
+function getSnowflakePassword(): string {
+  return requireEnv("SNOWFLAKE_PASSWORD");
+}
+
+function getSnowflakeWarehouse(): string | undefined {
+  return getEnv("SNOWFLAKE_WAREHOUSE");
+}
+
+function getSnowflakeDatabase(): string | undefined {
+  return getEnv("SNOWFLAKE_DATABASE");
+}
+
+function getSnowflakeSchema(): string | undefined {
+  return getEnv("SNOWFLAKE_SCHEMA");
+}
 
 interface SnowflakeStatementResponse {
   statementHandle: string;
