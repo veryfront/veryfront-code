@@ -12,7 +12,6 @@
 
 import { walk } from "#std/fs/walk";
 import { relative } from "#std/path";
-import { SUPPORTED_INTEGRATION_NAMES } from "../../src/integrations/feature-flags.ts";
 import { encodeBase64Bytes } from "../../src/utils/base64url.ts";
 
 interface TemplateManifest {
@@ -133,18 +132,19 @@ async function generateManifest(): Promise<TemplateManifest> {
     const hasFiles = await directoryExists(integrationPath);
 
     // `init --integrations` also reads the connector config, and the npm
-    // package carries templates only through this manifest, so ship the
-    // configs of the scaffolded and default integrations here.
-    if (
-      hasFiles ||
-      SUPPORTED_INTEGRATION_NAMES.some((name) => name === integrationName)
-    ) {
-      const configPath = `${integrationsDir}/${integrationName}/connector.json`;
-      if (await fileExists(configPath)) {
-        manifest.templates[`connector:${integrationName}`] = {
-          files: { "connector.json": await Deno.readTextFile(configPath) },
-        };
-      }
+    // package carries templates only through this manifest, so ship every
+    // config here, without the tool and setup-guide metadata init never reads.
+    const configPath = `${integrationsDir}/${integrationName}/connector.json`;
+    if (await fileExists(configPath)) {
+      const {
+        tools: _tools,
+        setupGuide: _setupGuide,
+        SETUP_GUIDE: _legacySetupGuide,
+        ...config
+      } = JSON.parse(await Deno.readTextFile(configPath));
+      manifest.templates[`connector:${integrationName}`] = {
+        files: { "connector.json": JSON.stringify({ ...config, tools: [] }) },
+      };
     }
 
     if (!hasFiles) continue;

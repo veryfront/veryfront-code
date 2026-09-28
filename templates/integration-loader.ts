@@ -112,7 +112,9 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
 
 /**
  * Load integration configuration from its connector.json, which ships in the
- * template manifest so it also resolves from the npm package.
+ * template manifest so it also resolves from the npm package. The manifest
+ * copy leaves out the tool list and setup guide, which scaffolding never reads;
+ * the hosted catalog in `src/integrations/_data.ts` carries those.
  */
 export async function loadIntegrationConfig(
   integrationName: IntegrationName,

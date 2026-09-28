@@ -95,10 +95,15 @@ describe("templates/integration-loader file namespacing", () => {
 });
 
 describe("templates/integration-loader connector configs", () => {
-  it("resolves the connector config of every scaffolded or default integration from the manifest", async () => {
+  it("resolves the connector config of every scaffolded, default or experimental integration from the manifest", async () => {
     // The npm package carries templates only through the compressed manifest,
     // so a connector config read from disk is missing there (inbox #2010).
-    const names = new Set<string>([...SUPPORTED_INTEGRATION_NAMES, ...await listIntegrations()]);
+    const names = new Set<string>([
+      ...SUPPORTED_INTEGRATION_NAMES,
+      ...await listIntegrations(),
+      "sap",
+      "persona",
+    ]);
     const missing: string[] = [];
     for (const name of names) {
       const config = await loadIntegrationConfig(name as IntegrationName);
