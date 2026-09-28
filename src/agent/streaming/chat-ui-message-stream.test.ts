@@ -402,6 +402,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
           outputTokens: number;
           cachedInputTokens?: number;
           cacheCreationInputTokens?: number;
+          cacheCreation1hInputTokens?: number;
           cacheReadInputTokens?: number;
           reasoningTokens?: number;
         };
@@ -429,6 +430,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
                   cacheReadTokens: 20,
                   cacheWriteTokens: 7,
                 },
+                cacheCreation1hInputTokens: 3,
                 outputTokenDetails: {
                   reasoningTokens: 2,
                 },
@@ -448,6 +450,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
                 outputTokens: part.totalUsage.outputTokens,
                 cachedInputTokens: part.totalUsage.inputTokenDetails.cacheReadTokens,
                 cacheCreationInputTokens: part.totalUsage.inputTokenDetails.cacheWriteTokens,
+                cacheCreation1hInputTokens: part.totalUsage.cacheCreation1hInputTokens,
                 cacheReadInputTokens: part.totalUsage.inputTokenDetails.cacheReadTokens,
                 reasoningTokens: part.totalUsage.outputTokenDetails.reasoningTokens,
               },
@@ -468,6 +471,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
         outputTokens: 45,
         cachedInputTokens: 20,
         cacheCreationInputTokens: 7,
+        cacheCreation1hInputTokens: 3,
         cacheReadInputTokens: 20,
         reasoningTokens: 2,
       },
@@ -482,6 +486,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
         cacheReadTokens: 20,
         cacheWriteTokens: 7,
       },
+      cacheCreation1hInputTokens: 3,
       outputTokenDetails: {
         reasoningTokens: 2,
       },

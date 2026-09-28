@@ -3923,6 +3923,7 @@ describe("internal-agents/run-stream", () => {
                 totalTokens: 28,
                 cachedInputTokens: 5,
                 cacheCreationInputTokens: 2,
+                cacheCreation1hInputTokens: 1,
                 cacheReadInputTokens: 3,
                 reasoningTokens: 4,
                 billableInputTokens: 15,
@@ -3966,6 +3967,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.attributes["gen_ai.usage.output_tokens"], 11);
     assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 28);
     assertEquals(runSpan?.attributes["gen_ai.usage.cache_creation.input_tokens"], 2);
+    assertEquals(runSpan?.attributes["gen_ai.usage.cache_creation_1h.input_tokens"], 1);
     assertEquals(runSpan?.attributes["gen_ai.usage.cache_read.input_tokens"], 3);
     assertEquals(runSpan?.attributes["gen_ai.usage.reasoning.output_tokens"], 4);
     assertEquals(runSpan?.attributes["agent.usage.billable_input_tokens"], 15);

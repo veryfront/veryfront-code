@@ -3849,6 +3849,7 @@ describe("anthropic-provider", () => {
                   input_tokens: 100,
                   output_tokens: 10,
                   cache_creation_input_tokens: 50,
+                  cache_creation: { ephemeral_1h_input_tokens: 20 },
                   cache_read_input_tokens: 30,
                 },
               }),
@@ -3863,6 +3864,7 @@ describe("anthropic-provider", () => {
         outputTokens: 10,
         totalTokens: 110,
         cacheCreationInputTokens: 50,
+        cacheCreation1hInputTokens: 20,
         cacheReadInputTokens: 30,
         cachedInputTokens: 30,
       });

@@ -122,6 +122,7 @@ function createReport(): EvalReport {
         outputTokens: 5,
         totalTokens: 15,
         costUsd: 0.01,
+        cacheCreation1hInputTokens: 4,
       },
     },
     records: [
@@ -1044,6 +1045,7 @@ describe("ext-eval-report-mlflow", () => {
     );
     assertEquals(metricByKey.get("veryfront_pass_rate"), 1);
     assertEquals(metricByKey.get("total_tokens"), 15);
+    assertEquals(metricByKey.get("cache_creation_1h_input_tokens"), 4);
     assertEquals(
       metricByKey.get("veryfront_metric.answer_exactmatch.pass_rate"),
       1,

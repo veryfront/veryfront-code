@@ -770,6 +770,9 @@ export function normalizeUsage(response: AgentResponse) {
       ...(response.usage.cacheCreationInputTokens !== undefined
         ? { cacheCreationInputTokens: response.usage.cacheCreationInputTokens }
         : {}),
+      ...(response.usage.cacheCreation1hInputTokens !== undefined
+        ? { cacheCreation1hInputTokens: response.usage.cacheCreation1hInputTokens }
+        : {}),
       ...(response.usage.cacheReadInputTokens !== undefined
         ? { cacheReadInputTokens: response.usage.cacheReadInputTokens }
         : {}),
