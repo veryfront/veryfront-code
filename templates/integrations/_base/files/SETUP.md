@@ -136,7 +136,8 @@ MICROSOFT_TENANT_ID=common
 ```env
 ATLASSIAN_CLIENT_ID=your-client-id
 ATLASSIAN_CLIENT_SECRET=your-client-secret
-ATLASSIAN_CLOUD_ID=your-cloud-id
+JIRA_CLOUD_ID=your-cloud-id
+CONFLUENCE_CLOUD_ID=your-cloud-id
 ```
 
 ### Required Scopes
@@ -357,6 +358,7 @@ POSTHOG_HOST=https://app.posthog.com
 ```env
 SALESFORCE_CLIENT_ID=your-consumer-key
 SALESFORCE_CLIENT_SECRET=your-consumer-secret
+SALESFORCE_INSTANCE_URL=https://your-domain.my.salesforce.com
 ```
 
 ### Pipedrive
