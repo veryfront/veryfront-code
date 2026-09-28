@@ -1,18 +1,9 @@
 import { jiraConfig, OAuthService } from "veryfront/oauth";
+import { getEnv } from "./env.ts";
 import { tokenStore } from "./token-store.ts";
 
 // OAuthService refreshes expired tokens under the store's refresh lock.
 const jiraService = new OAuthService(jiraConfig, tokenStore);
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-
-  return undefined;
-}
 
 /**
  * The Atlassian site's cloud ID: JIRA_CLOUD_ID when set, otherwise the first site the

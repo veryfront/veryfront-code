@@ -1,19 +1,10 @@
 import { confluenceConfig, OAuthService } from "veryfront/oauth";
+import { getEnv } from "./env.ts";
 import { tokenStore } from "./token-store.ts";
 import { htmlToPlainText } from "./confluence-plain-text.ts";
 
 // OAuthService refreshes expired tokens under the store's refresh lock.
 const confluenceService = new OAuthService(confluenceConfig, tokenStore);
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-
-  return undefined;
-}
 
 /**
  * The Atlassian site's cloud ID: CONFLUENCE_CLOUD_ID when set, otherwise the first site the

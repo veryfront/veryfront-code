@@ -1,27 +1,10 @@
 import { salesforceConfig } from "veryfront/oauth";
-import { getValidToken, type OAuthProvider } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-
-  return undefined;
-}
+import { getEnv } from "./env.ts";
+import { getValidToken, providerFromConfig } from "./oauth.ts";
 
 // The generic OAuthService does not support Salesforce, so tokens refresh
 // through the base scaffold's getValidToken().
-const salesforceOAuthProvider: OAuthProvider = {
-  name: "salesforce",
-  authorizationUrl: salesforceConfig.authorizationUrl,
-  tokenUrl: salesforceConfig.tokenUrl,
-  clientId: getEnv("SALESFORCE_CLIENT_ID") ?? "",
-  clientSecret: getEnv("SALESFORCE_CLIENT_SECRET") ?? "",
-  scopes: [...salesforceConfig.defaultScopes],
-  callbackPath: "/api/auth/salesforce/callback",
-};
+const salesforceOAuthProvider = providerFromConfig(salesforceConfig);
 
 /**
  * Your org's instance URL: SALESFORCE_INSTANCE_URL when set, otherwise the

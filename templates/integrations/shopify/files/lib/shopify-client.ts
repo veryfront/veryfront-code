@@ -1,15 +1,6 @@
 import { shopifyConfig } from "veryfront/oauth";
-import { getValidToken, type OAuthProvider } from "./oauth.ts";
-
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-
-  return undefined;
-}
+import { getEnv } from "./env.ts";
+import { getValidToken, providerFromConfig } from "./oauth.ts";
 
 const SHOPIFY_SHOP_DOMAIN = getEnv("SHOPIFY_SHOP_DOMAIN") ?? "shop.myshopify.com";
 const SHOPIFY_API_VERSION = "2024-01";
@@ -17,15 +8,10 @@ const SHOPIFY_BASE_URL = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API
 
 // The generic OAuthService does not support Shopify, so tokens resolve through
 // the base scaffold's getValidToken(). Offline Shopify tokens do not expire.
-const shopifyOAuthProvider: OAuthProvider = {
-  name: "shopify",
+const shopifyOAuthProvider = providerFromConfig(shopifyConfig, {
   authorizationUrl: `https://${SHOPIFY_SHOP_DOMAIN}/admin/oauth/authorize`,
   tokenUrl: `https://${SHOPIFY_SHOP_DOMAIN}/admin/oauth/access_token`,
-  clientId: getEnv("SHOPIFY_CLIENT_ID") ?? "",
-  clientSecret: getEnv("SHOPIFY_CLIENT_SECRET") ?? "",
-  scopes: [...shopifyConfig.defaultScopes],
-  callbackPath: "/api/auth/shopify/callback",
-};
+});
 
 interface ShopifyProduct {
   id: number;

@@ -1,12 +1,4 @@
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") return Deno.env.get(key);
-
-  // @ts-ignore - process global
-  if (typeof process !== "undefined" && process.env) return process.env[key];
-
-  return undefined;
-}
+import { getEnv } from "./env.ts";
 
 export interface ServiceNowIncident {
   sys_id: string;
