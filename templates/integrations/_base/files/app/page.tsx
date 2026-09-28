@@ -105,7 +105,11 @@ function ServiceStatusFromAPI(): React.ReactElement | null {
           <span
             key={service.id}
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
-            title={`Set ${service.envVars?.join(', ') ?? 'its env vars'} in .env`}
+            title={
+              service.envVars?.length
+                ? `Set ${service.envVars.join(', ')} in .env`
+                : `${service.name} has no local client in this project`
+            }
           >
             <span className="w-1.5 h-1.5 rounded-full bg-neutral-400" />
             {service.name}

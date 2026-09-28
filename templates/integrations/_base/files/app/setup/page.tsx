@@ -455,7 +455,9 @@ export default function SetupPage(): React.JSX.Element {
                                   </a>
                                 ) : (
                                   <span className="px-4 py-2 text-sm text-neutral-600 dark:text-neutral-400">
-                                    Set {integration.envVars?.join(", ") ?? "its env vars"} in .env
+                                    {integration.envVars?.length
+                                      ? `Set ${integration.envVars.join(", ")} in .env`
+                                      : "No local client in this project"}
                                   </span>
                                 )}
                               </div>
