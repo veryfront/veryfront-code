@@ -8,8 +8,14 @@ function getEnv(key: string): string | undefined {
   return undefined;
 }
 
-function getApiSecret(): string | undefined {
-  return getEnv("MIXPANEL_API_SECRET");
+/** Service account credentials, or the legacy project API secret as a fallback. */
+function getBasicCredentials(): string | undefined {
+  const username = getEnv("MIXPANEL_SERVICE_ACCOUNT_USERNAME");
+  const secret = getEnv("MIXPANEL_SERVICE_ACCOUNT_SECRET");
+  if (username && secret) return `${username}:${secret}`;
+
+  const apiSecret = getEnv("MIXPANEL_API_SECRET");
+  return apiSecret ? `${apiSecret}:` : undefined;
 }
 
 function getProjectId(): string | undefined {
@@ -84,15 +90,14 @@ interface MixpanelError {
 }
 
 function getAuthHeader(): string {
-  const apiSecret = getApiSecret();
-  if (!apiSecret) {
+  const credentials = getBasicCredentials();
+  if (!credentials) {
     throw new Error(
-      "Not authenticated with Mixpanel. Please set MIXPANEL_API_SECRET.",
+      "Not authenticated with Mixpanel. Please set MIXPANEL_SERVICE_ACCOUNT_USERNAME and MIXPANEL_SERVICE_ACCOUNT_SECRET.",
     );
   }
 
-  // Mixpanel uses Basic auth with API secret as username and empty password
-  return `Basic ${btoa(`${apiSecret}:`)}`;
+  return `Basic ${btoa(credentials)}`;
 }
 
 async function mixpanelFetch<T>(

@@ -18,12 +18,9 @@ function getSnowflakeAccount(): string {
   return requireEnv("SNOWFLAKE_ACCOUNT");
 }
 
-function getSnowflakeUsername(): string {
-  return requireEnv("SNOWFLAKE_USERNAME");
-}
-
-function getSnowflakePassword(): string {
-  return requireEnv("SNOWFLAKE_PASSWORD");
+/** Programmatic access token, sent as a Bearer token to the SQL API. */
+function getSnowflakePat(): string {
+  return requireEnv("SNOWFLAKE_PAT");
 }
 
 function getSnowflakeWarehouse(): string | undefined {
@@ -145,19 +142,17 @@ async function snowflakeFetch<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const account = getSnowflakeAccount();
-  const username = getSnowflakeUsername();
-  const password = getSnowflakePassword();
+  const pat = getSnowflakePat();
 
   const baseUrl = `https://${account}.snowflakecomputing.com/api/v2`;
-  const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
 
   const response = await fetch(`${baseUrl}${endpoint}`, {
     ...options,
     headers: {
-      Authorization: authHeader,
+      Authorization: `Bearer ${pat}`,
       "Content-Type": "application/json",
       Accept: "application/json",
-      "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
+      "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
       ...options.headers,
     },
   });
