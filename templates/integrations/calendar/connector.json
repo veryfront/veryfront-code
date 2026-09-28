@@ -37,6 +37,44 @@
       "docsUrl": "https://console.cloud.google.com/apis/credentials"
     }
   ],
+  "setupGuide": {
+    "title": "Google Calendar setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Google OAuth app",
+        "description": "On hosted Veryfront, Google Calendar uses the Veryfront-managed Google OAuth app: connect Google Calendar from the project's integrations and approve the Google consent screen, no environment variables needed. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET only to use your own Google OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Enable the Google Calendar API",
+        "description": "In the Google Cloud project that owns your OAuth app, enable the Google Calendar API.",
+        "url": "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
+      },
+      {
+        "step": 3,
+        "title": "Configure the OAuth consent screen",
+        "description": "Configure the consent screen and add the scopes this connector requests. While the app's publishing status is Testing, only the test users you list can authorize it, and Google expires their refresh tokens after 7 days, so they must reconnect weekly. Publishing the app to external users requires Google's OAuth app verification for these sensitive scopes.",
+        "url": "https://console.cloud.google.com/auth/overview"
+      },
+      {
+        "step": 4,
+        "title": "Create an OAuth client",
+        "description": "Create an OAuth client ID of type Web application. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/calendar for hosted Veryfront, or your app origin followed by /api/auth/calendar/callback for a local or self-hosted app. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the app's credentials.",
+        "url": "https://console.cloud.google.com/apis/credentials"
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Calendars (read-only). It returns the calendars of the connected Google account without changing them."
+      }
+    ],
+    "notes": [
+      "The connection requests https://www.googleapis.com/auth/calendar.readonly and https://www.googleapis.com/auth/calendar.events. calendar.readonly covers the read tools; calendar.events lets the write tools create, update and delete events.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://developers.google.com/workspace/calendar/api/guides/overview"
+  },
   "tools": [
     {
       "id": "calendar__list_calendars",
