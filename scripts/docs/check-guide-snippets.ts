@@ -225,7 +225,7 @@ try {
 
   const nodeVersion = await run("node", ["--version"]).catch(() => undefined);
   if (!nodeVersion?.success || !nodeStripsTypes(nodeVersion.text)) {
-    const message = `The Node first-call check needs Node.js 22.18 or later; found ${
+    const message = `The Node first-call check needs Node.js 22.18+ or 23.6+; found ${
       nodeVersion?.success ? nodeVersion.text.trim() : "no node"
     }.`;
     // CI must run it; a contributor with an older Node gets a warning.
