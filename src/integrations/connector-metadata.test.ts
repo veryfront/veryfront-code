@@ -27,14 +27,13 @@ describe("connector setup and side-effect metadata", () => {
     assertEquals(undeclared, []);
   });
 
-  it("requires only environment variables that auth, an endpoint or the config schema reads", () => {
+  it("requires only environment variables that auth or an endpoint reads", () => {
     // Descriptions may mention a variable without the executor reading it.
     const withoutProse = (value: unknown) =>
       JSON.stringify(value, (key, item) => key === "description" ? undefined : item);
     const unread = connectors.flatMap((connector) => {
       const read = withoutProse(connector.auth) +
-        withoutProse(connector.tools.map((tool) => tool.endpoint ?? null)) +
-        withoutProse(connector.configSchema ?? null);
+        withoutProse(connector.tools.map((tool) => tool.endpoint ?? null));
       return (connector.envVars ?? [])
         .filter((envVar) => envVar.required && envVar.default === undefined)
         .filter((envVar) => !/_CLIENT_(ID|SECRET)$/.test(envVar.name))
