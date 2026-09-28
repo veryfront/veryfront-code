@@ -6,6 +6,7 @@ import {
   mergeIntegrationFiles,
   namespaceIntegrationTemplateFiles,
   requiredSetupEnvVars,
+  scaffoldEnvVars,
 } from "./integration-loader-helpers.ts";
 import { ALL_AVAILABLE_INTEGRATIONS, loadIntegration } from "./integration-loader.ts";
 
@@ -95,6 +96,7 @@ describe("integration scaffold env contract", () => {
     );
     assertEquals(integration?.files, []);
     assertEquals(requiredSetupEnvVars(integration!), []);
+    assertEquals(scaffoldEnvVars(integration!), []);
   });
 
   it("requires only env vars an env-backed scaffold's own client reads", async () => {

@@ -77,6 +77,8 @@ const OAUTH_CLIENT_ENV_VAR = /_CLIENT_(ID|SECRET)$/;
 export function scaffoldEnvVars(
   integration: Pick<ResolvedIntegration, "config" | "files">,
 ): EnvVarConfig[] {
+  // Without scaffold files there is no local client to read any variable.
+  if (!integration.files.length) return [];
   const usesOAuth = hasOAuthRoute(integration);
   return (integration.config.envVars ?? []).map(({ scaffoldRequired, ...envVar }) => ({
     ...envVar,
@@ -93,8 +95,6 @@ export function requiredSetupEnvVars(
   integration: Pick<ResolvedIntegration, "config" | "files">,
 ): string[] | null {
   if (hasOAuthRoute(integration)) return null;
-  // Without scaffold files there is no local client to configure.
-  if (!integration.files.length) return [];
   return scaffoldEnvVars(integration)
     .filter((envVar) => envVar.required && envVar.default === undefined)
     .map((envVar) => envVar.name);
