@@ -74,6 +74,13 @@ jobs:
           echo "TEST_SEMANTIC_AUDIT_BASE_REF=$base" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
+      # docs:snippets:check runs the integrations guide's TypeScript first call
+      # under Node, which needs Node 22.18+ to run .ts files without flags.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        if: ${{ matrix.check == 'lint' }}
+        with:
+          node-version: "24"
+          package-manager-cache: false
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in
