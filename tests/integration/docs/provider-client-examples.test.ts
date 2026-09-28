@@ -34,6 +34,7 @@ async function runSnippetsWithOfficialClients(
     );
     await Deno.writeTextFile(modulePath, buildSnippetModule(snippets));
 
+    const denoCacheDirectory = Deno.env.get("DENO_DIR");
     const command = new Deno.Command(Deno.execPath(), {
       args: [
         "run",
@@ -45,7 +46,11 @@ async function runSnippetsWithOfficialClients(
         modulePath,
       ],
       clearEnv: true,
-      env: { VERYFRONT_API_KEY: "example-project-key" },
+      env: {
+        ...(denoCacheDirectory === undefined ? {} : { DENO_DIR: denoCacheDirectory }),
+        VERYFRONT_API_KEY: "example-project-key",
+        ANTHROPIC_API_KEY: "vendor-key-must-not-be-sent",
+      },
       stdout: "piped",
       stderr: "piped",
     });
@@ -147,6 +152,7 @@ describe("provider guide client snippets", () => {
       "Bearer example-project-key",
     );
     assertEquals(requests[1]!.headers["anthropic-version"], "2023-06-01");
+    assertEquals(requests[1]!.headers["x-api-key"], undefined);
     assertEquals(requests[0]!.body, {
       model: "mistral/mistral-small-2503",
       messages: [{ role: "user", content: "Say hello." }],

@@ -117,6 +117,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
   baseURL: "https://api.veryfront.com/ai",
+  apiKey: null,
   authToken: process.env.VERYFRONT_API_KEY,
 });
 
