@@ -26,6 +26,10 @@ import { buildHandlerContext } from "./handler-context-builder.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import { shouldSkipEnrichedContext } from "./request-utils.ts";
 import { seedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
+import {
+  type ProjectTraceConfigResult,
+  resolveProjectTraceConfig,
+} from "../project-env/telemetry-config.ts";
 
 const logger = getBaseLogger("SERVER").component("project-runtime-context");
 
@@ -119,6 +123,8 @@ export interface ProjectRuntimeContextResolution {
   environment: ProjectEnvironmentResolution;
   handlerContext: HandlerContext | undefined;
   rawEnvVars: Record<string, string>;
+  /** Host-only export settings. Never forward collector credentials through HandlerContext. */
+  projectTraceConfig: ProjectTraceConfigResult;
   sourceIntegrationPolicy: SourceIntegrationPolicy;
 }
 
@@ -321,6 +327,7 @@ export async function resolveProjectRuntimeContext(
       environment: envRes,
       handlerContext: undefined,
       rawEnvVars: {},
+      projectTraceConfig: { status: "disabled" },
       sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
     };
   }
@@ -484,12 +491,22 @@ export async function resolveProjectRuntimeContext(
   const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
     adapterRes.config?.integrations,
   );
+  const projectTraceConfig: ProjectTraceConfigResult = adapterRes.configOutcome === "deferred"
+    ? { status: "deferred" }
+    : !adapterRes.isLocalProject && reqCtx.token
+    ? await resolveProjectTraceConfig(
+      { projectId: projectRes.projectId ?? "", environmentId: environmentId ?? "" },
+      adapterRes.config?.extensions ?? [],
+      rawEnvVars,
+    )
+    : { status: "disabled" };
 
   return {
     adapter: adapterRes,
     environment: envRes,
     handlerContext,
     rawEnvVars,
+    projectTraceConfig,
     sourceIntegrationPolicy,
   };
 }

@@ -17,6 +17,9 @@ import {
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
 import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
+import { getProjectTraceProvider } from "#veryfront/observability/tracing/project-trace-scope.ts";
+import { formatTraceparent } from "#veryfront/observability/tracing/traceparent.ts";
+import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import type { HandlerContext } from "#veryfront/types";
@@ -1041,6 +1044,12 @@ function executeAppRouteIsolated(
     async () => {
       try {
         const pool = getWorkerPool();
+        const traceProvider = getProjectTraceProvider();
+        const parent = (traceProvider?.getTraceAPI().getActiveSpan() as Span | undefined)
+          ?.spanContext();
+        const traceparent = parent && traceProvider?.importSpans
+          ? formatTraceparent(parent)
+          : undefined;
         const serialized = await serializeRequest(request);
         const semanticContext = await snapshotWorkerSemanticContext();
         const workerApplicationIdentity = applicationIdentity === null
@@ -1052,6 +1061,7 @@ function executeAppRouteIsolated(
           [projectDir],
           {
             type: "execute-app-route",
+            ...(traceparent ? { traceparent } : {}),
             id: randomUUID(),
             module,
             modulePath,
@@ -1065,6 +1075,12 @@ function executeAppRouteIsolated(
           },
         );
 
+        if (
+          parent && (workerResponse.type === "result" || workerResponse.type === "error") &&
+          typeof workerResponse.traceRecords === "string"
+        ) {
+          traceProvider?.importSpans?.(workerResponse.traceRecords, parent);
+        }
         const response = workerResponseToResponse(
           workerResponse,
           pathname,
@@ -1102,6 +1118,12 @@ function executePagesRouteIsolated(
     async () => {
       try {
         const pool = getWorkerPool();
+        const traceProvider = getProjectTraceProvider();
+        const parent = (traceProvider?.getTraceAPI().getActiveSpan() as Span | undefined)
+          ?.spanContext();
+        const traceparent = parent && traceProvider?.importSpans
+          ? formatTraceparent(parent)
+          : undefined;
         const serialized = await serializeRequest(request);
         const semanticContext = await snapshotWorkerSemanticContext();
         const workerApplicationIdentity = applicationIdentity === null
@@ -1113,6 +1135,7 @@ function executePagesRouteIsolated(
           [projectDir],
           {
             type: "execute-pages-route",
+            ...(traceparent ? { traceparent } : {}),
             id: randomUUID(),
             module,
             modulePath,
@@ -1134,6 +1157,12 @@ function executePagesRouteIsolated(
           },
         );
 
+        if (
+          parent && (workerResponse.type === "result" || workerResponse.type === "error") &&
+          typeof workerResponse.traceRecords === "string"
+        ) {
+          traceProvider?.importSpans?.(workerResponse.traceRecords, parent);
+        }
         const response = workerResponseToResponse(
           workerResponse,
           pathname,

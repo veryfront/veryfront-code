@@ -132,6 +132,8 @@ export async function initializeOTLP(): Promise<void> {
 
 /** Shut down OTLP tracing export. */
 export async function shutdownOTLP(): Promise<void> {
+  const { shutdownProjectHttpTracing } = await import("./project-http-tracing.ts");
+  await shutdownProjectHttpTracing();
   // Actual shutdown is handled by the extension loader teardown.
   logger.debug("OTLP shutdown delegated to ext-observability-opentelemetry extension");
 }

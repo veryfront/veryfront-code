@@ -68,12 +68,8 @@ export {
   isAutoInstrumentEnabled,
 } from "./auto-instrument/index.ts";
 
-export {
-  getTraceContext,
-  isOTLPEnabled,
-  type OTLPConfig,
-  setActiveSpanAttributes,
-} from "./tracing/otlp-setup.ts";
+export { isOTLPEnabled, type OTLPConfig } from "./tracing/otlp-setup.ts";
+export { getTraceContext, setActiveSpanAttributes } from "./tracing/public-active-span.ts";
 
 // OpenTelemetry API shim (spans, metrics, context primitives). `trace` is the
 // read-only facade: the process-wide tracer-provider setter stays internal.

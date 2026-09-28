@@ -126,6 +126,7 @@ export type WorkerRequest =
   | RenderSSRRequest;
 
 export interface ExecuteAppRouteRequest {
+  traceparent?: string;
   type: "execute-app-route";
   id: string;
   module: PreparedWorkerModule;
@@ -145,6 +146,7 @@ export interface ExecuteAppRouteRequest {
 }
 
 export interface ExecutePagesRouteRequest {
+  traceparent?: string;
   type: "execute-pages-route";
   id: string;
   module: PreparedWorkerModule;
@@ -300,6 +302,7 @@ export interface WorkerSSRResultResponse {
 }
 
 export interface WorkerResultResponse {
+  traceRecords?: string;
   type: "result";
   id: string;
   response: SerializedResponse;
@@ -318,6 +321,7 @@ export interface WorkerDataResultResponse {
 }
 
 export interface WorkerErrorResponse {
+  traceRecords?: string;
   type: "error";
   id: string;
   error: SerializedError;

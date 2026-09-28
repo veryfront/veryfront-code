@@ -12,6 +12,8 @@
 
 // Capture host-environment primordials before any project module is imported.
 import "#veryfront/platform/compat/process/env.ts";
+import "#veryfront/observability/index.ts";
+import { createWorkerTraceRecorder } from "#veryfront/observability/tracing/worker-trace-recorder.ts";
 
 import type {
   ExecuteAppRouteRequest,
@@ -1807,7 +1809,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         "projectDir",
         "sourceIntegrationPolicy",
       ],
-      ["projectEnv", "applicationIdentity"],
+      ["projectEnv", "applicationIdentity", "traceparent"],
       "payload",
     );
     const applicationIdentity = readOptionalDataProperty(
@@ -1819,6 +1821,9 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
     }
     return {
       type,
+      traceparent: readOptionalDataProperty(request, "traceparent").present
+        ? requireString(readDataProperty(request, "traceparent"), "traceparent", 55, false)
+        : undefined,
       id: requireString(
         readDataProperty(request, "id"),
         "id",
@@ -1882,7 +1887,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         "projectDir",
         "sourceIntegrationPolicy",
       ],
-      ["projectEnv", "applicationIdentity"],
+      ["projectEnv", "applicationIdentity", "traceparent"],
       "payload",
     );
     const applicationIdentity = readOptionalDataProperty(
@@ -1894,6 +1899,9 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
     }
     return {
       type,
+      traceparent: readOptionalDataProperty(request, "traceparent").present
+        ? requireString(readDataProperty(request, "traceparent"), "traceparent", 55, false)
+        : undefined,
       id: requireString(
         readDataProperty(request, "id"),
         "id",
@@ -3266,6 +3274,7 @@ async function processWorkerRequest(
     return;
   }
 
+  let recorder: ReturnType<typeof createWorkerTraceRecorder>;
   try {
     if (!egressInitialized) {
       throw new NativeError("Worker egress guard is not initialized");
@@ -3293,23 +3302,18 @@ async function processWorkerRequest(
       return;
     }
 
-    let serializedResponse: SerializedResponse;
-
-    switch (request.type) {
-      case "execute-app-route":
-        serializedResponse = await handleAppRoute(request);
-        break;
-      case "execute-pages-route":
-        serializedResponse = await handlePagesRoute(request);
-        break;
-      default:
-        throw new NativeError("Unknown worker request type");
-    }
+    recorder = createWorkerTraceRecorder(request.traceparent);
+    const executeRoute = () =>
+      request.type === "execute-app-route"
+        ? handleAppRoute(request)
+        : handlePagesRoute(request as ExecutePagesRouteRequest);
+    const serializedResponse = await (recorder ? recorder.run(executeRoute) : executeRoute());
 
     const result: WorkerResultResponse = {
       type: "result",
       id: request.id,
       response: serializedResponse,
+      traceRecords: recorder?.finish(),
     };
     sendControlMessage(result);
   } catch (error) {
@@ -3331,6 +3335,7 @@ async function processWorkerRequest(
     const errorResponse: WorkerErrorResponse = {
       type: "error",
       id: request.id,
+      traceRecords: recorder?.finish(),
       error: serializeError(
         preparedFailure.failed ? preparedFailure.cause : error,
         dataModuleDigest,

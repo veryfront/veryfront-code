@@ -44,7 +44,8 @@ import {
 } from "../streaming/stream-outcome.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
+import { SpanKind } from "#veryfront/observability";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { withToolInputStatusTransitions } from "#veryfront/provider/runtime-loader/tool-input-status.ts";

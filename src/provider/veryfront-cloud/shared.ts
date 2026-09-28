@@ -766,7 +766,15 @@ export function createVeryfrontCloudFetch(
     const responsePromise = IntrinsicReflectApply(
       PromisePrototypeThen,
       wireModelProvider || options?.neutralRoute
-        ? sendOnNeutralRoute(apiBaseUrl, request, headers, wireModelProvider, init?.body)
+        ? sendOnNeutralRoute(
+          apiBaseUrl,
+          request,
+          headers,
+          wireModelProvider,
+          init && IntrinsicReflectApply(ObjectHasOwn, undefined, [init, "body"])
+            ? init.body
+            : undefined,
+        )
         : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
           new NativeRequest(request, { headers }),
         ),
