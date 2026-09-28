@@ -99,23 +99,28 @@ function resourceAttributes(value: unknown): Record<string, string> | undefined 
   if (value === undefined || value === "") return {};
   if (!text(value, 8192)) return undefined;
   const result: Record<string, string> = {};
-  const parts = apply(split, value, [","]) as string[];
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]!;
-    const separator = apply(indexOf, part, ["="]) as number;
-    if (separator < 1) continue;
-    const key = apply(trim, apply(slice, part, [0, separator]), []) as string;
-    if (
-      key !== "service.name" && key !== "service.version" &&
-      key !== "deployment.environment.name" && key !== "deployment.environment"
-    ) continue;
-    defineOwnDataProperty(result, key, apply(trim, apply(slice, part, [separator + 1]), []), {
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
+  try {
+    const parts = apply(split, value, [","]) as string[];
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]!;
+      const separator = apply(indexOf, part, ["="]) as number;
+      if (separator < 1) continue;
+      const key = decode(apply(trim, apply(slice, part, [0, separator]), []) as string);
+      const decoded = decode(apply(trim, apply(slice, part, [separator + 1]), []) as string);
+      if (
+        key !== "service.name" && key !== "service.version" &&
+        key !== "deployment.environment.name" && key !== "deployment.environment"
+      ) continue;
+      defineOwnDataProperty(result, key, decoded, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    return result;
+  } catch {
+    return undefined;
   }
-  return result;
 }
 
 async function revision(config: Omit<ProjectTraceConfig, "revision">): Promise<string> {
