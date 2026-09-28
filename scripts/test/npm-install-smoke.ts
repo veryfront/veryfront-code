@@ -608,6 +608,9 @@ async function npmInstall(
     "--no-audit",
     "--loglevel=error",
     "--ignore-scripts",
+    // Deno resolves the consumer manifest again. Keep registry smoke on the
+    // selected release even when a newer prerelease is published concurrently.
+    "--save-exact",
   ];
   if (!plan.registryMode) {
     const result = await run("npm", [...args, ...specs], {

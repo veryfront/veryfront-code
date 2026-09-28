@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -77,6 +77,99 @@ async function workspacePackageNames(): Promise<string[]> {
 }
 
 describe("exact-version registry smoke", () => {
+  it("persists the selected registry version for subsequent runtime resolution", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-registry-exact-" });
+    const packageDir = `${tempDir}/package`;
+    const binDir = `${tempDir}/bin`;
+    const manifestPath = `${tempDir}/installed-manifest.json`;
+    const version = "1.2.3-rc.45";
+    await Deno.mkdir(packageDir);
+    await Deno.mkdir(binDir);
+    await Deno.writeTextFile(
+      `${packageDir}/package.json`,
+      JSON.stringify({ name: "veryfront", version }),
+    );
+    const pack = await new Deno.Command("npm", {
+      args: ["pack", "--ignore-scripts", "--json"],
+      cwd: packageDir,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(pack.code, 0, decoder.decode(pack.stderr));
+    const filename = `veryfront-${version}.tgz`;
+    const tarball = await Deno.readFile(`${packageDir}/${filename}`);
+    const lookup = await new Deno.Command("sh", {
+      args: ["-c", "command -v npm; command -v node"],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(lookup.code, 0, decoder.decode(lookup.stderr));
+    const [npmPath, nodePath] = decoder.decode(lookup.stdout).trim().split("\n");
+    assert(npmPath && nodePath, "npm and Node executables are required");
+    let registryUrl = "";
+    const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, (request) => {
+      if (new URL(request.url).pathname.endsWith(".tgz")) {
+        return new Response(tarball, { headers: { "content-type": "application/octet-stream" } });
+      }
+      return Response.json({
+        name: "veryfront",
+        "dist-tags": { latest: version },
+        versions: {
+          [version]: {
+            name: "veryfront",
+            version,
+            dist: { tarball: `${registryUrl}/${filename}` },
+          },
+        },
+      });
+    });
+    registryUrl = `http://127.0.0.1:${server.addr.port}`;
+    await writeExecutable(
+      `${binDir}/npm`,
+      '#!/bin/sh\nPATH="$VF_REAL_PATH" exec "$VF_REAL_NPM" "$@"\n',
+    );
+    // Capture the consumer manifest at the first behavior check, after the
+    // real npm install and before Deno can resolve a saved semver range again.
+    await writeExecutable(
+      `${binDir}/node`,
+      `#!/bin/sh
+"$VF_REAL_NODE" -e 'require("node:fs").copyFileSync("package.json", process.env.VF_CAPTURE_MANIFEST)'
+exit 86
+`,
+    );
+    try {
+      const realPath = Deno.env.get("PATH") ?? "";
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
+        env: {
+          PATH: `${binDir}:${realPath}`,
+          VF_REAL_PATH: realPath,
+          VF_REAL_NPM: npmPath,
+          VF_REAL_NODE: nodePath,
+          VF_CAPTURE_MANIFEST: manifestPath,
+          // npm exec can inherit the repository's save-exact setting; the
+          // release smoke runs in a clean consumer with npm's range default.
+          NPM_CONFIG_SAVE_EXACT: "false",
+          npm_config_save_exact: "false",
+          NPM_CONFIG_SAVE_PREFIX: "^",
+          npm_config_save_prefix: "^",
+          VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
+          VF_NPM_REGISTRY_URL: registryUrl,
+          VF_NPM_REGISTRY_VERSION: version,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, 21, decoder.decode(output.stderr));
+      assertStringIncludes(decoder.decode(output.stderr), "CLI --version failed on root install");
+      const manifest = JSON.parse(await Deno.readTextFile(manifestPath));
+      assertEquals(manifest.dependencies.veryfront, version);
+    } finally {
+      await server.shutdown();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("runs the behavior journey against the scaffold shipped by the installed package", async () => {
     const source = await Deno.readTextFile(installSmokePath);
 
@@ -228,11 +321,11 @@ exit 0
       const log = await Deno.readTextFile(npmLog);
       assertStringIncludes(
         log,
-        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts --prefer-online veryfront@${version} @example/runtime-kit@${version} @veryfront/ext-parser-babel@${version}`,
+        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts --save-exact --prefer-online veryfront@${version} @example/runtime-kit@${version} @veryfront/ext-parser-babel@${version}`,
       );
       assertStringIncludes(
         log,
-        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts --prefer-online @veryfront/ext-auth-jwt@${version}`,
+        `args=install --no-fund --no-audit --loglevel=error --ignore-scripts --save-exact --prefer-online @veryfront/ext-auth-jwt@${version}`,
       );
       assertEquals(
         log.match(new RegExp(`registry=${registryUrl}`, "g"))?.length,
