@@ -26,6 +26,7 @@ import {
   type IntegrationHttpProblem,
   readIntegrationFailureCondition,
   readIntegrationHttpProblem,
+  readStaleConnectionCondition,
 } from "./integration-condition.ts";
 import {
   MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES,
@@ -44,6 +45,7 @@ import type {
   IntegrationClientContext,
   IntegrationClientTool,
   IntegrationConnectionStatus,
+  IntegrationConnectionWaitOptions,
   IntegrationConnectOptions,
   IntegrationConnectOutcome,
   IntegrationDetails,
@@ -54,6 +56,7 @@ import type {
 } from "./client-types.ts";
 
 import { createIntegrationErrorContext } from "./error-context.ts";
+import { waitForIntegrationConnection } from "./connection-wait.ts";
 
 /** A bounded API failure. Call failures never authorize automatic replay. */
 export class IntegrationApiError extends VeryfrontError {
@@ -264,7 +267,8 @@ export async function createIntegrationClient(
             "Integration API error",
           );
           problem = boundedObject(error, MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES);
-          condition = readIntegrationFailureCondition(problem);
+          condition = readIntegrationFailureCondition(problem) ??
+            readStaleConnectionCondition(problem);
         } catch { /* Error body text is not retained in diagnostics. */ }
         throw new IntegrationApiError(
           "http",
@@ -400,7 +404,7 @@ export async function createIntegrationClient(
     );
   }
 
-  return Object.freeze({
+  const client: IntegrationClient = Object.freeze({
     project: selectedProject,
     discover(options: { search?: string; sortOrder?: "asc" | "desc" } = {}) {
       return pages<IntegrationCatalogEntry>(
@@ -583,7 +587,7 @@ export async function createIntegrationClient(
         throw new TypeError("OAuth status requires an explicit user or project scope");
       }
       const params = new URLSearchParams({ project_reference: selectedProject.id, scope });
-      return requireShape<IntegrationConnectionStatus>(
+      const status = requireShape<IntegrationConnectionStatus>(
         await request(`/oauth/status/${integrationPath(integration)}?${params}`, {
           signal: options.abortSignal,
         }),
@@ -597,6 +601,7 @@ export async function createIntegrationClient(
             item.connectionGenerationId === undefined ||
             item.connection_generation_id === item.connectionGenerationId),
       );
+      return { ...status, scope };
     },
     async call(
       toolName: string,
@@ -658,5 +663,18 @@ export async function createIntegrationClient(
       }
       return { status: "success" as const, result };
     },
+    waitForConnection(integration: string, options: IntegrationConnectionWaitOptions) {
+      return waitForIntegrationConnection(client, integration, {
+        ...options,
+        ...(context.abortSignal
+          ? {
+            abortSignal: options.abortSignal
+              ? AbortSignal.any([context.abortSignal, options.abortSignal])
+              : context.abortSignal,
+          }
+          : {}),
+      });
+    },
   });
+  return client;
 }

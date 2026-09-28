@@ -2,6 +2,7 @@ import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { errorToRFC9457Response } from "#veryfront/errors";
+import { isDirectToPodRunRoute } from "#veryfront/channels/control-plane-routes.ts";
 
 const logger = serverLogger.component("route-registry");
 
@@ -32,7 +33,15 @@ export function buildRouteRegistrySpanAttributes(
   }
 
   if (!projectSlug && !projectId) return attributes;
+  // Cancel and resume handlers stamp the identity recorded when the run's stream started.
+  if (isDirectToPodRunRoute(req.method, url.pathname)) return attributes;
 
+  return { ...attributes, ...buildServingSpanAttributes(ctx) };
+}
+
+/** The environment name plus the release or branch a request was served from. */
+export function buildServingSpanAttributes(ctx: HandlerContext): SpanAttributes {
+  const attributes: SpanAttributes = {};
   if (ctx.environmentName) attributes["veryfront.environment_name"] = ctx.environmentName;
 
   const signedBranchName = ctx.branchId ? ctx.branchName : ctx.defaultBranchName;

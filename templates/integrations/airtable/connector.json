@@ -3,6 +3,7 @@
   "displayName": "Airtable",
   "icon": "airtable.svg",
   "description": "Read and write records in Airtable bases and tables",
+  "category": "data",
   "auth": {
     "type": "oauth2",
     "provider": "airtable",
@@ -40,6 +41,38 @@
       "docsUrl": "https://airtable.com/create/oauth"
     }
   ],
+  "setupGuide": {
+    "title": "Airtable setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Airtable OAuth app",
+        "description": "On hosted Veryfront, Airtable uses the Veryfront-managed Airtable OAuth app: connect Airtable from the project's integrations and approve the Airtable consent screen, no environment variables needed. Set AIRTABLE_CLIENT_ID and AIRTABLE_CLIENT_SECRET only to use your own Airtable OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Register an OAuth integration",
+        "description": "In Airtable, register a new OAuth integration.",
+        "url": "https://airtable.com/create/oauth"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URL, scopes and secret",
+        "description": "Add the scopes data.records:read, data.records:write, schema.bases:read and schema.bases:write. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/airtable for hosted Veryfront, or your app origin followed by /api/auth/airtable/callback for a local or self-hosted app. Generate a client secret, because the token exchange runs on a server. Set AIRTABLE_CLIENT_ID and AIRTABLE_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Bases (read-only). It returns the bases the user shared during consent without changing them."
+      }
+    ],
+    "notes": [
+      "The connection requests data.records:read, data.records:write, schema.bases:read and schema.bases:write.",
+      "During consent the user picks which bases and workspaces the connection can reach; the tools see nothing else.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://airtable.com/developers/web/guides/oauth-integrations"
+  },
   "tools": [
     {
       "id": "airtable__list_bases",

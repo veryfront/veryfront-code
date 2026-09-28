@@ -28,7 +28,7 @@
     {
       "name": "DATABASE_URL",
       "description": "PostgreSQL connection string for database queries",
-      "required": true,
+      "required": false,
       "sensitive": true,
       "docsUrl": "https://neon.tech/docs/connect/connect-from-any-app"
     }

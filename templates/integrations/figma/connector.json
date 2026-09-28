@@ -3,6 +3,7 @@
   "displayName": "Figma",
   "icon": "figma.svg",
   "description": "Access Figma designs, files, comments, and collaborate on design projects",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "figma",
@@ -39,6 +40,42 @@
       "docsUrl": "https://www.figma.com/developers/apps"
     }
   ],
+  "setupGuide": {
+    "title": "Figma setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Figma OAuth app",
+        "description": "On hosted Veryfront, Figma uses the Veryfront-managed Figma OAuth app: connect Figma from the project's integrations and approve the Figma consent screen, no environment variables needed. Set FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET only to use your own Figma OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth app",
+        "description": "In Figma, open My Apps and create a new app for your team or organization.",
+        "url": "https://www.figma.com/developers/apps"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URLs and scopes",
+        "description": "Select the scopes current_user:read, file_content:read, file_comments:read and file_comments:write. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/figma for hosted Veryfront, or your app origin followed by /api/auth/figma/callback for a local or self-hosted app. Set FIGMA_CLIENT_ID and FIGMA_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Publish the app",
+        "description": "While the app is a draft, only you and your plan admins can authorize it. Publish it privately for your team or organization, or publicly after Figma's review, so other users can connect."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run Get Me (read-only). It returns the connected Figma user without changing anything."
+      }
+    ],
+    "notes": [
+      "The connection requests current_user:read, file_content:read, file_comments:read and file_comments:write. file_comments:write is only needed by the tool that posts comments.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://developers.figma.com/docs/rest-api/oauth-apps/"
+  },
   "tools": [
     {
       "id": "figma__get_me",

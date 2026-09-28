@@ -1,7 +1,7 @@
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { isStdoutTTY } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { isTruthyEnvValue } from "../constants/env.ts";
-import { RUNTIME_VERSION } from "../version.ts";
+import { RUNTIME_VERSION, SERVICE_VERSION } from "../version.ts";
 import {
   ANSI,
   colorize,
@@ -69,6 +69,9 @@ export interface LogEntry {
   timestamp: string;
   level: LogLevelName;
   service: string;
+  /** Deployed artifact tag (OTEL_SERVICE_VERSION), or the runtime version when unset. */
+  service_version?: string;
+  /** @deprecated Use `service_version`. Framework version, kept for saved Loki queries. */
   veryfrontVersion: string;
   message: string;
   // Component that produced this log entry (e.g., "config", "cors", "discovery")
@@ -411,6 +414,7 @@ function createFallbackLogEntry(entry: LogEntry): Record<string, unknown> {
   fallback.timestamp = entry.timestamp;
   fallback.level = entry.level;
   fallback.service = entry.service;
+  fallback.service_version = entry.service_version;
   fallback.veryfrontVersion = entry.veryfrontVersion;
   fallback.message = entry.message;
   if (entry.component !== undefined) fallback.component = entry.component;
@@ -474,6 +478,7 @@ class ConsoleLogger implements Logger {
         sanitizeLogString(this.prefix, "veryfront"),
         [],
       ) as string,
+      service_version: SERVICE_VERSION,
       veryfrontVersion: RUNTIME_VERSION,
       message: REDACTED,
       context: { unserializable_context: REDACTED },
@@ -490,6 +495,7 @@ class ConsoleLogger implements Logger {
       timestamp: currentIsoTimestamp(),
       level,
       service: apply(stringToLowerCase, this.prefix, []) as string,
+      service_version: SERVICE_VERSION,
       veryfrontVersion: RUNTIME_VERSION,
       // The message string bypasses the key-based context redactor, so scrub
       // credential-shaped text (URL userinfo, ?access_token=, header dumps)

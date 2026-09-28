@@ -156,6 +156,34 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals("branch.name" in attributes, false);
     });
 
+    it("leaves serving identity off direct-to-pod cancel and resume only", () => {
+      const ctx: HandlerContext = {
+        ...makeCtx(),
+        projectId: "proj-123",
+        resolvedEnvironment: "production",
+        environmentName: "Production",
+        releaseId: "rel-unverified",
+      };
+      const attributesFor = (method: string, path: string) => {
+        const req = new Request(`https://example.com${path}`, { method });
+        return buildRouteRegistrySpanAttributes(req, new URL(req.url), ctx);
+      };
+
+      const cancel = attributesFor("DELETE", "/api/control-plane/runs/run_1");
+      const resume = attributesFor("POST", "/api/control-plane/runs/run_1/resume");
+      const stream = attributesFor("POST", "/api/control-plane/runs/run_1/stream");
+      const get = attributesFor("GET", "/api/control-plane/runs/run_1");
+
+      for (const attributes of [cancel, resume]) {
+        assertEquals(attributes["project.id"], "proj-123");
+        assertEquals("release.id" in attributes, false);
+        assertEquals("veryfront.environment_name" in attributes, false);
+      }
+      for (const attributes of [stream, get]) {
+        assertEquals(attributes["release.id"], "rel-unverified");
+      }
+    });
+
     it("tags a signed default-branch run on a production domain with the branch, not the release", () => {
       const req = makeReq();
       const url = new URL(req.url);

@@ -29,7 +29,7 @@
     {
       "name": "BAMBOOHR_SUBDOMAIN",
       "description": "Your BambooHR company subdomain - the {company} part of https://{company}.bamboohr.com. Pass it as the companyDomain parameter on each tool.",
-      "required": true,
+      "required": false,
       "sensitive": false,
       "docsUrl": "https://documentation.bamboohr.com/docs/getting-started"
     }

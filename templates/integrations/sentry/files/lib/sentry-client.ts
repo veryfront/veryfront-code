@@ -1,4 +1,20 @@
-import { getApiKey, getOrg } from "./token-store.ts";
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function getApiKey(): string | undefined {
+  return getEnv("SENTRY_AUTH_TOKEN");
+}
+
+function getOrg(): string | undefined {
+  return getEnv("SENTRY_ORG");
+}
 
 const SENTRY_API_BASE_URL = "https://sentry.io/api/0";
 
@@ -145,7 +161,7 @@ function getRequiredOrg(): string {
 }
 
 async function sentryFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const authToken = getApiKey() ?? process.env.SENTRY_AUTH_TOKEN;
+  const authToken = getApiKey();
   if (!authToken) {
     throw new Error("Not authenticated with Sentry. Please set SENTRY_AUTH_TOKEN.");
   }

@@ -3,6 +3,7 @@
   "displayName": "GitLab",
   "icon": "gitlab.svg",
   "description": "Search and manage GitLab issues, merge requests, and projects",
+  "category": "development",
   "auth": {
     "type": "oauth2",
     "provider": "gitlab",
@@ -38,6 +39,37 @@
       "docsUrl": "https://docs.gitlab.com/ee/api/oauth2.html"
     }
   ],
+  "setupGuide": {
+    "title": "GitLab setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the GitLab OAuth app",
+        "description": "On hosted Veryfront, GitLab uses the Veryfront-managed GitLab OAuth app: connect GitLab from the project's integrations and approve the GitLab consent screen, no environment variables needed. Set GITLAB_CLIENT_ID and GITLAB_CLIENT_SECRET only to use your own GitLab OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create an application",
+        "description": "In GitLab, open User settings, then Applications, and add a new application. Keep it confidential.",
+        "url": "https://gitlab.com/-/user_settings/applications"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URI and scopes",
+        "description": "Select the scopes api, read_user and read_repository. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/gitlab for hosted Veryfront, or your app origin followed by /api/auth/gitlab/callback for a local or self-hosted app. Set GITLAB_CLIENT_ID and GITLAB_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Projects (read-only). It returns projects the connected user can see without changing them."
+      }
+    ],
+    "notes": [
+      "The connection requests api, read_user and read_repository. The connector calls gitlab.com; api grants read and write access to the API.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://docs.gitlab.com/integration/oauth_provider/"
+  },
   "tools": [
     {
       "id": "gitlab__list_projects",

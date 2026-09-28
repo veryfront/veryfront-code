@@ -9,6 +9,15 @@ import {
   createVeryfrontCloudContextSummaryGenerator,
 } from "./context-summary-generator.ts";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForScopeForTests,
+  veryfrontCloudCatalogScopeKey,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import {
+  registerVeryfrontCloudModelFacts,
+  resolveVeryfrontCloudModelThinking,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 
 function createModel(): ModelRuntime {
   return {
@@ -415,6 +424,74 @@ describe("createRunScopedVeryfrontCloudContextSummaryGenerator", () => {
     await aborted;
     assertEquals(replayedDuringAbort, undefined);
     assertEquals(resolverActive, false);
+  });
+
+  it("resolves the summary model and its facts from the run-scoped credential's served catalog", async () => {
+    __resetVeryfrontCloudCatalogForTests();
+    const scope = { apiBaseUrl: "https://api.example.com", apiToken: "run-scoped-credential" };
+    __setVeryfrontCloudCatalogForScopeForTests(scope, {
+      models: [{
+        id: "served-only-summary",
+        modelId: "anthropic/served-only-summary",
+        provider: "anthropic",
+        surface: "anthropic",
+        aliases: [],
+        capabilities: { thinking: true, reasoning_budget_tokens: 3072 },
+      }],
+    });
+    const resolvedModelIds: string[] = [];
+    let preparations = 0;
+    const resolver = (modelId: string) => {
+      resolvedModelIds.push(modelId);
+      const model: ModelRuntime = {
+        ...createModel(),
+        prepare: () => {
+          preparations += 1;
+          return Promise.resolve();
+        },
+      };
+      registerVeryfrontCloudModelFacts(
+        model,
+        () => ({ catalogScopeKey: veryfrontCloudCatalogScopeKey(scope) }) as never,
+      );
+      return model;
+    };
+    const seen: Array<{ token?: string; thinking: unknown }> = [];
+    const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
+      {
+        apiUrl: "https://api.example.com",
+        authToken: "broader-request-token",
+        model: "served-only-summary",
+        maxOutputTokens: 500,
+        maxInputTokens: 1_000,
+        generateText: () => {
+          seen.push({
+            token: getCurrentVeryfrontCloudContext()?.apiToken,
+            thinking: resolveVeryfrontCloudModelThinking("anthropic/served-only-summary"),
+          });
+          return Promise.resolve({
+            text: "served summary",
+            usage: { inputTokens: 1, outputTokens: 1 },
+            finishReason: "stop",
+          });
+        },
+      },
+      () => resolver,
+    );
+
+    try {
+      assertEquals(await generator(summaryInput), { text: "served summary" });
+      // The shipped facts do not know the alias: a probe no catalog check
+      // refuses loads the catalog, then the served model is resolved.
+      assertEquals(resolvedModelIds, [
+        "veryfront-cloud/catalog-probe/catalog-probe",
+        "veryfront-cloud/anthropic/served-only-summary",
+      ]);
+      assertEquals(preparations, 1);
+      assertEquals(seen, [{ token: undefined, thinking: { enabled: true, budgetTokens: 3072 } }]);
+    } finally {
+      __resetVeryfrontCloudCatalogForTests();
+    }
   });
 
   it("falls back to the supplied token when no private resolver exists", async () => {

@@ -115,13 +115,15 @@ import {
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
-  getModelRuntimeId,
-  getModelRuntimeProvider,
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
 } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import { resolveAgentSystem } from "./effective-agent-system.ts";
+import {
+  resolveActiveProviderReplayProvider,
+  resolveRuntimeGenAiProviderName,
+} from "./provider-replay-protocol.ts";
 import {
   attachOutputSchemaParser,
   resolveAgentOutputSchema,
@@ -211,7 +213,6 @@ import {
   createProviderReplayCheckpointEmissionState,
   type ProviderReplayCheckpoint,
   type ProviderReplayCheckpointEmissionState,
-  type ProviderReplayProvider,
 } from "./provider-replay.ts";
 import {
   applySourceIntegrationPolicy,
@@ -298,42 +299,6 @@ export {
 } from "./tool-result-continuation.ts";
 
 const NativeError = Error;
-
-function getActiveProviderReplayProvider(
-  languageModel: ModelRuntime,
-): ProviderReplayProvider | "unsupported" {
-  const modelRuntimeId = getModelRuntimeId(languageModel);
-  const provider =
-    (typeof languageModel.modelProvider === "string" ? languageModel.modelProvider : undefined) ??
-      getModelRuntimeProvider(languageModel) ??
-      (modelRuntimeId !== undefined
-        ? resolveRuntimeGenAiProviderName(modelRuntimeId) ?? modelRuntimeId.split("/")[0]
-        : undefined);
-  if (provider === "anthropic") return "anthropic";
-  if (provider === "openai") return "openai-responses";
-  return "unsupported";
-}
-
-function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
-  const normalizedModelId = modelId.startsWith("veryfront-cloud/")
-    ? modelId.slice("veryfront-cloud/".length)
-    : modelId;
-  const provider = normalizedModelId.split("/")[0]?.trim().toLowerCase();
-
-  switch (provider) {
-    case "anthropic":
-      return "anthropic";
-    case "openai":
-      return "openai";
-    case "google":
-    case "google-ai-studio":
-      return "gcp.gen_ai";
-    case "moonshotai":
-      return "moonshotai";
-    default:
-      return undefined;
-  }
-}
 
 export { enforceSkillPolicy, type SkillPolicyResult } from "./skill-policy-enforcement.ts";
 
@@ -2828,7 +2793,7 @@ export class AgentRuntime {
       applyProviderReplayCheckpointsToMessages(
         currentMessages,
         getRuntimeProviderReplayCheckpoints(this.config),
-        { activeProvider: getActiveProviderReplayProvider(languageModel) },
+        { activeProvider: resolveActiveProviderReplayProvider(languageModel) },
       );
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -3537,7 +3502,7 @@ export class AgentRuntime {
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
-      { activeProvider: getActiveProviderReplayProvider(languageModel) },
+      { activeProvider: resolveActiveProviderReplayProvider(languageModel) },
     );
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 

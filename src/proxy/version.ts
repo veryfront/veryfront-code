@@ -19,3 +19,15 @@ export const PROXY_RUNTIME_VERSION = normalizeVersion(
 ) ??
   normalizeVersion(typeof denoConfig.version === "string" ? denoConfig.version : undefined) ??
   "0.0.0";
+
+/** The deployed artifact tag (OTEL_SERVICE_VERSION), or the runtime version when unset. */
+export function resolveProxyServiceVersion(
+  serviceVersion: string | undefined,
+  fallbackVersion: string = PROXY_RUNTIME_VERSION,
+): string {
+  return serviceVersion?.trim() || fallbackVersion;
+}
+
+export const PROXY_SERVICE_VERSION = resolveProxyServiceVersion(
+  getVersionEnv("OTEL_SERVICE_VERSION"),
+);

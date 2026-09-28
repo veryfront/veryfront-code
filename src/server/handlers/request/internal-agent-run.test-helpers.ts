@@ -6,6 +6,14 @@ import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
+import {
+  _resetShimForTests,
+  type AttributeValue,
+  setGlobalTracerProvider,
+  type Span,
+  type Tracer,
+} from "#veryfront/observability/tracing/api-shim.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export type CapturedApplicationError = {
   error: unknown;
@@ -26,6 +34,64 @@ export function stubApplicationErrorReporter(): {
     flush: () => Promise.resolve(true),
   });
   return { captures, restore: () => setApplicationErrorReporter(undefined) };
+}
+
+type RecordedSpan = { attributes: Record<string, unknown> };
+
+/**
+ * A tracer that records attributes in memory. It needs no OpenTelemetry SDK, so the
+ * helper also runs under Bun, where the SDK's `npm:` packages do not resolve.
+ */
+function createRecordingTracer(finished: RecordedSpan[]): Tracer {
+  let nextSpanId = 0;
+  const startSpan = (_name: string, options?: { attributes?: Record<string, AttributeValue> }) => {
+    const recorded: RecordedSpan = { attributes: { ...options?.attributes } };
+    const spanId = (++nextSpanId).toString(16).padStart(16, "0");
+    const span: Span = {
+      setAttribute(key, value) {
+        recorded.attributes[key] = value;
+        return span;
+      },
+      setAttributes(attrs) {
+        Object.assign(recorded.attributes, attrs);
+        return span;
+      },
+      setStatus: () => span,
+      recordException() {},
+      addEvent: () => span,
+      end() {
+        finished.push(recorded);
+      },
+      spanContext: () => ({ traceId: "1".padStart(32, "0"), spanId, traceFlags: 1 }),
+      updateName() {},
+    };
+    return span;
+  };
+  return {
+    startSpan,
+    startActiveSpan: (() => {
+      throw new Error("startActiveSpan is not used by withSpan");
+    }) as Tracer["startActiveSpan"],
+  };
+}
+
+/**
+ * Run `fn` inside an active span standing in for routing.registry.execute. Returns the
+ * attributes of the first span to finish: the stand-in, or a registry span `fn` opened.
+ */
+export async function withRecordedActiveSpan<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; attributes: Record<string, unknown> }> {
+  const finished: RecordedSpan[] = [];
+  const tracer = createRecordingTracer(finished);
+  setGlobalTracerProvider({ getTracer: () => tracer });
+
+  try {
+    const result = await withSpan("routing", () => fn());
+    return { result, attributes: { ...finished[0]?.attributes } };
+  } finally {
+    _resetShimForTests();
+  }
 }
 
 const encoder = new TextEncoder();

@@ -484,6 +484,103 @@ describe("metrics public SDK", () => {
     );
   });
 
+  describe("project token on the internal proxy", () => {
+    const internalProxyEnv = {
+      OTEL_METRICS_ENABLED: "true",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    };
+
+    function emitAsProject(token: string, name: string): Promise<void> {
+      return runWithRequestContext(
+        { projectSlug: "demo-project", projectId: "project-123", token, productionMode: true },
+        async () => {
+          runWithTrustedProjectEnv(
+            {},
+            { projectId: "project-123" },
+            () => metrics.counter(name, 1),
+          );
+          await metrics.__flushForTests();
+        },
+      );
+    }
+
+    async function exportedRequests(emit: () => Promise<void>): Promise<RequestInit[]> {
+      const requests: RequestInit[] = [];
+      await withEnv(internalProxyEnv, async () => {
+        await withMockFetch(
+          ((_url: string | URL | Request, init?: RequestInit) => {
+            requests.push(init ?? {});
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          }) as typeof fetch,
+          emit,
+        );
+      });
+      return requests;
+    }
+
+    function headersOf(request: RequestInit | undefined): Record<string, string> {
+      return request?.headers as Record<string, string>;
+    }
+
+    it("sends the token of the request that emitted the metric", async () => {
+      const requests = await exportedRequests(() => emitAsProject("project-token", "orders_total"));
+
+      assertEquals(headersOf(requests[0])["x-token"], "project-token");
+    });
+
+    it("refuses redirects, so the token never follows one to another host", async () => {
+      const requests = await exportedRequests(() => emitAsProject("project-token", "orders_total"));
+
+      assertEquals(requests[0]?.redirect, "error");
+    });
+
+    it("sends the latest token and keeps counting the same series when the token rotates", async () => {
+      const requests = await exportedRequests(async () => {
+        await emitAsProject("token-before-rotation", "orders_total");
+        await emitAsProject("token-after-rotation", "orders_total");
+      });
+
+      assertEquals(requests.map((request) => headersOf(request)["x-token"]), [
+        "token-before-rotation",
+        "token-after-rotation",
+      ]);
+      const lastPoint = JSON.parse(String(requests[1]?.body)).resourceMetrics[0].scopeMetrics[0]
+        .metrics[0].sum.dataPoints.at(-1);
+      assertEquals(lastPoint.asDouble, 2);
+    });
+
+    it("sends the token of a workflow worker, which restores only the request context", async () => {
+      const requests = await exportedRequests(() =>
+        runWithRequestContext(
+          { projectSlug: "demo-project", projectId: "project-123", token: "worker-token" },
+          async () => {
+            metrics.counter("orders_total", 1, { project_id: "other-project" });
+            await metrics.__flushForTests();
+          },
+        )
+      );
+
+      assertEquals(headersOf(requests[0])["x-token"], "worker-token");
+      const [point] = JSON.parse(String(requests[0]?.body)).resourceMetrics[0].scopeMetrics[0]
+        .metrics[0].sum.dataPoints;
+      assertEquals(
+        point.attributes.find((attribute: { key: string }) => attribute.key === "project_id").value,
+        { stringValue: "project-123" },
+      );
+    });
+
+    it("sends no token with host metrics that belong to no project", async () => {
+      const requests = await exportedRequests(async () => {
+        metrics.counter("orders_total", 1);
+        await metrics.__flushForTests();
+      });
+
+      assertEquals(headersOf(requests[0])["x-token"], undefined);
+    });
+  });
+
   it("labels hosted project metrics with the runtime's service, release and deployment", async () => {
     const requests: RequestInit[] = [];
 

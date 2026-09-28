@@ -70,6 +70,13 @@ export const UNITS: GeneratorUnit[] = [
     outputs: ["templates/manifest.json", "templates/manifest.generated.ts"],
   },
   {
+    name: "core-skills",
+    commands: [["deno", "run", "-A", "scripts/build/generate-core-skills.ts"]],
+    inputRoots: ["cli/mcp/skills", "cli/skills", "src/skill"],
+    inputFiles: ["scripts/build/generate-core-skills.ts", "deno.json"],
+    outputs: ["cli/skills/core-skills.generated.ts"],
+  },
+  {
     name: "dev-ui",
     commands: [
       ["deno", "run", "-A", "extensions/ext-dev-ui-react/scripts/generate-styles.ts"],

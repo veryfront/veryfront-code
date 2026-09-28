@@ -57,33 +57,47 @@ describe("provider/veryfront-cloud gateway routing", () => {
       {
         model: "anthropic/claude-opus-4-8",
         provider: "anthropic",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/anthropic/v1",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
         genAiSystem: "anthropic",
         toolProfile: "anthropic",
       },
       {
         model: "anthropic/claude-opus-4-6",
         provider: "anthropic",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/anthropic/v1",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
         genAiSystem: "anthropic",
         toolProfile: "anthropic",
       },
       {
         model: "anthropic/claude-sonnet-4-6",
         provider: "anthropic",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/anthropic/v1",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
         genAiSystem: "anthropic",
         toolProfile: "anthropic",
       },
       {
         model: "anthropic/claude-haiku-4-5-20251001",
         provider: "anthropic",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/anthropic/v1",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
         genAiSystem: "anthropic",
         toolProfile: "anthropic",
       },
       {
         model: "openai/gpt-5.5",
+        provider: "openai",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+        genAiSystem: "openai",
+        toolProfile: "openai",
+      },
+      {
+        model: "openai/gpt-6-sol",
+        provider: "openai",
+        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+        genAiSystem: "openai",
+        toolProfile: "openai",
+      },
+      {
+        model: "openai/gpt-6-luna",
         provider: "openai",
         gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
         genAiSystem: "openai",
@@ -180,7 +194,7 @@ describe("provider/veryfront-cloud gateway routing", () => {
         return [alias, getVeryfrontCloudGatewayBaseUrl(API_BASE_URL, provider)];
       }),
       [
-        ["anthropic", "https://api.veryfront.com/ai/anthropic/v1"],
+        ["anthropic", "https://api.veryfront.com/ai/v1"],
         ["openai", "https://api.veryfront.com/ai/v1"],
         ["google", "https://api.veryfront.com/ai/v1beta"],
         ["google-ai-studio", "https://api.veryfront.com/ai/v1beta"],
@@ -197,7 +211,7 @@ describe("provider/veryfront-cloud gateway routing", () => {
       ),
       [
         {
-          baseURL: "https://api.veryfront.com/ai/anthropic/v1",
+          baseURL: "https://api.veryfront.com/ai/v1",
           neutral: true,
           wireModelProvider: "anthropic",
         },
@@ -222,7 +236,7 @@ describe("provider/veryfront-cloud gateway routing", () => {
   it("keeps an API base path in front of the vendor-neutral path", () => {
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://gateway.example/api/", "anthropic"),
-      "https://gateway.example/api/ai/anthropic/v1",
+      "https://gateway.example/api/ai/v1",
     );
     assertEquals(
       getVeryfrontCloudGatewayBaseUrl("https://gateway.example/api", "openai"),

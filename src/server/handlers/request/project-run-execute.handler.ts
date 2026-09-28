@@ -105,6 +105,8 @@ export interface ProjectRunExecuteRequest {
   runtimeTargetBranchId?: string | null;
   config?: Record<string, unknown>;
   input?: Record<string, unknown>;
+  parentRunId?: string | null;
+  rootRunId?: string | null;
 }
 
 export interface ProjectRunExecuteResponse {
@@ -341,6 +343,8 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     runtimeTargetBranchId,
     config: parseRecord(value.config),
     input: parseRecord(value.input),
+    parentRunId: parseOptionalNullableString(value.parentRunId, "parentRunId"),
+    rootRunId: parseOptionalNullableString(value.rootRunId, "rootRunId"),
   };
 }
 
@@ -2094,6 +2098,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             "run.id": request.runId,
             "run.kind": request.kind,
             "project.id": request.projectId,
+            "parent.run.id": request.parentRunId ?? undefined,
+            "root.run.id": request.rootRunId ?? undefined,
           },
           // A run must stay findable by run.id when the control-plane request was
           // sampled out, so it roots its own trace and links back to the request.

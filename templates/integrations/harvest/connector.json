@@ -3,6 +3,7 @@
   "displayName": "Harvest",
   "icon": "harvest.svg",
   "description": "Track time, manage projects, and control invoices with Harvest \u2014 trusted by 70,000+ businesses",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "harvest",
@@ -33,6 +34,38 @@
       "docsUrl": "https://id.getharvest.com/developers"
     }
   ],
+  "setupGuide": {
+    "title": "Harvest setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Harvest OAuth app",
+        "description": "On hosted Veryfront, Harvest uses the Veryfront-managed Harvest OAuth app: connect Harvest from the project's integrations and approve the Harvest consent screen, no environment variables needed. Set HARVEST_CLIENT_ID and HARVEST_CLIENT_SECRET only to use your own Harvest OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create an OAuth2 application",
+        "description": "In Harvest ID, open Developers and create an OAuth2 application.",
+        "url": "https://id.getharvest.com/developers"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URL",
+        "description": "Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/harvest for hosted Veryfront, or your app origin followed by /api/auth/harvest/callback for a local or self-hosted app. Set HARVEST_CLIENT_ID and HARVEST_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run List Accounts (read-only). It returns the Harvest accounts the connected user can reach, with the account ID the other tools take, without changing anything."
+      }
+    ],
+    "notes": [
+      "Harvest has no per-endpoint scopes: during consent the user chooses which Harvest accounts the connection can reach.",
+      "The time-entry and user tools take the account_id from List Accounts, which Harvest requires on every request.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://help.getharvest.com/api-v2/authentication-api/authentication/authentication/"
+  },
   "tools": [
     {
       "id": "harvest__list_accounts",

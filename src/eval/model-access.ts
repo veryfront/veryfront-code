@@ -74,8 +74,9 @@ function statusDenial(status: number): EvalModelAccessDenial | undefined {
 
 /**
  * Model gateway routes under a Veryfront API base URL: the vendor-neutral
- * OpenAI-, Anthropic- and Google-protocol routes, and the vendor-scoped route
- * (still reached under `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor`).
+ * OpenAI-, Anthropic- and Google-protocol routes, the vendor-scoped route
+ * (still reached under `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor`), and the earlier
+ * Anthropic-protocol prefix, which recorded failures from previous releases can still carry.
  */
 const GATEWAY_ROUTE_PREFIXES: readonly string[] = [
   "/ai/v1/",

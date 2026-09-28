@@ -28,6 +28,7 @@ describe("logger serialization", () => {
         new URL("./logger-hostile-fallback.fixture.ts", import.meta.url).pathname,
       ],
       cwd: Deno.cwd(),
+      env: { OTEL_SERVICE_VERSION: "20260927145139-0c317774e6d3" },
       stdout: "piped",
       stderr: "piped",
     }).output();
@@ -37,5 +38,6 @@ describe("logger serialization", () => {
     const line = new TextDecoder().decode(output.stdout).trim();
     assertEquals(line.includes("synthetic-component-secret"), false);
     assertEquals(JSON.parse(line).component, "token=[REDACTED]");
+    assertEquals(JSON.parse(line).service_version, "20260927145139-0c317774e6d3");
   });
 });

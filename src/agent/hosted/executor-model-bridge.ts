@@ -1,5 +1,12 @@
 const hasOwn = Object.hasOwn;
-import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  readServedVeryfrontCloudCatalogModel,
+  readVeryfrontCloudModelFacts,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  rememberReceivedVeryfrontCloudCatalog,
+  type VeryfrontCloudCatalogScopeKey,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { createPrivateReadableStream } from "#veryfront/security/private-stream.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
@@ -18,6 +25,7 @@ import {
   executorModelJson,
   type ExecutorModelMetadata,
   getExecutorModelCallSchema,
+  getExecutorModelCatalogSchema,
   getExecutorModelEmptySchema,
   getExecutorModelGenerateResultSchema,
   getExecutorModelMetadataSchema,
@@ -145,6 +153,27 @@ export function createExecutorModelBroker(options: {
         const metadata = [...allowed].map((id) => modelMetadata(id, getModel(id)));
         return executorModelJson(
           parseExecutorModelData(getExecutorModelMetadataSchema(), executorModelJson(metadata)),
+        );
+      },
+    }],
+    ["model.catalog", {
+      mode: "unary",
+      // Non-reserving: it loads catalogs through the models' own credentials
+      // and returns only served model facts, never a credential or a scope key.
+      async handle(input, context) {
+        parseExecutorModelData(getExecutorModelEmptySchema(), input);
+        context.signal.throwIfAborted();
+        await Promise.all(
+          [...allowed].map((id) => settleForMetadata(getModel(id), context.signal)),
+        );
+        context.signal.throwIfAborted();
+        const rows = [];
+        for (const id of allowed) {
+          const model = servedCatalogModel(id, getModel(id));
+          if (model) rows.push({ id, model });
+        }
+        return executorModelJson(
+          parseExecutorModelData(getExecutorModelCatalogSchema(), executorModelJson(rows)),
         );
       },
     }],
@@ -289,6 +318,26 @@ async function settleForMetadata(model: ModelRuntime, signal: AbortSignal): Prom
   await Promise.resolve(model.prepare(signal)).catch(() => {});
 }
 
+/** The served catalog row a built Veryfront Cloud model reads, when its catalog has loaded. */
+function servedCatalogModel(id: string, model: ModelRuntime) {
+  const scopeKey = readVeryfrontCloudModelFacts(model)?.catalogScopeKey;
+  const served = scopeKey && readServedVeryfrontCloudCatalogModel(scopeKey, id);
+  return served && {
+    id: served.id,
+    modelId: served.modelId,
+    provider: served.provider,
+    aliases: [...served.aliases],
+    surface: served.surface,
+    operations: served.operations ? [...served.operations] : undefined,
+    thinking: served.thinking,
+    reasoningMode: served.reasoningMode,
+    transport: served.transport,
+    reasoningBudgetTokens: served.reasoningBudgetTokens,
+    chatCompletionsReasoningWithFunctionTools: served.chatCompletionsReasoningWithFunctionTools,
+    chatCompletionsConsecutiveSystemMessages: served.chatCompletionsConsecutiveSystemMessages,
+  };
+}
+
 function modelMetadata(id: string, model: ModelRuntime) {
   return {
     id,
@@ -384,6 +433,33 @@ export async function createExecutorModelRuntimeResolver(options: {
     authority.abort();
   });
   return resolver;
+}
+
+/**
+ * Load the served catalog rows of the granted models from the broker, which
+ * loaded them with credentials this executor never holds, and keep them under
+ * a new credential-free key. Resolves to that key, or to undefined when the
+ * broker has no served row yet. Rejects on invalid data or when the broker
+ * does not serve the operation; the caller then reads the shipped facts.
+ */
+export async function loadExecutorModelCatalog(options: {
+  channel: ExecutorChannel;
+  allowedModelIds: ReadonlySet<string>;
+  signal?: AbortSignal;
+}): Promise<VeryfrontCloudCatalogScopeKey | undefined> {
+  const allowed = executorModelIds(options.allowedModelIds);
+  const data = await options.channel.request("model.catalog", {}, { signal: options.signal });
+  const rows = parseExecutorModelData(getExecutorModelCatalogSchema(), data);
+  if (
+    new Set(rows.map((row) => row.id)).size !== rows.length ||
+    rows.some((row) => !allowed.has(row.id))
+  ) {
+    throw new TypeError("Invalid managed model catalog");
+  }
+  options.signal?.throwIfAborted();
+  return rows.length
+    ? rememberReceivedVeryfrontCloudCatalog(rows.map((row) => row.model))
+    : undefined;
 }
 
 function createExecutorModelRuntime(

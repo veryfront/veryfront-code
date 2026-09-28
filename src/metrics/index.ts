@@ -7,9 +7,9 @@
  * ```ts
  * import { metrics } from "veryfront/metrics";
  *
- * metrics.counter("vf_eval_result_total", 1, { provider: "openai" });
- * metrics.histogram("vf_eval_latency_ms", 420, { model: "gpt-5" });
- * metrics.gauge("vf_eval_queue_depth", 3);
+ * metrics.counter("orders_processed_total", 1, { status: "completed" });
+ * metrics.histogram("order_processing_ms", 240);
+ * metrics.gauge("orders_queued", 3);
  * ```
  */
 
@@ -95,6 +95,10 @@ interface DirectHistogramTotal {
 const directCounterTotals = new Map<string, DirectCounterTotal>();
 const directHistogramTotals = new Map<string, DirectHistogramTotal>();
 const directScopeSeries = new Map<string, Set<string>>();
+// The internal proxy files a project's points under the project its token names.
+// Any recent token of the project will do, so it is kept per scope rather than per
+// target: a rotated token must not restart the cumulative totals kept per target.
+const directScopeProjectTokens = new Map<string, string>();
 let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DIRECT_FLUSH_DELAY_MS = 1_000;
@@ -478,8 +482,12 @@ function resolveDirectCapacityScope(): string {
     "project:unattributed";
 }
 
+// Workflow workers restore only the request context, so a project named there
+// makes the sample the project's too.
 function hasTenantMetricsScope(): boolean {
-  return getTrustedProjectEnvIdentity() !== undefined || isProjectEnvActive();
+  const context = getRuntimeRequestContext();
+  return getTrustedProjectEnvIdentity() !== undefined || isProjectEnvActive() ||
+    (nonEmptyIdentity(context?.projectId) ?? nonEmptyIdentity(context?.projectSlug)) !== undefined;
 }
 
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
@@ -615,6 +623,7 @@ function evictUnusedDirectTarget(
     const scope = evicted.target.capacityScope;
     if (countDirectTargets((target) => target.capacityScope === scope) === 0) {
       apply(mapDelete, directScopeSeries, [scope]);
+      apply(mapDelete, directScopeProjectTokens, [scope]);
     }
   }
   return true;
@@ -995,6 +1004,20 @@ function createDirectExportDeadline(): {
   };
 }
 
+function rememberProjectToken(target: DirectMetricsTarget): void {
+  const token = getRuntimeRequestContext()?.token;
+  if (target.internal && target.tenantScoped && token) {
+    apply(mapSet, directScopeProjectTokens, [target.capacityScope, token]);
+  }
+}
+
+function projectTokenHeader(target: DirectMetricsTarget): Record<string, string> {
+  const token = target.internal && target.tenantScoped
+    ? apply(mapGet, directScopeProjectTokens, [target.capacityScope]) as string | undefined
+    : undefined;
+  return token === undefined ? {} : { "x-token": token };
+}
+
 async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
   const deadline = createDirectExportDeadline();
   try {
@@ -1004,8 +1027,10 @@ async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
         method: "POST",
         headers: {
           ...group.target.headers,
+          ...projectTokenHeader(group.target),
           "Content-Type": "application/json",
         },
+        redirect: group.target.internal ? "error" : "follow",
         body: jsonStringify(
           toHookFreeJsonValue(buildDirectOtlpBody(group.samples, group.target, group.key)),
         ),
@@ -1206,6 +1231,7 @@ function enqueueDirectMetric(
     return;
   }
   if (target.tenantScoped) retainTenantSeries(target.capacityScope, seriesKey);
+  rememberProjectToken(target);
   const sample: DirectMetricSample = {
     kind,
     name,
@@ -1297,6 +1323,7 @@ export const metrics = {
     directCounterTotals.clear();
     directHistogramTotals.clear();
     directScopeSeries.clear();
+    directScopeProjectTokens.clear();
     apply(mapClear, directTargetExportTails, []);
     internedTargets.length = 0;
     nextInternedTargetId = 0;

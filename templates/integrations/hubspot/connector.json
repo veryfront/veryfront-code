@@ -44,6 +44,37 @@
       "docsUrl": "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/oauth"
     }
   ],
+  "setupGuide": {
+    "title": "HubSpot setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the HubSpot OAuth app",
+        "description": "On hosted Veryfront, HubSpot uses the Veryfront-managed HubSpot OAuth app: connect HubSpot from the project's integrations and approve the HubSpot consent screen, no environment variables needed. Set HUBSPOT_CLIENT_ID and HUBSPOT_CLIENT_SECRET only to use your own HubSpot OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create a public app",
+        "description": "In a HubSpot developer account, create an app that uses OAuth.",
+        "url": "https://app.hubspot.com/developer-projects"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URL and scopes",
+        "description": "Add oauth and crm.objects.contacts.read as required scopes and forms, crm.objects.leads.read and crm.objects.leads.write as optional scopes. Add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/hubspot for hosted Veryfront, or your app origin followed by /oauth/callback/hubspot for a local or self-hosted app. Set HUBSPOT_CLIENT_ID and HUBSPOT_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Verify access",
+        "description": "Run Search Contacts (read-only). It returns contacts from the connected HubSpot account without changing them."
+      }
+    ],
+    "notes": [
+      "The connection requests oauth and crm.objects.contacts.read. The optional scopes forms, crm.objects.leads.read and crm.objects.leads.write are granted only when the installing account has access to them; the form and lead tools need them.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/oauth"
+  },
   "tools": [
     {
       "id": "hubspot__list_forms",

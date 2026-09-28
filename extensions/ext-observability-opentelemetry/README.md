@@ -9,12 +9,66 @@ Provides distributed tracing, OTLP log export, OTLP metrics export, the OpenTele
 Add the extension to your project's `veryfront.config.ts`:
 
 ```ts
+import { defineConfig } from "veryfront";
 import extOpenTelemetry from "@veryfront/ext-observability-opentelemetry";
 
 export default defineConfig({
   extensions: [extOpenTelemetry()],
 });
 ```
+
+## Local tracing
+
+With an OTLP/HTTP collector listening on port 4318, start your local app with:
+
+```sh
+OTEL_TRACES_ENABLED=true \
+OTEL_SERVICE_NAME=my-application \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+veryfront dev
+```
+
+If your collector requires authentication, set `OTEL_EXPORTER_OTLP_HEADERS` in your
+local environment before starting the app. Its format is `Authorization=Bearer <TOKEN>`
+for a collector using bearer authentication. Do not commit credentials.
+
+You can add custom spans using the public tracing API:
+
+```ts
+import { trace } from "veryfront/observability";
+
+const tracer = trace.getTracer("my-application");
+
+export function GET() {
+  return tracer.startActiveSpan("app.greeting", (span) => {
+    try {
+      return Response.json({ message: "Hello" });
+    } finally {
+      span.end();
+    }
+  });
+}
+```
+
+Place this handler in an API route and request it. Look for the application service
+and `app.greeting` span in your collector. Export is batched, so delivery is not
+synchronous with the HTTP response. Restart with `OTEL_TRACES_ENABLED=false` to
+disable trace export. Settings are read when the extension starts.
+
+The local integration fixture is tested on Deno 2.7.7. It verifies real OTLP/HTTP
+delivery, authentication headers, service identity, request/custom span correlation,
+disabled export, and unchanged app responses when the collector rejects exports.
+
+This setup exports traces over OTLP/HTTP; use a collector HTTP endpoint, not a gRPC
+endpoint. Delivery uses the SDK's in-memory batch queue. Queue overflow, collector
+failure, or abrupt process termination can lose spans. `OTEL_BSP_MAX_QUEUE_SIZE`
+and `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` configure the SDK buffer and batch limits.
+Restart the app after changing these settings. To roll back, set
+`OTEL_TRACES_ENABLED=false` and restart; this does not remove traces already stored
+by your collector.
+
+Managed project settings require separate
+runtime integration; this local setup does not configure a shared host's exporter.
 
 ## Environment variables
 

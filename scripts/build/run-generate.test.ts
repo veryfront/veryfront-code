@@ -77,10 +77,11 @@ describe("selectUnitsToRun", () => {
 });
 
 describe("UNITS", () => {
-  it("covers the seven generator steps of the stock chain", () => {
+  it("covers the eight generator steps of the stock chain", () => {
     assertEquals(UNITS.map((u) => u.name).sort(), [
       "bridge",
       "client-scripts",
+      "core-skills",
       "dev-ui",
       "embedded-npm-packages",
       "hydration-runtime",

@@ -1,5 +1,22 @@
-import { getApiKey, getDatabaseUrl } from "./token-store.ts";
 import { Client } from "pg";
+
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+function getApiKey(): string | undefined {
+  return getEnv("NEON_API_KEY");
+}
+
+function getDatabaseUrl(): string | undefined {
+  return getEnv("DATABASE_URL");
+}
 
 const NEON_API_BASE_URL = "https://console.neon.tech/api/v2";
 
@@ -109,7 +126,7 @@ interface ColumnInfo {
 }
 
 async function neonFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const apiKey = getApiKey() ?? process.env.NEON_API_KEY;
+  const apiKey = getApiKey();
   if (!apiKey) {
     throw new Error("Not authenticated with Neon. Please set NEON_API_KEY.");
   }

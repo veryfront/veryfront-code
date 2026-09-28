@@ -16,6 +16,7 @@ import {
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import { getResumeSignalSchema } from "#veryfront/internal-agents/schema.ts";
+import { setActiveSpanAttributes } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
@@ -68,6 +69,12 @@ export class AgentRunResumeHandler extends BaseHandler {
           expectedSurface: "studio",
         });
 
+        // This request bypasses the proxy, so its own release headers are untrusted.
+        // Only the pod running the run knows which release or branch served it. A pod
+        // that does not own the run stamps nothing: platform-scoped.
+        setActiveSpanAttributes(
+          this.sessionManager.getServingSpanAttributes(runId, ctx.projectId) ?? {},
+        );
         const signal = getResumeSignalSchema().parse(JSON.parse(rawBody));
         const outcome = this.sessionManager.submitToolResult(runId, {
           toolCallId: signal.toolCallId,

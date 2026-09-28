@@ -3,6 +3,7 @@
   "displayName": "Asana",
   "icon": "asana.svg",
   "description": "Manage tasks, projects, and teams in Asana",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "asana",
@@ -35,6 +36,42 @@
       "docsUrl": "https://developers.asana.com/docs/oauth"
     }
   ],
+  "setupGuide": {
+    "title": "Asana setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Choose who owns the Asana OAuth app",
+        "description": "On hosted Veryfront, Asana uses the Veryfront-managed Asana OAuth app: connect Asana from the project's integrations and approve the Asana consent screen, no environment variables needed. Set ASANA_CLIENT_ID and ASANA_CLIENT_SECRET only to use your own Asana OAuth app, which is required for local and self-hosted runs."
+      },
+      {
+        "step": 2,
+        "title": "Create an app",
+        "description": "In the Asana developer console, create a new app.",
+        "url": "https://app.asana.com/0/my-apps"
+      },
+      {
+        "step": 3,
+        "title": "Set the redirect URL",
+        "description": "Under OAuth, add the redirect URI of the environment that completes the flow: https://api.veryfront.com/oauth/callback/asana for hosted Veryfront, or your app origin followed by /api/auth/asana/callback for a local or self-hosted app. Set ASANA_CLIENT_ID and ASANA_CLIENT_SECRET from the app's credentials."
+      },
+      {
+        "step": 4,
+        "title": "Make the app available",
+        "description": "Under Manage distribution, make the app available in the workspaces whose users will connect; Asana refuses authorization from other workspaces."
+      },
+      {
+        "step": 5,
+        "title": "Verify access",
+        "description": "Run List Workspaces (read-only). It returns the workspaces of the connected user without changing anything."
+      }
+    ],
+    "notes": [
+      "The connection requests the default scope, which gives the app the full permissions of the user who authorizes it.",
+      "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
+    ],
+    "documentation": "https://developers.asana.com/docs/oauth"
+  },
   "tools": [
     {
       "id": "asana__list_tasks",

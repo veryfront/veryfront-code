@@ -1065,7 +1065,7 @@ describe("provider/veryfront-cloud", () => {
     await drainStream(stream);
 
     assertEquals(
-      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/anthropic/v1"),
+      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/v1"),
       true,
       "the anthropic runtime must be pointed at the Veryfront Cloud anthropic gateway",
     );
@@ -1278,7 +1278,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(routes, [
       [
         "anthropic/claude-sonnet-4-6",
-        "https://api.veryfront.com/ai/anthropic/v1/messages",
+        "https://api.veryfront.com/ai/v1/messages",
         "anthropic",
       ],
       [
@@ -1513,7 +1513,7 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
   const PROTOCOL_CASES: ReadonlyArray<readonly [string, string, string, string]> = [
     [
       "anthropic/claude-sonnet-4-6",
-      "https://api.veryfront.com/ai/anthropic/v1/messages",
+      "https://api.veryfront.com/ai/v1/messages",
       "https://api.veryfront.com/ai/gateway/anthropic/v1/messages",
       "claude-sonnet-4-6",
     ],
@@ -1568,7 +1568,7 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     await withEnv({ [VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV]: "neutral" }, () => {
       assertEquals(
         getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com", "anthropic"),
-        "https://api.veryfront.com/ai/anthropic/v1",
+        "https://api.veryfront.com/ai/v1",
       );
       return Promise.resolve();
     });
@@ -2108,6 +2108,47 @@ describe("provider/veryfront-cloud served catalog loading", () => {
       "POST /ai/v1/chat/completions",
       "POST /ai/v1/chat/completions",
     ]);
+  });
+
+  it("pins GPT-6 Sol to Responses from the shipped table when the catalog cannot load", async () => {
+    setCloudBootstrap();
+    // Mirrors a run-scoped inference credential: the catalog endpoint refuses
+    // the token, so resolution never sees a served catalog and must rely on
+    // the shipped table alone.
+    const requests = installGateway(() =>
+      Response.json({ error: "unauthorized" }, { status: 401 })
+    );
+
+    const model = resolveModel("veryfront-cloud/openai/gpt-6-sol") as ModelRuntime;
+    // The shipped table lists GPT-6 Sol as a reasoning model, so its plan is
+    // pinned to Responses before any catalog request settles.
+    assertEquals(readVeryfrontCloudModelFacts(model)?.transportPlan, {
+      transport: "responses",
+      pinned: true,
+    });
+
+    try {
+      const result = await model.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        tools: [{
+          type: "function",
+          name: "tool_search",
+          inputSchema: { type: "object", properties: { query: { type: "string" } } },
+        }],
+      } as never);
+      await drainStream(result.stream);
+    } catch {
+      // expected: the mocked catalog gateway answers every non-catalog
+      // request with a Chat Completions style stream, which the Responses
+      // parser rejects; the assertion below targets the outgoing request.
+    }
+
+    // A function tool never reaches Chat Completions, which refuses GPT-6
+    // reasoning combined with function tools.
+    assertEquals(
+      calls(requests).filter((call) => call.startsWith("POST")),
+      ["POST /ai/v1/responses"],
+    );
   });
 
   it("does not settle a model on a caller that stopped waiting", async () => {
