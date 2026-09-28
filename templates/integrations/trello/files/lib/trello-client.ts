@@ -1,8 +1,27 @@
-import { OAuthService, trelloConfig } from "veryfront/oauth";
-import { tokenStore } from "./token-store.ts";
+import { trelloConfig } from "veryfront/oauth";
+import { getValidToken, type OAuthProvider } from "./oauth.ts";
 
-// OAuthService refreshes expired tokens under the store's refresh lock.
-const trelloService = new OAuthService(trelloConfig, tokenStore);
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
+  return undefined;
+}
+
+// The generic OAuthService does not support Trello, so tokens resolve through
+// the base scaffold's getValidToken().
+const trelloOAuthProvider: OAuthProvider = {
+  name: "trello",
+  authorizationUrl: trelloConfig.authorizationUrl,
+  tokenUrl: trelloConfig.tokenUrl,
+  clientId: getEnv("TRELLO_CLIENT_ID") ?? "",
+  clientSecret: getEnv("TRELLO_CLIENT_SECRET") ?? "",
+  scopes: [...trelloConfig.defaultScopes],
+  callbackPath: "/api/auth/trello/callback",
+};
 
 const TRELLO_BASE_URL = "https://api.trello.com/1";
 
@@ -58,7 +77,7 @@ async function trelloFetch<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await trelloService.getAccessToken(userId);
+  const token = await getValidToken(trelloOAuthProvider, userId, "trello");
   if (!token) {
     throw new Error("Not authenticated with Trello. Please connect your account.");
   }
