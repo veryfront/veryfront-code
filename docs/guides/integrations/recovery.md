@@ -65,7 +65,10 @@ import {
   type IntegrationConnectionStatus,
 } from "veryfront/integrations";
 
-/** Shows the one-time URL to the signed-in person, for example in your UI. Never log it. */
+/**
+ * Shows the one-time URL to the signed-in person, for example in your UI, and
+ * resolves once it is shown, not after consent. Never log it.
+ */
 export type PresentConnectUrl = (url: string, expiresAt: string) => Promise<void>;
 
 /** Settles with `work`, or rejects when the deadline fires first. */
@@ -99,7 +102,12 @@ export async function connectGmail(
   const before = identity(await client.status("gmail", scope));
   const handoff = await client.connect("gmail", { scope, redirectUri: "<REDIRECT_URI>" });
   if (handoff.status !== "oauth_handoff") throw new Error(`Gmail needs setup: ${handoff.status}`);
-  await untilDeadline(presentConnectUrl(handoff.connect_url, handoff.expires_at), deadline);
+  // The one-time URL is useless after expires_at, so showing it must finish first.
+  const showBy = AbortSignal.any([
+    deadline,
+    AbortSignal.timeout(Math.max(0, Date.parse(handoff.expires_at) - Date.now())),
+  ]);
+  await untilDeadline(presentConnectUrl(handoff.connect_url, handoff.expires_at), showBy);
 
   while (true) {
     await untilDeadline(new Promise((resolve) => setTimeout(resolve, 3000)), deadline);
@@ -119,7 +127,8 @@ identity in that scope, not proof that this particular handoff succeeded: a
 concurrent connect in the same scope can produce it too. Confirm the account
 with the person before relying on it. The client-level abort signal ends every
 request, including `connect`, at the deadline, and `untilDeadline` stops waiting
-for `presentConnectUrl` and for the polling delay at the same deadline. A new `connection_generation_id`
+for the polling delay at the same deadline. Showing the URL must also finish
+before its `expires_at`, because an expired URL cannot start consent. A new `connection_generation_id`
 on an existing `id` means the same account was reconnected. `veryfront integration connect` performs the same check for you and
 returns `connection_observed` with the confirmed row. If the callback arrives
 but inventory does not show a new generation within its short confirmation
