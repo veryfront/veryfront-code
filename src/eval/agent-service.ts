@@ -597,10 +597,9 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
   const cacheCreationInputTokens = readNonNegativeNumber(record.cacheCreationInputTokens) ??
     readNonNegativeNumber(record.cacheCreationTokens) ??
     readNonNegativeNumber(record.cache_creation_input_tokens);
-  const cacheCreation1hInputTokens = readCacheWrite1hShare(
-    cacheCreationInputTokens,
-    record.cacheCreation1hInputTokens ?? record.cache_creation_1h_input_tokens,
-  );
+  const cacheCreation1hInputTokens =
+    readCacheWrite1hShare(cacheCreationInputTokens, record.cacheCreation1hInputTokens) ??
+      readCacheWrite1hShare(cacheCreationInputTokens, record.cache_creation_1h_input_tokens);
   const cacheReadInputTokens = readNonNegativeNumber(record.cacheReadInputTokens) ??
     readNonNegativeNumber(record.cacheReadTokens) ??
     readNonNegativeNumber(record.cache_read_input_tokens);

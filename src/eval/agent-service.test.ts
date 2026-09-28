@@ -587,6 +587,14 @@ describe("eval/agent-service", () => {
       [{ cacheCreationInputTokens: 6, cacheCreation1hInputTokens: -1 }, undefined],
       [{ cacheCreationInputTokens: 6, cacheCreation1hInputTokens: 9 }, 6],
       [{ cache_creation_input_tokens: 6, cache_creation_1h_input_tokens: 4 }, 4],
+      [
+        {
+          cacheCreationInputTokens: 6,
+          cacheCreation1hInputTokens: 1.5,
+          cache_creation_1h_input_tokens: 4,
+        },
+        4,
+      ],
     ];
     for (const [metadata, expected] of cases) {
       const adapter = createAgentServiceEvalAdapter({
