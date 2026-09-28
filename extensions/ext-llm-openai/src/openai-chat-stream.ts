@@ -187,6 +187,39 @@ function assertCompleteToolInput(
   return argumentsText;
 }
 
+const CONTENT_FILTER_ANNOTATION_CHOICE_KEYS = new Set([
+  "content_filter_offsets",
+  "content_filter_results",
+  "delta",
+  "finish_reason",
+  "index",
+  "logprobs",
+]);
+
+/**
+ * Azure OpenAI's asynchronous content filter reports its verdict on text that
+ * was already streamed in a frame of its own: one choice with no delta, a null
+ * finish reason and `content_filter_results`, often after the finish reason.
+ * A report that flags nothing carries no content, so the stream skips it. A
+ * report that flags content is not skipped and fails the stream as before.
+ */
+function isUnflaggedContentFilterAnnotation(choices: unknown[]): boolean {
+  if (choices.length !== 1) return false;
+  const choice = readRecord(choices[0]);
+  if (!choice) return false;
+  for (const key of Object.keys(choice)) {
+    if (!CONTENT_FILTER_ANNOTATION_CHOICE_KEYS.has(key)) return false;
+  }
+  if (choice.delta !== undefined && choice.delta !== null) return false;
+  if (choice.finish_reason !== undefined && choice.finish_reason !== null) return false;
+  const results = readRecord(choice.content_filter_results);
+  if (!results) return false;
+  for (const verdict of Object.values(results)) {
+    if (readRecord(verdict)?.filtered !== false) return false;
+  }
+  return true;
+}
+
 function isToolCallsFinishReason(
   value: string | { unified: string; raw: string } | null,
 ): boolean {
@@ -251,6 +284,9 @@ export async function* streamOpenAICompatibleParts(
     // The `choices` key being absent entirely is still rejected above — that is
     // a malformed event rather than a content-free one.
     if (record.choices.length === 0) {
+      return;
+    }
+    if (isUnflaggedContentFilterAnnotation(record.choices)) {
       return;
     }
     if (sawFinishReason) {

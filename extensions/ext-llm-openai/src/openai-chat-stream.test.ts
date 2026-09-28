@@ -953,6 +953,68 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     );
   });
 
+  it("skips an Azure content-filter annotation that flags nothing, even after the finish reason", async () => {
+    // Frame shape Azure OpenAI streams when the asynchronous content filter is
+    // on: the filter's verdict on already-streamed text arrives as its own
+    // choice, with no delta and a null finish reason, after the finish chunk.
+    const annotation = {
+      choices: [{
+        content_filter_offsets: { check_offset: 62, start_offset: 60, end_offset: 62 },
+        content_filter_results: {
+          hate: { filtered: false, severity: "safe" },
+          protected_material_code: { detected: false, filtered: false },
+          self_harm: { filtered: false, severity: "safe" },
+          sexual: { filtered: false, severity: "safe" },
+          violence: { filtered: false, severity: "safe" },
+        },
+        finish_reason: null,
+        index: 0,
+      }],
+      created: 0,
+      id: "",
+      model: "",
+      object: "",
+    };
+    assertEquals(
+      await collectParts(streamFromText([
+        data({ choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] }),
+        data(annotation),
+        data({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+        data(annotation),
+        data({ choices: [], usage: { prompt_tokens: 13, completion_tokens: 19 } }),
+        "data: [DONE]\r\n\r\n",
+      ].join(""))),
+      [
+        { type: "text-delta", delta: "ok" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          usage: { inputTokens: 13, outputTokens: 19, totalTokens: 32 },
+        },
+      ],
+    );
+  });
+
+  it("still rejects a content-filter annotation that flags content", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({ choices: [{ index: 0, delta: { content: "ok" } }] }),
+          data({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+          data({
+            choices: [{
+              content_filter_results: { violence: { filtered: true, severity: "high" } },
+              finish_reason: null,
+              index: 0,
+            }],
+          }),
+          "data: [DONE]\r\n\r\n",
+        ].join(""))),
+      ProviderRequestError,
+      "choice data after its finish reason",
+    );
+  });
+
   it("rejects structurally empty and unterminated successful streams", async () => {
     await assertRejects(
       () => collectParts(streamFromText(data({}))),
