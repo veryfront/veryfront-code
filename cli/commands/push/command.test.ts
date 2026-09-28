@@ -3789,10 +3789,11 @@ describe("push divergence guard", () => {
         assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
         assertStringIncludes(error.message, '"app.ts"');
         assertEquals(fileListCalls, 3);
-        assertEquals(putPaths, [
+        // Directory iteration order varies by filesystem; verify every attempted write.
+        assertEquals(putPaths.toSorted(), [
+          "/projects/my-project/files/app.ts",
           "/projects/my-project/files/app.ts",
           "/projects/my-project/files/second.ts",
-          "/projects/my-project/files/app.ts",
           "/projects/my-project/files/second.ts",
         ]);
         assertEquals(await readPushReceipt(projectDir), null);
