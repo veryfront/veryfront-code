@@ -159,7 +159,9 @@ describe("hosted application model authority", () => {
     const options = { ...resolverOptions(), allowedModelIds: new Set([servedId]) };
     try {
       const model = createHostedApplicationModelResolver(options)(servedId)!;
-      // Cold, an unlisted provider is built as an OpenAI-protocol model.
+      // Cold, an unlisted provider is built as an OpenAI-protocol model. The
+      // served catalog then names it as a spelling of Google, the one provider
+      // the Google-protocol route serves.
       assertEquals(model._reconcileProviderMetadata, undefined);
 
       __setVeryfrontCloudCatalogForScopeForTests(
@@ -168,7 +170,7 @@ describe("hosted application model authority", () => {
           models: [{
             id: "acme-gemini",
             modelId: "acme/acme-gemini",
-            provider: "acme",
+            provider: "google",
             surface: "google",
             operations: ["chat-completions"],
             aliases: [],
