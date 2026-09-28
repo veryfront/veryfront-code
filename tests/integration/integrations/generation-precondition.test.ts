@@ -67,3 +67,44 @@ describe("published client generation preconditions", () => {
     });
   }
 });
+
+describe("published client stale generation refusal", () => {
+  for (const slug of ["integration-connection-stale", "validation-failed"] as const) {
+    it(`types ${slug} without replaying the call`, async () => {
+      let calls = 0;
+      await withMockFetch(async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path.startsWith("/projects/")) return Response.json(project);
+        const headers = new Headers({
+          "x-veryfront-project-id": project.id,
+          "x-veryfront-tool-preconditions": "project_id,connection_generation_id",
+        });
+        if (!path.endsWith("/call")) return Response.json({ tools: [] }, { headers });
+        calls++;
+        const status = slug === "integration-connection-stale" ? 409 : 400;
+        return Response.json({ slug, status, title: "Refused" }, {
+          status,
+          headers: { "content-type": "application/problem+json" },
+        });
+      }, async () => {
+        const client = await createIntegrationClient(context);
+        const error = await assertRejects(
+          () =>
+            client.call("github__get_current_user", {}, {
+              connectionId,
+              expectedConnectionGenerationId: generation,
+            }),
+          IntegrationApiError,
+        ) as IntegrationApiError;
+        assertEquals(error.outcomeUnknown, false);
+        assertEquals(
+          error.condition,
+          slug === "integration-connection-stale"
+            ? { slug, status: 409, retryable: false }
+            : undefined,
+        );
+        assertEquals(calls, 1);
+      });
+    });
+  }
+});

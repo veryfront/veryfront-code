@@ -239,6 +239,34 @@ export type ExecutorModelMetadata = InferSchema<
   ReturnType<typeof getExecutorModelMetadataSchema>
 >[number];
 
+/**
+ * Served catalog rows of granted models: non-secret model facts only. A model
+ * whose served row has not loaded is absent, and its reads use shipped facts.
+ */
+export const getExecutorModelCatalogSchema = defineSchema((v) => {
+  const name = () => v.string().min(1).max(256);
+  return v.array(
+    v.object({
+      id: getModelIdSchema(),
+      model: v.object({
+        id: name(),
+        modelId: name(),
+        provider: name(),
+        aliases: v.array(name()).max(64),
+        surface: name().optional(),
+        operations: v.array(name()).max(64).optional(),
+        thinking: v.boolean().optional(),
+        reasoningMode: name().optional(),
+        transport: name().optional(),
+        reasoningBudgetTokens: v.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+          .optional(),
+        chatCompletionsReasoningWithFunctionTools: v.boolean().optional(),
+        chatCompletionsConsecutiveSystemMessages: v.boolean().optional(),
+      }).strict(),
+    }).strict(),
+  ).max(MAX_MODELS);
+});
+
 export const getExecutorModelGenerateResultSchema = defineSchema((v) =>
   v.object({
     content: v.array(getJsonValueSchema()).max(MAX_ITEMS).optional(),

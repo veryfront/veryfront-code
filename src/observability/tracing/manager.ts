@@ -106,8 +106,8 @@ export class TracingManager {
     };
 
     // No-op propagator used only when ext-observability-opentelemetry is NOT installed.
-    // When the extension is active, it registers W3CTraceContextPropagator
-    // on the shim directly; we intentionally do NOT wrap shimApi.propagation
+    // When the extension is active, the server bootstrap and the proxy install
+    // its W3CTraceContextPropagator on the shim; we intentionally do NOT wrap shimApi.propagation
     // here (doing so would cause infinite recursion when the global
     // propagator is the wrapper itself).
     const propagator: TextMapPropagator = {

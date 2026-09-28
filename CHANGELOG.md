@@ -74,9 +74,9 @@ unchanged.
 
 ### Changed: Veryfront Cloud models call the vendor-neutral endpoints
 
-`veryfront-cloud/*` models that speak the OpenAI protocol now send requests to
-`<api>/ai/v1`, and models that speak the Anthropic protocol send them to
-`<api>/ai/anthropic/v1`. The request body names the model as
+`veryfront-cloud/*` models now send requests under `<api>/ai/v1`: models that
+speak the OpenAI protocol use `/chat/completions` or `/responses`, and models
+that speak the Anthropic protocol use `/messages`. The request body names the model as
 `<provider>/<model>`. Google models keep their existing route. Authentication,
 project and billing headers are unchanged, and platform refusals such as
 insufficient credits or a missing project are reported as before.

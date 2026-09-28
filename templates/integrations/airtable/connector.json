@@ -3,6 +3,7 @@
   "displayName": "Airtable",
   "icon": "airtable.svg",
   "description": "Read and write records in Airtable bases and tables",
+  "category": "data",
   "auth": {
     "type": "oauth2",
     "provider": "airtable",

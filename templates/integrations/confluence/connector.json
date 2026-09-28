@@ -3,6 +3,7 @@
   "displayName": "Confluence",
   "icon": "confluence.svg",
   "description": "Search, read, and create documentation in Confluence",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "atlassian",

@@ -3,6 +3,7 @@
   "displayName": "Linear",
   "icon": "linear.svg",
   "description": "Search, create, and manage Linear issues and projects",
+  "category": "development",
   "auth": {
     "type": "oauth2",
     "provider": "linear",

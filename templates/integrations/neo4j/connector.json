@@ -44,7 +44,7 @@
     {
       "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
-      "description": "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows; use for lookups, traversals, and GraphRAG retrieval. Note: the Query API does not enforce read-only access, so only submit read statements here (use a read-only database user to guarantee no writes)",
+      "description": "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows; use for lookups, traversals, and GraphRAG retrieval. The request runs in the Query API read access mode, so Neo4j rejects write statements; use Run Cypher Write to change the graph",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -66,6 +66,12 @@
           "parameters": {
             "type": "object",
             "description": "Values for $placeholders in the statement, e.g. { \"name\": \"Alice\" }"
+          },
+          "accessMode": {
+            "type": "string",
+            "description": "Neo4j Query API access mode, pinned to Read so the server rejects write statements.",
+            "default": "Read",
+            "fixed": true
           }
         },
         "response": {
@@ -157,7 +163,7 @@
       "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https://. Include the port in NEO4J_HOST, e.g. my-server:7473",
       "Always pass Cypher values via the parameters object ($placeholders) rather than string-concatenating them into the statement; this enables plan caching and prevents Cypher injection",
       "Both tools run implicit (auto-commit) transactions; explicit multi-request transactions are not exposed",
-      "The Query API has no server-side read-only mode: Run Cypher Query is read-only by convention only, and write statements sent through it would execute. Connect with a read-only database user if you need a hard guarantee"
+      "Run Cypher Query sends accessMode Read, so Neo4j rejects write statements sent through it (Neo.ClientError.Statement.AccessMode); use Run Cypher Write for CREATE, MERGE, SET and DELETE"
     ],
     "documentation": "https://neo4j.com/docs/query-api/current/"
   }

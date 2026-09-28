@@ -1,13 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+import {
+  AgentRunSessionManager,
+  type RunServingIdentity,
+} from "#veryfront/internal-agents/session-manager.ts";
 import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
+import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import {
   createControlPlaneSignature as createTestControlPlaneSignature,
   createCtx,
   stubApplicationErrorReporter,
+  withRecordedActiveSpan,
 } from "./internal-agent-run.test-helpers.ts";
 
 function createControlPlaneSignature(
@@ -294,6 +299,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
 
     try {
       const handler = new AgentRunResumeHandler({
+        getServingSpanAttributes: () => undefined,
         submitToolResult() {
           throw thrown;
         },
@@ -336,6 +342,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
   it("returns 401 when the control-plane signature is missing", async () => {
     let submitCalls = 0;
     const handler = new AgentRunResumeHandler({
+      getServingSpanAttributes: () => undefined,
       submitToolResult() {
         submitCalls++;
         return { accepted: true };
@@ -366,6 +373,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
   it("refuses a signature minted for a different run", async () => {
     let submitCalls = 0;
     const handler = new AgentRunResumeHandler({
+      getServingSpanAttributes: () => undefined,
       submitToolResult() {
         submitCalls++;
         return { accepted: true };
@@ -399,5 +407,96 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
       0,
       "a replayed signature must not inject a tool result into another run",
     );
+  });
+});
+
+describe("agent-run-resume.handler serving identity", () => {
+  const productionIdentity = {
+    projectId: "proj-1",
+    spanAttributes: { "veryfront.environment_name": "staging", "release.id": "rel-1" },
+  };
+
+  async function resume(sessionManager: AgentRunSessionManager) {
+    const body = JSON.stringify({
+      type: "tool_result",
+      toolCallId: "tool_1",
+      result: { ok: true },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    // Through the registry, so the attributes are those of routing.registry.execute.
+    const { result, attributes } = await withRecordedActiveSpan(() =>
+      new RouteRegistry().register(new AgentRunResumeHandler(sessionManager)).execute(
+        new Request("https://example.com/api/control-plane/runs/run_1/resume", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+            "x-release-id": "rel-untrusted",
+            "x-environment-name": "untrusted",
+          },
+          body,
+        }),
+        {
+          ...createCtx(publicKeyPem),
+          resolvedEnvironment: "production",
+          releaseId: "rel-untrusted",
+          environmentName: "untrusted",
+        },
+      )
+    );
+    return { status: result?.status, attributes };
+  }
+
+  function startRun(servingIdentity: RunServingIdentity) {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), servingIdentity });
+    return { sessionManager, pending: sessionManager.waitForToolResult("run_1", "tool_1") };
+  }
+
+  it("stamps the release the owned run's stream was served from", async () => {
+    const { sessionManager, pending } = startRun(productionIdentity);
+
+    const { status, attributes } = await resume(sessionManager);
+
+    assertEquals(status, 200);
+    await pending;
+    assertEquals(attributes["release.id"], "rel-1");
+    assertEquals(attributes["veryfront.environment_name"], "staging");
+  });
+
+  it("stamps the branch of an owned preview run", async () => {
+    const { sessionManager, pending } = startRun({
+      projectId: "proj-1",
+      spanAttributes: { "branch.id": "branch-1", "branch.name": "feature" },
+    });
+
+    const { status, attributes } = await resume(sessionManager);
+
+    assertEquals(status, 200);
+    await pending;
+    assertEquals(attributes["branch.name"], "feature");
+    assertEquals(attributes["release.id"], undefined);
+  });
+
+  it("stamps no release for a run this pod does not own", async () => {
+    const { status, attributes } = await resume(new AgentRunSessionManager());
+
+    assertEquals(status, 410);
+    assertEquals(attributes["release.id"], undefined);
+    assertEquals(attributes["veryfront.environment_name"], undefined);
+  });
+
+  it("stamps nothing when the run was served for another project", async () => {
+    const { sessionManager, pending } = startRun({
+      ...productionIdentity,
+      projectId: "proj-other",
+    });
+
+    const { status, attributes } = await resume(sessionManager);
+
+    assertEquals(status, 200);
+    await pending;
+    assertEquals(attributes["release.id"], undefined);
+    assertEquals(attributes["veryfront.environment_name"], undefined);
   });
 });

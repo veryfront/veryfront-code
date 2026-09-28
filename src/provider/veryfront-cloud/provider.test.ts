@@ -1065,7 +1065,7 @@ describe("provider/veryfront-cloud", () => {
     await drainStream(stream);
 
     assertEquals(
-      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/anthropic/v1"),
+      capturedRequest?.url.startsWith("https://api.veryfront.com/ai/v1"),
       true,
       "the anthropic runtime must be pointed at the Veryfront Cloud anthropic gateway",
     );
@@ -1278,7 +1278,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(routes, [
       [
         "anthropic/claude-sonnet-4-6",
-        "https://api.veryfront.com/ai/anthropic/v1/messages",
+        "https://api.veryfront.com/ai/v1/messages",
         "anthropic",
       ],
       [
@@ -1513,7 +1513,7 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
   const PROTOCOL_CASES: ReadonlyArray<readonly [string, string, string, string]> = [
     [
       "anthropic/claude-sonnet-4-6",
-      "https://api.veryfront.com/ai/anthropic/v1/messages",
+      "https://api.veryfront.com/ai/v1/messages",
       "https://api.veryfront.com/ai/gateway/anthropic/v1/messages",
       "claude-sonnet-4-6",
     ],
@@ -1568,7 +1568,7 @@ describe("provider/veryfront-cloud vendor-neutral routes", () => {
     await withEnv({ [VERYFRONT_CLOUD_GATEWAY_ROUTES_ENV]: "neutral" }, () => {
       assertEquals(
         getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com", "anthropic"),
-        "https://api.veryfront.com/ai/anthropic/v1",
+        "https://api.veryfront.com/ai/v1",
       );
       return Promise.resolve();
     });

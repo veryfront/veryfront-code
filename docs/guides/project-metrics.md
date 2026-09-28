@@ -19,23 +19,24 @@ Use the SDK hook from app, agent, tool, task, workflow, and eval code:
 ```ts
 import { metrics } from "veryfront/metrics";
 
-metrics.counter("vf_signup_total", 1, {
+metrics.counter("signup_total", 1, {
   plan: "pro",
   source: "checkout",
 });
 
-metrics.histogram("vf_checkout_duration_seconds", 1.24, {
+metrics.histogram("checkout_duration_seconds", 1.24, {
   step: "payment",
 });
 
-metrics.gauge("vf_queue_depth", 42, {
+metrics.gauge("queue_depth", 42, {
   queue: "email",
 });
 ```
 
 Use counters for totals, histograms for durations and sizes, and gauges for
-current values. Prefer stable `vf_`-prefixed metric names so they are easy to
-discover in Studio.
+current values. Prefer stable names with a prefix of your own so they are easy
+to discover in Studio. Names that start with `ai_gateway_` or `vf_` are reserved
+for platform metrics, except the `vf_eval_` names used for eval metrics.
 
 When code runs inside Veryfront, the SDK adds request-scoped labels for
 `project_id`, `project_slug`, `environment`, and `branch` for preview requests.
@@ -100,6 +101,10 @@ In Veryfront runtimes, the SDK drops a sample instead of exporting it when:
 - it would start a new name and label combination after the project has created
   500 in the current runtime process
 
+Shared Veryfront runtimes send project metrics through the platform with the
+project's credential, and the platform files them under that project. It drops
+samples whose name is reserved for platform metrics.
+
 ## Query sparse counters
 
 Each runtime process exports its own cumulative totals and is identified by the
@@ -112,7 +117,7 @@ where `increase()` extrapolates from too few samples:
 
 ```promql
 sum by (outcome) (
-  max_over_time(vf_job_items_total[1d]) - min_over_time(vf_job_items_total[1d])
+  max_over_time(job_items_total[1d]) - min_over_time(job_items_total[1d])
 )
 ```
 

@@ -3,6 +3,7 @@
   "displayName": "Google Docs",
   "icon": "docs-google.svg",
   "description": "Read, create, and manage Google Docs documents",
+  "category": "productivity",
   "auth": {
     "type": "oauth2",
     "provider": "google",

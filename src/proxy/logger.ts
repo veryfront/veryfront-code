@@ -1,7 +1,7 @@
 import { getEnv } from "./env.ts";
 import { getTraceContext } from "./tracing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { PROXY_RUNTIME_VERSION } from "./version.ts";
+import { PROXY_RUNTIME_VERSION, PROXY_SERVICE_VERSION } from "./version.ts";
 import {
   ANSI,
   colorize,
@@ -109,6 +109,9 @@ interface LogEntry {
   timestamp: string;
   level: LogLevel;
   service: string;
+  /** Deployed artifact tag (OTEL_SERVICE_VERSION), or the runtime version when unset. */
+  service_version: string;
+  /** @deprecated Use `service_version`. Framework version, kept for saved Loki queries. */
   veryfrontVersion: string;
   message: string;
   // camelCase aliases of the snake_case fields below. Remove each one once no
@@ -184,6 +187,7 @@ export function formatProxyJsonLine(
     timestamp: new Date().toISOString(),
     level,
     service: "proxy",
+    service_version: PROXY_SERVICE_VERSION,
     veryfrontVersion: PROXY_RUNTIME_VERSION,
     message,
     ...(traceCtx.traceId && {

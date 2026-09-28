@@ -120,6 +120,37 @@ export type IntegrationConnectOutcome = IntegrationOAuthHandoff | {
   readonly details: IntegrationDetails;
 };
 
+/**
+ * Bounded wait for consent completion. Read `status()` before starting consent and pass it
+ * as `before`, so the unchanged prior connection is never mistaken for the new one.
+ */
+export interface IntegrationConnectionWaitOptions {
+  readonly scope: "user" | "project";
+  readonly before?: IntegrationConnectionStatus;
+  /** Local wait budget in milliseconds, at most 15 minutes. */
+  readonly timeoutMs: number;
+  readonly abortSignal?: AbortSignal;
+}
+
+/**
+ * `connection_observed` requires a connected status whose connection id and generation
+ * differ from `before` and match a connected row of the requested scope. It confirms the
+ * stored connection, not provider permission or tool readiness.
+ */
+export type IntegrationConnectionWaitOutcome =
+  | {
+    readonly status: "connection_observed";
+    readonly integration: string;
+    readonly scope: "user" | "project";
+    readonly connection: IntegrationClientConnection;
+    readonly connection_status: IntegrationConnectionStatus;
+  }
+  | {
+    readonly status: "timed_out";
+    readonly integration: string;
+    readonly scope: "user" | "project";
+  };
+
 /** Project-bound primitives. Iterators use a bounded deadline and fail rather than silently truncate. */
 export interface IntegrationClient {
   readonly project: Readonly<{ id: string; slug: string }>;
@@ -154,6 +185,11 @@ export interface IntegrationClient {
     scope: "user" | "project",
     options?: { abortSignal?: AbortSignal },
   ): Promise<IntegrationConnectionStatus>;
+  /** Poll status and connections until a new connection generation is observed or time runs out. */
+  waitForConnection(
+    integration: string,
+    options: IntegrationConnectionWaitOptions,
+  ): Promise<IntegrationConnectionWaitOutcome>;
   call(
     toolName: string,
     args: Record<string, unknown>,
