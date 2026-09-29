@@ -293,6 +293,38 @@ describe("agentAsTool", () => {
     assertEquals(result, { text: "null", object: null, toolCalls: 0, status: "completed" });
   });
 
+  it("keeps a parsed undefined object from a schema transform", async () => {
+    const childAgent = createMinimalAgent("discarding");
+    childAgent.config.outputSchema = { type: "object" };
+    childAgent.stream = (input): Promise<AgentStreamResult> => {
+      input.onFinish?.({
+        text: '{"city":"Berlin"}',
+        object: undefined,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      });
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+        },
+      });
+    };
+
+    const result = await agentAsTool(childAgent, "Discarding").execute(
+      { input: "Berlin?" },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(Object.hasOwn(result, "object"), true);
+    assertEquals(result, {
+      text: '{"city":"Berlin"}',
+      object: undefined,
+      toolCalls: 0,
+      status: "completed",
+    });
+  });
+
   it("returns no object key for a child without an outputSchema", async () => {
     const result = await agentAsTool(createMinimalAgent("writer"), "Write").execute(
       { input: "Describe the room." },

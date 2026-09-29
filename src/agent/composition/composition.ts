@@ -114,13 +114,12 @@ export function agentAsTool(
           });
 
           // The child's accepted value: its parsed object when it declares an
-          // outputSchema and parsing succeeded, next to the text. An explicit null
-          // object is passed through; an inherited `object` is never forwarded.
+          // outputSchema and parsing succeeded, next to the text. Any own `object`
+          // (including null or a transform's undefined) is passed through; an
+          // inherited `object` is never forwarded.
           return {
             text: response.text,
-            ...(objectHasOwn(response, "object") && response.object !== undefined
-              ? { object: response.object }
-              : {}),
+            ...(objectHasOwn(response, "object") ? { object: response.object } : {}),
             toolCalls: response.toolCalls.length,
             status: response.status,
           };
