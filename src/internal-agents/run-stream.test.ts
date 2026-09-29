@@ -397,7 +397,7 @@ describe("internal-agents/run-stream", () => {
         new AgentRunSessionManager(),
       );
 
-      const entry = mergedTools === true ? undefined : mergedTools?.["lookup_reference"];
+      const entry = mergedTools?.["lookup_reference"];
       assertEquals(typeof entry, "object", `tools=${JSON.stringify(tools)}`);
       assertEquals((entry as Tool).description, "Look up a reference code");
     }

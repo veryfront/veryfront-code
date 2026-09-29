@@ -1014,7 +1014,7 @@ describe("agent/ag-ui-runtime-handler", () => {
           type: "function",
           description: "Generate a number.",
           inputSchema: defineSchema((v) => v.object({ min: v.number(), max: v.number() }))(),
-          execute: () => ({ randomNumber: 42 }),
+          execute: () => Promise.resolve({ randomNumber: 42 }),
         },
       },
     } as Agent["config"];
