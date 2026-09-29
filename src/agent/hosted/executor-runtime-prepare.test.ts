@@ -1709,6 +1709,59 @@ Synthetic source instructions.`,
     });
   }
 
+  for (
+    const received of [
+      {
+        name: "declares the tool",
+        supportedProviderTools: ["web_search"],
+        expected: ["web_search"],
+      },
+      { name: "declares no tools", supportedProviderTools: [], expected: [] },
+      { name: "omits the declaration", expected: [] },
+    ]
+  ) {
+    it(`selects provider tools from the received catalog when it ${received.name}`, async () => {
+      // Only the catalog the loadModelCatalog facade receives names the model.
+      __setVeryfrontCloudCatalogForTests(undefined);
+      let visible: string[] = [];
+      const f = fixture({
+        config: { providerTools: ["web_search"] },
+        grant: {
+          ...grant,
+          models: new Map([[modelId, { maxOutputTokens: 200, providerToolNames: ["web_search"] }]]),
+        },
+        facades: {
+          loadModelCatalog: () =>
+            Promise.resolve(rememberReceivedVeryfrontCloudCatalog([{
+              id: "gpt-5.4",
+              modelId: "openai/gpt-5.4",
+              provider: "openai",
+              aliases: ["openai/gpt-5.4", "gpt-5.4"],
+              surface: "openai",
+              operations: ["chat-completions"],
+              transport: "chat-completions",
+              ...(received.supportedProviderTools
+                ? { supportedProviderTools: received.supportedProviderTools }
+                : {}),
+            }])),
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream(options) {
+              visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
+              return finishStream();
+            },
+          }),
+        },
+      });
+      try {
+        await Array.fromAsync(await preparedStream(f));
+        assertEquals(visible, received.expected);
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
+
   it("retains discovery resources during preparation after upstream abort", async () => {
     const entered = Promise.withResolvers<void>();
     const listing = Promise.withResolvers<[]>();

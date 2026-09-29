@@ -794,8 +794,14 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         loadLatestConversationUserText: facades.latestConversationUserText,
       };
       objectSetPrototypeOf(assemblyInput, null);
+      // Assembly reads the served provider tools, so it uses the same catalog.
       const toolAssembly = await observePrivatePromise(
-        prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
+        catalogContext
+          ? runWithVeryfrontCloudContextAsync(
+            catalogContext,
+            () => prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
+          )
+          : prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
       );
       assertActive();
       for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
