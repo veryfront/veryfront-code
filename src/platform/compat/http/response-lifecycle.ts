@@ -4,6 +4,8 @@
  * responses complete only after their body closes, errors, or is cancelled.
  */
 
+type ResponseBodyOutcome = "completed" | "canceled" | "error";
+
 export function isEventStreamResponse(response: Response): boolean {
   if (!response.body) return false;
 
@@ -30,10 +32,10 @@ export function completeOnResponseBodyConsumption(
     /** Error the returned body on abort instead of making an unfinished stream look complete. */
     errorOnAbort?: boolean;
     /** Optional terminal notification. It does not change ownership of pending cancellation work. */
-    onOutcome?: (outcome: "completed" | "canceled" | "error") => void;
+    onOutcome?: (outcome: ResponseBodyOutcome) => void;
   } = {},
 ): Response {
-  const notifyOutcome = (outcome: "completed" | "canceled" | "error"): void => {
+  const notifyOutcome = (outcome: ResponseBodyOutcome): void => {
     try {
       if (options.onOutcome) void Promise.resolve(options.onOutcome(outcome)).catch(() => {});
     } catch { /* Observers cannot change the response outcome. */ }
@@ -52,7 +54,7 @@ export function completeOnResponseBodyConsumption(
   let abortBody = (): void => {};
   let cancellationPending = false;
   let cancellationPromise: Promise<void> | undefined;
-  const complete = (outcome: "completed" | "canceled" | "error"): void => {
+  const complete = (outcome: ResponseBodyOutcome): void => {
     if (completed) return;
     completed = true;
     clearTimeout(cancellationTimer);
