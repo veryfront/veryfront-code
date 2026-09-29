@@ -654,7 +654,7 @@ function readWithAbort(
       reject(new DOMException("aborted", "AbortError"));
     };
     signal.addEventListener("abort", abort, { once: true });
-    promiseThen(
+    void promiseThen(
       reader.read(),
       (result) => {
         signal.removeEventListener("abort", abort);

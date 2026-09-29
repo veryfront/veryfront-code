@@ -156,7 +156,7 @@ function chainPromise<T, TResult>(
   onFulfilled: (value: T) => Promise<TResult>,
 ): Promise<TResult> {
   return new NativePromise<TResult>((resolve, reject) => {
-    thenPromise(
+    void thenPromise(
       promise,
       (value) => {
         let next: Promise<TResult>;
@@ -169,7 +169,7 @@ function chainPromise<T, TResult>(
         // Do not return `next` from this handler. Native promise adoption reads
         // the live `.then` property, which tenant code can replace after this
         // module loads. Apply the captured intrinsic explicitly instead.
-        thenPromise(next, resolve, reject);
+        void thenPromise(next, resolve, reject);
       },
       reject,
     );
@@ -186,7 +186,7 @@ function allPromises<T>(promises: readonly Promise<T>[]): Promise<T[]> {
       return;
     }
     for (let index = 0; index < promises.length; index++) {
-      thenPromise(
+      void thenPromise(
         promises[index]!,
         (value) => {
           results[index] = value;
@@ -206,7 +206,7 @@ function racePromiseWithTimeout<T, TTimeout>(
 ): { promise: Promise<T | TTimeout>; cancelTimeout: () => void } {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const raced = new NativePromise<T | TTimeout>((resolve, reject) => {
-    thenPromise(promise, resolve, reject);
+    void thenPromise(promise, resolve, reject);
     timeoutId = nativeSetTimeout(() => resolve(timeoutValue), timeoutMs);
   });
   return {

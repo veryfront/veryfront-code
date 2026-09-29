@@ -74,7 +74,7 @@ export async function startNodeManagedAgentBroker(options: {
         });
       },
       setShuttingDown() {
-        beginShutdown();
+        void beginShutdown();
       },
       async stop() {
         const results = await Promise.allSettled([

@@ -312,4 +312,4 @@ async function main() {
   Deno.exit(0);
 }
 
-main();
+void main();

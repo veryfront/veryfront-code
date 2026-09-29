@@ -110,7 +110,7 @@ export async function ensureBinaryCompiled(): Promise<void> {
 }
 
 function collectLogs(logs: string[], stream: ReadableStream<Uint8Array>): void {
-  (async () => {
+  void (async () => {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     try {

@@ -132,4 +132,4 @@ async function install() {
   }
 }
 
-install();
+void install();

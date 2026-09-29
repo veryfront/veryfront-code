@@ -122,7 +122,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       }
     }
 
-    fetchApproval();
+    void fetchApproval();
     return () => {
       current = false;
       controller.abort();

@@ -136,7 +136,7 @@ function settlePendingHooks(
               rejectHook(error);
             });
           }
-          continueProxyShutdownPromise(
+          void continueProxyShutdownPromise(
             operation,
             finish,
             (error) => {
@@ -193,7 +193,7 @@ export function createProxyShutdownHooks(): ProxyShutdownHooks {
     const pendingSettlement = settle();
     return createProxyShutdownPromise<void>((resolve, reject) => {
       try {
-        continueProxyShutdownPromise(
+        void continueProxyShutdownPromise(
           pendingSettlement,
           (failures) => {
             try {

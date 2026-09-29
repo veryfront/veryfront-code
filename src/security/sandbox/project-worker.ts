@@ -634,7 +634,7 @@ export class ProjectWorker {
         this.failWorker("crashed", "Worker crashed");
       };
     } catch (error) {
-      this.beginShutdown("terminated", "Worker startup failed");
+      void this.beginShutdown("terminated", "Worker startup failed");
       throw error;
     }
 

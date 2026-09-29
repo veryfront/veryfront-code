@@ -33,7 +33,7 @@ globalThis.PrefetchManager = class {
         const link = entry.target;
         const href = link.getAttribute("href");
         if (href?.startsWith("/") && !this.prefetched.has(href)) {
-          this.prefetch(href);
+          void this.prefetch(href);
         }
       }
     });

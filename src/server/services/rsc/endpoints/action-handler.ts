@@ -614,12 +614,12 @@ function raceAuthorizationAgainstGrace(
       raceFinished = true;
       resolve(value);
     };
-    createIntrinsicPromiseContinuation(
+    void createIntrinsicPromiseContinuation(
       settlement,
       (value) => resolveOnce(settledAuthorizationRace(value)),
       reject,
     );
-    createIntrinsicPromiseContinuation(
+    void createIntrinsicPromiseContinuation(
       graceExpired,
       () => resolveOnce(graceExpiredAuthorizationRace),
       reject,
@@ -638,7 +638,7 @@ function releaseLeaseAfterAuthorizationSettlement(
     () => release(),
     () => release(),
   );
-  createIntrinsicPromiseContinuation(
+  void createIntrinsicPromiseContinuation(
     released,
     ignoreAuthorizationSettlement,
     ignoreAuthorizationSettlement,

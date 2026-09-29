@@ -379,7 +379,7 @@ export function createApp(config: AppConfig): App {
 
     write(screen.altOn + cursor.hide);
     render();
-    handleInput();
+    void handleInput();
 
     if (!state.server.running) startSpinner();
   }

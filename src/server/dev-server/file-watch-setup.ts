@@ -156,7 +156,7 @@ export class FileWatchSetup {
       });
 
       this.fileWatcher = watcher;
-      this.processFileWatcher(watcher, this.watcherController.signal);
+      void this.processFileWatcher(watcher, this.watcherController.signal);
     } catch (error) {
       hmrLog.warn("Failed to setup file watcher", error);
     }
