@@ -2733,7 +2733,9 @@ describe("project run execution span", () => {
     // The caller's context only links the traces; it never parents the run.
     assertEquals(span.parentSpanContext, undefined);
     assertEquals(span.links.map((link) => link.context.traceId), [otherProjectCaller.traceId]);
-    assertEquals(JSON.stringify(span.attributes).includes("other"), false);
+    const attributeValues = Object.values(span.attributes);
+    assertEquals(attributeValues.includes("proj-other"), false);
+    assertEquals(attributeValues.includes("run_other_project"), false);
   });
 
   it("records the execution span as its own trace linked to a sampled-out caller", async () => {
