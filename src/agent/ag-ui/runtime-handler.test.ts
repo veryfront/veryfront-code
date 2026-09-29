@@ -1049,7 +1049,7 @@ describe("agent/ag-ui-runtime-handler", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             threadId: crypto.randomUUID(),
-            runId: "run_runtime_client_tool_2104",
+            runId: "run_runtime_undeclared_client_tool",
             messages: [{ id: "msg-1", role: "user", content: "Verify reference code NV-2231." }],
             tools: [{
               name: "lookup_reference",
