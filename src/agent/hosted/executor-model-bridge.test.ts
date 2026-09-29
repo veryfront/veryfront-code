@@ -669,6 +669,44 @@ describe("executor managed model bridge", () => {
     }
   });
 
+  it("cancels a provider stream that resolves after the generation was cancelled", async () => {
+    const started = Promise.withResolvers<void>();
+    let cancelled = false;
+    const channels = await connected(stubModel({
+      doStream: ({ abortSignal }) => {
+        started.resolve();
+        return new Promise((resolve) =>
+          abortSignal!.addEventListener("abort", () =>
+            resolve({
+              stream: new ReadableStream({
+                cancel() {
+                  cancelled = true;
+                },
+              }, { highWaterMark: 0 }),
+            }), { once: true })
+        );
+      },
+    }));
+    try {
+      const controller = new AbortController();
+      const call = channels.proxy.doStream({ prompt, abortSignal: controller.signal });
+      await started.promise;
+      controller.abort();
+      await assertRejects(
+        async () => {
+          const { stream } = await call;
+          await stream.getReader().read();
+        },
+        Error,
+        "cancelled",
+      );
+      await tick();
+      assertEquals(cancelled, true, "a stream that arrives after cancellation must be cancelled");
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("contains provider stream errors during abort without an uncaught event rejection", async () => {
     const channels = await connected(stubModel({
       doStream: ({ abortSignal }) =>

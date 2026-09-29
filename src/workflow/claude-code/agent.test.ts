@@ -39,7 +39,10 @@ function createMockSDK(messages?: unknown[]): {
             duration_ms: 0,
           }];
           return (async function* () {
-            for (const message of scripted) yield message;
+            for (const message of scripted) {
+              if (message instanceof Error) throw message;
+              yield message;
+            }
           })();
         },
       };
@@ -219,6 +222,50 @@ describe("executeAgent result mapping", () => {
       assertEquals(result.success, true, "a success SDK subtype must be reported as success");
       assertEquals(result.response, "mocked", "the SDK result text must be surfaced");
       assertEquals(result.error, undefined, "a successful run must not report an error");
+    } finally {
+      mock.uninstall();
+    }
+  });
+
+  it("reports the collected text when the conversation ends without a result message", async () => {
+    const mock = createMockSDK([
+      { type: "assistant", message: { content: [{ type: "text", text: "partial" }] } },
+    ]);
+    mock.install();
+    try {
+      const { executeAgent } = await import("./agent.ts");
+      const completed: unknown[] = [];
+      const result = await executeAgent("test task", {
+        cwd: TEST_CWD,
+        onComplete: (value) => {
+          completed.push(value);
+        },
+      });
+
+      assertEquals(result.success, true, "a conversation without a result message must not fail");
+      assertEquals(result.response, "partial", "the collected assistant text must be surfaced");
+      assertEquals(completed, [result], "onComplete must receive the returned result");
+    } finally {
+      mock.uninstall();
+    }
+  });
+
+  it("reports an SDK failure as a failed result", async () => {
+    const mock = createMockSDK([new Error("sdk unavailable")]);
+    mock.install();
+    try {
+      const { executeAgent } = await import("./agent.ts");
+      const completed: unknown[] = [];
+      const result = await executeAgent("test task", {
+        cwd: TEST_CWD,
+        onComplete: (value) => {
+          completed.push(value);
+        },
+      });
+
+      assertEquals(result.success, false, "an SDK failure must be reported as a failure");
+      assertEquals(result.error, "sdk unavailable", "the SDK error message must be surfaced");
+      assertEquals(completed, [result], "onComplete must receive the returned result");
     } finally {
       mock.uninstall();
     }
