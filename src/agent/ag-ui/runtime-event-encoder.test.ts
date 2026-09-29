@@ -77,4 +77,35 @@ describe("agent/ag-ui-runtime-event-encoder", () => {
       model: "openai/gpt-5.4",
     });
   });
+  // #2117: the chat path shares finalizeAgUiEvents with the hosted run stream, so a
+  // schema-bound response also reports its parsed object on chat RunFinished events.
+  it("reports a schema-bound response's parsed object as RunFinished.result", () => {
+    const encoder = createAgUiRuntimeEventEncoder({ timing: { nowMs: null, epochMs: null } });
+    encoder.encode({ type: "text-delta", delta: '{"category":"billing"}' });
+
+    const runFinished = encoder.finalize({
+      text: '{"category":"billing"}',
+      object: { category: "billing" },
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+    }).find((event) => event.event === "RunFinished");
+
+    assertEquals(runFinished?.payload.result, { category: "billing" });
+  });
+
+  it("omits RunFinished.result when the response carries no parsed object", () => {
+    const encoder = createAgUiRuntimeEventEncoder({ timing: { nowMs: null, epochMs: null } });
+    encoder.encode({ type: "text-delta", delta: "plain text" });
+
+    const runFinished = encoder.finalize({
+      text: "plain text",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+    }).find((event) => event.event === "RunFinished");
+
+    assertEquals(runFinished === undefined, false);
+    assertEquals(Object.hasOwn(runFinished?.payload ?? {}, "result"), false);
+  });
 });
