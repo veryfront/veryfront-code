@@ -11,6 +11,11 @@ import {
   registerHostedInferenceCredential,
 } from "#veryfront/agent/hosted/inference-credential.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import {
+  clearEnvFileValueSources,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
+import { resolveVeryfrontPublicApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { clearModelProviders, registerModelProvider, resolveModel } from "#veryfront/provider";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
@@ -136,6 +141,7 @@ describe("run-scoped inference credential", () => {
     deleteEnv("VERYFRONT_API_TOKEN");
     deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
     deleteEnv("VERYFRONT_API_URL");
+    clearEnvFileValueSources();
     deleteEnv("VERYFRONT_PROJECT_SLUG");
   });
 
@@ -1306,6 +1312,37 @@ describe("run-scoped inference credential", () => {
       requests.filter((request) => request.authorization === "Bearer run-scoped-inference-token")
         .map((request) => request.url),
       ["https://trusted-api.example.test/ai/v1/chat/completions"],
+    );
+  });
+
+  it("never takes a run-scoped credential's destination from a project env file", () => {
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
+    setEnv("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
+    markEnvFileValue("VERYFRONT_PUBLIC_API_BASE_URL");
+
+    assertEquals(
+      requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+      "https://trusted-api.example.test",
+    );
+    // Credential-free readers still see the project env-file value.
+    assertEquals(resolveVeryfrontPublicApiBaseUrlFromHostEnv(), "https://evil.example");
+  });
+
+  it("sends internal-agent inference to the trusted host origin when a project env file sets the public API URL", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
+    setEnv("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
+    markEnvFileValue("VERYFRONT_PUBLIC_API_BASE_URL");
+    const requests = await captureInternalAgentInferenceRequests(() => () => {});
+
+    assertEquals(requests.length > 0, true);
+    for (const request of requests) {
+      assertEquals(new URL(request.url).origin, "https://trusted-api.example.test");
+    }
+    assertEquals(
+      requests.some((request) => request.authorization === "Bearer run-scoped-inference-token"),
+      true,
     );
   });
 

@@ -85,7 +85,11 @@ export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
     normalizeVeryfrontApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
 }
 
-/** Resolve the optional public API origin used for bearer-bound inference requests. */
+/**
+ * Resolve the optional public API origin, including values a project env file
+ * set. Never send a credential here: use
+ * {@link resolveVeryfrontInferenceApiBaseUrlFromHostEnv} for that.
+ */
 export function resolveVeryfrontPublicApiBaseUrlFromHostEnv(): string | undefined {
   return normalizeVeryfrontApiBaseUrl(getHostEnv("VERYFRONT_PUBLIC_API_BASE_URL"));
 }
@@ -98,11 +102,14 @@ function resolveHostCredentialApiBaseUrl(): string {
 
 /**
  * Resolve the API origin for run-scoped inference credentials from host
- * configuration alone. The Veryfront Cloud context is never consulted: code in
- * the same process can forge it, and this origin receives the credential.
+ * configuration alone. Neither the Veryfront Cloud context nor a project env
+ * file is consulted: project code can set both, and this origin receives the
+ * credential.
  */
 export function resolveVeryfrontInferenceApiBaseUrlFromHostEnv(): string {
-  return resolveVeryfrontPublicApiBaseUrlFromHostEnv() ?? resolveHostCredentialApiBaseUrl();
+  return normalizeVeryfrontApiBaseUrl(
+    getHostEnvExcludingEnvFile("VERYFRONT_PUBLIC_API_BASE_URL"),
+  ) ?? resolveHostCredentialApiBaseUrl();
 }
 
 /** Built-in default model, used until the served catalog names one. */

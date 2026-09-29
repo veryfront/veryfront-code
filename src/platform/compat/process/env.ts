@@ -73,7 +73,11 @@ const stringToLowerCase = String.prototype.toLowerCase;
 const hostSecrets: Map<string, string> = new MapConstructor();
 const envFileValueKeys: Set<string> = new SetConstructor();
 const hostApiEnvSnapshot: Map<string, string | undefined> = new MapConstructor();
-const HOST_API_ENV_KEYS = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL"] as const;
+const HOST_API_ENV_KEYS = [
+  "VERYFRONT_API_URL",
+  "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_PUBLIC_API_BASE_URL",
+] as const;
 
 /** Capture operator-owned API routing before project modules can mutate the process. */
 export function captureHostApiEnvironment(): void {
