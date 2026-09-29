@@ -72,6 +72,7 @@ export const getModelCallCompletedPayloadSchema = defineRunEventSchema((v) =>
     cacheCreationTokens: v.number().int().nonnegative(),
     cacheReadTokens: v.number().int().nonnegative(),
     totalTokens: v.number().int().nonnegative(),
+    // Preserve the API decimal amount as a string without floating-point rounding.
     costCredits: requiredString(v),
     latencyMs: v.number().int().nonnegative().nullable(),
     usageCaptureStatus: v.enum(["complete", "missing"]),

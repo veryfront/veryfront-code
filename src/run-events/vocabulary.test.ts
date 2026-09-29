@@ -15,7 +15,11 @@ import {
 
 /**
  * API catalog snapshot a691aa0f (2026-09-28), plus the retained UNKNOWN fallback.
- * The digest pins the type and class contract independently of the display catalog.
+ * Recompute from that API revision's RUN_EVENT_TYPES plus UNKNOWN:
+ * SHA-256 of sorted type names joined with "\n", with no trailing newline.
+ * For classes, hash sorted "type=class" lines from the API's getRunEventClass;
+ * UNKNOWN remains fact. All four newly added API types are facts.
+ * The display catalog is not an input to either digest.
  */
 const API_RUN_EVENT_TYPE_COUNT = 57;
 const API_RUN_EVENT_TYPES_SHA256 =

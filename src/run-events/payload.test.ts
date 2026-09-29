@@ -42,6 +42,7 @@ describe("run-events/payload", () => {
     }
     assert(schema.safeParse({ ...payload, futureField: true }).success);
   });
+
   it("declares a schema for every catalogued type except the control plane ones", () => {
     const withSchema = RUN_EVENT_TYPES.filter((eventType) =>
       RUN_EVENT_PAYLOAD_SCHEMAS[eventType] !== undefined
