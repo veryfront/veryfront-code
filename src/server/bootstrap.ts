@@ -1,3 +1,4 @@
+import { createServerBuiltinExtensions } from "./runtime-extensions.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type {
@@ -14,10 +15,7 @@ import {
   createLLMProviderRegistry,
   LLMProviderRegistryName,
 } from "#veryfront/extensions/llm/index.ts";
-import {
-  createBuiltinExtensions,
-  ensureBuiltinSchemaValidator,
-} from "#veryfront/extensions/builtin-extensions.ts";
+import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
@@ -371,7 +369,7 @@ export async function bootstrap(
         config,
         logger: bootstrapLog,
         primeContracts: createBootstrapPrimeContracts(),
-        builtinExtensions: createBuiltinExtensions(),
+        builtinExtensions: createServerBuiltinExtensions(),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
       });
       wireTracingShim();
@@ -425,7 +423,7 @@ export async function bootstrap(
         config,
         logger: bootstrapLog,
         primeContracts: createBootstrapPrimeContracts(),
-        builtinExtensions: createBuiltinExtensions(),
+        builtinExtensions: createServerBuiltinExtensions(),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
       });
       wireTracingShim();
@@ -507,7 +505,7 @@ export async function bootstrap(
           config,
           logger: bootstrapLog,
           primeContracts: createBootstrapPrimeContracts(),
-          builtinExtensions: createBuiltinExtensions(),
+          builtinExtensions: createServerBuiltinExtensions(),
           setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
         }),
       fsDispose,
