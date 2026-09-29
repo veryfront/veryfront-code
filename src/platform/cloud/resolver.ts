@@ -96,6 +96,15 @@ function resolveHostCredentialApiBaseUrl(): string {
     DEFAULT_API_BASE_URL;
 }
 
+/**
+ * Resolve the API origin for run-scoped inference credentials from host
+ * configuration alone. The Veryfront Cloud context is never consulted: code in
+ * the same process can forge it, and this origin receives the credential.
+ */
+export function resolveVeryfrontInferenceApiBaseUrlFromHostEnv(): string {
+  return resolveVeryfrontPublicApiBaseUrlFromHostEnv() ?? resolveHostCredentialApiBaseUrl();
+}
+
 /** Built-in default model, used until the served catalog names one. */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/mistral/mistral-small-2503";
 export const DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL =

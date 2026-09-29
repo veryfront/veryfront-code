@@ -101,6 +101,7 @@ import { type ProviderReplayTurnFailure } from "#veryfront/agent/runtime/runtime
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
+import { resolveVeryfrontInferenceApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { streamWithAgentRuntimeDispatch } from "#veryfront/agent/runtime/index.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
@@ -1359,10 +1360,12 @@ export async function createRuntimeAgentStreamResponse(
         runtime: new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
           ...(inferenceAuthToken
             ? {
-              // This server surface has no AgentServiceConfig object to thread through. The
-              // credential resolver reads VERYFRONT_PUBLIC_API_BASE_URL from trusted host env;
-              // project-scoped env overlays cannot redirect that lookup.
-              resolveModelRuntime: createVeryfrontCloudInferenceModelResolver(inferenceAuthToken),
+              // This server surface has no AgentServiceConfig object to thread through, so the
+              // destination comes from trusted host env. The cloud context is never consulted:
+              // project code in this process can forge it and would receive the credential.
+              resolveModelRuntime: createVeryfrontCloudInferenceModelResolver(inferenceAuthToken, {
+                apiBaseUrl: resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+              }),
             }
             : {}),
         }),

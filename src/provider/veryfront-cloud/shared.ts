@@ -2,7 +2,7 @@ import { CONFIG_INVALID, createError, NOT_SUPPORTED, toError } from "#veryfront/
 import {
   getVeryfrontCloudBootstrap,
   normalizeVeryfrontApiBaseUrl,
-  resolveVeryfrontPublicApiBaseUrlFromHostEnv,
+  resolveVeryfrontInferenceApiBaseUrlFromHostEnv,
 } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -296,9 +296,10 @@ export function requireVeryfrontCloudBootstrap(
   const normalizedInferenceApiBaseUrlOverride = inferenceApiBaseUrlOverride === undefined
     ? undefined
     : normalizeVeryfrontApiBaseUrl(inferenceApiBaseUrlOverride) ?? inferenceApiBaseUrlOverride;
+  // A run-scoped credential never takes its destination from the cloud
+  // context: project code in the same process can forge that context.
   const apiBaseUrl = apiTokenOverride
-    ? normalizedInferenceApiBaseUrlOverride ?? resolveVeryfrontPublicApiBaseUrlFromHostEnv() ??
-      bootstrap.apiBaseUrl
+    ? normalizedInferenceApiBaseUrlOverride ?? resolveVeryfrontInferenceApiBaseUrlFromHostEnv()
     : bootstrap.apiBaseUrl;
 
   if (apiTokenOverride) {
