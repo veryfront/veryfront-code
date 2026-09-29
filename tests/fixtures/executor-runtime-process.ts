@@ -7,6 +7,9 @@ import {
   startExecutorRuntimeEntrypoint,
 } from "#veryfront/agent/hosted/executor-runtime-entrypoint.ts";
 
+import type { ExecutorHttpInstall } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
+import { runProjectHttpTracing } from "#veryfront/observability/tracing/project-http-tracing.ts";
+
 await initializeExecutorRuntimeContracts();
 const mode = process.argv[3] === "http"
   ? "http"
@@ -20,11 +23,25 @@ const executor = await startExecutorRuntimeEntrypoint({
   mode,
   ...(mode === "http"
     ? {
-      async createHttpRuntime({ projectDir }: { projectDir: string }) {
+      async createHttpRuntime({ projectDir, installation }: {
+        projectDir: string;
+        installation: ExecutorHttpInstall;
+      }) {
+        if (installation.owner.scopeKind !== "project") throw new Error("Expected project owner");
+        const identity = {
+          projectId: installation.owner.projectId,
+          environmentId: installation.environmentId,
+        };
         const module = await import(pathToFileURL(join(projectDir, "http.ts")).href);
         const ended = Promise.withResolvers<void>();
         return {
-          handle: module.default,
+          handle: (request: Request) =>
+            runProjectHttpTracing(
+              { status: "disabled" },
+              identity,
+              request,
+              () => Promise.resolve(module.default(request)),
+            ),
           close: () => {
             ended.resolve();
             return Promise.resolve();
