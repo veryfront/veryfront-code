@@ -643,6 +643,31 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
+  it("never sends a stray input from a knowledge ingest call (#2109)", async () => {
+    mockFetch([
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+    ]);
+    const client = createTestClient();
+    // Structural typing lets a wider object through the `Omit<..., "input">` input types.
+    const stray = { projectId, input: ["INV-7731"] };
+
+    await client.knowledge.ingestByUploadIds({
+      ...stray,
+      uploadIds: ["33333333-3333-4333-8333-333333333333"],
+    });
+    await client.knowledge.ingestByUploadPaths({ ...stray, uploadPaths: ["docs/a.md"] });
+    await client.knowledge.ingestByUploadPrefix({ ...stray, uploadPrefix: "docs/" });
+
+    for (const index of [0, 1, 2]) {
+      assertEquals(
+        Object.hasOwn((jsonBody(index) as { request: Record<string, unknown> }).request, "input"),
+        false,
+      );
+    }
+  });
+
   it("creates knowledge ingest task runs from upload paths", async () => {
     mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
 

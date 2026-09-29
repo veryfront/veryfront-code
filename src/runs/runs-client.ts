@@ -408,7 +408,8 @@ export class VeryfrontRunsClient {
   private ingestKnowledgeByUploadIds(
     input: KnowledgeIngestByUploadIdsInput,
   ): Promise<CreateRunResponse> {
-    const { uploadIds, ...options } = input;
+    // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+    const { uploadIds, input: _input, ...options } = input as typeof input & { input?: unknown };
     return this.createTaskRun({
       ...options,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
@@ -420,7 +421,8 @@ export class VeryfrontRunsClient {
   private ingestKnowledgeByUploadPaths(
     input: KnowledgeIngestByUploadPathsInput,
   ): Promise<CreateRunResponse> {
-    const { uploadPaths, ...options } = input;
+    // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+    const { uploadPaths, input: _input, ...options } = input as typeof input & { input?: unknown };
     return this.createTaskRun({
       ...options,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
@@ -432,7 +434,8 @@ export class VeryfrontRunsClient {
   private ingestKnowledgeByUploadPrefix(
     input: KnowledgeIngestByUploadPrefixInput,
   ): Promise<CreateRunResponse> {
-    const { uploadPrefix, ...options } = input;
+    // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+    const { uploadPrefix, input: _input, ...options } = input as typeof input & { input?: unknown };
     return this.createTaskRun({
       ...options,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
