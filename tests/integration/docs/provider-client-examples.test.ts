@@ -172,6 +172,22 @@ describe("provider guide client snippets", () => {
     });
   });
 
+  it("passes an unknown vendor model id through the OpenAI client", async () => {
+    const [openAiSnippet] = await getSnippets();
+    const unknownVendorSnippet = openAiSnippet!.replace(
+      "mistral/mistral-small-2503",
+      "acme-labs/model-not-in-the-built-in-catalog",
+    );
+
+    const [request] = await runSnippetsWithOfficialClients([unknownVendorSnippet]);
+
+    assertEquals(request!.url, "https://api.veryfront.com/ai/v1/chat/completions");
+    assertEquals(
+      (request!.body as { model: string }).model,
+      "acme-labs/model-not-in-the-built-in-catalog",
+    );
+  });
+
   it("requires a Veryfront key instead of falling back to a vendor key", async () => {
     const error = await assertRejects(
       async () =>
@@ -179,6 +195,9 @@ describe("provider guide client snippets", () => {
       Error,
     );
 
+    if (!(error instanceof Error)) {
+      throw new Error("Expected the missing-project-key guard to reject with an Error");
+    }
     assertEquals(error.message.includes("Set VERYFRONT_API_KEY"), true);
   });
 });

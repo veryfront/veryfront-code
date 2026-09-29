@@ -218,6 +218,12 @@ describe("Guide: providers.md", () => {
     return guide.slice(start, end === -1 ? undefined : end);
   }
 
+  it("shows how to export a project key for the client examples", async () => {
+    const section = await gatewayClientSection();
+
+    assertStringIncludes(section, 'export VERYFRONT_API_KEY="<your-project-api-key>"');
+  });
+
   // The guide documents the default routes, so a host that opts back into
   // vendor routes must not change what this suite compares against.
   function neutralBaseUrl(provider: string): Promise<string> {
@@ -245,7 +251,7 @@ describe("Guide: providers.md", () => {
     assertStringIncludes(section, `curl ${base}/messages`);
   });
 
-  it("sends a vendor the SDK does not know over the OpenAI protocol", async () => {
+  it("maps unknown SDK vendors to the OpenAI protocol and documents open provider ids", async () => {
     const section = await gatewayClientSection();
 
     assertEquals(await neutralBaseUrl("acme-labs"), `${api}/ai/v1`);
