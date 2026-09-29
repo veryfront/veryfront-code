@@ -104,7 +104,8 @@ export interface ProjectRunExecuteRequest {
   runtimeTargetEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
   config?: Record<string, unknown>;
-  input?: Record<string, unknown>;
+  /** Business input: any JSON value. Absent when the run was created without input. */
+  input?: unknown;
   parentRunId?: string | null;
   rootRunId?: string | null;
 }
@@ -342,7 +343,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     runtimeTargetEnvironmentId,
     runtimeTargetBranchId,
     config: parseRecord(value.config),
-    input: parseRecord(value.input),
+    input: value.input,
     parentRunId: parseOptionalNullableString(value.parentRunId, "parentRunId"),
     rootRunId: parseOptionalNullableString(value.rootRunId, "rootRunId"),
   };
@@ -543,6 +544,7 @@ async function executeTaskRun(
   const result = await deps.runTask({
     task,
     config: request.config ?? {},
+    input: request.input,
     projectId: request.projectId,
     environmentId: request.runtimeTargetEnvironmentId === undefined
       ? ctx.environmentId
@@ -1407,7 +1409,7 @@ function createEvalAdapterConfig(input: {
   ctx: HandlerContext;
 }): AgentServiceEvalAdapterConfig {
   const config = input.request.config ?? {};
-  const runInput = input.request.input ?? {};
+  const runInput = isRecord(input.request.input) ? input.request.input : {};
   const authToken = getRuntimeApiToken(input.req, input.ctx);
   if (!authToken) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });

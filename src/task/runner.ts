@@ -36,6 +36,9 @@ export interface RunTaskOptions {
   /** Additional config to pass to the task */
   config?: Record<string, unknown>;
 
+  /** Business input for `ctx.input`. When omitted, `ctx.input` falls back to `config`. */
+  input?: unknown;
+
   /** Project ID (for cloud context) */
   projectId?: string;
 
@@ -104,6 +107,7 @@ export async function runTask(
   const {
     task,
     config = {},
+    input,
     projectId,
     environmentId,
     signal,
@@ -125,6 +129,7 @@ export async function runTask(
     const ctx: TaskContext = {
       env,
       config,
+      input: input === undefined ? config : input,
       projectId,
       environmentId,
       ...(signal === undefined ? {} : { signal }),

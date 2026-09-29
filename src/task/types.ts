@@ -15,8 +15,14 @@ import { captureTaskDefinition } from "./definition-snapshot.ts";
 export interface TaskContext {
   /** Environment variables */
   env: Record<string, string>;
-  /** Run config (when executed by the platform) */
+  /** Run config: execution settings (when executed by the platform) */
   config: Record<string, unknown>;
+  /**
+   * Business input submitted with the run (`request.input`). It can be any JSON value.
+   * When the run was created without input, `input` falls back to `config`, so tasks that
+   * read business data from `config` keep working.
+   */
+  input?: unknown;
   /** Project ID (when executed by the platform) */
   projectId?: string;
   /** Environment ID for the runtime target executing this task */

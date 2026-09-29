@@ -93,6 +93,7 @@ The `run` function receives a `TaskContext`:
 interface TaskContext {
   env: Record<string, string>;
   config: Record<string, unknown>;
+  input?: unknown;
   projectId?: string;
   environmentId?: string;
   signal?: AbortSignal;
@@ -100,10 +101,33 @@ interface TaskContext {
 ```
 
 - **`env`**: filtered environment variables (use `envAllowlist` to restrict)
-- **`config`**: run configuration (passed when run in the cloud)
+- **`config`**: run configuration, meaning execution settings (passed when run
+  in the cloud)
+- **`input`**: business input submitted with the run as `request.input`. It can
+  be any JSON value: an object, array, string, number, boolean, or `null`.
+  When the run was created without input, `ctx.input` falls back to
+  `ctx.config`
 - **`projectId`**: project identifier (available in cloud context)
 - **`environmentId`**: runtime-target environment identifier, when selected
 - **`signal`**: optional cooperative cancellation signal
+
+Use `ctx.input` for the data a task works on and `ctx.config` for settings
+that control how it runs. Tasks that read business data from `ctx.config`
+keep working: a run created with only `config` sees the same object in
+`ctx.input`. To move such a task to `ctx.input`, read `ctx.input` and create
+new runs with `input` instead of `config`.
+
+```ts
+import type { TaskContext } from "veryfront/task";
+
+export default {
+  name: "Classify ticket",
+  run(ctx: TaskContext) {
+    const { ticketText } = ctx.input as { ticketText: string };
+    return { category: ticketText.includes("invoice") ? "billing" : "other" };
+  },
+};
+```
 
 Reserved control variables are never copied into `ctx.env`: every variable
 prefixed `TENANT_` and a fixed set of framework `VERYFRONT_` control keys (API
@@ -170,6 +194,15 @@ await runs.createTaskRun({
   target: "task:sync-data",
   config: { batchSize: 100 },
 });
+```
+
+To send business input over REST, add `input` to the request next to `config`:
+
+```bash
+curl -X POST "$VERYFRONT_API_URL/runs" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"task","owner":{"kind":"project","id":"<PROJECT_ID>"},"request":{"target":"task:sync-data","input":{"since":"2026-01-01"},"config":{"batchSize":100}}}'
 ```
 
 See [Runs](./runs.md) for run creation and event monitoring.

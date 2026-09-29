@@ -569,6 +569,96 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     await stopEsbuild();
   });
 
+  // veryfront/veryfront-issue-inbox#2105: business input is any JSON value and reaches the
+  // task separately from config.
+  it("#2091 forwards non-object task input to the runner", async () => {
+    let received: { input?: unknown; config?: unknown } = {};
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: (options) => {
+        received = { input: options.input, config: options.config };
+        return Promise.resolve({ success: true, result: options.input, durationMs: 1 });
+      },
+    }));
+    const body = {
+      runId: "run_task_input",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      config: { dry_run: true },
+      input: ["INV-7731", "Harbor Office"],
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_input/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(received, { input: ["INV-7731", "Harbor Office"], config: { dry_run: true } });
+    assertEquals((await result.response.json()).result, ["INV-7731", "Harbor Office"]);
+  });
+
+  it("#2105 leaves task input undefined when the request carries none", async () => {
+    let received: { hasInput?: boolean } = {};
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: (options) => {
+        received = { hasInput: options.input !== undefined };
+        return Promise.resolve({ success: true, result: null, durationMs: 1 });
+      },
+    }));
+    const body = {
+      runId: "run_task_no_input",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      config: { ticket: "T-legacy" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_no_input/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(received, { hasInput: false });
+  });
+
+  it("#2105 starts a workflow with non-object input unchanged", async () => {
+    let startedInput: unknown = "unset";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: (_workflowId: string, input: unknown, options?: { runId?: string }) => {
+          startedInput = input;
+          return Promise.resolve({ runId: options?.runId ?? "workflow-run" });
+        },
+        getRun: () => Promise.resolve({ status: "completed", output: null }),
+        destroy: () => Promise.resolve(),
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_array",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: "a string",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_array/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(startedInput, "a string");
+  });
+
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     let receivedEnvironmentId: string | undefined;
