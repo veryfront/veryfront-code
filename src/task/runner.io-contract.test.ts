@@ -47,6 +47,17 @@ describe("src/task/runner io contract", () => {
     assertEquals(seen(), { input: { ticket: "T-legacy" }, config: { ticket: "T-legacy" } });
   });
 
+  it("treats null input as no input and falls back to config", async () => {
+    const { task, seen } = captureContext();
+
+    await runTask(
+      { task, config: { ticket: "T-legacy" }, input: null },
+      createInMemoryHostRuntime(),
+    );
+
+    assertEquals(seen(), { input: { ticket: "T-legacy" }, config: { ticket: "T-legacy" } });
+  });
+
   it("falls back to an empty config for ctx.input when neither input nor config was submitted", async () => {
     const { task, seen } = captureContext();
 
@@ -61,7 +72,6 @@ describe("src/task/runner io contract", () => {
       ["a string", "a string"],
       ["a number", 42],
       ["a boolean", false],
-      ["null", null],
     ] as const
   ) {
     it(`passes ${label} input to ctx.input unchanged`, async () => {

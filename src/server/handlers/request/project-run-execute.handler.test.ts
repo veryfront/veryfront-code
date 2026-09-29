@@ -627,7 +627,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(received, { hasInput: false });
   });
 
-  for (const input of ["a string", ["INV-7731"], 42, null]) {
+  for (const input of ["a string", ["INV-7731"], 42, false]) {
     it(`#2105 starts a workflow with non-object input ${JSON.stringify(input)} unchanged`, async () => {
       let startedInput: unknown = "unset";
       const handler = new ProjectRunExecuteHandler(createDeps({
@@ -660,6 +660,37 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(startedInput, input);
     });
   }
+
+  it("#2105 starts a workflow with {} when its input is null", async () => {
+    let startedInput: unknown = "unset";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: (_workflowId: string, received: unknown, options?: { runId?: string }) => {
+          startedInput = received;
+          return Promise.resolve({ runId: options?.runId ?? "workflow-run" });
+        },
+        getRun: () => Promise.resolve({ status: "completed", output: null }),
+        destroy: () => Promise.resolve(),
+      }),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_null/execute",
+      {
+        runId: "run_workflow_null",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+        input: null,
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(startedInput, {});
+  });
 
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;

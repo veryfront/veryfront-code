@@ -625,8 +625,8 @@ async function executeWorkflowRun(
   );
   try {
     client.register(workflow.definition);
-    const input = request.input === undefined ? {} : request.input;
-    const handle = await client.start(workflow.id, input, { runId: request.runId });
+    // A null input counts as no input, the same as on the API run record.
+    const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
     const run = await waitForWorkflowResult(client, handle.runId, deps);
     await handle.settled?.();
     const durationMs = Math.max(0, deps.now() - startedAt);
