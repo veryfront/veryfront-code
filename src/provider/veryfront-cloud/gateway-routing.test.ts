@@ -7,7 +7,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { seedServedCatalogForTests } from "./catalog-client.test-helpers.ts";
+import {
+  seedServedCatalogForTests,
+  SERVED_MODEL_ROWS,
+  UNSERVED_MODEL_ROWS,
+} from "./catalog-client.test-helpers.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import { resolveGenAiProviderName } from "#veryfront/agent/hosted/trace-attributes.ts";
 import { getProviderToolProfile } from "#veryfront/agent/runtime/provider-tool-compat.ts";
@@ -18,7 +22,6 @@ import {
   resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
-  VERYFRONT_CLOUD_CHAT_MODELS,
 } from "./model-catalog.ts";
 import {
   getVeryfrontCloudGatewayBaseUrl,
@@ -52,127 +55,130 @@ describe("provider/veryfront-cloud gateway routing", () => {
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
   it("keeps the routing facts of every catalog model", () => {
-    assertEquals(VERYFRONT_CLOUD_CHAT_MODELS.map((model) => routingRow(model.modelId)), [
-      {
-        model: "anthropic/claude-opus-4-8",
-        provider: "anthropic",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "anthropic",
-        toolProfile: "anthropic",
-      },
-      {
-        model: "anthropic/claude-opus-4-6",
-        provider: "anthropic",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "anthropic",
-        toolProfile: "anthropic",
-      },
-      {
-        model: "anthropic/claude-sonnet-4-6",
-        provider: "anthropic",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "anthropic",
-        toolProfile: "anthropic",
-      },
-      {
-        model: "anthropic/claude-haiku-4-5-20251001",
-        provider: "anthropic",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "anthropic",
-        toolProfile: "anthropic",
-      },
-      {
-        model: "openai/gpt-5.5",
-        provider: "openai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "openai",
-        toolProfile: "openai",
-      },
-      {
-        model: "openai/gpt-6-sol",
-        provider: "openai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "openai",
-        toolProfile: "openai",
-      },
-      {
-        model: "openai/gpt-6-luna",
-        provider: "openai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "openai",
-        toolProfile: "openai",
-      },
-      {
-        model: "openai/gpt-5.4-mini",
-        provider: "openai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "openai",
-        toolProfile: "openai",
-      },
-      {
-        model: "openai/gpt-5.4",
-        provider: "openai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "openai",
-        toolProfile: "openai",
-      },
-      {
-        model: "openai/gpt-5.2",
-        provider: "openai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "openai",
-        toolProfile: "openai",
-      },
-      {
-        model: "google-ai-studio/gemini-3.5-flash",
-        provider: "google",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
-        genAiSystem: "gcp.gen_ai",
-        toolProfile: "google",
-      },
-      {
-        model: "google-ai-studio/gemini-2.5-pro",
-        provider: "google",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
-        genAiSystem: "gcp.gen_ai",
-        toolProfile: "google",
-      },
-      {
-        model: "google-ai-studio/gemini-2.5-flash",
-        provider: "google",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
-        genAiSystem: "gcp.gen_ai",
-        toolProfile: "google",
-      },
-      {
-        model: "mistral/mistral-small-2503",
-        provider: "mistral",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: null,
-        toolProfile: "unknown",
-      },
-      {
-        model: "moonshotai/kimi-k2.6",
-        provider: "moonshotai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "moonshotai",
-        toolProfile: "moonshot",
-      },
-      {
-        model: "moonshotai/kimi-k2.5",
-        provider: "moonshotai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "moonshotai",
-        toolProfile: "moonshot",
-      },
-      {
-        model: "openai/gpt-5-nano",
-        provider: "openai",
-        gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
-        genAiSystem: "openai",
-        toolProfile: "openai",
-      },
-    ]);
+    assertEquals(
+      [...SERVED_MODEL_ROWS, ...UNSERVED_MODEL_ROWS].map((model) => routingRow(model.modelId)),
+      [
+        {
+          model: "anthropic/claude-opus-4-8",
+          provider: "anthropic",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "anthropic",
+          toolProfile: "anthropic",
+        },
+        {
+          model: "anthropic/claude-opus-4-6",
+          provider: "anthropic",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "anthropic",
+          toolProfile: "anthropic",
+        },
+        {
+          model: "anthropic/claude-sonnet-4-6",
+          provider: "anthropic",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "anthropic",
+          toolProfile: "anthropic",
+        },
+        {
+          model: "anthropic/claude-haiku-4-5-20251001",
+          provider: "anthropic",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "anthropic",
+          toolProfile: "anthropic",
+        },
+        {
+          model: "openai/gpt-5.5",
+          provider: "openai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "openai",
+          toolProfile: "openai",
+        },
+        {
+          model: "openai/gpt-6-sol",
+          provider: "openai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "openai",
+          toolProfile: "openai",
+        },
+        {
+          model: "openai/gpt-6-luna",
+          provider: "openai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "openai",
+          toolProfile: "openai",
+        },
+        {
+          model: "openai/gpt-5.4-mini",
+          provider: "openai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "openai",
+          toolProfile: "openai",
+        },
+        {
+          model: "openai/gpt-5.4",
+          provider: "openai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "openai",
+          toolProfile: "openai",
+        },
+        {
+          model: "openai/gpt-5-nano",
+          provider: "openai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "openai",
+          toolProfile: "openai",
+        },
+        {
+          model: "google-ai-studio/gemini-3.5-flash",
+          provider: "google",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
+          genAiSystem: "gcp.gen_ai",
+          toolProfile: "google",
+        },
+        {
+          model: "google-ai-studio/gemini-2.5-pro",
+          provider: "google",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
+          genAiSystem: "gcp.gen_ai",
+          toolProfile: "google",
+        },
+        {
+          model: "google-ai-studio/gemini-2.5-flash",
+          provider: "google",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1beta",
+          genAiSystem: "gcp.gen_ai",
+          toolProfile: "google",
+        },
+        {
+          model: "mistral/mistral-small-2503",
+          provider: "mistral",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: null,
+          toolProfile: "unknown",
+        },
+        {
+          model: "moonshotai/kimi-k2.6",
+          provider: "moonshotai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "moonshotai",
+          toolProfile: "moonshot",
+        },
+        {
+          model: "moonshotai/kimi-k2.5",
+          provider: "moonshotai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "moonshotai",
+          toolProfile: "moonshot",
+        },
+        {
+          model: "openai/gpt-5.2",
+          provider: "openai",
+          gatewayBaseUrl: "https://api.veryfront.com/ai/v1",
+          genAiSystem: "openai",
+          toolProfile: "openai",
+        },
+      ],
+    );
   });
 
   it("keeps the gateway base URL of every accepted provider alias", () => {

@@ -7,6 +7,7 @@ import {
   __resetVeryfrontCloudCatalogForTests,
   __setVeryfrontCloudCatalogClockForTests,
   __setVeryfrontCloudCatalogForScopeForTests,
+  __setVeryfrontCloudCatalogForTests,
   VERYFRONT_CLOUD_CATALOG_RETRY_MS,
   VERYFRONT_CLOUD_CATALOG_TTL_MS,
 } from "./catalog-client.ts";
@@ -1343,6 +1344,20 @@ describe("provider/veryfront-cloud", () => {
 
   it("sends a hosted qwen/qwen3.8-27b run to the vendor-neutral gateway route (#1913)", async () => {
     setCloudBootstrap();
+    // The served catalog is the authority on which providers the platform serves.
+    const served = servedCatalogPayload();
+    __setVeryfrontCloudCatalogForTests({
+      ...served,
+      models: [...(served.models as unknown[]), {
+        id: "qwen3.8-27b",
+        modelId: "qwen/qwen3.8-27b",
+        provider: "qwen",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
     const encoder = new TextEncoder();
     let captured: { url: string; model: unknown } | undefined;
 
@@ -2048,21 +2063,19 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     ]);
   });
 
-  it("pins GPT-6 Sol to Responses from the shipped table when the catalog cannot load", async () => {
+  it("uses protocol defaults for GPT-6 Sol when the catalog cannot load", async () => {
     setCloudBootstrap();
-    // Mirrors a run-scoped inference credential: the catalog endpoint refuses
-    // the token, so resolution never sees a served catalog and must rely on
-    // the shipped table alone.
+    // Mirrors a credential the catalog endpoint refuses: resolution never sees
+    // a served catalog, so no model fact pins the transport. The plan stays
+    // adaptive and a function-tool call goes to Chat Completions.
     const requests = installGateway(() =>
       Response.json({ error: "unauthorized" }, { status: 401 })
     );
 
     const model = resolveModel("veryfront-cloud/openai/gpt-6-sol") as ModelRuntime;
-    // The shipped table lists GPT-6 Sol as a reasoning model, so its plan is
-    // pinned to Responses before any catalog request settles.
     assertEquals(readVeryfrontCloudModelFacts(model)?.transportPlan, {
-      transport: "responses",
-      pinned: true,
+      transport: "chat-completions",
+      pinned: false,
     });
 
     try {
@@ -2076,16 +2089,12 @@ describe("provider/veryfront-cloud served catalog loading", () => {
       } as never);
       await drainStream(result.stream);
     } catch {
-      // expected: the mocked catalog gateway answers every non-catalog
-      // request with a Chat Completions style stream, which the Responses
-      // parser rejects; the assertion below targets the outgoing request.
+      // The assertion below targets the outgoing request, not the parsed stream.
     }
 
-    // A function tool never reaches Chat Completions, which refuses GPT-6
-    // reasoning combined with function tools.
     assertEquals(
       calls(requests).filter((call) => call.startsWith("POST")),
-      ["POST /ai/v1/responses"],
+      ["POST /ai/v1/chat/completions"],
     );
   });
 

@@ -457,6 +457,13 @@ describe("provider/veryfront-cloud/catalog-client", () => {
         warnings.map((warning) => (warning.fields as { projectSlug?: string }).projectSlug),
         ["catalog-test", "catalog-other"],
       );
+      // Nothing loaded before, so the warning names the protocol-default fallback.
+      for (const warning of warnings) {
+        assertEquals(
+          warning.message,
+          "Veryfront Cloud model catalog is unavailable; models use protocol defaults until it loads",
+        );
+      }
       assertEquals(JSON.stringify(warnings).includes("vf_catalog_"), false);
     });
   });

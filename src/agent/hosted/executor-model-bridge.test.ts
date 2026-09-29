@@ -1134,11 +1134,8 @@ describe("executor managed model bridge", () => {
         ["web_fetch"],
       );
       assertEquals(resolveVeryfrontCloudProviderToolNames(servedModelId), []);
-      // Outside the key the executor still reads the facts shipped with the package.
-      assertEquals(resolveVeryfrontCloudModelThinking(servedModelId), {
-        enabled: true,
-        budgetTokens: 2048,
-      });
+      // Outside the key no catalog has loaded, so the executor knows no thinking default.
+      assertEquals(resolveVeryfrontCloudModelThinking(servedModelId), undefined);
       assert(calls.includes(`prepare:${servedModelId}`));
     } finally {
       await channels.close();
