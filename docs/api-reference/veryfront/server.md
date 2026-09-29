@@ -113,3 +113,32 @@ await server.fetch(new Request("https://example.com/health"));
 | Name                                  | Description                                                                                 | Source                                                                                                       |
 | ------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `defaultDistributedCacheInitializers` | Default wiring of distributed-cache initializers, assembled at the server composition root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/distributed-cache-initializers.ts) |
+
+## Deep imports
+
+These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
+
+### `veryfront/server/http-broker`
+
+```ts
+import {
+  connectExecutorTransport,
+  createHostedExecutorAllocatorClient,
+  createHostedHttpBroker,
+} from "veryfront/server/http-broker";
+```
+
+#### Functions
+
+| Name                                  | Description                                                                                                                                                                                                                                                                                                                                                      | Source                                                                                                         |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `connectExecutorTransport`            | Node-only TLS 1.3 PSK. No certificate fallback, session reuse, or reconnect.                                                                                                                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-node-transport.ts)    |
+| `createHostedExecutorAllocatorClient` | Trusted broker client for the operator's dedicated TLS endpoint. Each call reads the rotated Pod-bound token. No redirects, automatic POST retries, arbitrary headers, application credentials, or ambient gateway fallback. The returned promise retains raw token-read and socket ownership; the session supplies prompt cancellation notification separately. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-allocator-client.ts)  |
+| `createHostedHttpBroker`              | One HTTP invocation per existing allocator session, with no shared-host fallback.                                                                                                                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-broker.ts) |
+
+#### Types
+
+| Name                              | Description                                                                             | Source                                                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `ConnectExecutorTransportOptions` |                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-node-transport.ts)    |
+| `HostedHttpInput`                 | Trusted ingress authority; none of these values are inferred from HTTP headers or URLs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-broker.ts) |
