@@ -272,7 +272,7 @@ export function createExecutorModelBroker(options: {
         let complete = false;
         try {
           if (context.signal.aborted) {
-            cancel();
+            void cancel();
             context.signal.throwIfAborted();
           }
           yield executorModelJson(
