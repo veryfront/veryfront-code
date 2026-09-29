@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { PERMISSION_DENIED } from "#veryfront/errors";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  seedServedCatalogForTests,
+  SERVED_MODEL_ROWS,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
   __setVeryfrontCloudCatalogForTests,
@@ -52,6 +55,12 @@ const binding = {
 };
 const source = { type: "release", releaseId: "synthetic-release" } as const;
 const modelId = "veryfront-cloud/openai/gpt-5.4";
+function seedHostedProviderTools(supportedProviderTools: readonly string[] = ["web_search"]) {
+  __setVeryfrontCloudCatalogForTests({
+    models: SERVED_MODEL_ROWS.map((model) => ({ ...model, supportedProviderTools })),
+  });
+}
+
 const model: ModelRuntime = {
   modelId: "gpt-5.4",
   provider: "openai",
@@ -1638,6 +1647,18 @@ Synthetic source instructions.`,
     const selection of [
       { name: "omitted binding", expected: [] },
       { name: "explicit binding", configured: ["web_search"], expected: ["web_search"] },
+      {
+        name: "catalog denies a granted binding",
+        configured: ["web_search"],
+        catalogTools: [],
+        expected: [],
+      },
+      {
+        name: "missing catalog cannot grant a binding",
+        configured: ["web_search"],
+        catalogUnavailable: true,
+        expected: [],
+      },
       { name: "empty binding", configured: [], expected: [] },
       { name: "request cannot add a binding", requested: ["web_search"], expected: [] },
       { name: "binding requires a grant", configured: ["web_search"], granted: [], expected: [] },
@@ -1650,6 +1671,8 @@ Synthetic source instructions.`,
     ]
   ) {
     it(`selects provider tools within authored bindings: ${selection.name}`, async () => {
+      seedHostedProviderTools(selection.catalogTools);
+      if (selection.catalogUnavailable) __setVeryfrontCloudCatalogForTests(undefined);
       let visible: string[] = [];
       const f = fixture({
         config: { providerTools: selection.configured },
@@ -2177,6 +2200,7 @@ Synthetic source instructions.`,
 
   for (const extraToolCount of [0, 128]) {
     it(`refreshes steering with the model-visible provider-compatible tools (${extraToolCount} extra tools)`, async () => {
+      seedHostedProviderTools();
       const remoteNames = [
         "update_file",
         ...Array.from({ length: extraToolCount }, (_, index) => `zz_tool_${index}`),

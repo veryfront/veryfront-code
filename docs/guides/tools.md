@@ -206,6 +206,18 @@ export default agent({
 });
 ```
 
+For `veryfront-cloud/*` models, the served catalogue for your project and
+credential determines which provider tools are available. Configuring a tool
+cannot grant it when the selected deployment omits it. Before the catalogue
+loads, or when its tool declaration is missing, no provider tools are offered.
+The gateway remains responsible for enforcing policy before dispatch. Read its
+served web-tool data-flow facts for processing recipients and boundary coverage;
+inference residency alone does not approve web search or fetch.
+
+Direct provider models, such as `anthropic/*` and `openai/*`, use the runtime's
+implemented provider tools and your own endpoint configuration. Running offline
+or self-hosting does not bypass catalogue checks for a `veryfront-cloud/*` model.
+
 Use `mcpServers` for remote MCP tools. Put remote visibility policy on the MCP
 server. When `tools` is an explicit object, also list the remote tool name in
 `tools` so the model can use it.

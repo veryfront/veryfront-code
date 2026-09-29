@@ -1,3 +1,4 @@
+import { resolveVeryfrontCloudProviderToolNames } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { HostToolSet, ToolDefinition } from "#veryfront/tool";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
@@ -79,14 +80,31 @@ export function resolveProviderNativeToolProvider(
 export function getProviderNativeToolNames(
   options?: ProviderNativeToolInventoryOptions,
 ): string[] {
+  let implemented: readonly string[];
   switch (resolveProviderNativeToolProvider(options)) {
     case "anthropic":
-      return copyNames(ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES);
+      implemented = ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES;
+      break;
     case "openai":
-      return copyNames(OPENAI_PROVIDER_NATIVE_TOOL_NAMES);
+      implemented = OPENAI_PROVIDER_NATIVE_TOOL_NAMES;
+      break;
     default:
       return [];
   }
+  if (!options?.model?.startsWith("veryfront-cloud/")) return copyNames(implemented);
+
+  const permitted = IntrinsicObjectCreate(null) as Record<string, true>;
+  const served = resolveVeryfrontCloudProviderToolNames(options.model);
+  for (let index = 0; index < served.length; index++) {
+    const name = served[index];
+    if (name !== undefined) permitted[name] = true;
+  }
+  const selected: string[] = [];
+  for (let index = 0; index < implemented.length; index++) {
+    const name = implemented[index];
+    if (name !== undefined && permitted[name] === true) selected[selected.length] = name;
+  }
+  return selected;
 }
 
 /** Create schema-free search entries for configured provider-native tools. */

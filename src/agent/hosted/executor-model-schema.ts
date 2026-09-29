@@ -255,6 +255,7 @@ export const getExecutorModelCatalogSchema = defineSchema((v) => {
         aliases: v.array(name()).max(64),
         surface: name().optional(),
         operations: v.array(name()).max(64).optional(),
+        supportedProviderTools: v.array(name()).max(64).optional(),
         thinking: v.boolean().optional(),
         reasoningMode: name().optional(),
         transport: name().optional(),
