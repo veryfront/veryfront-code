@@ -127,6 +127,7 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
         usageCaptureStatus: v.enum(["complete", "partial", "missing"] as const).optional(),
         finishReason: v.string().optional(),
       }),
+      result: v.unknown().optional(),
     }),
     // The seven native run event wire names replace the AG-UI `Custom`
     // wrapper (see native-run-events.ts). They carry API-catalog-required

@@ -357,6 +357,20 @@ describe("chat/ag-ui", () => {
     );
   });
 
+  // veryfront/veryfront-issue-inbox#2117: a schema-bound agent's parsed object.
+  it("keeps a RunFinished structured result on the decoded wire event", () => {
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    const result = decodeAgUiSseChunk(
+      state,
+      'id: 1\nevent: RunFinished\ndata: {"metadata":{},"result":{"category":"billing"}}\n\n',
+    );
+
+    assertEquals(result.events[0]?.wireEvent, {
+      eventName: "RunFinished",
+      payload: { metadata: {}, result: { category: "billing" } },
+    });
+  });
+
   it("throws on malformed trailing handled payloads when flushed in strict mode", () => {
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
     const initial = decodeAgUiSseChunk(
