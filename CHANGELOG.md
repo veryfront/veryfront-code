@@ -6,6 +6,44 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: the bundled Veryfront Cloud model list is removed
+
+Veryfront Cloud model facts now come only from the served model catalog
+(`GET <api>/ai/models`). This package no longer bundles a model list to fall
+back on.
+
+- `VERYFRONT_CLOUD_CHAT_MODELS`, `findVeryfrontCloudModel`,
+  `findVeryfrontCloudModelByModelId`, `groupVeryfrontCloudModelsByProvider` and
+  the `VeryfrontCloudChatModel` type are removed from `veryfront/provider`. To
+  list models, call `GET <api>/ai/models` with your Veryfront Cloud
+  credentials. To resolve a short alias, call
+  `loadVeryfrontCloudModelCatalog()` and then `resolveVeryfrontCloudModelId()`.
+- Until the catalog has loaded for the credentials in use, and whenever it
+  cannot be loaded, models use protocol defaults and no model is refused:
+  - A short alias such as `opus`, `sonnet` or `haiku` does not resolve and
+    throws `Unknown model alias`. A provider-qualified ID such as
+    `anthropic/claude-sonnet-4-6` works.
+  - No model has a default thinking budget or a pinned transport. `openai`,
+    `anthropic` and `google` speak their own protocol natively, and every other
+    provider uses Chat Completions on the OpenAI protocol.
+  - An agent model `<provider>/<model>` with any well-formed provider routes
+    through Veryfront Cloud when only Veryfront Cloud credentials are present,
+    unless your application registered its own runtime for that provider with
+    `registerModelProvider()`.
+  - A Mistral model is refused only when a catalog loaded within the last five
+    minutes does not list it.
+- Adaptive Anthropic thinking applies only to a model the catalog serves with
+  adaptive reasoning. `anthropic/claude-opus-4-7`, which the catalog no longer
+  lists, already received budget-based thinking options once a catalog had
+  loaded, and now receives them before one loads too. Use
+  `anthropic/claude-opus-4-8` for adaptive thinking.
+- `deno task generate:model-catalog` and `generate:model-catalog:check` are
+  removed.
+
+Ensure `loadVeryfrontCloudModelCatalog()` succeeds with the credentials your
+deployment uses before you upgrade if you rely on short aliases, thinking
+defaults or per-model transports.
+
 ### Breaking: `VERYFRONT_CLOUD_GATEWAY_ROUTES` is removed
 
 `veryfront-cloud/*` models always call the vendor-neutral endpoints:

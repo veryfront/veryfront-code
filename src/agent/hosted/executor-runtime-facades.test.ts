@@ -396,7 +396,7 @@ it("loads served catalog facts only on request and forgets them on cleanup", asy
   }
 });
 
-it("rejects the catalog load when the broker does not serve it, so preparation uses shipped facts", async () => {
+it("rejects the catalog load when the broker does not serve it, so preparation uses protocol defaults", async () => {
   const pair = channels([]);
   const input = installation();
   input.grant.hostToolFacadeIds = [];

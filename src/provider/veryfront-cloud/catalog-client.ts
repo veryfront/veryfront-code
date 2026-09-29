@@ -2,10 +2,10 @@
  * Client for the model catalog Veryfront Cloud serves at `<api>/ai/models`.
  *
  * Model facts (wire protocol, operations, thinking defaults and transport
- * capabilities) come from the served catalog, not from a table shipped in this
- * package. Loading is asynchronous and happens on the first async step of a
- * model call; every synchronous reader uses {@link peekVeryfrontCloudCatalog}
- * and degrades when nothing is loaded yet.
+ * capabilities) come only from the served catalog. Loading is asynchronous
+ * and happens on the first async step of a model call; every synchronous
+ * reader uses {@link peekVeryfrontCloudCatalog} and degrades to protocol
+ * defaults when nothing is loaded yet.
  *
  * - Entries are cached per API base URL, project and credential, because the
  *   served list is filtered by the project the credential or header selects.
@@ -528,7 +528,7 @@ export function rememberReceivedVeryfrontCloudCatalog(
   // cache there is no load in flight to protect: each executor session keeps
   // at most one received catalog and forgets it on cleanup, and a broker pool
   // admits at most as many sessions as this cap. An evicted catalog only makes
-  // later reads fall back to the shipped facts.
+  // later reads use protocol defaults.
   for (const oldest of received.keys()) {
     if (received.size <= VERYFRONT_CLOUD_CATALOG_MAX_ENTRIES) break;
     received.delete(oldest);

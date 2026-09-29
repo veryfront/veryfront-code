@@ -481,7 +481,7 @@ describe("createRunScopedVeryfrontCloudContextSummaryGenerator", () => {
 
     try {
       assertEquals(await generator(summaryInput), { text: "served summary" });
-      // The shipped facts do not know the alias: a probe no catalog check
+      // Nothing loaded knows the alias: a probe no catalog check
       // refuses loads the catalog, then the served model is resolved.
       assertEquals(resolvedModelIds, [
         "veryfront-cloud/catalog-probe/catalog-probe",

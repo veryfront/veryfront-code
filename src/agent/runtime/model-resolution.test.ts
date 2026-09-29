@@ -8,13 +8,18 @@ import {
 import { VeryfrontError } from "#veryfront/errors";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
-import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import {
-  resolveVeryfrontCloudModelId,
-  VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
-  VERYFRONT_CLOUD_CHAT_MODELS,
-} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+  seedServedCatalogForTests,
+  SERVED_MODEL_ROWS,
+  servedCatalogPayload,
+  UNSERVED_MODEL_ROWS,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForTests,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import { resolveVeryfrontCloudModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { registerModelProvider } from "#veryfront/provider/model-registry.ts";
 import {
   AUTO_AGENT_MODEL,
   DEFAULT_AGENT_MODEL,
@@ -23,6 +28,24 @@ import {
   resolveModelProviderOptionKey,
   resolveRuntimeModel,
 } from "./model-resolution.ts";
+
+/** Every model the served catalog fixtures list. */
+const CATALOG_MODELS = [...SERVED_MODEL_ROWS, ...UNSERVED_MODEL_ROWS];
+
+/** Seed the served fixtures plus one row per extra served model ID. */
+function seedServedCatalogWith(...modelIds: string[]): void {
+  const served = servedCatalogPayload();
+  __setVeryfrontCloudCatalogForTests({
+    ...served,
+    models: [
+      ...(served.models as unknown[]),
+      ...modelIds.map((modelId) => {
+        const [provider = "", id = ""] = modelId.split("/");
+        return { id, modelId, provider, surface: "openai", aliases: [], capabilities: {} };
+      }),
+    ],
+  });
+}
 
 const MODEL_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
@@ -301,7 +324,7 @@ describe("agent/runtime/model-resolution", () => {
   });
 
   it("aliases every Veryfront Cloud catalog model id to its provider model", () => {
-    for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
+    for (const model of CATALOG_MODELS) {
       assertEquals(resolveConfiguredAgentModel(model.id), model.modelId);
     }
   });
@@ -310,7 +333,7 @@ describe("agent/runtime/model-resolution", () => {
     clearModelEnv();
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
+    for (const model of CATALOG_MODELS) {
       const hosted = `veryfront-cloud/${model.modelId}`;
       assertEquals(resolveRuntimeModel(model.id), hosted);
       assertEquals(resolveRuntimeModel(model.modelId), hosted);
@@ -403,7 +426,10 @@ describe("agent/runtime/model-resolution", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
 
-    for (const provider of VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES) {
+    const providers = new Set(
+      CATALOG_MODELS.flatMap((model) => [model.provider, model.modelId.split("/")[0] ?? ""]),
+    );
+    for (const provider of providers) {
       // Mistral model IDs are gated by the catalog, so it needs a listed one.
       const modelId = provider === "mistral" ? "mistral-small-2503" : "model-x";
       assertEquals(
@@ -415,9 +441,9 @@ describe("agent/runtime/model-resolution", () => {
   });
 
   it("routes every vendor the gateway catalog serves through veryfront-cloud (#1913)", () => {
-    // The vendors GET /ai/models lists. Qwen is served before the catalog
-    // snapshot in this package names it; a vendor missing here fails hosted
+    // The vendors GET /ai/models lists. A vendor missing here fails hosted
     // runs with `Model provider "<vendor>" not registered`.
+    seedServedCatalogWith("deepseek/deepseek-v4-flash", "qwen/qwen3.8-27b");
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
 
@@ -536,6 +562,72 @@ describe("agent/runtime/model-resolution", () => {
       () => resolveRuntimeModel("veryfront-cloud/mistral/mistral-medium-3-5"),
       Error,
       'Unsupported Mistral model "veryfront-cloud/mistral/mistral-medium-3-5"',
+    );
+  });
+});
+
+describe("agent/runtime/model-resolution hosted candidates", () => {
+  beforeEach(() => {
+    __resetVeryfrontCloudCatalogForTests();
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+  });
+  afterEach(__resetVeryfrontCloudCatalogForTests);
+  afterEach(() => {
+    clearModelEnv();
+  });
+
+  it("routes any well-formed provider through veryfront-cloud before a catalog loads", () => {
+    // No list to check against, so no provider is refused: a provider the
+    // platform added (the zai regression) reaches the gateway.
+    for (
+      const model of [
+        "zai/glm-5.2",
+        "qwen/qwen3.8-27b",
+        "deepseek/deepseek-v4-flash",
+        "moonshotai/kimi-k2.6",
+        "acme-labs/mystery-1",
+        "mistral/mistral-small-2603",
+        "anthropic/claude-sonnet-4-6",
+      ]
+    ) {
+      assertEquals(resolveRuntimeModel(model), `veryfront-cloud/${model}`, model);
+    }
+    assertEquals(
+      resolveRuntimeModel("veryfront-cloud/mistral/mistral-small-2603"),
+      "veryfront-cloud/mistral/mistral-small-2603",
+    );
+  });
+
+  it("keeps a provider the application registered on its own runtime before a catalog loads", () => {
+    const unregister = registerModelProvider("tenant", () => {
+      throw new Error("not resolved in this test");
+    });
+    try {
+      assertEquals(resolveRuntimeModel("tenant/model-a"), "tenant/model-a");
+    } finally {
+      unregister();
+    }
+  });
+
+  it("keeps an ill-formed provider segment off the gateway before a catalog loads", () => {
+    assertEquals(resolveRuntimeModel("Acme Labs/mystery-1"), "Acme Labs/mystery-1");
+    assertEquals(resolveRuntimeModel("constructor/mystery-1"), "constructor/mystery-1");
+  });
+
+  it("routes only providers a fresh served catalog serves or lists", () => {
+    seedServedCatalogWith("zai/glm-5.2");
+    assertEquals(resolveRuntimeModel("zai/glm-5.2"), "veryfront-cloud/zai/glm-5.2");
+    assertEquals(resolveRuntimeModel("zai/glm-9"), "veryfront-cloud/zai/glm-9");
+    assertEquals(
+      resolveRuntimeModel("moonshotai/kimi-k2.6"),
+      "veryfront-cloud/moonshotai/kimi-k2.6",
+    );
+    assertEquals(resolveRuntimeModel("acme-labs/mystery-1"), "acme-labs/mystery-1");
+    // Providers this package can call directly stay candidates whatever the catalog says.
+    assertEquals(
+      resolveRuntimeModel("openai/gpt-unlisted"),
+      "veryfront-cloud/openai/gpt-unlisted",
     );
   });
 });

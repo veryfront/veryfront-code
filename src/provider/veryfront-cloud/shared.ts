@@ -267,8 +267,9 @@ export function parseVeryfrontCloudModelId(
 }
 
 /**
- * Refuse a Mistral model the catalog in effect does not list, so a caller gets
- * a clear error rather than a gateway-side failure.
+ * Refuse a Mistral model a fresh served catalog does not list, so a caller gets
+ * a clear error rather than a gateway-side failure. Without one, nothing is
+ * refused and the gateway answers for the model.
  */
 export function assertVeryfrontCloudModelListed(provider: string, upstreamModelId: string): void {
   if (
@@ -330,8 +331,9 @@ export function requireVeryfrontCloudBootstrap(
  * afterward (thinking defaults, short aliases such as `opus`, the default
  * model) come from it. Resolves to whether a catalog is available. Never
  * throws. When a refresh fails, the last catalog loaded for these credentials
- * stays in use; only when none has loaded (no credentials, or no load has
- * succeeded yet) do the facts shipped with this package apply.
+ * stays in use. While none has loaded (no credentials, or no load has
+ * succeeded yet), reads use protocol defaults only: short aliases do not
+ * resolve and no model has thinking defaults.
  */
 export async function loadVeryfrontCloudModelCatalog(
   options: { signal?: AbortSignal; maxWaitMs?: number } = {},

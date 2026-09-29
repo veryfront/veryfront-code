@@ -9,10 +9,10 @@ import {
   createRetiredVeryfrontCloudModelError,
   isListedInServedVeryfrontCloudCatalog,
   isRetiredVeryfrontCloudModelId,
+  isServedVeryfrontCloudProvider,
   isSupportedMistralModelId,
-  isVeryfrontCloudCatalogLoaded,
   resolveServedVeryfrontCloudAlias,
-  VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
+  resolveVeryfrontCloudProviderId,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
@@ -22,20 +22,22 @@ import {
 import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getModelRuntimeProvider } from "#veryfront/provider/runtime-inspection.ts";
+import { hasModelProvider } from "#veryfront/provider/model-registry.ts";
 
 export const AUTO_AGENT_MODEL = "auto";
 export const DEFAULT_AGENT_MODEL = "openai/gpt-5-nano";
 
 /**
- * Providers the gateway serves that the catalog snapshot shipped in this
- * package does not list yet. Each routes on the default surface, which the
- * gateway serves at the vendor-neutral `/ai/v1`. Drop an entry once
- * `deno task generate:model-catalog` adds its provider to the snapshot.
+ * Providers this package can also call directly with the vendor's own key. A
+ * model of one of these is always a Veryfront Cloud candidate, whatever the
+ * served catalog says, because the direct credential decides the route.
  */
-const GATEWAY_PROVIDERS_AHEAD_OF_CATALOG = ["qwen"] as const;
-const HOSTED_PROVIDER_NAMES: ReadonlySet<string> = new Set([
-  ...VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
-  ...GATEWAY_PROVIDERS_AHEAD_OF_CATALOG,
+const DIRECT_CAPABLE_PROVIDER_NAMES: ReadonlySet<string> = new Set([
+  "openai",
+  "anthropic",
+  "google",
+  "google-ai-studio",
+  "mistral",
 ]);
 const DIRECT_CREDENTIAL_PROVIDER_ALIASES = new Map<string, string>([
   ["google-ai-studio", "google"],
@@ -160,11 +162,28 @@ function isSupportedHostedMistralModel(modelId: string): boolean {
 }
 
 function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
-  // An explicit Veryfront Cloud id is refused only against a served catalog:
-  // the shipped list cannot know a model the platform added since, and the
-  // model checks its own catalog once that has loaded.
-  return modelId.startsWith("veryfront-cloud/mistral/") && isVeryfrontCloudCatalogLoaded() &&
+  // An explicit Veryfront Cloud id is refused only against a fresh served
+  // catalog; without one the gateway answers for the model.
+  return modelId.startsWith("veryfront-cloud/mistral/") &&
     canVeryfrontCloudCatalogRefuse() && !isSupportedMistralModelId(modelId);
+}
+
+/**
+ * Whether `<provider>/<model>` may route through Veryfront Cloud.
+ *
+ * A fresh served catalog is the authority: it serves the provider, or lists
+ * the model. Before one has loaded, or while it is stale, there is no list to
+ * check, so any well-formed provider segment is a candidate unless the
+ * application registered its own runtime for that provider. A typo in a
+ * provider then fails at the gateway instead of locally.
+ */
+function isVeryfrontCloudCandidate(provider: string, configuredModel: string): boolean {
+  if (DIRECT_CAPABLE_PROVIDER_NAMES.has(provider)) return true;
+  if (canVeryfrontCloudCatalogRefuse()) {
+    return isServedVeryfrontCloudProvider(provider) ||
+      isListedInServedVeryfrontCloudCatalog(configuredModel);
+  }
+  return resolveVeryfrontCloudProviderId(provider) !== undefined && !hasModelProvider(provider);
 }
 
 function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {
@@ -261,13 +280,7 @@ export function resolveRuntimeModel(model?: string): string {
   const provider = configuredModel.slice(0, slashIndex);
   const modelId = configuredModel.slice(slashIndex + 1);
 
-  // A provider this package names, or any model the loaded served catalog
-  // lists (a provider the platform added since), is a Veryfront Cloud candidate.
-  if (
-    !modelId ||
-    (!HOSTED_PROVIDER_NAMES.has(provider) &&
-      !isListedInServedVeryfrontCloudCatalog(configuredModel))
-  ) {
+  if (!modelId || !isVeryfrontCloudCandidate(provider, configuredModel)) {
     return configuredModel;
   }
 
