@@ -82,8 +82,11 @@ describe("runs/schemas", () => {
     assertEquals(parsed.output_schema_sha256, undefined);
   });
 
-  it("rejects a schema identity that is not a string", () => {
-    for (const identity of [42, "", { sha256: "abc" }]) {
+  it("rejects a schema identity that is not a lowercase hex sha256", () => {
+    const digest = "3b1f5c0a9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b";
+    for (
+      const identity of [42, "", { sha256: "abc" }, digest.slice(0, 12), digest.toUpperCase()]
+    ) {
       assertEquals(
         RunSchema.safeParse(makeRun({ output_schema_sha256: identity } as Partial<Run>)).success,
         false,
