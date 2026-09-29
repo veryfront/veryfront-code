@@ -104,9 +104,9 @@ interface TaskContext {
 - **`config`**: run configuration, meaning execution settings (passed when run
   in the cloud)
 - **`input`**: business input submitted with the run as `request.input`. It can
-  be any JSON value: an object, array, string, number, boolean, or `null`.
-  When the run was created without input, `ctx.input` falls back to
-  `ctx.config`
+  be any JSON value: an object, array, string, number, or boolean. When the
+  run was created without input, or with `null` input, `ctx.input` falls back
+  to `ctx.config`
 - **`projectId`**: project identifier (available in cloud context)
 - **`environmentId`**: runtime-target environment identifier, when selected
 - **`signal`**: optional cooperative cancellation signal

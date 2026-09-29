@@ -19,8 +19,8 @@ export interface TaskContext {
   config: Record<string, unknown>;
   /**
    * Business input submitted with the run (`request.input`). It can be any JSON value.
-   * When the run was created without input, `input` falls back to `config`, so tasks that
-   * read business data from `config` keep working.
+   * When the run was created without input (a `null` input counts as none), `input` falls
+   * back to `config`, so tasks that read business data from `config` keep working.
    */
   input?: unknown;
   /** Project ID (when executed by the platform) */
