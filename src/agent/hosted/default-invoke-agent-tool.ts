@@ -178,6 +178,8 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     trace: DefaultHostedInvokeAgentTrace;
     setTraceAttributes: (attributes: DefaultHostedInvokeAgentTraceAttributes) => void;
     createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
+    /** Whether `resolveModelId` names models that run through Veryfront Cloud. */
+    hostedModel?: boolean;
     resolveModelId: (model: string) => string;
     resolveProvider: (modelId: string) => string;
     resolveProviderOptions?: (
@@ -393,6 +395,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     childConfig?: DefaultHostedChildAgentExecutionConfig;
     provider: string;
     forkModel: string;
+    hostedModel?: boolean;
     effectivePrompt: string;
     requestedTools?: HostedChildForkToolInput["tools"];
     abortSignal?: AbortSignal;
@@ -414,6 +417,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
       ),
     provider: input.provider,
     forkModel: input.forkModel,
+    hostedModel: input.hostedModel,
     effectivePrompt: input.effectivePrompt,
     requestedTools: input.requestedTools,
     ...(input.childConfig?.deniedToolNames?.length
@@ -529,6 +533,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     defaultMaxSteps: runtimeOptions.childConfig?.maxSteps ??
       options.defaultMaxSteps ??
       DEFAULT_USER_AGENT_MAX_STEPS,
+    hostedModel: options.hostedModel,
     resolveModelId: options.resolveModelId,
     resolveProvider: options.resolveProvider,
     resolveModelThinking: options.resolveModelThinking,
@@ -551,6 +556,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
         childConfig: runtimeOptions.childConfig,
         provider: runtimeConfig.provider,
         forkModel: runtimeConfig.forkModel,
+        hostedModel: runtimeConfig.hostedModel,
         effectivePrompt: runtimeConfig.effectivePrompt,
         requestedTools,
         abortSignal,

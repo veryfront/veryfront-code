@@ -366,6 +366,7 @@ it("loads served catalog facts only on request and forgets them on cleanup", asy
             surface: "openai",
             thinking: true,
             reasoningBudgetTokens: 4096,
+            supportedProviderTools: ["web_search"],
           },
         }];
       },
@@ -387,6 +388,7 @@ it("loads served catalog facts only on request and forgets them on cleanup", asy
     assertEquals(catalogRequests, [{}]);
     const catalog = peekVeryfrontCloudCatalog(key as VeryfrontCloudCatalogScopeKey);
     assertEquals(catalog?.models.map((model) => model.reasoningBudgetTokens), [4096]);
+    assertEquals(catalog?.models.map((model) => model.supportedProviderTools), [["web_search"]]);
     await facades.cleanup();
     assertEquals(peekVeryfrontCloudCatalog(key as VeryfrontCloudCatalogScopeKey), undefined);
   } finally {

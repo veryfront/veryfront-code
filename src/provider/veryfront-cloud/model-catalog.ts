@@ -870,6 +870,18 @@ export function readServedVeryfrontCloudCatalogModel(
   });
 }
 
+/**
+ * @internal Provider-native tools declared by the served model in the current
+ * project and credential scope. Missing catalog facts never grant tools.
+ */
+export function resolveVeryfrontCloudProviderToolNames(modelId: string): readonly string[] {
+  if (loadedCatalog() === undefined) return [];
+  const model = findServedModel(modelId);
+  return model && !isRetiredVeryfrontCloudModelId(model.modelId)
+    ? model.supportedProviderTools ?? []
+    : [];
+}
+
 /** Resolves Veryfront Cloud model thinking. */
 export function resolveVeryfrontCloudModelThinking(
   modelId: string | undefined,

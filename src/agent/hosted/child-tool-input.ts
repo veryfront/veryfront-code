@@ -86,6 +86,8 @@ export type HostedChildForkRuntimeConfig = {
   requestedTools: string[] | undefined;
   forkModel: string;
   provider: string;
+  /** Whether the fork model runs through Veryfront Cloud. */
+  hostedModel?: boolean;
   temperature?: number;
   maxSteps: number;
   thinkingConfig: RuntimeAgentThinkingConfig | undefined;
@@ -234,6 +236,8 @@ export type ResolveHostedChildForkRuntimeConfigInput = {
   defaultModel: string;
   defaultMaxSteps: number;
   runId: string;
+  /** Whether `resolveModelId` names models that run through Veryfront Cloud. */
+  hostedModel?: boolean;
   resolveModelId: (modelId: string) => string;
   resolveProvider: (modelId: string) => string;
   resolveModelThinking?: (modelId: string) => RuntimeAgentThinkingConfig | undefined;
@@ -301,6 +305,7 @@ export function resolveHostedChildForkRuntimeConfig(
     requestedTools: tools,
     forkModel,
     provider: input.resolveProvider(forkModel),
+    ...(input.hostedModel === undefined ? {} : { hostedModel: input.hostedModel }),
     ...(temperature === undefined ? {} : { temperature }),
     maxSteps: Math.max(requestedMaxSteps ?? input.defaultMaxSteps, input.defaultMaxSteps),
     thinkingConfig,

@@ -329,6 +329,9 @@ function servedCatalogModel(id: string, model: ModelRuntime) {
     aliases: [...served.aliases],
     surface: served.surface,
     operations: served.operations ? [...served.operations] : undefined,
+    supportedProviderTools: served.supportedProviderTools
+      ? [...served.supportedProviderTools]
+      : undefined,
     thinking: served.thinking,
     reasoningMode: served.reasoningMode,
     transport: served.transport,

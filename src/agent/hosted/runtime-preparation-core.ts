@@ -29,6 +29,7 @@ import {
   revokeModelRuntimeResolver,
 } from "#veryfront/agent/runtime/model-transport.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   type ExecutorBinding,
@@ -775,6 +776,10 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         allowedToolNames,
         deniedToolNames,
         allowedProviderToolNames: providerToolNames,
+        // Executor models run through Veryfront Cloud whatever their id form.
+        providerNativeToolNames: withServedFacts(() =>
+          getProviderNativeToolNames({ model: modelId, hosted: true })
+        ),
         sourceProviderToolNames: definition.providerTools,
         prepareRemoteToolInput: ({ toolName, toolInput }) =>
           applyDefaultResearchArtifactPath(toolName, toolInput, taskContext),
@@ -794,8 +799,14 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         loadLatestConversationUserText: facades.latestConversationUserText,
       };
       objectSetPrototypeOf(assemblyInput, null);
+      // Assembly reads the served provider tools, so it uses the same catalog.
       const toolAssembly = await observePrivatePromise(
-        prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
+        catalogContext
+          ? runWithVeryfrontCloudContextAsync(
+            catalogContext,
+            () => prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
+          )
+          : prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
       );
       assertActive();
       for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {

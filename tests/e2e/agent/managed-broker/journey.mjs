@@ -825,13 +825,11 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     );
     assert(JSON.stringify(modelCalls[1].prompt).includes("host-ok"));
     if (steering) {
-      assertEquals(steeringRefreshes, [[
-        "host_probe",
-        "update_file",
-        "web_search",
-      ]]);
+      // The synthetic broker grants search but serves no model catalogue.
+      // A grant alone cannot expose a provider tool, including after steering refresh.
+      assertEquals(steeringRefreshes, [["host_probe", "update_file"]]);
       for (const call of modelCalls) {
-        assert(call.tools.some((tool) => tool.name === "web_search"));
+        assertEquals(call.tools.some((tool) => tool.name === "web_search"), false);
       }
       assert(
         JSON.stringify(modelCalls[1].prompt).includes(

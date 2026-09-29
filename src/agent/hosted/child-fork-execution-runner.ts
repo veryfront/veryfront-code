@@ -133,6 +133,8 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   kind: string;
   provider: string;
   forkModel: string;
+  /** Whether the fork model runs through Veryfront Cloud. */
+  hostedModel?: boolean;
   temperature?: number;
   maxSteps: number;
   effectivePrompt: string;
@@ -236,6 +238,7 @@ export type ExecuteHostedChildForkToolInputOptions<
     | "description"
     | "provider"
     | "forkModel"
+    | "hostedModel"
     | "maxSteps"
     | "effectivePrompt"
     | "toolAssembly"
@@ -257,6 +260,7 @@ export type ExecuteHostedChildForkToolInputOptions<
     }) =>
       | DefaultHostedChildForkToolAssemblyResult
       | Promise<DefaultHostedChildForkToolAssemblyResult>;
+    hostedModel?: ResolveHostedChildForkRuntimeConfigInput["hostedModel"];
     resolveModelId: ResolveHostedChildForkRuntimeConfigInput["resolveModelId"];
     resolveProvider: ResolveHostedChildForkRuntimeConfigInput["resolveProvider"];
     resolveProviderOptions?: (
@@ -313,6 +317,7 @@ async function executeHostedChildForkToolInputWithoutWriterAuthority<
     defaultModel: input.defaultModel,
     defaultMaxSteps: input.defaultMaxSteps,
     runId: input.durableChildRun?.childRunId ?? input.toolCallId,
+    hostedModel: input.hostedModel,
     resolveModelId: input.resolveModelId,
     resolveProvider: input.resolveProvider,
     resolveModelThinking: input.resolveModelThinking,
@@ -336,6 +341,7 @@ async function executeHostedChildForkToolInputWithoutWriterAuthority<
     description: runtimeConfig.description,
     provider: runtimeConfig.provider,
     forkModel: runtimeConfig.forkModel,
+    hostedModel: runtimeConfig.hostedModel,
     temperature: runtimeConfig.temperature,
     maxSteps: runtimeConfig.maxSteps,
     effectivePrompt: runtimeConfig.effectivePrompt,
@@ -429,6 +435,7 @@ async function executeHostedChildForkWithoutWriterAuthority<
         projectId: input.projectId ?? null,
         provider: input.provider,
         forkModel: input.forkModel,
+        hostedModel: input.hostedModel,
         temperature: input.temperature,
         maxSteps: input.maxSteps,
         prompt: input.effectivePrompt,

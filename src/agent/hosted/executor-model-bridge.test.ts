@@ -18,6 +18,7 @@ import {
 import {
   registerVeryfrontCloudModelFacts,
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudProviderToolNames,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
@@ -1032,6 +1033,7 @@ describe("executor managed model bridge", () => {
         provider: "anthropic",
         surface: "anthropic",
         operations: ["messages"],
+        supportedProviderTools: ["web_fetch"],
         capabilities: { thinking: true, reasoning_mode: "budget", reasoning_budget_tokens: 1536 },
       }],
     });
@@ -1086,6 +1088,14 @@ describe("executor managed model bridge", () => {
         ),
         { enabled: true, budgetTokens: 1536 },
       );
+      assertEquals(
+        runWithVeryfrontCloudContext(
+          { catalogScopeKey: key },
+          () => resolveVeryfrontCloudProviderToolNames(servedModelId),
+        ),
+        ["web_fetch"],
+      );
+      assertEquals(resolveVeryfrontCloudProviderToolNames(servedModelId), []);
       // Outside the key the executor still reads the facts shipped with the package.
       assertEquals(resolveVeryfrontCloudModelThinking(servedModelId), {
         enabled: true,

@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __resetVeryfrontCloudCatalogForTests,
+  __setVeryfrontCloudCatalogForTests,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 
@@ -30,7 +34,35 @@ function getRuntimeToolSchema(tool: unknown): unknown {
   return (inputSchema as { jsonSchema?: unknown }).jsonSchema;
 }
 
+function allowHostedTools(modelId: string, supportedProviderTools: readonly string[]) {
+  const [provider, id] = modelId.split("/");
+  __setVeryfrontCloudCatalogForTests({
+    models: [{ id, modelId, provider, supportedProviderTools }],
+  });
+}
+
 describe("model-tool-converter", () => {
+  afterEach(__resetVeryfrontCloudCatalogForTests);
+
+  it("omits unavailable hosted provider tools while preserving supplied-content tools", () => {
+    const tools: ToolDefinition[] = [{
+      name: "create_file",
+      description: "Create a file",
+      parameters: { type: "object", properties: {} },
+    }];
+    const options = {
+      model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      providerTools: ["web_search", "web_fetch"],
+    };
+    assertEquals(Object.keys(convertToolsToRuntimeTools(tools, options)!), ["create_file"]);
+    allowHostedTools("anthropic/claude-sonnet-4-6", []);
+    assertEquals(Object.keys(convertToolsToRuntimeTools(tools, options)!), ["create_file"]);
+    allowHostedTools("anthropic/claude-sonnet-4-6", ["web_fetch"]);
+    assertEquals(Object.keys(convertToolsToRuntimeTools(tools, options)!).sort(), [
+      "create_file",
+      "web_fetch",
+    ]);
+  });
   it("mirrors JSON schema fields on runtime schema wrappers for provider compatibility", () => {
     const result = convertToolsToRuntimeTools([
       {
@@ -260,6 +292,7 @@ describe("model-tool-converter", () => {
   });
 
   it("adds provider-native web_search for veryfront-cloud anthropic models when explicitly configured", () => {
+    allowHostedTools("anthropic/claude-sonnet-4-6", ["web_search"]);
     const result = convertToolsToRuntimeTools([], {
       model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
       providerTools: ["web_search"],
@@ -280,6 +313,7 @@ describe("model-tool-converter", () => {
   });
 
   it("adds provider-native web_fetch for veryfront-cloud anthropic models when explicitly configured", () => {
+    allowHostedTools("anthropic/claude-sonnet-4-6", ["web_fetch"]);
     const result = convertToolsToRuntimeTools([], {
       model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
       providerTools: ["web_fetch"],
@@ -301,6 +335,7 @@ describe("model-tool-converter", () => {
   });
 
   it("adds provider-native web_search for veryfront-cloud OpenAI models", () => {
+    allowHostedTools("openai/gpt-4.1", ["web_search"]);
     const result = convertToolsToRuntimeTools([], {
       model: "veryfront-cloud/openai/gpt-4.1",
       providerTools: ["web_search"],
@@ -340,6 +375,7 @@ describe("model-tool-converter", () => {
   });
 
   it("uses provider-native web tools for Anthropic even when Studio forwards tool definitions", () => {
+    allowHostedTools("anthropic/claude-opus-4-6", ["web_search", "web_fetch"]);
     const result = convertToolsToRuntimeTools([
       {
         name: "web_search",

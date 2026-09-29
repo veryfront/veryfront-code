@@ -303,3 +303,16 @@ export function resolveRuntimeModel(model?: string): string {
 
   return `veryfront-cloud/${provider}/${modelId}`;
 }
+
+/**
+ * Whether the runtime routes `model` through Veryfront Cloud in the current
+ * context. A model it cannot resolve counts as hosted, so a capability cap
+ * derived from the answer fails closed.
+ */
+export function isVeryfrontCloudRuntimeModel(model?: string): boolean {
+  try {
+    return resolveRuntimeModel(model).startsWith("veryfront-cloud/");
+  } catch {
+    return true;
+  }
+}

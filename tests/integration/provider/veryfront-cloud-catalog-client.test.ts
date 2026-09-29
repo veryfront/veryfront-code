@@ -81,6 +81,21 @@ describe("provider/veryfront-cloud/catalog-client", () => {
       assertEquals(mistral?.chatCompletionsConsecutiveSystemMessages, true);
     });
 
+    it("retains only declared provider tool names as immutable catalog facts", () => {
+      const tools: unknown[] = ["web_search", 42, ""];
+      const catalog = parseVeryfrontCloudCatalog({
+        models: [{
+          id: "model",
+          modelId: "anthropic/model",
+          provider: "anthropic",
+          supportedProviderTools: tools,
+        }],
+      });
+      tools.push("web_fetch");
+      assertEquals(catalog?.models[0]?.supportedProviderTools, ["web_search"]);
+      assertEquals(Object.isFrozen(catalog?.models[0]?.supportedProviderTools), true);
+    });
+
     it("reads a field an older API does not serve as absent", () => {
       const catalog = parseVeryfrontCloudCatalog({
         models: [{

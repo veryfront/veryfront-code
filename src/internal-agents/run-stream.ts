@@ -1,5 +1,8 @@
 import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
-import { resolveConfiguredAgentModel } from "#veryfront/agent/runtime/model-resolution.ts";
+import {
+  isVeryfrontCloudRuntimeModel,
+  resolveConfiguredAgentModel,
+} from "#veryfront/agent/runtime/model-resolution.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import {
   markTrustedHostToolProvenance,
@@ -1229,7 +1232,10 @@ export async function createRuntimeAgentStreamResponse(
         )
         : []);
     const modelSupportedProviderToolNames = new Set(
-      getProviderNativeToolNames({ model: executionModel }),
+      getProviderNativeToolNames({
+        model: executionModel,
+        hosted: isVeryfrontCloudRuntimeModel(executionModel),
+      }),
     );
     const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
       modelSupportedProviderToolNames.has(toolName) &&

@@ -53,6 +53,8 @@ export interface VeryfrontCloudCatalogModel {
   readonly surface?: string;
   /** Operations of `surface` the model is served on. Absent on an older API. */
   readonly operations?: readonly string[];
+  /** Provider-native tools the selected deployment permits. Absent on an older API. */
+  readonly supportedProviderTools?: readonly string[];
   /** Whether the model takes thinking controls. */
   readonly thinking?: boolean;
   /** Which reasoning control the model takes, for example `budget` or `adaptive`. */
@@ -156,6 +158,9 @@ function parseModel(value: unknown): VeryfrontCloudCatalogModel | undefined {
     surface: optionalString(value.surface),
     operations: ((operations) => operations && Object.freeze(operations))(
       stringList(value.operations),
+    ),
+    supportedProviderTools: ((tools) => tools && Object.freeze(tools))(
+      stringList(value.supportedProviderTools),
     ),
     thinking: optionalBoolean(capabilities.thinking),
     reasoningMode: optionalString(capabilities.reasoning_mode),
@@ -512,6 +517,9 @@ export function rememberReceivedVeryfrontCloudCatalog(
           ...model,
           aliases: Object.freeze([...model.aliases]),
           ...(model.operations ? { operations: Object.freeze([...model.operations]) } : {}),
+          ...(model.supportedProviderTools
+            ? { supportedProviderTools: Object.freeze([...model.supportedProviderTools]) }
+            : {}),
         })
       )),
     }),

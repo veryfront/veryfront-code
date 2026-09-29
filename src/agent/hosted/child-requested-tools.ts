@@ -216,6 +216,8 @@ export type DefaultHostedChildForkToolAssemblyResult =
 export function selectHostedChildForkRuntimeTools(input: {
   provider: string;
   forkModel?: string;
+  /** Whether the fork model runs through Veryfront Cloud. */
+  hostedModel?: boolean;
   forkTools: HostToolSet;
   requestedTools?: readonly string[];
 }): HostedChildForkRuntimeToolSelectionResult {
@@ -238,6 +240,7 @@ export function selectHostedChildForkRuntimeTools(input: {
     getProviderNativeToolNames({
       provider: input.provider,
       model: input.forkModel,
+      hosted: input.hostedModel,
     }),
   );
   const availableNames = new Set([
@@ -303,6 +306,8 @@ export function sanitizeDefaultHostedChildRequestedTools(input: {
 export function selectDefaultHostedChildForkRuntimeTools(input: {
   provider: string;
   forkModel?: string;
+  /** Whether the fork model runs through Veryfront Cloud. */
+  hostedModel?: boolean;
   forkTools: HostToolSet;
   effectivePrompt: string;
   requestedTools?: readonly string[];
@@ -323,6 +328,7 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
   return selectHostedChildForkRuntimeTools({
     provider: input.provider,
     forkModel: input.forkModel,
+    hostedModel: input.hostedModel,
     forkTools: input.forkTools,
     requestedTools: effectiveRequestedTools?.filter((name) =>
       explicitNames.has(name) || availableNames.has(name)
@@ -334,6 +340,8 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
 export function prepareDefaultHostedChildForkRuntimeTools(input: {
   provider: string;
   forkModel?: string;
+  /** Whether the fork model runs through Veryfront Cloud. */
+  hostedModel?: boolean;
   forkTools: HostToolSet;
   effectivePrompt: string;
   requestedTools?: readonly string[];
@@ -347,6 +355,7 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
   const selectedTools = selectDefaultHostedChildForkRuntimeTools({
     provider: input.provider,
     forkModel: input.forkModel,
+    hostedModel: input.hostedModel,
     forkTools: input.forkTools,
     effectivePrompt: input.effectivePrompt,
     requestedTools: input.requestedTools,
@@ -394,6 +403,8 @@ export async function prepareDefaultHostedChildForkToolAssembly(input: {
   prepareToolSources: () => Promise<DefaultHostedChildForkToolAssemblySourceResult>;
   provider: string;
   forkModel?: string;
+  /** Whether the fork model runs through Veryfront Cloud. */
+  hostedModel?: boolean;
   effectivePrompt: string;
   requestedTools?: readonly string[];
   excludedTools?: ReadonlySet<string>;
@@ -411,6 +422,7 @@ export async function prepareDefaultHostedChildForkToolAssembly(input: {
   const preparedTools = prepareDefaultHostedChildForkRuntimeTools({
     provider: input.provider,
     forkModel: input.forkModel,
+    hostedModel: input.hostedModel,
     forkTools: toolSources.forkTools,
     effectivePrompt: input.effectivePrompt,
     requestedTools: input.requestedTools,

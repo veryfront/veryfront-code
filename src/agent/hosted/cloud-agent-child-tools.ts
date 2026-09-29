@@ -414,6 +414,8 @@ export function createInvokeAgentTool(
     trace: context.trace,
     setTraceAttributes: context.infrastructure.setActiveSpanAttributes,
     createBashTool: context.options.createBashTool,
+    // Resolved ids are unprefixed, so hosted identity is stated explicitly.
+    hostedModel: true,
     resolveModelId: resolveVeryfrontCloudModelId,
     resolveProvider: getVeryfrontCloudProviderFromModelId,
     resolveModelThinking: resolveVeryfrontCloudModelThinking,
