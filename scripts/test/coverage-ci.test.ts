@@ -5,6 +5,7 @@ import {
   buildCoverageCommandArgs,
   buildDenoTestCommandArgs,
   LOOPBACK_ALLOW_NET,
+  mergeLcovReports,
 } from "./coverage-ci.ts";
 
 /**
@@ -93,6 +94,113 @@ describe("buildDenoTestCommandArgs leak tracing", () => {
     assert(
       buildDenoTestCommandArgs({ coverageDir: "cov", files: ["a.test.ts"] })
         .includes("--trace-leaks"),
+    );
+  });
+});
+
+describe("mergeLcovReports", () => {
+  it("sums branch hits across reports and preserves uncovered branches", () => {
+    const merged = mergeLcovReports([
+      "SF:src/task.ts\nDA:10,2\nBRDA:10,0,0,2\nBRDA:10,0,1,-\nBRDA:10,1,0,-\nBRF:3\nBRH:1\nend_of_record",
+      "SF:src/task.ts\nDA:10,3\nBRDA:10,0,0,1\nBRDA:10,0,1,3\nBRDA:10,1,0,0\nBRF:3\nBRH:2\nend_of_record",
+    ]);
+    assertEquals(
+      merged,
+      [
+        "SF:src/task.ts",
+        "DA:10,5",
+        "LH:1",
+        "LF:1",
+        "BRDA:10,0,0,3",
+        "BRDA:10,0,1,3",
+        "BRDA:10,1,0,0",
+        "BRF:3",
+        "BRH:2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps line-only reports unchanged and isolates files", () => {
+    assertEquals(
+      mergeLcovReports([
+        "SF:b.ts\nDA:2,0\nDA:1,2\nend_of_record\nSF:a.ts\nDA:1,1\nend_of_record",
+        "SF:b.ts\nDA:1,3\nend_of_record",
+      ]),
+      [
+        "SF:a.ts",
+        "DA:1,1",
+        "LH:1",
+        "LF:1",
+        "end_of_record",
+        "SF:b.ts",
+        "DA:1,5",
+        "DA:2,0",
+        "LH:1",
+        "LF:2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps branch totals when only some reports carry branch data", () => {
+    assertEquals(
+      mergeLcovReports([
+        "SF:src/task.ts\nDA:118,1\nBRDA:118,0,0,1\nBRDA:118,0,1,-\nend_of_record",
+        "SF:src/task.ts\nDA:118,2\nend_of_record",
+        "SF:src/task.ts\nDA:118,0\nBRDA:118,0,1,4\nend_of_record",
+      ]),
+      [
+        "SF:src/task.ts",
+        "DA:118,3",
+        "LH:1",
+        "LF:1",
+        "BRDA:118,0,0,1",
+        "BRDA:118,0,1,4",
+        "BRF:2",
+        "BRH:2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("orders branches numerically by line, block, then branch", () => {
+    assertEquals(
+      mergeLcovReports([
+        "SF:a.ts\nBRDA:10,2,0,1\nBRDA:9,10,0,1\nBRDA:9,2,1,0\nBRDA:9,2,0,1\nend_of_record",
+      ]),
+      [
+        "SF:a.ts",
+        "LH:0",
+        "LF:0",
+        "BRDA:9,2,0,1",
+        "BRDA:9,2,1,0",
+        "BRDA:9,10,0,1",
+        "BRDA:10,2,0,1",
+        "BRF:4",
+        "BRH:3",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
+  it("ignores records between end_of_record and the next SF", () => {
+    assertEquals(
+      mergeLcovReports([
+        "SF:a.ts\nDA:1,1\nend_of_record\nDA:2,1\nBRDA:2,0,0,1\nSF:b.ts\nDA:1,0\nend_of_record",
+      ]),
+      [
+        "SF:a.ts",
+        "DA:1,1",
+        "LH:1",
+        "LF:1",
+        "end_of_record",
+        "SF:b.ts",
+        "DA:1,0",
+        "LH:0",
+        "LF:1",
+        "end_of_record",
+      ].join("\n"),
     );
   });
 });
