@@ -14,7 +14,7 @@ import {
 } from "./payload.ts";
 
 /**
- * The sixteen control plane types the API declares as bare `{ type }`
+ * The control plane types the API declares as bare `{ type }`
  * variants, whose payloads it sanitizes before a reader sees them. They have
  * no per-type getter here, which is the signal to validate the envelope only.
  */
@@ -23,11 +23,30 @@ const CONTROL_PLANE_TYPES = RUN_EVENT_TYPES.filter((eventType) =>
 );
 
 describe("run-events/payload", () => {
+  it("validates gateway usage without treating it as a success signal", () => {
+    const schema = RUN_EVENT_PAYLOAD_SCHEMAS.MODEL_CALL_COMPLETED!();
+    const payload = { type: "MODEL_CALL_COMPLETED", ...MINIMAL_PAYLOADS.MODEL_CALL_COMPLETED };
+    assert(schema.safeParse(payload).success);
+    for (
+      const override of [
+        { inputTokens: -1 },
+        { outputTokens: 0.5 },
+        { provider: "" },
+        { usageCaptureStatus: "succeeded" },
+        { modelCallContextEventId: 0 },
+        { latencyMs: -1 },
+        { costCredits: undefined },
+      ]
+    ) {
+      assertEquals(schema.safeParse({ ...payload, ...override }).success, false);
+    }
+    assert(schema.safeParse({ ...payload, futureField: true }).success);
+  });
   it("declares a schema for every catalogued type except the control plane ones", () => {
     const withSchema = RUN_EVENT_TYPES.filter((eventType) =>
       RUN_EVENT_PAYLOAD_SCHEMAS[eventType] !== undefined
     );
-    assertEquals(CONTROL_PLANE_TYPES.length, 16);
+    assertEquals(CONTROL_PLANE_TYPES.length, 19);
     assertEquals(withSchema.length, RUN_EVENT_TYPES.length - CONTROL_PLANE_TYPES.length);
     for (const eventType of CONTROL_PLANE_TYPES) {
       assertEquals(RUN_EVENT_PAYLOAD_SCHEMAS[eventType], undefined);
@@ -173,6 +192,20 @@ describe("run-events/payload", () => {
  * own type, rather than only the eight the contract fixture covers.
  */
 const MINIMAL_PAYLOADS: Record<string, Record<string, unknown>> = {
+  MODEL_CALL_COMPLETED: {
+    provider: "test-provider",
+    model: "test-model",
+    inputTokens: 10,
+    outputTokens: 2,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    totalTokens: 12,
+    costCredits: "0.01",
+    latencyMs: null,
+    usageCaptureStatus: "missing",
+    providerRequestId: null,
+    modelCallContextEventId: null,
+  },
   RUN_STARTED: {},
   RUN_FINISHED: {},
   RUN_ERROR: {},
