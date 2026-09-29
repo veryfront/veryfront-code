@@ -171,19 +171,22 @@ function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
 /**
  * Whether `<provider>/<model>` may route through Veryfront Cloud.
  *
- * A fresh served catalog is the authority: it serves the provider, or lists
- * the model. Before one has loaded, or while it is stale, there is no list to
- * check, so any well-formed provider segment is a candidate unless the
- * application registered its own runtime for that provider. A typo in a
- * provider then fails at the gateway instead of locally.
+ * A provider the application registered its own runtime for always keeps that
+ * runtime, whether or not a catalog has loaded, so routing does not change
+ * when the catalog loads. Otherwise a fresh served catalog is the authority:
+ * it serves the provider, or lists the model. Before one has loaded, or while
+ * it is stale, there is no list to check, so any well-formed provider segment
+ * is a candidate. A typo in a provider then fails at the gateway instead of
+ * locally.
  */
 function isVeryfrontCloudCandidate(provider: string, configuredModel: string): boolean {
   if (DIRECT_CAPABLE_PROVIDER_NAMES.has(provider)) return true;
+  if (hasModelProvider(provider)) return false;
   if (canVeryfrontCloudCatalogRefuse()) {
     return isServedVeryfrontCloudProvider(provider) ||
       isListedInServedVeryfrontCloudCatalog(configuredModel);
   }
-  return resolveVeryfrontCloudProviderId(provider) !== undefined && !hasModelProvider(provider);
+  return resolveVeryfrontCloudProviderId(provider) !== undefined;
 }
 
 function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {

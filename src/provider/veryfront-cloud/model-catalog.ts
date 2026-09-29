@@ -104,8 +104,9 @@ function requireThinkingBudgetTokens(value: unknown): number | undefined {
 }
 
 /**
- * Short ID of the built-in default model. Only a loaded served catalog
- * resolves a short ID. Where no catalog may have loaded, use
+ * Short ID of the built-in default model. `resolveVeryfrontCloudModelId()`
+ * resolves a short ID only through a loaded served catalog. Where no catalog
+ * may have loaded, use
  * `resolveVeryfrontCloudDefaultModelId()`, which returns the
  * provider-qualified default either way.
  */
@@ -287,7 +288,7 @@ export function isListedInServedVeryfrontCloudCatalog(modelId: string): boolean 
 
 /**
  * Whether a served catalog has loaded for the scope reads use right now. While
- * it has not, reads know no model facts and use protocol defaults only.
+ * it has not, reads know no catalog facts and use protocol defaults only.
  */
 export function isVeryfrontCloudCatalogLoaded(): boolean {
   return loadedCatalog() !== undefined;
@@ -764,9 +765,10 @@ export function resolveServedVeryfrontCloudAlias(alias: string): string | undefi
  * use `loadVeryfrontCloudModelCatalog()` first; before it has loaded, a short
  * alias is unknown.
  *
- * Throws for a model the gateway has retired, with or without a loaded
- * catalog, and for a Mistral model a catalog loaded within the last five
- * minutes does not list. No other model is refused.
+ * Throws for a short alias no loaded catalog names, for a model the gateway
+ * has retired (with or without a loaded catalog), and for a Mistral model a
+ * catalog loaded within the last five minutes does not list. No other
+ * provider-qualified ID is refused.
  */
 export function resolveVeryfrontCloudModelId(alias?: string): string {
   const requestedModel = alias || resolveVeryfrontCloudDefaultModelId();

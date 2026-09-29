@@ -8,9 +8,13 @@ versions are listed at
 
 ### Breaking: the bundled Veryfront Cloud model list is removed
 
-Veryfront Cloud model facts now come only from the served model catalog
-(`GET <api>/ai/models`). This package no longer bundles a model list to fall
-back on.
+The Veryfront Cloud catalog facts this package bundled now come only from the
+served model catalog (`GET <api>/ai/models`): the model list, the short aliases
+`resolveVeryfrontCloudModelId()` resolves, default thinking budgets, per-model
+transports and Chat Completions capability flags, adaptive thinking, and which
+providers the platform serves. Protocol rules stay in this package, as do the
+retired-model guard, the fixed agent model aliases and the per-model output
+token limits.
 
 - `VERYFRONT_CLOUD_CHAT_MODELS`, `findVeryfrontCloudModel`,
   `findVeryfrontCloudModelByModelId`, `groupVeryfrontCloudModelsByProvider` and
@@ -18,36 +22,50 @@ back on.
   list models, call `GET <api>/ai/models` with your Veryfront Cloud
   credentials. To resolve a short alias, call
   `loadVeryfrontCloudModelCatalog()` and then `resolveVeryfrontCloudModelId()`.
-- Until the catalog has loaded for the credentials in use, and whenever it
-  cannot be loaded, models use protocol defaults, and only a model the gateway
-  has retired is refused:
-  - A short alias such as `opus`, `sonnet` or `haiku` does not resolve and
-    throws `Unknown model alias`. A provider-qualified ID such as
-    `anthropic/claude-sonnet-4-6` works.
-  - No model has a default thinking budget or a pinned transport. `openai`,
-    `anthropic` and `google` speak their own protocol natively, and every other
+- Until a catalog has loaded for the credentials in use, including while every
+  load so far has failed, models use protocol defaults:
+  - `resolveVeryfrontCloudModelId()` resolves no short alias such as `opus`,
+    `sonnet` or `haiku` and throws `Unknown model alias`. A provider-qualified
+    ID such as `anthropic/claude-sonnet-4-6` works. An agent's `model` keeps
+    resolving the fixed agent aliases, such as `sonnet` or `gpt-5.5`.
+  - No model has a default thinking budget or a transport declared by the
+    catalog. `openai`, `anthropic` and `google` (also spelled
+    `google-ai-studio`) speak their own protocol natively, and every other
     provider uses Chat Completions on the OpenAI protocol.
+  - An `openai` model whose ID names an OpenAI reasoning family (`o1`, `o3`,
+    `o4`, `gpt-5` and `gpt-5.2` or later GPT-5 versions, but not `gpt-5-chat`
+    or `gpt-5.1`) uses the Responses operation. Any other `openai` model,
+    including `gpt-6-*`, uses Chat Completions until a request carries a hosted
+    tool, which moves that request to Responses.
   - An agent model `<provider>/<model>` with any well-formed provider routes
-    through Veryfront Cloud when only Veryfront Cloud credentials are present,
-    unless your application registered its own runtime for that provider with
-    `registerModelProvider()`.
-  - A Mistral model is refused only when a catalog loaded within the last five
-    minutes does not list it.
-  - `openai/gpt-5.4-nano`, `google/gemini-3.1-pro-preview` (under either
-    Google spelling) and `mistral/mistral-large-2512` are always refused
-    through Veryfront Cloud, with or without a catalog, because the gateway has
-    retired them. They stay available with the vendor's own API key.
+    through Veryfront Cloud when Veryfront Cloud credentials are present and no
+    credential of your own applies.
+  - No model is refused for being unlisted, including Mistral models.
+- Once a catalog has loaded:
+  - An agent model whose provider this package cannot call directly (anything
+    but `openai`, `anthropic`, `google`, `google-ai-studio` and `mistral`)
+    routes through Veryfront Cloud only if the catalog serves that provider or
+    lists the model.
+  - A Mistral model is refused only while the catalog is less than five minutes
+    old and does not list it. If a later refresh fails, the last loaded catalog
+    stays in use, and it refuses nothing once it is older than that.
+- A provider your application registered with `registerModelProvider()` keeps
+  your runtime, before and after a catalog loads.
+- `openai/gpt-5.4-nano`, `google/gemini-3.1-pro-preview` (under either Google
+  spelling) and `mistral/mistral-large-2512` are always refused through
+  Veryfront Cloud, with or without a catalog, because the gateway has retired
+  them. They stay available with the vendor's own API key.
 - Adaptive Anthropic thinking applies only to a model the catalog serves with
   adaptive reasoning. `anthropic/claude-opus-4-7`, which the catalog no longer
-  lists, already received budget-based thinking options once a catalog had
-  loaded, and now receives them before one loads too. Use
-  `anthropic/claude-opus-4-8` for adaptive thinking.
+  lists, already received the budget-based `thinking` option for a
+  `budgetTokens` value once a catalog had loaded, and now receives it before
+  one loads too. Use `anthropic/claude-opus-4-8` for adaptive thinking.
 - `deno task generate:model-catalog` and `generate:model-catalog:check` are
   removed.
 
 Ensure `loadVeryfrontCloudModelCatalog()` succeeds with the credentials your
-deployment uses before you upgrade if you rely on short aliases, thinking
-defaults or per-model transports.
+deployment uses before you upgrade if you rely on catalog short aliases,
+thinking defaults or per-model transports.
 
 ### Breaking: `VERYFRONT_CLOUD_GATEWAY_ROUTES` is removed
 

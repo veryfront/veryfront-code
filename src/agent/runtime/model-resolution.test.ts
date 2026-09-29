@@ -599,6 +599,14 @@ describe("agent/runtime/model-resolution hosted candidates", () => {
     );
   });
 
+  it("keeps the fixed agent model aliases before a catalog loads", () => {
+    assertEquals(resolveConfiguredAgentModel("sonnet"), "anthropic/claude-sonnet-4-6");
+    assertEquals(resolveConfiguredAgentModel("opus"), "anthropic/claude-opus-4-8");
+    assertEquals(resolveConfiguredAgentModel("gpt-5.5"), "openai/gpt-5.5");
+    assertEquals(resolveRuntimeModel("sonnet"), "veryfront-cloud/anthropic/claude-sonnet-4-6");
+    assertThrows(() => resolveVeryfrontCloudModelId("sonnet"), Error, "Unknown model alias");
+  });
+
   it("still refuses gateway-retired models before a catalog loads", () => {
     for (
       const model of [
@@ -616,15 +624,22 @@ describe("agent/runtime/model-resolution hosted candidates", () => {
     }
   });
 
-  it("keeps a provider the application registered on its own runtime before a catalog loads", () => {
-    const unregister = registerModelProvider("tenant", () => {
+  it("keeps a provider the application registered on its own runtime, before and after a catalog loads", () => {
+    // `zai` is one the served catalog lists below: the application's own
+    // runtime must still win, so routing does not change when the catalog loads.
+    const unregister = registerModelProvider("zai", () => {
       throw new Error("not resolved in this test");
     });
     try {
-      assertEquals(resolveRuntimeModel("tenant/model-a"), "tenant/model-a");
+      assertEquals(resolveRuntimeModel("zai/glm-5.2"), "zai/glm-5.2");
+      seedServedCatalogWith("zai/glm-5.2");
+      assertEquals(resolveRuntimeModel("zai/glm-5.2"), "zai/glm-5.2");
+      assertEquals(resolveRuntimeModel("zai/glm-9"), "zai/glm-9");
     } finally {
       unregister();
     }
+    // Without the registration the same fresh catalog routes it to the gateway.
+    assertEquals(resolveRuntimeModel("zai/glm-5.2"), "veryfront-cloud/zai/glm-5.2");
   });
 
   it("keeps an ill-formed provider segment off the gateway before a catalog loads", () => {

@@ -1,7 +1,7 @@
 /**
  * Client for the model catalog Veryfront Cloud serves at `<api>/ai/models`.
  *
- * Model facts (wire protocol, operations, thinking defaults and transport
+ * Catalog facts (wire protocol, operations, thinking defaults and transport
  * capabilities) come only from the served catalog. Loading is asynchronous
  * and happens on the first async step of a model call; every synchronous
  * reader uses {@link peekVeryfrontCloudCatalog} and degrades to protocol

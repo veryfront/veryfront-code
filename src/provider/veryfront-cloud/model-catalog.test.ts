@@ -19,6 +19,7 @@ import {
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAIChatSystemMessages,
   resolveVeryfrontCloudOpenAITransport,
@@ -733,9 +734,31 @@ describe("provider/veryfront-cloud/model-catalog without a loaded catalog", () =
         { transport: "chat-completions", pinned: true },
       );
     }
+    // OpenAI reasoning families are pinned to Responses by their ID alone.
+    for (const model of ["gpt-5-nano", "gpt-5.4", "o3", "o4-mini", "o1"]) {
+      assertEquals(
+        resolveVeryfrontCloudOpenAITransportPlan("openai", model),
+        { transport: "responses", pinned: true },
+        model,
+      );
+    }
+    // Any other openai model stays on Chat Completions until a call carries a hosted tool.
+    for (const model of ["gpt-5.1", "gpt-5-chat-latest", "gpt-6-sol", "gpt-4o"]) {
+      assertEquals(
+        resolveVeryfrontCloudOpenAITransportPlan("openai", model),
+        { transport: "chat-completions", pinned: false },
+        model,
+      );
+      assertEquals(
+        resolveVeryfrontCloudOpenAICallTransport("openai", model, false),
+        "chat-completions",
+      );
+      assertEquals(resolveVeryfrontCloudOpenAICallTransport("openai", model, true), "responses");
+    }
+    // A reasoning-style ID on another provider never leaves Chat Completions.
     assertEquals(
-      resolveVeryfrontCloudOpenAITransportPlan("openai", "gpt-5-nano").transport,
-      "responses",
+      resolveVeryfrontCloudOpenAICallTransport("zai", "gpt-5.4", true),
+      "chat-completions",
     );
   });
 

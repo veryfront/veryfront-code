@@ -332,8 +332,9 @@ export function requireVeryfrontCloudBootstrap(
  * model) come from it. Resolves to whether a catalog is available. Never
  * throws. When a refresh fails, the last catalog loaded for these credentials
  * stays in use. While none has loaded (no credentials, or no load has
- * succeeded yet), reads use protocol defaults only: short aliases do not
- * resolve and no model has thinking defaults.
+ * succeeded yet), reads use protocol defaults only:
+ * `resolveVeryfrontCloudModelId()` resolves no short alias and no model has a
+ * thinking default.
  */
 export async function loadVeryfrontCloudModelCatalog(
   options: { signal?: AbortSignal; maxWaitMs?: number } = {},
