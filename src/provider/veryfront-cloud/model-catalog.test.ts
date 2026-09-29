@@ -661,7 +661,7 @@ describe("provider/veryfront-cloud/model-catalog without a loaded catalog", () =
   beforeEach(__resetVeryfrontCloudCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
 
-  it("never refuses a model, because there is no list to refuse against", () => {
+  it("refuses no unlisted model, because there is no list to refuse against", () => {
     assertEquals(isVeryfrontCloudCatalogLoaded(), false);
     assertEquals(canVeryfrontCloudCatalogRefuse(), false);
     assertEquals(isSupportedMistralModelId("mistral/mistral-small-2503"), false);
@@ -686,12 +686,22 @@ describe("provider/veryfront-cloud/model-catalog without a loaded catalog", () =
     );
   });
 
-  it("keeps the gateway retirement guard", () => {
-    assertThrows(
-      () => resolveVeryfrontCloudModelId("openai/gpt-5.4-nano"),
-      Error,
-      "is no longer available through Veryfront Cloud",
-    );
+  it("still refuses every model the gateway has retired", () => {
+    for (
+      const modelId of [
+        "openai/gpt-5.4-nano",
+        "google/gemini-3.1-pro-preview",
+        "google-ai-studio/gemini-3.1-pro-preview",
+        "mistral/mistral-large-2512",
+      ]
+    ) {
+      assertEquals(isRetiredVeryfrontCloudModelId(modelId), true, modelId);
+      assertThrows(
+        () => resolveVeryfrontCloudModelId(modelId),
+        Error,
+        "is no longer available through Veryfront Cloud",
+      );
+    }
   });
 
   it("resolves the built-in default but no short alias", () => {

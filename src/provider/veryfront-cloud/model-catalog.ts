@@ -263,7 +263,9 @@ function loadedCatalog(): VeryfrontCloudCatalog | undefined {
  * Whether the catalog reads use may refuse a model it does not list: only a
  * fresh served catalog. Before one loads there is no list to refuse against,
  * and a stale one may miss a model the platform has enabled since, so the
- * platform answers for the model until a fresh catalog has loaded.
+ * platform answers for the model until a fresh catalog has loaded. The
+ * gateway retirement guard ({@link isRetiredVeryfrontCloudModelId}) does not
+ * depend on this and applies either way.
  */
 export function canVeryfrontCloudCatalogRefuse(): boolean {
   if (loadedCatalog() === undefined) return false;
@@ -761,6 +763,10 @@ export function resolveServedVeryfrontCloudAlias(alias: string): string | undefi
  * as written. A short ID or alias resolves only through the served catalog, so
  * use `loadVeryfrontCloudModelCatalog()` first; before it has loaded, a short
  * alias is unknown.
+ *
+ * Throws for a model the gateway has retired, with or without a loaded
+ * catalog, and for a Mistral model a catalog loaded within the last five
+ * minutes does not list. No other model is refused.
  */
 export function resolveVeryfrontCloudModelId(alias?: string): string {
   const requestedModel = alias || resolveVeryfrontCloudDefaultModelId();

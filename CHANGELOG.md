@@ -19,7 +19,8 @@ back on.
   credentials. To resolve a short alias, call
   `loadVeryfrontCloudModelCatalog()` and then `resolveVeryfrontCloudModelId()`.
 - Until the catalog has loaded for the credentials in use, and whenever it
-  cannot be loaded, models use protocol defaults and no model is refused:
+  cannot be loaded, models use protocol defaults, and only a model the gateway
+  has retired is refused:
   - A short alias such as `opus`, `sonnet` or `haiku` does not resolve and
     throws `Unknown model alias`. A provider-qualified ID such as
     `anthropic/claude-sonnet-4-6` works.
@@ -32,6 +33,10 @@ back on.
     `registerModelProvider()`.
   - A Mistral model is refused only when a catalog loaded within the last five
     minutes does not list it.
+  - `openai/gpt-5.4-nano`, `google/gemini-3.1-pro-preview` (under either
+    Google spelling) and `mistral/mistral-large-2512` are always refused
+    through Veryfront Cloud, with or without a catalog, because the gateway has
+    retired them. They stay available with the vendor's own API key.
 - Adaptive Anthropic thinking applies only to a model the catalog serves with
   adaptive reasoning. `anthropic/claude-opus-4-7`, which the catalog no longer
   lists, already received budget-based thinking options once a catalog had
@@ -116,9 +121,9 @@ unchanged.
   `doStream`), with the same credentials and project as inference, and is
   cached for five minutes per API, project and credential.
 - Until the catalog has loaded for the credentials in use, and whenever it
-  cannot be loaded, the facts shipped with this package apply, as in the
-  previous release. A model whose first load failed tries again on a later
-  call.
+  cannot be loaded, models use protocol defaults (see "the bundled Veryfront
+  Cloud model list is removed" above). A model whose first load failed tries
+  again on a later call.
 - A model keeps the facts it settled with for its lifetime. A catalog refreshed
   later applies to models constructed after the refresh.
 - Agents resolve a short alias or a provider the platform added after this
@@ -126,9 +131,8 @@ unchanged.
   built-in aliases, so a bare vendor model name keeps its meaning for your own
   provider key.
 - A model the catalog does not list is refused only against a catalog loaded
-  within the last five minutes, or the shipped list before any has loaded. A
-  model enabled since the catalog was cached is not refused; the catalog is
-  refreshed first.
+  within the last five minutes. A model enabled since the catalog was cached
+  is not refused; the catalog is refreshed first.
 - `loadVeryfrontCloudModelCatalog()` loads the catalog for the Veryfront Cloud
   credentials in effect, so synchronous helpers such as
   `resolveVeryfrontCloudModelId("opus")` and
@@ -139,8 +143,8 @@ unchanged.
   `VeryfrontCloudModelId` types a model ID as `<provider>/<model>`.
 - `VERYFRONT_CLOUD_CHAT_MODELS`, `findVeryfrontCloudModel`,
   `findVeryfrontCloudModelByModelId` and `groupVeryfrontCloudModelsByProvider`
-  are deprecated. They still return the list shipped with this package, and a
-  later release removes them.
+  were deprecated here and are now removed (see "the bundled Veryfront Cloud
+  model list is removed" above).
 
 ### Changed: Veryfront Cloud models call the vendor-neutral endpoints
 

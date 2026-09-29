@@ -599,6 +599,23 @@ describe("agent/runtime/model-resolution hosted candidates", () => {
     );
   });
 
+  it("still refuses gateway-retired models before a catalog loads", () => {
+    for (
+      const model of [
+        "openai/gpt-5.4-nano",
+        "google/gemini-3.1-pro-preview",
+        "mistral/mistral-large-2512",
+        "veryfront-cloud/mistral/mistral-large-2512",
+      ]
+    ) {
+      assertThrows(
+        () => resolveRuntimeModel(model),
+        Error,
+        "is no longer available through Veryfront Cloud",
+      );
+    }
+  });
+
   it("keeps a provider the application registered on its own runtime before a catalog loads", () => {
     const unregister = registerModelProvider("tenant", () => {
       throw new Error("not resolved in this test");

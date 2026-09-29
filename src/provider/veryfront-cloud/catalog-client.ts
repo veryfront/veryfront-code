@@ -361,7 +361,7 @@ function refresh(
         logger.warn(
           stale
             ? "Veryfront Cloud model catalog refresh failed; the last loaded catalog stays in use"
-            : "Veryfront Cloud model catalog is unavailable; model facts fall back to the built-in list",
+            : "Veryfront Cloud model catalog is unavailable; models use protocol defaults until it loads",
           {
             apiBaseUrl: loggableBaseUrl(options.apiBaseUrl),
             projectSlug: options.projectSlug,
