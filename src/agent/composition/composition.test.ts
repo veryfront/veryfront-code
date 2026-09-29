@@ -241,7 +241,7 @@ describe("agentAsTool", () => {
         messages: [],
         toolCalls: [],
         status: "completed",
-      } as AgentResponse);
+      });
       return Promise.resolve({
         toDataStreamResponse() {
           return new Response("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
