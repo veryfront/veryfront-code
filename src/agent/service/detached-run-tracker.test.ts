@@ -101,6 +101,29 @@ describe("agent/detached-run-tracker", () => {
     });
   });
 
+  it("keeps draining an older execution that outlives the newer execution for its run id", async () => {
+    const tracker = createDetachedRunTracker();
+    const oldExecution = deferred();
+    const newExecution = deferred();
+
+    tracker.registerExecution("run_1", oldExecution.promise);
+    tracker.registerExecution("run_1", newExecution.promise);
+    await newExecution.resolve();
+
+    const pending = await tracker.waitForDrain({ timeoutMs: 1, pollIntervalMs: 1 });
+    assertEquals(
+      pending,
+      { drained: false, pendingRunIds: ["run_1"] },
+      "shutdown must wait for the older execution that is still settling",
+    );
+
+    await oldExecution.resolve();
+    assertEquals(await tracker.waitForDrain({ timeoutMs: 50, pollIntervalMs: 1 }), {
+      drained: true,
+      pendingRunIds: [],
+    });
+  });
+
   it("stops tracking a cancelled run that has no registered execution", async () => {
     const tracker = createDetachedRunTracker({ pollIntervalMs: 1 });
 

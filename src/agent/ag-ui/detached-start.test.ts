@@ -504,6 +504,61 @@ describe("agent/ag-ui-detached-start", () => {
     assertEquals(sessionManager.getRunStatus("run_1"), "running");
   });
 
+  /**
+   * The resumed execution can finish first and leave the session map. The
+   * park-cancelled execution that settles afterwards is still superseded and
+   * must not run lifecycle callbacks for a run the resume already finished.
+   */
+  it("does not report a park-cancelled execution's failure after the resumed run finished", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const captured: Promise<unknown>[] = [];
+    const reported: string[] = [];
+    let rejectParkedExecution!: (error: Error) => void;
+    const parkedExecution = new Promise<void>((_resolve, reject) => {
+      rejectParkedExecution = reject;
+    });
+    let executions = 0;
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        executions += 1;
+        if (executions === 1) await parkedExecution;
+      },
+      onFinish: ({ runId }) => {
+        reported.push(`finish:${runId}`);
+      },
+      onError: ({ runId }) => {
+        reported.push(`error:${runId}`);
+      },
+    });
+
+    await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    sessionManager.cancelRun("run_1");
+    await handler({
+      request: createDetachedRequest(),
+      waitUntil: (promise: Promise<unknown>) => captured.push(promise),
+    });
+    await captured[1];
+    assertEquals(reported, ["finish:run_1"]);
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
+
+    rejectParkedExecution(new DOMException("Run cancelled", "AbortError"));
+    await captured[0];
+
+    assertEquals(
+      reported,
+      ["finish:run_1"],
+      "a superseded execution must not run lifecycle callbacks after the resume finished",
+    );
+  });
+
   it("still reports the failure of an execution cancelled without a resume", async () => {
     const sessionManager = new RunResumeSessionManager<{
       result: unknown;

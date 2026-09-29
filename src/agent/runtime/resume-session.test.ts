@@ -516,6 +516,30 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(manager.isSupersededRun("run_1", resumedSignal), false);
   });
 
+  it("keeps a park-cancelled run superseded after the resumed run finished", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const parkedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    manager.cancelRun("run_1");
+    const resumedSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    manager.completeRun("run_1", resumedSignal);
+
+    assertEquals(manager.getRunStatus("run_1"), null);
+    assertEquals(manager.isSupersededRun("run_1", parkedSignal), true);
+    assertEquals(manager.isSupersededRun("run_1", resumedSignal), false);
+  });
+
+  it("does not supersede a cancelled run that settled before the next start", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const firstSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    manager.cancelRun("run_1");
+    manager.failRun("run_1", firstSignal);
+    const secondSignal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    manager.completeRun("run_1", secondSignal);
+
+    assertEquals(manager.isSupersededRun("run_1", firstSignal), false);
+  });
+
   it("does not leak session slots across repeated completed runs", () => {
     const maxConcurrentSessions = 2;
     const manager = new RunResumeSessionManager<{ ok: boolean }>({ maxConcurrentSessions });

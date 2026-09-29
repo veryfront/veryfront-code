@@ -58,7 +58,9 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
 ): DetachedRunTracker<TResumeValue> {
   const sessionManager = options.sessionManager ?? new RunResumeSessionManager<TResumeValue>();
   const activeRunIds = new Set<string>();
-  const activeExecutions = new Map<string, Promise<void>>();
+  // Every outstanding execution per run id: a park-cancelled execution can
+  // outlive the resumed execution that reused its run id.
+  const activeExecutions = new Map<string, Set<Promise<void>>>();
   const defaultPollIntervalMs = options.pollIntervalMs ?? 50;
 
   const collectPendingRunIds = (): string[] => [
@@ -86,7 +88,8 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
       activeRunIds.add(runId);
 
       const trackedExecution = execution.finally(() => {
-        if (activeExecutions.get(runId) !== trackedExecution) {
+        const executions = activeExecutions.get(runId);
+        if (!executions?.delete(trackedExecution) || executions.size > 0) {
           return;
         }
 
@@ -96,7 +99,9 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
       // Only waitForDrain (shutdown) reads this promise. Without a rejection handler, a failure triggers an unhandled rejection and crashes the process.
       trackedExecution.catch(() => {});
 
-      activeExecutions.set(runId, trackedExecution);
+      const executions = activeExecutions.get(runId) ?? new Set<Promise<void>>();
+      executions.add(trackedExecution);
+      activeExecutions.set(runId, executions);
     },
     cancelAllRuns() {
       const runIds = [...activeRunIds];
@@ -115,7 +120,7 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
           return { drained: true, pendingRunIds: [] };
         }
 
-        const executions = [...activeExecutions.values()];
+        const executions = [...activeExecutions.values()].flatMap((pending) => [...pending]);
         if (executions.length > 0) {
           await Promise.race([Promise.allSettled(executions), sleep(pollIntervalMs)]);
           continue;

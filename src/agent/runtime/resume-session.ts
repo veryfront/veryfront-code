@@ -88,6 +88,7 @@ const DEFAULT_WAITING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_CANCELLATION_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_CANCELLATION_TOMBSTONES = 1_000;
 const DEFAULT_MAX_CONCURRENT_SESSIONS = 100;
+const MAX_SETTLING_CANCELLED_EXECUTIONS = 1_000;
 
 /** Options accepted by run resume session manager. */
 export interface RunResumeSessionManagerOptions<T> {
@@ -111,6 +112,13 @@ function defaultConflictKey(value: unknown): string {
 export class RunResumeSessionManager<T> {
   private readonly sessions = new Map<string, RunSession<T>>();
   private readonly cancellationTombstones = new Map<string, CancellationTombstone>();
+  /**
+   * Signal of a cancelled session per run id whose execution has not reported
+   * settling yet. A start that reuses the run id supersedes it.
+   */
+  private readonly settlingCancelledSignals = new Map<string, AbortSignal>();
+  /** Signals of executions whose run id a later start has taken over. */
+  private readonly supersededSignals = new WeakSet<AbortSignal>();
 
   constructor(
     private readonly options: RunResumeSessionManagerOptions<T> = {},
@@ -245,6 +253,31 @@ export class RunResumeSessionManager<T> {
     this.clearSessionTimeout(session);
     session.waitingState = null;
     this.sessions.delete(session.runId);
+    if (status === "cancelled") {
+      this.rememberSettlingCancellation(session.runId, session.abortController.signal);
+    }
+  }
+
+  /**
+   * A cancelled execution can ignore its abort and keep running. Remember its
+   * signal until it settles so a start that reuses the run id supersedes it.
+   * Bounded like the cancellation tombstones: the oldest entry is dropped first.
+   */
+  private rememberSettlingCancellation(runId: string, signal: AbortSignal): void {
+    this.settlingCancelledSignals.delete(runId);
+    while (this.settlingCancelledSignals.size >= MAX_SETTLING_CANCELLED_EXECUTIONS) {
+      const oldestRunId = this.settlingCancelledSignals.keys().next().value;
+      if (oldestRunId === undefined) break;
+      this.settlingCancelledSignals.delete(oldestRunId);
+    }
+    this.settlingCancelledSignals.set(runId, signal);
+  }
+
+  /** Forget a cancelled execution once it settles; a later start no longer races it. */
+  private forgetSettledCancellation(runId: string, signal: AbortSignal | undefined): void {
+    if (signal !== undefined && this.settlingCancelledSignals.get(runId) === signal) {
+      this.settlingCancelledSignals.delete(runId);
+    }
   }
 
   startRun(input: { runId: string; threadId: string; startedFromEventId?: number }): AbortSignal {
@@ -276,6 +309,12 @@ export class RunResumeSessionManager<T> {
       waitingTimeoutId: null,
       sessionTimeoutId: null,
     };
+
+    const settlingSignal = this.settlingCancelledSignals.get(input.runId);
+    if (settlingSignal !== undefined) {
+      this.supersededSignals.add(settlingSignal);
+      this.settlingCancelledSignals.delete(input.runId);
+    }
 
     this.sessions.set(input.runId, session);
     this.touchSession(session);
@@ -517,6 +556,7 @@ export class RunResumeSessionManager<T> {
    * such as the resume of a run whose parked turn settled late.
    */
   completeRun(runId: string, signal?: AbortSignal): void {
+    this.forgetSettledCancellation(runId, signal);
     const session = this.getOwnedSession(runId, signal);
     if (!session) return;
     this.finalizeSession(session, "completed");
@@ -524,6 +564,7 @@ export class RunResumeSessionManager<T> {
 
   /** Finalize a run as failed; see {@link completeRun} for `signal`. */
   failRun(runId: string, signal?: AbortSignal): void {
+    this.forgetSettledCancellation(runId, signal);
     const session = this.getOwnedSession(runId, signal);
     if (!session) return;
     this.finalizeSession(session, "failed");
@@ -532,9 +573,11 @@ export class RunResumeSessionManager<T> {
   /**
    * Whether a newer session now owns the run id of the execution holding
    * `signal`. A run whose own session simply ended is not superseded; one whose
-   * id was reused by a later start, such as the resume of a parked run, is.
+   * id was reused by a later start, such as the resume of a parked run, is,
+   * even after that later session has finished and left the manager.
    */
   isSupersededRun(runId: string, signal: AbortSignal): boolean {
+    if (this.supersededSignals.has(signal)) return true;
     const session = this.sessions.get(runId);
     return session !== undefined && session.abortController.signal !== signal;
   }
@@ -555,5 +598,6 @@ export class RunResumeSessionManager<T> {
       this.cancelRun(runId);
     }
     this.cancellationTombstones.clear();
+    this.settlingCancelledSignals.clear();
   }
 }
