@@ -72,6 +72,82 @@ function runtime() {
   };
 }
 
+describe("HTTP executor installation", () => {
+  it("requires exact project/source installation before making HTTP operations available", async () => {
+    const httpArtifact = {
+      ...artifact,
+      owner: { scopeKind: "project" as const, projectId: "project-a" },
+    };
+    const ended = Promise.withResolvers<void>();
+    let installs = 0;
+    const installation = createExecutorRuntimeInstallation({
+      mode: "http",
+      binding,
+      artifact: httpArtifact,
+      async install(input) {
+        installs++;
+        assertEquals(input.environmentId, "environment-a");
+        assertEquals(input.configurationId, "configuration-a");
+        return {
+          operations: new Map<string, ExecutorOperation>([["http.request", {
+            mode: "stream",
+            async *handle() {
+              yield { response: "project-a" };
+            },
+          }]]),
+          close: () => {
+            ended.resolve();
+            return Promise.resolve();
+          },
+          settled: ended.promise,
+        };
+      },
+    });
+    const input = {
+      ...httpArtifact,
+      mode: "http",
+      binding,
+      environmentId: "environment-a",
+      configurationId: "configuration-a",
+    };
+    const http = installation.operations.get("http.request");
+    if (http?.mode !== "stream") throw new Error("Missing HTTP operation");
+    try {
+      await assertRejects(
+        () => http.handle({}, context())[Symbol.asyncIterator]().next(),
+        Error,
+        "not installed",
+      );
+      for (
+        const change of [
+          { owner: { scopeKind: "project", projectId: "project-b" } },
+          { source: { type: "release", releaseId: "release-b" } },
+          { binding: { ...binding, generation: 2 } },
+        ]
+      ) {
+        await assertRejects(() =>
+          call(installation.operations, "runtime.install", { ...input, ...change })
+        );
+      }
+      assertEquals(installs, 0);
+      await call(installation.operations, "runtime.install", input);
+      assertEquals(installs, 1);
+      assertEquals(installation.operations.has("agent.stream"), false);
+      assertEquals(installation.operations.has("tool.execute"), false);
+      const iterator = http.handle({}, context())[Symbol.asyncIterator]();
+      assertEquals((await iterator.next()).value, { response: "project-a" });
+      await iterator.return?.();
+      await assertRejects(
+        () => call(installation.operations, "runtime.install", input),
+        Error,
+        "already installed",
+      );
+    } finally {
+      await installation.close();
+    }
+  });
+});
+
 describe("executor runtime installation", () => {
   it("observes retirement rejection while original cleanup remains pending", async () => {
     const cleanup = Promise.withResolvers<void>();

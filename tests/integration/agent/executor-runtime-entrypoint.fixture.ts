@@ -15,6 +15,8 @@ import { createExecutorModelBroker } from "#veryfront/agent/hosted/executor-mode
 import { getExecutorDiscoveryResultSchema } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { createExecutorProjectToolSource } from "#veryfront/agent/hosted/executor-project-tools.ts";
 import { startExecutorRuntimeEntrypoint } from "#veryfront/agent/hosted/executor-runtime-entrypoint.ts";
+import { createExecutorHttpClient } from "#veryfront/server/isolated-http/executor-http.ts";
+import type { JsonValue } from "#veryfront/schemas/index.ts";
 
 const root = new URL("../../../", import.meta.url);
 const resolver = fileURLToPath(new URL("tests/node/resolver.mjs", root));
@@ -57,7 +59,7 @@ export function registerExecutorRuntimeEntrypointTests(): void {
       await executor?.close();
     }
   });
-  for (const profile of ["runtime", "project-tools"] as const) {
+  for (const profile of ["runtime", "project-tools", "http"] as const) {
     it(`loads a real project only after fixed ${profile} installation`, {
       timeout: 45_000,
     }, async () => {
@@ -74,6 +76,14 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         join(dir, "crew", "writer.md"),
         "---\nname: Writer\n---\nSynthetic instructions.\n",
       );
+      if (profile === "http") {
+        await writeFile(
+          join(dir, "http.ts"),
+          `import { writeFileSync } from "node:fs"; import process from "node:process"; import { trace } from "veryfront/observability"; const tracer = trace.getTracer("http-fixture"); writeFileSync(${
+            JSON.stringify(marker)
+          }, JSON.stringify({pid:process.pid})); export default (request: Request) => { if (request.headers.has("x-token")) throw new Error("Unexpected platform credential"); tracer.startSpan("http.fixture.custom").end(); return new Response(request.body, { status: 201, headers: { "content-type": "application/octet-stream", "x-synthetic-pid": String(process.pid) } }); };`,
+        );
+      }
       if (profile === "project-tools") {
         await mkdir(join(dir, "tools"));
         await writeFile(
@@ -128,6 +138,9 @@ export function registerExecutorRuntimeEntrypointTests(): void {
       });
       child.stdin.end(key);
       let channel: ReturnType<typeof createExecutorChannel> | undefined;
+      const httpClient = profile === "http"
+        ? createExecutorHttpClient({ binding, channel: () => channel! })
+        : undefined;
       const timer = setTimeout(() => child.kill(), 40_000);
       try {
         const endpoint = await ready;
@@ -144,20 +157,21 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         channel = createExecutorChannel({
           binding,
           transport,
-          operations: profile === "project-tools" ? new Map() : createExecutorModelBroker({
-            allowedModelIds: new Set([modelId]),
-            resolveModelRuntime: () => ({
-              provider: "openai",
-              modelId: "synthetic-model",
-              specificationVersion: "v3",
-              doGenerate: () => {
-                throw new Error("Unexpected model call");
-              },
-              doStream: () => {
-                throw new Error("Unexpected model call");
-              },
-            }),
-          }),
+          operations: httpClient?.operations ??
+            (profile === "project-tools" ? new Map() : createExecutorModelBroker({
+              allowedModelIds: new Set([modelId]),
+              resolveModelRuntime: () => ({
+                provider: "openai",
+                modelId: "synthetic-model",
+                specificationVersion: "v3",
+                doGenerate: () => {
+                  throw new Error("Unexpected model call");
+                },
+                doStream: () => {
+                  throw new Error("Unexpected model call");
+                },
+              }),
+            })),
         });
         await channel.ready;
         await assertRejects(() => channel!.request("discovery.describe", {}));
@@ -185,18 +199,31 @@ export function registerExecutorRuntimeEntrypointTests(): void {
           projectId: "synthetic-project",
           runId: "synthetic-run",
         };
-        const input = profile === "runtime" ? runtimeInput : {
-          version: 1,
-          mode: "project-tools",
-          binding,
-          root: "project",
-          owner: runtimeInput.owner,
-          source: runtimeInput.source,
-          context: projectContext,
-          allowedToolNames: ["inspect"],
-          maxCalls: 32,
-          maxConcurrent: 2,
-        };
+        const input: JsonValue = profile === "http"
+          ? {
+            version: 1,
+            mode: "http",
+            binding,
+            root: "project",
+            owner: { scopeKind: "project", projectId: "synthetic-project" },
+            source: runtimeInput.source,
+            environmentId: "synthetic-environment",
+            configurationId: "synthetic-configuration",
+          }
+          : profile === "runtime"
+          ? runtimeInput
+          : {
+            version: 1,
+            mode: "project-tools",
+            binding,
+            root: "project",
+            owner: runtimeInput.owner,
+            source: runtimeInput.source,
+            context: projectContext,
+            allowedToolNames: ["inspect"],
+            maxCalls: 32,
+            maxConcurrent: 2,
+          };
         await assertRejects(() =>
           channel!.request("runtime.install", {
             ...input,
@@ -205,10 +232,38 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         );
         assertEquals(existsSync(marker), false);
         assertEquals(await channel.request("runtime.install", input), { installed: true });
-        const description = getExecutorDiscoveryResultSchema().parse(
-          await channel.request("discovery.describe", {}, { timeoutMs: 30_000 }),
-        );
-        assert(description.ok, JSON.stringify(description));
+        if (httpClient) {
+          const bytes = Uint8Array.from({ length: 90_000 }, (_, index) => index % 256);
+          let spanRecords = "[]";
+          const response = await httpClient.fetch(
+            new Request("https://app.example/api/echo", {
+              method: "POST",
+              body: bytes,
+              headers: { "x-token": "synthetic-platform-credential" },
+            }),
+            {
+              traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
+              onRecords: (records) => {
+                spanRecords = records;
+              },
+            },
+          );
+          assertEquals(response.status, 201);
+          assertEquals(response.headers.get("x-synthetic-pid"), String(endpoint.pid));
+          assertEquals(new Uint8Array(await response.arrayBuffer()), bytes);
+          const spans = JSON.parse(spanRecords);
+          assertEquals(spans.length, 1);
+          assertEquals(spans[0].name, "http.fixture.custom");
+          assertEquals(spans[0].traceId, "11111111111111111111111111111111");
+          assertEquals(spans[0].parentSpanId, "2222222222222222");
+          await assertRejects(() => channel!.request("runtime.prepare", { agentId: "writer" }));
+          await assertRejects(() => Array.fromAsync(channel!.stream("agent.stream", {})));
+        } else {
+          const description = getExecutorDiscoveryResultSchema().parse(
+            await channel.request("discovery.describe", {}, { timeoutMs: 30_000 }),
+          );
+          assert(description.ok, JSON.stringify(description));
+        }
         assertEquals(JSON.parse(await readFile(marker, "utf8")).pid, endpoint.pid);
         await assertRejects(() => channel!.request("runtime.install", input));
         if (profile === "project-tools") {
@@ -242,6 +297,7 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         assertEquals(await exited, 0, stderr);
       } finally {
         clearTimeout(timer);
+        await httpClient?.close();
         channel?.close();
         await channel?.settled;
         child.kill();

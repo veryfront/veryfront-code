@@ -31,6 +31,22 @@ export const getExecutorArtifactManifestSchema = defineSchema((v) =>
   v.object(artifactShape(v)).strict()
 );
 
+/** HTTP-only authority for a project artifact and one trusted environment configuration. */
+export const getExecutorHttpInstallSchema = defineSchema((v) =>
+  v.object({
+    ...artifactShape(v),
+    mode: v.literal("http"),
+    binding: getExecutorBindingSchema(),
+    environmentId: getExecutorDiscoveryIdSchema(),
+    configurationId: getExecutorDiscoveryIdSchema(),
+  }).strict().refine(
+    (input) => input.owner.scopeKind === "project",
+    "HTTP requires project ownership",
+  )
+);
+
+export type ExecutorHttpInstall = InferSchema<ReturnType<typeof getExecutorHttpInstallSchema>>;
+
 export const getExecutorRuntimeInstallSchema = defineSchema((v) =>
   v.object({
     ...artifactShape(v),

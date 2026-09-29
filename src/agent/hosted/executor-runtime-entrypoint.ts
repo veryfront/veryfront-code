@@ -4,6 +4,8 @@ import { isAbsolute } from "node:path";
 import process from "node:process";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ExecutorChannel } from "../executor/channel.ts";
+import { createExecutorHttpOperation } from "#veryfront/server/isolated-http/executor-http.ts";
+import type { ExecutorHttpInstall } from "./executor-runtime-install-schema.ts";
 import {
   type ExecutorNodeBootstrapOptions,
   readExecutorBootstrapConfiguration,
@@ -20,6 +22,13 @@ import {
 
 const ARTIFACT_MANIFEST = "/opt/veryfront/executor-artifact.json";
 const PROJECT_ROOT = "/opt/veryfront/project";
+
+/** Trusted image-owned HTTP runtime, constructed after exact artifact/owner installation. */
+export interface ExecutorHttpRuntime {
+  handle(request: Request): Response | Promise<Response>;
+  close(): Promise<void>;
+  readonly settled: Promise<void>;
+}
 
 async function readFixedArtifact() {
   const file = await open(
@@ -58,18 +67,37 @@ async function readFixedArtifact() {
  * manifest is outside the project tree and is never selected by channel input.
  * The default runtime profile installs agent grants and capabilities. The project-tools
  * profile installs only fixed-context project tool operations; it cannot prepare or stream agents.
+ * The HTTP profile uses an image-owned handler factory and exposes only HTTP
+ * dispatch after owner/source installation; it never installs agent capabilities.
  */
 export async function startExecutorRuntimeEntrypoint(
   options: Pick<ExecutorNodeBootstrapOptions, "environment" | "readKey" | "signal"> & {
     /** Trusted image profile, fixed before project discovery. */
-    mode?: "runtime" | "project-tools";
+    mode?: "runtime" | "project-tools" | "http";
+    /**
+     * Required for the HTTP image profile. Bind the authenticated environment
+     * configuration and fixed project root before loading tenant modules. Never
+     * select a loader, executable or filesystem path from channel input.
+     */
+    createHttpRuntime?(input: {
+      installation: ExecutorHttpInstall;
+      projectDir: string;
+      signal: AbortSignal;
+    }): Promise<ExecutorHttpRuntime>;
     /** Trusted image/test boundary, never a channel field or environment path. */
     readArtifact?: () => Promise<{ manifest: ExecutorArtifactManifest; projectDir: string }>;
   } = {},
 ) {
   const mode = options.mode;
-  if (mode !== undefined && mode !== "runtime" && mode !== "project-tools") {
+  if (mode !== undefined && mode !== "runtime" && mode !== "project-tools" && mode !== "http") {
     throw new TypeError("Invalid executor installation profile");
+  }
+  const createHttpRuntime = options.createHttpRuntime;
+  if (
+    (mode === "http" && typeof createHttpRuntime !== "function") ||
+    (mode !== "http" && createHttpRuntime !== undefined)
+  ) {
+    throw new TypeError("HTTP runtime factory requires the HTTP profile");
   }
   const environment = options.environment ?? { get: (name) => process.env[name] };
   const { binding } = readExecutorBootstrapConfiguration(environment);
@@ -85,7 +113,35 @@ export async function startExecutorRuntimeEntrypoint(
   signal.throwIfAborted();
   const channel = Promise.withResolvers<ExecutorChannel>();
   void channel.promise.catch(() => {});
-  const installation = mode === "project-tools"
+  const installation = mode === "http"
+    ? createExecutorRuntimeInstallation({
+      mode: "http",
+      binding,
+      artifact: artifact.manifest,
+      signal,
+      async install(input, runtimeSignal) {
+        const connected = await channel.promise;
+        runtimeSignal.throwIfAborted();
+        const runtime = await createHttpRuntime!({
+          installation: input,
+          projectDir: artifact.projectDir,
+          signal: runtimeSignal,
+        });
+        return {
+          operations: new Map([[
+            "http.request",
+            createExecutorHttpOperation({
+              binding,
+              channel: () => connected,
+              handle: runtime.handle.bind(runtime),
+            }),
+          ]]),
+          close: runtime.close.bind(runtime),
+          settled: runtime.settled,
+        };
+      },
+    })
+    : mode === "project-tools"
     ? createExecutorRuntimeInstallation({
       mode: "project-tools",
       binding,
