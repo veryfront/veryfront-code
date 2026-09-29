@@ -10,6 +10,32 @@ function getSetCookies(headers: Headers): string[] {
 }
 
 describe("response body lifecycle", () => {
+  it("can fail an unfinished body on abort while still canceling its source", async () => {
+    const abort = new AbortController();
+    let canceled = false;
+    const failure = new Error("Synthetic session stopped");
+    const response = completeOnResponseBodyConsumption(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("partial"));
+          },
+          cancel() {
+            canceled = true;
+          },
+        }),
+      ),
+      () => {},
+      abort.signal,
+      { highWaterMark: 0 },
+      { errorOnAbort: true },
+    );
+    const outcome = response.text().then(() => undefined, (error) => error);
+    abort.abort(failure);
+    assertStrictEquals(await outcome, failure);
+    assertEquals(canceled, true);
+  });
+
   it("reports normal completion, cancellation and source errors separately", async () => {
     for (const expected of ["completed", "canceled", "error"] as const) {
       const outcomes: string[] = [];

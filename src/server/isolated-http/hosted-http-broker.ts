@@ -124,6 +124,7 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
           signal,
           { highWaterMark: 0 },
           {
+            errorOnAbort: true,
             onOutcome(outcome) {
               // Pool admission stays held through session.settled, including
               // cleanup whose bounded notification requires a reaper.

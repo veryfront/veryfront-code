@@ -138,6 +138,28 @@ function fixture(handle: (request: Request) => Promise<Response> | Response) {
 }
 
 describe("hosted HTTP executor broker", () => {
+  it("rejects an unfinished response when executor shutdown interrupts it", async () => {
+    const f = fixture(() =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("partial"));
+          },
+        }),
+      )
+    );
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      const response = await broker.fetch(new Request("https://app.example/api/download"), f.input);
+      const outcome = response.text().then(() => "completed", () => "failed");
+      await broker.shutdown();
+      assertEquals(await outcome, "failed");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("releases a failed response body as canceled", async () => {
     let source: ReadableStreamDefaultController<Uint8Array> | undefined;
     const f = fixture(() =>

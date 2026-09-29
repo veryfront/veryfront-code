@@ -27,6 +27,8 @@ export function completeOnResponseBodyConsumption(
   options: {
     runDeferredOperation?: <T>(operation: () => Promise<T>) => Promise<T>;
     cancellationTimeoutMs?: number;
+    /** Error the returned body on abort instead of making an unfinished stream look complete. */
+    errorOnAbort?: boolean;
     /** Optional terminal notification. It does not change ownership of pending cancellation work. */
     onOutcome?: (outcome: "completed" | "canceled" | "error") => void;
   } = {},
@@ -43,6 +45,8 @@ export function completeOnResponseBodyConsumption(
   }
 
   const runDeferredOperation = options.runDeferredOperation ?? ((operation) => operation());
+  const errorOnAbort = options.errorOnAbort === true;
+  let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
   let completed = false;
   let abortBody = (): void => {};
@@ -81,6 +85,7 @@ export function completeOnResponseBodyConsumption(
     return cancellationPromise;
   };
   abortBody = (): void => {
+    if (errorOnAbort) bodyController?.error(signal?.reason);
     void cancelBody(signal?.reason).catch(() => undefined);
   };
 
@@ -104,6 +109,10 @@ export function completeOnResponseBodyConsumption(
   let body: ReadableStream<Uint8Array>;
   try {
     body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller;
+        if (errorOnAbort && signal?.aborted) controller.error(signal.reason);
+      },
       async pull(controller) {
         try {
           const result = await runDeferredOperation(() => reader.read());
