@@ -229,8 +229,8 @@ describe("agentAsTool", () => {
     );
   });
 
-  // veryfront/veryfront-issue-inbox#2106: a delegating agent receives the child's accepted
-  // value, the parsed object when the child declares an outputSchema.
+  // A delegating agent receives the child's accepted value: the parsed object
+  // when the child declares an outputSchema.
   it("returns the child's structured object alongside its text", async () => {
     const childAgent = createMinimalAgent("classifier");
     const object = { category: "billing", confidence: 0.93 };
@@ -260,6 +260,31 @@ describe("agentAsTool", () => {
       toolCalls: 0,
       status: "completed",
     });
+  });
+
+  it("passes an explicit null object through instead of dropping it", async () => {
+    const childAgent = createMinimalAgent("nullable");
+    childAgent.stream = (input): Promise<AgentStreamResult> => {
+      input.onFinish?.({
+        text: "null",
+        object: null,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      });
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+        },
+      });
+    };
+
+    const result = await agentAsTool(childAgent, "Nullable").execute(
+      { input: "Anything?" },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(result, { text: "null", object: null, toolCalls: 0, status: "completed" });
   });
 
   it("returns no object key for a child without an outputSchema", async () => {

@@ -112,7 +112,7 @@ export function agentAsTool(
           });
 
           // The child's accepted value: its parsed object when it declares an
-          // outputSchema, next to the text (veryfront-issue-inbox#2106).
+          // outputSchema, next to the text. An explicit null object is passed through.
           return {
             text: response.text,
             ...(response.object !== undefined ? { object: response.object } : {}),
