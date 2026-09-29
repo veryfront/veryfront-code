@@ -50,7 +50,12 @@ token limits.
     old and does not list it. If a later refresh fails, the last loaded catalog
     stays in use, and it refuses nothing once it is older than that.
 - A provider your application registered with `registerModelProvider()` keeps
-  your runtime, before and after a catalog loads.
+  your runtime, before and after a catalog loads, whatever credentials are
+  present. This includes `openai`, `anthropic`, `google` (a `google`
+  registration also serves `google-ai-studio/*` IDs) and `mistral`, which
+  previously routed through Veryfront Cloud when Veryfront Cloud credentials
+  were present and no vendor key was set. An omitted or `auto` model and an
+  explicit `veryfront-cloud/*` ID still use Veryfront Cloud.
 - `openai/gpt-5.4-nano`, `google/gemini-3.1-pro-preview` (under either Google
   spelling) and `mistral/mistral-large-2512` are always refused through
   Veryfront Cloud, with or without a catalog, because the gateway has retired

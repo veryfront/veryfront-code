@@ -22,7 +22,7 @@ import {
 import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getModelRuntimeProvider } from "#veryfront/provider/runtime-inspection.ts";
-import { hasModelProvider } from "#veryfront/provider/model-registry.ts";
+import { hasApplicationModelProvider } from "#veryfront/provider/model-registry.ts";
 
 export const AUTO_AGENT_MODEL = "auto";
 export const DEFAULT_AGENT_MODEL = "openai/gpt-5-nano";
@@ -169,19 +169,25 @@ function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
 }
 
 /**
- * Whether `<provider>/<model>` may route through Veryfront Cloud.
+ * Whether the application registered its own runtime for a provider, under the
+ * name the direct runtime is resolved by (`google` for `google-ai-studio`).
+ */
+function hasApplicationRuntime(provider: string): boolean {
+  return hasApplicationModelProvider(provider) ||
+    hasApplicationModelProvider(DIRECT_RUNTIME_PROVIDER_ALIASES.get(provider) ?? provider);
+}
+
+/**
+ * Whether `<provider>/<model>` may route through Veryfront Cloud. The caller
+ * has already kept a provider the application registered on its own runtime.
  *
- * A provider the application registered its own runtime for always keeps that
- * runtime, whether or not a catalog has loaded, so routing does not change
- * when the catalog loads. Otherwise a fresh served catalog is the authority:
- * it serves the provider, or lists the model. Before one has loaded, or while
- * it is stale, there is no list to check, so any well-formed provider segment
- * is a candidate. A typo in a provider then fails at the gateway instead of
- * locally.
+ * A fresh served catalog is the authority: it serves the provider, or lists
+ * the model. Before one has loaded, or while it is stale, there is no list to
+ * check, so any well-formed provider segment is a candidate. A typo in a
+ * provider then fails at the gateway instead of locally.
  */
 function isVeryfrontCloudCandidate(provider: string, configuredModel: string): boolean {
   if (DIRECT_CAPABLE_PROVIDER_NAMES.has(provider)) return true;
-  if (hasModelProvider(provider)) return false;
   if (canVeryfrontCloudCatalogRefuse()) {
     return isServedVeryfrontCloudProvider(provider) ||
       isListedInServedVeryfrontCloudCatalog(configuredModel);
@@ -283,7 +289,14 @@ export function resolveRuntimeModel(model?: string): string {
   const provider = configuredModel.slice(0, slashIndex);
   const modelId = configuredModel.slice(slashIndex + 1);
 
-  if (!modelId || !isVeryfrontCloudCandidate(provider, configuredModel)) {
+  if (!provider || !modelId) return configuredModel;
+
+  // A provider the application registered its own runtime for always keeps it,
+  // whatever the credentials and whether or not a catalog has loaded, so
+  // routing never changes when the catalog loads.
+  if (hasApplicationRuntime(provider)) return toDirectRuntimeModel(provider, modelId);
+
+  if (!isVeryfrontCloudCandidate(provider, configuredModel)) {
     return configuredModel;
   }
 

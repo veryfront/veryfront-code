@@ -642,7 +642,48 @@ describe("agent/runtime/model-resolution hosted candidates", () => {
     assertEquals(resolveRuntimeModel("zai/glm-5.2"), "veryfront-cloud/zai/glm-5.2");
   });
 
+  it("keeps every direct-capable provider the application registered on its own runtime", () => {
+    // Veryfront Cloud credentials and no vendor key: without a registration
+    // these route through the gateway; with one, the application's runtime wins.
+    const cases = [
+      ["openai", "openai/gpt-5.5", "openai/gpt-5.5"],
+      ["anthropic", "anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4-6"],
+      ["google", "google/gemini-3.5-flash", "google/gemini-3.5-flash"],
+      ["google", "google-ai-studio/gemini-3.5-flash", "google/gemini-3.5-flash"],
+      ["google-ai-studio", "google-ai-studio/gemini-3.5-flash", "google/gemini-3.5-flash"],
+      ["mistral", "mistral/mistral-small-2503", "mistral/mistral-small-2503"],
+    ] as const;
+    for (const [registered, model, direct] of cases) {
+      for (const catalog of ["cold", "fresh"] as const) {
+        if (catalog === "fresh") seedServedCatalogForTests();
+        else __resetVeryfrontCloudCatalogForTests();
+        assertEquals(resolveRuntimeModel(model), `veryfront-cloud/${model}`, `${model} ${catalog}`);
+        const unregister = registerModelProvider(registered, () => {
+          throw new Error("not resolved in this test");
+        });
+        try {
+          assertEquals(resolveRuntimeModel(model), direct, `${registered} ${model} ${catalog}`);
+        } finally {
+          unregister();
+        }
+        assertEquals(resolveRuntimeModel(model), `veryfront-cloud/${model}`, `${model} ${catalog}`);
+      }
+    }
+  });
+
+  it("keeps a registered provider's gateway-retired model on its own runtime", () => {
+    const unregister = registerModelProvider("openai", () => {
+      throw new Error("not resolved in this test");
+    });
+    try {
+      assertEquals(resolveRuntimeModel("openai/gpt-5.4-nano"), "openai/gpt-5.4-nano");
+    } finally {
+      unregister();
+    }
+  });
+
   it("keeps an ill-formed provider segment off the gateway before a catalog loads", () => {
+    assertEquals(resolveRuntimeModel("/mystery-1"), "/mystery-1");
     assertEquals(resolveRuntimeModel("Acme Labs/mystery-1"), "Acme Labs/mystery-1");
     assertEquals(resolveRuntimeModel("constructor/mystery-1"), "constructor/mystery-1");
   });
