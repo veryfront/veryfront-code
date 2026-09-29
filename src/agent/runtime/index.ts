@@ -335,6 +335,7 @@ import {
   type ResolvedModelTransport,
   revokeModelRuntimeResolver,
 } from "./model-transport.ts";
+import { createProjectRunInferenceModelResolver } from "./project-run-inference-credential.ts";
 import { buildRuntimeUsageTraceAttributes, type RuntimeUsageTraceInput } from "./trace-usage.ts";
 import {
   pickDefinedUsageFields,
@@ -2143,9 +2144,15 @@ export class AgentRuntime {
     if (resolverState.status === "consumed") {
       throw new TypeError("AgentRuntime model resolver has already been consumed");
     }
+    // A project-run execution scopes a signed inference credential to its
+    // calls; an agent built without its own resolver draws one fresh resolver
+    // from that scope per call, consumed and revoked like any private resolver.
+    const projectRunResolver = resolverState.status === "absent"
+      ? createProjectRunInferenceModelResolver()
+      : undefined;
     const resolveModelRuntime = resolverState.status === "available"
       ? resolverState.resolver
-      : undefined;
+      : projectRunResolver;
     if (resolverState.status === "available") {
       this.#modelResolverState = { status: "consumed" };
     }
@@ -2158,6 +2165,7 @@ export class AgentRuntime {
           modelOverride,
           mode,
           resolveModelRuntime,
+          ...(projectRunResolver ? { loadServedCatalog: true } : {}),
           modelCallThinking: this.#modelCallThinking,
         }),
         ...(resolveModelRuntime ? { resolveModelRuntime } : {}),

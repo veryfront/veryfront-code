@@ -185,6 +185,12 @@ export interface ResolveAgentModelTransportInput {
   modelOverride: string | undefined;
   mode: "generate" | "stream";
   resolveModelRuntime?: AgentModelRuntimeResolver;
+  /**
+   * Load the served catalog even though a private resolver is present. A
+   * project-run resolver is drawn at call time, not prepared from a catalog
+   * snapshot, so its call reads the catalog like an ambient one.
+   */
+  loadServedCatalog?: boolean;
   modelCallThinking?: RuntimeReasoningOption & { enabled: boolean };
 }
 
@@ -222,7 +228,7 @@ export async function resolveAgentModelTransport(
   // model resolver was prepared from the catalog as it stood then, and its call
   // must keep what that preparation reserved, so it does not load it here.
   if (
-    !input.resolveModelRuntime && isVeryfrontCloudEnabled() &&
+    (!input.resolveModelRuntime || input.loadServedCatalog === true) && isVeryfrontCloudEnabled() &&
     !(typeof configuredModel === "string" && configuredModel.startsWith("local/"))
   ) {
     await warmVeryfrontCloudCatalog();

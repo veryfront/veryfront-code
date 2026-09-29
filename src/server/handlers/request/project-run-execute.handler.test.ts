@@ -32,6 +32,7 @@ import {
   projectWorkflowRedisPrefix,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
+import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
@@ -2755,5 +2756,142 @@ describe("project run execution span", () => {
     assertExists(span);
     assertEquals(span.parentSpanContext, undefined);
     assertEquals(span.links.map((link) => link.context.traceId), [caller.traceId]);
+  });
+});
+
+describe("project run inference credential header", () => {
+  const INFERENCE_TOKEN = "project-run-inference-credential-canary";
+  const taskBody = {
+    runId: "run_task_inference",
+    kind: "task",
+    target: "task:sync-calendar-events",
+    projectId: "proj-1",
+  };
+  const taskPath = "/api/control-plane/runs/run_task_inference/execute";
+
+  async function withCapturedConsole<T>(
+    fn: () => Promise<T>,
+  ): Promise<{ value: T; lines: string[] }> {
+    const lines: string[] = [];
+    const methods = ["log", "info", "warn", "error", "debug"] as const;
+    const originals = methods.map((method) => console[method]);
+    for (const method of methods) {
+      console[method] = (...args: unknown[]) => {
+        lines.push(
+          args.map((arg) => typeof arg === "string" ? arg : JSON.stringify(arg)).join(" "),
+        );
+      };
+    }
+    try {
+      return { value: await fn(), lines };
+    } finally {
+      methods.forEach((method, index) => {
+        console[method] = originals[index]!;
+      });
+    }
+  }
+
+  it("scopes a managed-model resolver to a task run that carries the header", async () => {
+    let resolverInScope: boolean | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        resolverInScope = createProjectRunInferenceModelResolver() !== undefined;
+        return { success: true, result: { ok: true }, durationMs: 1 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+    });
+
+    const { value: result, lines } = await withCapturedConsole(() =>
+      handler.handle(request, createCtx(publicKeyPem))
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(resolverInScope, true);
+    // Out of scope once the execution settles.
+    assertEquals(createProjectRunInferenceModelResolver(), undefined);
+    assertEquals(lines.some((line) => line.includes(INFERENCE_TOKEN)), false);
+  });
+
+  it("scopes the resolver to a workflow run that carries the header", async () => {
+    let resolverInScope: boolean | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => {
+          resolverInScope = createProjectRunInferenceModelResolver() !== undefined;
+          return { runId: options?.runId ?? "workflow-run" };
+        },
+        getRun: async () => ({ status: "completed", output: { deployed: true } }),
+        destroy: async () => {},
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_inference",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_inference/execute",
+      body,
+      { "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(resolverInScope, true);
+  });
+
+  it("keeps the current behaviour when the header is absent", async () => {
+    let resolverInScope: boolean | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        resolverInScope = createProjectRunInferenceModelResolver() !== undefined;
+        return { success: true, result: { synced: 12 }, durationMs: 42 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody);
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { synced: 12 },
+      duration_ms: 42,
+      logs: null,
+    });
+    assertEquals(resolverInScope, false);
+  });
+
+  it("rejects a malformed header before running anything, without echoing it", async () => {
+    let ran = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        ran = true;
+        return { success: true, result: null, durationMs: 0 };
+      },
+    }));
+    const malformed = `${INFERENCE_TOKEN} `;
+    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
+      "X-Veryfront-Inference-Token": malformed,
+    });
+
+    const { value: result, lines } = await withCapturedConsole(() =>
+      handler.handle(request, createCtx(publicKeyPem))
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    const text = await result.response.text();
+    assertEquals(text.includes(INFERENCE_TOKEN), false);
+    assertEquals(ran, false);
+    assertEquals(lines.some((line) => line.includes(INFERENCE_TOKEN)), false);
   });
 });

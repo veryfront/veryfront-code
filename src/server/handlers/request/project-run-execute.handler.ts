@@ -57,6 +57,11 @@ import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/d
 import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
 import type { WorkflowClientConfig } from "#veryfront/workflow";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
+import {
+  PROJECT_RUN_INFERENCE_TOKEN_HEADER,
+  runWithProjectRunInferenceCredential,
+} from "#veryfront/agent/runtime/project-run-inference-credential.ts";
+import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
@@ -673,6 +678,18 @@ interface RuntimeApiClient {
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
+}
+
+/**
+ * The execute request's gateway-only inference credential, validated with the
+ * same visible-ASCII and size checks hosted runs apply to theirs. Read raw:
+ * trimming first would turn a malformed header into a valid one. `undefined`
+ * when the control plane sent none, which keeps the pre-header behaviour.
+ */
+function readProjectRunInferenceToken(req: Request): string | undefined {
+  const value = req.headers.get(PROJECT_RUN_INFERENCE_TOKEN_HEADER);
+  if (value === null) return undefined;
+  return requireInferenceProviderCredential(value, "Inference token header");
 }
 
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
@@ -2075,13 +2092,19 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         ) {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
+        const inferenceToken = readProjectRunInferenceToken(req);
 
         return await withSpan(
           "project_run.execute",
           async () => {
             const startedAt = this.deps.now();
             try {
-              const response = await executeProjectRun(request, ctx, req, this.deps);
+              const response = inferenceToken === undefined
+                ? await executeProjectRun(request, ctx, req, this.deps)
+                : await runWithProjectRunInferenceCredential(
+                  inferenceToken,
+                  () => executeProjectRun(request, ctx, req, this.deps),
+                );
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
               return this.respond(builder.json(response, 200));
             } catch (error) {
