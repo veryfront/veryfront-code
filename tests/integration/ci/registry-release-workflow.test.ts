@@ -245,6 +245,73 @@ async function runReleaseScript({
 }
 
 describe("registry release workflow", () => {
+  it("publishes stable assets while preserving a previously published RC and its tag", async () => {
+    const jobs = await readJobs();
+    const step = namedStep(asRecord(jobs.release, "release job"), "Create GitHub releases");
+    await withTempDir(async (stateDir) => {
+      for (const path of ["bin", "releases", "scripts/ci", "binaries/veryfront-linux-x64"]) {
+        await Deno.mkdir(`${stateDir}/${path}`, { recursive: true });
+      }
+      await Deno.copyFile(RELEASE_SCRIPT_PATH, `${stateDir}/scripts/ci/publish-github-release.sh`);
+      for (
+        const asset of [
+          "scripts/install.sh",
+          "scripts/install.ps1",
+          "binaries/veryfront-linux-x64/veryfront-linux-x64",
+        ]
+      ) {
+        await Deno.writeTextFile(`${stateDir}/${asset}`, "synthetic release asset");
+      }
+      const retainedRelease = `${stateDir}/releases/v1.2.3-rc.4`;
+      await Deno.writeTextFile(retainedRelease, "published RC assets and tag");
+      await Deno.writeTextFile(
+        `${stateDir}/bin/gh`,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$STATE_DIR/gh.log"
+case "$1:$2" in
+  release:list) printf 'v1.2.3-rc.4\n' ;;
+  release:view)
+    [ -f "$STATE_DIR/releases/$3" ] || exit 1
+    if [ "$(cat "$STATE_DIR/releases/$3")" = draft ]; then echo true; else echo false; fi ;;
+  release:create) printf draft > "$STATE_DIR/releases/$3" ;;
+  release:upload) [ -f "$4" ] ;;
+  release:edit) printf published > "$STATE_DIR/releases/$3" ;;
+  release:delete) rm -f "$STATE_DIR/releases/$3" ;;
+  *) exit 1 ;;
+esac
+`,
+      );
+      await Deno.writeTextFile(
+        `${stateDir}/bin/sha256sum`,
+        `#!/usr/bin/env bash
+printf '%064d  %s\n' 0 "$1"
+`,
+      );
+      await Deno.chmod(`${stateDir}/bin/gh`, 0o755);
+      await Deno.chmod(`${stateDir}/bin/sha256sum`, 0o755);
+      const output = await new Deno.Command("bash", {
+        args: ["-eo", "pipefail", "-c", String(step.run)],
+        cwd: stateDir,
+        env: {
+          PATH: `${stateDir}/bin:${Deno.env.get("PATH")}`,
+          STATE_DIR: stateDir,
+          VERSION: "1.2.3",
+          GH_TOKEN: "synthetic",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(await Deno.readTextFile(`${stateDir}/releases/v1.2.3`), "published");
+      assertEquals(await Deno.readTextFile(retainedRelease), "published RC assets and tag");
+      assertStringIncludes(
+        await Deno.readTextFile(`${stateDir}/gh.log`),
+        "--prerelease=false --latest",
+      );
+    });
+  });
+
   it("publishes after retrying a transient release asset upload failure", async () => {
     await withTempDir(async (stateDir) => {
       const asset = `${stateDir}/veryfront-macos-arm64`;
