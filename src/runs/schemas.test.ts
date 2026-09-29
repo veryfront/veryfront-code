@@ -62,6 +62,50 @@ describe("runs/schemas", () => {
     assertEquals(RunSchema.parse(run), run);
   });
 
+  it("keeps the run I/O contract schema identities the API returns (#2109)", () => {
+    const identity = "3b1f5c0a9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b";
+    const run = makeRun({ input_schema_sha256: identity, output_schema_sha256: null });
+
+    const parsed: Run = RunSchema.parse(run);
+    const inputIdentity: string | null | undefined = parsed.input_schema_sha256;
+    const outputIdentity: string | null | undefined = parsed.output_schema_sha256;
+
+    assertEquals(inputIdentity, identity);
+    assertEquals(outputIdentity, null);
+    assertEquals(parsed, run);
+  });
+
+  it("parses runs from APIs that predate schema identities", () => {
+    const parsed = RunSchema.parse(makeRun());
+
+    assertEquals(parsed.input_schema_sha256, undefined);
+    assertEquals(parsed.output_schema_sha256, undefined);
+  });
+
+  it("rejects a schema identity that is not a string", () => {
+    for (const identity of [42, "", { sha256: "abc" }]) {
+      assertEquals(
+        RunSchema.safeParse(makeRun({ output_schema_sha256: identity } as Partial<Run>)).success,
+        false,
+        `output_schema_sha256=${JSON.stringify(identity)} is rejected`,
+      );
+    }
+  });
+
+  it("keeps any JSON value as run input and output", () => {
+    for (
+      const [input, output] of [
+        [["INV-7731", "Harbor Office"], "billing"],
+        ["Classify ticket INV-7731", 0.94],
+        [7731, true],
+        [false, [{ category: "billing" }]],
+      ] as const
+    ) {
+      const run = makeRun({ input, output });
+      assertEquals(RunSchema.parse(run), run);
+    }
+  });
+
   it("rejects impossible numeric run state", () => {
     for (
       const [field, value] of [

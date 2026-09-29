@@ -50,9 +50,14 @@ export const getRunSchema = defineSchema((v) =>
     runtime_target_kind: getRunRuntimeTargetKindSchema().nullable(),
     runtime_target_environment_id: v.string().nullable(),
     runtime_target_branch_id: v.string().nullable(),
+    // Run I/O contract: `input` and `output` are any JSON value (an agent's output is its final
+    // text). The schema identities are the sha256 of the canonical JSON Schema the run was admitted
+    // against, null when the target declares none, and absent from APIs that predate them.
     input: v.unknown().nullable(),
     config: v.unknown().nullable(),
     output: v.unknown().nullable(),
+    input_schema_sha256: v.string().min(1).nullable().optional(),
+    output_schema_sha256: v.string().min(1).nullable().optional(),
     error: getRunExecutionErrorSchema().nullable(),
     logs: v.string().nullable(),
     artifacts: v.array(v.unknown()),

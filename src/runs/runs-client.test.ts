@@ -268,6 +268,54 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
+  it("sends any JSON value as task, workflow and eval run input (#2109)", async () => {
+    const input = ["INV-7731", "Harbor Office"];
+    mockFetch([
+      jsonResponse({ accepted: true, run: makeRun({ input }) }, 202),
+      jsonResponse({ accepted: true, run: makeRun({ kind: "workflow", input }) }, 202),
+      jsonResponse({ accepted: true, run: makeRun({ kind: "eval", input }) }, 202),
+    ]);
+    const client = createTestClient();
+
+    const task = await client.createTaskRun({
+      projectId,
+      target: "task:classify-ticket",
+      input,
+      config: { urgent: true },
+    });
+    await client.createWorkflowRun({
+      projectId,
+      workflowId: "classify-ticket-flow",
+      target: "workflow:classify-ticket-flow",
+      input,
+    });
+    await client.createEvalRun({ projectId, target: "eval:invoice-lookup", input });
+
+    assertEquals(task.run.input, input);
+    assertEquals(jsonBody(0), {
+      kind: "task",
+      owner: { kind: "project", id: projectId },
+      request: { target: "task:classify-ticket", input, config: { urgent: true } },
+    });
+    assertEquals((jsonBody(1) as { request: { input: unknown } }).request.input, input);
+    assertEquals((jsonBody(2) as { request: { input: unknown } }).request.input, input);
+  });
+
+  it("omits task input when none is given, so config-only callers are unchanged", async () => {
+    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+
+    await createTestClient().createTaskRun({
+      projectId,
+      target: "task:sync-data",
+      config: { a: 1 },
+    });
+
+    assertEquals(
+      Object.hasOwn((jsonBody(0) as { request: Record<string, unknown> }).request, "input"),
+      false,
+    );
+  });
+
   it("creates schedule runs by resolving the source trigger id", async () => {
     mockFetch([
       jsonResponse({

@@ -56,6 +56,27 @@ console.log(accepted.run.run_id);
 console.log(accepted.run.status);
 ```
 
+## Run input and output
+
+`input` on task, workflow and eval runs is any JSON value: an object, an
+array, a string, a number, a boolean or `null`. A task reads it as
+`ctx.input` and its execution settings as `ctx.config`:
+
+```ts
+await runs.createTaskRun({
+  projectId: "22222222-2222-4222-8222-222222222222",
+  target: "task:classify-ticket",
+  input: ["INV-7731", "Harbor Office"],
+  config: { urgent: true },
+});
+```
+
+A run's `input` and `output` read back as the same JSON values. When the
+target declares an input or output schema, the run also carries
+`input_schema_sha256` and `output_schema_sha256`: the sha256 of the canonical
+JSON Schema it was admitted against. They are `null` when the target declares
+no schema, and absent on API versions that predate them.
+
 ## Create a workflow run
 
 ```ts
