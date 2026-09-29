@@ -19,7 +19,8 @@ import {
   __setVeryfrontCloudCatalogForTests,
 } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { resolveVeryfrontCloudModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { registerModelProvider } from "#veryfront/provider/model-registry.ts";
+import { registerModelProvider, resolveModel } from "#veryfront/provider/model-registry.ts";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import {
   AUTO_AGENT_MODEL,
   DEFAULT_AGENT_MODEL,
@@ -650,7 +651,11 @@ describe("agent/runtime/model-resolution hosted candidates", () => {
       ["anthropic", "anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4-6"],
       ["google", "google/gemini-3.5-flash", "google/gemini-3.5-flash"],
       ["google", "google-ai-studio/gemini-3.5-flash", "google/gemini-3.5-flash"],
-      ["google-ai-studio", "google-ai-studio/gemini-3.5-flash", "google/gemini-3.5-flash"],
+      [
+        "google-ai-studio",
+        "google-ai-studio/gemini-3.5-flash",
+        "google-ai-studio/gemini-3.5-flash",
+      ],
       ["mistral", "mistral/mistral-small-2503", "mistral/mistral-small-2503"],
     ] as const;
     for (const [registered, model, direct] of cases) {
@@ -667,6 +672,44 @@ describe("agent/runtime/model-resolution hosted candidates", () => {
           unregister();
         }
         assertEquals(resolveRuntimeModel(model), `veryfront-cloud/${model}`, `${model} ${catalog}`);
+      }
+    }
+  });
+
+  it("reaches the registered factory end to end under either Google spelling", () => {
+    const fakeRuntime = (provider: string, modelId: string): ModelRuntime => ({
+      specificationVersion: "v2",
+      provider,
+      modelId,
+      doGenerate: () => Promise.resolve({}),
+      doStream: () => Promise.resolve({ stream: new ReadableStream() }),
+    } as unknown as ModelRuntime);
+    // [registered provider name, configured model]
+    const cases = [
+      ["google-ai-studio", "google-ai-studio/gemini-3.5-flash"],
+      ["google", "google-ai-studio/gemini-3.5-flash"],
+      ["google", "google/gemini-3.5-flash"],
+    ] as const;
+    for (const [registered, model] of cases) {
+      for (const catalog of ["cold", "fresh"] as const) {
+        if (catalog === "fresh") seedServedCatalogForTests();
+        else __resetVeryfrontCloudCatalogForTests();
+        const calls: string[] = [];
+        const unregister = registerModelProvider(registered, (modelId) => {
+          calls.push(modelId);
+          return fakeRuntime(`app-${registered}`, modelId);
+        });
+        try {
+          const runtime = resolveModel(resolveRuntimeModel(model));
+          assertEquals(calls, ["gemini-3.5-flash"], `${registered} ${model} ${catalog}`);
+          assertEquals(
+            (runtime as unknown as { provider: string }).provider,
+            `app-${registered}`,
+            `${registered} ${model} ${catalog}`,
+          );
+        } finally {
+          unregister();
+        }
       }
     }
   });

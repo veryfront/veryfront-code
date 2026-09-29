@@ -169,12 +169,18 @@ function isUnsupportedVeryfrontCloudMistralModel(modelId: string): boolean {
 }
 
 /**
- * Whether the application registered its own runtime for a provider, under the
- * name the direct runtime is resolved by (`google` for `google-ai-studio`).
+ * The provider name the application registered its own runtime under for a
+ * model's provider segment, or undefined when it registered none. The exact
+ * segment wins, so a `google-ai-studio` registration keeps serving
+ * `google-ai-studio/*`; otherwise the name the direct runtime is resolved by
+ * (`google` for `google-ai-studio`) is checked.
  */
-function hasApplicationRuntime(provider: string): boolean {
-  return hasApplicationModelProvider(provider) ||
-    hasApplicationModelProvider(DIRECT_RUNTIME_PROVIDER_ALIASES.get(provider) ?? provider);
+function findApplicationRuntimeProvider(provider: string): string | undefined {
+  if (hasApplicationModelProvider(provider)) return provider;
+  const runtimeProvider = DIRECT_RUNTIME_PROVIDER_ALIASES.get(provider);
+  return runtimeProvider !== undefined && hasApplicationModelProvider(runtimeProvider)
+    ? runtimeProvider
+    : undefined;
 }
 
 /**
@@ -294,7 +300,10 @@ export function resolveRuntimeModel(model?: string): string {
   // A provider the application registered its own runtime for always keeps it,
   // whatever the credentials and whether or not a catalog has loaded, so
   // routing never changes when the catalog loads.
-  if (hasApplicationRuntime(provider)) return toDirectRuntimeModel(provider, modelId);
+  // The returned ID names the provider the registration is under, so
+  // resolveModel reaches the application's factory rather than a built-in one.
+  const applicationProvider = findApplicationRuntimeProvider(provider);
+  if (applicationProvider !== undefined) return `${applicationProvider}/${modelId}`;
 
   if (!isVeryfrontCloudCandidate(provider, configuredModel)) {
     return configuredModel;
