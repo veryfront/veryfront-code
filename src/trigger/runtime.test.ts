@@ -560,6 +560,35 @@ describe("trigger runtime", () => {
     assertEquals(result.output, { nested: { value: "captured" } });
   });
 
+  // veryfront/veryfront-issue-inbox#2105: ctx.input is the raw trigger input, while
+  // ctx.config keeps the legacy record mapping.
+  for (const input of [["INV-7731", "Harbor Office"], "a string", 42, { ticket: "T-1" }]) {
+    it(`passes trigger input ${JSON.stringify(input)} to the task as ctx.input`, async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/tasks/echo-context.ts": [
+          "export default {",
+          '  name: "Echo context",',
+          "  run({ input, config }) { return { input, config }; },",
+          "};",
+          "",
+        ].join("\n"),
+      });
+
+      const result = await runTriggerTarget({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } },
+        target: { kind: "task", id: "echo-context" },
+        input,
+      });
+
+      assertEquals(result.output, {
+        input,
+        config: typeof input === "object" && !Array.isArray(input) ? input : { payload: input },
+      });
+    });
+  }
+
   it("propagates live cancellation into task execution", async () => {
     const startupWatchdogMs = 30_000;
     const adapter = createRuntimeAdapter({
