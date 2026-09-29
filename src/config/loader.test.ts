@@ -10247,6 +10247,7 @@ export default config as const;
           environment: {},
         });
         const releaseRead = Promise.withResolvers<void>();
+        const releaseEvaluation = Promise.withResolvers<void>();
         let reads = 0;
         let evaluations = 0;
         adapter.fs.readFile = async (path: string) => {
@@ -10257,7 +10258,7 @@ export default config as const;
         };
         __setHostedConfigEvaluatorForTests(async () => {
           evaluations += 1;
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          await releaseEvaluation.promise;
           return { title: "burst" };
         });
 
@@ -10283,6 +10284,11 @@ export default config as const;
             },
           );
           releaseRead.resolve();
+          // Source selection and evaluation have separate admission boundaries.
+          // Keep evaluation open until every caller has finished preparing its
+          // cache key and joined, regardless of coverage instrumentation or load.
+          await waitForHostedFlightState({ flights: 1, waiters: burstSize });
+          releaseEvaluation.resolve();
           const results = await settled;
           const rejected = results.filter((result) => result.status === "rejected");
           assertEquals(rejected.length, 0, String((rejected[0] as PromiseRejectedResult)?.reason));
@@ -10294,6 +10300,7 @@ export default config as const;
           assertEquals(evaluations, 1);
         } finally {
           releaseRead.resolve();
+          releaseEvaluation.resolve();
           await Promise.allSettled(requests);
         }
         await waitForHostedSourceReadState({

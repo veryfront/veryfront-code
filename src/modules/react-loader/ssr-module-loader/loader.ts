@@ -1212,7 +1212,7 @@ export class SSRModuleLoader {
               ),
             resolveDependencies,
             (dependencyError, transformSettlement) => {
-              retainInProgressTransformUntilSettled(
+              void retainInProgressTransformUntilSettled(
                 inProgressKey,
                 transformPromise,
                 transformSettlement,

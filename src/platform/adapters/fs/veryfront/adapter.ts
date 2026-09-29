@@ -111,7 +111,7 @@ function formatDuration(durationMs: number): string {
 }
 
 function ignorePromiseRejection(promise: Promise<unknown>): void {
-  IntrinsicReflectApply(PromisePrototypeCatch, promise, [() => undefined]);
+  void IntrinsicReflectApply(PromisePrototypeCatch, promise, [() => undefined]);
 }
 
 function nextSourceSnapshotGeneration(): number {

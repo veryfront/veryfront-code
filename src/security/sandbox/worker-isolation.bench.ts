@@ -108,7 +108,7 @@ Deno.bench({
       maxRequestsPerWorker: 100_000,
     });
     pool.getOrCreateWorker("bench-create", ["/tmp"]);
-    pool.shutdown();
+    void pool.shutdown();
   },
 });
 
@@ -304,6 +304,6 @@ Deno.bench({
 // ---------------------------------------------------------------------------
 
 globalThis.addEventListener("beforeunload", () => {
-  lookupPool.shutdown();
-  executePool.shutdown();
+  void lookupPool.shutdown();
+  void executePool.shutdown();
 });

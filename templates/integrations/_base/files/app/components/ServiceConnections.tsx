@@ -44,7 +44,7 @@ function useIntegrationStatus(): { status: Record<string, boolean>; loading: boo
       }
     }
 
-    checkStatus();
+    void checkStatus();
   }, []);
 
   return { status, loading };

@@ -120,6 +120,13 @@ export async function startExecutorRuntimeEntrypoint(
       artifact: artifact.manifest,
       signal,
       async install(input, runtimeSignal) {
+        if (input.owner.scopeKind !== "project") {
+          throw new TypeError("HTTP requires project ownership");
+        }
+        const traceIdentity = {
+          projectId: input.owner.projectId,
+          environmentId: input.environmentId,
+        };
         const connected = await channel.promise;
         runtimeSignal.throwIfAborted();
         const runtime = await createHttpRuntime!({
@@ -134,6 +141,7 @@ export async function startExecutorRuntimeEntrypoint(
               binding,
               channel: () => connected,
               handle: runtime.handle.bind(runtime),
+              traceIdentity,
             }),
           ]]),
           close: runtime.close.bind(runtime),

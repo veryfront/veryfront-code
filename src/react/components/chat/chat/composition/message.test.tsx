@@ -7,7 +7,11 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatDynamicToolPart, ChatMessage } from "#veryfront/agent/react";
 import { Message } from "./message.tsx";
-import { useMessageBranches, useMessageParts } from "../contexts/message-context.tsx";
+import {
+  useMessageBranches,
+  useMessageContext,
+  useMessageParts,
+} from "../contexts/message-context.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
 
 const completedTool: ChatDynamicToolPart = {
@@ -482,5 +486,31 @@ describe("Message.CopyAction", () => {
       Object.assign(globalThis, previous);
       dom.window.close();
     }
+  });
+});
+
+describe("Message.Root actions", () => {
+  it("routes an edit to editMessage with the message id", () => {
+    const edits: Array<[string, string]> = [];
+    let onEdit: ((content: string) => void) | undefined;
+    const CaptureEdit = () => {
+      onEdit = useMessageContext().onEdit;
+      return null;
+    };
+    renderToString(
+      <Message.Root
+        message={assistantMessage}
+        editMessage={(messageId, newText) => {
+          edits.push([messageId, newText]);
+          return Promise.resolve();
+        }}
+      >
+        <CaptureEdit />
+      </Message.Root>,
+    );
+
+    assert(onEdit, "an editMessage override must expose onEdit");
+    onEdit("Revised answer.");
+    assertEquals(edits, [["m-assistant", "Revised answer."]]);
   });
 });

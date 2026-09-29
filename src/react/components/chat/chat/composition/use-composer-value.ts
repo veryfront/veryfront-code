@@ -121,7 +121,7 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
   const { sendMessage, setInput, onClearAttachments, onSubmit, onRemoveAttachment } = p;
   const onSubmitEffective = React.useCallback((e?: React.FormEvent) => {
     if (!sendMessage) {
-      onSubmit?.(e);
+      void onSubmit?.(e);
       return;
     }
     e?.preventDefault();
@@ -130,7 +130,7 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
     const text = p.input.trim();
     const files = attachmentsToFileParts(attachments);
     if (!text && files.length === 0) return;
-    sendMessage({
+    void sendMessage({
       text,
       ...(files.length > 0 ? { files } : {}),
       ...(p.model !== undefined ? { model: p.model } : {}),

@@ -59,7 +59,7 @@ export function ErrorsTab(): React.JSX.Element {
   }
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, []);
 
   if (loading) {

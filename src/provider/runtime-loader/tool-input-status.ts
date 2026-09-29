@@ -143,7 +143,7 @@ export function withToolInputStatusTransitions(
       // never let consumer cancellation wait on that cleanup promise.
       resolveCancellation();
     }
-    closeSource();
+    void closeSource();
   };
 
   const transformed = getPrivateAsyncIterator(applyToolInputStatusTransitions(
@@ -400,7 +400,7 @@ async function* applyToolInputStatusTransitions(
     }
   } finally {
     if (!lifecycle.sourceDone) {
-      closeSource();
+      void closeSource();
     }
   }
 }

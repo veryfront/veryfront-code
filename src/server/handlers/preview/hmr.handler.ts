@@ -63,7 +63,7 @@ export class HMRHandler extends BaseHandler {
       });
 
       const projectSlug = project?.projectSlug ?? "preview";
-      invalidateProjectCaches(projectSlug, changedPaths, {
+      void invalidateProjectCaches(projectSlug, changedPaths, {
         projectId: project?.projectId,
         environment: project?.environment,
         branchId: project?.branch ?? undefined,

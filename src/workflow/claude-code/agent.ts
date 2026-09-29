@@ -202,7 +202,7 @@ export async function executeAgent(
           executionTime: Date.now() - startTime,
         };
 
-        config.onComplete?.(result);
+        void config.onComplete?.(result);
         return result;
       }
     }
@@ -217,7 +217,7 @@ export async function executeAgent(
       executionTime: Date.now() - startTime,
     };
 
-    config.onComplete?.(result);
+    void config.onComplete?.(result);
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -232,7 +232,7 @@ export async function executeAgent(
       executionTime: Date.now() - startTime,
     };
 
-    config.onComplete?.(result);
+    void config.onComplete?.(result);
     return result;
   }
 }

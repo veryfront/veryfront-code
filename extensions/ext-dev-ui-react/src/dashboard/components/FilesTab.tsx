@@ -122,7 +122,7 @@ function FileDetail({ path }: { path: string }): React.ReactElement {
         setLoading(false);
       }
     }
-    loadContent();
+    void loadContent();
   }, [path]);
 
   const title = !loading && content?.content !== undefined ? "Contents" : undefined;

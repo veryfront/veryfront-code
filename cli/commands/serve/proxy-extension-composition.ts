@@ -35,7 +35,7 @@ function pinCompositionPromise<T>(promise: Promise<T>): Promise<T> {
   descriptor.enumerable = false;
   descriptor.value = NativePromise;
   descriptor.writable = false;
-  defineProperty(promise, "constructor", descriptor);
+  void defineProperty(promise, "constructor", descriptor);
   return promise;
 }
 

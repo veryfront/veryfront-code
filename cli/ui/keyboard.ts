@@ -112,7 +112,7 @@ function createPlatformHandler(options: KeyboardOptions): KeyboardHandler {
       setRawMode(true);
       reader = getStdinReader();
       running = true;
-      readLoop();
+      void readLoop();
     } catch {
       // Failed to set raw mode, keyboard shortcuts won't work
     }
