@@ -217,11 +217,18 @@ describe("executeAgent result mapping", () => {
     mock.install();
     try {
       const { executeAgent } = await import("./agent.ts");
-      const result = await executeAgent("test task", { cwd: TEST_CWD });
+      const completed: unknown[] = [];
+      const result = await executeAgent("test task", {
+        cwd: TEST_CWD,
+        onComplete: (value) => {
+          completed.push(value);
+        },
+      });
 
       assertEquals(result.success, true, "a success SDK subtype must be reported as success");
       assertEquals(result.response, "mocked", "the SDK result text must be surfaced");
       assertEquals(result.error, undefined, "a successful run must not report an error");
+      assertEquals(completed, [result], "onComplete must receive the returned result");
     } finally {
       mock.uninstall();
     }
