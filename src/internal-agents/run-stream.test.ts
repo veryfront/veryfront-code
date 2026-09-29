@@ -369,6 +369,40 @@ describe("internal-agents/run-stream", () => {
     }
   });
 
+  it("merges request client tools the agent does not declare on project runs", () => {
+    const selectors: Array<Agent["config"]["tools"]> = [undefined, true, { web_fetch: true }];
+
+    for (const tools of selectors) {
+      const runtimeAgent = {
+        id: "lookup-agent",
+        config: { id: "lookup-agent", system: "test", ...(tools === undefined ? {} : { tools }) },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_client_tool_2104",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "lookup_reference",
+            description: "Look up a reference code",
+            parameters: {
+              type: "object",
+              required: ["code"],
+              properties: { code: { type: "string" } },
+            },
+          }],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        new AgentRunSessionManager(),
+      );
+
+      const entry = mergedTools?.["lookup_reference"];
+      assertEquals(typeof entry, "object", `tools=${JSON.stringify(tools)}`);
+      assertEquals((entry as Tool).description, "Look up a reference code");
+    }
+  });
+
   it("keeps injected studio waits authoritative over same-named registry tools", () => {
     const sessionManager = new AgentRunSessionManager();
     const projectTool = {
