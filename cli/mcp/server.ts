@@ -296,10 +296,14 @@ export class MCPDevServer {
   private handleToolsList(_params?: unknown): { tools: ToolListEntry[] } {
     return {
       tools: allTools.map((tool) => {
+        const inputSchema = zodToJsonSchema(tool.inputSchema) as Record<string, unknown>;
         const entry: ToolListEntry = {
           name: tool.name,
           description: tool.description,
-          inputSchema: zodToJsonSchema(tool.inputSchema) as Record<string, unknown>,
+          // Scaffold accepts two object variants; MCP requires an explicit object root.
+          inputSchema: tool.name === "vf_scaffold"
+            ? { ...inputSchema, type: "object" }
+            : inputSchema,
         };
         if (tool.title) entry.title = tool.title;
         if (tool.annotations) entry.annotations = tool.annotations;
