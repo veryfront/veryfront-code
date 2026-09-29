@@ -27,6 +27,8 @@ import {
 import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
+import { isVeryfrontCloudRuntimeModel } from "../runtime/model-resolution.ts";
+import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import {
   applyDefaultResearchArtifactPath,
   createDefaultResearchRunArtifactMirrorHandler,
@@ -230,6 +232,7 @@ async function buildToolAssembly(
   input: CreateDefaultHostedChatRuntimeOptions & {
     taskContext: DefaultHostedChatRuntimeTaskContext;
     cloudContext: VeryfrontCloudContext;
+    providerNativeToolNames: readonly string[];
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -268,6 +271,7 @@ async function buildToolAssembly(
       }
       : {}),
     allowedProviderToolNames: input.options.allowedProviderTools,
+    providerNativeToolNames: input.providerNativeToolNames,
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
@@ -563,12 +567,22 @@ export async function createDefaultHostedChatRuntime(
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
         : createDefaultTaskContext({ options: input.options, modelId });
+      // The id is normalized, so hosted identity comes from the run's routing,
+      // read with the run's credentials and served catalog.
+      const providerNativeToolNames = runWithVeryfrontCloudContext(
+        cloudContext,
+        () =>
+          getProviderNativeToolNames({
+            model: modelId,
+            hosted: isVeryfrontCloudRuntimeModel(modelId),
+          }),
+      );
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 
       try {
         const toolAssembly = await runWithHostedRunEventWriterCapability(
           effectiveRunEventWriterCapability,
-          () => buildToolAssembly({ ...input, taskContext, cloudContext }),
+          () => buildToolAssembly({ ...input, taskContext, cloudContext, providerNativeToolNames }),
         );
         const refreshSystem = input.refreshSystem;
         const liveProjectSteering = input.options.liveProjectSteering;

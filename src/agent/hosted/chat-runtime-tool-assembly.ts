@@ -212,6 +212,12 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   deniedToolNames?: readonly string[];
   allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
   /**
+   * Provider-native tools the run's model supports, resolved where the run's
+   * routing and served catalog are known. Defaults to the inventory for
+   * `taskContext.model` as written.
+   */
+  providerNativeToolNames?: readonly string[];
+  /**
    * Include runtime-essential tools when `allowedToolNames` is an empty set.
    * Non-empty selectors remain restrictive.
    */
@@ -557,7 +563,8 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const allowedProviderToolNames = normalizeHostedRuntimeAllowedToolNames(
     input.allowedProviderToolNames,
   );
-  const providerNativeToolNames = getProviderNativeToolNames({ model: input.taskContext.model });
+  const providerNativeToolNames = input.providerNativeToolNames ??
+    getProviderNativeToolNames({ model: input.taskContext.model });
   const sortedLocalToolEntries = filterValues(
     ownEntries(selectedLocalTools),
     (entry) => isToolAllowedBySourcePolicy(entry[0], input.sourceIntegrationPolicy, entry[1]),

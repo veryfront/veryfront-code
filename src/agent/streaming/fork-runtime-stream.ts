@@ -151,6 +151,8 @@ export type StartAgentRuntimeForkWithHostToolsInput<
   & {
     provider: string;
     forkModel: string;
+    /** Whether the fork model runs through Veryfront Cloud. */
+    hostedModel?: boolean;
     forkTools: HostToolSet;
     forkToolNames?: readonly string[];
     traceTools?: TraceHostToolsOptions<TAttributes>;
@@ -191,6 +193,7 @@ export function startAgentRuntimeForkWithHostTools<
     getProviderNativeToolNames({
       provider: input.provider,
       model: input.forkModel,
+      hosted: input.hostedModel,
     }),
   );
   const providerToolNames = forkToolNames.filter((toolName) =>

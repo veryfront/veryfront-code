@@ -43,6 +43,12 @@ function uniqueNames(names: readonly string[]): string[] {
 export interface ProviderNativeToolInventoryOptions {
   model?: string;
   provider?: string;
+  /**
+   * Whether the model runs through Veryfront Cloud. A `veryfront-cloud/` id is
+   * always hosted; callers that normalize a hosted id say so here, so the
+   * served declaration caps the tools whatever form the id takes.
+   */
+  hosted?: boolean;
 }
 
 interface ExpandAllowedRemoteToolNamesOptions extends ProviderNativeToolInventoryOptions {
@@ -91,7 +97,10 @@ export function getProviderNativeToolNames(
     default:
       return [];
   }
-  if (!options?.model?.startsWith("veryfront-cloud/")) return copyNames(implemented);
+  if (options?.hosted !== true && !options?.model?.startsWith("veryfront-cloud/")) {
+    return copyNames(implemented);
+  }
+  if (!options.model) return [];
 
   const permitted = IntrinsicObjectCreate(null) as Record<string, true>;
   const served = resolveVeryfrontCloudProviderToolNames(options.model);
