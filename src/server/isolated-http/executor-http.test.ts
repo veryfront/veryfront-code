@@ -9,6 +9,7 @@ import {
 import { createExecutorHttpClient, createExecutorHttpOperation } from "./executor-http.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { trace } from "veryfront/observability";
+import { runProjectHttpTracing } from "#veryfront/observability/tracing/project-http-tracing.ts";
 
 const binding = { allocationId: "http-allocation", generation: 1, invocationId: "http-generation" };
 
@@ -17,7 +18,12 @@ function connect(
   remoteOperation?: ExecutorOperation,
 ) {
   const client = createExecutorHttpClient({ binding, channel: () => host });
-  const operation = createExecutorHttpOperation({ binding, channel: () => child, handle });
+  const operation = createExecutorHttpOperation({
+    binding,
+    channel: () => child,
+    handle,
+    traceIdentity: { projectId: "project-one", environmentId: "environment-one" },
+  });
   const forward = new TransformStream<Uint8Array>();
   const backward = new TransformStream<Uint8Array>();
   const host: ExecutorChannel = createExecutorChannel({
@@ -359,6 +365,103 @@ describe("authenticated executor HTTP transport", () => {
     }
   });
 
+  it("retains custom spans through the application tracing boundary", async () => {
+    const identity = { projectId: "project-one", environmentId: "environment-one" };
+    const tracer = trace.getTracer("application-http-tracer");
+    const pair = connect((request) =>
+      runProjectHttpTracing(
+        { status: "disabled" },
+        identity,
+        request,
+        async () => {
+          tracer.startSpan("application.handler").end();
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                tracer.startSpan("application.stream").end();
+                controller.enqueue(new TextEncoder().encode("streamed"));
+                controller.close();
+              },
+            }, { highWaterMark: 0 }),
+          );
+        },
+      )
+    );
+    let records = "[]";
+    try {
+      const response = await pair.client.fetch(new Request("https://app.example/api/data"), {
+        traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
+        onRecords: (value) => {
+          records = value;
+        },
+      });
+      assertEquals(await response.text(), "streamed");
+      assertEquals(JSON.parse(records).map((record: { name: string }) => record.name), [
+        "application.handler",
+        "application.stream",
+      ]);
+    } finally {
+      await pair.close();
+    }
+  });
+
+  for (
+    const identity of [
+      { projectId: "project-other", environmentId: "environment-one" },
+      { projectId: "project-one", environmentId: "environment-other" },
+      {},
+    ]
+  ) {
+    it(`does not retain executor tracing for a different identity ${JSON.stringify(identity)}`, async () => {
+      const tracer = trace.getTracer("foreign-application-tracer");
+      const pair = connect((request) =>
+        runProjectHttpTracing(
+          { status: "disabled" },
+          identity,
+          request,
+          async () => {
+            tracer.startSpan("foreign.handler").end();
+            // Re-entering the original identity must not recover a cleared scope.
+            await runProjectHttpTracing(
+              { status: "disabled" },
+              {
+                projectId: "project-one",
+                environmentId: "environment-one",
+              },
+              request,
+              async () => {
+                tracer.startSpan("foreign.nested").end();
+                return undefined;
+              },
+            );
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  tracer.startSpan("foreign.stream").end();
+                  controller.enqueue(new TextEncoder().encode("unchanged"));
+                  controller.close();
+                },
+              }, { highWaterMark: 0 }),
+            );
+          },
+        )
+      );
+      let records = "[]";
+      try {
+        const response = await pair.client.fetch(new Request("https://app.example/api/data"), {
+          traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
+          onRecords: (value) => {
+            records = value;
+          },
+        });
+        assertEquals(await response.text(), "unchanged");
+        assertEquals(JSON.parse(records), []);
+      } finally {
+        await pair.close();
+      }
+    });
+  }
+
   it("keeps trace delivery failures outside the application response", async () => {
     const pair = connect(() => new Response("unchanged"));
     try {
@@ -406,11 +509,18 @@ describe("authenticated executor HTTP transport", () => {
 
   it("keeps concurrent response trace records paired with their original request", async () => {
     const tracer = trace.getTracer("concurrent-http-tracer");
-    const pair = connect(async () => {
-      await Promise.resolve();
-      tracer.startSpan("isolated.http.concurrent").end();
-      return new Response("ok");
-    });
+    const pair = connect((request) =>
+      runProjectHttpTracing(
+        { status: "deferred" },
+        { projectId: "project-one", environmentId: "environment-one" },
+        request,
+        async () => {
+          await Promise.resolve();
+          tracer.startSpan("isolated.http.concurrent").end();
+          return new Response("ok");
+        },
+      )
+    );
     try {
       await Promise.all(Array.from({ length: 12 }, async (_, index) => {
         const traceId = (index + 1).toString(16).padStart(32, "0");

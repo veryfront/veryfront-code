@@ -7,7 +7,8 @@ import type {
 import type { ProjectTraceConfigResult } from "#veryfront/server/project-env/telemetry-config.ts";
 import { ProjectTraceRegistry } from "./project-trace-registry.ts";
 import { createProjectOtlpTransport } from "./project-otlp-transport.ts";
-import { runWithProjectTraceProvider } from "./project-trace-scope.ts";
+import { getExecutorHttpTraceScope } from "./executor-http-trace-scope.ts";
+import { getProjectTraceProvider, runWithProjectTraceProvider } from "./project-trace-scope.ts";
 import { type Context, type Span, trace, type Tracer } from "./api-shim.ts";
 import { formatTraceparent } from "./traceparent.ts";
 
@@ -62,6 +63,32 @@ export async function runProjectHttpTracing<T extends Response | undefined>(
   request: Request,
   operation: () => Promise<T>,
 ): Promise<T> {
+  const executorScope = getExecutorHttpTraceScope();
+  if (executorScope) {
+    // Export is owned by the broker. The executor only retains the recorder for
+    // its installed project/environment, including deferred response work.
+    const provider = !request.signal.aborted &&
+        identity.projectId === executorScope.projectId &&
+        identity.environmentId === executorScope.environmentId &&
+        getProjectTraceProvider() === executorScope.provider
+      ? executorScope.provider
+      : undefined;
+    const run = <R>(operation: () => Promise<R>): Promise<R> =>
+      runWithProjectTraceProvider(provider, operation);
+    const response = await run(operation);
+    return response
+      ? completeOnResponseBodyConsumption(
+        response,
+        () => {},
+        request.signal,
+        { highWaterMark: 0 },
+        {
+          runDeferredOperation: run,
+          cancellationTimeoutMs: 1000,
+        },
+      ) as T
+      : response;
+  }
   const active = getRegistry();
   if (settings.status !== "enabled" || !active || request.signal.aborted) {
     if (
