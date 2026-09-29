@@ -160,7 +160,7 @@ function MessageRoot(
         copyFailed,
         onEdit: editMessage
           ? (content: string) => {
-            editMessage(message.id, content);
+            void editMessage(message.id, content);
           }
           : undefined,
         onFeedback: onFeedbackProp

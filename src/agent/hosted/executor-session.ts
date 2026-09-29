@@ -508,7 +508,7 @@ class Session implements HostedExecutorSession {
         operations: this.#grant.operations,
         defaultTimeoutMs: Math.max(1, this.#request.hardDeadlineAt - this.#now()),
       });
-      this.#track(() => this.#channel!.settled);
+      void this.#track(() => this.#channel!.settled);
       void this.#channel.closed.then(() => this.#stop("channel-closed"));
       await awaitAbortable(this.#channel.ready, this.signal);
       this.#assertActive();

@@ -89,8 +89,8 @@ export function AgentTab({
       }
     }
 
-    loadProviders();
-    loadWorkflows();
+    void loadProviders();
+    void loadWorkflows();
   }, []);
 
   function navigateToMCP(mcpSubTab: "tools" | "resources" | "prompts", itemId: string): void {

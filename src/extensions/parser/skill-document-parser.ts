@@ -126,7 +126,7 @@ function observePromiseSettlementWithoutHooks(promise: Promise<unknown>): void {
   try {
     call(objectDefineProperty, Object, [promise, "constructor", replacement]);
     installed = true;
-    call(promiseThen, promise, [
+    void call(promiseThen, promise, [
       ignorePromiseSettlement,
       ignorePromiseSettlement,
     ]);

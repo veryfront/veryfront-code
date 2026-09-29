@@ -253,7 +253,7 @@ export class ProjectIsolationManager {
     // Shut down the worker pool if isolation is enabled
     if (isWorkerIsolationEnabled()) {
       try {
-        getWorkerPool().shutdown();
+        void getWorkerPool().shutdown();
       } catch {
         // Pool may not be initialized
       }

@@ -974,7 +974,7 @@ export class ExtensionLoader {
       },
     );
     addSetValue(this.lateSetups, cleanup);
-    createIntrinsicPromiseContinuation(
+    void createIntrinsicPromiseContinuation(
       cleanup,
       () => {
         deleteSetValue(this.lateSetups, cleanup);
@@ -1019,7 +1019,7 @@ export class ExtensionLoader {
         try {
           forEachSetValue(this.lateSetups, (cleanup) => {
             remaining += 1;
-            createIntrinsicPromiseContinuation(
+            void createIntrinsicPromiseContinuation(
               cleanup,
               markSettled,
               fail,
@@ -1070,7 +1070,7 @@ export class ExtensionLoader {
         let lateSetupBarrier: Promise<void>;
         try {
           lateSetupBarrier = this.waitForLateSetups(false);
-          createIntrinsicPromiseContinuation(
+          void createIntrinsicPromiseContinuation(
             lateSetupBarrier,
             finish,
             fail,
@@ -1085,7 +1085,7 @@ export class ExtensionLoader {
           // This call reaches generation sealing and retirement notification
           // synchronously before its first suspension point.
           teardown = this.teardownAllInternal();
-          createIntrinsicPromiseContinuation(
+          void createIntrinsicPromiseContinuation(
             teardown,
             waitAfterTeardown,
             fail,
@@ -1099,7 +1099,7 @@ export class ExtensionLoader {
         // A public shutdown is a full barrier: if a setup outlived its timeout,
         // do not overlap its cleanup with another teardown pass.
         const lateSetupBarrier = this.waitForLateSetups(false);
-        createIntrinsicPromiseContinuation(
+        void createIntrinsicPromiseContinuation(
           lateSetupBarrier,
           startTeardown,
           fail,
@@ -1256,7 +1256,7 @@ export class ExtensionLoader {
           return;
         }
         try {
-          createIntrinsicPromiseContinuation(
+          void createIntrinsicPromiseContinuation(
             operationResult,
             resolve,
             reject,
@@ -1266,7 +1266,7 @@ export class ExtensionLoader {
         }
       };
       try {
-        createIntrinsicPromiseContinuation(
+        void createIntrinsicPromiseContinuation(
           this.lifecycleTail,
           runOperation,
           reject,

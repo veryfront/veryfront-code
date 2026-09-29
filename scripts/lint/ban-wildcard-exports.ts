@@ -61,4 +61,4 @@ async function main(): Promise<void> {
   Deno.exit(1);
 }
 
-main();
+void main();

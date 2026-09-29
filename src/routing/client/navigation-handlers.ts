@@ -38,7 +38,7 @@ export class NavigationHandlers {
       if (!href) return;
 
       event.preventDefault();
-      callbacks.onNavigate(href);
+      void callbacks.onNavigate(href);
     };
   }
 
@@ -46,7 +46,7 @@ export class NavigationHandlers {
     return (_event: PopStateEvent) => {
       this.isPopStateNav = true;
       const { pathname, search, hash } = globalThis.location;
-      callbacks.onNavigate(`${pathname}${search}${hash}`);
+      void callbacks.onNavigate(`${pathname}${search}${hash}`);
     };
   }
 

@@ -1935,7 +1935,7 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   destroy(): Promise<void> {
-    this.clear();
+    void this.clear();
 
     logger.debug("Destroyed");
     return Promise.resolve();

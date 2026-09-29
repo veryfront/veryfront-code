@@ -39,7 +39,7 @@ function observeNative(
     if (!hasObservableConstructor(promise)) return;
     // Ignore the species-created return value. Only reactions attached to the
     // original promise may settle the protected wrapper.
-    apply(promiseThen, promise, [fulfilled, rejected]);
+    void apply(promiseThen, promise, [fulfilled, rejected]);
   } catch {
     // A hostile constructor/species can prevent observation. It cannot turn
     // unfinished work into an observed fulfillment or rejection.
@@ -103,7 +103,7 @@ class PrivatePromise<T> extends NativePromise<T> {
   }
 }
 freeze(PrivatePromise.prototype);
-freeze(PrivatePromise);
+void freeze(PrivatePromise);
 
 /** Observe owned native work without changing the input promise. */
 export function chainPrivatePromise<T, U>(

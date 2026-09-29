@@ -139,8 +139,8 @@ function resolvedPromise(): Promise<void> {
 
 function raceTwo<T>(first: Promise<T>, second: Promise<T>): Promise<T> {
   return new IntrinsicPromise<T>((resolve, reject) => {
-    promiseThen(first, resolve, reject);
-    promiseThen(second, resolve, reject);
+    void promiseThen(first, resolve, reject);
+    void promiseThen(second, resolve, reject);
   });
 }
 
@@ -729,7 +729,7 @@ export class ImportMapPreloader {
 
   private trackActiveLoad(promise: Promise<ImportMapConfig>): void {
     setAdd(this.activeLoads, promise);
-    promiseThen(
+    void promiseThen(
       promise,
       () => {
         if (setDelete(this.activeLoads, promise)) this.notifyCapacityChange();
@@ -758,7 +758,7 @@ export class ImportMapPreloader {
       }
       this.notifyCapacityChange();
     };
-    promiseThen(promise, release, release);
+    void promiseThen(promise, release, release);
   }
 
   private hasActiveWorkCapacity(): boolean {
@@ -797,7 +797,7 @@ export class ImportMapPreloader {
     const releaseActive = (): void => {
       if (setDelete(this.activeIdentityBuilds, promise)) this.notifyCapacityChange();
     };
-    promiseThen(
+    void promiseThen(
       promise,
       releaseActive,
       () => {
@@ -1044,7 +1044,7 @@ export class ImportMapPreloader {
       const entry: CachedImportMap = { promise, expiresAt: null };
       mapSet(projectCache, variantKey, entry);
 
-      promiseThen(
+      void promiseThen(
         promise,
         () => {
           releaseIdentity();

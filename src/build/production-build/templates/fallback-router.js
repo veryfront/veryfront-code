@@ -45,7 +45,7 @@ globalThis.VeryfrontRouter = class {
     if (link?.href?.startsWith(globalThis.location.origin)) {
       event.preventDefault();
       const url = new URL(link.href);
-      this.navigate(url.pathname);
+      void this.navigate(url.pathname);
     }
   }
 

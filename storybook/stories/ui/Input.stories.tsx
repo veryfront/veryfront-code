@@ -166,7 +166,7 @@ export const ReadOnlyWithCopy: Story = {
     const value = "vf_live_4f9c2b8e1a7d6c5b3a2e9f8d7c6b5a4e";
     const [isCopied, setIsCopied] = useState(false);
     const onCopy = () => {
-      navigator.clipboard?.writeText(value);
+      void navigator.clipboard?.writeText(value);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 1500);
     };

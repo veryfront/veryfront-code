@@ -309,7 +309,7 @@ export class WorkflowWorker {
   private resumeInBackground(run: WorkflowRun): void {
     this.activeResumes.add(run.id);
 
-    (async () => {
+    void (async () => {
       try {
         if (this.config.debug) {
           logger.info(`Resuming stalled run ${run.id}`);

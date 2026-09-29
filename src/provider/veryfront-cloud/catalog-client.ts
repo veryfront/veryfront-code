@@ -402,7 +402,7 @@ function waitFor(
     const onAbort = () => finish(fallback);
     signal?.addEventListener("abort", onAbort, { once: true });
     if (maxWaitMs !== undefined) timer = setTimeout(() => finish(fallback), maxWaitMs);
-    request.then(finish);
+    void request.then(finish);
   });
 }
 

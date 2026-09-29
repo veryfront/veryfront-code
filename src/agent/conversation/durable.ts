@@ -1030,7 +1030,7 @@ export function createConversationRunEventQueueController(input: {
         : flushTail.then(() => flushOnce(options?.abortSignal));
       const tail = result.catch(() => {});
       flushTail = tail;
-      tail.then(() => {
+      void tail.then(() => {
         if (flushTail === tail) {
           flushTail = null;
         }
