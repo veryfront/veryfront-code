@@ -117,6 +117,19 @@ describe("mcp/standalone", () => {
       assertEquals(names.includes("vf_trigger_hmr"), true);
     });
 
+    it("tools/list advertises an object input schema for every tool", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "tools/list");
+      const result = resp.result as {
+        tools: { name: string; inputSchema: { type?: string } }[];
+      };
+
+      assertEquals(result.tools.length > 0, true);
+      for (const tool of result.tools) {
+        assertEquals(tool.inputSchema.type, "object", tool.name);
+      }
+    });
+
     it("tools/list includes vf_scaffold with auth enum parity", async () => {
       const server = new StandaloneMCPServer();
       const resp = await dispatch(server, "tools/list");
