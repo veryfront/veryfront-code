@@ -229,6 +229,134 @@ describe("agentAsTool", () => {
     );
   });
 
+  // A delegating agent receives the child's accepted value: the parsed object
+  // when the child declares an outputSchema.
+  it("returns the child's structured object alongside its text", async () => {
+    const childAgent = createMinimalAgent("classifier");
+    childAgent.config.outputSchema = {
+      type: "object",
+      properties: { category: { type: "string" }, confidence: { type: "number" } },
+      required: ["category", "confidence"],
+    };
+    const object = { category: "billing", confidence: 0.93 };
+    childAgent.stream = (input): Promise<AgentStreamResult> => {
+      input.onFinish?.({
+        text: JSON.stringify(object),
+        object,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      });
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+        },
+      });
+    };
+
+    const result = await agentAsTool(childAgent, "Classify the ticket").execute(
+      { input: "I was charged twice." },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(result, {
+      text: JSON.stringify(object),
+      object,
+      toolCalls: 0,
+      status: "completed",
+    });
+  });
+
+  it("passes an explicit null object through instead of dropping it", async () => {
+    const childAgent = createMinimalAgent("nullable");
+    childAgent.config.outputSchema = { type: ["object", "null"] };
+    childAgent.stream = (input): Promise<AgentStreamResult> => {
+      input.onFinish?.({
+        text: "null",
+        object: null,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      });
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+        },
+      });
+    };
+
+    const result = await agentAsTool(childAgent, "Nullable").execute(
+      { input: "Anything?" },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(result, { text: "null", object: null, toolCalls: 0, status: "completed" });
+  });
+
+  it("keeps a parsed undefined object from a schema transform", async () => {
+    const childAgent = createMinimalAgent("discarding");
+    childAgent.config.outputSchema = { type: "object" };
+    childAgent.stream = (input): Promise<AgentStreamResult> => {
+      input.onFinish?.({
+        text: '{"city":"Berlin"}',
+        object: undefined,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      });
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+        },
+      });
+    };
+
+    const result = await agentAsTool(childAgent, "Discarding").execute(
+      { input: "Berlin?" },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(Object.hasOwn(result, "object"), true);
+    assertEquals(result, {
+      text: '{"city":"Berlin"}',
+      object: undefined,
+      toolCalls: 0,
+      status: "completed",
+    });
+  });
+
+  it("returns no object key for a child without an outputSchema", async () => {
+    const result = await agentAsTool(createMinimalAgent("writer"), "Write").execute(
+      { input: "Describe the room." },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
+  });
+
+  it("ignores an object value the child response only inherits", async () => {
+    const childAgent = createMinimalAgent("writer");
+    childAgent.stream = (input): Promise<AgentStreamResult> => {
+      const inherited: AgentResponse = Object.assign(
+        Object.create({ object: { injected: true } }) as AgentResponse,
+        { text: "ok", messages: [], toolCalls: [], status: "completed" as const },
+      );
+      input.onFinish?.(inherited);
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+        },
+      });
+    };
+
+    const result = await agentAsTool(childAgent, "Write").execute(
+      { input: "Describe the room." },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
+  });
+
   it("preserves the child stream error when no final response is produced", async () => {
     const childAgent = createMinimalAgent("failing-child");
     childAgent.stream = () =>
