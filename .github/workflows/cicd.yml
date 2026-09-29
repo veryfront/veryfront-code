@@ -1359,10 +1359,8 @@ jobs:
           echo "Checksum manifest:"
           cat "$SUMS_FILE"
 
-          # Clean up rc pre-releases (created by the prerelease job on main pushes)
-          gh release list --repo veryfront/veryfront --json tagName -q ".[].tagName" \
-            | grep "^v${VERSION}-rc\." \
-            | xargs -I{} gh release delete {} --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
+          # Downstream runtime catalogues can still pin an RC after stable publication.
+          # Retain its immutable assets so those builds and rollback sources remain available.
 
           bash scripts/ci/publish-github-release.sh \
             --repo veryfront/veryfront \
