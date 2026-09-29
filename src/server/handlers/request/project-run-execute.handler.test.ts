@@ -2870,28 +2870,60 @@ describe("project run inference credential header", () => {
     assertEquals(resolverInScope, false);
   });
 
-  it("rejects a malformed header before running anything, without echoing it", async () => {
-    let ran = false;
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      runTask: async () => {
-        ran = true;
-        return { success: true, result: null, durationMs: 0 };
-      },
-    }));
-    const malformed = `${INFERENCE_TOKEN} `;
-    const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
-      "X-Veryfront-Inference-Token": malformed,
+  const MALFORMED_HEADERS: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ["an internal space", [`${INFERENCE_TOKEN} ${INFERENCE_TOKEN}`]],
+    // Two headers are joined with ", ", which the credential check refuses.
+    ["a duplicated header", [INFERENCE_TOKEN, INFERENCE_TOKEN]],
+    ["a value over the inference credential bound", [INFERENCE_TOKEN + "x".repeat(16 * 1024)]],
+    ["an empty value", [""]],
+  ];
+
+  for (const [label, values] of MALFORMED_HEADERS) {
+    it(`rejects ${label} before running anything, without echoing it`, async () => {
+      let ran = false;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          ran = true;
+          return { success: true, result: null, durationMs: 0 };
+        },
+      }));
+      const signed = await signedRequest(taskPath, taskBody);
+      const headers = new Headers(signed.request.headers);
+      for (const value of values) headers.append("X-Veryfront-Inference-Token", value);
+      const request = new Request(signed.request, { headers });
+
+      const { value: result, lines } = await withCapturedConsole(() =>
+        handler.handle(request, createCtx(signed.publicKeyPem))
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+      const text = await result.response.text();
+      assertEquals(text.includes(INFERENCE_TOKEN), false);
+      assertEquals(ran, false);
+      assertEquals(lines.some((line) => line.includes(INFERENCE_TOKEN)), false);
     });
+  }
 
-    const { value: result, lines } = await withCapturedConsole(() =>
-      handler.handle(request, createCtx(publicKeyPem))
-    );
-
-    assertExists(result.response);
-    assertEquals(result.response.status, 400);
-    const text = await result.response.text();
-    assertEquals(text.includes(INFERENCE_TOKEN), false);
-    assertEquals(ran, false);
-    assertEquals(lines.some((line) => line.includes(INFERENCE_TOKEN)), false);
+  it("reads the header without a patched Headers.prototype.get seeing it", async () => {
+    const seen: unknown[] = [];
+    const originalGet = Headers.prototype.get;
+    Headers.prototype.get = function (this: Headers, name: string) {
+      const value = originalGet.call(this, name);
+      seen.push(value);
+      return value;
+    };
+    try {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(taskPath, taskBody, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+      });
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+    } finally {
+      Headers.prototype.get = originalGet;
+    }
+    assertEquals(seen.includes(INFERENCE_TOKEN), false);
   });
 });

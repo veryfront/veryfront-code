@@ -680,6 +680,10 @@ interface RuntimeApiClient {
   delete<T>(path: string): Promise<T>;
 }
 
+const IntrinsicReflectApply = Reflect.apply;
+const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!.get!;
+const HeadersGet = Headers.prototype.get;
+
 /**
  * The execute request's gateway-only inference credential, validated with the
  * same visible-ASCII and size checks hosted runs apply to theirs. Read raw:
@@ -687,7 +691,12 @@ interface RuntimeApiClient {
  * when the control plane sent none, which keeps the pre-header behaviour.
  */
 function readProjectRunInferenceToken(req: Request): string | undefined {
-  const value = req.headers.get(PROJECT_RUN_INFERENCE_TOKEN_HEADER);
+  // Captured accessors: a project that patches `Headers.prototype.get` must not
+  // see the credential of this or any later execute request on the same host.
+  const headers = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
+  const value = IntrinsicReflectApply(HeadersGet, headers, [
+    PROJECT_RUN_INFERENCE_TOKEN_HEADER,
+  ]) as string | null;
   if (value === null) return undefined;
   return requireInferenceProviderCredential(value, "Inference token header");
 }

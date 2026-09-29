@@ -95,6 +95,13 @@ export interface VeryfrontCloudCatalogLoadOptions extends VeryfrontCloudCatalogS
    * stale entry still answers when the refresh fails or the wait ends.
    */
   readonly fresh?: boolean;
+  /**
+   * Throws when the credential in `apiToken` may no longer be sent. Called
+   * before this caller starts a catalog request, the one step here that sends
+   * the credential; a revoked credential then fails the load instead of
+   * reaching the network.
+   */
+  readonly assertCredentialActive?: () => void;
 }
 
 interface CatalogEntry {
@@ -409,7 +416,9 @@ function waitFor(
 /**
  * Load the served catalog for a scope. Resolves to the cached catalog when it
  * is fresh, to a stale one while a refresh runs, and to undefined when no
- * catalog could be loaded or the caller stopped waiting first. Never rejects.
+ * catalog could be loaded or the caller stopped waiting first. Never rejects,
+ * except that `assertCredentialActive` throws synchronously, before any request,
+ * when the credential it guards was revoked.
  */
 export function loadVeryfrontCloudCatalog(
   options: VeryfrontCloudCatalogLoadOptions,
@@ -427,6 +436,7 @@ export function loadVeryfrontCloudCatalog(
     return Promise.resolve(entry?.catalog);
   }
   if (lastFailure !== undefined) failedAt.delete(key);
+  options.assertCredentialActive?.();
   const request = refresh(key, {
     apiBaseUrl: options.apiBaseUrl,
     apiToken: options.apiToken,
