@@ -76,6 +76,7 @@ const TaskSetTimeout = globalThis.setTimeout;
 const TaskClearTimeout = globalThis.clearTimeout;
 const TaskAbortController = AbortController;
 const TaskAbort = AbortController.prototype.abort;
+const TaskAbortSignalAny = AbortSignal.any;
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -172,6 +173,7 @@ interface WorkflowClientView {
     options?: { runId?: string },
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
+  cancel(runId: string): Promise<void>;
   destroy(): Promise<void>;
 }
 
@@ -660,6 +662,7 @@ async function executeTaskRun(
 async function executeDiscoveredTaskRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
 ): Promise<ProjectRunExecuteResponse> {
@@ -685,7 +688,6 @@ async function executeDiscoveredTaskRun(
   control?.throwIfExpired();
   const result = await deps.runTask({
     task,
-    signal: control?.signal,
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
     input: request.input,
@@ -694,6 +696,11 @@ async function executeDiscoveredTaskRun(
     environmentId: request.runtimeTargetEnvironmentId === undefined
       ? ctx.environmentId
       : request.runtimeTargetEnvironmentId ?? undefined,
+    // The control plane aborts its request when the run is cancelled; the
+    // task sees that, or its deadline, as ctx.signal and can stop cooperatively.
+    signal: control
+      ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[signal, control.signal]])
+      : signal,
     debug: ctx.debug,
   });
 
@@ -707,9 +714,15 @@ async function executeDiscoveredTaskRun(
   };
 }
 
+/**
+ * Polls a workflow run until it settles. When the control plane aborts the
+ * request (the run was cancelled), the workflow run is cancelled instead of
+ * being polled to completion.
+ */
 async function waitForWorkflowResult(
   client: WorkflowClientView,
   runId: string,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
@@ -718,14 +731,16 @@ async function waitForWorkflowResult(
     const run = await client.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
-    if (
-      run.status === "completed" ||
-      run.status === "failed" ||
-      run.status === "cancelled" ||
-      run.status === "waiting"
-    ) {
-      return run;
+    if (signal.aborted && !isSettledWorkflowStatus(run.status)) {
+      await client.cancel(runId);
+      return {
+        status: "cancelled",
+        output: run.output,
+        error: { message: "Workflow run cancelled" },
+      };
     }
+
+    if (isSettledWorkflowStatus(run.status)) return run;
 
     if (deps.now() >= deadline) {
       throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
@@ -735,9 +750,15 @@ async function waitForWorkflowResult(
   }
 }
 
+function isSettledWorkflowStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled" ||
+    status === "waiting";
+}
+
 async function executeWorkflowRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
@@ -780,7 +801,7 @@ async function executeWorkflowRun(
       if (failure) return failure;
       throw error;
     }
-    const run = await waitForWorkflowResult(client, handle.runId, deps);
+    const run = await waitForWorkflowResult(client, handle.runId, signal, deps);
     await handle.settled?.();
     const durationMs = Math.max(0, deps.now() - startedAt);
 
@@ -2181,12 +2202,12 @@ function executeProjectRun(
         case "task:style-artifact-build":
           return deps.executeStyleArtifactBuild({ request, ctx, req });
         default:
-          return executeDiscoveredTaskRun(request, ctx, deps, control);
+          return executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
       }
     });
   }
   if (request.kind === "eval") return executeEvalRun(request, ctx, req, deps);
-  return executeWorkflowRun(request, ctx, deps);
+  return executeWorkflowRun(request, ctx, req.signal, deps);
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {

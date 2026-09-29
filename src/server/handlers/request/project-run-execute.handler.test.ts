@@ -363,6 +363,7 @@ function createDeps(
         status: "completed",
         output: { deployed: true },
       }),
+      cancel: async () => {},
       destroy: async () => {},
     }),
     runEval: async (definition, options) => ({
@@ -1026,6 +1027,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             return Promise.resolve({ runId: options?.runId ?? "workflow-run" });
           },
           getRun: () => Promise.resolve({ status: "completed", output: null }),
+          cancel: async () => {},
           destroy: () => Promise.resolve(),
         }),
       }));
@@ -1059,6 +1061,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           return Promise.resolve({ runId: options?.runId ?? "workflow-run" });
         },
         getRun: () => Promise.resolve({ status: "completed", output: null }),
+        cancel: async () => {},
         destroy: () => Promise.resolve(),
       }),
     }));
@@ -1486,6 +1489,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "completed",
           output: { deployed: true },
         }),
+        cancel: async () => {},
         destroy: async () => {},
       }),
     }));
@@ -2553,6 +2557,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             status: "completed",
             output: { agent: "ok" },
           }),
+          cancel: async () => {},
           destroy: async () => {},
         };
       },
@@ -2605,6 +2610,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             status: "completed",
             output: { deployed: true },
           }),
+          cancel: async () => {},
           destroy: async () => {},
         };
       },
@@ -2816,6 +2822,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "failed",
           error: { message: "step failed" },
         }),
+        cancel: async () => {},
         destroy: async () => {
           order.push("destroy");
         },
@@ -2859,6 +2866,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "waiting",
           output: { approvalId: "approval-1" },
         }),
+        cancel: async () => {},
         destroy: async () => {
           destroyed = true;
         },
@@ -2913,6 +2921,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           getRunCalls++;
           return { status: "running" };
         },
+        cancel: async () => {},
         destroy: async () => {},
       }),
     }));
@@ -2956,6 +2965,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "waiting",
           output: { approvalId: "approval-1" },
         }),
+        cancel: async () => {},
         destroy: async () => {
           destroyed = true;
         },
@@ -3322,5 +3332,101 @@ describe("project run execution span", () => {
     assertExists(span);
     assertEquals(span.parentSpanContext, undefined);
     assertEquals(span.links.map((link) => link.context.traceId), [caller.traceId]);
+  });
+});
+
+// veryfront-issue-inbox#2086: a cancelled project run must reach the running
+// task or workflow, not only the control-plane row.
+describe("server/handlers/request/project-run-execute.handler cancellation", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  function abortable(request: Request): { request: Request; controller: AbortController } {
+    const controller = new AbortController();
+    return { request: new Request(request, { signal: controller.signal }), controller };
+  }
+
+  it("hands the task its supported cooperative cancellation signal", async () => {
+    let taskSignal: AbortSignal | undefined;
+    let releaseTask!: () => void;
+    const taskStarted = Promise.withResolvers<void>();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async (options) => {
+        taskSignal = options.signal;
+        taskStarted.resolve();
+        await new Promise<void>((resolve) => {
+          releaseTask = resolve;
+        });
+        return { success: true, result: { synced: 1 }, durationMs: 1 };
+      },
+    }));
+    const body = {
+      runId: "run_task_cancel",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const signed = await signedRequest("/api/control-plane/runs/run_task_cancel/execute", body);
+    const { request, controller } = abortable(signed.request);
+
+    const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+    await taskStarted.promise;
+    controller.abort(new Error("run cancelled"));
+
+    try {
+      assertExists(taskSignal, "runTask must receive a signal");
+      assertEquals(taskSignal.aborted, true);
+    } finally {
+      releaseTask();
+      await pending;
+    }
+  });
+
+  it("cancels the workflow run instead of polling it to completion", async () => {
+    const cancelled: string[] = [];
+    let status = "running";
+    const controller = new AbortController();
+    const client = {
+      register: () => {},
+      start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+        runId: options?.runId ?? "workflow-run",
+      }),
+      getRun: async () => {
+        // Cancellation arrives while the workflow is still running.
+        if (!controller.signal.aborted) controller.abort(new Error("run cancelled"));
+        return { status, output: null };
+      },
+      cancel: async (runId: string) => {
+        cancelled.push(runId);
+        status = "cancelled";
+      },
+      destroy: async () => {},
+    };
+    let polls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => client,
+      sleep: async () => {
+        polls += 1;
+        // Stand in for the real poll timeout so a missing cancel fails fast.
+        if (polls > 5) status = "completed";
+      },
+    }));
+    const body = {
+      runId: "run_workflow_cancel",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: {},
+    };
+    const signed = await signedRequest("/api/control-plane/runs/run_workflow_cancel/execute", body);
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertEquals(cancelled, ["run_workflow_cancel"]);
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
   });
 });
