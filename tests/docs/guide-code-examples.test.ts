@@ -250,7 +250,7 @@ describe("Guide: providers.md", () => {
 
     assertEquals(await neutralBaseUrl("acme-labs"), `${api}/ai/v1`);
     assertStringIncludes(section, "`<provider>/<model>`");
-    assertStringIncludes(section, `curl ${api}/ai/v1/models`);
+    assertStringIncludes(section, `curl ${api}/ai/models`);
   });
 });
 

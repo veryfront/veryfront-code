@@ -73,7 +73,7 @@ The Veryfront CLI and SDK read `VERYFRONT_API_TOKEN`, described above.
 Name the model as `<provider>/<model>`. List the models your key can use:
 
 ```bash
-curl https://api.veryfront.com/ai/v1/models \
+curl https://api.veryfront.com/ai/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
 
