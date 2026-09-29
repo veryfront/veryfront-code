@@ -111,8 +111,11 @@ export function agentAsTool(
             "agent.status": response.status,
           });
 
+          // The child's accepted value: its parsed object when it declares an
+          // outputSchema, next to the text (veryfront-issue-inbox#2106).
           return {
             text: response.text,
+            ...(response.object !== undefined ? { object: response.object } : {}),
             toolCalls: response.toolCalls.length,
             status: response.status,
           };

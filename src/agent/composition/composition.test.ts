@@ -229,6 +229,48 @@ describe("agentAsTool", () => {
     );
   });
 
+  // veryfront/veryfront-issue-inbox#2106: a delegating agent receives the child's accepted
+  // value, the parsed object when the child declares an outputSchema.
+  it("returns the child's structured object alongside its text", async () => {
+    const childAgent = createMinimalAgent("classifier");
+    const object = { category: "billing", confidence: 0.93 };
+    childAgent.stream = (input): Promise<AgentStreamResult> => {
+      input.onFinish?.({
+        text: JSON.stringify(object),
+        object,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      } as AgentResponse);
+      return Promise.resolve({
+        toDataStreamResponse() {
+          return new Response("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+        },
+      });
+    };
+
+    const result = await agentAsTool(childAgent, "Classify the ticket").execute(
+      { input: "I was charged twice." },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(result, {
+      text: JSON.stringify(object),
+      object,
+      toolCalls: 0,
+      status: "completed",
+    });
+  });
+
+  it("returns no object key for a child without an outputSchema", async () => {
+    const result = await agentAsTool(createMinimalAgent("writer"), "Write").execute(
+      { input: "Describe the room." },
+      {} as ToolExecutionContext,
+    );
+
+    assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
+  });
+
   it("preserves the child stream error when no final response is produced", async () => {
     const childAgent = createMinimalAgent("failing-child");
     childAgent.stream = () =>
