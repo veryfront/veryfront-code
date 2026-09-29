@@ -139,6 +139,7 @@ async function runTaskTarget(
       runTask({
         task,
         config: toRecordInput(input),
+        input,
         projectId: options.projectId,
         signal: options.signal,
         debug: options.debug,
