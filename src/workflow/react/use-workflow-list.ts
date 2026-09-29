@@ -195,7 +195,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
       if (!cancelled && isCurrentRequest(request)) setIsLoading(false);
     }
 
-    doFetch();
+    void doFetch();
 
     return () => {
       cancelled = true;

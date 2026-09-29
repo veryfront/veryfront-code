@@ -220,7 +220,7 @@ function createPinnedPromise<T>(
   ) => void,
 ): Promise<T> {
   const promise = new NativePromise<T>(executor);
-  defineProperty(
+  void defineProperty(
     promise,
     "constructor",
     createDataDescriptor(NativePromise),

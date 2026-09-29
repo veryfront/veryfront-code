@@ -1,19 +1,19 @@
 /**
  * Served model catalog fixtures for tests.
  *
- * `SERVED_MODEL_ROWS` copies the `/ai/models` rows the platform serves today
- * for the models this package's shipped table lists, reduced to the fields
- * the catalog client reads. `UNSERVED_TABLE_MODEL_ROWS` describes the models
- * the shipped table still lists but the platform no longer serves, with the
- * facts the table carries, so tests written against those IDs keep working.
- * Models the gateway has retired are not listed here: they are refused.
+ * `SERVED_MODEL_ROWS` copies `/ai/models` rows the platform serves today for
+ * a representative set of models, reduced to the fields the catalog client
+ * reads. `UNSERVED_MODEL_ROWS` describes models the platform no longer lists
+ * with the facts they were served with, so tests written against those IDs
+ * keep working. Models the gateway has retired are not listed here: they are
+ * refused.
  */
 import {
   __resetVeryfrontCloudCatalogForTests,
   __setVeryfrontCloudCatalogForTests,
 } from "./catalog-client.ts";
 
-/** Served rows for the models the shipped table lists. */
+/** Served rows for a representative set of models. */
 export const SERVED_MODEL_ROWS = [
   {
     "id": "claude-opus-4-8",
@@ -315,8 +315,8 @@ export const SERVED_MODEL_ROWS = [
   },
 ] as const;
 
-/** Rows for models the shipped table lists that the platform no longer serves. */
-export const UNSERVED_TABLE_MODEL_ROWS = [
+/** Rows for models the platform no longer lists, with the facts they were served with. */
+export const UNSERVED_MODEL_ROWS = [
   {
     "id": "gpt-5.2",
     "modelId": "openai/gpt-5.2",
@@ -342,7 +342,7 @@ export const SERVED_DEFAULT_MODEL_ID = "mistral/mistral-small-2503";
 /** A `/ai/models` payload with every row above. */
 export function servedCatalogPayload(): Record<string, unknown> {
   return {
-    models: [...SERVED_MODEL_ROWS, ...UNSERVED_TABLE_MODEL_ROWS],
+    models: [...SERVED_MODEL_ROWS, ...UNSERVED_MODEL_ROWS],
     defaultModelId: SERVED_DEFAULT_MODEL_ID,
   };
 }

@@ -28,10 +28,7 @@ export type {
 } from "./veryfront-cloud/model-catalog.ts";
 export {
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
-  findVeryfrontCloudModel,
-  findVeryfrontCloudModelByModelId,
   getVeryfrontCloudProviderFromModelId,
-  groupVeryfrontCloudModelsByProvider,
   normalizeVeryfrontCloudModelId,
   resolveHostedVeryfrontCloudModelId,
   resolveVeryfrontCloudDefaultModelId,
@@ -41,11 +38,7 @@ export {
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
   tryGetVeryfrontCloudProviderFromModelId,
-  VERYFRONT_CLOUD_CHAT_MODELS,
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "./veryfront-cloud/model-catalog.ts";
 export { loadVeryfrontCloudModelCatalog } from "./veryfront-cloud/shared.ts";
-export type {
-  VeryfrontCloudChatModel,
-  VeryfrontCloudModelThinkingConfig,
-} from "./veryfront-cloud/model-catalog.ts";
+export type { VeryfrontCloudModelThinkingConfig } from "./veryfront-cloud/model-catalog.ts";

@@ -413,6 +413,18 @@ export function hasModelProvider(name: string): boolean {
 }
 
 /**
+ * @internal Whether the application registered its own runtime for a provider
+ * with {@link registerModelProvider}, in the active project scope or at
+ * application bootstrap. The built-in providers registered from the
+ * environment do not count, so this is how model resolution tells an
+ * application's own `openai` runtime from the built-in one.
+ */
+export function hasApplicationModelProvider(name: string): boolean {
+  const normalizedName = normalizeProviderName(name);
+  return manager.getOwn(normalizedName) !== undefined || bootstrapProviders.has(normalizedName);
+}
+
+/**
  * Get provider names available in the current scope.
  *
  * The result includes project overrides, application bootstrap defaults, and

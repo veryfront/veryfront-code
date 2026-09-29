@@ -68,7 +68,7 @@ function clonePropertyDescriptor(descriptor: PropertyDescriptor): PropertyDescri
 }
 
 function pinPromiseConstructor<T>(promise: Promise<T>): Promise<T> {
-  defineProperty(
+  void defineProperty(
     promise,
     "constructor",
     createDataDescriptor(NativePromise),
@@ -180,7 +180,7 @@ export function createIntrinsicPromiseContinuation<T, R>(
     );
   }
 
-  defineProperty(
+  void defineProperty(
     promise,
     "constructor",
     createDataDescriptor(safePromiseSpeciesHolder),
@@ -195,7 +195,7 @@ export function createIntrinsicPromiseContinuation<T, R>(
     if (originalConstructor === undefined) {
       deleteProperty(promise, "constructor");
     } else {
-      defineProperty(
+      void defineProperty(
         promise,
         "constructor",
         clonePropertyDescriptor(originalConstructor),

@@ -44,7 +44,7 @@ export class RequestHandler {
     const healthResponse = this.handleHealthCheck(url.pathname);
     if (healthResponse) return healthResponse;
 
-    this.incrementRequestMetrics();
+    void this.incrementRequestMetrics();
 
     try {
       const devResponse = this.handleDevEndpoint(req, url.pathname);
@@ -94,7 +94,7 @@ export class RequestHandler {
   private async incrementRequestMetrics(): Promise<void> {
     try {
       const { metrics } = await import("#veryfront/observability/simple-metrics/index.ts");
-      metrics.incRequest();
+      void metrics.incRequest();
     } catch (error) {
       logger.debug("[dev] metrics.incRequest failed", error);
     }

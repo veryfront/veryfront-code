@@ -55,7 +55,7 @@ defineProperty(
 freeze(safePromiseSpeciesHolder);
 
 function pinPromiseConstructor<T>(promise: Promise<T>): Promise<T> {
-  defineProperty(promise, "constructor", createDataDescriptor(NativePromise));
+  void defineProperty(promise, "constructor", createDataDescriptor(NativePromise));
   return promise;
 }
 
@@ -80,7 +80,7 @@ export function continueProxyShutdownPromise<T, R>(
     );
   }
 
-  defineProperty(promise, "constructor", createDataDescriptor(safePromiseSpeciesHolder));
+  void defineProperty(promise, "constructor", createDataDescriptor(safePromiseSpeciesHolder));
   let continuation: Promise<R>;
   try {
     continuation = apply(nativePromiseThen, promise, [
@@ -91,7 +91,7 @@ export function continueProxyShutdownPromise<T, R>(
     if (originalConstructor === undefined) {
       deleteProperty(promise, "constructor");
     } else {
-      defineProperty(promise, "constructor", clonePropertyDescriptor(originalConstructor));
+      void defineProperty(promise, "constructor", clonePropertyDescriptor(originalConstructor));
     }
   }
   return pinPromiseConstructor(continuation);
@@ -108,7 +108,7 @@ export function resolveProxyShutdownValue<T>(
   return createProxyShutdownPromise<T>((resolve, reject) => {
     if ((typeof value === "object" && value !== null) || typeof value === "function") {
       try {
-        continueProxyShutdownPromise(
+        void continueProxyShutdownPromise(
           value as Promise<T>,
           resolve,
           reject,

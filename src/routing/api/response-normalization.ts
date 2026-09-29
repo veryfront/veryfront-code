@@ -405,7 +405,7 @@ function cancelResponseReader(
   try {
     const cancellation = apply(READER_CANCEL, reader, []);
     if (isPromise(cancellation)) {
-      apply(PROMISE_CATCH, cancellation, [() => undefined]);
+      void apply(PROMISE_CATCH, cancellation, [() => undefined]);
     }
   } catch {
     // Cancellation is best effort after the primary response failure is known.

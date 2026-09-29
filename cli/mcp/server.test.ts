@@ -206,7 +206,37 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
         assertExists(tool.name);
         assertExists(tool.description);
         assertExists(tool.inputSchema);
+        assertEquals(tool.inputSchema.type, "object", tool.name);
       }
+
+      const scaffold = data.result.tools.find((tool: { name: string }) =>
+        tool.name === "vf_scaffold"
+      );
+      assertExists(scaffold);
+      assertEquals(scaffold.inputSchema.anyOf.length, 2);
+      for (const variant of scaffold.inputSchema.anyOf) {
+        assertEquals(variant.type, "object");
+        assertEquals(variant.required, ["type", "name"]);
+      }
+      assertEquals(scaffold.inputSchema.anyOf[0].properties.type.const, "auth");
+      assertEquals(scaffold.inputSchema.anyOf[0].properties.name.enum, [
+        "authelia",
+        "oidc",
+        "microsoft-entra",
+      ]);
+      assertEquals(scaffold.inputSchema.anyOf[1].properties.type.enum, [
+        "page",
+        "api",
+        "layout",
+        "component",
+        "tool",
+        "agent",
+        "prompt",
+        "workflow",
+        "task",
+        "resource",
+        "skill",
+      ]);
 
       const getErrorsTool = data.result.tools.find((tool: { name: string }) =>
         tool.name === "vf_get_errors"

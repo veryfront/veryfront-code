@@ -57,8 +57,8 @@ export function ConfigTab(): React.JSX.Element {
   }
 
   function refresh(): void {
-    loadConfig();
-    loadDebug();
+    void loadConfig();
+    void loadDebug();
   }
 
   useEffect(() => {

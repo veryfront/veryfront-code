@@ -241,7 +241,7 @@ export type ExecutorModelMetadata = InferSchema<
 
 /**
  * Served catalog rows of granted models: non-secret model facts only. A model
- * whose served row has not loaded is absent, and its reads use shipped facts.
+ * whose served row has not loaded is absent, and its reads use protocol defaults.
  */
 export const getExecutorModelCatalogSchema = defineSchema((v) => {
   const name = () => v.string().min(1).max(256);

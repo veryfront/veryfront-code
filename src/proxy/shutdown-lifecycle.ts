@@ -251,7 +251,7 @@ export function runProxyShutdownSteps(
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
           const outcomePromise = createProxyShutdownPromise<StepOutcome>((resolveOutcome) => {
             try {
-              continueProxyShutdownPromise(
+              void continueProxyShutdownPromise(
                 operation,
                 () => resolveOutcome({ status: "completed" }),
                 (error) => {

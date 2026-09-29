@@ -319,7 +319,7 @@ describe("served-only models from a cold process", () => {
       );
     });
 
-    it("falls back to the shipped aliases in a credential-free context whose run loaded nothing", () => {
+    it("resolves no short alias in a credential-free context whose run loaded nothing", () => {
       const stripped: VeryfrontCloudContext = {
         apiBaseUrl: "https://api.veryfront.com",
         projectSlug: "run-project",
@@ -327,7 +327,11 @@ describe("served-only models from a cold process", () => {
       };
 
       runWithVeryfrontCloudContext(stripped, () => {
-        assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
+        assertThrows(() => resolveVeryfrontCloudModelId("opus"), Error, "Unknown model alias");
+        assertEquals(
+          resolveVeryfrontCloudModelId("anthropic/claude-opus-4-8"),
+          "anthropic/claude-opus-4-8",
+        );
         assertThrows(
           () => resolveVeryfrontCloudModelId(SERVED_ONLY_ALIAS),
           Error,

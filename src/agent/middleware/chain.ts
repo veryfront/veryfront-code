@@ -192,12 +192,12 @@ function trackEagerContinuation<T>(
     }
     return trackEagerContinuation(derived, onRejection, suppressedInvalidErrors);
   };
-  ObjectDefineProperty(promise, "then", {
+  void ObjectDefineProperty(promise, "then", {
     configurable: false,
     value: trackedThen,
     writable: false,
   });
-  ObjectDefineProperty(promise, "constructor", {
+  void ObjectDefineProperty(promise, "constructor", {
     configurable: false,
     value: CONTINUATION_SPECIES_HOLDER,
     writable: false,
@@ -239,7 +239,7 @@ function createObservedContinuation<T>(
     };
     // Keep the species constructor tamper-resistant after wiring the branch
     // tracker onto this internal continuation.
-    ObjectDefineProperty(continuation, "constructor", {
+    void ObjectDefineProperty(continuation, "constructor", {
       configurable: false,
       value: DerivedContinuationPromise,
       writable: false,

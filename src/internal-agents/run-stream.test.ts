@@ -369,6 +369,72 @@ describe("internal-agents/run-stream", () => {
     }
   });
 
+  const clientToolSelectors: Array<Agent["config"]["tools"]> = [
+    undefined,
+    true,
+    {},
+    { web_fetch: true },
+  ];
+  for (const tools of clientToolSelectors) {
+    it(
+      `merges request client tools the agent does not declare on project runs (tools: ${
+        JSON.stringify(tools)
+      })`,
+      async () => {
+        toolRegistryInternal.clearAll();
+        try {
+          const sessionManager = new AgentRunSessionManager();
+          const runId = "run_undeclared_client_tool";
+          sessionManager.startRun({ runId, threadId: "thread" });
+          const runtimeAgent = {
+            id: "lookup-agent",
+            config: {
+              id: "lookup-agent",
+              system: "test",
+              ...(tools === undefined ? {} : { tools }),
+            },
+          } as unknown as Agent;
+          const mergedTools = buildMergedTools(
+            runtimeAgent,
+            {
+              runId,
+              threadId: "thread",
+              messages: [],
+              tools: [{
+                name: "lookup_reference",
+                description: "Look up a reference code",
+                parameters: {
+                  type: "object",
+                  required: ["code"],
+                  properties: { code: { type: "string" } },
+                },
+              }],
+              context: [],
+            } as Parameters<typeof buildMergedTools>[1],
+            sessionManager,
+          );
+
+          assertEquals(
+            (mergedTools?.lookup_reference as Tool | undefined)?.description,
+            "Look up a reference code",
+          );
+          // The merged entry is the wait-for-tool-result wrapper: executing it
+          // parks on the session until the client submits the result.
+          const result = executeConfiguredTool(
+            "lookup_reference",
+            { code: "A1" },
+            mergedTools,
+            { toolCallId: "lookup" },
+          );
+          sessionManager.submitToolResult(runId, { toolCallId: "lookup", result: { title: "A1" } });
+          assertEquals(await result, { title: "A1" });
+        } finally {
+          toolRegistryInternal.clearAll();
+        }
+      },
+    );
+  }
+
   it("keeps injected studio waits authoritative over same-named registry tools", () => {
     const sessionManager = new AgentRunSessionManager();
     const projectTool = {

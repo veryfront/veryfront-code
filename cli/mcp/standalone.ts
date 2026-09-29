@@ -400,6 +400,7 @@ export class StandaloneMCPServer {
         description:
           "Generate Veryfront pages, API routes, layouts, components, tools, agents, prompts, workflows, tasks, resources, skills, or auth setup files. Returns created file paths and refuses existing target files.",
         inputSchema: {
+          type: "object",
           anyOf: [
             {
               type: "object",

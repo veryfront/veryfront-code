@@ -67,7 +67,7 @@ async function removeDir(path: string): Promise<void> {
  * Collect log output from a readable stream into an array.
  */
 function collectLogs(logs: string[], stream: ReadableStream<Uint8Array>): void {
-  (async () => {
+  void (async () => {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     try {

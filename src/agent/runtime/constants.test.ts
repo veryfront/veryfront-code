@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import {
+  SERVED_MODEL_ROWS,
+  UNSERVED_MODEL_ROWS,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import {
   __resetLoggerConfigForTests,
   __subscribeLogRecordEmitter,
@@ -119,6 +122,12 @@ describe("getModelMaxOutputTokens", () => {
   });
 });
 
+/** The models the served catalog fixtures list, with whether each thinks. */
+const CATALOG_MODELS = [...SERVED_MODEL_ROWS, ...UNSERVED_MODEL_ROWS].map((row) => ({
+  modelId: row.modelId,
+  thinking: (row.capabilities as Record<string, unknown>).thinking === true,
+}));
+
 describe("MODEL_MAX_OUTPUT_TOKENS covers the catalog", () => {
   // Every catalog model MUST have an explicit budget. A missing entry falls back
   // to FALLBACK_MODEL_MAX_OUTPUT_TOKENS (4_096), which truncates thinking models
@@ -126,7 +135,7 @@ describe("MODEL_MAX_OUTPUT_TOKENS covers the catalog", () => {
   // keeps the token table in sync with the catalog so a newly added model
   // cannot regress into that class of bug unnoticed.
   it("every catalog model has an explicit max-output-token budget (not just the fallback)", () => {
-    const missing = VERYFRONT_CLOUD_CHAT_MODELS
+    const missing = CATALOG_MODELS
       .filter((model) =>
         getModelMaxOutputTokens(model.modelId) === FALLBACK_MODEL_MAX_OUTPUT_TOKENS
       )
@@ -137,7 +146,7 @@ describe("MODEL_MAX_OUTPUT_TOKENS covers the catalog", () => {
   // veryfront-issue-inbox#1480: agent definitions are written with the undated
   // spelling as often as the dated one. Both must carry the same budget.
   it("every dated catalog model gives its undated id the same budget", () => {
-    const mismatched = VERYFRONT_CLOUD_CHAT_MODELS
+    const mismatched = CATALOG_MODELS
       .filter((model) => /-\d{8}$/.test(model.modelId))
       .map((model) => ({
         modelId: model.modelId,
@@ -154,7 +163,7 @@ describe("MODEL_MAX_OUTPUT_TOKENS covers the catalog", () => {
     // must comfortably exceed the reasoning burst. Non-thinking models are
     // exempt (e.g. mistral-large-2512 is intentionally quota-capped at 1_024).
     const FLOOR = 16_000;
-    const tooLow = VERYFRONT_CLOUD_CHAT_MODELS
+    const tooLow = CATALOG_MODELS
       .filter((model) => model.thinking && getModelMaxOutputTokens(model.modelId) < FLOOR)
       .map((model) => `${model.modelId}=${getModelMaxOutputTokens(model.modelId)}`);
     assertEquals(tooLow, []);

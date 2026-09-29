@@ -177,8 +177,7 @@ export interface ExecutorRuntimeFacades {
    * executor's model fact reads resolve to. Awaited once, after every grant
    * check and before thinking defaults are read, so the first run in a process
    * reads served facts. It must not resolve a model or reserve any resource,
-   * and a failure is ignored: the reads then use the facts shipped with this
-   * package. It may resolve to the non-secret key naming the loaded catalog;
+   * and a failure is ignored: the reads then use protocol defaults. It may resolve to the non-secret key naming the loaded catalog;
    * preparation and the run then read under that key.
    */
   loadModelCatalog?: (signal: AbortSignal) => Promise<string | undefined | void>;
@@ -538,7 +537,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           const key = await observePrivatePromise(facades.loadModelCatalog(context.signal));
           if (typeof key === "string" && key) catalogScopeKey = key;
         } catch {
-          // The reads below fall back to the shipped facts.
+          // The reads below use protocol defaults.
         }
         assertActive();
       }

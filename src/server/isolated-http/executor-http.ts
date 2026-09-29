@@ -12,6 +12,7 @@ import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { createWorkerTraceRecorder } from "#veryfront/observability/tracing/worker-trace-recorder.ts";
 import { parseTraceparent } from "#veryfront/observability/tracing/traceparent.ts";
+import { runWithExecutorHttpTraceScope } from "#veryfront/observability/tracing/executor-http-trace-scope.ts";
 import { runWithProjectTraceProvider } from "#veryfront/observability/tracing/project-trace-scope.ts";
 import {
   type ApplicationRequestHeaderOptions,
@@ -335,6 +336,8 @@ export function createExecutorHttpClient(options: BoundChannel & ApplicationRequ
 /** Install only after the existing owner/source/installation checks succeed. */
 export function createExecutorHttpOperation(
   options: BoundChannel & {
+    /** Trusted project/environment identity from the authenticated HTTP installation. */
+    traceIdentity?: { projectId: string; environmentId: string };
     /** The handler is already bound to this installation's immutable project source. */
     handle(request: Request): Response | Promise<Response>;
   },
@@ -342,6 +345,7 @@ export function createExecutorHttpOperation(
   const binding = parse(getExecutorBindingSchema(), options.binding);
   const channelForGeneration = options.channel;
   const handle = options.handle;
+  const traceIdentity = options.traceIdentity && { ...options.traceIdentity };
   return {
     mode: "stream",
     async *handle(value, context) {
@@ -358,8 +362,11 @@ export function createExecutorHttpOperation(
         : undefined;
       let response: Response | undefined;
       const recorder = createWorkerTraceRecorder(input.traceparent);
-      const run = <T>(operation: () => T): T =>
-        recorder ? recorder.run(operation) : runWithProjectTraceProvider(undefined, operation);
+      const run = <T>(operation: () => T): T => {
+        const scoped = () =>
+          traceIdentity ? runWithExecutorHttpTraceScope(traceIdentity, operation) : operation();
+        return recorder ? recorder.run(scoped) : runWithProjectTraceProvider(undefined, scoped);
+      };
       try {
         const init: RequestInit & { duplex?: "half" } = {
           method: input.method,

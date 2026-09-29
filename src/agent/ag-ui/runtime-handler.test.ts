@@ -997,6 +997,81 @@ describe("agent/ag-ui-runtime-handler", () => {
     }
   });
 
+  it("merges request client tools the agent does not declare", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+    const agent = createTestAgent().agent;
+    let modelToolNames: string[] = [];
+
+    agent.config = {
+      ...agent.config,
+      tools: {
+        "number-generator": {
+          id: "number-generator",
+          type: "function",
+          description: "Generate a number.",
+          inputSchema: defineSchema((v) => v.object({ min: v.number(), max: v.number() }))(),
+          execute: () => Promise.resolve({ randomNumber: 42 }),
+        },
+      },
+    } as Agent["config"];
+
+    AgentRuntime.prototype.stream = function (): Promise<ReadableStream<Uint8Array>> {
+      const runtimeConfig = this as unknown as { config: { tools?: Record<string, unknown> } };
+      modelToolNames = Object.keys(runtimeConfig.config.tools ?? {}).sort();
+
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "ok" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+            controller.close();
+          },
+        }),
+      );
+    };
+
+    try {
+      const handler = createAgUiRuntimeHandler({ agent, sessionManager });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId: crypto.randomUUID(),
+            runId: "run_runtime_undeclared_client_tool",
+            messages: [{ id: "msg-1", role: "user", content: "Verify reference code NV-2231." }],
+            tools: [{
+              name: "lookup_reference",
+              description: "Look up a reference code",
+              parameters: {
+                type: "object",
+                required: ["code"],
+                properties: { code: { type: "string" } },
+              },
+            }],
+          }),
+        }),
+      );
+
+      await response.text();
+      assertEquals(response.status, 200);
+      assertEquals(modelToolNames, ["lookup_reference", "number-generator"]);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
   it("requires a session manager when injected runtime tools are present and the default path is used", async () => {
     const testAgent = createTestAgent();
     const threadId = crypto.randomUUID();
