@@ -78,6 +78,7 @@ import { parsePushArgs } from "../../cli/commands/push/command.ts";
 import { parseCliArgs } from "../../cli/shared/args.ts";
 import { AUTH_PRESETS } from "../../cli/scaffold/engine.ts";
 import { getTemplate } from "../../templates/index.ts";
+import { getVeryfrontCloudGatewayBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
   "agents.md",
@@ -203,6 +204,59 @@ describe("Guide code example coverage", () => {
     const guideFiles = new Set(await guideFilesWithCodeFences());
     const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) => !guideFiles.has(name));
     assertEquals(stale, []);
+  });
+});
+
+describe("Guide: providers.md", () => {
+  const api = "https://api.veryfront.com";
+
+  async function gatewayClientSection(): Promise<string> {
+    const guide = await readGuide("providers.md");
+    const start = guide.indexOf("### Call the AI Gateway from other clients");
+    assert(start !== -1, "providers.md documents calling the AI Gateway from other clients");
+    const end = guide.indexOf("\n## ", start);
+    return guide.slice(start, end === -1 ? undefined : end);
+  }
+
+  it("shows how to export a project key for the client examples", async () => {
+    const section = await gatewayClientSection();
+
+    assertStringIncludes(section, 'export VERYFRONT_API_KEY="<your-project-api-key>"');
+  });
+
+  // The guide documents the default routes, so a host that opts back into
+  // vendor routes must not change what this suite compares against.
+  function neutralBaseUrl(provider: string): Promise<string> {
+    return withEnv(
+      { VERYFRONT_CLOUD_GATEWAY_ROUTES: "" },
+      () => Promise.resolve(getVeryfrontCloudGatewayBaseUrl(api, provider)),
+    );
+  }
+
+  it("gives the OpenAI client the base URL the SDK sends OpenAI-protocol models to", async () => {
+    const section = await gatewayClientSection();
+    const base = await neutralBaseUrl("openai");
+
+    assertStringIncludes(section, `baseURL: "${base}"`);
+    assertStringIncludes(section, `curl ${base}/chat/completions`);
+  });
+
+  it("gives the Anthropic client the canonical Messages base URL", async () => {
+    const section = await gatewayClientSection();
+    const base = `${api}/ai/v1`;
+
+    // The Anthropic client appends /v1/messages to its base URL.
+    assertEquals(base.endsWith("/v1"), true);
+    assertStringIncludes(section, `baseURL: "${base.slice(0, -"/v1".length)}"`);
+    assertStringIncludes(section, `curl ${base}/messages`);
+  });
+
+  it("maps unknown SDK vendors to the OpenAI protocol and documents open provider ids", async () => {
+    const section = await gatewayClientSection();
+
+    assertEquals(await neutralBaseUrl("acme-labs"), `${api}/ai/v1`);
+    assertStringIncludes(section, "`<provider>/<model>`");
+    assertStringIncludes(section, `curl ${api}/ai/models`);
   });
 });
 
