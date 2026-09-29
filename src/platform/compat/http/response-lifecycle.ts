@@ -27,9 +27,17 @@ export function completeOnResponseBodyConsumption(
   options: {
     runDeferredOperation?: <T>(operation: () => Promise<T>) => Promise<T>;
     cancellationTimeoutMs?: number;
+    /** Optional terminal notification. It does not change ownership of pending cancellation work. */
+    onOutcome?: (outcome: "completed" | "canceled" | "error") => void;
   } = {},
 ): Response {
+  const notifyOutcome = (outcome: "completed" | "canceled" | "error"): void => {
+    try {
+      if (options.onOutcome) void Promise.resolve(options.onOutcome(outcome)).catch(() => {});
+    } catch { /* Observers cannot change the response outcome. */ }
+  };
   if (!response.body) {
+    notifyOutcome(signal?.aborted ? "canceled" : "completed");
     onComplete();
     return response;
   }
@@ -40,11 +48,12 @@ export function completeOnResponseBodyConsumption(
   let abortBody = (): void => {};
   let cancellationPending = false;
   let cancellationPromise: Promise<void> | undefined;
-  const complete = (): void => {
+  const complete = (outcome: "completed" | "canceled" | "error"): void => {
     if (completed) return;
     completed = true;
     clearTimeout(cancellationTimer);
     signal?.removeEventListener("abort", abortBody);
+    notifyOutcome(outcome);
     onComplete();
   };
 
@@ -52,7 +61,7 @@ export function completeOnResponseBodyConsumption(
   try {
     reader = response.body.getReader();
   } catch (error) {
-    complete();
+    complete("error");
     throw error;
   }
 
@@ -60,12 +69,12 @@ export function completeOnResponseBodyConsumption(
     if (cancellationPromise) return cancellationPromise;
     cancellationPending = true;
     if (options.cancellationTimeoutMs !== undefined) {
-      cancellationTimer = setTimeout(complete, options.cancellationTimeoutMs);
+      cancellationTimer = setTimeout(() => complete("canceled"), options.cancellationTimeoutMs);
     }
     cancellationPromise = runDeferredOperation(() => reader.cancel(reason)).then(
-      () => complete(),
+      () => complete("canceled"),
       (error) => {
-        complete();
+        complete("canceled");
         throw error;
       },
     );
@@ -79,10 +88,10 @@ export function completeOnResponseBodyConsumption(
   // response without explicitly consuming or cancelling the wrapper.
   void reader.closed.then(
     () => {
-      if (!cancellationPending) complete();
+      if (!cancellationPending) complete("completed");
     },
     () => {
-      if (!cancellationPending) complete();
+      if (!cancellationPending) complete("error");
     },
   );
 
@@ -99,13 +108,13 @@ export function completeOnResponseBodyConsumption(
         try {
           const result = await runDeferredOperation(() => reader.read());
           if (result.done) {
-            if (!cancellationPending) complete();
+            if (!cancellationPending) complete("completed");
             controller.close();
             return;
           }
           controller.enqueue(result.value);
         } catch (error) {
-          if (!cancellationPending) complete();
+          if (!cancellationPending) complete("error");
           controller.error(error);
         }
       },
@@ -121,7 +130,7 @@ export function completeOnResponseBodyConsumption(
     });
   } catch (error) {
     void cancelBody(error).catch(() => undefined);
-    complete();
+    complete("error");
     throw error;
   }
 }

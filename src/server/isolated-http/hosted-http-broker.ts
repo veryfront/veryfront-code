@@ -91,6 +91,11 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
           return { operations: client.operations, revoke: () => lifetime.abort() };
         },
       });
+      const closeSession = (reason: "completed" | "canceled") => {
+        // Session/pool settlement owns cleanup. Returning an HTTP error must
+        // neither await that cleanup nor replace it with a cleanup failure.
+        void Promise.resolve().then(() => session.close(reason)).catch(() => {});
+      };
       try {
         channel = await session.ready;
         const binding = session.binding;
@@ -115,16 +120,21 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
         const response = await session.runOwned(() => client!.fetch(ownedRequest, tracing));
         return completeOnResponseBodyConsumption(
           response,
-          () => {
-            // Pool admission remains retained until session.settled, even when
-            // the bounded close notification says a reaper is still required.
-            void session.close(request.signal.aborted ? "canceled" : "completed").catch(() => {});
-          },
+          () => {},
           signal,
           { highWaterMark: 0 },
+          {
+            onOutcome(outcome) {
+              // Pool admission stays held through session.settled, including
+              // cleanup whose bounded notification requires a reaper.
+              closeSession(
+                outcome === "completed" && !request.signal.aborted ? "completed" : "canceled",
+              );
+            },
+          },
         );
       } catch (error) {
-        await session.close("canceled");
+        closeSession("canceled");
         throw error;
       }
     },

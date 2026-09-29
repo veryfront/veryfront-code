@@ -4,7 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import { createExecutorRuntimeInstallation } from "#veryfront/agent/hosted/executor-runtime-install.ts";
 import type { HostedExecutorAllocation } from "#veryfront/agent/hosted/executor-session-schema.ts";
-import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
+import {
+  createHostedExecutorSession,
+  type HostedExecutorSessionOptions,
+} from "#veryfront/agent/hosted/executor-session.ts";
 import { createExecutorHttpOperation } from "./executor-http.ts";
 import { createHostedHttpBroker, type HostedHttpInput } from "veryfront/server/http-broker";
 
@@ -135,6 +138,100 @@ function fixture(handle: (request: Request) => Promise<Response> | Response) {
 }
 
 describe("hosted HTTP executor broker", () => {
+  it("releases a failed response body as canceled", async () => {
+    let source: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const f = fixture(() =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            source = controller;
+          },
+        }),
+      )
+    );
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      const response = await broker.fetch(new Request("https://app.example/api/stream"), f.input);
+      source!.error(new Error("Synthetic response failure"));
+      await assertRejects(() => response.text());
+      await f.releaseEntered.promise;
+      assertEquals(f.calls.includes("release:canceled"), true);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("releases an abandoned response as canceled without requiring request abort", async () => {
+    const f = fixture(() => new Response(new ReadableStream<Uint8Array>({})));
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      const request = new Request("https://app.example/api/stream");
+      const response = await broker.fetch(request, f.input);
+      await response.body!.cancel();
+      await f.releaseEntered.promise;
+      assertEquals(request.signal.aborted, false);
+      assertEquals(f.calls.includes("release:canceled"), true);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("returns an execution error while allocation cleanup is still pending", async () => {
+    const f = fixture(() => {
+      throw new Error("synthetic application failure");
+    });
+    f.holdRelease();
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    let rejected = false;
+    const pending = broker.fetch(new Request("https://app.example/api/fail"), f.input);
+    const failed = assertRejects(() => pending, Error, "operation-failed").then(() => {
+      rejected = true;
+    });
+    try {
+      await f.releaseEntered.promise;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      assertEquals(rejected, true);
+      assertEquals(broker.active, 1);
+    } finally {
+      f.releaseAllowed.resolve();
+      await failed;
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("preserves the execution error when a trusted session close rejects", async () => {
+    const f = fixture(() => {
+      throw new Error("synthetic application failure");
+    });
+    let restore = () => {};
+    const broker = createHostedHttpBroker({
+      maxActive: 1,
+      createSession(options) {
+        const session = createHostedExecutorSession(options);
+        const close = session.close.bind(session);
+        session.close = () => Promise.reject(new Error("synthetic cleanup failure"));
+        restore = () => {
+          session.close = close;
+        };
+        return session;
+      },
+    });
+    try {
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example/api/fail"), f.input),
+        Error,
+        "operation-failed",
+      );
+    } finally {
+      restore();
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("streams a request through the admitted installation and releases on completion", async () => {
     const f = fixture((request) => {
       assertEquals(request.headers.get("x-token"), null);
