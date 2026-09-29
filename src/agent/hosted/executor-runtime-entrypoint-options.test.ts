@@ -30,3 +30,31 @@ it("executor profile rejects invalid JavaScript values before bootstrap access",
     assertEquals(accesses, 0);
   }
 });
+
+it("HTTP profile requires its trusted handler factory before reading bootstrap authority", async () => {
+  for (const mode of [undefined, "runtime", "project-tools", "http"] as const) {
+    let accesses = 0;
+    const options = {
+      mode,
+      ...(mode !== "http"
+        ? {
+          createHttpRuntime: () => {
+            throw new Error("Must not create runtime");
+          },
+        }
+        : {}),
+      environment: {
+        get() {
+          accesses++;
+          return undefined;
+        },
+      },
+    };
+    await assertRejects(
+      () => startExecutorRuntimeEntrypoint(options),
+      TypeError,
+      "HTTP runtime factory requires the HTTP profile",
+    );
+    assertEquals(accesses, 0);
+  }
+});

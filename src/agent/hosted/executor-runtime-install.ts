@@ -12,9 +12,11 @@ import { sameHostedExecutorOwner } from "./executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "./runtime-source-binding.ts";
 import {
   type ExecutorArtifactManifest,
+  type ExecutorHttpInstall,
   type ExecutorProjectToolInstall,
   type ExecutorRuntimeInstall,
   getExecutorArtifactManifestSchema,
+  getExecutorHttpInstallSchema,
   getExecutorProjectToolInstallSchema,
   getExecutorRuntimeInstallSchema,
   parseExecutorInstallation,
@@ -43,6 +45,8 @@ const projectToolOperationModes = {
   "tool.execute": "stream",
 } as const;
 
+const httpOperationModes = { "http.request": "stream" } as const;
+
 type InstallationIdentity = {
   binding: ExecutorBinding;
   artifact: ExecutorArtifactManifest;
@@ -54,6 +58,13 @@ type InstallationOptions =
     mode?: "runtime";
     install(
       input: ExecutorRuntimeInstall,
+      signal: AbortSignal,
+      context: ExecutorOperationContext,
+    ): Promise<InstalledExecutorRuntime>;
+  } | {
+    mode: "http";
+    install(
+      input: ExecutorHttpInstall,
       signal: AbortSignal,
       context: ExecutorOperationContext,
     ): Promise<InstalledExecutorRuntime>;
@@ -72,11 +83,24 @@ type InstallationOptions =
  * The broker remains authoritative for grants and operation phases.
  */
 export function createExecutorRuntimeInstallation(options: InstallationOptions) {
-  const operationModes = options.mode === "project-tools"
+  const operationModes = options.mode === "http"
+    ? httpOperationModes
+    : options.mode === "project-tools"
     ? projectToolOperationModes
     : runtimeOperationModes;
   const operationEntries = Object.entries(operationModes);
   const prepareInstallation = (() => {
+    if (options.mode === "http") {
+      const install = options.install;
+      return (value: unknown, context: ExecutorOperationContext) => {
+        const input = parseExecutorInstallation(getExecutorHttpInstallSchema(), value);
+        return {
+          input,
+          start: (signal: AbortSignal): Promise<InstalledExecutorRuntime> =>
+            apply(install, options, [input, signal, context]),
+        };
+      };
+    }
     if (options.mode === "project-tools") {
       const install = options.install;
       return (value: unknown, context: ExecutorOperationContext) => {
