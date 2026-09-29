@@ -408,10 +408,11 @@ export class VeryfrontRunsClient {
   private ingestKnowledgeByUploadIds(
     input: KnowledgeIngestByUploadIdsInput,
   ): Promise<CreateRunResponse> {
-    // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
-    const { uploadIds, input: _input, ...options } = input as typeof input & { input?: unknown };
+    const { uploadIds, ...options } = input;
     return this.createTaskRun({
       ...options,
+      // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+      input: undefined,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
       target: "task:knowledge-ingest",
       config: { upload_ids: uploadIds },
@@ -421,10 +422,11 @@ export class VeryfrontRunsClient {
   private ingestKnowledgeByUploadPaths(
     input: KnowledgeIngestByUploadPathsInput,
   ): Promise<CreateRunResponse> {
-    // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
-    const { uploadPaths, input: _input, ...options } = input as typeof input & { input?: unknown };
+    const { uploadPaths, ...options } = input;
     return this.createTaskRun({
       ...options,
+      // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+      input: undefined,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
       target: "task:knowledge-ingest",
       config: { paths: uploadPaths },
@@ -434,10 +436,11 @@ export class VeryfrontRunsClient {
   private ingestKnowledgeByUploadPrefix(
     input: KnowledgeIngestByUploadPrefixInput,
   ): Promise<CreateRunResponse> {
-    // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
-    const { uploadPrefix, input: _input, ...options } = input as typeof input & { input?: unknown };
+    const { uploadPrefix, ...options } = input;
     return this.createTaskRun({
       ...options,
+      // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+      input: undefined,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
       target: "task:knowledge-ingest",
       config: { path_prefix: uploadPrefix },
