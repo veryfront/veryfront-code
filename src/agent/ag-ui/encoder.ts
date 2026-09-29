@@ -1098,9 +1098,7 @@ function finalizeAgUiEventsUnstamped(
       // A schema-bound agent's parsed `outputSchema` value, which the API stores
       // as the run output. Absent when the agent declares no schema or the
       // output did not parse; a parsed `null` is still reported.
-      ...(response && "object" in response && response.object !== undefined
-        ? { result: response.object }
-        : {}),
+      ...(response?.object !== undefined ? { result: response.object } : {}),
     },
   });
 

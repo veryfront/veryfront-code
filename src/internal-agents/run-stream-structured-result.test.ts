@@ -4,9 +4,15 @@
  * the API can store the object as `run.output` instead of the agent's JSON text.
  */
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { type Agent, agent as createAgent, type AgentResponse } from "#veryfront/agent";
+import {
+  type Agent,
+  agent as createAgent,
+  type AgentResponse,
+  AgentRuntime,
+} from "#veryfront/agent";
+import { streamWithAgentRuntimeDispatch } from "#veryfront/agent/runtime/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
@@ -135,33 +141,47 @@ function completedResponse(overrides: Partial<AgentResponse> = {}): AgentRespons
 }
 
 describe("internal agent run stream structured result (#2117)", () => {
-  it("ends a schema-bound agent run with RunFinished.result equal to the stream's onFinish object", async () => {
+  it("ends a schema-bound agent run with RunFinished.result equal to the same run's onFinish object", async () => {
+    // Drive the real framework runtime through the override seam so the test can
+    // observe the exact `onFinish` response the hosted run consumes.
     let onFinishObject: unknown = "not called";
-    const directStream = await createTicketAgent({
-      id: "ticket-classifier-direct",
-      text: CLASSIFICATION_TEXT,
-      outputSchema: true,
-    }).stream({
-      input: "I was charged twice.",
-      onFinish: (response) => {
-        onFinishObject = response.object;
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_issue_2117_schema_bound",
+        messages: [{ id: "message-1", role: "user", content: "I was charged twice." }],
+        tools: [],
+        context: [],
       },
-    });
-    await directStream.toDataStreamResponse().text();
-
-    const frames = await streamRunFrames(
       createTicketAgent({
         id: "ticket-classifier",
         text: CLASSIFICATION_TEXT,
         outputSchema: true,
       }),
-      "run_issue_2117_schema_bound",
+      {
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: (runtimeAgent) => {
+          const runtime = new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
+          return {
+            stream: (messages, context, callbacks, ...rest) =>
+              streamWithAgentRuntimeDispatch(runtime, messages, context, {
+                ...callbacks,
+                onFinish: (finished: AgentResponse) => {
+                  onFinishObject = finished.object;
+                  callbacks?.onFinish?.(finished);
+                },
+              }, ...rest),
+          };
+        },
+      },
     );
+    const frames = parseSseFrames(await response.text());
     const runFinished = frames.find((frame) => frame.event === "RunFinished");
 
     assertEquals(onFinishObject, { category: "billing", confidence: 0.93 });
-    assertEquals(runFinished?.data.result, onFinishObject);
-    assertEquals(typeof runFinished?.data.metadata, "object");
+    assertExists(runFinished);
+    assertEquals(runFinished.data.result, onFinishObject);
+    assertEquals(typeof runFinished.data.metadata, "object");
   });
 
   it("emits no result key for an agent without an outputSchema", async () => {
@@ -171,8 +191,8 @@ describe("internal agent run stream structured result (#2117)", () => {
     );
     const runFinished = frames.find((frame) => frame.event === "RunFinished");
 
-    assertEquals(runFinished === undefined, false);
-    assertEquals(Object.hasOwn(runFinished!.data, "result"), false);
+    assertExists(runFinished);
+    assertEquals(Object.hasOwn(runFinished.data, "result"), false);
   });
 
   it("emits no RunFinished and no result when the output does not parse", async () => {
@@ -197,8 +217,9 @@ describe("internal agent run stream structured result (#2117)", () => {
     });
     const runFinished = frames.find((frame) => frame.event === "RunFinished");
 
-    assertEquals(Object.hasOwn(runFinished!.data, "result"), true);
-    assertEquals(runFinished!.data.result, null);
+    assertExists(runFinished);
+    assertEquals(Object.hasOwn(runFinished.data, "result"), true);
+    assertEquals(runFinished.data.result, null);
   });
 
   it("emits no result for a step-budget exit whose output did not parse", async () => {
@@ -214,8 +235,8 @@ describe("internal agent run stream structured result (#2117)", () => {
     });
     const runFinished = frames.find((frame) => frame.event === "RunFinished");
 
-    assertEquals(runFinished === undefined, false);
-    assertEquals(Object.hasOwn(runFinished!.data, "result"), false);
+    assertExists(runFinished);
+    assertEquals(Object.hasOwn(runFinished.data, "result"), false);
   });
 
   it("emits no result when the runtime fails after reporting an object", async () => {
