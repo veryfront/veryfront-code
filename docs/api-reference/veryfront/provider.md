@@ -63,10 +63,10 @@ Clear all registered model providers and reset lazy built-ins (for testing).
 
 ### Components
 
-| Name                               | Description                                                                                                                                                                 | Source                                                                                                        |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `DEFAULT_VERYFRONT_CLOUD_MODEL_ID` | Short ID of the built-in default model. Only a loaded served catalog resolves a short ID; use `DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID` where no catalog may have loaded. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts) |
-| `VERYFRONT_CLOUD_MODEL_PREFIX`     | Shared Veryfront Cloud model prefix value.                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts) |
+| Name                               | Description                                                                                                                                                                                                                       | Source                                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `DEFAULT_VERYFRONT_CLOUD_MODEL_ID` | Short ID of the built-in default model. Only a loaded served catalog resolves a short ID. Where no catalog may have loaded, use `resolveVeryfrontCloudDefaultModelId()`, which returns the provider-qualified default either way. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts) |
+| `VERYFRONT_CLOUD_MODEL_PREFIX`     | Shared Veryfront Cloud model prefix value.                                                                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts) |
 
 ### Functions
 

@@ -105,8 +105,9 @@ function requireThinkingBudgetTokens(value: unknown): number | undefined {
 
 /**
  * Short ID of the built-in default model. Only a loaded served catalog
- * resolves a short ID; use {@link DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID}
- * where no catalog may have loaded.
+ * resolves a short ID. Where no catalog may have loaded, use
+ * `resolveVeryfrontCloudDefaultModelId()`, which returns the
+ * provider-qualified default either way.
  */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "mistral-small-2503";
 /** Shared Veryfront Cloud model prefix value. */
