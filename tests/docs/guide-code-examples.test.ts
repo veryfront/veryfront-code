@@ -78,7 +78,7 @@ import { parsePushArgs } from "../../cli/commands/push/command.ts";
 import { parseCliArgs } from "../../cli/shared/args.ts";
 import { AUTH_PRESETS } from "../../cli/scaffold/engine.ts";
 import { getTemplate } from "../../templates/index.ts";
-import { getVeryfrontCloudGatewayBaseUrl } from "../../src/provider/veryfront-cloud/shared.ts";
+import { getVeryfrontCloudGatewayBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
   "agents.md",
