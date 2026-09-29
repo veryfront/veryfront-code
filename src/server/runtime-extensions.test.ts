@@ -13,8 +13,13 @@ async function withEnvironment(
   redisUrl: string | undefined,
   fn: () => Promise<void>,
 ) {
-  const previous = { PROXY_MODE: getEnv("PROXY_MODE"), REDIS_URL: getEnv("REDIS_URL") };
+  const previous = {
+    PROXY_MODE: getEnv("PROXY_MODE"),
+    REDIS_URL: getEnv("REDIS_URL"),
+    VERYFRONT_CLI_LOCAL_PROXY_MODE: getEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE"),
+  };
   setEnv("PROXY_MODE", proxyMode);
+  deleteEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE");
   if (redisUrl === undefined) deleteEnv("REDIS_URL");
   else setEnv("REDIS_URL", redisUrl);
   try {
@@ -49,6 +54,16 @@ describe("hosted server Redis composition", () => {
 
   it("keeps Redis opt-in for local projects", async () => {
     await withEnvironment("0", "redis://localhost:6379", async () => {
+      assertEquals(
+        createServerBuiltinExtensions().some((entry) => entry.extension.name === "ext-redis"),
+        false,
+      );
+    });
+  });
+
+  it("keeps local CLI proxy mode opt-in even with a Redis connection", async () => {
+    await withEnvironment("1", "redis://localhost:6379", async () => {
+      setEnv("VERYFRONT_CLI_LOCAL_PROXY_MODE", "1");
       assertEquals(
         createServerBuiltinExtensions().some((entry) => entry.extension.name === "ext-redis"),
         false,

@@ -16,6 +16,9 @@ import "../../_helpers/contract-init.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { RedisRuntimeProviderName } from "#veryfront/extensions/distributed/index.ts";
+import { getRedisModule } from "#veryfront/platform/adapters/redis/modules.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { join } from "#veryfront/compat/path";
 import { mkdir } from "#veryfront/compat/fs.ts";
@@ -218,6 +221,30 @@ describe("bootstrap - FSAdapter Initialization", {
 }, () => {
   afterEach(() => {
     clearConfigCache();
+  });
+
+  it("activates and tears down Redis through hosted server bootstrap", async () => {
+    const restore = withEnvOverrides({
+      PROXY_MODE: "1",
+      VERYFRONT_CLI_LOCAL_PROXY_MODE: undefined,
+      VERYFRONT_API_BASE_URL: "http://localhost:4000",
+      REDIS_URL: "redis://localhost:6379",
+    });
+    try {
+      await withTempProjectDir("hosted_redis", async (projectDir) => {
+        const result = await bootstrap(projectDir, await getAdapter());
+        try {
+          assertEquals(result.usingFSAdapter, true);
+          assertExists(tryResolve(RedisRuntimeProviderName));
+          assertExists((await getRedisModule()).NodeRedis);
+        } finally {
+          await result.dispose?.();
+        }
+        assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
+      });
+    } finally {
+      restore();
+    }
   });
 
   it('should skip FSAdapter when type is "local"', async () => {
