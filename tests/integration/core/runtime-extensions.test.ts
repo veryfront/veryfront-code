@@ -4,7 +4,7 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { ExtensionLoader, tryResolve } from "#veryfront/extensions/index.ts";
 import { RedisRuntimeProviderName } from "#veryfront/extensions/distributed/index.ts";
 import { getRedisModule } from "#veryfront/platform/adapters/redis/modules.ts";
-import { createServerBuiltinExtensions } from "./runtime-extensions.ts";
+import { createServerBuiltinExtensions } from "#veryfront/server/runtime-extensions.ts";
 
 const logger = { debug() {}, info() {}, warn() {}, error() {} };
 
