@@ -14,39 +14,18 @@ import {
 } from "./vocabulary.ts";
 
 /**
- * Read from the veryfront-api catalog on 2026-09-10: `RUN_EVENT_TYPES` in
- * `src/lib/types/run-event/payload.ts`, which derives from the options of
- * `RunEventPayloadSchema`. The cross-repository contract fixture
- * (`tests/fixtures/contracts/native-run-events.json`) covers the eight types
- * this runtime emits; these two values cover the other forty-five, which have
- * no producer here and so no fixture sample.
- *
- * Pinning a length and a digest rather than a second copy of the list keeps
- * the list itself the one declaration: `RUN_EVENT_TYPES` in `vocabulary.ts` is
- * the copy under test, and a name changed there fails the digest.
+ * API catalog snapshot a691aa0f (2026-09-28), plus the retained UNKNOWN fallback.
+ * Recompute from that API revision's RUN_EVENT_TYPES plus UNKNOWN:
+ * SHA-256 of sorted type names joined with "\n", with no trailing newline.
+ * For classes, hash sorted "type=class" lines from the API's getRunEventClass;
+ * UNKNOWN remains fact. All four newly added API types are facts.
+ * The display catalog is not an input to either digest.
  */
-const API_RUN_EVENT_TYPE_COUNT = 53;
-// Recomputed on 2026-09-14 after the eight control plane types took the
-// past-tense names the API catalog declares (`RUNTIME_INVOKE_RETRIED`,
-// `TOOL_EXPOSURE_CHECKPOINTED`, `PROVIDER_REPLAY_CHECKPOINTED`,
-// `PROVIDER_REPLAY_TURN_FINISHED`, `MODEL_CALL_CONTEXT_RECORDED`,
-// `CONTROL_PLANE_DISPATCH_ACCEPTED`, `INVOKE_AGENT_BILLING_MODE_RETAINED`,
-// `BILLING_USAGE_RETAINED`). Only those names changed.
+const API_RUN_EVENT_TYPE_COUNT = 57;
 const API_RUN_EVENT_TYPES_SHA256 =
-  "f5ed5e0225a6ace61c670d43ab7a18f60186e2e63912202d063ad1091090a1e5";
-
-/**
- * Read from the veryfront-api checkout on 2026-09-10 by importing
- * `RUN_EVENT_TYPES` (`src/lib/types/run-event/payload.ts`) and
- * `getRunEventClass` (`src/lib/types/run-event/envelope.ts`) with `tsx` and
- * hashing `event_type=event_class` for every type, sorted. Same
- * executed-verification approach as `API_RUN_EVENT_TYPES_SHA256` above: the
- * digest is the ground truth, `RUN_EVENT_CLASS_BY_TYPE` in `vocabulary.ts` is
- * the copy under test, and a class changed there fails the digest.
- */
-// Recomputed on 2026-09-14 for the same eight renames; every class is unchanged.
+  "5357bef5f2a262d41e751446b3745e883f710f179bae9c3ba3ada8102f0f4158";
 const API_RUN_EVENT_CLASS_BY_TYPE_SHA256 =
-  "5bdf63c9744b56f639db8ecdd16a80f636f335a4725b2e95708f640a5eb3da8c";
+  "0a65cbbbb6beea61ceea9c317228f23d9bf63078c72b19bdef6e5bd40b006d01";
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));

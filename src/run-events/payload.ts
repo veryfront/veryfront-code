@@ -17,7 +17,7 @@
  * change may narrow that gap by having the decoder consume these catalog
  * shapes and apply its own leniency on top.
  *
- * The sixteen control plane types (`AGENT_RUN_*`) have no getter. Their shapes
+ * The control plane types (`AGENT_RUN_*`) have no getter. Their shapes
  * are owned by the API's own types and sanitized before they ever reach a
  * reader, so the API declares them as bare `{ type }` variants and there is
  * nothing here to mirror.
@@ -61,6 +61,25 @@ function nullableString(v: SchemaValidator): Schema<string | null> {
 function unknownRecord(v: SchemaValidator): Schema<Record<string, unknown>> {
   return v.record(v.string(), v.unknown());
 }
+
+/** Model usage recorded by the API gateway, independently of the call's outcome. */
+export const getModelCallCompletedPayloadSchema = defineRunEventSchema((v) =>
+  variant(v, "MODEL_CALL_COMPLETED", {
+    provider: requiredString(v),
+    model: requiredString(v),
+    inputTokens: v.number().int().nonnegative(),
+    outputTokens: v.number().int().nonnegative(),
+    cacheCreationTokens: v.number().int().nonnegative(),
+    cacheReadTokens: v.number().int().nonnegative(),
+    totalTokens: v.number().int().nonnegative(),
+    // Preserve the API decimal amount as a string without floating-point rounding.
+    costCredits: requiredString(v),
+    latencyMs: v.number().int().nonnegative().nullable(),
+    usageCaptureStatus: v.enum(["complete", "missing"]),
+    providerRequestId: nullableString(v),
+    modelCallContextEventId: v.number().int().positive().nullable(),
+  })
+);
 
 /** Payload of a run that started. */
 export const getRunStartedPayloadSchema = defineRunEventSchema((v) =>
@@ -407,6 +426,7 @@ const runEventPayloadSchemasByType = {
   FILE_ATTACHED: getFileAttachedPayloadSchema,
   FILES_CHANGED: getFilesChangedPayloadSchema,
   RUNTIME_EVENT_RECORDED: getRuntimeEventRecordedPayloadSchema,
+  MODEL_CALL_COMPLETED: getModelCallCompletedPayloadSchema,
   UNKNOWN: getUnknownRunEventPayloadSchema,
 };
 
@@ -415,12 +435,12 @@ type KnownRunEventPayloadSchemas = typeof runEventPayloadSchemasByType;
 /**
  * Every per-type payload schema, keyed by stored type, for a reader that
  * validates a row whose type it only learns at runtime. Types without a
- * declared payload shape (the sixteen control plane types) are absent, which
+ * declared payload shape (the control plane types) are absent, which
  * is the signal to validate the envelope only.
  *
  * Indexing with a literal type narrows to that variant's own schema type
  * (`Schema<UrlCitedPayload>`, not `Schema<Record<string, unknown>>`); the
- * sixteen control plane types type as `undefined` rather than failing to
+ * control plane types type as `undefined` rather than failing to
  * index at all, matching that they are legal `RunEventType` values with no
  * getter.
  *

@@ -3,11 +3,16 @@
  *
  * Every run event surface returns rows that carry a span envelope and a
  * payload, keyed `payload` and named by a catalogued type. This module owns
- * the reader's half of that contract: the type vocabulary, the AG-UI wire
+ * the reader's half of that contract: the type vocabulary, display names and groups, the AG-UI wire
  * names, the envelope and row schemas, and one payload schema per type.
  * Import it instead of writing the names or shapes out again. The typed
  * contract is the only one: `format=typed` is accepted and ignored
  * (deprecated), and `format=raw` is refused, so do not send `format`.
+ *
+ * `RUN_EVENT_CATALOG` lists each event's `type`, display `name`, and `group`.
+ * `RUN_EVENT_GROUPS` supplies the ordered group IDs and names. These are display
+ * metadata, not fields added to event payloads, and need no schema validator.
+ * The catalog includes the legacy `UNKNOWN` fallback alongside current types.
  *
  * Every schema here is lazy and materializes through the registered
  * `SchemaValidator` contract, so a consumer outside a Veryfront app must
@@ -31,6 +36,16 @@
  * an error naming the contract and this registration call.
  *
  * @module run-events
+ *
+ * @example
+ * ```ts
+ * import { RUN_EVENT_CATALOG, RUN_EVENT_GROUPS } from "veryfront/run-events";
+ *
+ * for (const group of RUN_EVENT_GROUPS) {
+ *   const events = RUN_EVENT_CATALOG.filter((event) => event.group === group.id);
+ *   console.log(group.name, events.map(({ type, name }) => ({ type, name })));
+ * }
+ * ```
  *
  * @example
  * ```ts
@@ -65,7 +80,7 @@
  *     console.log(row.event_type, row.span_id, row.payload);
  *     continue;
  *   }
- *   // The sixteen control-plane `AGENT_RUN_*` types have no payload schema:
+ *   // The control-plane `AGENT_RUN_*` types have no payload schema:
  *   // the API owns their shape and sanitizes it before a reader ever sees
  *   // it, so fall back to the already-validated raw payload for those.
  *   const schema = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type];
@@ -102,6 +117,7 @@ export {
   getInputRequestCreatedPayloadSchema,
   getInputRequestUpdatedPayloadSchema,
   getMessagesSnapshotPayloadSchema,
+  getModelCallCompletedPayloadSchema,
   getReasoningContentPayloadSchema,
   getReasoningEndPayloadSchema,
   getReasoningMessageContentPayloadSchema,
@@ -145,3 +161,11 @@ export {
   type RunEventWireName,
   toRunEventWireName,
 } from "./vocabulary.ts";
+
+export {
+  getRunEventDefinition,
+  RUN_EVENT_CATALOG,
+  RUN_EVENT_GROUPS,
+  type RunEventDefinition,
+  type RunEventGroup,
+} from "./catalog.ts";

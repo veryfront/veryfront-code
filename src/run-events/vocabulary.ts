@@ -2,9 +2,9 @@
  * The run event vocabulary the Veryfront API publishes on every run event surface.
  *
  * The API owns this list: `RUN_EVENT_TYPES` here mirrors the type union
- * `RunEventPayloadSchema` declares in the API's `run-event/payload.ts`, in the
- * same order, and the wire names mirror what the API's `toRunEventWireName`
- * returns for each of them. Consumers that read run events (Veryfront Studio,
+ * `RunEventPayloadSchema` declares in the API's `run-event/payload.ts`, with
+ * the legacy `UNKNOWN` fallback retained. Wire names mirror the API's
+ * `toRunEventWireName` output. Consumers that read run events (Veryfront Studio,
  * a custom dashboard, a replay tool) import this module instead of writing the
  * names out again.
  *
@@ -18,10 +18,9 @@
 import { NATIVE_RUN_EVENTS } from "#veryfront/agent/ag-ui/native-run-events.ts";
 
 /**
- * Every catalogued run event type, in the API's declaration order: the AG-UI
+ * Every catalogued run event type: the AG-UI
  * core types (`CUSTOM` excluded, it has no typed projection), the Veryfront
- * control plane types, and the twelve extension types that replaced the
- * registered `CUSTOM` names, followed by `UNKNOWN`.
+ * control plane and extension types, followed by the legacy `UNKNOWN` fallback.
  *
  * The source of truth is the API's `RUN_EVENT_TYPES`. `vocabulary.test.ts`
  * pins the length and a digest of the sorted names against the values read
@@ -84,6 +83,10 @@ export const RUN_EVENT_TYPES = [
   "FILE_ATTACHED",
   "FILES_CHANGED",
   "RUNTIME_EVENT_RECORDED",
+  "AGENT_RUN_DETACHED_ACCEPTED",
+  "AGENT_RUN_INTEGRATION_CONNECTION_REFUSED",
+  "AGENT_RUN_REPLAYED_UPLOADS_SEALED",
+  "MODEL_CALL_COMPLETED",
   // legacy: removed in Phase F -- UNKNOWN exists only while unprojectable legacy rows can be read.
   "UNKNOWN",
 ] as const;
@@ -214,6 +217,10 @@ const RUN_EVENT_WIRE_NAMES = {
   FILE_ATTACHED: "FileAttached",
   FILES_CHANGED: "FilesChanged",
   RUNTIME_EVENT_RECORDED: "RuntimeEventRecorded",
+  AGENT_RUN_DETACHED_ACCEPTED: "AgentRunDetachedAccepted",
+  AGENT_RUN_INTEGRATION_CONNECTION_REFUSED: "AgentRunIntegrationConnectionRefused",
+  AGENT_RUN_REPLAYED_UPLOADS_SEALED: "AgentRunReplayedUploadsSealed",
+  MODEL_CALL_COMPLETED: "ModelCallCompleted",
   UNKNOWN: "Unknown",
 } as const satisfies Record<RunEventType, string>;
 
