@@ -1,6 +1,5 @@
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
@@ -63,26 +62,6 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(restricted.providerTools, ["web_search"]);
     assertEquals(restricted.model, undefined);
     assertEquals(restricted.tools, {});
-  });
-
-  it("classifies an omitted direct default without checking another provider's credential", () => {
-    const keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "VERYFRONT_API_TOKEN"];
-    const saved = keys.map((key) => [key, getEnv(key)] as const);
-    for (const key of keys) deleteEnv(key);
-    setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
-    try {
-      const restricted = applyAgUiRuntimeRestrictionsForModel(
-        createConfig({ model: undefined, tools: true, providerTools: ["web_search"] }),
-        { allowedTools: ["web_search"] },
-      );
-      assertEquals(restricted.providerTools, ["web_search"]);
-      assertEquals(restricted.tools, {});
-    } finally {
-      for (const [key, value] of saved) {
-        if (value === undefined) deleteEnv(key);
-        else setEnv(key, value);
-      }
-    }
   });
 
   it("classifies an omitted hosted default within the current request context", async () => {

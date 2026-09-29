@@ -69,4 +69,24 @@ describe("hosted provider tool restriction routing", () => {
       }
     });
   }
+
+  it("classifies an omitted direct default without checking another provider's credential", () => {
+    const keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "VERYFRONT_API_TOKEN"];
+    const saved = keys.map((key) => [key, getEnv(key)] as const);
+    for (const key of keys) deleteEnv(key);
+    setEnv("ANTHROPIC_API_KEY", "synthetic-direct-key");
+    try {
+      const restricted = applyAgUiRuntimeRestrictionsForModel(
+        createConfig({ tools: true, providerTools: ["web_search"] }),
+        { allowedTools: ["web_search"] },
+      );
+      assertEquals(restricted.providerTools, ["web_search"]);
+      assertEquals(restricted.tools, {});
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) deleteEnv(key);
+        else setEnv(key, value);
+      }
+    }
+  });
 });
