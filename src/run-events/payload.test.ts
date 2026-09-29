@@ -13,13 +13,19 @@ import {
   RUN_EVENT_PAYLOAD_SCHEMAS,
 } from "./payload.ts";
 
+/** The control plane types the API declares with fields, so they have getters. */
+const CONTROL_PLANE_TYPES_WITH_FIELDS = new Set<string>([
+  "AGENT_RUN_DETACHED_ACCEPTED",
+  "AGENT_RUN_INTEGRATION_CONNECTION_REFUSED",
+]);
+
 /**
  * The control plane types the API declares as bare `{ type }`
  * variants, whose payloads it sanitizes before a reader sees them. They have
  * no per-type getter here, which is the signal to validate the envelope only.
  */
 const CONTROL_PLANE_TYPES = RUN_EVENT_TYPES.filter((eventType) =>
-  eventType.startsWith("AGENT_RUN_")
+  eventType.startsWith("AGENT_RUN_") && !CONTROL_PLANE_TYPES_WITH_FIELDS.has(eventType)
 );
 
 describe("run-events/payload", () => {
@@ -43,11 +49,46 @@ describe("run-events/payload", () => {
     assert(schema.safeParse({ ...payload, futureField: true }).success);
   });
 
-  it("declares a schema for every catalogued type except the control plane ones", () => {
+  it("validates the fields the API declares for detached run acceptance", () => {
+    const schema = RUN_EVENT_PAYLOAD_SCHEMAS.AGENT_RUN_DETACHED_ACCEPTED!();
+    const payload = {
+      type: "AGENT_RUN_DETACHED_ACCEPTED",
+      ...MINIMAL_PAYLOADS.AGENT_RUN_DETACHED_ACCEPTED,
+    };
+    assert(schema.safeParse(payload).success);
+    assert(schema.safeParse({ ...payload, futureField: true }).success);
+    for (
+      const override of [
+        { leaseOwner: "" },
+        { leaseOwner: undefined },
+        { dispatchAttemptId: "attempt-1" },
+      ]
+    ) {
+      assertEquals(schema.safeParse({ ...payload, ...override }).success, false);
+    }
+    // A viewer receives this type as `{ type }` only: the row does not match,
+    // and the reader keeps the raw payload.
+    assertEquals(schema.safeParse({ type: "AGENT_RUN_DETACHED_ACCEPTED" }).success, false);
+  });
+
+  it("validates the refusal record viewers and editors both receive", () => {
+    const schema = RUN_EVENT_PAYLOAD_SCHEMAS.AGENT_RUN_INTEGRATION_CONNECTION_REFUSED!();
+    const payload = {
+      type: "AGENT_RUN_INTEGRATION_CONNECTION_REFUSED",
+      ...MINIMAL_PAYLOADS.AGENT_RUN_INTEGRATION_CONNECTION_REFUSED,
+    };
+    assertEquals(schema.parse(payload), payload);
+    for (const field of ["integration", "toolName", "message"]) {
+      assertEquals(schema.safeParse({ ...payload, [field]: "" }).success, false);
+      assertEquals(schema.safeParse({ ...payload, [field]: undefined }).success, false);
+    }
+  });
+
+  it("declares a schema for every catalogued type except the bare control plane ones", () => {
     const withSchema = RUN_EVENT_TYPES.filter((eventType) =>
       RUN_EVENT_PAYLOAD_SCHEMAS[eventType] !== undefined
     );
-    assertEquals(CONTROL_PLANE_TYPES.length, 19);
+    assertEquals(CONTROL_PLANE_TYPES.length, 17);
     assertEquals(withSchema.length, RUN_EVENT_TYPES.length - CONTROL_PLANE_TYPES.length);
     for (const eventType of CONTROL_PLANE_TYPES) {
       assertEquals(RUN_EVENT_PAYLOAD_SCHEMAS[eventType], undefined);
@@ -206,6 +247,15 @@ const MINIMAL_PAYLOADS: Record<string, Record<string, unknown>> = {
     usageCaptureStatus: "missing",
     providerRequestId: null,
     modelCallContextEventId: null,
+  },
+  AGENT_RUN_DETACHED_ACCEPTED: {
+    leaseOwner: "runtime-worker-1",
+    dispatchAttemptId: "0b6f1c1e-6a4f-4d8e-9a57-3f0d2f6a9c41",
+  },
+  AGENT_RUN_INTEGRATION_CONNECTION_REFUSED: {
+    integration: "calendar",
+    toolName: "list_events",
+    message: "Connect the calendar integration to use this tool.",
   },
   RUN_STARTED: {},
   RUN_FINISHED: {},

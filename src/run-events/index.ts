@@ -3,16 +3,22 @@
  *
  * Every run event surface returns rows that carry a span envelope and a
  * payload, keyed `payload` and named by a catalogued type. This module owns
- * the reader's half of that contract: the type vocabulary, display names and groups, the AG-UI wire
+ * the reader's half of that contract: the type vocabulary, display names, groups, categories and kinds, the AG-UI wire
  * names, the envelope and row schemas, and one payload schema per type.
  * Import it instead of writing the names or shapes out again. The typed
  * contract is the only one: `format=typed` is accepted and ignored
  * (deprecated), and `format=raw` is refused, so do not send `format`.
  *
- * `RUN_EVENT_CATALOG` lists each event's `type`, display `name`, and `group`.
- * `RUN_EVENT_GROUPS` supplies the ordered group IDs and names. These are display
- * metadata, not fields added to event payloads, and need no schema validator.
- * The catalog includes the legacy `UNKNOWN` fallback alongside current types.
+ * `RUN_EVENT_CATALOG` lists each event's `type`, display `name`, reference
+ * `group`, filter `category` and semantic `kind`. `RUN_EVENT_GROUPS`,
+ * `RUN_EVENT_CATEGORIES` and `RUN_EVENT_KINDS` supply the ordered IDs and names;
+ * `RUN_EVENT_CATEGORY_HEADINGS` places the categories under the filter's
+ * Interactions and System headings. These are display metadata, not fields
+ * added to event payloads, and need no schema validator. The catalog includes
+ * the legacy `UNKNOWN` fallback alongside current types. `getRunEventCategory`
+ * and `getRunEventKind` accept any stored type: a legacy alias resolves to its
+ * current type (`RUN_EVENT_TYPE_ALIASES`) and an unrecognized type falls back to
+ * `system` and `runtime`.
  *
  * Every schema here is lazy and materializes through the registered
  * `SchemaValidator` contract, so a consumer outside a Veryfront app must
@@ -80,9 +86,9 @@
  *     console.log(row.event_type, row.span_id, row.payload);
  *     continue;
  *   }
- *   // The control-plane `AGENT_RUN_*` types have no payload schema:
- *   // the API owns their shape and sanitizes it before a reader ever sees
- *   // it, so fall back to the already-validated raw payload for those.
+ *   // Most control-plane `AGENT_RUN_*` types have no payload schema, and
+ *   // viewer rows can be redacted: fall back to the already-validated raw
+ *   // payload when there is no schema or the payload does not match.
  *   const schema = RUN_EVENT_PAYLOAD_SCHEMAS[row.event_type];
  *   const result = schema?.().safeParse(row.payload);
  *   console.log(row.event_type, row.span_id, result?.success ? result.data : row.payload);
@@ -110,6 +116,8 @@ export {
 export {
   getActivityDeltaPayloadSchema,
   getActivitySnapshotPayloadSchema,
+  getAgentRunDetachedAcceptedPayloadSchema,
+  getAgentRunIntegrationConnectionRefusedPayloadSchema,
   getChildRunStatusChangedPayloadSchema,
   getDocumentCitedPayloadSchema,
   getFileAttachedPayloadSchema,
@@ -163,9 +171,18 @@ export {
 } from "./vocabulary.ts";
 
 export {
+  getRunEventCategory,
   getRunEventDefinition,
+  getRunEventKind,
+  resolveRunEventType,
   RUN_EVENT_CATALOG,
+  RUN_EVENT_CATEGORIES,
+  RUN_EVENT_CATEGORY_HEADINGS,
   RUN_EVENT_GROUPS,
+  RUN_EVENT_KINDS,
+  RUN_EVENT_TYPE_ALIASES,
+  type RunEventCategory,
   type RunEventDefinition,
   type RunEventGroup,
+  type RunEventKind,
 } from "./catalog.ts";

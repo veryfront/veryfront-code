@@ -17,10 +17,12 @@
  * change may narrow that gap by having the decoder consume these catalog
  * shapes and apply its own leniency on top.
  *
- * The control plane types (`AGENT_RUN_*`) have no getter. Their shapes
+ * Most control plane types (`AGENT_RUN_*`) have no getter. Their shapes
  * are owned by the API's own types and sanitized before they ever reach a
  * reader, so the API declares them as bare `{ type }` variants and there is
- * nothing here to mirror.
+ * nothing here to mirror. The two control plane types the API declares fields
+ * for, `AGENT_RUN_DETACHED_ACCEPTED` and
+ * `AGENT_RUN_INTEGRATION_CONNECTION_REFUSED`, have getters.
  *
  * @module run-events/payload
  */
@@ -78,6 +80,30 @@ export const getModelCallCompletedPayloadSchema = defineRunEventSchema((v) =>
     usageCaptureStatus: v.enum(["complete", "missing"]),
     providerRequestId: nullableString(v),
     modelCallContextEventId: v.number().int().positive().nullable(),
+  })
+);
+
+/**
+ * Payload of a detached run the runtime accepted: the lease owner and the
+ * dispatch attempt it accepted. Viewers receive this type as `{ type }` only,
+ * so a viewer row does not match; fall back to the raw payload.
+ */
+export const getAgentRunDetachedAcceptedPayloadSchema = defineRunEventSchema((v) =>
+  variant(v, "AGENT_RUN_DETACHED_ACCEPTED", {
+    leaseOwner: requiredString(v),
+    dispatchAttemptId: v.string().uuid(),
+  })
+);
+
+/**
+ * Payload of a tool call refused because its integration has no usable
+ * connection. Viewers receive the same three fields.
+ */
+export const getAgentRunIntegrationConnectionRefusedPayloadSchema = defineRunEventSchema((v) =>
+  variant(v, "AGENT_RUN_INTEGRATION_CONNECTION_REFUSED", {
+    integration: requiredString(v),
+    toolName: requiredString(v),
+    message: requiredString(v),
   })
 );
 
@@ -427,6 +453,8 @@ const runEventPayloadSchemasByType = {
   FILES_CHANGED: getFilesChangedPayloadSchema,
   RUNTIME_EVENT_RECORDED: getRuntimeEventRecordedPayloadSchema,
   MODEL_CALL_COMPLETED: getModelCallCompletedPayloadSchema,
+  AGENT_RUN_DETACHED_ACCEPTED: getAgentRunDetachedAcceptedPayloadSchema,
+  AGENT_RUN_INTEGRATION_CONNECTION_REFUSED: getAgentRunIntegrationConnectionRefusedPayloadSchema,
   UNKNOWN: getUnknownRunEventPayloadSchema,
 };
 
@@ -435,12 +463,12 @@ type KnownRunEventPayloadSchemas = typeof runEventPayloadSchemasByType;
 /**
  * Every per-type payload schema, keyed by stored type, for a reader that
  * validates a row whose type it only learns at runtime. Types without a
- * declared payload shape (the control plane types) are absent, which
+ * declared payload shape (the bare control plane types) are absent, which
  * is the signal to validate the envelope only.
  *
  * Indexing with a literal type narrows to that variant's own schema type
  * (`Schema<UrlCitedPayload>`, not `Schema<Record<string, unknown>>`); the
- * control plane types type as `undefined` rather than failing to
+ * bare control plane types type as `undefined` rather than failing to
  * index at all, matching that they are legal `RunEventType` values with no
  * getter.
  *
