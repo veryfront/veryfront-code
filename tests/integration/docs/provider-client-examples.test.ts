@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -11,6 +11,7 @@ type RecordedRequest = {
 
 async function runSnippetsWithOfficialClients(
   snippets: string[],
+  options: { includeVeryfrontApiKey?: boolean } = {},
 ): Promise<RecordedRequest[]> {
   const tempDir = await makeTempDir({ prefix: "vf-provider-docs-" });
   try {
@@ -48,7 +49,10 @@ async function runSnippetsWithOfficialClients(
       clearEnv: true,
       env: {
         ...(denoCacheDirectory === undefined ? {} : { DENO_DIR: denoCacheDirectory }),
-        VERYFRONT_API_KEY: "example-project-key",
+        ...(options.includeVeryfrontApiKey === false
+          ? {}
+          : { VERYFRONT_API_KEY: "example-project-key" }),
+        OPENAI_API_KEY: "openai-vendor-key-must-not-be-sent",
         ANTHROPIC_API_KEY: "vendor-key-must-not-be-sent",
       },
       stdout: "piped",
@@ -122,13 +126,17 @@ console.log(JSON.stringify(requests));
 }
 
 describe("provider guide client snippets", () => {
-  it("sends the documented gateway requests", async () => {
+  async function getSnippets(): Promise<string[]> {
     const guide = await Deno.readTextFile(
       new URL("../../../docs/guides/providers.md", import.meta.url),
     );
     const section = guide.split("### Call the AI Gateway from other clients")[1]!
       .split("\n## ")[0]!;
-    const snippets = [...section.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1]!);
+    return [...section.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1]!);
+  }
+
+  it("sends the documented gateway requests", async () => {
+    const snippets = await getSnippets();
     assertEquals(snippets.length, 2);
     assertEquals(snippets.map((snippet) => snippet.split("\n")[0]), [
       'import OpenAI from "openai";',
@@ -162,5 +170,15 @@ describe("provider guide client snippets", () => {
       max_tokens: 1024,
       messages: [{ role: "user", content: "Say hello." }],
     });
+  });
+
+  it("requires a Veryfront key instead of falling back to a vendor key", async () => {
+    const error = await assertRejects(
+      async () =>
+        runSnippetsWithOfficialClients(await getSnippets(), { includeVeryfrontApiKey: false }),
+      Error,
+    );
+
+    assertEquals(error.message.includes("Set VERYFRONT_API_KEY"), true);
   });
 });

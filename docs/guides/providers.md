@@ -91,9 +91,14 @@ built-in entry for:
 ```ts
 import OpenAI from "openai";
 
+const projectApiKey = process.env.VERYFRONT_API_KEY;
+if (!projectApiKey) {
+  throw new Error("Set VERYFRONT_API_KEY before running this example.");
+}
+
 const client = new OpenAI({
   baseURL: "https://api.veryfront.com/ai/v1",
-  apiKey: process.env.VERYFRONT_API_KEY,
+  apiKey: projectApiKey,
 });
 
 const completion = await client.chat.completions.create({
