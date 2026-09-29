@@ -7,7 +7,11 @@ import { isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "#veryfront/agent/runtime/agent-delegation-names.ts";
 import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
-import { resolveRuntimeModel } from "#veryfront/agent/runtime/model-resolution.ts";
+import {
+  resolveConfiguredAgentModel,
+  resolveRuntimeModel,
+} from "#veryfront/agent/runtime/model-resolution.ts";
+import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { DEFAULT_MAX_STEPS } from "#veryfront/agent/runtime/constants.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
@@ -315,8 +319,13 @@ export function applyAgUiRuntimeRestrictionsForModel(
 
   const allowedToolNames = restrictions.allowedTools;
   const allowedTools = toToolNameLookup(allowedToolNames);
+  const selectedModel = modelOverride ?? config.model;
   const supportedProviderTools = toToolNameLookup(getProviderNativeToolNames({
-    model: resolveRuntimeModel(modelOverride ?? config.model),
+    // Classification only: an omitted direct default is not checked against
+    // other providers' credentials here; the run reports any mismatch.
+    model: selectedModel === undefined && !isVeryfrontCloudEnabled()
+      ? resolveConfiguredAgentModel()
+      : resolveRuntimeModel(selectedModel),
   }));
   const configuredProviderToolNames = config.providerTools === undefined
     ? []
