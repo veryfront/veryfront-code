@@ -2440,6 +2440,38 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(await result.response.json(), { error: "Missing control-plane signature" });
   });
 
+  it("refuses a run signed for another project whatever trace context the request carries", async () => {
+    const executed: string[] = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async (options) => {
+        executed.push(options.projectId ?? "");
+        return { success: true, result: {}, durationMs: 1 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_other/execute",
+      {
+        runId: "run_other",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-other",
+        parentRunId: "run_proj_1_parent",
+        rootRunId: "run_proj_1_root",
+      },
+      {
+        traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        baggage: "project.id=proj-1,run.id=run_proj_1_parent,root.run.id=run_proj_1_root",
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401);
+    assertEquals(await result.response.json(), { error: "Invalid control-plane signature" });
+    assertEquals(executed, []);
+  });
+
   it("rejects runtime targets that carry no identifier for their kind", async () => {
     // Both selections would canonicalize to the empty identifier, so every
     // environment run missing its environment id — and every preview run
@@ -2529,6 +2561,7 @@ describe("project run execution span", () => {
     runTask: ProjectRunExecuteHandlerDeps["runTask"],
     callerSpanContext?: otelApi.SpanContext,
     lineage: { parentRunId?: string; rootRunId?: string } = {},
+    caller: { headers?: Record<string, string>; baggage?: Record<string, string> } = {},
   ): Promise<{
     spans: ReturnType<InMemorySpanExporter["getFinishedSpans"]>;
     body: Record<string, unknown>;
@@ -2556,11 +2589,22 @@ describe("project run execution span", () => {
       const { request, publicKeyPem } = await signedRequest(
         "/api/control-plane/runs/run_task_traced/execute",
         body,
+        caller.headers,
       );
 
-      const callerContext = callerSpanContext
+      const tracedContext = callerSpanContext
         ? otelApi.trace.setSpanContext(otelApi.context.active(), callerSpanContext)
         : otelApi.context.active();
+      const callerContext = caller.baggage
+        ? otelApi.propagation.setBaggage(
+          tracedContext,
+          otelApi.propagation.createBaggage(
+            Object.fromEntries(
+              Object.entries(caller.baggage).map(([key, value]) => [key, { value }]),
+            ),
+          ),
+        )
+        : tracedContext;
       const result = await otelApi.context.with(
         callerContext,
         () => handler.handle(request, createCtx(publicKeyPem)),
@@ -2646,6 +2690,52 @@ describe("project run execution span", () => {
     const span = spans.find((candidate) => candidate.name === "project_run.execute");
     assertExists(span);
     assertEquals(span.status.code, SpanStatusCode.ERROR);
+  });
+
+  it("keeps the signed project and lineage when the caller's trace context names another project's run", async () => {
+    const otherProjectCaller = {
+      traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+      spanId: "00f067aa0ba902b7",
+      traceFlags: otelApi.TraceFlags.SAMPLED,
+      isRemote: true,
+    };
+    const otherProjectLineage = {
+      "project.id": "proj-other",
+      "run.id": "run_other_project",
+      "parent.run.id": "run_other_project",
+      "root.run.id": "run_other_project",
+    };
+    const ranFor: Array<string | undefined> = [];
+    const { spans } = await executeTracedTask(
+      async (options) => {
+        ranFor.push(options.projectId);
+        return { success: true, result: { synced: 1 }, durationMs: 5 };
+      },
+      otherProjectCaller,
+      { parentRunId: "run_workflow_parent", rootRunId: "run_sched_root" },
+      {
+        headers: {
+          traceparent: `00-${otherProjectCaller.traceId}-${otherProjectCaller.spanId}-01`,
+          baggage: Object.entries(otherProjectLineage).map(([key, value]) => `${key}=${value}`)
+            .join(","),
+        },
+        baggage: otherProjectLineage,
+      },
+    );
+
+    assertEquals(ranFor, ["proj-1"]);
+    const span = spans.find((candidate) => candidate.name === "project_run.execute");
+    assertExists(span);
+    assertEquals(span.attributes["project.id"], "proj-1");
+    assertEquals(span.attributes["run.id"], "run_task_traced");
+    assertEquals(span.attributes["parent.run.id"], "run_workflow_parent");
+    assertEquals(span.attributes["root.run.id"], "run_sched_root");
+    // The caller's context only links the traces; it never parents the run.
+    assertEquals(span.parentSpanContext, undefined);
+    assertEquals(span.links.map((link) => link.context.traceId), [otherProjectCaller.traceId]);
+    const attributeValues = Object.values(span.attributes);
+    assertEquals(attributeValues.includes("proj-other"), false);
+    assertEquals(attributeValues.includes("run_other_project"), false);
   });
 
   it("records the execution span as its own trace linked to a sampled-out caller", async () => {
