@@ -212,4 +212,25 @@ describe("hosted HTTP ingress", () => {
     await assertRejects(() => response, Error, "Source lookup canceled");
     assertEquals(dispatches, 0);
   });
+  it("replaces the private listener port while preserving public ports and path identity", async () => {
+    for (const host of ["app.example", "app.example:8443", "[2001:db8::1]"]) {
+      const fetch = createHostedHttpIngress({
+        broker: {
+          fetch(request) {
+            assertEquals(request.url, `https://${host}//path?query=1`);
+            assertEquals(request.headers.get("host"), host);
+            return Promise.resolve(new Response("matched"));
+          },
+        },
+        resolve: () => Promise.resolve(resolvedInput()),
+      });
+      const response = await fetch(
+        new Request("http://runtime.example:3000//path?query=1", {
+          headers: { "x-forwarded-host": host, "x-forwarded-proto": "https" },
+        }),
+        selection,
+      );
+      assertEquals(await response.text(), "matched");
+    }
+  });
 });

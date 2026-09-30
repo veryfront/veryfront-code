@@ -71,11 +71,11 @@ it("dispatches trusted production HTTP before host project reads and preserves i
       try {
         const payload = new Uint8Array(40_000).fill(137);
         const response = await handler(
-          new Request("http://runtime.example/api/proof?query=1", {
+          new Request("http://runtime.example:3000/api/proof?query=1", {
             method: "POST",
             body: payload,
             headers: {
-              host: "runtime.example",
+              host: "runtime.example:3000",
               "x-forwarded-host": "app.example",
               "x-forwarded-proto": "https",
               "x-project-id": identity.projectId,

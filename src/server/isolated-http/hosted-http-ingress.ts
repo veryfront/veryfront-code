@@ -114,6 +114,7 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
       const publicOrigin = new URL(origin);
       url.protocol = publicOrigin.protocol;
       url.host = publicOrigin.host;
+      url.port = publicOrigin.port;
       const headers = new Headers(request.headers);
       headers.set("host", url.host);
       const applicationRequest = inheritRequestPeerProvenance(
