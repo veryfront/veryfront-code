@@ -100,6 +100,7 @@ export interface CreateEvalRunInput extends RunCreateBaseInput, RunRuntimeTarget
   /** Eval run input: any JSON value. */
   input?: unknown;
   config?: Record<string, unknown>;
+  /** @deprecated Retained for source compatibility; task-based eval runs ignore this option. */
   startMode?: string;
 }
 

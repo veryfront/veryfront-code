@@ -104,9 +104,11 @@ await runs.createEvalRun({
   target: "eval:deep-research",
   input: { dataset: "smoke" },
   config: { repetitions: 2 },
-  startMode: "manual",
 });
 ```
+
+The deprecated `startMode` option remains accepted for source compatibility,
+but task-based eval runs ignore it.
 
 ## Observe a run
 
