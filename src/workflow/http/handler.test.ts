@@ -514,6 +514,39 @@ describe("createWorkflowHandler", () => {
     expect((await client.getRun(runId))?.context.after).toBeDefined();
   });
 
+  // veryfront-issue-inbox#2102: a workflow run the control plane owns is
+  // decided only through POST /runs/{run_id}/resume, so the canonical run moves.
+  it("rejects an approval decision for a run the control plane owns and points to the canonical resume", async () => {
+    client.register(
+      workflow({
+        id: "needs-approval",
+        steps: [
+          waitForApproval("sign-off", { message: "ok?" }),
+          step("after", { tool: passthroughTool("after") }),
+        ],
+      }),
+    );
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    await client.start("needs-approval", {}, { runId });
+    await until(
+      async () => (await client.getPendingApprovals(runId)).length > 0,
+      `run ${runId} to pause for approval`,
+    );
+    const approvalId = (await client.getPendingApprovals(runId))[0]?.id;
+
+    const decided = await handlers.POST(
+      post(`/api/workflows/runs/${runId}/approvals/${approvalId}`, {
+        approved: true,
+        approver: "tester",
+      }),
+    );
+
+    expect(decided.status).toBe(409);
+    expect(JSON.stringify(await decided.json())).toContain(`POST /runs/${runId}/resume`);
+    expect((await client.getRun(runId))?.status).toBe("waiting");
+    expect((await client.getPendingApprovals(runId)).length).toBe(1);
+  });
+
   it("fails the run when an approval is rejected", async () => {
     client.register(
       workflow({

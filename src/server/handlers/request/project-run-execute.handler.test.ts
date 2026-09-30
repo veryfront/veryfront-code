@@ -2402,7 +2402,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(order, ["settled", "destroy"]);
   });
 
-  it("treats waiting workflow runs as successful pause boundaries", async () => {
+  // veryfront-issue-inbox#2085, #2102, #2110: a durable pause is reported as
+  // `waiting` with what it waits on and its earliest deadline, and the pause
+  // payload is never sent as a result.
+  it("reports a durable approval pause as waiting with its pending nodes and deadline, never as a result", async () => {
     let destroyed = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
       createWorkflowClient: () => ({
@@ -2414,7 +2417,17 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         getRun: async () => ({
           status: "waiting",
           output: { approvalId: "approval-1" },
+          pendingApprovals: [
+            {
+              id: "apr_1",
+              nodeId: "review",
+              status: "pending",
+              expiresAt: new Date("2026-09-29T21:00:00.000Z"),
+            },
+            { id: "apr_0", nodeId: "earlier", status: "approved" },
+          ],
         }),
+        getPendingEventWaits: async () => [],
         destroy: async () => {
           destroyed = true;
         },
@@ -2438,12 +2451,83 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: true,
-      result: { approvalId: "approval-1" },
+      status: "waiting",
+      waiting_reason: "approval",
+      waiting: { pending_approvals: ["review"], resume_at: "2026-09-29T21:00:00.000Z" },
       duration_ms: 0,
       logs: null,
     });
     assertEquals(destroyed, true);
   });
+
+  for (
+    const scenario of [
+      {
+        name: "an event wait reports the event and its timeout",
+        waits: [{
+          nodeId: "invoice",
+          eventName: "invoice.received",
+          waitKind: "event",
+          status: "pending",
+          expiresAt: "2026-09-29T22:00:00.000Z",
+        }],
+        waiting: { event: "invoice.received", resume_at: "2026-09-29T22:00:00.000Z" },
+      },
+      {
+        name: "a delay reports only its wake-up",
+        waits: [{
+          nodeId: "cool-off",
+          eventName: "__veryfront_delay__",
+          waitKind: "delay",
+          status: "pending",
+          expiresAt: new Date("2026-09-29T20:05:00.000Z"),
+        }],
+        waiting: { resume_at: "2026-09-29T20:05:00.000Z" },
+      },
+      {
+        name: "an event wait without a timeout reports no deadline",
+        waits: [{ nodeId: "invoice", eventName: "invoice.received", waitKind: "event" }],
+        waiting: { event: "invoice.received" },
+      },
+    ] as const
+  ) {
+    it(`reports a durable event pause as waiting: ${scenario.name}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createWorkflowClient: () => ({
+          statePersistence: "durable",
+          register: () => {},
+          start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+            runId: options?.runId ?? "workflow-run",
+          }),
+          getRun: async () => ({
+            status: "waiting",
+            output: { paused: true },
+            pendingApprovals: [],
+          }),
+          getPendingEventWaits: async () => [...scenario.waits],
+          destroy: async () => {},
+        }),
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_workflow_event_1/execute",
+        {
+          runId: "run_workflow_event_1",
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.status, "waiting");
+      assertEquals(payload.waiting_reason, "event");
+      assertEquals(payload.waiting, scenario.waiting);
+      assertEquals("result" in payload, false);
+    });
+  }
 
   it("times out a workflow run that never reaches a terminal status", async () => {
     // Mirrors DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS in the handler (15 minutes).
@@ -2497,6 +2581,314 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertStringIncludes(payload.error, "timed out");
     assertEquals(sleepCalls > 0, true, "the poll loop must sleep between getRun calls");
     assertEquals(getRunCalls > 1, true, "the poll loop must re-check the run after sleeping");
+  });
+
+  // veryfront-issue-inbox#2085: a durable pause is not a completed run. The
+  // response must carry the lifecycle outcome so the backend can keep the
+  // canonical run `waiting` instead of mapping `success` to `completed`.
+  for (
+    const scenario of [
+      {
+        name: "approval",
+        pendingApprovals: [{ id: "approval-1", nodeId: "review" }],
+      },
+      { name: "event", pendingApprovals: [] },
+    ] as const
+  ) {
+    it(`reports a durable ${scenario.name} pause as waiting, not as a completed result`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createWorkflowClient: () => ({
+          statePersistence: "durable",
+          register: () => {},
+          start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+            runId: options?.runId ?? "workflow-run",
+          }),
+          getRun: async () => ({
+            status: "waiting",
+            output: { approvalId: "approval-1" },
+            pendingApprovals: scenario.pendingApprovals,
+          }),
+          destroy: async () => {},
+        }),
+      }));
+      const runId = `run_workflow_waiting_outcome_${scenario.name}`;
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        {
+          runId,
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+          input: { release: "v1" },
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(
+        payload.status,
+        "waiting",
+        "a paused workflow must report status waiting across the runtime/backend boundary",
+      );
+      assertEquals(payload.waiting_reason, scenario.name);
+    });
+  }
+
+  // veryfront-issue-inbox#2102 and #2110: a waiting run the control plane
+  // dispatches again under the same run id is continued, never started anew.
+  function resumableClient(initial: Record<string, unknown>) {
+    const calls: Array<[string, ...unknown[]]> = [];
+    let state: Record<string, unknown> = initial;
+    const settle = (next: Record<string, unknown>) => {
+      state = next;
+    };
+    const client = {
+      statePersistence: "durable" as const,
+      register: () => {},
+      start: (..._args: unknown[]) => {
+        calls.push(["start"]);
+        return Promise.reject(new Error("a resumed run must not be started again"));
+      },
+      getRun: () => Promise.resolve(state as { status: string }),
+      getPendingEventWaits: () =>
+        Promise.resolve(
+          (state.eventWaits ?? []) as Array<
+            { nodeId: string; eventName: string; waitKind: string }
+          >,
+        ),
+      approve: (runId: string, approvalId: string, approver: string, comment?: string) => {
+        calls.push(["approve", runId, approvalId, approver, comment]);
+        settle({ status: "completed", output: { stage: "paid" } });
+        return Promise.resolve();
+      },
+      reject: (runId: string, approvalId: string, approver: string, comment?: string) => {
+        calls.push(["reject", runId, approvalId, approver, comment]);
+        settle({ status: "failed", error: { message: "Approval rejected" } });
+        return Promise.resolve();
+      },
+      publishEvent: (runId: string, name: string, payload?: unknown) => {
+        calls.push(["publishEvent", runId, name, payload]);
+        settle({ status: "completed", output: { invoice: payload } });
+        return Promise.resolve("delivered");
+      },
+      releaseDueWaits: () => {
+        calls.push(["releaseDueWaits"]);
+        settle((initial.onDeadline ?? { status: "completed" }) as Record<string, unknown>);
+        return Promise.resolve();
+      },
+      destroy: () => Promise.resolve(),
+    };
+    return { client, calls, settle };
+  }
+
+  async function executeResume(
+    client: ReturnType<typeof resumableClient>["client"],
+    resume: Record<string, unknown>,
+    deps: Partial<ProjectRunExecuteHandlerDeps> = {},
+  ) {
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({ createWorkflowClient: () => client, ...deps }),
+    );
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1", resume },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    return { status: result.response.status, payload: await result.response.json(), runId };
+  }
+
+  const waitingOnReview = {
+    status: "waiting",
+    pendingApprovals: [{ id: "apr_1", nodeId: "manager-review", status: "pending" }],
+  };
+
+  it("applies an approval decision to the same durable run and reports its completion", async () => {
+    const { client, calls } = resumableClient(waitingOnReview);
+
+    const { payload, runId } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      comment: "ok",
+      approver: "user:u1",
+    });
+
+    assertEquals(calls, [["approve", runId, "apr_1", "user:u1", "ok"]]);
+    assertEquals(payload, { success: true, result: { stage: "paid" }, logs: null, duration_ms: 0 });
+  });
+
+  it("applies a rejection and reports the run as failed", async () => {
+    const { client, calls } = resumableClient(waitingOnReview);
+
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: false,
+      approver: "user:u1",
+    });
+
+    assertEquals(calls.map(([name]) => name), ["reject"]);
+    assertEquals(payload.success, false);
+    assertEquals(payload.error, "Approval rejected");
+  });
+
+  it("delivers an event to the same durable run", async () => {
+    const { client, calls } = resumableClient({
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [{
+        nodeId: "invoice",
+        eventName: "invoice.received",
+        waitKind: "event",
+        status: "pending",
+      }],
+    });
+
+    const { payload, runId } = await executeResume(client, {
+      type: "event",
+      name: "invoice.received",
+      payload: { id: 7 },
+    });
+
+    assertEquals(calls, [["publishEvent", runId, "invoice.received", { id: 7 }]]);
+    assertEquals(payload, {
+      success: true,
+      result: { invoice: { id: 7 } },
+      logs: null,
+      duration_ms: 0,
+    });
+  });
+
+  it("releases a passed delay on a deadline dispatch and reports the next boundary", async () => {
+    const { client, calls } = resumableClient({
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [{
+        nodeId: "cool-off",
+        eventName: "__veryfront_delay__",
+        waitKind: "delay",
+        status: "pending",
+        expiresAt: new Date(Date.now() - 1_000),
+      }],
+      onDeadline: { status: "completed", output: { cooled: true } },
+    });
+
+    const { payload } = await executeResume(client, { type: "deadline" });
+
+    assertEquals(calls, [["releaseDueWaits"]]);
+    assertEquals(payload, { success: true, result: { cooled: true }, logs: null, duration_ms: 0 });
+  });
+
+  it("reports an approval timeout on a deadline dispatch as a failure with the runtime's timeout error", async () => {
+    const { client } = resumableClient({
+      status: "waiting",
+      pendingApprovals: [{
+        id: "apr_1",
+        nodeId: "manager-review",
+        status: "pending",
+        expiresAt: new Date(Date.now() - 1_000),
+      }],
+      onDeadline: { status: "failed", error: { message: 'Approval "apr_1" expired' } },
+    });
+
+    const { payload } = await executeResume(client, { type: "deadline" });
+
+    assertEquals(payload.success, false);
+    assertEquals(payload.error, 'Approval "apr_1" expired');
+  });
+
+  it("polls past the boundary it released while the resumed execution catches up", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    let polls = 0;
+    client.approve = () => {
+      // The decision is durable, but the run still reads the old boundary for
+      // a few polls before the resumed execution finishes.
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(
+      client,
+      { type: "approval", node_id: "manager-review", approved: true, approver: "user:u1" },
+      {
+        sleep: () => {
+          polls++;
+          if (polls === 3) settle({ status: "completed", output: { stage: "paid" } });
+          return Promise.resolve();
+        },
+      },
+    );
+
+    assertEquals(polls, 3);
+    assertEquals(payload.result, { stage: "paid" });
+  });
+
+  it("reports a resumed run that paused again on a new approval as waiting", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    client.approve = () => {
+      settle({
+        status: "waiting",
+        pendingApprovals: [{ id: "apr_2", nodeId: "finance-review", status: "pending" }],
+      });
+      return Promise.resolve();
+    };
+
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+    });
+
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting, { pending_approvals: ["finance-review"] });
+  });
+
+  it("does not apply a decision twice when a re-dispatch finds the run already past it", async () => {
+    const { client, calls } = resumableClient({ status: "completed", output: { stage: "paid" } });
+
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+    });
+
+    assertEquals(calls, []);
+    assertEquals(payload.result, { stage: "paid" });
+  });
+
+  it("rejects a resume block on a non-workflow run and a malformed resume block", async () => {
+    for (
+      const body of [
+        {
+          runId: "run_task_1",
+          kind: "task",
+          target: "task:sync",
+          projectId: "proj-1",
+          resume: { type: "deadline" },
+        },
+        {
+          runId: "run_task_1",
+          kind: "workflow",
+          target: "workflow:x",
+          projectId: "proj-1",
+          resume: { type: "later" },
+        },
+      ]
+    ) {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_task_1/execute",
+        body,
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(result.response.status >= 400 && result.response.status < 500, true);
+    }
   });
 
   it("does not report waiting workflow runs as successful without durable workflow state", async () => {
