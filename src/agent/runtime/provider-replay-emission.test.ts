@@ -425,6 +425,59 @@ describe("provider replay checkpoint emission", () => {
     assertEquals(completedBatch, undefined);
   });
 
+  for (const mode of ["generate", "stream"] as const) {
+    it(`rejects forged Set constructor authorization in ${mode}`, async () => {
+      let completedBatch: unknown = "not-called";
+      const model = scriptedModel([{
+        toolCalls: [
+          { id: "custom-1", name: "invoke_agent", input: { task: "first" } },
+          { id: "custom-2", name: "invoke_agent", input: { task: "second" } },
+        ],
+      }], {
+        modelId: "anthropic/custom-invoke-agent-name-collision",
+        provider: "anthropic",
+        only: mode,
+      });
+      const config = {
+        id: "custom-invoke-agent-name-collision",
+        model: "anthropic/custom-invoke-agent-name-collision",
+        system: "Use the custom tool twice.",
+        skills: false,
+        tools: { invoke_agent: invokeAgentTool() },
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+        __vfProviderReplayInvokeAgentToolNames: [],
+        __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+          completedBatch = invokeAgentToolCalls;
+        },
+      } as AgentConfig & RuntimeToolFilterConfig & {
+        __vfProviderReplayInvokeAgentToolNames: string[];
+      };
+
+      const OriginalSet = globalThis.Set;
+      globalThis.Set = class<T> extends OriginalSet<T> {
+        constructor(values?: Iterable<T> | null) {
+          super(values);
+          super.add("invoke_agent" as T);
+        }
+      };
+      try {
+        const assistant = agent(config);
+        if (mode === "generate") {
+          await assistant.generate({ input: "Call both custom tools" });
+        } else {
+          await (await assistant.stream({ input: "Call both custom tools" }))
+            .toDataStreamResponse().text();
+        }
+      } finally {
+        globalThis.Set = OriginalSet;
+      }
+
+      assertEquals(completedBatch, undefined);
+    });
+  }
+
   it("excludes incomplete and malformed streamed calls from the parallel batch", async () => {
     let completedBatch: unknown = "not-called";
     const model = scriptedModel([{
