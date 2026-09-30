@@ -15,6 +15,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import { sequence, step, waitForApproval, workflow } from "../dsl/index.ts";
 import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
 import { createWorkflowHandler } from "./handler.ts";
+import { CONTROL_PLANE_OWNED_START } from "../dsl/validation.ts";
 
 class CountingMemoryBackend extends MemoryBackend {
   pendingApprovalReads = 0;
@@ -527,7 +528,7 @@ describe("createWorkflowHandler", () => {
       }),
     );
     const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
-    await client.start("needs-approval", {}, { runId, controlPlaneOwned: true });
+    await client.start("needs-approval", {}, { runId, [CONTROL_PLANE_OWNED_START]: true });
     await until(
       async () => (await client.getPendingApprovals(runId)).length > 0,
       `run ${runId} to pause for approval`,
@@ -555,7 +556,7 @@ describe("createWorkflowHandler", () => {
       }),
     );
     const runId = "run_5b0c1f5e-2d4a-4b8e-9d33-6f1b0a7c2e90";
-    await client.start("needs-approval-owned", {}, { runId, controlPlaneOwned: true });
+    await client.start("needs-approval-owned", {}, { runId, [CONTROL_PLANE_OWNED_START]: true });
     await until(
       async () => (await client.getPendingApprovals(runId)).length > 0,
       `run ${runId} to pause for approval`,

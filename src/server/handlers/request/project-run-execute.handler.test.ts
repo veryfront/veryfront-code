@@ -1,6 +1,7 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
+import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import {
   assertEquals,
   assertExists,
@@ -1101,7 +1102,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       | {
         workflowId: string;
         input: unknown;
-        options?: { runId?: string; controlPlaneOwned?: boolean };
+        options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true };
       }
       | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
@@ -1110,7 +1111,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         start: async (
           workflowId: string,
           input: unknown,
-          options?: { runId?: string; controlPlaneOwned?: boolean },
+          options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true },
         ) => {
           started = { workflowId, input, options };
           return { runId: options?.runId ?? "workflow-run" };
@@ -1147,7 +1148,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(started, {
       workflowId: "publish",
       input: { release: "v1" },
-      options: { runId: "run_workflow_1", controlPlaneOwned: true },
+      options: { runId: "run_workflow_1", [CONTROL_PLANE_OWNED_START]: true },
     });
   });
 
@@ -2688,8 +2689,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             { nodeId: string; eventName: string; waitKind: string }
           >,
         ),
-      approve: (runId: string, approvalId: string, approver: string, comment?: string) => {
-        calls.push(["approve", runId, approvalId, approver, comment]);
+      approve: (
+        runId: string,
+        approvalId: string,
+        approver: string,
+        comment?: string,
+        data?: unknown,
+      ) => {
+        calls.push([
+          "approve",
+          runId,
+          approvalId,
+          approver,
+          comment,
+          ...(data === undefined ? [] : [data]),
+        ]);
         settle({ status: "completed", output: { stage: "paid" } });
         return Promise.resolve();
       },
@@ -2756,6 +2770,20 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertEquals(calls, [["approve", runId, "apr_1", "user:u1", "ok"]]);
     assertEquals(payload, { success: true, result: { stage: "paid" }, logs: null, duration_ms: 0 });
+  });
+
+  it("forwards the structured response of an approval decision", async () => {
+    const { client, calls } = resumableClient(waitingOnReview);
+
+    const { runId } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+      data: { amount: 120 },
+    });
+
+    assertEquals(calls, [["approve", runId, "apr_1", "user:u1", undefined, { amount: 120 }]]);
   });
 
   it("applies a rejection and reports the run as failed", async () => {
@@ -3091,7 +3119,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const definition = workflow({ id: "publish", steps }).definition;
       const first = createWorkflowClient({ backend });
       first.register(definition);
-      const handle = await first.start("publish", {}, { runId, controlPlaneOwned: true });
+      const handle = await first.start("publish", {}, { runId, [CONTROL_PLANE_OWNED_START]: true });
       await handle.settled?.();
       first.getApprovalManager().stop();
       first.getEventWaitManager().stop();

@@ -34,9 +34,17 @@ export function validateWorkflowPathSegment(id: string, label: string): void {
  * must go through `POST /runs/{run_id}/resume` so the canonical run moves with
  * them (#2102). The shape is reserved: ids this runtime generates
  * (`run_` + 12 characters) never match, and `start` refuses a caller-chosen id
- * of this shape unless the start is control-plane owned.
+ * of this shape unless the start carries `CONTROL_PLANE_OWNED_START`.
  */
 const CONTROL_PLANE_RUN_ID = /^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Start option marking the control plane's own dispatch. Internal: this module
+ * is not a package export, so application code cannot set it.
+ */
+export const CONTROL_PLANE_OWNED_START: unique symbol = Symbol(
+  "veryfront.workflow.controlPlaneOwnedStart",
+);
 
 export function isControlPlaneWorkflowRunId(runId: string): boolean {
   return CONTROL_PLANE_RUN_ID.test(runId);

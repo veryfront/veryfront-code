@@ -56,6 +56,7 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
 import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
+import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import type { WorkflowClientConfig } from "#veryfront/workflow";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
@@ -125,6 +126,8 @@ export type WorkflowResumeSignal =
     node_id: string;
     approved: boolean;
     comment?: string;
+    /** Structured response for an approval declared with a `responseSchema`. */
+    data?: unknown;
     approver: string;
     wait_id?: string;
   }
@@ -198,12 +201,24 @@ interface WorkflowClientView {
   start(
     workflowId: string,
     input: unknown,
-    options?: { runId?: string; controlPlaneOwned?: boolean },
+    options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true },
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
-  approve?(runId: string, approvalId: string, approver: string, comment?: string): Promise<unknown>;
-  reject?(runId: string, approvalId: string, approver: string, comment?: string): Promise<unknown>;
+  approve?(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<unknown>;
+  reject?(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<unknown>;
   /** Resolves with the workflow client's `PublishEventOutcome`. */
   publishEvent?(runId: string, eventName: string, payload?: unknown): Promise<string>;
   retryEventDelivery?(runId: string, eventName: string): Promise<boolean>;
@@ -452,6 +467,7 @@ function parseResumeSignal(
         node_id: parseResumeId(value.node_id, "resume.node_id"),
         approved: value.approved,
         approver: parseResumeId(value.approver, "resume.approver"),
+        ...(value.data === undefined ? {} : { data: value.data }),
         ...parseResumeWaitId(value.wait_id),
         // An empty comment is valid, as on the control plane's resume route.
         ...(value.comment === undefined ? {} : {
@@ -844,7 +860,7 @@ async function applyResumeSignal(
   if (!approval) return { released: false };
   const decide = resume.approved ? client.approve : client.reject;
   if (!decide) return { failure: "Workflow client cannot decide approvals" };
-  await decide.call(client, runId, approval.id, resume.approver, resume.comment);
+  await decide.call(client, runId, approval.id, resume.approver, resume.comment, resume.data);
   return { released: true };
 }
 
@@ -960,7 +976,7 @@ async function executeWorkflowRun(
       // A null input counts as no input, the same as on the API run record.
       const handle = await client.start(workflow.id, request.input ?? {}, {
         runId: request.runId,
-        controlPlaneOwned: true,
+        [CONTROL_PLANE_OWNED_START]: true,
       });
       run = await waitForWorkflowResult(client, handle.runId, deps);
       await handle.settled?.();
