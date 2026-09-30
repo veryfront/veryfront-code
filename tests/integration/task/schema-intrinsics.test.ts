@@ -6,7 +6,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { defineSchema } from "#veryfront/schemas/define.ts";
-import { canonicalJsonSchema } from "#veryfront/schemas/schema-identity.ts";
+import { canonicalJsonSchema, schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import {
   escapePointerSegment,
   formatSchemaValidationErrors,
@@ -108,6 +108,21 @@ describe("schema identity after project code replaced built-ins", () => {
     }
 
     assertEquals(canonical, VECTOR_CANONICAL);
+  });
+  it("hashes a contract schema when project code replaced Array.isArray", async () => {
+    const contract = defineSchema((v) => v.object({ ticketText: v.string() }))();
+    const baseline = await schemaIdentitySha256(contract);
+    const originalIsArray = Reflect.getOwnPropertyDescriptor(Array, "isArray")!;
+    let identity: string | null = null;
+    try {
+      Reflect.set(Array, "isArray", () => true);
+      identity = await schemaIdentitySha256(contract);
+    } finally {
+      Reflect.defineProperty(Array, "isArray", originalIsArray);
+    }
+
+    assertMatch(baseline ?? "", /^[0-9a-f]{64}$/);
+    assertEquals(identity, baseline);
   });
 });
 
