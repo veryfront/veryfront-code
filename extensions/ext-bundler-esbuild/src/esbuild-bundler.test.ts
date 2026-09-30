@@ -29,6 +29,7 @@ import { rebuildContextWithSignal } from "./context-build-lifecycle.ts";
 const childProcess = createRequire(import.meta.url)("node:child_process") as {
   spawn: typeof import("node:child_process").spawn;
 };
+const OBSERVED_SERVICE_CLOSE_TIMEOUT_MS = 5_000;
 
 function observeEsbuildServices(): {
   services: Array<{
@@ -55,7 +56,15 @@ function observeEsbuildServices(): {
       const close = Promise.withResolvers<void>();
       const service = { child, closed: false, close: close.promise };
       services.push(service);
+      const closeTimeout = setTimeout(() => {
+        close.reject(
+          new Error(
+            `Timed out after ${OBSERVED_SERVICE_CLOSE_TIMEOUT_MS}ms waiting for the observed esbuild service to close`,
+          ),
+        );
+      }, OBSERVED_SERVICE_CLOSE_TIMEOUT_MS);
       child.once("close", () => {
+        clearTimeout(closeTimeout);
         service.closed = true;
         close.resolve();
       });
