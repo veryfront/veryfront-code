@@ -720,6 +720,7 @@ export class VeryfrontAPIOperations {
     projectRef: string,
     version = "latest",
     options: ListFilesOptions = {},
+    signal?: AbortSignal,
   ): Promise<FileListResult> {
     const params = addRuntimeServerFunctionAccess(buildListParams(options));
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
@@ -727,7 +728,7 @@ export class VeryfrontAPIOperations {
     }/files?${params}`;
     logger.debug("listReleaseFiles", { projectRef, version, pattern: options.pattern });
 
-    const raw = await this.request(url);
+    const raw = await this.request(url, { signal });
     const response = getListReleaseFilesResponseSchema().parse(raw);
 
     return {
@@ -742,9 +743,15 @@ export class VeryfrontAPIOperations {
     projectRef: string,
     version = "latest",
     options: Omit<ListFilesOptions, "cursor"> = {},
+    signal?: AbortSignal,
   ): Promise<ProjectFile[]> {
     return listAllFiles((cursor) =>
-      this.listReleaseFiles(projectRef, version, { ...options, cursor, limit: DEFAULT_PAGE_LIMIT })
+      this.listReleaseFiles(
+        projectRef,
+        version,
+        { ...options, cursor, limit: DEFAULT_PAGE_LIMIT },
+        signal,
+      )
     );
   }
 
@@ -908,6 +915,7 @@ export class VeryfrontAPIOperations {
   async upsertStyleArtifact(
     projectRef: string,
     input: UpsertStyleArtifactInput,
+    signal?: AbortSignal,
   ): Promise<ProjectStyleArtifactResolution> {
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current`;
     logger.debug("upsertStyleArtifact", {
@@ -939,6 +947,7 @@ export class VeryfrontAPIOperations {
           build_run_id: input.buildRunId,
           failure_reason: input.failureReason,
         }),
+        signal,
       }),
     );
   }
@@ -953,6 +962,7 @@ export class VeryfrontAPIOperations {
     contentHash: string,
     contentType: DependencyArtifactContentType,
     bytes: Uint8Array<ArrayBuffer>,
+    signal?: AbortSignal,
   ): Promise<DependencyArtifactAssetUploadResponse> {
     if (await computeHashBytes(bytes) !== contentHash) {
       throw API_CLIENT_ERROR.create({
@@ -973,6 +983,7 @@ export class VeryfrontAPIOperations {
       method: "PUT",
       headers: { "Content-Type": contentType },
       body: bytes as BodyInit,
+      signal,
     });
     return getDependencyArtifactAssetUploadResponseSchema().parse(raw);
   }
@@ -981,6 +992,7 @@ export class VeryfrontAPIOperations {
     artifactId: string,
     attemptCount: number,
     result: DependencyArtifactBuildResultBody,
+    signal?: AbortSignal,
   ): Promise<DependencyArtifactBuildResultResponse> {
     const url = `/dependency-artifacts/${
       encodeURIComponent(artifactId)
@@ -993,6 +1005,7 @@ export class VeryfrontAPIOperations {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(result),
+      signal,
     });
     return getDependencyArtifactBuildResultResponseSchema().parse(raw);
   }
@@ -1004,6 +1017,7 @@ export class VeryfrontAPIOperations {
   async beginReleaseAssetManifestBuild(
     projectRef: string,
     version: string,
+    signal?: AbortSignal,
   ): Promise<ReleaseAssetManifestBuildResponse> {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
@@ -1014,6 +1028,7 @@ export class VeryfrontAPIOperations {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
+      signal,
     });
     return getReleaseAssetManifestBuildResponseSchema().parse(raw);
   }
@@ -1024,6 +1039,7 @@ export class VeryfrontAPIOperations {
     contentHash: string,
     contentType: string,
     bytes: Uint8Array,
+    signal?: AbortSignal,
   ): Promise<ReleaseAssetUploadResponse> {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
@@ -1043,6 +1059,7 @@ export class VeryfrontAPIOperations {
         "x-vf-content-hash": contentHash,
       },
       body: bytes as BodyInit,
+      signal,
     });
     return getReleaseAssetUploadResponseSchema().parse(raw);
   }
@@ -1051,6 +1068,7 @@ export class VeryfrontAPIOperations {
     projectRef: string,
     version: string,
     manifest: unknown,
+    signal?: AbortSignal,
   ): Promise<ReleaseAssetManifestStateResponse> {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
@@ -1061,6 +1079,7 @@ export class VeryfrontAPIOperations {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(manifest),
+      signal,
     });
     return getReleaseAssetManifestStateResponseSchema().parse(raw);
   }
@@ -1070,6 +1089,7 @@ export class VeryfrontAPIOperations {
     version: string,
     state: "partial" | "failed",
     error?: string,
+    signal?: AbortSignal,
   ): Promise<ReleaseAssetManifestStateResponse> {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
@@ -1080,6 +1100,7 @@ export class VeryfrontAPIOperations {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(error ? { state, error } : { state }),
+      signal,
     });
     return getReleaseAssetManifestStateResponseSchema().parse(raw);
   }

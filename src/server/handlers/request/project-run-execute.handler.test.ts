@@ -1683,6 +1683,62 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedConfig, { upload_ids: ["upload-1"] });
   });
 
+  it("runs the default knowledge ingest executor and uploads its generated document", async () => {
+    const body = {
+      runId: "run_knowledge_default",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+      config: { paths: ["uploads/guide.md"], slug: "guide" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_knowledge_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    const result = await withMockFetch(
+      (async (input, init) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof Request
+          ? input.url
+          : input.toString();
+        if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md/url")) {
+          return new Response(
+            JSON.stringify({
+              signed_url: "https://signed.example.test/guide.md",
+              expires_at: "2026-09-30T23:00:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === "https://signed.example.test/guide.md") {
+          return new Response("# Guide\n\nCancellation-safe knowledge.", { status: 200 });
+        }
+        assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+        uploads.push({ url, body: requestJsonBody(init) ?? {} });
+        return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          signed.request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result.summary.ingested_count, 1);
+    assertEquals(uploads.length, 1);
+    assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+  });
+
   it("dispatches built-in style artifact builds through the reusable style executor", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     let attemptedProjectDiscovery = false;
@@ -1792,6 +1848,143 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(attemptedProjectDiscovery, false);
   });
 
+  it("runs the default dependency artifact executor and publishes its graph", async () => {
+    const body = {
+      runId: "run_dependency_artifact_default",
+      kind: "task",
+      target: "task:dependency-artifact-build",
+      projectId: "proj-1",
+      config: {
+        artifact_id: "11111111-1111-4111-8111-111111111111",
+        attempt_count: 1,
+        identity: {
+          origin_key: "npm:public",
+          package_name: "fixture-package",
+          exact_version: "1.2.3",
+          subpath: "",
+          target: "es2022",
+          profile: "standard-v1",
+        },
+        policy: { decision: "allow" },
+      },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    let uploads = 0;
+    let publications = 0;
+
+    const result = await withMockFetch(
+      (async (input) => {
+        const url = String(input);
+        if (url.startsWith("https://esm.sh/")) {
+          return new Response("export const ready = true;", {
+            status: 200,
+            headers: { "Content-Type": "text/javascript" },
+          });
+        }
+        if (url.includes("/assets/")) {
+          uploads++;
+          return new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/result")) {
+          publications++;
+          return new Response(JSON.stringify({ accepted: true, state: "ready" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          signed.request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result.state, "ready");
+    assertEquals(uploads, 1);
+    assertEquals(publications, 1);
+  });
+
+  it("aborts an in-flight dependency asset upload and never publishes the result", async () => {
+    const controller = new AbortController();
+    const uploadStarted = Promise.withResolvers<void>();
+    let uploadSignal: AbortSignal | undefined;
+    let publications = 0;
+    const body = {
+      runId: "run_dependency_artifact_cancel_upload",
+      kind: "task",
+      target: "task:dependency-artifact-build",
+      projectId: "proj-1",
+      config: {
+        artifact_id: "11111111-1111-4111-8111-111111111111",
+        attempt_count: 1,
+        identity: {
+          origin_key: "npm:public",
+          package_name: "fixture-package",
+          exact_version: "1.2.3",
+          subpath: "",
+          target: "es2022",
+          profile: "standard-v1",
+        },
+        policy: { decision: "allow" },
+      },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_cancel_upload/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = withMockFetch(
+      ((input, init) => {
+        const url = String(input);
+        if (url.startsWith("https://esm.sh/")) {
+          return Promise.resolve(
+            new Response("export const ready = true;", {
+              status: 200,
+              headers: { "Content-Type": "text/javascript" },
+            }),
+          );
+        }
+        if (url.includes("/assets/")) {
+          uploadSignal = init?.signal ?? undefined;
+          uploadStarted.resolve();
+          if (!uploadSignal) return Promise.reject(new Error("missing abort signal"));
+          return new Promise<Response>((_resolve, reject) =>
+            uploadSignal.addEventListener("abort", () => reject(uploadSignal?.reason), {
+              once: true,
+            })
+          );
+        }
+        if (url.endsWith("/result")) publications++;
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(request, createCtx(signed.publicKeyPem)),
+    );
+
+    await uploadStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(uploadSignal?.aborted, true);
+    assertEquals(publications, 0);
+  });
+
   it("does not continue a release asset build after its start request is cancelled", async () => {
     const controller = new AbortController();
     const body = {
@@ -1827,6 +2020,156 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     assertEquals((await result.response.json()).success, false);
     assertEquals(fetchCalls, 1);
+  });
+
+  it("runs the default release asset executor through upload and manifest publication", async () => {
+    const body = {
+      runId: "run_release_asset_default",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    const requests: string[] = [];
+
+    const result = await withMockFetch(
+      (async (input, init) => {
+        const url = String(input);
+        requests.push(`${init?.method ?? "GET"} ${url}`);
+        if (url.endsWith("/asset-manifest/builds")) {
+          return new Response(
+            JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("/releases/release-1/files?")) {
+          return new Response(
+            JSON.stringify({
+              data: [{
+                id: "file-1",
+                version_id: "version-1",
+                path: "pages/index.tsx",
+                content: "export default function Page() { return null; }",
+                type: "page",
+                size: 49,
+                updated_at: "2026-09-30T00:00:00.000Z",
+              }],
+              page_info: { self: null, first: null, next: null, prev: null },
+              release_id: "release-1",
+              release_version: "1",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.endsWith("/asset-manifest/assets")) {
+          return new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/asset-manifest")) {
+          return new Response(JSON.stringify({ state: "ready", manifest_version: 1 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(signed.request, ctx),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, payload.error);
+    assertEquals(payload.result.state, "ready");
+    assertEquals(requests.some((request) => request.includes("asset-manifest/assets")), true);
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), true);
+  });
+
+  it("aborts an in-flight release asset upload and never publishes the manifest", async () => {
+    const controller = new AbortController();
+    const uploadStarted = Promise.withResolvers<void>();
+    let uploadSignal: AbortSignal | undefined;
+    let manifestPuts = 0;
+    const body = {
+      runId: "run_release_asset_cancel_upload",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_cancel_upload/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+
+    const pending = withMockFetch(
+      ((input, init) => {
+        const url = String(input);
+        if (url.endsWith("/asset-manifest/builds")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        if (url.includes("/releases/release-1/files?")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [{
+                  id: "file-1",
+                  version_id: "version-1",
+                  path: "pages/index.tsx",
+                  content: "export default function Page() { return null; }",
+                  type: "page",
+                  size: 49,
+                  updated_at: "2026-09-30T00:00:00.000Z",
+                }],
+                page_info: { self: null, first: null, next: null, prev: null },
+                release_id: "release-1",
+                release_version: "1",
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        if (url.endsWith("/asset-manifest/assets")) {
+          uploadSignal = init?.signal ?? undefined;
+          uploadStarted.resolve();
+          if (!uploadSignal) return Promise.reject(new Error("missing abort signal"));
+          return new Promise<Response>((_resolve, reject) =>
+            uploadSignal.addEventListener("abort", () => reject(uploadSignal?.reason), {
+              once: true,
+            })
+          );
+        }
+        if (url.endsWith("/asset-manifest") && init?.method === "PUT") manifestPuts++;
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    await uploadStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(uploadSignal?.aborted, true);
+    assertEquals(manifestPuts, 0);
   });
 
   it("builds style artifacts from adapter source files and adapter stylesheet reads", async () => {
@@ -1948,6 +2291,54 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     assertEquals((await result.response.json()).success, false);
     assertEquals(recorder.upserts, []);
+  });
+
+  it("aborts an in-flight style artifact publication", async () => {
+    const controller = new AbortController();
+    const publicationStarted = Promise.withResolvers<void>();
+    let publicationSignal: AbortSignal | undefined;
+    const body = {
+      runId: "run_style_artifact_cancel_publication",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "Preview" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_cancel_publication/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities;",
+    });
+
+    const pending = withMockFetch(
+      ((_input, init) => {
+        publicationSignal = init?.signal ?? undefined;
+        publicationStarted.resolve();
+        if (!publicationSignal) return Promise.reject(new Error("missing abort signal"));
+        return new Promise<Response>((_resolve, reject) =>
+          publicationSignal.addEventListener("abort", () => reject(publicationSignal?.reason), {
+            once: true,
+          })
+        );
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    await publicationStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(publicationSignal?.aborted, true);
   });
 
   it("runs a discovered workflow with the canonical run id and input", async () => {

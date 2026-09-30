@@ -2783,11 +2783,14 @@ async function executeReleaseAssetBuildRun(input: {
       },
       client: {
         beginReleaseAssetManifestBuild: (version) =>
-          runWhileActive(input.signal, () => apiClient.beginReleaseAssetManifestBuild(version)),
+          runWhileActive(
+            input.signal,
+            () => apiClient.beginReleaseAssetManifestBuild(version, undefined, input.signal),
+          ),
         listAllReleaseFiles: async (version) => {
           const files = await runWhileActive(
             input.signal,
-            () => apiClient.listAllReleaseFiles(version),
+            () => apiClient.listAllReleaseFiles(version, {}, input.signal),
           );
           return files.map((file) => {
             if (typeof file.content !== "string") {
@@ -2802,14 +2805,32 @@ async function executeReleaseAssetBuildRun(input: {
         uploadReleaseAsset: (version, hash, contentType, bytes) =>
           runWhileActive(
             input.signal,
-            () => apiClient.uploadReleaseAsset(version, hash, contentType, bytes),
+            () =>
+              apiClient.uploadReleaseAsset(
+                version,
+                hash,
+                contentType,
+                bytes,
+                undefined,
+                input.signal,
+              ),
           ),
         putReleaseAssetManifest: (version, manifest) =>
-          runWhileActive(input.signal, () => apiClient.putReleaseAssetManifest(version, manifest)),
+          runWhileActive(
+            input.signal,
+            () => apiClient.putReleaseAssetManifest(version, manifest, undefined, input.signal),
+          ),
         reportReleaseAssetManifestState: (version, state, error) =>
           runWhileActive(
             input.signal,
-            () => apiClient.reportReleaseAssetManifestState(version, state, error),
+            () =>
+              apiClient.reportReleaseAssetManifestState(
+                version,
+                state,
+                error,
+                undefined,
+                input.signal,
+              ),
           ),
         compileProjectCss: (...args) =>
           runWhileActive(input.signal, () => compileProjectCss(...args)),
@@ -2874,6 +2895,7 @@ async function executeDependencyArtifactBuildRun(input: {
             contentHash,
             contentType,
             bytes,
+            input.signal,
           )),
       reportResult: ({ artifactId, attemptCount, result }) =>
         runWhileActive(input.signal, () =>
@@ -2881,6 +2903,7 @@ async function executeDependencyArtifactBuildRun(input: {
             artifactId,
             attemptCount,
             result,
+            input.signal,
           )),
     }, { signal: input.signal });
     input.signal.throwIfAborted();
@@ -3135,15 +3158,19 @@ async function executeStyleArtifactBuildRun(input: {
     });
     input.signal.throwIfAborted();
 
-    await apiClient.upsertStyleArtifact({
-      ...selector,
-      styleProfileHash,
-      status: "ready",
-      artifactHash: result.hash,
-      assetPath: `/_vf/css/${result.hash}.css`,
-      contentType: "text/css; charset=utf-8",
-      buildRunId: input.request.runId,
-    });
+    await apiClient.upsertStyleArtifact(
+      {
+        ...selector,
+        styleProfileHash,
+        status: "ready",
+        artifactHash: result.hash,
+        assetPath: `/_vf/css/${result.hash}.css`,
+        contentType: "text/css; charset=utf-8",
+        buildRunId: input.request.runId,
+      },
+      undefined,
+      input.signal,
+    );
     input.signal.throwIfAborted();
 
     return {
@@ -3161,13 +3188,17 @@ async function executeStyleArtifactBuildRun(input: {
   } catch (error) {
     if (input.signal.aborted) throw input.signal.reason;
     if (apiClient && selector && styleProfileHash) {
-      await apiClient.upsertStyleArtifact({
-        ...selector,
-        styleProfileHash,
-        status: "failed",
-        buildRunId: input.request.runId,
-        failureReason: errorMessage(error),
-      }).catch(() => undefined);
+      await apiClient.upsertStyleArtifact(
+        {
+          ...selector,
+          styleProfileHash,
+          status: "failed",
+          buildRunId: input.request.runId,
+          failureReason: errorMessage(error),
+        },
+        undefined,
+        input.signal,
+      ).catch(() => undefined);
     }
 
     return {
