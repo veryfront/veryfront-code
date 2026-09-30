@@ -16,6 +16,10 @@ import {
   createLocalControlAccessDeniedResponse,
   isTrustedLocalControlRequest,
 } from "#veryfront/security/http/local-control-request.ts";
+import {
+  INGRESS_API_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
 
 export class DebugContextHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -41,7 +45,7 @@ export class DebugContextHandler extends BaseHandler {
       );
     }
 
-    const token = req.headers.get("x-token");
+    const token = readIngressCredential(req, INGRESS_API_TOKEN_HEADER);
     const url = new URL(req.url);
 
     const debugInfo = {

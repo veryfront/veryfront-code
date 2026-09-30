@@ -1,6 +1,10 @@
 import { getBaseLogger } from "#veryfront/utils";
 import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  INGRESS_API_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
@@ -584,7 +588,7 @@ function createProxyGuard(
 ): ProxyGuardResult | undefined {
   if (!isProxyMode) return undefined;
 
-  const token = req.headers.get("x-token");
+  const token = readIngressCredential(req, INGRESS_API_TOKEN_HEADER);
   const hasUntrustedIdentityHeaders = !identityHeadersTrusted &&
     (
       req.headers.has("x-project-id") ||
