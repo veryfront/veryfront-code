@@ -1568,34 +1568,13 @@ describe("child-run-result-summary", () => {
       assertEquals(result.text, "ok");
     });
 
-    it("scales linearly across many unclosed transcript tags", () => {
-      const measure = (count: number): number => {
+    it("removes many unclosed transcript tags", () => {
+      // Scan complexity is checked deterministically in the integration suite.
+      // Unit and coverage shards must not depend on scheduler timing.
+      for (const count of [8_000, 16_000]) {
         const text = "<tool_response>".repeat(count) + "<tool_call>".repeat(count);
-        const start = performance.now();
         assertEquals(buildChildRunResultSummary(text).text, "");
-        return performance.now() - start;
-      };
-
-      // Coverage shards run concurrently. Interleave repeated measurements so
-      // a scheduling pause in one sample cannot determine the scaling ratio.
-      const shorterDurations: number[] = [];
-      const longerDurations: number[] = [];
-      for (let sample = 0; sample < 5; sample++) {
-        shorterDurations.push(measure(8_000));
-        longerDurations.push(measure(16_000));
       }
-      const median = (durations: number[]): number => {
-        const sorted = [...durations].sort((left, right) => left - right);
-        const middle = sorted[Math.floor(sorted.length / 2)];
-        if (middle === undefined) throw new Error("Expected timing measurements");
-        return middle;
-      };
-      const shorterDuration = median(shorterDurations);
-      const longerDuration = median(longerDurations);
-      const details = JSON.stringify({ shorterDurations, longerDurations });
-
-      assertEquals(longerDuration < 750, true, details);
-      assertEquals(longerDuration < shorterDuration * 3 + 100, true, details);
     });
   });
 
