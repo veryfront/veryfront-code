@@ -886,6 +886,7 @@ const IntrinsicReflectApply = Reflect.apply;
 const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!.get!;
 const RequestUrlGetter = Object.getOwnPropertyDescriptor(Request.prototype, "url")!.get!;
 const RequestMethodGetter = Object.getOwnPropertyDescriptor(Request.prototype, "method")!.get!;
+const RequestSignalGetter = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!.get!;
 const HeadersGet = Headers.prototype.get;
 const HeadersAppend = Headers.prototype.append;
 const HeadersEntries = Headers.prototype.entries;
@@ -897,7 +898,7 @@ const NativeHeaders = Headers;
 
 /**
  * The execute request as the run sees it: the same URL, method and headers,
- * minus the inference credential. Project code (a task, workflow or eval
+ * and cancellation signal, minus the inference credential. Project code (a task, workflow or eval
  * module) loads during execution and can patch `Headers.prototype.get`, so the
  * request it can reach must no longer carry the credential. The body was read
  * and verified before this point and is not needed again.
@@ -924,6 +925,8 @@ function withoutProjectRunInferenceToken(req: Request): Request {
   return new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
     method: IntrinsicReflectApply(RequestMethodGetter, req, []) as string,
     headers,
+    // The run is cancelled through this signal; the copy must keep it.
+    signal: IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
   });
 }
 

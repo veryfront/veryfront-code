@@ -672,6 +672,68 @@ describe("project-run inference credential catalog", () => {
     assertEquals(requests.filter((request) => request.authorization?.includes(BROADER_TOKEN)), []);
   });
 
+  // Where the bearer is attached (the catalog request and the gateway fetch
+  // wrapper), project code that replaced the Headers class or its setters must
+  // not receive it. Header iteration further down the shared outbound stack is
+  // a separate, pre-existing surface and is not covered here.
+  it("attaches the bearer without a patched Headers class or setter seeing it", async () => {
+    const requests = captureRequests();
+    const managed = createAgent({
+      id: "project-run-patched-headers",
+      model: "veryfront-cloud/openai/gpt-test",
+      system: "Answer concisely.",
+      skills: false,
+    });
+    const observed: string[] = [];
+    const record = (value: unknown) => {
+      try {
+        observed.push(JSON.stringify(value) ?? "");
+      } catch {
+        observed.push(String(value));
+      }
+    };
+    const OriginalHeaders = globalThis.Headers;
+    const prototype = OriginalHeaders.prototype as unknown as Record<string, unknown>;
+    const originals = {
+      set: prototype.set as (this: Headers, name: string, value: string) => void,
+      append: prototype.append as (this: Headers, name: string, value: string) => void,
+    };
+    // Installed by project code before the run.
+    globalThis.Headers = class extends OriginalHeaders {
+      constructor(init?: HeadersInit) {
+        record(init);
+        super(init);
+      }
+    } as typeof Headers;
+    prototype.set = function (this: Headers, name: string, value: string) {
+      record([name, value]);
+      return originals.set.call(this, name, value);
+    };
+    prototype.append = function (this: Headers, name: string, value: string) {
+      record([name, value]);
+      return originals.append.call(this, name, value);
+    };
+    let text: string;
+    try {
+      text = (await runWithProjectRunInferenceCredential(
+        INFERENCE_TOKEN,
+        () => managed.generate({ input: "Hello" }),
+      )).text;
+    } finally {
+      globalThis.Headers = OriginalHeaders;
+      prototype.set = originals.set;
+      prototype.append = originals.append;
+    }
+
+    assertEquals(text, "Hello");
+    assertEquals(requests.some((request) => request.catalog), true);
+    assertEquals(
+      requests.every((request) => request.authorization === `Bearer ${INFERENCE_TOKEN}`),
+      true,
+    );
+    assertEquals(observed.some((value) => value.includes(INFERENCE_TOKEN)), false);
+  });
+
   it("loads a cold catalog with the ambient credential outside a scope (negative control)", async () => {
     const requests = captureRequests();
     const managed = createAgent({

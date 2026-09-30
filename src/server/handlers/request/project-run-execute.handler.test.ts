@@ -3631,6 +3631,85 @@ describe("project run inference credential header", () => {
     assertEquals(received.method, "POST");
   });
 
+  it("still cancels a task run that carries the header", async () => {
+    let taskSignal: AbortSignal | undefined;
+    let releaseTask!: () => void;
+    const taskStarted = Promise.withResolvers<void>();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async (options) => {
+        taskSignal = options.signal;
+        taskStarted.resolve();
+        await new Promise<void>((resolve) => {
+          releaseTask = resolve;
+        });
+        return { success: true, result: { synced: 1 }, durationMs: 1 };
+      },
+    }));
+    const signed = await signedRequest(taskPath, taskBody, {
+      "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+    });
+    const controller = new AbortController();
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+    await taskStarted.promise;
+    controller.abort(new Error("run cancelled"));
+
+    try {
+      assertExists(taskSignal, "runTask must receive a signal");
+      assertEquals(taskSignal.aborted, true);
+    } finally {
+      releaseTask();
+      await pending;
+    }
+  });
+
+  it("still cancels a workflow run that carries the header", async () => {
+    const cancelled: string[] = [];
+    let status = "running";
+    const controller = new AbortController();
+    let polls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => {
+          if (!controller.signal.aborted) controller.abort(new Error("run cancelled"));
+          return { status, output: null };
+        },
+        cancel: async (runId: string) => {
+          cancelled.push(runId);
+          status = "cancelled";
+        },
+        destroy: async () => {},
+      }),
+      sleep: async () => {
+        polls += 1;
+        if (polls > 5) status = "completed";
+      },
+    }));
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_inference_cancel/execute",
+      {
+        runId: "run_workflow_inference_cancel",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+        input: {},
+      },
+      { "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertEquals(cancelled, ["run_workflow_inference_cancel"]);
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+  });
+
   it("reads the header without a patched Headers.prototype.get seeing it", async () => {
     const seen: unknown[] = [];
     const originalGet = Headers.prototype.get;

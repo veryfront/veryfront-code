@@ -50,6 +50,11 @@ const StringPrototypeTrim = String.prototype.trim;
 const HeadersDelete = NativeHeaders.prototype.delete;
 const HeadersGet = NativeHeaders.prototype.get;
 const HeadersSet = NativeHeaders.prototype.set;
+const HeadersEntries = NativeHeaders.prototype.entries;
+const HeadersIteratorNext = Object.getPrototypeOf(new NativeHeaders().entries()).next as (
+  this: IterableIterator<[string, string]>,
+) => IteratorResult<[string, string]>;
+const ObjectCreate = Object.create;
 const JSONParse = JSON.parse;
 const JSONStringify = JSON.stringify;
 const MapPrototypeGet = Map.prototype.get;
@@ -113,6 +118,26 @@ function readNativeRequestHeaders(request: Request): Headers {
     throw CONFIG_INVALID.create({ detail: "Veryfront Cloud Request accessors are unavailable" });
   }
   return IntrinsicReflectApply(RequestHeadersGet, request, []) as Headers;
+}
+
+/**
+ * Headers that carry the gateway bearer, as a null-prototype record built with
+ * captured iteration. Handing a Headers object to a Request constructor runs a
+ * patchable `Headers.prototype[Symbol.iterator]` over it, which would let
+ * project code read the credential; a plain record takes no such path.
+ */
+function toCredentialHeaderRecord(headers: Headers): Record<string, string> {
+  const record = ObjectCreate(null) as Record<string, string>;
+  const iterator = IntrinsicReflectApply(HeadersEntries, headers, []) as IterableIterator<
+    [string, string]
+  >;
+  while (true) {
+    const step = IntrinsicReflectApply(HeadersIteratorNext, iterator, []) as IteratorResult<
+      [string, string]
+    >;
+    if (step.done) return record;
+    record[step.value[0]] = step.value[1];
+  }
 }
 
 function parseVeryfrontCloudApiBaseUrl(value: string): URL {
@@ -481,10 +506,15 @@ function toNeutralRouteRequest(
   provider: string,
 ): Request {
   const wireBody = toWireModelBody(text, provider);
-  if (wireBody === undefined) return new NativeRequest(request, { headers, body: text });
+  if (wireBody === undefined) {
+    return new NativeRequest(request, { headers: toCredentialHeaderRecord(headers), body: text });
+  }
   // The body length changes, so any length the builder set no longer holds.
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
-  return new NativeRequest(request, { headers, body: wireBody });
+  return new NativeRequest(request, {
+    headers: toCredentialHeaderRecord(headers),
+    body: wireBody,
+  });
 }
 
 /**
@@ -517,7 +547,7 @@ function sendOnNeutralRoute(
     ? IntrinsicReflectApply(RequestMethodGet, request, []) as string
     : request.method;
   if (method === "GET" || method === "HEAD" || wireModelProvider === undefined) {
-    return send(new NativeRequest(request, { headers }));
+    return send(new NativeRequest(request, { headers: toCredentialHeaderRecord(headers) }));
   }
   if (typeof initBody === "string") {
     return send(toNeutralRouteRequest(request, headers, initBody, wireModelProvider));
@@ -764,7 +794,7 @@ export function createVeryfrontCloudFetch(
             : undefined,
         )
         : createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(
-          new NativeRequest(request, { headers }),
+          new NativeRequest(request, { headers: toCredentialHeaderRecord(headers) }),
         ),
       [markVeryfrontGatewayResponse, rethrowAsGatewayTransportFailure],
     ) as Promise<Response>;
