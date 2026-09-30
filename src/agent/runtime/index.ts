@@ -1421,6 +1421,7 @@ function generatedSameTurnSkillDelegationOrder(
   let sawDelegation = false;
   let sawSkillAfterDelegation = false;
   let sawSkillBeforeDelegation = false;
+  let sawOtherToolBeforeDelegation = false;
   for (let index = 0; index < (toolCalls?.length ?? 0); index++) {
     if (!ObjectHasOwn(toolCalls!, index)) continue;
     const toolCall = toolCalls![index]!;
@@ -1437,9 +1438,15 @@ function generatedSameTurnSkillDelegationOrder(
     ) {
       if (sawSkillAfterDelegation) return "interleaved";
       sawDelegation = true;
+    } else if (!sawDelegation) {
+      sawOtherToolBeforeDelegation = true;
     }
   }
-  return sawSkillBeforeDelegation && sawDelegation ? "prefix" : undefined;
+  if (!sawSkillBeforeDelegation || !sawDelegation) return undefined;
+  // A deferred boundary holds every forwarded tool end, so another tool that
+  // runs before the delegations (for example one that waits on the host)
+  // could never complete. Keep that turn on the sequential path.
+  return sawOtherToolBeforeDelegation ? "interleaved" : "prefix";
 }
 
 function streamedSameTurnSkillDelegationOrder(
@@ -1450,6 +1457,7 @@ function streamedSameTurnSkillDelegationOrder(
   let sawDelegation = false;
   let sawSkillAfterDelegation = false;
   let sawSkillBeforeDelegation = false;
+  let sawOtherToolBeforeDelegation = false;
   for (let index = 0; index < toolCalls.length; index++) {
     if (!ObjectHasOwn(toolCalls, index)) continue;
     const toolCall = toolCalls[index]!;
@@ -1469,9 +1477,15 @@ function streamedSameTurnSkillDelegationOrder(
     ) {
       if (sawSkillAfterDelegation) return "interleaved";
       sawDelegation = true;
+    } else if (!sawDelegation) {
+      sawOtherToolBeforeDelegation = true;
     }
   }
-  return sawSkillBeforeDelegation && sawDelegation ? "prefix" : undefined;
+  if (!sawSkillBeforeDelegation || !sawDelegation) return undefined;
+  // A deferred boundary holds every forwarded tool end, so another tool that
+  // runs before the delegations (for example one that waits on the host)
+  // could never complete. Keep that turn on the sequential path.
+  return sawOtherToolBeforeDelegation ? "interleaved" : "prefix";
 }
 
 function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {

@@ -647,6 +647,67 @@ describe("provider replay checkpoint emission", () => {
   });
 
   for (const mode of ["generate", "stream"] as const) {
+    it(`keeps skill delegation sequential when another ${mode} tool precedes it`, async () => {
+      const operations: string[] = [];
+      let completedBatch: unknown = "not-called";
+      const model = scriptedModel([{
+        toolCalls: [
+          { id: "load-1", name: "load_skill", input: { skillId: "delegate" } },
+          { id: "ask-1", name: "ask_user", input: { question: "Which tasks?" } },
+          { id: "child-1", name: "invoke_agent", input: { task: "first" } },
+          { id: "child-2", name: "invoke_agent", input: { task: "second" } },
+        ],
+      }], {
+        modelId: `anthropic/host-wait-skill-${mode}-replay-boundary`,
+        provider: "anthropic",
+        only: mode,
+      });
+      const config = {
+        id: `host-wait-skill-${mode}-replay-boundary`,
+        model: `anthropic/host-wait-skill-${mode}-replay-boundary`,
+        system: "Load the skill, ask, then delegate twice.",
+        skills: true,
+        tools: {
+          ...skillDelegationTools({
+            onLoad: () => operations.push("load"),
+            onInvoke: (task) => operations.push(`invoke:${task}`),
+          }),
+          ask_user: tool({
+            id: "ask_user",
+            description: "Wait for the host to answer",
+            inputSchema: defineSchema((v) => v.object({ question: v.string() }))(),
+            execute: () => {
+              operations.push("ask");
+              return { answer: "both" };
+            },
+          }),
+        },
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+        __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+        __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+          operations.push("turn:complete");
+          completedBatch = invokeAgentToolCalls;
+        },
+      } as AgentConfig & RuntimeToolFilterConfig & {
+        __vfProviderReplayInvokeAgentToolNames: string[];
+      };
+
+      const assistant = agent(config);
+      if (mode === "generate") {
+        await assistant.generate({ input: "Delegate after asking" });
+      } else {
+        await (await assistant.stream({ input: "Delegate after asking" })).toDataStreamResponse()
+          .text();
+      }
+
+      assertEquals(completedBatch, undefined);
+      assertEquals(operations[0], "turn:complete");
+    });
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
     it(`keeps interleaved skill delegation sequential in ${mode}`, async () => {
       const operations: string[] = [];
       let completedBatch: unknown = "not-called";
