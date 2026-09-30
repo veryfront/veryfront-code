@@ -220,8 +220,13 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+const nativeSetHas = Set.prototype.has;
+const nativeWeakSetHas = WeakSet.prototype.has;
+
 describe("internal-agents/run-stream", () => {
   afterEach(() => {
+    Set.prototype.has = nativeSetHas;
+    WeakSet.prototype.has = nativeWeakSetHas;
     _resetShimForTests();
     skillRegistryInternal.clearAll();
     toolRegistryInternal.clearAll();
@@ -982,10 +987,15 @@ describe("internal-agents/run-stream", () => {
     assertEquals(JSON.stringify(frames).includes("ordered-signature"), false);
   });
 
-  it("emits every parallel invoke_agent call before the first tool dispatch", async () => {
+  it("emits every parallel invoke_agent call before dispatch when Set membership is replaced", async () => {
     const sessionManager = new AgentRunSessionManager();
     const messageId = crypto.randomUUID();
     const runId = "run_fast_parallel_results";
+    const poisonedSetHas = function (this: Set<unknown>, value: unknown) {
+      return value === "veryfront__invoke_agent"
+        ? false
+        : Reflect.apply(nativeSetHas, this, [value]) as boolean;
+    };
     let completeProviderReplayTurn:
       | ((
         invokeAgentToolCalls?: readonly {
@@ -1026,6 +1036,7 @@ describe("internal-agents/run-stream", () => {
             stream: async () =>
               new ReadableStream<Uint8Array>({
                 start(controller) {
+                  Set.prototype.has = poisonedSetHas;
                   controller.enqueue(
                     new TextEncoder().encode(
                       'data: {"type":"step-start"}\n\n' +
@@ -1036,7 +1047,8 @@ describe("internal-agents/run-stream", () => {
                     ),
                   );
                   setTimeout(async () => {
-                    await completeProviderReplayTurn?.([
+                    Set.prototype.has = nativeSetHas;
+                    const completed = completeProviderReplayTurn?.([
                       {
                         toolCallId: "child-1",
                         toolName: "veryfront__invoke_agent",
@@ -1048,6 +1060,8 @@ describe("internal-agents/run-stream", () => {
                         toolArgsJson: '{"task":"second"}',
                       },
                     ]);
+                    Set.prototype.has = poisonedSetHas;
+                    await completed;
                     controller.close();
                   }, 0);
                 },
@@ -1078,6 +1092,7 @@ describe("internal-agents/run-stream", () => {
         );
       }
     }
+    Set.prototype.has = nativeSetHas;
     const frames = parseSseFrames(body);
     const turnCompleteIndex = frames.findIndex((frame) =>
       frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
@@ -1176,7 +1191,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(firstToolArgs.delta, '{"task":"first"}');
   });
 
-  it("does not authorize a custom invoke_agent collision for replay dispatch", async () => {
+  it("does not authorize a custom invoke_agent collision when WeakSet membership is replaced", async () => {
     let replayToolNames: unknown;
     const customInvokeAgent = tool({
       id: "invoke_agent",
@@ -1194,6 +1209,7 @@ describe("internal-agents/run-stream", () => {
       },
     } as unknown as Agent;
 
+    WeakSet.prototype.has = () => true;
     await createRuntimeAgentStreamResponse(
       {
         agentId: runtimeAgent.id,
@@ -1224,6 +1240,7 @@ describe("internal-agents/run-stream", () => {
         },
       },
     );
+    WeakSet.prototype.has = nativeWeakSetHas;
 
     assertEquals(replayToolNames, []);
   });

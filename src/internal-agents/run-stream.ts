@@ -113,6 +113,8 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
 const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicSetHas = Set.prototype.has;
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
@@ -248,7 +250,7 @@ function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | un
   return runtimeInferenceCredentials.get(input);
 }
 
-const controlPlaneInjectedTools = new WeakSet<Tool>();
+const controlPlaneInjectedTools = createPrivateWeakStore<Tool, true>();
 
 function createInjectedStudioTool(
   runId: string,
@@ -282,7 +284,7 @@ function createInjectedStudioTool(
       return waitResult.result;
     },
   };
-  controlPlaneInjectedTools.add(tool);
+  controlPlaneInjectedTools.set(tool, true);
   return controlPlaneNames.some((name) => toolName === `veryfront__${name}`)
     ? markTrustedHostToolProvenance(tool)
     : tool;
@@ -315,7 +317,7 @@ function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<st
     if (
       isFrameworkChildRunTool(tool) ||
       (CHILD_RUN_CONTROL_PLANE_TOOL_NAMES.has(toolName) && isRecord(tool) &&
-        controlPlaneInjectedTools.has(tool as Tool))
+        controlPlaneInjectedTools.get(tool as Tool) === true)
     ) {
       names.add(toolName);
     }
@@ -331,7 +333,7 @@ function resolveControlPlaneInvokeAgentToolNames(
   for (const toolName of CHILD_RUN_CONTROL_PLANE_TOOL_NAMES) {
     const entry = mergedTools[toolName];
     const tool = entry === true ? toolRegistry.get(toolName) : entry;
-    if (isRecord(tool) && controlPlaneInjectedTools.has(tool as Tool)) {
+    if (isRecord(tool) && controlPlaneInjectedTools.get(tool as Tool) === true) {
       names.push(toolName as ProviderReplayInvokeAgentToolName);
     }
   }
@@ -1644,9 +1646,9 @@ export async function createRuntimeAgentStreamResponse(
               if (
                 mappedEvent.event === "ToolCallStart" &&
                 typeof mappedEvent.payload.toolCallName === "string" &&
-                controlPlaneInvokeAgentToolNames.has(
+                IntrinsicReflectApply(IntrinsicSetHas, controlPlaneInvokeAgentToolNames, [
                   mappedEvent.payload.toolCallName as ProviderReplayInvokeAgentToolName,
-                )
+                ]) as boolean
               ) {
                 await flushProviderReplayTurn();
               }
