@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeHashBytes } from "#veryfront/utils";
 import { FakeTime } from "#std/testing/time";
@@ -457,6 +457,31 @@ describe("release-assets/dependency-artifact-builder", () => {
     assertEquals(result.success, false);
     assertEquals(failureCodeOf(result), "upstream_timeout");
     assertEquals(upstreamSignals[0]?.aborted, true);
+  });
+
+  it("aborts the upstream fetch without publishing a result when the run is cancelled", async () => {
+    const controller = new AbortController();
+    const { client, events } = recordingClient();
+    let upstreamSignal: AbortSignal | undefined;
+    const build = runDependencyArtifactBuild(buildTaskInput(), client, {
+      signal: controller.signal,
+      fetch: ((_input: RequestInfo | URL, init?: RequestInit) => {
+        upstreamSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          upstreamSignal?.addEventListener(
+            "abort",
+            () => reject(upstreamSignal?.reason),
+            { once: true },
+          );
+        });
+      }) as typeof fetch,
+    });
+
+    controller.abort(new Error("run cancelled"));
+
+    await assertRejects(() => build, Error, "run cancelled");
+    assertEquals(upstreamSignal?.aborted, true);
+    assertEquals(events, []);
   });
 
   it("does not start an upstream fetch after its deadline expires", async () => {

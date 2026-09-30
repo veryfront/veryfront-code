@@ -520,6 +520,7 @@ function createStyleArtifactCtx(
       environmentName?: string;
       releaseId?: string;
     };
+    onGetAllSourceFiles?: () => void;
   },
 ): { ctx: HandlerContext; readCalls: string[]; sourceFileCalls: { count: number } } {
   const ctx = createCtx(publicKeyPem);
@@ -529,6 +530,7 @@ function createStyleArtifactCtx(
   const underlyingAdapter = {
     async getAllSourceFiles() {
       sourceFileCalls.count++;
+      options.onGetAllSourceFiles?.();
       return options.files;
     },
     getContentContext() {
@@ -936,6 +938,94 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "style-artifact-build",
     ]
   ) {
+    it(`stops reserved task side effects when the run is cancelled: ${target}`, async () => {
+      let receivedSignal: AbortSignal | undefined;
+      let sideEffects = 0;
+      const started = Promise.withResolvers<void>();
+      const execute = async (input: unknown) => {
+        receivedSignal = (input as { signal?: AbortSignal }).signal;
+        started.resolve();
+        if (!receivedSignal) return { success: true };
+        await new Promise<void>((resolve) =>
+          receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
+        );
+        receivedSignal.throwIfAborted();
+        sideEffects++;
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_cancel/execute",
+        {
+          runId: "run_cancel",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+        },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+
+      const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+      await started.promise;
+      controller.abort(new Error("run cancelled"));
+      const result = await pending;
+
+      assertExists(result.response);
+      assertExists(receivedSignal);
+      assertEquals(receivedSignal.aborted, true);
+      assertEquals(sideEffects, 0);
+      assertEquals((await result.response.json()).success, false);
+    });
+
+    it(`stops reserved task side effects when its deadline expires: ${target}`, async () => {
+      let receivedSignal: AbortSignal | undefined;
+      let sideEffects = 0;
+      const execute = async (input: unknown) => {
+        receivedSignal = (input as { signal?: AbortSignal }).signal;
+        if (!receivedSignal) return { success: true };
+        await new Promise<void>((resolve) =>
+          receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
+        );
+        receivedSignal.throwIfAborted();
+        sideEffects++;
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+          deadlineAt: new Date(Date.now() + 25).toISOString(),
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertExists(receivedSignal);
+      assertEquals(receivedSignal.aborted, true);
+      assertEquals(sideEffects, 0);
+      assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+    });
+
     it(`bounds a non-cooperative reserved task: ${target}`, async () => {
       let finish: (() => void) | undefined;
       const execute = async () => {
@@ -1702,6 +1792,43 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(attemptedProjectDiscovery, false);
   });
 
+  it("does not continue a release asset build after its start request is cancelled", async () => {
+    const controller = new AbortController();
+    const body = {
+      runId: "run_release_asset_cancelled",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_cancelled/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    let fetchCalls = 0;
+
+    const result = await withMockFetch(
+      (async (input) => {
+        fetchCalls++;
+        assertStringIncludes(String(input), "/releases/release-1/asset-manifest/builds");
+        controller.abort(new Error("run cancelled"));
+        return new Response(
+          JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(fetchCalls, 1);
+  });
+
   it("builds style artifacts from adapter source files and adapter stylesheet reads", async () => {
     const body = {
       runId: "run_style_artifact_adapter_source",
@@ -1786,6 +1913,41 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       String(recorder.upserts[0]?.failure_reason),
       "Style profile hash mismatch",
     );
+  });
+
+  it("does not publish a ready or failed style artifact after cancellation", async () => {
+    const controller = new AbortController();
+    const body = {
+      runId: "run_style_artifact_cancelled",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "Preview" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_cancelled/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities;",
+      onGetAllSourceFiles: () => controller.abort(new Error("run cancelled")),
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(recorder.upserts, []);
   });
 
   it("runs a discovered workflow with the canonical run id and input", async () => {
