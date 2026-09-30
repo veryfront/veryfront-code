@@ -83,6 +83,7 @@ export const REQUEST_TIMEOUT_MS = 15_000;
 
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
 const DEFAULT_REGISTRY_URL = "https://registry.npmjs.org";
+const INSTALL_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 
 function defaultDelay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -233,7 +234,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** npm installs from this abbreviated package index, which can lag the version endpoint. */
+/** npm installs from this package index, which can lag the version endpoint. */
 async function verifyInstallIndex(
   metadata: RegistryPackageMetadata,
   options: PollRegistryPackageOptions,
@@ -248,13 +249,14 @@ async function verifyInstallIndex(
       registryErrorContext(options, "install index metadata missing"),
     );
   signal.throwIfAborted();
-  const response = await fetcher(
-    registryPackageUrl(
-      options.registryUrl ?? DEFAULT_REGISTRY_URL,
-      options.packageName,
-    ),
-    { signal, headers: { accept: "application/vnd.npm.install-v1+json" } },
-  );
+  const url = registryPackageUrl(options.registryUrl ?? DEFAULT_REGISTRY_URL, options.packageName);
+  let response = await fetcher(url, { signal, headers: { accept: INSTALL_ACCEPT } });
+  // Match npm's fallback when a registry does not support abbreviated metadata.
+  if (response.status === 404) {
+    await response.body?.cancel();
+    signal.throwIfAborted();
+    response = await fetcher(url, { signal, headers: { accept: "application/json" } });
+  }
   if (response.status === 404) return missing();
   if (!response.ok) {
     throw new RegistryReleaseError(

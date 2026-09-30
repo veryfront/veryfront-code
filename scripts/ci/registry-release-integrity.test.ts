@@ -519,7 +519,7 @@ describe("registry install-index readiness", () => {
         }
         assertEquals(
           new Headers(Reflect.get(init ?? {}, "headers")).get("accept"),
-          "application/vnd.npm.install-v1+json",
+          "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         );
         indexes++;
         return Promise.resolve(
@@ -642,7 +642,7 @@ describe("registry install-index integrity", () => {
         "missing index",
         () => new Response("missing", { status: 404 }),
         "missing-version",
-        2,
+        4,
       ],
       [
         "missing entry version",
@@ -780,5 +780,71 @@ describe("registry install-index integrity", () => {
     assertEquals(error.classification, "missing-version");
     assertEquals(indexes, 3);
     assertEquals(now, 65000);
+  });
+});
+
+describe("registry full-metadata fallback", () => {
+  const options = {
+    packageName: PACKAGE_NAME,
+    version: VERSION,
+    expectedGitHead: GIT_HEAD,
+    maxAttempts: 1,
+    retryDelayMs: 0,
+    requestTimeoutMs: 100,
+  };
+
+  it("advertises full JSON as an accepted representation", async () => {
+    const metadata = await pollRegistryPackage({
+      ...options,
+      fetcher: (input, init) => {
+        if (String(input).endsWith(`/${VERSION}`)) {
+          return Promise.resolve(Response.json(publishedPackage()));
+        }
+        const accept = new Headers(Reflect.get(init ?? {}, "headers")).get("accept");
+        return Promise.resolve(
+          accept?.includes("application/json")
+            ? Response.json(installIndex())
+            : new Response("unsupported", { status: 406 }),
+        );
+      },
+    });
+    assertEquals(metadata.version, VERSION);
+  });
+
+  it("retries a Corgi 404 with full metadata using the same deadline", async () => {
+    const accepts: string[] = [];
+    let signal: AbortSignal | undefined;
+    let canceled = 0;
+    const metadata = await pollRegistryPackage({
+      ...options,
+      fetcher: (input, init) => {
+        if (String(input).endsWith(`/${VERSION}`)) {
+          signal = Reflect.get(init ?? {}, "signal");
+          return Promise.resolve(Response.json(publishedPackage()));
+        }
+        assertEquals(Reflect.get(init ?? {}, "signal") === signal, true);
+        const accept = new Headers(Reflect.get(init ?? {}, "headers")).get("accept")!;
+        accepts.push(accept);
+        if (accept !== "application/json") {
+          return Promise.resolve(
+            new Response(
+              new ReadableStream({
+                cancel() {
+                  canceled++;
+                },
+              }),
+              { status: 404 },
+            ),
+          );
+        }
+        assertEquals(canceled, 1);
+        return Promise.resolve(Response.json(installIndex()));
+      },
+    });
+    assertEquals(metadata.version, VERSION);
+    assertEquals(accepts, [
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+      "application/json",
+    ]);
   });
 });
