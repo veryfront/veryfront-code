@@ -167,6 +167,31 @@ describe("mergeLcovReports", () => {
     );
   });
 
+  it("keeps emitted block ids when the branch shapes on the line differ", () => {
+    const merged = mergeLcovReports([
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,2,0,1\nBRDA:6,2,1,-\nend_of_record",
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,3,0,-\nBRDA:6,3,1,1\nBRDA:6,3,2,1\nend_of_record",
+    ]);
+
+    assertEquals(
+      merged,
+      [
+        "SF:src/nested.ts",
+        "DA:6,2",
+        "LH:1",
+        "LF:1",
+        "BRDA:6,2,0,1",
+        "BRDA:6,2,1,0",
+        "BRDA:6,3,0,0",
+        "BRDA:6,3,1,1",
+        "BRDA:6,3,2,1",
+        "BRF:5",
+        "BRH:3",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
   it("keeps line-only reports unchanged and isolates files", () => {
     assertEquals(
       mergeLcovReports([
