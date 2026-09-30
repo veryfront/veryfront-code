@@ -658,8 +658,14 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
-  for (const cooperative of [true, false]) {
-    it(`bounds a ${cooperative ? "cooperative" : "non-cooperative"} task at its deadline`, async () => {
+  // Named after the #2088 Done-when items they prove.
+  for (
+    const [name, cooperative] of [
+      ["hands the task an abort signal that fires at the invocation deadline", true],
+      ["answers with an explicit timeout when a task ignores the signal past its deadline", false],
+    ] as const
+  ) {
+    it(name, async () => {
       let signal: AbortSignal | undefined;
       let settle: (() => void) | undefined;
       const handler = new ProjectRunExecuteHandler(createDeps({

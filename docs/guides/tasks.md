@@ -150,10 +150,9 @@ functions that ignore the signal cannot be forcibly terminated by the task
 runner.
 
 For project task runs, `timeout_seconds` defaults to 300 and bounds the whole
-run from its first start, including any retry attempts. The API calculates
-the absolute deadline from that first start. The runtime aborts `ctx.signal`
-at the supplied deadline and reports a timeout even if the task ignores
-the signal. The run fails with `RUN_TIMEOUT`. Code that ignores cancellation
+run from its first start, including any retry attempts. The runtime aborts
+`ctx.signal` at the supplied deadline and reports a timeout even if the task
+ignores the signal. The run fails with `RUN_TIMEOUT`. Code that ignores cancellation
 can continue executing inside the runtime process after the response returns;
 a timeout does not roll back side effects.
 
@@ -164,11 +163,13 @@ makes at most `backoff_limit + 1` attempts. Only two failures start another
 attempt, after an exponential backoff:
 
 - The runtime never started the task: the connection was refused, or the
-  runtime answered HTTP 502 or 503 before accepting the request.
+  runtime answered HTTP 503 because it was shutting down and admitted no new
+  work.
 - The task threw `RetryableError`.
 
 Any other thrown error fails the run at once. A network error after the
-request was sent is never retried, because the task may already have run. No
+request was sent, or an HTTP 502 (a proxy also answers it when the runtime
+stops mid-request), is never retried, because the task may already have run. No
 retry starts when its backoff would pass the `timeout_seconds` deadline; the
 run then fails with the last attempt's error. `ctx.attempt` is the 1-based
 attempt number.

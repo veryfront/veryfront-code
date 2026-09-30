@@ -88,6 +88,8 @@ const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
 const ParseHostedChatRuntimeOverrides = hostedChatRuntimeOverridesSchema.safeParse;
+/** setTimeout fires at once for a longer delay, so a far deadline is re-armed in steps. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 function getOwnDataProperty(value: Record<string, unknown>, key: string): unknown {
   const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
@@ -556,19 +558,21 @@ async function executeTaskRun(
       "Task exceeded its execution deadline; non-cooperative task code may continue inside the runtime process",
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = () => {
+  // The abort reason and the thrown value are the same error: once the signal
+  // is aborted, the catch below knows the deadline, not the task, failed.
+  const expire = () => {
     controller.abort(error);
     return error;
   };
   try {
-    if (Date.now() >= deadline) throw timeout();
+    if (Date.now() >= deadline) throw expire();
     const expired = new Promise<never>((_resolve, reject) => {
       const arm = () => {
         const remaining = deadline - Date.now();
         if (remaining <= 0) {
-          reject(timeout());
+          reject(expire());
         } else {
-          timer = setTimeout(arm, Math.min(remaining, 2_147_483_647));
+          timer = setTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
         }
       };
       arm();
@@ -577,7 +581,7 @@ async function executeTaskRun(
       expired,
       executeTaskRunWithSignal(request, ctx, deps, controller.signal),
     ]);
-    if (Date.now() >= deadline) throw timeout();
+    if (Date.now() >= deadline) throw expire();
     return result;
   } catch (failure) {
     if (!controller.signal.aborted) throw failure;

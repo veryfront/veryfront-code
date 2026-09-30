@@ -210,8 +210,9 @@ describe("src/task/runner", () => {
 
     it("recognizes a RetryableError thrown by another copy of the framework", async () => {
       // A project bundle can carry its own copy of veryfront/task, so instanceof alone is not enough.
+      const foreignBrand = Symbol.for("veryfront.task.RetryableError");
       class ForeignRetryableError extends Error {
-        readonly [Symbol.for("veryfront.task.RetryableError")] = true;
+        readonly [foreignBrand] = true;
       }
       const result = await runTask(
         {

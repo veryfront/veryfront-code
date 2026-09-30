@@ -17,7 +17,6 @@ const expectedRuntimeExports = [
   "findProjectRuntimeTask",
   "findTaskById",
   "formatProjectRuntimeDiscoveryErrors",
-  "isRetryableError",
   "isTaskDefinition",
   "listProjectRuntimeTasks",
   "runTask",
@@ -35,7 +34,6 @@ describe("task/index.ts exports", () => {
     assertStrictEquals(taskModule.findTaskById, discoveryModule.findTaskById);
     assertStrictEquals(taskModule.runTask, runnerModule.runTask);
     assertStrictEquals(taskModule.RetryableError, errorsModule.RetryableError);
-    assertStrictEquals(taskModule.isRetryableError, errorsModule.isRetryableError);
     assertStrictEquals(taskModule.isTaskDefinition, typesModule.isTaskDefinition);
     assertStrictEquals(
       taskModule.discoverProjectTaskRuntime,
