@@ -38,6 +38,19 @@ const getRunSchemaIdentitySchema = defineSchema((v) =>
   v.string().regex(/^[0-9a-f]{64}$/).nullable().optional()
 );
 
+// A run a waiting run depends on (waiting_reason `child_run`), with the tool call or workflow node
+// that started it. Several entries mean the run waits for all of them.
+const getRunWaitingDependencySchema = defineSchema((v) =>
+  v.object({
+    kind: v.literal("run"),
+    run_id: v.string().min(1),
+    correlation: v.object({
+      kind: v.enum(["tool_call", "workflow_node"] as const),
+      id: v.string().min(1),
+    }),
+  })
+);
+
 export const getRunSchema = defineSchema((v) =>
   v.object({
     run_id: v.string(),
@@ -47,6 +60,9 @@ export const getRunSchema = defineSchema((v) =>
     parent_run_id: v.string().nullable(),
     root_run_id: v.string(),
     waiting_reason: v.string().nullable(),
+    // Active dependencies while `waiting_reason` is `child_run`; null otherwise, and absent from
+    // APIs that predate it.
+    waiting_on: v.array(getRunWaitingDependencySchema()).nullable().optional(),
     metadata: v.unknown().nullable(),
     target: v.string().nullable(),
     workflow_id: v.string().nullable(),

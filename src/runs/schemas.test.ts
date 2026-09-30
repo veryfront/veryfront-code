@@ -75,6 +75,45 @@ describe("runs/schemas", () => {
     assertEquals(parsed, run);
   });
 
+  it("keeps the child runs a waiting run depends on (#2092)", () => {
+    const waitingOn = [{
+      kind: "run" as const,
+      run_id: "run_child_1",
+      correlation: { kind: "tool_call" as const, id: "call_invoke_agent_1" },
+    }];
+    const run = makeRun({
+      kind: "agent",
+      status: "waiting",
+      waiting_reason: "child_run",
+      waiting_on: waitingOn,
+    });
+
+    const parsed: Run = RunSchema.parse(run);
+
+    assertEquals(parsed.waiting_reason, "child_run");
+    assertEquals(parsed.waiting_on, waitingOn);
+    assertEquals(RunSchema.parse(makeRun()).waiting_on, undefined);
+    assertEquals(RunSchema.parse(makeRun({ waiting_on: null })).waiting_on, null);
+  });
+
+  it("rejects a malformed waiting dependency", () => {
+    for (
+      const dependency of [
+        { kind: "task", run_id: "run_child_1", correlation: { kind: "tool_call", id: "call_1" } },
+        { kind: "run", run_id: "", correlation: { kind: "tool_call", id: "call_1" } },
+        { kind: "run", run_id: "run_child_1", correlation: { kind: "message", id: "call_1" } },
+        { kind: "run", run_id: "run_child_1", correlation: { kind: "tool_call", id: "" } },
+      ]
+    ) {
+      assertEquals(
+        RunSchema.safeParse(makeRun({ waiting_on: [dependency] } as unknown as Partial<Run>))
+          .success,
+        false,
+        `waiting_on=${JSON.stringify(dependency)} is rejected`,
+      );
+    }
+  });
+
   it("parses runs from APIs that predate schema identities", () => {
     const parsed = RunSchema.parse(makeRun());
 
