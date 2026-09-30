@@ -29,6 +29,7 @@ import {
 } from "../../source-integration-policy.ts";
 import { INVALID_ARGUMENT, NOT_SUPPORTED, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import type { CheckpointOwnership } from "../checkpoint-manager.ts";
+import { toJsonOutput } from "../json-output.ts";
 
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
@@ -2498,8 +2499,16 @@ export class DAGExecutor {
     const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
 
     let finalOutput: unknown = result.context;
+    if (result.completed && workflowDef.output) {
+      // A nested workflow hands its parent the output it selects, checked by
+      // its own outputSchema, exactly as it would as a top-level run (#2107).
+      const selected = workflowDef.output(result.context);
+      finalOutput = toJsonOutput(
+        workflowDef.outputSchema ? workflowDef.outputSchema.parse(selected) : selected,
+      );
+    }
     if (result.completed && config.output) {
-      finalOutput = config.output(result.context);
+      finalOutput = config.output(finalOutput);
       abortSignal?.throwIfAborted();
     }
 

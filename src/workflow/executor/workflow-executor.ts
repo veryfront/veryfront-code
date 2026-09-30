@@ -311,7 +311,9 @@ export class WorkflowExecutor {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${workflowId}` });
     }
 
-    workflow.inputSchema?.parse(input);
+    // Steps see the parsed input (schema transforms and defaults applied);
+    // the run record keeps the input as submitted (#2107).
+    const parsedInput = workflow.inputSchema ? workflow.inputSchema.parse(input) : input;
 
     // Capture current tenant context for multi-tenant run execution.
     // When a workflow is started from an API route, the request context
@@ -343,7 +345,7 @@ export class WorkflowExecutor {
       nodeStates: {},
       currentNodes: [],
       context: {
-        input,
+        input: parsedInput,
         ...(injectedProjectEnv ? { env: injectedProjectEnv } : {}),
       },
       checkpoints: [],
@@ -638,6 +640,7 @@ export class WorkflowExecutor {
     if (!workflow) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
+    const { output: selectOutput, outputSchema } = workflow;
 
     // One span per execution, always its own trace root.
     //
@@ -697,8 +700,21 @@ export class WorkflowExecutor {
         onStart: (startedRun) => {
           this.config.onStart?.(startedRun);
         },
+        // A declared selector picks the final output, and `outputSchema`
+        // checks it before it is stored: the parsed value is the output, and
+        // a mismatch fails the run instead of completing it (#2107).
+        ...(selectOutput
+          ? {
+            selectOutput: (context: WorkflowContext) => {
+              const selected = selectOutput(context);
+              return outputSchema ? outputSchema.parse(selected) : selected;
+            },
+          }
+          : {}),
         onComplete: async (finalRun) => {
-          workflow.outputSchema?.parse(finalRun.output);
+          // Without a selector the output keeps its historical shape: the
+          // context minus `input`, checked after completion as before.
+          if (!selectOutput) outputSchema?.parse(finalRun.output);
           await workflow.onComplete?.(finalRun.output, finalRun.context);
           this.config.onComplete?.(finalRun);
         },

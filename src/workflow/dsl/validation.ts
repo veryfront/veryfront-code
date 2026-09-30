@@ -78,6 +78,7 @@ function rebaseWorkflowNodes(
   oldPrefix: string,
   newPrefix: string,
   nodes: WorkflowNode[],
+  kept?: Set<string>,
 ): WorkflowNode[] {
   const rebaseId = (id: string): string => {
     if (newPrefix && id.startsWith(newPrefix)) return id;
@@ -90,11 +91,12 @@ function rebaseWorkflowNodes(
   return nodes.map((node) => {
     const oldId = node.id;
     const newId = rebaseId(oldId);
+    if (newId === oldId) kept?.add(oldId);
 
     return {
       ...node,
       id: newId,
-      config: rebaseCompositeDescendants(node.config, oldId, newId, oldPrefix, newPrefix),
+      config: rebaseCompositeDescendants(node.config, oldId, newId, oldPrefix, newPrefix, kept),
       ...(node.dependsOn === undefined
         ? {}
         : { dependsOn: node.dependsOn.map((dependency) => rebaseId(dependency)) }),
@@ -108,12 +110,13 @@ export function rebaseCompositeDescendants(
   newId: string,
   oldPrefix = `${oldId}/`,
   newPrefix = `${newId}/`,
+  kept?: Set<string>,
 ): WorkflowNodeConfig {
   switch (config.type) {
     case "parallel":
       return {
         ...config,
-        nodes: rebaseWorkflowNodes(`${oldId}/`, `${newId}/`, config.nodes),
+        nodes: rebaseWorkflowNodes(`${oldId}/`, `${newId}/`, config.nodes, kept),
       };
     case "branch":
       return {
@@ -122,18 +125,20 @@ export function rebaseCompositeDescendants(
           `${oldId}/then/`,
           `${newId}/then/`,
           config.then,
+          kept,
         ),
         else: config.else === undefined ? undefined : rebaseWorkflowNodes(
           `${oldId}/else/`,
           `${newId}/else/`,
           config.else,
+          kept,
         ),
       };
     case "loop":
       return Array.isArray(config.steps)
         ? {
           ...config,
-          steps: rebaseWorkflowNodes(`${oldId}/`, `${newId}/`, config.steps),
+          steps: rebaseWorkflowNodes(`${oldId}/`, `${newId}/`, config.steps, kept),
         }
         : config;
     case "subWorkflow":
@@ -158,11 +163,40 @@ function rebaseWorkflowDefinition(
   newPrefix: string,
   definition: WorkflowDefinition,
 ): WorkflowDefinition {
-  const steps = definition.steps;
+  const { steps, output } = definition;
+  // Declared ids the rebase left unchanged (already carrying the new prefix).
+  const kept = new Set<string>();
   return {
     ...definition,
     steps: Array.isArray(steps)
-      ? rebaseWorkflowNodes(oldPrefix, newPrefix, steps)
-      : (context) => rebaseWorkflowNodes(oldPrefix, newPrefix, steps(context)),
+      ? rebaseWorkflowNodes(oldPrefix, newPrefix, steps, kept)
+      : (context) => rebaseWorkflowNodes(oldPrefix, newPrefix, steps(context), kept),
+    // The output selector reads the step ids the definition declares, so hand
+    // it the context keyed by those ids rather than the rebased ones.
+    ...(output === undefined
+      ? {}
+      : { output: (context) => output(rebaseContextKeys(newPrefix, oldPrefix, context, kept)) }),
   };
+}
+
+function rebaseContextKeys<T extends Record<string, unknown>>(
+  fromPrefix: string,
+  toPrefix: string,
+  context: T,
+  kept: ReadonlySet<string>,
+): T {
+  const isKept = (key: string): boolean => {
+    for (const id of kept) {
+      if (key === id || key.startsWith(`${id}/`)) return true;
+    }
+    return false;
+  };
+  return Object.fromEntries(
+    Object.entries(context).map(([key, value]) => [
+      key.startsWith(fromPrefix) && !isKept(key)
+        ? `${toPrefix}${key.slice(fromPrefix.length)}`
+        : key,
+      value,
+    ]),
+  ) as T;
 }

@@ -27,6 +27,13 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
+  /**
+   * Selects the run's final output from its context. The selector is
+   * synchronous and must not change the context. `outputSchema`, when
+   * declared, validates the selected value and the parsed value is stored.
+   * Without `output`, the output is the context minus `input`.
+   */
+  output?: (context: WorkflowContext) => TOutput;
   /** Explicit integration scopes and resources required by scheduled runs. */
   integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   retry?: RetryConfig;
@@ -58,6 +65,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
     version: options.version,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
+    output: options.output,
     integrationRequirements: options.integrationRequirements,
     retry: options.retry,
     timeout: options.timeout,
