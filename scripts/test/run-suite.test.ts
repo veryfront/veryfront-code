@@ -23,6 +23,7 @@ import {
   LEAF_TEST_SUITES,
   partitionDenoSuiteFiles,
   PROVIDER_EGRESS_DENY_NET,
+  shouldRunDenoBatchInParallel,
 } from "./suites.ts";
 import { classifyTestPath } from "./test-layout.ts";
 import {
@@ -42,6 +43,7 @@ const UNIT_CWD_FILES = [
 
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
+  "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ];
 
 const UNIT_CWD_EXCLUSION_FILES = [
@@ -115,15 +117,15 @@ describe("suite planning parity", () => {
     }
   });
 
-  it("keeps process-global esbuild lifecycle tests out of parallel unit batches", async () => {
-    const esbuildLifecycleTest =
-      "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts";
+  it("keeps process-global tests out of parallel unit batches", async () => {
     const parallel = await planSuiteFiles({ suite: "unit:parallel" });
     const config = JSON.parse(
       await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
     );
 
-    assertEquals(parallel.files.includes(esbuildLifecycleTest), false);
+    for (const serialTest of UNIT_SERIAL_FILES) {
+      assertEquals(parallel.files.includes(serialTest), false);
+    }
     assert(
       (config.tasks["test:unit"] as string | undefined)?.includes(
         "deno task test:unit:serial",
@@ -479,6 +481,26 @@ describe("migration command surface", () => {
       ["e.test.ts"],
     ]);
     assertEquals(partitionDenoSuiteFiles(files, null), [files]);
+  });
+
+  it("isolates process-wide CPU measurements inside coverage batches", () => {
+    const scannerTest =
+      "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts";
+
+    assertEquals(
+      partitionDenoSuiteFiles(
+        ["src/a.test.ts", scannerTest, "src/b.test.ts"],
+        null,
+      ),
+      [["src/a.test.ts"], [scannerTest], ["src/b.test.ts"]],
+    );
+    assertEquals(
+      buildDenoSuiteCommandArgs("coverage:unit", [scannerTest], {
+        parallel: shouldRunDenoBatchInParallel(true, [scannerTest]),
+      })
+        .includes("--parallel"),
+      false,
+    );
   });
 
   it("keeps unit lanes loopback-only and provider-enabled lanes deny-listed", () => {

@@ -33,6 +33,19 @@ describe("coverage CI command", () => {
     assert(args.includes(LOOPBACK_ALLOW_NET));
   });
 
+  it("can isolate process-wide measurements without dropping coverage", () => {
+    const args = buildDenoTestCommandArgs({
+      coverageDir: "coverage-shard-1",
+      files: [
+        "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
+      ],
+      parallel: false,
+    });
+
+    assertEquals(args.includes("--parallel"), false);
+    assert(args.includes("--coverage=coverage-shard-1"));
+  });
+
   it("reports on cli/ as well as src/", () => {
     const args = buildCoverageCommandArgs(["coverage-shard-1"]);
 

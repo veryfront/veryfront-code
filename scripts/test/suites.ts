@@ -166,15 +166,22 @@ export const UNIT_CWD_FILES: readonly string[] = Object.freeze([
   "src/testing/cwd.test.ts",
 ]);
 
-const CWD_MUTATING_TEST_FILES = new Set([
+/** Tests that require a quiet process because they own process-global lifecycle or measurement. */
+export const UNIT_SERIAL_FILES: readonly string[] = Object.freeze([
+  "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
+  "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
+]);
+
+const PROCESS_ISOLATED_TEST_FILES = new Set([
   ...UNIT_CWD_FILES,
+  ...UNIT_SERIAL_FILES,
   "tests/integration/adapters/shell-adapter.test.ts",
   "tests/integration/cli/merge-preview.integration.test.ts",
   "tests/integration/cli/mcp/standalone-auth-scaffold.test.ts",
   "tests/integration/semantic-unit-boundary/cli/scaffold/missing-parent-race.test.ts",
 ]);
 
-/** Keep cwd writers in their own process, including in coverage shards. */
+/** Keep tests with process-wide state in their own process, including in coverage shards. */
 export function partitionDenoSuiteFiles(
   files: readonly string[],
   maxFilesPerProcess: number | null,
@@ -182,7 +189,7 @@ export function partitionDenoSuiteFiles(
   const batches: string[][] = [];
   let parallel: string[] = [];
   for (const file of files) {
-    if (CWD_MUTATING_TEST_FILES.has(file)) {
+    if (PROCESS_ISOLATED_TEST_FILES.has(file)) {
       if (parallel.length > 0) batches.push(parallel);
       parallel = [];
       batches.push([file]);
@@ -196,6 +203,15 @@ export function partitionDenoSuiteFiles(
   }
   if (parallel.length > 0 || batches.length === 0) batches.push(parallel);
   return batches;
+}
+
+/** Whether a batch may use Deno's parallel module workers. */
+export function shouldRunDenoBatchInParallel(
+  defaultParallel: boolean,
+  files: readonly string[],
+): boolean {
+  return defaultParallel &&
+    !(files.length === 1 && PROCESS_ISOLATED_TEST_FILES.has(files[0]!));
 }
 
 export type TestLevel = "unit" | "integration" | "e2e";
