@@ -2362,13 +2362,20 @@ async function executeEvalRun(
     : reportPath
     ? { ...report, reportPath }
     : report;
+  const requiredUploadError = options.summaryOnly && !reportPath
+    ? uploadError ?? "Eval report upload failed: report was not stored"
+    : null;
+  const failureMessages = [
+    ...(failed > 0 ? [`${failed} eval record${failed === 1 ? "" : "s"} failed`] : []),
+    ...(requiredUploadError ? [requiredUploadError] : []),
+  ];
   const logs = [...progressLogs, ...(uploadError ? [uploadError] : [])].join("\n") || null;
 
   return {
-    success: failed === 0,
+    success: failureMessages.length === 0,
     result,
     ...(reportPath ? { artifacts: [createEvalReportArtifact(reportPath)] } : {}),
-    ...(failed > 0 ? { error: `${failed} eval record${failed === 1 ? "" : "s"} failed` } : {}),
+    ...(failureMessages.length > 0 ? { error: failureMessages.join("; ") } : {}),
     logs,
     duration_ms: Math.max(0, deps.now() - startedAt),
   };

@@ -672,14 +672,19 @@ function getRunFinishedUsage(events: Array<Record<string, unknown>>): EvalUsage 
 function createRequestInit(
   config: AgentServiceEvalAdapterConfig,
   body: AgentServiceEvalRequestBody,
+  signal?: AbortSignal,
 ): RequestInit {
+  const timeoutSignal = config.requestTimeoutMs === undefined
+    ? undefined
+    : AbortSignal.timeout(config.requestTimeoutMs);
+  const requestSignal = signal && timeoutSignal
+    ? AbortSignal.any([signal, timeoutSignal])
+    : signal ?? timeoutSignal;
   return {
     method: "POST",
     headers: createHeaders(config),
     body: IntrinsicJSONStringify(body),
-    ...(config.requestTimeoutMs !== undefined
-      ? { signal: AbortSignal.timeout(config.requestTimeoutMs) }
-      : {}),
+    ...(requestSignal ? { signal: requestSignal } : {}),
   };
 }
 
@@ -890,7 +895,10 @@ export function createAgentServiceEvalAdapter(
           ? { onProgress: (snapshot) => config.onProgress?.(snapshot, context) }
           : {}),
       };
-      const response = await requestFetch(endpoint, createRequestInit(config, body));
+      const response = await requestFetch(
+        endpoint,
+        createRequestInit(config, body, context.signal),
+      );
       const run = await parseAgUiSseResponse(response, parseOptions);
       const completed = response.ok && run.runError === null &&
         run.eventTypes.includes(agUiSseEventTypes.runFinished);

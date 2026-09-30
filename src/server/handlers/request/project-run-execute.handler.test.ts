@@ -1670,6 +1670,60 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedAuthToken, "runtime-token");
   });
 
+  for (
+    const uploadFailure of [
+      {
+        name: "returns no artifact path",
+        upload: () => Promise.resolve(null),
+        error: "Eval report upload failed: report was not stored",
+      },
+      {
+        name: "rejects",
+        upload: () => Promise.reject(new Error("project file service unavailable")),
+        error: "Eval report upload failed: project file service unavailable",
+      },
+    ]
+  ) {
+    it(`fails task:eval when report upload ${uploadFailure.name}`, async () => {
+      const report: EvalReport = {
+        kind: "eval-report",
+        runId: "run_task_eval_upload_failed",
+        definitionId: "eval:deep-research",
+        targetKind: "agent",
+        target: "agent:researcher",
+        startedAt: "2026-09-30T10:00:00.000Z",
+        endedAt: "2026-09-30T10:00:01.000Z",
+        summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+        records: [],
+      };
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async () => report,
+        uploadEvalReport: uploadFailure.upload,
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_task_eval_upload_failed/execute",
+        {
+          runId: "run_task_eval_upload_failed",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.error, uploadFailure.error);
+      assertEquals(payload.result, report.summary);
+      assertEquals(payload.artifacts, undefined);
+    });
+  }
+
   it("reports a clear error when task:eval names an unknown eval", async () => {
     const handler = new ProjectRunExecuteHandler(createDeps({ runTask: runTaskDefinition }));
     const { request, publicKeyPem } = await signedRequest(
@@ -2086,6 +2140,46 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedReport, report);
     assertEquals(receivedProjectReference, "demo-project");
     assertEquals(receivedReportPath, reportPath);
+  });
+
+  it("keeps legacy kind:eval report upload failures best-effort", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_eval_report_upload_failed",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runEval: async () => report,
+      uploadEvalReport: async () => {
+        throw new Error("project file service unavailable");
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_report_upload_failed/execute",
+      {
+        runId: "run_eval_report_upload_failed",
+        kind: "eval",
+        target: "eval:deep-research",
+        projectId: "proj-1",
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: report,
+      duration_ms: 0,
+      logs: "Eval report upload failed: project file service unavailable",
+    });
   });
 
   it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {
