@@ -953,7 +953,7 @@ describe("eval/runner", () => {
     });
     const events: string[] = [];
 
-    await runEval(definition, {
+    const report = await runEval(definition, {
       adapters: { agent: async ({ example }) => example.id === "q1" ? "Paris" : "Lyon" },
       onProgress: (event) => {
         events.push(
@@ -967,12 +967,14 @@ describe("eval/runner", () => {
       },
     });
 
+    assertEquals(report.records.map((record) => record.completed), [true, true]);
+    assertEquals(report.summary.failed, 1);
     assertEquals(events, [
       "eval-started eval:progress total=2",
       "record-started q1:1 1/2",
       "record-finished q1:1 completed=true",
       "record-started q2:1 2/2",
-      "record-finished q2:1 completed=true",
+      "record-finished q2:1 completed=false",
     ]);
   });
 

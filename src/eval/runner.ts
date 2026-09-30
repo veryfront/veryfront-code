@@ -844,7 +844,8 @@ export async function runEval(
     notifyEvalProgress(options, {
       type: "record-finished",
       ...progress,
-      completed: record.completed,
+      // Progress consumers use completion as the case outcome, including grading.
+      completed: recordPassed(record),
       durationMs: Date.now() - startedAt,
     });
   }
