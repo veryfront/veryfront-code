@@ -35,6 +35,7 @@ const RequestHeadersGetter = Object.getOwnPropertyDescriptor(NativeRequest.proto
 const StringToLowerCase = String.prototype.toLowerCase;
 const WeakMapDelete = NativeWeakMap.prototype.delete;
 const WeakMapGet = NativeWeakMap.prototype.get;
+const WeakMapHas = NativeWeakMap.prototype.has;
 const WeakMapSet = NativeWeakMap.prototype.set;
 
 /** The proxy-injected Veryfront API credential. */
@@ -107,6 +108,9 @@ function toHeaderRecordWithoutCredentials(request: Request): Record<string, stri
  * by {@link requestForWebSocketUpgrade}, for the upgrade call itself.
  */
 export function sealIngressCredentials(request: Request): Request {
+  // Sealed already (an outer server wrapper ran first), or a framework copy of
+  // a sealed request: its headers no longer hold what it arrived with.
+  if (IntrinsicReflectApply(WeakMapHas, ingressCredentials, [request])) return request;
   const credentials: IngressCredentials = ObjectFreeze({
     __proto__: null,
     [INGRESS_API_TOKEN_HEADER]: readNativeHeader(request, INGRESS_API_TOKEN_HEADER),
@@ -156,6 +160,37 @@ export function requestForWebSocketUpgrade(request: Request): Request {
     throw new TypeError("Cannot upgrade a credential-bearing request with modified headers");
   }
   return source;
+}
+
+/**
+ * Seal the request a caller-owned interceptor (the in-process proxy of
+ * combined mode) produced from the sealed `source`. The interceptor sets its
+ * own `x-token`, so that one comes from its output; the control plane's
+ * inference and run-event tokens it would have forwarded from the headers
+ * `source` no longer has carry over from `source`.
+ */
+export function sealInterceptedRequest(source: Request, intercepted: Request): Request {
+  const sealed = sealIngressCredentials(intercepted);
+  if (sealed === source) return sealed;
+  const before = IntrinsicReflectApply(WeakMapGet, ingressCredentials, [source]) as
+    | IngressCredentials
+    | undefined;
+  const after = IntrinsicReflectApply(WeakMapGet, ingressCredentials, [sealed]) as
+    | IngressCredentials
+    | undefined;
+  if (before === undefined || after === undefined) return sealed;
+  IntrinsicReflectApply(WeakMapSet, ingressCredentials, [
+    sealed,
+    ObjectFreeze({
+      __proto__: null,
+      [INGRESS_API_TOKEN_HEADER]: after[INGRESS_API_TOKEN_HEADER],
+      [INGRESS_INFERENCE_TOKEN_HEADER]: after[INGRESS_INFERENCE_TOKEN_HEADER] ??
+        before[INGRESS_INFERENCE_TOKEN_HEADER],
+      [INGRESS_RUN_EVENT_TOKEN_HEADER]: after[INGRESS_RUN_EVENT_TOKEN_HEADER] ??
+        before[INGRESS_RUN_EVENT_TOKEN_HEADER],
+    } as IngressCredentials),
+  ]);
+  return sealed;
 }
 
 /**

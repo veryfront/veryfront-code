@@ -50,6 +50,10 @@ import {
   runProductionProcessOwner,
 } from "./production-shutdown-coordinator.ts";
 import { isServerShuttingDown } from "./shutdown-state.ts";
+import {
+  sealIngressCredentials,
+  sealInterceptedRequest,
+} from "#veryfront/security/http/ingress-credentials.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -396,9 +400,19 @@ export function startProductionServerWithDependencies(
               // request state. The core handler still owns the fixed probe
               // responses and the standard shutdown response.
               if (isServerShuttingDown()) return coreHandler(req);
-              const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-              if (isWebSocketUpgrade) return coreHandler(req);
-              return coreHandler(await runRequestInterceptor(req, requestInterceptor));
+              // Before the header read below and the caller-owned interceptor:
+              // run credentials must be out of the headers project code could
+              // reach. The core handler then finds the request already sealed.
+              const sealed = sealIngressCredentials(req);
+              const isWebSocketUpgrade =
+                sealed.headers.get("upgrade")?.toLowerCase() === "websocket";
+              if (isWebSocketUpgrade) return coreHandler(sealed);
+              return coreHandler(
+                sealInterceptedRequest(
+                  sealed,
+                  await runRequestInterceptor(sealed, requestInterceptor),
+                ),
+              );
             },
             { ready: coreHandler.ready },
           )

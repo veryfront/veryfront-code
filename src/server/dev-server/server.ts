@@ -35,6 +35,10 @@ import { isPersistentLocalCacheEnabled } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
 import { runWithDevServerCacheDir } from "./cache-context.ts";
+import {
+  sealIngressCredentials,
+  sealInterceptedRequest,
+} from "#veryfront/security/http/ingress-credentials.ts";
 
 const rscLog = logger.component("rsc");
 const fsAdapterLog = logger.component("fs-adapter");
@@ -283,15 +287,21 @@ export class DevServer {
         const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
         if (isWebSocketUpgrade) return baseHandler(req);
 
-        const interceptedReq = await runRequestInterceptor(req, interceptor);
+        const interceptedReq = sealInterceptedRequest(
+          req,
+          await runRequestInterceptor(req, interceptor),
+        );
         return baseHandler(interceptedReq);
       }
       : baseHandler;
     const handler = async (req: Request, nativeContext?: unknown) => {
       recordHandlerRequestPeer(req, nativeContext);
+      // Before middleware and the interceptor read any header: run credentials
+      // must be out of the headers project code could reach.
+      const sealed = sealIngressCredentials(req);
       return await runWithDevServerCacheDir(
         this.options.projectDir,
-        () => interceptedHandler(req),
+        () => interceptedHandler(sealed),
       );
     };
 

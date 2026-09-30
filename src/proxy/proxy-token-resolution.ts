@@ -1,6 +1,10 @@
 import type { TokenRequestOptions, TokenScope } from "./token-manager.ts";
 import { createAbortError } from "#veryfront/utils/abort.ts";
 import { OAuthTokenRequestError } from "./oauth-client.ts";
+import {
+  INGRESS_API_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
 
 const MAX_AUTH_COOKIE_HEADER_CODE_UNITS = 64 * 1024;
 const MAX_USER_TOKEN_CODE_UNITS = 64 * 1024;
@@ -146,7 +150,9 @@ export async function resolveProxyRequestToken(
   let tokenFetchError: unknown;
 
   if (useSignedInternalControlPlaneToken) {
-    token = req.headers.get("x-token") ?? undefined;
+    // In combined mode the runtime took this off the request before
+    // interception; a standalone proxy reads it from the headers.
+    token = readIngressCredential(req, INGRESS_API_TOKEN_HEADER) ?? undefined;
     if (token) tokenSource = "signed-internal";
     logger?.debug("Using signed control-plane token for internal request", {
       pathname: url.pathname,

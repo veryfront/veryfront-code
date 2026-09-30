@@ -19,6 +19,7 @@ import {
   readIngressCredential,
   requestForWebSocketUpgrade,
   sealIngressCredentials,
+  sealInterceptedRequest,
 } from "./ingress-credentials.ts";
 import { installCredentialProbes } from "./credential-probes.test-helpers.ts";
 
@@ -239,6 +240,40 @@ describe("security/http/ingress-credentials", () => {
       probes.restore();
     }
     assertEquals(probes.saw(API_TOKEN), false);
+  });
+
+  it("keeps the arrival credentials when a sealed request is sealed again", () => {
+    const sealed = sealIngressCredentials(credentialRequest());
+
+    assertStrictEquals(sealIngressCredentials(sealed), sealed);
+    assertEquals(readIngressCredential(sealed, INGRESS_API_TOKEN_HEADER), API_TOKEN);
+    assertEquals(readIngressCredential(sealed, INGRESS_INFERENCE_TOKEN_HEADER), INFERENCE_TOKEN);
+  });
+
+  it("takes an interceptor's x-token from its output and the run tokens from the source", () => {
+    const source = sealIngressCredentials(credentialRequest());
+    const intercepted = sealInterceptedRequest(
+      source,
+      new Request("https://project.example/page", {
+        headers: { "x-token": "proxy-resolved-token", "x-project-slug": "demo" },
+      }),
+    );
+
+    assertEquals(intercepted.headers.get("x-token"), null);
+    assertEquals(
+      readIngressCredential(intercepted, INGRESS_API_TOKEN_HEADER),
+      "proxy-resolved-token",
+    );
+    assertEquals(
+      readIngressCredential(intercepted, INGRESS_INFERENCE_TOKEN_HEADER),
+      INFERENCE_TOKEN,
+    );
+    assertEquals(
+      readIngressCredential(intercepted, INGRESS_RUN_EVENT_TOKEN_HEADER),
+      RUN_EVENT_TOKEN,
+    );
+    // An interceptor that hands back its input changes nothing.
+    assertStrictEquals(sealInterceptedRequest(source, source), source);
   });
 
   it("carries the credentials to a framework copy, and none to a copy of an unsealed request", () => {
