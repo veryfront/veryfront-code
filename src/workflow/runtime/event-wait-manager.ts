@@ -1676,7 +1676,7 @@ export class EventWaitManager {
       return;
     }
     if (status !== null) activeRunIds.add(runId);
-    if (!wait.expiresAt || Date.now() <= wait.expiresAt.getTime()) return;
+    if (!wait.expiresAt || Date.now() < wait.expiresAt.getTime()) return;
     try {
       await this.expire(wait);
     } catch (error) {

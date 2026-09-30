@@ -1003,7 +1003,7 @@ export class ApprovalManager {
 
     for (const { runId, approval } of pending) {
       if (targetRunId !== undefined && runId !== targetRunId) continue;
-      if (!approval.expiresAt || now <= approval.expiresAt) {
+      if (!approval.expiresAt || now < approval.expiresAt) {
         continue;
       }
 

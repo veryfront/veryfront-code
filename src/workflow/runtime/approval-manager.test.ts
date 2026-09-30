@@ -214,6 +214,29 @@ describe("ApprovalManager", () => {
   });
 
   describe("checkExpiredApprovals", () => {
+    it("expires an approval at its deadline but leaves a future approval pending", async () => {
+      using _time = new FakeTime(new Date("2026-09-30T12:00:00.000Z"));
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      for (const [id, offset] of [["due", 0], ["future", 1]] as const) {
+        await backend.createRun(createTestRun(id));
+        await backend.savePendingApproval(id, {
+          id: `approval-${id}`,
+          nodeId: "review",
+          message: "Review",
+          payload: {},
+          requestedAt: new Date(Date.now() - 1000),
+          expiresAt: new Date(Date.now() + offset),
+          status: "pending",
+        });
+      }
+      await manager.checkExpiredApprovals();
+      assertEquals((await backend.getPendingApproval("due", "approval-due"))?.status, "rejected");
+      assertEquals(
+        (await backend.getPendingApproval("future", "approval-future"))?.status,
+        "pending",
+      );
+    });
+
     it("expires only approvals past their expiresAt", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
