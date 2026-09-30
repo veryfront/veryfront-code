@@ -1299,6 +1299,7 @@ async function executeWorkflowRun(
       }
       run = await waitForWorkflowResult(client, handle.runId, signal, deps);
       await handle.settled?.();
+      if (run.status === "waiting") run = await client.getRun(handle.runId) ?? run;
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 

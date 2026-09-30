@@ -3120,6 +3120,47 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  it("refreshes approval metadata after the initial pause finishes persisting", async () => {
+    let settled = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        cancel: () => Promise.resolve(),
+        start: (_id, _input, options) =>
+          Promise.resolve({
+            runId: options!.runId!,
+            settled: () => {
+              settled = true;
+              return Promise.resolve();
+            },
+          }),
+        getRun: () =>
+          Promise.resolve({
+            status: "waiting",
+            pendingApprovals: settled ? [{ id: "approval", nodeId: "review" }] : [],
+          }),
+        getPendingEventWaits: () => Promise.resolve([]),
+        destroy: () => Promise.resolve(),
+      }),
+    }));
+    const runId = "run_pending_approval_metadata";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.waiting_reason, "approval");
+    assertEquals(payload.waiting.pending_approvals, ["review"]);
+  });
+
   // veryfront-issue-inbox#2102 and #2110: a waiting run the control plane
   // dispatches again under the same run id is continued, never started anew.
   function resumableClient(initial: Record<string, unknown>) {
