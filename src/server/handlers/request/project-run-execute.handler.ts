@@ -862,15 +862,23 @@ async function executeDiscoveredTaskRun(
  * Polls a workflow run until it settles. When the control plane aborts the
  * request (the run was cancelled), the workflow run is cancelled instead of
  * being polled to completion.
+ *
+ * The runtime marks a run `waiting` before it saves the approvals and event
+ * waits it pauses on, so a durable `waiting` counts as a pause only once it
+ * names at least one pending wait and the same waits on two consecutive polls.
+ * A pause reported earlier would name no wait, or only some of several
+ * parallel waits. `releasedKeys` are the waits a resume just released: the
+ * run may still read `waiting` on them while the resumed execution catches up.
  */
 async function waitForWorkflowResult(
   client: WorkflowClientView,
   runId: string,
   shouldCancel: () => boolean,
   deps: ProjectRunExecuteHandlerDeps,
-  stillParkedOnReleasedBoundary?: (run: WorkflowRunView) => Promise<boolean>,
+  releasedKeys?: string[],
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
+  let previousKeys: string[] | undefined;
 
   while (true) {
     const run = await client.getRun(runId);
@@ -886,11 +894,18 @@ async function waitForWorkflowResult(
       };
     }
 
-    if (
-      isTerminalWorkflowStatus(run.status) ||
-      (run.status === "waiting" && !(await stillParkedOnReleasedBoundary?.(run)))
-    ) {
-      return run;
+    if (isTerminalWorkflowStatus(run.status)) return run;
+
+    if (run.status === "waiting") {
+      if (client.statePersistence !== "durable") return run;
+      const keys = waitKeys(await readPendingWaits(client, runId, run));
+      const settled = keys.length > 0 &&
+        !(releasedKeys && sameKeys(keys, releasedKeys)) &&
+        previousKeys !== undefined && sameKeys(keys, previousKeys);
+      if (settled) return run;
+      previousKeys = keys;
+    } else {
+      previousKeys = undefined;
     }
 
     if (deps.now() >= deadline) {
@@ -1011,10 +1026,8 @@ async function deliverResumeEvent(
  * Apply one decision or deadline to the waits the run is parked on. Resolves
  * with whether anything was released, or a failure.
  *
- * A deadline release runs the workflow client's own expiry pass, which covers
- * every due wait on this project's backend, not only this run's, exactly as
- * the runtime's periodic expiry timer does. Other runs released that way are
- * reported to the control plane at their own deadline dispatch.
+ * A deadline release runs the workflow client's expiry pass for this run
+ * only, so it releases this run's due waits and no other run's.
  */
 async function applyResumeSignal(
   client: WorkflowClientView,
@@ -1092,20 +1105,11 @@ async function resumeWaitingWorkflowRun(
   if ("failure" in applied) return applied;
 
   // The decision can resume the run in the background, so the run may still
-  // read `waiting` on the boundary it was just released from, or with nothing
-  // pending at all while the released node completes. Poll past both; a later
-  // pause on a different boundary is a new `waiting`.
-  const released = waitKeys(parked);
-  // A run that reads `waiting` with nothing pending had its decision applied
-  // by an earlier dispatch, and the released node has not finished yet: poll
-  // on to the next boundary rather than report a pause nothing can release.
-  const stillParked = applied.released || isParkedOnNothing(parked)
-    ? async (run: WorkflowRunView) => {
-      const keys = waitKeys(await readPendingWaits(client, runId, run));
-      return keys.length === 0 || sameKeys(keys, released);
-    }
-    : undefined;
-  return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps, stillParked) };
+  // read `waiting` on the boundary it was just released from while the
+  // released node completes. Poll past it; a later pause on a different
+  // boundary is a new `waiting`.
+  const releasedKeys = applied.released ? waitKeys(parked) : undefined;
+  return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps, releasedKeys) };
 }
 
 function isTerminalWorkflowStatus(status: string): boolean {

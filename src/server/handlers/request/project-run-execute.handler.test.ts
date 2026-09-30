@@ -2937,6 +2937,58 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(destroyed, true);
   });
 
+  it("keeps polling a run that reads waiting before its pause records are saved", async () => {
+    // The runtime writes `waiting` before it saves the approvals and event
+    // waits the run pauses on. A poll in between must not report a pause that
+    // names no wait, or only some of several parallel waits.
+    let polls = 0;
+    const approvals = [{ id: "apr_1", nodeId: "review", status: "pending" }];
+    const waits = [{
+      id: "wait_1",
+      nodeId: "invoice",
+      eventName: "invoice.received",
+      waitKind: "event",
+    }];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "waiting",
+          output: null,
+          pendingApprovals: polls >= 1 ? approvals : [],
+        }),
+        getPendingEventWaits: async () => (polls >= 2 ? waits : []),
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+      sleep: async () => {
+        polls++;
+      },
+    }));
+    const runId = "run_workflow_waiting_unsaved";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1", input: {} },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting_reason, "approval");
+    assertEquals(withoutWaitId(payload.waiting), {
+      pending_approvals: ["review"],
+      event: "invoice.received",
+      events: ["invoice.received"],
+    });
+    assertEquals(polls, 3);
+  });
+
   for (
     const scenario of [
       {
@@ -3091,6 +3143,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             output: { approvalId: "approval-1" },
             pendingApprovals: scenario.pendingApprovals,
           }),
+          getPendingEventWaits: async () =>
+            scenario.name === "event"
+              ? [{ nodeId: "invoice", eventName: "invoice.received", waitKind: "event" }]
+              : [],
           cancel: async () => {},
           destroy: async () => {},
         }),
@@ -3734,7 +3790,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       sleep: () => Promise.resolve(void polls++),
     });
 
-    assertEquals(polls, 0);
+    // One poll confirms the pause names the same waits twice.
+    assertEquals(polls, 1);
     assertEquals(payload.status, "waiting");
     assertEquals(withoutWaitId(payload.waiting), {
       event: "invoice.received",
@@ -4428,7 +4485,11 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
           controller.abort(new Error("run cancelled"));
         },
       }),
-      getRun: async () => ({ status, output: null }),
+      getRun: async () => ({
+        status,
+        output: null,
+        pendingApprovals: [{ id: "approval-1", nodeId: "review" }],
+      }),
       cancel: async (runId: string) => {
         cancelled.push(runId);
         status = "cancelled";
