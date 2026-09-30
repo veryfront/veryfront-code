@@ -3436,7 +3436,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     const controller = new AbortController();
     const client = {
       register: () => {},
-      statePersistence: "durable",
+      statePersistence: "durable" as const,
       start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
         runId: options?.runId ?? "workflow-run",
       }),
