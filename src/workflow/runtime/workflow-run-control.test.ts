@@ -809,7 +809,7 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     });
   });
 
-  it("#2091 workflow final output is the selected value", async () => {
+  it("stores the selected value as the workflow's final output", async () => {
     const backend = new MemoryBackend();
     const run = { ...createRun("selected-output"), status: "running" as const };
     await backend.createRun(run);
@@ -863,6 +863,8 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(persisted?.status, "failed");
     assertEquals(persisted?.output, undefined);
     assertEquals(persisted?.error?.message, "output does not match the schema");
+    // The failed run keeps the final step outputs the selector saw.
+    assertEquals(persisted?.context, { input: {}, finish: { ok: true } });
   });
 
   it("never selects an output for a run that pauses", async () => {

@@ -159,6 +159,48 @@ describe("WorkflowClient", () => {
     }
   });
 
+  it("stores the registered workflow's selected output on the run (#2107)", async () => {
+    client.register(workflow({
+      id: "selected-output-workflow",
+      steps: [
+        step("classify", {
+          tool: createMockTool("classify", { category: "billing", confidence: 0.94 }),
+        }),
+      ],
+      output: (context) => context.classify,
+    }));
+
+    const handle = await client.start("selected-output-workflow", { ticketText: "charged twice" });
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, { category: "billing", confidence: 0.94 });
+  });
+
+  it("hands a parent the selected output of a nested workflow that declares one (#2107)", async () => {
+    const child = workflow({
+      id: "selecting-child",
+      steps: [
+        step("classify", {
+          tool: createMockTool("classify", { category: "billing", confidence: 0.94 }),
+        }),
+      ],
+      output: (context) => context.classify,
+    });
+    client.register(workflow({
+      id: "selecting-parent",
+      steps: [subWorkflow("triage", { workflow: child.definition })],
+    }));
+
+    const handle = await client.start("selecting-parent", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, { triage: { category: "billing", confidence: 0.94 } });
+  });
+
   describe("typed approval payload", () => {
     const schemaWorkflow = workflow({
       id: "typed-approval-workflow",

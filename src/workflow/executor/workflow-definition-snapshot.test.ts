@@ -26,6 +26,27 @@ function step(overrides: Record<string, unknown> = {}): WorkflowNode {
 }
 
 describe("workflow definition snapshot", () => {
+  it("keeps a workflow's output selector and rejects one that is not a function (#2107)", () => {
+    const output = (context: Record<string, unknown>) => context.work;
+    const captured = captureWorkflowDefinition({
+      id: "selecting-workflow",
+      steps: [step()],
+      output,
+    });
+
+    assertEquals(captured.output, output);
+    assertThrows(
+      () =>
+        captureWorkflowDefinition({
+          id: "bad-selector",
+          steps: [step()],
+          output: "work",
+        } as unknown as WorkflowDefinition),
+      VeryfrontError,
+      "output",
+    );
+  });
+
   it("captures and detaches the current top-level retry contract", () => {
     const retry = { maxAttempts: 3, backoff: "exponential" as const };
     const captured = captureWorkflowDefinition({
