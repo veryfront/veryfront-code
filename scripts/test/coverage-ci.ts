@@ -96,7 +96,7 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
 
 export function mergeLcovReports(reports: string[]): string {
   const blockLayouts = reports.map(collectBranchBlockLayouts);
-  const unstableBlockLines = findUnstableBranchBlockLines(blockLayouts);
+  const shiftedBlockLines = findShiftedBranchBlockLines(blockLayouts);
   const files = new Map<string, {
     lines: Map<number, number>;
     branches: Map<string, { key: [number, number, number]; hits: number }>;
@@ -137,9 +137,10 @@ export function mergeLcovReports(reports: string[]): string {
         // forms (for example lcov 2.x `e`-prefixed exception blocks) are
         // intentionally dropped. Deno derives block ids from V8 function
         // indexes, which can differ between otherwise equivalent reports. If
-        // the block layout differs on a line, use each block's source-order
-        // ordinal so Sonar sees one stable condition set. Consistent ids stay
-        // unchanged.
+        // every report has the same number of blocks on a line but the ids
+        // differ, use each block's source-order ordinal so Sonar sees one
+        // stable condition set. If a report omits a block, ordinals would not
+        // line up, so the emitted ids are kept for that line.
         const match = /^BRDA:(\d+),(\d+),(\d+),(\d+|-)\s*$/.exec(line);
         if (!match) continue;
         const lineNumber = Number(match[1]);
@@ -148,7 +149,7 @@ export function mergeLcovReports(reports: string[]): string {
           lineNumber,
         );
         const blockOrdinal = layout?.indexOf(emittedBlock) ?? -1;
-        const block = unstableBlockLines.get(currentFile)?.has(lineNumber) &&
+        const block = shiftedBlockLines.get(currentFile)?.has(lineNumber) &&
             blockOrdinal >= 0
           ? blockOrdinal
           : emittedBlock;
@@ -234,30 +235,43 @@ function collectBranchBlockLayouts(
   );
 }
 
-function findUnstableBranchBlockLines(
+/**
+ * Lines whose block ids differ between reports while every report carries the
+ * same number of blocks. Only those can be aligned by source-order ordinal; a
+ * line where some report omits a block keeps its emitted ids, because an
+ * ordinal there could attribute one condition's hits to another.
+ */
+function findShiftedBranchBlockLines(
   layouts: Map<string, Map<number, number[]>>[],
 ): Map<string, Set<number>> {
-  const firstLayout = new Map<string, string>();
-  const unstable = new Map<string, Set<number>>();
+  const seen = new Map<string, { signature: string; size: number }>();
+  const differing = new Map<string, { file: string; line: number }>();
+  const partial = new Set<string>();
 
   for (const layout of layouts) {
     for (const [file, lines] of layout) {
       for (const [line, blocks] of lines) {
         const id = `${file}\0${line}`;
         const signature = blocks.join(",");
-        const first = firstLayout.get(id);
+        const first = seen.get(id);
         if (first === undefined) {
-          firstLayout.set(id, signature);
-        } else if (first !== signature) {
-          const fileLines = unstable.get(file) ?? new Set<number>();
-          fileLines.add(line);
-          unstable.set(file, fileLines);
+          seen.set(id, { signature, size: blocks.length });
+          continue;
         }
+        if (first.size !== blocks.length) partial.add(id);
+        if (first.signature !== signature) differing.set(id, { file, line });
       }
     }
   }
 
-  return unstable;
+  const shifted = new Map<string, Set<number>>();
+  for (const [id, { file, line }] of differing) {
+    if (partial.has(id)) continue;
+    const fileLines = shifted.get(file) ?? new Set<number>();
+    fileLines.add(line);
+    shifted.set(file, fileLines);
+  }
+  return shifted;
 }
 
 async function runShard(args: string[]): Promise<void> {
