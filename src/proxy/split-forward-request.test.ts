@@ -28,6 +28,41 @@ function previewContext(): ProxyContext {
 }
 
 describe("split proxy forward request", () => {
+  it("propagates incoming cancellation to the upstream signal", () => {
+    const client = new AbortController();
+    const timeout = new AbortController();
+    const request = new Request("https://proxy.test/slow", { signal: client.signal });
+    const init = createSplitForwardRequestInit(request, previewContext(), null, timeout.signal);
+    client.abort(new Error("client disconnected"));
+    assertEquals(init.signal?.aborted, true);
+    assertStrictEquals(init.signal?.reason, client.signal.reason);
+    assertEquals(timeout.signal.aborted, false);
+  });
+
+  it("still aborts the upstream request on timeout", () => {
+    const client = new AbortController();
+    const timeout = new AbortController();
+    const request = new Request("https://proxy.test/slow", { signal: client.signal });
+    const init = createSplitForwardRequestInit(request, previewContext(), null, timeout.signal);
+    timeout.abort();
+    assertEquals(init.signal?.aborted, true);
+    assertStrictEquals(init.signal?.reason, timeout.signal.reason);
+    assertEquals(client.signal.aborted, false);
+  });
+
+  it("preserves an incoming request that was already aborted", () => {
+    const client = new AbortController();
+    client.abort();
+    const request = new Request("https://proxy.test/slow", { signal: client.signal });
+    const init = createSplitForwardRequestInit(
+      request,
+      previewContext(),
+      null,
+      new AbortController().signal,
+    );
+    assertEquals(init.signal?.aborted, true);
+  });
+
   it("uses the shared end-to-end header policy", () => {
     const body = new ReadableStream<Uint8Array>();
     const request = new Request(
@@ -75,7 +110,7 @@ describe("split proxy forward request", () => {
 
     assertEquals(init.method, "POST");
     assertEquals(init.redirect, "manual");
-    assertStrictEquals(init.signal, signal);
+    assertEquals(init.signal?.aborted, false);
     assertStrictEquals(init.body, request.body);
     assertEquals(init.duplex, "half");
     assertEquals(headers.get("connection"), null);

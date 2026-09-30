@@ -12,7 +12,7 @@ import { injectContext } from "./tracing.ts";
  * caller-supplied internal headers have been removed.
  */
 export function createSplitForwardRequestInit(
-  request: Pick<Request, "headers" | "method">,
+  request: Pick<Request, "headers" | "method" | "signal">,
   context: ProxyContext,
   body: ReadableStream<Uint8Array> | null,
   signal: AbortSignal,
@@ -24,6 +24,6 @@ export function createSplitForwardRequestInit(
     headers,
     body,
     redirect: "manual",
-    signal,
+    signal: AbortSignal.any([signal, request.signal]),
   });
 }
