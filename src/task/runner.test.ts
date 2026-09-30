@@ -126,6 +126,23 @@ describe("src/task/runner", () => {
       assertEquals(receivedProjectId, "proj-123");
     });
 
+    it("should pass runId to task context", async () => {
+      let receivedRunId: string | undefined;
+      const task = makeTask({
+        run: (ctx) => {
+          receivedRunId = ctx.runId;
+          return null;
+        },
+      });
+
+      await runTask(
+        { task, runId: "run-123" },
+        createInMemoryHostRuntime(),
+      );
+
+      assertEquals(receivedRunId, "run-123");
+    });
+
     it("should pass environmentId to task context", async () => {
       let receivedEnvironmentId: string | undefined;
       const task = makeTask({

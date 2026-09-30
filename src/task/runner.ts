@@ -39,6 +39,9 @@ export interface RunTaskOptions {
   /** Business input for `ctx.input`. When omitted or `null`, `ctx.input` falls back to `config`. */
   input?: unknown;
 
+  /** Public run ID (for cloud context) */
+  runId?: string;
+
   /** Project ID (for cloud context) */
   projectId?: string;
 
@@ -108,6 +111,7 @@ export async function runTask(
     task,
     config = {},
     input,
+    runId,
     projectId,
     environmentId,
     signal,
@@ -130,6 +134,7 @@ export async function runTask(
       env,
       config,
       input: input ?? config,
+      runId,
       projectId,
       environmentId,
       ...(signal === undefined ? {} : { signal }),

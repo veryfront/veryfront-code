@@ -695,10 +695,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     let receivedEnvironmentId: string | undefined;
+    let receivedRunId: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async (options) => {
         receivedConfig = options.config;
         receivedEnvironmentId = options.environmentId;
+        receivedRunId = options.runId;
         return {
           success: true,
           result: { synced: 12 },
@@ -723,6 +725,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await handler.handle(request, createCtx(publicKeyPem));
 
     assertExists(result.response);
+    assertEquals(receivedRunId, "run_task_1");
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: true,
