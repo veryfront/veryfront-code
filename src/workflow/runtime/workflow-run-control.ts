@@ -1,7 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import {
   ensureError,
-  INVALID_ARGUMENT,
   NOT_SUPPORTED,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
@@ -19,6 +18,7 @@ import {
   type WorkflowRunUpdate,
 } from "../backends/types.ts";
 import type { CheckpointOwnership } from "../executor/checkpoint-manager.ts";
+import { toJsonOutput } from "../executor/json-output.ts";
 import type {
   ApprovalDecision,
   NodeState,
@@ -1441,29 +1441,6 @@ function selectFinalOutput(
   const publicContext = toPersistedWorkflowContext(context);
   if (!input.selectOutput) return determineOutput(publicContext);
   return toJsonOutput(input.selectOutput(publicContext));
-}
-
-/**
- * Store a selected output in the JSON form every backend persists, so the
- * memory and Redis backends read back the same value. A value JSON cannot
- * represent (a function, a symbol, a bigint) fails the run.
- */
-function toJsonOutput(selected: unknown): unknown {
-  if (selected === undefined) return undefined;
-  let serialized: string | undefined;
-  try {
-    serialized = JSON.stringify(selected);
-  } catch (error) {
-    throw INVALID_ARGUMENT.create({
-      detail: `Workflow output is not JSON-serializable: ${ensureError(error).message}`,
-    });
-  }
-  if (serialized === undefined) {
-    throw INVALID_ARGUMENT.create({
-      detail: `Workflow output is not JSON-serializable (got ${typeof selected})`,
-    });
-  }
-  return JSON.parse(serialized);
 }
 
 function determineOutput(context: WorkflowContext): unknown {

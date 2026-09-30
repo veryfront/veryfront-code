@@ -201,6 +201,26 @@ describe("WorkflowClient", () => {
     assertEquals(run?.output, { triage: { category: "billing", confidence: 0.94 } });
   });
 
+  it("hands a parent the JSON form of a nested workflow's selected output (#2107)", async () => {
+    const child = workflow({
+      id: "json-selecting-child",
+      steps: [step("classify", { tool: createMockTool("classify", { category: "billing" }) })],
+      output: (context): unknown => ({ ...(context.classify as object), note: undefined }),
+    });
+    client.register(workflow({
+      id: "json-selecting-parent",
+      steps: [subWorkflow("triage", { workflow: child.definition })],
+    }));
+
+    const handle = await client.start("json-selecting-parent", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, { triage: { category: "billing" } });
+    assertEquals(Object.keys((run?.nodeStates.triage?.output ?? {}) as object), ["category"]);
+  });
+
   it("selects a map workflow processor's output by its declared step ids (#2107)", async () => {
     const processor = workflow({
       id: "selecting-map-processor",
