@@ -18,6 +18,11 @@ import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtim
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import type { ApplicationRequestHeaderOptions } from "#veryfront/security/http/application-request.ts";
 import { createExecutorHttpClient, type ExecutorHttpTracing } from "./executor-http.ts";
+import {
+  createExecutorHttpConfigurationOperation,
+  type ExecutorHttpApplicationConfiguration,
+  snapshotExecutorHttpApplicationConfiguration,
+} from "./application-configuration.ts";
 
 export { createHostedExecutorAllocatorClient } from "#veryfront/agent/hosted/executor-allocator-client.ts";
 export {
@@ -29,6 +34,8 @@ export {
 export interface HostedHttpInput {
   session: Omit<HostedExecutorSessionOptions, "createOperations" | "preparationSignal">;
   installation: Omit<ExecutorHttpInstall, "binding">;
+  /** Project-authorized snapshot for the built-in application runtime; collector settings are refused. */
+  configuration?: ExecutorHttpApplicationConfiguration;
   headers?: ApplicationRequestHeaderOptions;
   tracing?: ExecutorHttpTracing;
 }
@@ -66,6 +73,9 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
       ) {
         throw new TypeError("HTTP executor installation does not match its allocation");
       }
+      const configuration = input.configuration === undefined
+        ? undefined
+        : snapshotExecutorHttpApplicationConfiguration(input.configuration, installation);
       const headerOptions = { denyHeaders: input.headers?.denyHeaders?.slice() };
       const tracing = input.tracing ? { ...input.tracing } : undefined;
       const lifetime = new AbortController();
@@ -88,7 +98,14 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
             },
             ...headerOptions,
           });
-          return { operations: client.operations, revoke: () => lifetime.abort() };
+          const operations = new Map(client.operations);
+          if (configuration) {
+            operations.set(
+              "http.configuration",
+              createExecutorHttpConfigurationOperation(binding, configuration),
+            );
+          }
+          return { operations, revoke: () => lifetime.abort() };
         },
       });
       const closeSession = (reason: "completed" | "canceled") => {

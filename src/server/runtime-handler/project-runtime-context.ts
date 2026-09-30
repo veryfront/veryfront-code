@@ -24,6 +24,7 @@ import { resolveAdapter } from "./adapter-factory.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
+import { installedProjectDomain, type InstalledProjectHttpBinding } from "./installed-project.ts";
 import { shouldSkipEnrichedContext } from "./request-utils.ts";
 import { seedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 import {
@@ -40,6 +41,7 @@ export interface PrepareProjectRequestInput {
   url: URL;
   isProxyMode: boolean;
   trustProxy?: ProxyTrustVerifier;
+  installedProject?: InstalledProjectHttpBinding;
 }
 
 type ProjectRequestHeaders = ReturnType<typeof extractRequestHeaders>;
@@ -74,6 +76,7 @@ export interface PreparedProjectRequest {
 }
 
 export interface ResolveProjectIdentityInput {
+  installedProject?: InstalledProjectHttpBinding;
   operation?: string;
   req: Request;
   url: URL;
@@ -90,6 +93,7 @@ export interface ResolveProjectIdentityInput {
 }
 
 export interface ResolveProjectRuntimeContextInput {
+  installedProject?: InstalledProjectHttpBinding;
   req: Request;
   url: URL;
   projectDir: string;
@@ -156,6 +160,46 @@ export async function prepareProjectRequest(
   input: PrepareProjectRequestInput,
 ): Promise<PreparedProjectRequest> {
   const { req, url, isProxyMode } = input;
+  if (input.installedProject) {
+    if (isProxyMode) throw new TypeError("Installed project identity cannot be used in proxy mode");
+    const binding = input.installedProject;
+    return {
+      url,
+      headers: {
+        projectId: binding.projectId,
+        projectSlug: binding.projectSlug,
+        releaseId: binding.releaseId,
+        environmentId: binding.environmentId,
+        environmentName: binding.environmentName,
+        environment: "production",
+        branchId: undefined,
+        branchName: undefined,
+        defaultBranchName: undefined,
+        projectPath: undefined,
+        contentSourceId: undefined,
+        token: undefined,
+      },
+      requestContext: { slug: binding.projectSlug, branch: null, mode: "production", token: "" },
+      proxyTrust: { proxyTrusted: false, identityHeadersTrusted: false },
+      loggerFacts: {
+        domain: url.hostname,
+        projectSlug: binding.projectSlug,
+        projectId: binding.projectId,
+        releaseId: binding.releaseId,
+        branchId: undefined,
+        branchName: undefined,
+        defaultBranchName: undefined,
+        pathname: url.pathname,
+      },
+      trackingFacts: {
+        projectSlug: binding.projectSlug,
+        pathname: url.pathname,
+        method: req.method,
+        environment: "production",
+        releaseId: binding.releaseId,
+      },
+    };
+  }
   const proxyTrusted = isProxyMode ? await (input.trustProxy ?? isProxyTrusted)(req) : undefined;
   // In shared mode, only the same operator-owned proxy decision that admits
   // the request may authorize canonical cache and secret-fetch identity.
@@ -207,6 +251,18 @@ export async function resolveProjectIdentity(
 ): Promise<ProjectIdentityResolution> {
   if (input.operation && input.operation !== "identity") {
     throw new Error(`Unsupported project runtime context operation: ${input.operation}`);
+  }
+
+  if (input.installedProject) {
+    const binding = input.installedProject;
+    return {
+      projectId: binding.projectId,
+      projectSlug: binding.projectSlug,
+      releaseId: binding.releaseId,
+      environmentName: binding.environmentName,
+      proxyEnv: "production",
+      parsedDomain: installedProjectDomain(binding),
+    };
   }
 
   return await resolveProject(input.req, input.url, input.headers, {
@@ -276,27 +332,35 @@ export async function resolveProjectRuntimeContext(
     return hostedConfigLoadPromise;
   };
 
-  const adapterRes = await profileAdapter(() =>
-    resolveAdapter({
-      req: input.req,
+  const adapterRes: ProjectAdapterResolution = input.installedProject
+    ? {
       projectDir: input.projectDir,
       adapter: input.adapter,
       config: input.config,
-      projectSlug: projectRes.projectSlug,
-      projectId: projectRes.projectId,
-      proxyToken: reqCtx.token,
-      releaseId: projectRes.releaseId,
-      proxyEnv: projectRes.proxyEnv,
-      branch: reqCtx.branch,
-      environmentName: projectRes.environmentName,
-      parsedDomain: projectRes.parsedDomain,
-      pathname: input.url.pathname,
-      isProxyMode: input.isProxyMode,
-      allowHostProjectCodeExecution: input.allowHostProjectCodeExecution === true,
-      proxyTrusted: input.proxyTrust.proxyTrusted,
-      ...(input.isProxyMode ? { prepareHostedConfigContext } : {}),
-    })
-  );
+      configOutcome: "inherited",
+      isLocalProject: false,
+    }
+    : await profileAdapter(() =>
+      resolveAdapter({
+        req: input.req,
+        projectDir: input.projectDir,
+        adapter: input.adapter,
+        config: input.config,
+        projectSlug: projectRes.projectSlug,
+        projectId: projectRes.projectId,
+        proxyToken: reqCtx.token,
+        releaseId: projectRes.releaseId,
+        proxyEnv: projectRes.proxyEnv,
+        branch: reqCtx.branch,
+        environmentName: projectRes.environmentName,
+        parsedDomain: projectRes.parsedDomain,
+        pathname: input.url.pathname,
+        isProxyMode: input.isProxyMode,
+        allowHostProjectCodeExecution: input.allowHostProjectCodeExecution === true,
+        proxyTrusted: input.proxyTrust.proxyTrusted,
+        ...(input.isProxyMode ? { prepareHostedConfigContext } : {}),
+      })
+    );
 
   const trustProxyHeaders = input.proxyTrust.proxyTrusted ??
     getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";

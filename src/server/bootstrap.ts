@@ -100,6 +100,11 @@ export interface BootstrapResult {
   dispose?: () => void | Promise<void>;
 }
 
+export interface BootstrapOptions {
+  /** Refuse configuration that replaces an installed immutable filesystem. */
+  fixedProjectSource?: boolean;
+}
+
 /**
  * Wire the `TracingExporter` contract (if registered) into the core shim.
  * Must be called after `orchestrateExtensions()` completes.
@@ -341,6 +346,7 @@ function logEnvConfig(): void {
 export async function bootstrap(
   projectDir: string,
   adapter: RuntimeAdapter,
+  options: BootstrapOptions = {},
 ): Promise<BootstrapResult> {
   bootstrapLog.debug("Starting framework initialization", {
     projectDir,
@@ -361,6 +367,11 @@ export async function bootstrap(
   try {
     const fsType = config.fs?.type;
     const needsFSAdapter = fsType != null && fsType !== "local";
+    if (
+      options.fixedProjectSource && (needsFSAdapter || config.fs?.veryfront?.proxyMode === true)
+    ) {
+      throw new TypeError("Installed applications require one fixed local source");
+    }
 
     if (!needsFSAdapter) {
       bootstrapLog.debug("Using local filesystem (no FSAdapter needed)");
@@ -550,6 +561,7 @@ export async function bootstrapDev(
 export async function bootstrapProd(
   projectDir: string,
   adapter: RuntimeAdapter,
+  options: BootstrapOptions = {},
 ): Promise<BootstrapResult> {
   bootstrapProdLog.debug("Starting production mode initialization");
 
@@ -560,7 +572,7 @@ export async function bootstrapProd(
   validateProductionEnvironment();
 
   try {
-    const result = await bootstrap(projectDir, adapter);
+    const result = await bootstrap(projectDir, adapter, options);
 
     if (result.usingFSAdapter) {
       bootstrapProdLog.debug("FSAdapter initialized", {

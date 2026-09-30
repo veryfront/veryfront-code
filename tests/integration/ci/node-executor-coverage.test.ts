@@ -11,6 +11,74 @@ import {
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
 describe("native executor source coverage", () => {
+  it("retains original source coverage from an owned child process", async () => {
+    await Deno.mkdir(`${root}/coverage`, { recursive: true });
+    const directory = await makeTempDirWithOptions({
+      dir: `${root}/coverage`,
+      prefix: "node-child-",
+    });
+    const source = `${directory}/child-source.ts`;
+    const child = `${directory}/child.ts`;
+    const test = `${directory}/child.test.ts`;
+    const lcov = `${directory}/lcov.info`;
+    await Deno.writeTextFile(
+      source,
+      [
+        "export interface Input {",
+        "  value: number;",
+        "}",
+        "",
+        "export function childTarget(input: Input): number {",
+        "  return input.value + 1;",
+        "}",
+      ].join("\n"),
+    );
+    await Deno.writeTextFile(
+      child,
+      'import { childTarget } from "./child-source.ts"; if (childTarget({ value: 2 }) !== 3) throw new Error("Invalid result");',
+    );
+    await Deno.writeTextFile(
+      test,
+      [
+        'import { test } from "node:test";',
+        'import { spawnSync } from "node:child_process";',
+        'import process from "node:process";',
+        'import assert from "node:assert/strict";',
+        'test("executes child source", () => {',
+        `  const result = spawnSync(process.execPath, ["--enable-source-maps", "--import", ${
+          JSON.stringify(`${root}/tests/node/resolver.mjs`)
+        }, ${JSON.stringify(child)}], {`,
+        '    env: { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }, encoding: "utf8",',
+        "  });",
+        "  assert.equal(result.status, 0, result.stderr);",
+        "});",
+      ].join("\n"),
+    );
+    try {
+      const output = await new Deno.Command("node", {
+        args: buildNativeCoverageArgs({
+          root,
+          reportPath: lcov,
+          sourceFiles: [relative(root, source)],
+          testFiles: [test],
+        }),
+        cwd: root,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+      const summaries = await validateNativeCoverage({
+        root,
+        reportPath: lcov,
+        sourceFiles: [source],
+      });
+      assertEquals(summaries.length, 1);
+      assert(summaries[0]!.linesHit > 0);
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
+  });
+
   it("retains an original function anchor when generated coordinates repeat its name", async () => {
     await Deno.mkdir(`${root}/coverage`, { recursive: true });
     const directory = await makeTempDirWithOptions({

@@ -11,6 +11,7 @@ const SOURCE_FILES = [
   "src/agent/hosted/executor-allocator-client.ts",
   "src/agent/hosted/executor-node-bootstrap.ts",
   "src/agent/hosted/executor-runtime-entrypoint.ts",
+  "src/server/isolated-http/application-runtime.ts",
   "src/agent/hosted/executor-node-transport.ts",
   "src/security/http/native-header-processing.ts",
   "src/security/http/native-request-processing.ts",
