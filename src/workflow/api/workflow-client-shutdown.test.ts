@@ -43,6 +43,9 @@ describe("WorkflowClient shutdown", () => {
       input: {},
       context: { input: {} },
       nodeStates: {},
+      currentNodes: [],
+      checkpoints: [],
+      pendingApprovals: [],
       createdAt: new Date(),
     });
     await backend.savePendingApproval("completed-run", {
