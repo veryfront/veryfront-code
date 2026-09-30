@@ -809,6 +809,81 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     });
   });
 
+  it("#2091 workflow final output is the selected value", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("selected-output"), status: "running" as const };
+    await backend.createRun(run);
+    const seen: WorkflowContext[] = [];
+
+    await execute(
+      backend,
+      run,
+      () =>
+        completedResult({
+          input: { ticketText: "charged twice" },
+          _tenant: { projectSlug: "private", token: "token", productionMode: false },
+          classify: { category: "billing", confidence: 0.94 },
+        }),
+      {
+        selectOutput: (context) => {
+          seen.push(context);
+          return context.classify;
+        },
+      },
+    );
+
+    const persisted = await backend.getRun(run.id);
+    assertExists(persisted);
+    assertEquals(persisted.status, "completed");
+    assertEquals(persisted.output, { category: "billing", confidence: 0.94 });
+    // The selector sees the persisted context, never the private tenant.
+    assertEquals(seen, [{
+      input: { ticketText: "charged twice" },
+      classify: { category: "billing", confidence: 0.94 },
+    }]);
+  });
+
+  it("fails the run and stores no output when the output selector throws", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("selector-throws"), status: "running" as const };
+    await backend.createRun(run);
+
+    await assertRejects(
+      () =>
+        execute(backend, run, () => completedResult(), {
+          selectOutput: () => {
+            throw new Error("output does not match the schema");
+          },
+        }),
+      Error,
+      "output does not match the schema",
+    );
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "failed");
+    assertEquals(persisted?.output, undefined);
+    assertEquals(persisted?.error?.message, "output does not match the schema");
+  });
+
+  it("never selects an output for a run that pauses", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("paused-no-output"), status: "running" as const };
+    await backend.createRun(run);
+    let selected = 0;
+
+    await execute(backend, run, () => waitingResult(), {
+      selectOutput: () => {
+        selected++;
+        return { unexpected: true };
+      },
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "waiting");
+    assertEquals(persisted?.output, undefined);
+    assertEquals(selected, 0);
+  });
+
   it("re-parks a stalled wait node that still holds a durable event-wait record", async () => {
     const backend = new MemoryBackend();
     const run = { ...createRun("stalled-live-event-wait"), status: "running" as const };

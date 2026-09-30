@@ -2470,3 +2470,118 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(backend.heartbeatUpdates, heartbeatUpdates);
   });
 });
+
+// veryfront-issue-inbox#2107: a workflow can select its final output from its
+// context; a declared outputSchema checks the selected value and the parsed
+// value is stored; steps see the parsed input.
+describe("workflow/executor/workflow-executor final output selection (#2107)", () => {
+  function executorWith(definition: Parameters<typeof workflow>[0]) {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(workflow(definition).definition);
+    return { backend, executor };
+  }
+
+  it("stores the selected value as the run output", async () => {
+    const { executor, backend } = executorWith({
+      id: "select-output",
+      steps: [
+        step("prepare", {
+          tool: createTool("prepare", () => ({ claimId: "EXP-1", stage: "review" })),
+        }),
+        step("finalize", { tool: createTool("finalize", () => ({ stage: "paid" })) }),
+      ],
+      output: (context) => ({
+        claimId: (context.prepare as { claimId: string }).claimId,
+        stage: (context.finalize as { stage: string }).stage,
+      }),
+    });
+
+    const handle = await executor.start("select-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, { claimId: "EXP-1", stage: "paid" });
+  });
+
+  it("stores the parsed value when an outputSchema is declared", async () => {
+    const { executor, backend } = executorWith({
+      id: "parsed-output",
+      steps: [
+        step("total", { tool: createTool("total", () => ({ amount: "42.5", note: "internal" })) }),
+      ],
+      outputSchema: defineSchema((v) => v.object({ amount: v.coerce.number() }))(),
+      output: (context) => context.total,
+    });
+
+    const handle = await executor.start("parsed-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, { amount: 42.5 });
+  });
+
+  it("fails the run instead of completing it when the selected value fails the outputSchema", async () => {
+    let completed = 0;
+    const { executor, backend } = executorWith({
+      id: "invalid-output",
+      steps: [step("total", { tool: createTool("total", () => ({ amount: "not a number" })) })],
+      outputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      output: (context) => context.total,
+      onComplete: () => {
+        completed++;
+      },
+    });
+
+    const handle = await executor.start("invalid-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "failed");
+    assertEquals(run?.output, undefined);
+    assertExists(run?.error);
+    assertEquals(completed, 0);
+  });
+
+  it("keeps the default output without a selector: every step's output by step id", async () => {
+    const { executor, backend } = executorWith({
+      id: "default-output",
+      steps: [step("only", { tool: createTool("only", () => ({ done: true })) })],
+    });
+
+    const handle = await executor.start("default-output", { submitted: 1 });
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.output, { only: { done: true } });
+  });
+
+  it("gives steps the parsed input and keeps the submitted input on the run", async () => {
+    let seen: unknown;
+    const { executor, backend } = executorWith({
+      id: "parsed-input",
+      inputSchema: defineSchema((v) =>
+        v.object({ amount: v.coerce.number(), currency: v.string().default("EUR") })
+      )(),
+      steps: [
+        step("read", {
+          tool: createTool("read", (input) => {
+            seen = input;
+            return {};
+          }),
+          input: (context) => context.input,
+        }),
+      ],
+    });
+
+    const handle = await executor.start("parsed-input", { amount: "42.5" });
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(seen, { amount: 42.5, currency: "EUR" });
+    assertEquals(run?.input, { amount: "42.5" });
+    assertEquals(run?.context.input, { amount: 42.5, currency: "EUR" });
+  });
+});
