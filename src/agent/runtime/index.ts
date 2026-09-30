@@ -330,7 +330,10 @@ import {
   telemetryErrorType,
 } from "#veryfront/observability/telemetry-error.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
-import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
+import {
+  applySkillDelegationOverridesToToolInput,
+  type SkillDelegationOverrides,
+} from "./skill-delegation-overrides.ts";
 import {
   type AgentModelRuntimeResolver,
   createModelRuntimeResolverAbortGuard,
@@ -1288,9 +1291,34 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
   await input.emission.complete?.(input.invokeAgentToolCalls);
 }
 
+type ProviderReplayDelegationArgsContext = {
+  activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
+  toolsConfig: AgentConfig["tools"];
+  agentId: string;
+  hasToolReplacements: boolean;
+};
+
+function applyProviderReplayDelegationOverrides(
+  toolName: string,
+  args: Record<string, unknown>,
+  context: ProviderReplayDelegationArgsContext,
+): Record<string, unknown> {
+  if (toolName !== "invoke_agent") return args;
+  return applySkillDelegationOverridesToToolInput(
+    toolName,
+    args,
+    context.hasToolReplacements ? undefined : context.activeSkillDelegationOverrides,
+    context.hasToolReplacements
+      ? undefined
+      : resolveConfiguredTool(context.toolsConfig, toolName, { agentId: context.agentId }) ??
+        undefined,
+  );
+}
+
 function collectGeneratedParallelInvokeAgentToolCalls(
   toolCalls: RuntimeGenerateTextResult["toolCalls"],
   allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
+  delegationArgsContext: ProviderReplayDelegationArgsContext,
 ): ProviderReplayInvokeAgentToolCall[] | undefined {
   const calls: ProviderReplayInvokeAgentToolCall[] = [];
   if (!toolCalls) return undefined;
@@ -1306,10 +1334,15 @@ function collectGeneratedParallelInvokeAgentToolCalls(
     ) {
       continue;
     }
+    const effectiveArgs = applyProviderReplayDelegationOverrides(
+      toolCall.toolName,
+      toolCall.input as Record<string, unknown>,
+      delegationArgsContext,
+    );
     pushPrivateArray(calls, {
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName as ProviderReplayInvokeAgentToolName,
-      toolArgsJson: privateJsonStringify(toolCall.input),
+      toolArgsJson: privateJsonStringify(effectiveArgs),
     });
   }
   return calls.length >= 2 ? getProviderReplayInvokeAgentToolCallsSchema().parse(calls) : undefined;
@@ -1319,6 +1352,7 @@ function collectStreamedParallelInvokeAgentToolCalls(
   toolCalls: readonly StreamingToolCall[],
   allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
   shouldContinue: boolean,
+  delegationArgsContext: ProviderReplayDelegationArgsContext,
 ): ProviderReplayInvokeAgentToolCall[] | undefined {
   if (!shouldContinue) return undefined;
   const calls: ProviderReplayInvokeAgentToolCall[] = [];
@@ -1336,10 +1370,15 @@ function collectStreamedParallelInvokeAgentToolCalls(
     const materialized = materializeStreamedToolCall(toolCall);
     if (materialized.kind !== "complete") continue;
     const args = "args" in materialized.part ? materialized.part.args : {};
+    const effectiveArgs = applyProviderReplayDelegationOverrides(
+      toolCall.name,
+      args,
+      delegationArgsContext,
+    );
     pushPrivateArray(calls, {
       toolCallId: toolCall.id,
       toolName: toolCall.name as ProviderReplayInvokeAgentToolName,
-      toolArgsJson: privateJsonStringify(args),
+      toolArgsJson: privateJsonStringify(effectiveArgs),
     });
   }
   return calls.length >= 2 ? getProviderReplayInvokeAgentToolCallsSchema().parse(calls) : undefined;
@@ -3065,6 +3104,12 @@ export class AgentRuntime {
             ? collectGeneratedParallelInvokeAgentToolCalls(
               response.toolCalls,
               providerReplayCheckpointEmission.invokeAgentToolNames,
+              {
+                activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+                toolsConfig: runtimeToolsConfig,
+                agentId: this.id,
+                hasToolReplacements,
+              },
             )
             : undefined,
         });
@@ -4238,6 +4283,12 @@ export class AgentRuntime {
             streamedToolCalls,
             providerReplayCheckpointEmission.invokeAgentToolNames,
             shouldContinue,
+            {
+              activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+              toolsConfig: this.config.tools,
+              agentId: this.id,
+              hasToolReplacements: false,
+            },
           )
           : undefined,
       });

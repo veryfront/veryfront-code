@@ -52,6 +52,39 @@ function invokeAgentTool(onExecute: (task: string) => void = () => {}) {
   });
 }
 
+function skillDelegationTools() {
+  return {
+    load_skill: tool({
+      id: "load_skill",
+      description: "Load a skill",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: () => ({
+        skillId: "delegate",
+        instructions: "# Delegate",
+        allowedTools: ["invoke_agent"],
+        references: [],
+        scripts: [],
+        model: "anthropic/claude-sonnet-4-5",
+        thinking: false,
+        maxSteps: 6,
+      }),
+    }),
+    invoke_agent: tool({
+      id: "invoke_agent",
+      description: "Invoke a child agent",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          task: v.string(),
+          model: v.string().optional(),
+          thinking: v.number().optional(),
+          max_steps: v.number().optional(),
+        })
+      )(),
+      execute: ({ task }) => ({ result: task }),
+    }),
+  };
+}
+
 describe("provider replay checkpoint emission", () => {
   it("accumulates private provider blocks without consulting the buffer append method", () => {
     const state = createProviderReplayCheckpointEmissionState({ messageId: MESSAGE_ID });
@@ -339,6 +372,82 @@ describe("provider replay checkpoint emission", () => {
     ]);
     assertEquals(operations, ["turn:complete", "tool:first", "tool:second"]);
   });
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`publishes effective skill delegation args for a parallel ${mode} batch`, async () => {
+      const completedBatches: unknown[] = [];
+      const executedInputs: unknown[] = [];
+      const model = scriptedModel([{
+        toolCalls: [{ id: "load-1", name: "load_skill", input: { skillId: "delegate" } }],
+      }, {
+        toolCalls: [
+          { id: "child-1", name: "invoke_agent", input: { task: "first" } },
+          { id: "child-2", name: "invoke_agent", input: { task: "second" } },
+        ],
+      }], {
+        modelId: `anthropic/skill-parallel-${mode}-replay-boundary`,
+        provider: "anthropic",
+        only: mode,
+      });
+      const config = {
+        id: `skill-parallel-${mode}-replay-boundary`,
+        model: `anthropic/skill-parallel-${mode}-replay-boundary`,
+        system: "Load the skill, then delegate twice.",
+        skills: true,
+        tools: skillDelegationTools(),
+        maxSteps: 2,
+        resolveModelTransport: () => ({ model }),
+        onToolResult: (request: { toolName: string; input: unknown }) => {
+          if (request.toolName === "invoke_agent") executedInputs.push(request.input);
+        },
+        __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+        __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+        __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+          completedBatches.push(invokeAgentToolCalls);
+        },
+      } as AgentConfig & RuntimeToolFilterConfig & {
+        __vfProviderReplayInvokeAgentToolNames: string[];
+      };
+
+      const assistant = agent(config);
+      if (mode === "generate") {
+        await assistant.generate({ input: "Delegate both tasks" });
+      } else {
+        await (await assistant.stream({ input: "Delegate both tasks" })).toDataStreamResponse()
+          .text();
+      }
+
+      const expectedArgs = [
+        {
+          task: "first",
+          model: "anthropic/claude-sonnet-4-5",
+          thinking: 0,
+          max_steps: 6,
+        },
+        {
+          task: "second",
+          model: "anthropic/claude-sonnet-4-5",
+          thinking: 0,
+          max_steps: 6,
+        },
+      ];
+      assertEquals(executedInputs, expectedArgs);
+      assertEquals(completedBatches[1], [
+        {
+          toolCallId: "child-1",
+          toolName: "invoke_agent",
+          toolArgsJson:
+            '{"task":"first","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
+        },
+        {
+          toolCallId: "child-2",
+          toolName: "invoke_agent",
+          toolArgsJson:
+            '{"task":"second","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
+        },
+      ]);
+    });
+  }
 
   it("uses the trusted aliased control-plane name for a parallel batch", async () => {
     let completedBatch: unknown;
