@@ -690,3 +690,64 @@ it("refuses competing managed and explicit tracing before allocation", async () 
     await broker.settled;
   }
 });
+
+it("errors an unfinished managed-tracing response when its request aborts", async () => {
+  register("TracingExporter", {
+    createProjectProvider() {
+      const recorder = createWorkerTraceRecorder(`00-${"a".repeat(32)}-${"b".repeat(16)}-01`)!;
+      return Promise.resolve(recorder.run(() => getProjectTraceProvider())!);
+    },
+  });
+  const settings: ProjectTraceConfigResult = {
+    status: "enabled",
+    config: {
+      projectId: "project-a",
+      environmentId: "environment-a",
+      revision: "abort",
+      endpoint: "https://collector.example/v1/traces",
+      headers: {},
+      serviceName: "app",
+      serviceVersion: "",
+      deploymentEnvironment: "production",
+    },
+  };
+  const f = fixture(() =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("prefix"));
+        },
+      }, { highWaterMark: 0 }),
+    )
+  );
+  const broker = createHostedHttpBroker({ maxActive: 1 });
+  const abort = new AbortController();
+  try {
+    await runProjectHttpTracing(
+      settings,
+      settings.config,
+      new Request("https://app.example"),
+      () => Promise.resolve(new Response(null, { status: 204 })),
+    );
+    await flushProjectHttpTracing();
+    const response = await broker.fetch(
+      new Request("https://app.example", { signal: abort.signal }),
+      {
+        ...f.input,
+        projectTracing: settings,
+      },
+    );
+    const reader = response.body!.getReader();
+    assertEquals(new TextDecoder().decode((await reader.read()).value), "prefix");
+    const pending = reader.read();
+    abort.abort(new Error("Client disconnected"));
+    await assertRejects(() => pending, Error, "Client disconnected");
+    assertEquals(f.calls.includes("release:completed"), false);
+  } finally {
+    abort.abort();
+    await broker.shutdown();
+    await broker.settled;
+    await shutdownProjectHttpTracing();
+    unregister("TracingExporter");
+  }
+});

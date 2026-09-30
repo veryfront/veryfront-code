@@ -92,6 +92,7 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
         identity,
         request,
         () => dispatch(request, { ...input, tracing: captureProjectTracing() }),
+        { errorOnAbort: true },
       );
     },
   };
