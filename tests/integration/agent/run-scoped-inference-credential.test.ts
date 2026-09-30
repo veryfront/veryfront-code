@@ -1340,7 +1340,13 @@ describe("run-scoped inference credential", () => {
     const script = `
       const resolver = await import(${resolverModule});
       const { requireVeryfrontCloudBootstrap } = await import(${sharedModule});
-      Deno.env.set("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
+      for (const key of [
+        "VERYFRONT_PUBLIC_API_BASE_URL",
+        "VERYFRONT_API_URL",
+        "VERYFRONT_API_BASE_URL",
+      ]) {
+        Deno.env.set(key, "https://evil.example");
+      }
       console.log(JSON.stringify([
         requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
         resolver.resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),

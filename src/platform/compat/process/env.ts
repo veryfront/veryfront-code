@@ -291,22 +291,30 @@ function readHostProcessEnv(key: string): string | undefined {
   return undefined;
 }
 
-const PUBLIC_API_BASE_URL_ENV = "VERYFRONT_PUBLIC_API_BASE_URL";
 // Captured while this module loads, before a project env file is loaded or
-// project code runs, so neither can redirect credentials sent to this origin.
-const hostBootPublicApiBaseUrl = readHostProcessEnv(PUBLIC_API_BASE_URL_ENV);
+// project code runs, so neither can redirect credentials sent to these origins.
+const HOST_BOOT_ENV_KEYS = [
+  "VERYFRONT_PUBLIC_API_BASE_URL",
+  "VERYFRONT_API_URL",
+  "VERYFRONT_API_BASE_URL",
+] as const;
+type HostBootEnvKey = typeof HOST_BOOT_ENV_KEYS[number];
+const hostBootEnv: Map<string, string | undefined> = new MapConstructor();
+for (const bootKey of HOST_BOOT_ENV_KEYS) {
+  apply(mapSet, hostBootEnv, [bootKey, readHostProcessEnv(bootKey)]);
+}
 
 /**
- * Read `VERYFRONT_PUBLIC_API_BASE_URL` as the host process started with it.
+ * Read a host API routing variable as the host process started with it.
  * Later process-environment writes and project env files are ignored; only a
  * test run (captured host DENO_TESTING=1) may override it through the overlay.
  */
-export function getHostBootPublicApiBaseUrl(): string | undefined {
-  if (allowHostEnvTestOverlay && !hasEnvFileValueSource(PUBLIC_API_BASE_URL_ENV)) {
-    const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), PUBLIC_API_BASE_URL_ENV);
+export function getHostBootEnv(key: HostBootEnvKey): string | undefined {
+  if (allowHostEnvTestOverlay && !hasEnvFileValueSource(key)) {
+    const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
     if (overlayResult.hasValue) return overlayResult.value;
   }
-  return hostBootPublicApiBaseUrl;
+  return apply(mapGet, hostBootEnv, [key]);
 }
 
 let _trustedProjectEnvSnapshot: (() => ProjectEnvSnapshot | undefined) | null = null;
