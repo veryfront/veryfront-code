@@ -438,6 +438,30 @@ function createDeps(
   };
 }
 
+const runTaskDefinition: ProjectRunExecuteHandlerDeps["runTask"] = async (options) => {
+  const startedAt = performance.now();
+  try {
+    options.signal?.throwIfAborted();
+    const result = await options.task.definition.run({
+      env: {},
+      config: options.config ?? {},
+      input: options.input ?? options.config ?? {},
+      runId: options.runId,
+      projectId: options.projectId,
+      environmentId: options.environmentId,
+      signal: options.signal,
+      attempt: options.attempt ?? 1,
+    });
+    return { success: true, result, durationMs: performance.now() - startedAt };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: performance.now() - startedAt,
+    };
+  }
+};
+
 function requestJsonBody(
   init: Parameters<typeof globalThis.fetch>[1],
 ): Record<string, unknown> | null {
@@ -1662,6 +1686,329 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
+  it("runs task:eval through the task runner and returns its summary and report artifact", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_task_eval_1",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-09-30T10:00:00.000Z",
+      endedAt: "2026-09-30T10:00:01.000Z",
+      summary: { records: 2, passed: 2, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const reportPath = "evals/reports/deep-research/run_task_eval_1.json";
+    let receivedEvalId: string | undefined;
+    let receivedRepetitions: number | undefined;
+    let receivedTaskId: string | undefined;
+    let receivedAgentId: string | null | undefined;
+    let receivedAuthToken: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async (options) => {
+        receivedTaskId = options.task.id;
+        return await runTaskDefinition(options);
+      },
+      findEvalById: async (evalId, options) => {
+        receivedEvalId = evalId;
+        return await createDeps().findEvalById(evalId, options);
+      },
+      runEval: async (definition, options) => {
+        receivedRepetitions = definition.repetitions;
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: "eval:private-customer\nforged-eval-row",
+          recordId: "session-123\nforged-record-row",
+          exampleId: "customer-456\nforged-example-row",
+          repetition: 1,
+          index: 0,
+          total: 2,
+          completed: true,
+          durationMs: 10,
+        });
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: definition.id,
+          recordId: "q1:2",
+          exampleId: "q1",
+          repetition: 2,
+          index: 1,
+          total: 2,
+          completed: true,
+          durationMs: 11,
+        });
+        return report;
+      },
+      createEvalAgentAdapter: (config) => {
+        receivedAgentId = config.agentId;
+        receivedAuthToken = config.authToken;
+        return async () => ({ text: "Paris" });
+      },
+      uploadEvalReport: async () => reportPath,
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_1/execute",
+      {
+        runId: "run_task_eval_1",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research", repetitions: 2 },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result, report.summary);
+    assertEquals(payload.artifacts, [{
+      kind: "eval-report",
+      path: reportPath,
+      contentType: "application/json",
+    }]);
+    assertEquals(String(payload.logs).split("\n"), [
+      '{"level":"info","message":"Eval case completed","case_index":1,"total_cases":2,"repetition":1}',
+      '{"level":"info","message":"Eval case completed","case_index":2,"total_cases":2,"repetition":2}',
+    ]);
+    assertEquals(String(payload.logs).includes("private-customer"), false);
+    assertEquals(String(payload.logs).includes("session-123"), false);
+    assertEquals(String(payload.logs).includes("customer-456"), false);
+    assertEquals(String(payload.logs).split("\n").length, 2);
+    assertEquals(receivedTaskId, "eval");
+    assertEquals(receivedEvalId, "eval:deep-research");
+    assertEquals(receivedRepetitions, 2);
+    assertEquals(receivedAgentId, "researcher");
+    assertEquals(receivedAuthToken, "runtime-token");
+  });
+
+  for (
+    const uploadFailure of [
+      {
+        name: "returns no artifact path",
+        upload: () => Promise.resolve(null),
+        error: "Eval report upload failed: report was not stored",
+      },
+      {
+        name: "rejects",
+        upload: () => Promise.reject(new Error("project file service unavailable")),
+        error: "Eval report upload failed: project file service unavailable",
+      },
+    ]
+  ) {
+    it(`fails task:eval when report upload ${uploadFailure.name}`, async () => {
+      const report: EvalReport = {
+        kind: "eval-report",
+        runId: "run_task_eval_upload_failed",
+        definitionId: "eval:deep-research",
+        targetKind: "agent",
+        target: "agent:researcher",
+        startedAt: "2026-09-30T10:00:00.000Z",
+        endedAt: "2026-09-30T10:00:01.000Z",
+        summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+        records: [],
+      };
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async () => report,
+        uploadEvalReport: uploadFailure.upload,
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_task_eval_upload_failed/execute",
+        {
+          runId: "run_task_eval_upload_failed",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.error, uploadFailure.error);
+      assertEquals(payload.result, report.summary);
+      assertEquals(payload.artifacts, undefined);
+    });
+  }
+
+  it("reports a clear error when task:eval names an unknown eval", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({ runTask: runTaskDefinition }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_missing/execute",
+      {
+        runId: "run_task_eval_missing",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:missing" },
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Eval not found: eval:missing",
+      logs: null,
+      duration_ms: 0,
+    });
+  });
+
+  it("reports task:eval as cancelled and does not begin another case", async () => {
+    const startedCases: string[] = [];
+    const firstCaseFinished = Promise.withResolvers<void>();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (definition, options) => {
+        const signal = options.signal;
+        startedCases.push("q1");
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: definition.id,
+          recordId: "q1:1",
+          exampleId: "q1",
+          repetition: 1,
+          index: 0,
+          total: 2,
+          completed: true,
+          durationMs: 1,
+        });
+        firstCaseFinished.resolve();
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+        startedCases.push("q2");
+        throw new Error("unreachable");
+      },
+    }));
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_cancel/execute",
+      {
+        runId: "run_task_eval_cancel",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { "x-token": "runtime-token" },
+    );
+    const controller = new AbortController();
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+    await firstCaseFinished.promise;
+    controller.abort(new Error("Run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "cancelled");
+    assertEquals(
+      payload.logs,
+      '{"level":"info","message":"Eval case completed","case_index":1,"total_cases":2,"repetition":1}',
+    );
+    assertEquals(startedCases, ["q1"]);
+  });
+
+  it("bounds task:eval progress logs and emits one eval truncation marker", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_task_eval_many_cases",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-09-30T10:00:00.000Z",
+      endedAt: "2026-09-30T10:00:01.000Z",
+      summary: { records: 2_000, passed: 2_000, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (definition, options) => {
+        for (let index = 0; index < 2_000; index += 1) {
+          options.onProgress?.({
+            type: "record-finished",
+            evalId: definition.id,
+            recordId: `private-record-${index}`,
+            exampleId: `private-example-${index}`,
+            repetition: 1,
+            index,
+            total: 2_000,
+            completed: true,
+            durationMs: 1,
+          });
+        }
+        return report;
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_many_cases/execute",
+      {
+        runId: "run_task_eval_many_cases",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    const lines = String(payload.logs).split("\n");
+    assertEquals(lines.length, 1_001);
+    assertEquals(
+      lines.filter((line) => line.includes("Eval progress logs were truncated")).length,
+      1,
+    );
+    assertEquals(String(payload.logs).includes("private-example"), false);
+    assertEquals(String(payload.logs).includes("private-record"), false);
+  });
+
+  it("fails task:eval with RUN_TIMEOUT when its task deadline expires", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (_definition, options) => {
+        const signal = options.signal;
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+        throw new Error("unreachable");
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_timeout/execute",
+      {
+        runId: "run_task_eval_timeout",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+        deadlineAt: new Date(Date.now() + 25).toISOString(),
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error_code, "RUN_TIMEOUT");
+  });
+
   it("runs a discovered eval with the canonical run id and local routed AG-UI adapter endpoint", async () => {
     const report: EvalReport = {
       kind: "eval-report",
@@ -2018,6 +2365,46 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedReport, report);
     assertEquals(receivedProjectReference, "demo-project");
     assertEquals(receivedReportPath, reportPath);
+  });
+
+  it("keeps legacy kind:eval report upload failures best-effort", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_eval_report_upload_failed",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runEval: async () => report,
+      uploadEvalReport: async () => {
+        throw new Error("project file service unavailable");
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_report_upload_failed/execute",
+      {
+        runId: "run_eval_report_upload_failed",
+        kind: "eval",
+        target: "eval:deep-research",
+        projectId: "proj-1",
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: report,
+      duration_ms: 0,
+      logs: "Eval report upload failed: project file service unavailable",
+    });
   });
 
   it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {

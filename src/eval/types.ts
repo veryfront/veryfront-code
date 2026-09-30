@@ -617,6 +617,8 @@ export interface RunEvalOptions {
    * on without waiting for it. Omit or pass 0 for no limit.
    */
   recordTimeoutMs?: number;
+  /** Stops remaining cases and propagates cancellation to the active case. */
+  signal?: AbortSignal;
   /**
    * Receives progress while records run. Records run one after another, so
    * events arrive in dataset order. A listener that throws, or whose promise

@@ -692,7 +692,9 @@ async function runRecordWithinTimeout(
   runId: string,
   timeoutMs: number,
 ): Promise<EvalRecord> {
-  if (timeoutMs === 0) return await runRecord(definition, options, example, repetition, runId);
+  if (timeoutMs === 0) {
+    return await runRecord(definition, options, example, repetition, runId, options.signal);
+  }
 
   const started = Date.now();
   const controller = new AbortController();
@@ -752,7 +754,7 @@ async function runRecordWithinTimeout(
     example,
     repetition,
     runId,
-    controller.signal,
+    options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
     (record) => {
       targetRecord = { ...record };
     },
@@ -797,7 +799,9 @@ export async function runEval(
     ? createEvalRunId(startedAt)
     : normalizeEvalString(options.runId, "Eval run id");
   const baseDir = options.baseDir ?? cwd();
+  options.signal?.throwIfAborted();
   const loadedExamples = await definition.dataset.load({ baseDir });
+  options.signal?.throwIfAborted();
   const examples = normalizeEvalExamples(
     loadedExamples,
     `dataset "${definition.dataset.path ?? definition.dataset.kind}"`,
@@ -815,6 +819,7 @@ export async function runEval(
   notifyEvalProgress(options, { type: "eval-started", evalId: definition.id, total });
 
   for (const [index, { example, repetition }] of jobs.entries()) {
+    options.signal?.throwIfAborted();
     const progress = {
       evalId: definition.id,
       recordId: `${example.id}:${repetition}`,
@@ -836,6 +841,7 @@ export async function runEval(
       runId,
       recordTimeoutMs,
     );
+    options.signal?.throwIfAborted();
     records.push(record);
     notifyEvalProgress(options, {
       type: "record-finished",
