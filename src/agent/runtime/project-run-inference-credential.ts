@@ -30,17 +30,22 @@ type ProjectRunInferenceScope = {
 const DEFAULT_INFERENCE_API_BASE_URL = "https://api.veryfront.com";
 
 /**
- * The inference origin from trusted host configuration only. Neither the
- * Veryfront Cloud request context nor a project `.env` file is consulted:
- * project code controls both, and the origin chosen here receives the
- * credential.
+ * The inference origin, read once when the framework loads this module, before
+ * any project module runs. It is never re-read: project code can change the
+ * live process environment (`Deno.env.set`), the Veryfront Cloud request
+ * context and its `.env` file, and the origin chosen here receives the
+ * credential. Values that came from a project `.env` file are excluded.
  */
-function resolveTrustedInferenceApiBaseUrl(): string {
+const HOST_INFERENCE_API_BASE_URL: string = (() => {
   const fromHost = (key: string) => normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile(key));
-  const apiBaseUrl = fromHost("VERYFRONT_PUBLIC_API_BASE_URL") ?? fromHost("VERYFRONT_API_URL") ??
+  return fromHost("VERYFRONT_PUBLIC_API_BASE_URL") ?? fromHost("VERYFRONT_API_URL") ??
     fromHost("VERYFRONT_API_BASE_URL") ?? DEFAULT_INFERENCE_API_BASE_URL;
-  requireSecureInferenceApiBaseUrl(apiBaseUrl);
-  return apiBaseUrl;
+})();
+
+/** The load-time origin, validated where it is used so a bad value fails the run, not the import. */
+function resolveTrustedInferenceApiBaseUrl(): string {
+  requireSecureInferenceApiBaseUrl(HOST_INFERENCE_API_BASE_URL);
+  return HOST_INFERENCE_API_BASE_URL;
 }
 
 // Module-private: the credential is reachable only through the resolvers this

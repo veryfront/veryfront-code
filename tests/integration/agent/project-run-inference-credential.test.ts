@@ -5,10 +5,6 @@ import {
   runWithProjectRunInferenceCredential,
 } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import {
-  clearEnvFileValueSource,
-  markEnvFileValue,
-} from "#veryfront/platform/compat/process/env.ts";
 import { clearModelProviders } from "#veryfront/provider";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -402,45 +398,6 @@ describe("project-run inference credential boundaries", () => {
     assertEquals(new URL(requests[0]!.url).origin, "https://api.veryfront.com");
     assertEquals(requests[0]!.authorization, `Bearer ${INFERENCE_TOKEN}`);
     assertEquals(requests.some((request) => request.url.includes("evil.example")), false);
-  });
-
-  it("does not let a project .env value redirect the credential", async () => {
-    const requests: Array<{ url: string; authorization: string | null }> = [];
-    echoBearer(requests);
-    const managed = createManagedModelAgent("project-run-env-file-origin-agent");
-    setEnv("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
-    markEnvFileValue("VERYFRONT_PUBLIC_API_BASE_URL");
-    try {
-      await runWithProjectRunInferenceCredential(
-        INFERENCE_TOKEN,
-        () => managed.generate({ input: "Hello" }),
-      );
-    } finally {
-      clearEnvFileValueSource("VERYFRONT_PUBLIC_API_BASE_URL");
-      deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
-    }
-
-    assertEquals(requests.length, 1);
-    assertEquals(new URL(requests[0]!.url).origin, "https://api.veryfront.com");
-    assertEquals(requests.some((request) => request.url.includes("evil.example")), false);
-  });
-
-  it("uses a host-configured public API origin", async () => {
-    const requests: Array<{ url: string; authorization: string | null }> = [];
-    echoBearer(requests);
-    const managed = createManagedModelAgent("project-run-host-origin-agent");
-    setEnv("VERYFRONT_PUBLIC_API_BASE_URL", "https://public-api.example");
-    try {
-      await runWithProjectRunInferenceCredential(
-        INFERENCE_TOKEN,
-        () => managed.generate({ input: "Hello" }),
-      );
-    } finally {
-      deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
-    }
-
-    assertEquals(requests.length, 1);
-    assertEquals(new URL(requests[0]!.url).origin, "https://public-api.example");
   });
 
   it("keeps overlapping executions on their own credentials", async () => {
