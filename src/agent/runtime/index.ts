@@ -1224,6 +1224,7 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
   emission: RuntimeProviderReplayCheckpointEmission;
   providerMetadata: Record<string, unknown> | undefined;
   invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[];
+  deferCompletion?: boolean;
 }): Promise<void> {
   try {
     await persistProviderReplayCheckpointAfterTurnUnsafe(input);
@@ -1261,6 +1262,7 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
   emission: RuntimeProviderReplayCheckpointEmission;
   providerMetadata: Record<string, unknown> | undefined;
   invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[];
+  deferCompletion?: boolean;
 }): Promise<void> {
   if (!input.emission.state) {
     if (input.emission.required) {
@@ -1268,7 +1270,9 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
         detail: "provider replay checkpoint message identity is required",
       });
     }
-    await input.emission.complete?.(input.invokeAgentToolCalls);
+    if (input.deferCompletion !== true) {
+      await input.emission.complete?.(input.invokeAgentToolCalls);
+    }
     return;
   }
   const checkpoint = captureProviderReplayCheckpoint(
@@ -1276,7 +1280,9 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
     input.providerMetadata,
   );
   if (!checkpoint) {
-    await input.emission.complete?.(input.invokeAgentToolCalls);
+    if (input.deferCompletion !== true) {
+      await input.emission.complete?.(input.invokeAgentToolCalls);
+    }
     return;
   }
   if (!input.emission.persist) {
@@ -1288,7 +1294,24 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
     return;
   }
   await input.emission.persist(checkpoint);
-  await input.emission.complete?.(input.invokeAgentToolCalls);
+  if (input.deferCompletion !== true) {
+    await input.emission.complete?.(input.invokeAgentToolCalls);
+  }
+}
+
+async function completeDeferredProviderReplayCheckpointTurn(
+  emission: RuntimeProviderReplayCheckpointEmission,
+  invokeAgentToolCalls: ProviderReplayInvokeAgentToolCall[] | undefined,
+): Promise<void> {
+  try {
+    await emission.complete?.(invokeAgentToolCalls);
+  } catch (error) {
+    await failProviderReplayCheckpointTurn(
+      emission,
+      resolveProviderReplayPersistenceFailure(error),
+    );
+    throw error;
+  }
 }
 
 type ProviderReplayDelegationArgsContext = {
@@ -1386,6 +1409,71 @@ function collectStreamedParallelInvokeAgentToolCalls(
     });
   }
   return calls.length >= 2 ? getProviderReplayInvokeAgentToolCallsSchema().parse(calls) : undefined;
+}
+
+type SameTurnSkillDelegationOrder = "prefix" | "interleaved" | undefined;
+
+function generatedSameTurnSkillDelegationOrder(
+  toolCalls: RuntimeGenerateTextResult["toolCalls"],
+  toolResults: ReadonlyMap<string, RuntimeGenerateToolResult>,
+  allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
+): SameTurnSkillDelegationOrder {
+  let sawDelegation = false;
+  let sawSkillAfterDelegation = false;
+  let sawSkillBeforeDelegation = false;
+  for (let index = 0; index < (toolCalls?.length ?? 0); index++) {
+    if (!ObjectHasOwn(toolCalls!, index)) continue;
+    const toolCall = toolCalls![index]!;
+    if (toolResults.has(toolCall.toolCallId)) continue;
+    if (toolCall.toolName === LOAD_SKILL_TOOL_ID) {
+      if (sawDelegation) sawSkillAfterDelegation = true;
+      else sawSkillBeforeDelegation = true;
+      continue;
+    }
+    if (
+      IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
+        toolCall.toolName as ProviderReplayInvokeAgentToolName,
+      ])
+    ) {
+      if (sawSkillAfterDelegation) return "interleaved";
+      sawDelegation = true;
+    }
+  }
+  return sawSkillBeforeDelegation && sawDelegation ? "prefix" : undefined;
+}
+
+function streamedSameTurnSkillDelegationOrder(
+  toolCalls: readonly StreamingToolCall[],
+  toolResults: ReadonlyMap<string, StreamingToolResult>,
+  allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
+): SameTurnSkillDelegationOrder {
+  let sawDelegation = false;
+  let sawSkillAfterDelegation = false;
+  let sawSkillBeforeDelegation = false;
+  for (let index = 0; index < toolCalls.length; index++) {
+    if (!ObjectHasOwn(toolCalls, index)) continue;
+    const toolCall = toolCalls[index]!;
+    if (
+      toolCall.inputAvailable !== true || toolCall.providerExecuted === true ||
+      toolResults.has(toolCall.id)
+    ) {
+      continue;
+    }
+    if (toolCall.name === LOAD_SKILL_TOOL_ID) {
+      if (sawDelegation) sawSkillAfterDelegation = true;
+      else sawSkillBeforeDelegation = true;
+      continue;
+    }
+    if (
+      IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
+        toolCall.name as ProviderReplayInvokeAgentToolName,
+      ])
+    ) {
+      if (sawSkillAfterDelegation) return "interleaved";
+      sawDelegation = true;
+    }
+  }
+  return sawSkillBeforeDelegation && sawDelegation ? "prefix" : undefined;
 }
 
 function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
@@ -3096,6 +3184,27 @@ export class AgentRuntime {
         }
 
         const generatedToolResults = collectGeneratedToolResults(response.toolResults);
+        const generatedInvokeAgentBatch = providerReplayCheckpointEmission.complete
+          ? collectGeneratedParallelInvokeAgentToolCalls(
+            response.toolCalls,
+            generatedToolResults,
+            providerReplayCheckpointEmission.invokeAgentToolNames,
+            {
+              activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+              toolsConfig: runtimeToolsConfig,
+              agentId: this.id,
+              hasToolReplacements,
+            },
+          )
+          : undefined;
+        const generatedSkillDelegationOrder = generatedInvokeAgentBatch && !hasToolReplacements
+          ? generatedSameTurnSkillDelegationOrder(
+            response.toolCalls,
+            generatedToolResults,
+            providerReplayCheckpointEmission.invokeAgentToolNames,
+          )
+          : undefined;
+        let generatedBatchCompletionDeferred = generatedSkillDelegationOrder === "prefix";
         const assistantMessage = buildGeneratedAssistantMessage(response, {
           id: `msg_${Date.now()}_${step}`,
           timestamp: Date.now(),
@@ -3105,19 +3214,10 @@ export class AgentRuntime {
         await persistProviderReplayCheckpointAfterTurn({
           emission: providerReplayCheckpointEmission,
           providerMetadata: readAttachedProviderMetadata(assistantMessage),
-          invokeAgentToolCalls: providerReplayCheckpointEmission.complete
-            ? collectGeneratedParallelInvokeAgentToolCalls(
-              response.toolCalls,
-              generatedToolResults,
-              providerReplayCheckpointEmission.invokeAgentToolNames,
-              {
-                activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
-                toolsConfig: runtimeToolsConfig,
-                agentId: this.id,
-                hasToolReplacements,
-              },
-            )
-            : undefined,
+          invokeAgentToolCalls: generatedSkillDelegationOrder === "interleaved"
+            ? undefined
+            : generatedInvokeAgentBatch,
+          deferCompletion: generatedBatchCompletionDeferred,
         });
         throwIfAborted(abortSignal);
 
@@ -3225,6 +3325,31 @@ export class AgentRuntime {
             status: "pending",
           };
           const generatedToolResult = generatedToolResults.get(tc.toolCallId);
+
+          if (
+            generatedBatchCompletionDeferred && generatedToolResult === undefined &&
+            IntrinsicReflectApply(
+              IntrinsicSetHas,
+              providerReplayCheckpointEmission.invokeAgentToolNames,
+              [tc.toolName as ProviderReplayInvokeAgentToolName],
+            )
+          ) {
+            await completeDeferredProviderReplayCheckpointTurn(
+              providerReplayCheckpointEmission,
+              collectGeneratedParallelInvokeAgentToolCalls(
+                response.toolCalls,
+                generatedToolResults,
+                providerReplayCheckpointEmission.invokeAgentToolNames,
+                {
+                  activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+                  toolsConfig: runtimeToolsConfig,
+                  agentId: this.id,
+                  hasToolReplacements,
+                },
+              ),
+            );
+            generatedBatchCompletionDeferred = false;
+          }
 
           await withSpan("agent.tool_execute", async (toolSpan) => {
             const inputSizeBytes = estimateSerializedSizeBytes(tc.input);
@@ -4278,25 +4403,37 @@ export class AgentRuntime {
       ) {
         latestAssistantText = stepAssistantText;
       }
+      const streamedInvokeAgentBatch = providerReplayCheckpointEmission.complete
+        ? collectStreamedParallelInvokeAgentToolCalls(
+          streamedToolCalls,
+          finalToolResults,
+          providerReplayCheckpointEmission.invokeAgentToolNames,
+          shouldContinue,
+          {
+            activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+            toolsConfig: this.config.tools,
+            agentId: this.id,
+            hasToolReplacements: false,
+          },
+        )
+        : undefined;
+      const streamedSkillDelegationOrder = streamedInvokeAgentBatch
+        ? streamedSameTurnSkillDelegationOrder(
+          streamedToolCalls,
+          finalToolResults,
+          providerReplayCheckpointEmission.invokeAgentToolNames,
+        )
+        : undefined;
+      let streamedBatchCompletionDeferred = streamedSkillDelegationOrder === "prefix";
       pushPrivateArray(currentMessages, assistantMessage);
       await persistMessage(assistantMessage);
       await persistProviderReplayCheckpointAfterTurn({
         emission: providerReplayCheckpointEmission,
         providerMetadata: readAttachedProviderMetadata(assistantMessage),
-        invokeAgentToolCalls: providerReplayCheckpointEmission.complete
-          ? collectStreamedParallelInvokeAgentToolCalls(
-            streamedToolCalls,
-            finalToolResults,
-            providerReplayCheckpointEmission.invokeAgentToolNames,
-            shouldContinue,
-            {
-              activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
-              toolsConfig: this.config.tools,
-              agentId: this.id,
-              hasToolReplacements: false,
-            },
-          )
-          : undefined,
+        invokeAgentToolCalls: streamedSkillDelegationOrder === "interleaved"
+          ? undefined
+          : streamedInvokeAgentBatch,
+        deferCompletion: streamedBatchCompletionDeferred,
       });
 
       if (stoppedEmptyAfterCompletedTool) {
@@ -4481,6 +4618,33 @@ export class AgentRuntime {
         };
         const matchingResult = finalToolResults.get(tc.id);
         const persistedResult = currentStepToolResults.get(tc.id);
+
+        if (
+          streamedBatchCompletionDeferred && tc.providerExecuted !== true && !matchingResult &&
+          !persistedResult &&
+          IntrinsicReflectApply(
+            IntrinsicSetHas,
+            providerReplayCheckpointEmission.invokeAgentToolNames,
+            [tc.name as ProviderReplayInvokeAgentToolName],
+          )
+        ) {
+          await completeDeferredProviderReplayCheckpointTurn(
+            providerReplayCheckpointEmission,
+            collectStreamedParallelInvokeAgentToolCalls(
+              streamedToolCalls,
+              finalToolResults,
+              providerReplayCheckpointEmission.invokeAgentToolNames,
+              shouldContinue,
+              {
+                activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+                toolsConfig: this.config.tools,
+                agentId: this.id,
+                hasToolReplacements: false,
+              },
+            ),
+          );
+          streamedBatchCompletionDeferred = false;
+        }
 
         if (matchingResult) {
           await persistToolResult(matchingResult);

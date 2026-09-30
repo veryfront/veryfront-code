@@ -52,22 +52,28 @@ function invokeAgentTool(onExecute: (task: string) => void = () => {}) {
   });
 }
 
-function skillDelegationTools() {
+function skillDelegationTools(callbacks: {
+  onLoad?: () => void;
+  onInvoke?: (task: string) => void;
+} = {}) {
   return {
     load_skill: tool({
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({
-        skillId: "delegate",
-        instructions: "# Delegate",
-        allowedTools: ["invoke_agent"],
-        references: [],
-        scripts: [],
-        model: "anthropic/claude-sonnet-4-5",
-        thinking: false,
-        maxSteps: 6,
-      }),
+      execute: () => {
+        callbacks.onLoad?.();
+        return {
+          skillId: "delegate",
+          instructions: "# Delegate",
+          allowedTools: ["invoke_agent"],
+          references: [],
+          scripts: [],
+          model: "anthropic/claude-sonnet-4-5",
+          thinking: false,
+          maxSteps: 6,
+        };
+      },
     }),
     invoke_agent: tool({
       id: "invoke_agent",
@@ -80,7 +86,10 @@ function skillDelegationTools() {
           max_steps: v.number().optional(),
         })
       )(),
-      execute: ({ task }) => ({ result: task }),
+      execute: ({ task }) => {
+        callbacks.onInvoke?.(task);
+        return { result: task };
+      },
     }),
   };
 }
@@ -534,6 +543,117 @@ describe("provider replay checkpoint emission", () => {
         },
       ]);
       assertEquals(localExecutions, 2);
+    });
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`publishes same-turn skill overrides before parallel ${mode} dispatch`, async () => {
+      const operations: string[] = [];
+      let completedBatch: unknown;
+      const model = scriptedModel([{
+        toolCalls: [
+          { id: "load-1", name: "load_skill", input: { skillId: "delegate" } },
+          { id: "child-1", name: "invoke_agent", input: { task: "first" } },
+          { id: "child-2", name: "invoke_agent", input: { task: "second" } },
+        ],
+      }], {
+        modelId: `anthropic/same-turn-skill-parallel-${mode}-replay-boundary`,
+        provider: "anthropic",
+        only: mode,
+      });
+      const config = {
+        id: `same-turn-skill-parallel-${mode}-replay-boundary`,
+        model: `anthropic/same-turn-skill-parallel-${mode}-replay-boundary`,
+        system: "Load the skill, then delegate twice.",
+        skills: true,
+        tools: skillDelegationTools({
+          onLoad: () => operations.push("load"),
+          onInvoke: (task) => operations.push(`invoke:${task}`),
+        }),
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+        __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+        __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+          operations.push("turn:complete");
+          completedBatch = invokeAgentToolCalls;
+        },
+      } as AgentConfig & RuntimeToolFilterConfig & {
+        __vfProviderReplayInvokeAgentToolNames: string[];
+      };
+
+      const assistant = agent(config);
+      if (mode === "generate") {
+        await assistant.generate({ input: "Delegate both tasks" });
+      } else {
+        await (await assistant.stream({ input: "Delegate both tasks" })).toDataStreamResponse()
+          .text();
+      }
+
+      assertEquals(completedBatch, [
+        {
+          toolCallId: "child-1",
+          toolName: "invoke_agent",
+          toolArgsJson:
+            '{"task":"first","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
+        },
+        {
+          toolCallId: "child-2",
+          toolName: "invoke_agent",
+          toolArgsJson:
+            '{"task":"second","model":"anthropic/claude-sonnet-4-5","thinking":0,"max_steps":6}',
+        },
+      ]);
+      assertEquals(operations, ["load", "turn:complete", "invoke:first", "invoke:second"]);
+    });
+  }
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`keeps interleaved skill delegation sequential in ${mode}`, async () => {
+      const operations: string[] = [];
+      let completedBatch: unknown = "not-called";
+      const model = scriptedModel([{
+        toolCalls: [
+          { id: "child-1", name: "invoke_agent", input: { task: "first" } },
+          { id: "load-1", name: "load_skill", input: { skillId: "delegate" } },
+          { id: "child-2", name: "invoke_agent", input: { task: "second" } },
+        ],
+      }], {
+        modelId: `anthropic/interleaved-skill-${mode}-replay-boundary`,
+        provider: "anthropic",
+        only: mode,
+      });
+      const config = {
+        id: `interleaved-skill-${mode}-replay-boundary`,
+        model: `anthropic/interleaved-skill-${mode}-replay-boundary`,
+        system: "Delegate, load the skill, then delegate again.",
+        skills: true,
+        tools: skillDelegationTools({
+          onLoad: () => operations.push("load"),
+          onInvoke: (task) => operations.push(`invoke:${task}`),
+        }),
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+        __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+        __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+          operations.push("turn:complete");
+          completedBatch = invokeAgentToolCalls;
+        },
+      } as AgentConfig & RuntimeToolFilterConfig & {
+        __vfProviderReplayInvokeAgentToolNames: string[];
+      };
+
+      const assistant = agent(config);
+      if (mode === "generate") {
+        await assistant.generate({ input: "Delegate in order" });
+      } else {
+        await (await assistant.stream({ input: "Delegate in order" })).toDataStreamResponse()
+          .text();
+      }
+
+      assertEquals(completedBatch, undefined);
+      assertEquals(operations, ["turn:complete", "invoke:first", "load", "invoke:second"]);
     });
   }
 
