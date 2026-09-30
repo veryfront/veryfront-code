@@ -70,8 +70,9 @@ tasks that read business data from `config` keep working. See
 
 ### Evals
 
-An eval reads an object `input` as target hints, such as `branch_id`. Other
-JSON values are stored on the run and carry no hints. The output is the eval
+An eval that targets an agent reads an object `input` as target hints, such as
+`branch_id`. Other evals, and other JSON values, store the input on the run
+without reading hints from it. The output is the eval
 report, and a failed eval run keeps its report as `output`.
 
 ## Runs without schemas
