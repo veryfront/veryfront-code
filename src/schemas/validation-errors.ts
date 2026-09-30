@@ -22,7 +22,14 @@ export interface SchemaValidationError {
 
 /** Escape one JSON Pointer reference token (RFC 6901). */
 export function escapePointerSegment(segment: string | number): string {
-  return String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
+  // Character loop, not replaceAll: task code may have replaced String methods in the shared realm.
+  const text = `${segment}`;
+  let escaped = "";
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    escaped += char === "~" ? "~0" : char === "/" ? "~1" : char;
+  }
+  return escaped;
 }
 
 /** Convert schema issues to JSON Pointer validation errors, capped at {@link MAX_SCHEMA_VALIDATION_ERRORS}. */

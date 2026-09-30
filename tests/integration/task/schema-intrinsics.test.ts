@@ -7,7 +7,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { defineSchema } from "#veryfront/schemas/define.ts";
 import { canonicalJsonSchema } from "#veryfront/schemas/schema-identity.ts";
-import { formatSchemaValidationErrors } from "#veryfront/schemas/validation-errors.ts";
+import {
+  escapePointerSegment,
+  formatSchemaValidationErrors,
+} from "#veryfront/schemas/validation-errors.ts";
 import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type RunnableTask, runTask } from "#veryfront/task/runner.ts";
@@ -225,5 +228,20 @@ describe("task schema checks after project code replaced built-ins", () => {
     }
 
     assertEquals(summary, "/ticketText: Expected string; <root>: Required");
+  });
+
+  it("escapes JSON Pointer segments when project code replaced String replaceAll", () => {
+    const originalReplaceAll = Reflect.getOwnPropertyDescriptor(String.prototype, "replaceAll")!;
+    let escaped: string | undefined;
+    try {
+      Reflect.set(String.prototype, "replaceAll", () => {
+        throw new Error("replaced String.prototype.replaceAll");
+      });
+      escaped = escapePointerSegment("a/b~c");
+    } finally {
+      Reflect.defineProperty(String.prototype, "replaceAll", originalReplaceAll);
+    }
+
+    assertEquals(escaped, "a~1b~0c");
   });
 });
