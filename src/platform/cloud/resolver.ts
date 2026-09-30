@@ -109,8 +109,9 @@ function resolveHostCredentialApiBaseUrl(): string {
  */
 export function resolveVeryfrontInferenceApiBaseUrlFromHostEnv(): string {
   return normalizeVeryfrontApiBaseUrl(getHostBootEnv("VERYFRONT_PUBLIC_API_BASE_URL")) ??
-    normalizeVeryfrontApiBaseUrl(getHostBootEnv("VERYFRONT_API_URL")) ??
+    // Same precedence as resolveVeryfrontApiBaseUrlFromHostEnv().
     normalizeVeryfrontApiBaseUrl(getHostBootEnv("VERYFRONT_API_BASE_URL")) ??
+    normalizeVeryfrontApiBaseUrl(getHostBootEnv("VERYFRONT_API_URL")) ??
     DEFAULT_API_BASE_URL;
 }
 

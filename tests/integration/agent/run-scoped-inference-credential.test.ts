@@ -141,6 +141,7 @@ describe("run-scoped inference credential", () => {
     deleteEnv("VERYFRONT_API_TOKEN");
     deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
     deleteEnv("VERYFRONT_API_URL");
+    deleteEnv("VERYFRONT_API_BASE_URL");
     clearEnvFileValueSources();
     deleteEnv("VERYFRONT_PROJECT_SLUG");
   });
@@ -1312,6 +1313,16 @@ describe("run-scoped inference credential", () => {
       requests.filter((request) => request.authorization === "Bearer run-scoped-inference-token")
         .map((request) => request.url),
       ["https://trusted-api.example.test/ai/v1/chat/completions"],
+    );
+  });
+
+  it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL for run-scoped inference", () => {
+    setEnv("VERYFRONT_API_URL", "https://control-plane.example.test");
+    setEnv("VERYFRONT_API_BASE_URL", "https://rest-api.example.test");
+
+    assertEquals(
+      requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+      "https://rest-api.example.test",
     );
   });
 
