@@ -44,6 +44,7 @@ import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/log
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getActiveRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import {
   buildMergedTools,
@@ -979,6 +980,78 @@ describe("internal-agents/run-stream", () => {
       true,
     );
     assertEquals(JSON.stringify(frames).includes("ordered-signature"), false);
+  });
+
+  it("does not deadlock the real runtime while publishing an aliased batch before dispatch", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const messageId = crypto.randomUUID();
+    const runId = "run_real_aliased_parallel_delegation";
+    const model = scriptedModel([{
+      toolCalls: [
+        { id: "child-1", name: "veryfront__invoke_agent", input: '{}{"task":"first"}' },
+        { id: "child-2", name: "veryfront__invoke_agent", input: '{}{"task":"second"}' },
+      ],
+    }], {
+      modelId: "anthropic/hosted-aliased-parallel-delegation",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const runtimeAgent = createAgent({
+      id: "hosted-aliased-parallel-delegation",
+      model: "anthropic/hosted-aliased-parallel-delegation",
+      system: "Delegate twice.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId,
+        messageId,
+        messages: [{ id: "user-1", role: "user", content: "Delegate both tasks" }],
+        tools: [{ name: "veryfront__invoke_agent" }],
+        context: [],
+      },
+      runtimeAgent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: () => Promise.resolve(),
+      },
+    );
+    sessionManager.prepareForToolResult(runId, "child-1");
+    sessionManager.prepareForToolResult(runId, "child-2");
+    sessionManager.submitToolResult(runId, {
+      toolCallId: "child-1",
+      result: { result: "first complete" },
+    });
+    sessionManager.submitToolResult(runId, {
+      toolCallId: "child-2",
+      result: { result: "second complete" },
+    });
+    const body = await response.text();
+    const frames = parseSseFrames(body);
+    const replayBoundary = frames.find((frame) =>
+      frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
+    )?.data as Record<string, unknown>;
+    const firstToolArgs = frames.find((frame) => frame.event === "ToolCallArgs")?.data as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals(body.includes(PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME), true);
+    assertEquals(
+      body.indexOf(PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME) <
+        body.indexOf("event: ToolCallStart"),
+      true,
+    );
+    assertStringIncludes(body, '"toolName":"veryfront__invoke_agent"');
+    assertEquals(
+      (replayBoundary.invokeAgentToolCalls as Array<Record<string, unknown>>)[0]?.toolArgsJson,
+      '{"task":"first"}',
+    );
+    assertEquals(firstToolArgs.delta, '{"task":"first"}');
   });
 
   it("fails closed when checkpoint emission has no runtime message identity", async () => {
