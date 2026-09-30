@@ -3429,4 +3429,90 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     const json = await result.response.json();
     assertEquals(json.success, false);
   });
+
+  it("cancels a workflow run that reached waiting when the request was aborted", async () => {
+    const cancelled: string[] = [];
+    let status = "waiting";
+    const controller = new AbortController();
+    const client = {
+      register: () => {},
+      statePersistence: "durable",
+      start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+        runId: options?.runId ?? "workflow-run",
+      }),
+      getRun: async () => {
+        // The cancel lands in the same poll in which the workflow parks.
+        if (!controller.signal.aborted) controller.abort(new Error("run cancelled"));
+        return { status, output: null };
+      },
+      cancel: async (runId: string) => {
+        cancelled.push(runId);
+        status = "cancelled";
+      },
+      destroy: async () => {},
+    };
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({ createWorkflowClient: () => client }),
+    );
+    const body = {
+      runId: "run_workflow_waiting_cancel",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: {},
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_waiting_cancel/execute",
+      body,
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertEquals(cancelled, ["run_workflow_waiting_cancel"]);
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+  });
+
+  it("does not start a workflow whose run was cancelled before it started", async () => {
+    const started: string[] = [];
+    const controller = new AbortController();
+    const client = {
+      register: () => {},
+      start: async (workflowId: string, _input: unknown, options?: { runId?: string }) => {
+        started.push(workflowId);
+        return { runId: options?.runId ?? "workflow-run" };
+      },
+      getRun: async () => ({ status: "completed", output: { done: true } }),
+      cancel: async () => {},
+      destroy: async () => {},
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => {
+        // The cancel lands while the workflow is still being loaded.
+        controller.abort(new Error("run cancelled"));
+        return client;
+      },
+    }));
+    const body = {
+      runId: "run_workflow_cancel_before_start",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: {},
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_cancel_before_start/execute",
+      body,
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertEquals(started, []);
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+  });
 });

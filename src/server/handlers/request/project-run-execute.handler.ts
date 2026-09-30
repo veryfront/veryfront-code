@@ -731,7 +731,8 @@ async function waitForWorkflowResult(
     const run = await client.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
-    if (signal.aborted && !isSettledWorkflowStatus(run.status)) {
+    // A waiting run is resumable, so an aborted request cancels it too.
+    if (signal.aborted && !isTerminalWorkflowStatus(run.status)) {
       await client.cancel(runId);
       return {
         status: "cancelled",
@@ -750,9 +751,12 @@ async function waitForWorkflowResult(
   }
 }
 
+function isTerminalWorkflowStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
 function isSettledWorkflowStatus(status: string): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled" ||
-    status === "waiting";
+  return isTerminalWorkflowStatus(status) || status === "waiting";
 }
 
 async function executeWorkflowRun(
@@ -792,6 +796,15 @@ async function executeWorkflowRun(
   );
   try {
     client.register(workflow.definition);
+    // The run was cancelled while the workflow was being loaded: do not start it.
+    if (signal.aborted) {
+      return {
+        success: false,
+        error: "Workflow run cancelled",
+        logs: null,
+        duration_ms: Math.max(0, deps.now() - startedAt),
+      };
+    }
     // A null input counts as no input, the same as on the API run record.
     let handle: Awaited<ReturnType<typeof client.start>>;
     try {
