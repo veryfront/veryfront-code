@@ -37,6 +37,7 @@ import {
   type ProjectRunExecuteHandlerDeps,
   projectWorkflowRedisConfig,
   projectWorkflowRedisPrefix,
+  uploadEvalReportToProjectFiles,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { MemoryBackend } from "#veryfront/workflow/backends/memory.ts";
@@ -1944,6 +1945,135 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(payload.error, uploadFailure.error);
       assertEquals(payload.result, report.summary);
       assertEquals(payload.artifacts, undefined);
+    });
+  }
+
+  for (const cancelled of [true, false]) {
+    it(`eval report upload ${cancelled ? "aborts while pending" : "succeeds exactly once"}`, async () => {
+      const uploadStarted = Promise.withResolvers<void>();
+      const finishUpload = Promise.withResolvers<void>();
+      let uploads = 0;
+      let written = false;
+      let uploadSignal: AbortSignal | undefined;
+      const report: EvalReport = {
+        kind: "eval-report",
+        runId: "run_eval_report_upload",
+        definitionId: "eval:deep-research",
+        targetKind: "agent",
+        target: "agent:researcher",
+        startedAt: "2026-09-30T10:00:00.000Z",
+        endedAt: "2026-09-30T10:00:01.000Z",
+        summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+        records: [],
+      };
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async () => report,
+        uploadEvalReport: async (input) => {
+          uploads++;
+          uploadSignal = input.signal;
+          uploadStarted.resolve();
+          await finishUpload.promise;
+          uploadSignal?.throwIfAborted();
+          written = true;
+          return input.reportPath;
+        },
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_eval_report_upload/execute",
+        {
+          runId: "run_eval_report_upload",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+      const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+      await uploadStarted.promise;
+      if (cancelled) controller.abort(new Error("Run cancelled"));
+      finishUpload.resolve();
+      const result = await pending;
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertExists(uploadSignal);
+      assertEquals(uploadSignal.aborted, cancelled);
+      assertEquals(uploads, 1);
+      assertEquals(written, !cancelled);
+      assertEquals(payload.success, !cancelled);
+      if (cancelled) {
+        assertStringIncludes(payload.error, "cancelled");
+        assertEquals(payload.artifacts, undefined);
+      } else {
+        assertEquals(
+          payload.artifacts[0].path,
+          "evals/reports/deep-research/run_eval_report_upload.json",
+        );
+      }
+    });
+  }
+
+  for (const cancelled of [true, false]) {
+    it(`eval report upload HTTP transport ${cancelled ? "receives cancellation" : "stores one report"}`, async () => {
+      const uploadStarted = Promise.withResolvers<void>();
+      const finishUpload = Promise.withResolvers<void>();
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        uploadEvalReport: uploadEvalReportToProjectFiles,
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_eval_report_http/execute",
+        {
+          runId: "run_eval_report_http",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+      let written = false;
+      let uploads = 0;
+      let signal: AbortSignal | null | undefined;
+      const result = await withMockFetch(async (url, init) => {
+        const options = observeFetchRequestInit(init);
+        assertStringIncludes(String(url), "/files/evals%2Freports%2Fdeep-research%2F");
+        assertEquals(options.method, "PUT");
+        signal = options.signal;
+        uploads++;
+        uploadStarted.resolve();
+        await finishUpload.promise;
+        signal?.throwIfAborted();
+        written = true;
+        return Response.json({ path: "evals/reports/deep-research/run_eval_report_http.json" });
+      }, async () => {
+        const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+        await uploadStarted.promise;
+        if (cancelled) controller.abort(new Error("Run cancelled"));
+        finishUpload.resolve();
+        return await pending;
+      });
+      assertExists(signal);
+      assertEquals(signal.aborted, cancelled);
+      assertEquals(uploads, 1);
+      assertEquals(written, !cancelled);
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, !cancelled);
+      if (cancelled) {
+        assertStringIncludes(payload.error, "cancelled");
+        assertEquals(payload.artifacts, undefined);
+      } else {
+        assertEquals(
+          payload.artifacts[0].path,
+          "evals/reports/deep-research/run_eval_report_http.json",
+        );
+      }
     });
   }
 
