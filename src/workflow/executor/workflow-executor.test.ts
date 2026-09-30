@@ -22,7 +22,8 @@ import {
   workflow,
 } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
-import type { WorkflowRun } from "../types.ts";
+import type { WorkflowChildRunWaitBoundary, WorkflowRun } from "../types.ts";
+import type { WorkflowRunUpdate } from "../backends/types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
 import { FakeTime } from "#std/testing/time";
 import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
@@ -211,11 +212,11 @@ class RejectingNodeStateBoundaryBackend extends MemoryBackend {
 class ConcurrentSiblingChildRunBackend extends MemoryBackend {
   injected = false;
 
-  override async updateRunIfStatusAndWorker(
+  override async updateRunIfChildWaitBoundary(
     runId: string,
-    expectedStatuses: WorkflowRun["status"][],
-    expectedWorkerId: string,
-    patch: Partial<WorkflowRun>,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
   ): Promise<boolean> {
     if (!this.injected && patch.nodeStates?.children?.status === "completed") {
       this.injected = true;
@@ -231,11 +232,44 @@ class ConcurrentSiblingChildRunBackend extends MemoryBackend {
         },
       });
     }
-    return await super.updateRunIfStatusAndWorker(
+    return await super.updateRunIfChildWaitBoundary(
       runId,
-      expectedStatuses,
-      expectedWorkerId,
+      expectedBoundary,
       patch,
+      expectedWorkerId,
+    );
+  }
+}
+
+class ReplaceChildBoundaryOnAtomicUpdateBackend extends MemoryBackend {
+  replaced = false;
+
+  override async updateRunIfChildWaitBoundary(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (!this.replaced) {
+      this.replaced = true;
+      await super.updateRun(runId, {
+        currentNodes: ["children"],
+        nodeStates: {
+          children: {
+            nodeId: "children",
+            status: "running",
+            attempt: 2,
+            input: { type: "child_run", runIds: ["run_child_b"] },
+            _waitInstanceId: "wait-b",
+          },
+        },
+      });
+    }
+    return await super.updateRunIfChildWaitBoundary(
+      runId,
+      expectedBoundary,
+      patch,
+      expectedWorkerId,
     );
   }
 }
@@ -511,6 +545,7 @@ describe("workflow/executor/workflow-executor", () => {
           status: "running",
           attempt: 1,
           input: { type: "child_run", runIds: ["run_child_1"] },
+          _waitInstanceId: "wait-1",
         },
         sibling: { nodeId: "sibling", status: "running", attempt: 1 },
       },
@@ -518,12 +553,58 @@ describe("workflow/executor/workflow-executor", () => {
     };
     await backend.createRun(run);
 
-    assertEquals(await executor.resumeChildRuns(run.id), true);
+    assertEquals(
+      await executor.resumeChildRuns(run.id, [{
+        nodeId: "children",
+        runIds: ["run_child_1"],
+        waitInstanceId: "wait-1",
+      }]),
+      true,
+    );
 
     const completed = await backend.getRun(run.id);
     assertEquals(completed?.status, "completed");
     assertEquals(completed?.nodeStates.sibling?.status, "completed");
     assertEquals(completed?.context.sibling, { approved: true });
+  });
+
+  it("does not let a resume validated for an earlier child boundary complete the current one", async () => {
+    const backend = new ReplaceChildBoundaryOnAtomicUpdateBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run: WorkflowRun = {
+      ...createRun("stale-child-run-resume"),
+      status: "waiting",
+      workerId: "worker-1",
+      nodeStates: {
+        children: {
+          nodeId: "children",
+          status: "running",
+          attempt: 1,
+          input: { type: "child_run", runIds: ["run_child_a"] },
+          _waitInstanceId: "wait-a",
+        },
+      },
+      currentNodes: ["children"],
+    };
+    await backend.createRun(run);
+
+    assertEquals(
+      await executor.resumeChildRuns(run.id, [{
+        nodeId: "children",
+        runIds: ["run_child_a"],
+        waitInstanceId: "wait-a",
+      }]),
+      false,
+    );
+
+    const current = await backend.getRun(run.id);
+    assertEquals(current?.status, "waiting");
+    assertEquals(current?.nodeStates.children?.status, "running");
+    assertEquals(current?.nodeStates.children?._waitInstanceId, "wait-b");
+    assertEquals(current?.nodeStates.children?.input, {
+      type: "child_run",
+      runIds: ["run_child_b"],
+    });
   });
 
   it("persists the exact source integration policy when a run starts", async () => {

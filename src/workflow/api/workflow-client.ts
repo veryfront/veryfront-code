@@ -11,14 +11,17 @@ import type {
   PendingEventWait,
   RunFilter,
   WaitNodeConfig,
+  WorkflowChildRunWaitBoundary,
   WorkflowDefinition,
   WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
 import {
+  hasChildRunWaitBoundaryUpdateSupport,
   hasEventWaitSupport,
   hasRunObservationSupport,
+  hasRunPatchKeyMergeSupport,
   type WorkflowBackend,
 } from "../backends/types.ts";
 import { deriveWorkflowRunEventObservation, type WorkflowRunEventObservation } from "../events.ts";
@@ -43,7 +46,7 @@ import {
   getPendingApprovalResponseSchemaId,
   projectRunPendingApprovals,
 } from "../runtime/pending-approval-metadata.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
 
 const logger = baseLogger.component("workflow-client");
 const waitResponseSchemaId = Symbol("veryfront.workflow.waitResponseSchemaId");
@@ -141,6 +144,15 @@ export class WorkflowClient {
           await this.createEventWaitFromPersistedInput(run, nodeId, input, activeWaitConfig);
         } else if (input.type === "approval") {
           await this.createApprovalFromPersistedInput(run, nodeId, input, activeWaitConfig);
+        } else if (
+          input.type === "child_run" &&
+          (!hasRunPatchKeyMergeSupport(this.backend) ||
+            !hasChildRunWaitBoundaryUpdateSupport(this.backend))
+        ) {
+          throw NOT_SUPPORTED.create({
+            detail:
+              "Durable child-run waits require atomic boundary updates on a key-merge workflow backend",
+          });
         }
 
         await userOnWaitingPersist?.(run, nodeId, activeWaitConfig);
@@ -417,8 +429,11 @@ export class WorkflowClient {
   }
 
   /** Continue a durable pause after every child run reported by it became terminal. */
-  resumeChildRuns(runId: string): Promise<boolean> {
-    return this.executor.resumeChildRuns(runId);
+  resumeChildRuns(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+  ): Promise<boolean> {
+    return this.executor.resumeChildRuns(runId, expectedBoundary);
   }
 
   retry(runId: string): Promise<void> {

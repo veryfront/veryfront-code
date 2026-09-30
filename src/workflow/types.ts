@@ -238,6 +238,13 @@ export interface WaitNodeConfig extends BaseNodeConfig {
   responseSchema?: Schema<unknown>;
 }
 
+/** Exact durable child-run pause identity validated by the runtime bridge. */
+export interface WorkflowChildRunWaitBoundary {
+  nodeId: string;
+  waitInstanceId: string;
+  runIds: readonly string[];
+}
+
 /**
  * Durable record of a run parked on a `waitForEvent` or `delay` node.
  *

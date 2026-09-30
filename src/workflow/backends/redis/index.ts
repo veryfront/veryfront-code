@@ -12,6 +12,7 @@ import type {
   Checkpoint,
   PendingApproval,
   RunFilter,
+  WorkflowChildRunWaitBoundary,
   WorkflowQueueItem,
   WorkflowRun,
   WorkflowStatus,
@@ -1001,6 +1002,8 @@ return revision`;
  * index. The replace-maps flag (ARGV[expectedCount + 8]) switches `context`
  * and `nodeStates` from the per-key merge to wholesale replacement: checkpoint
  * restore must drop keys written after the snapshot, which a merge cannot do.
+ * ARGV[expectedCount + 9] optionally contains the exact child-run wait boundary
+ * that must still be current for this mutation.
  */
 const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
 local old = redis.call('hget', KEYS[1], 'status')
@@ -1040,6 +1043,35 @@ local expectedWorkerId = ARGV[expectedCount + 5]
 if expectedWorkerId ~= '' and redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then
   return 0
 end
+local expectedChildBoundaryRaw = ARGV[expectedCount + 9]
+if expectedChildBoundaryRaw ~= '' then
+  local expectedBoundary = cjson.decode(expectedChildBoundaryRaw)
+  local currentNodeIds = cjson.decode(redis.call('hget', KEYS[1], 'currentNodes') or '[]')
+  local nodeStates = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+  local currentBoundary = {}
+  for _, nodeId in ipairs(currentNodeIds) do
+    local state = nodeStates[nodeId]
+    if state and (state.status == 'running' or state.status == 'completed') and
+        state.input and state.input.type == 'child_run' and state.input.runIds and
+        #state.input.runIds > 0 and state._waitInstanceId and state._waitInstanceId ~= '' then
+      table.insert(currentBoundary, {
+        nodeId = nodeId,
+        waitInstanceId = state._waitInstanceId,
+        runIds = state.input.runIds,
+      })
+    end
+  end
+  if #currentBoundary ~= #expectedBoundary then return 0 end
+  for index, current in ipairs(currentBoundary) do
+    local expected = expectedBoundary[index]
+    if not expected or current.nodeId ~= expected.nodeId or
+        current.waitInstanceId ~= expected.waitInstanceId or
+        #current.runIds ~= #expected.runIds then return 0 end
+    for runIndex, runId in ipairs(current.runIds) do
+      if runId ~= expected.runIds[runIndex] then return 0 end
+    end
+  end
+end
 if nextStatus ~= '' and old ~= nextStatus then
   redis.call('hset', KEYS[1], 'status', nextStatus)
   redis.call('srem', statusPrefix .. old, runId)
@@ -1047,7 +1079,7 @@ if nextStatus ~= '' and old ~= nextStatus then
 end
 local streamKey = ARGV[expectedCount + 6]
 local maxLength = ARGV[expectedCount + 7]
-for i = expectedCount + 9, #ARGV, 2 do
+for i = expectedCount + 10, #ARGV, 2 do
   applyPatchField(ARGV[i], ARGV[i + 1])
 end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
@@ -2421,6 +2453,7 @@ export class RedisBackend implements WorkflowBackend {
     patch: WorkflowRunUpdate,
     expectedWorkerId?: string,
     replaceMapFields = false,
+    expectedChildBoundary?: readonly WorkflowChildRunWaitBoundary[],
   ): Promise<boolean> {
     assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
@@ -2457,6 +2490,7 @@ export class RedisBackend implements WorkflowBackend {
         this.runObservationKey(runId),
         String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
         replaceMapFields ? "1" : "0",
+        expectedChildBoundary === undefined ? "" : JSON.stringify(expectedChildBoundary),
         ...fieldArgs,
       ],
     );
@@ -2466,6 +2500,22 @@ export class RedisBackend implements WorkflowBackend {
       await client.del(this.claimKey(runId));
     }
     return updated;
+  }
+
+  async updateRunIfChildWaitBoundary(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    return await this.updateRunConditionally(
+      runId,
+      ["waiting"],
+      patch,
+      expectedWorkerId,
+      false,
+      expectedBoundary,
+    );
   }
 
   async deleteRun(runId: string): Promise<void> {

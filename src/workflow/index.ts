@@ -103,6 +103,7 @@ export type {
   TerminalRunRetentionBatch,
   TerminalRunRetentionCandidate,
   TerminalWorkflowStatus,
+  WithChildRunWaitBoundaryUpdateSupport,
   WithTerminalRunRetentionSupport,
   WorkflowBackend,
   WorkflowQueueDelivery,
@@ -110,7 +111,9 @@ export type {
   WorkflowRunObservedState,
   WorkflowRunUpdate,
 } from "./backends/types.ts";
+export type { WorkflowChildRunWaitBoundary } from "./types.ts";
 export {
+  hasChildRunWaitBoundaryUpdateSupport,
   hasEventWaitSupport,
   hasRunObservationSupport,
   hasTerminalRunRetentionSupport,

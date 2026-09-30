@@ -5855,7 +5855,17 @@ describe("WorkflowClient durable event waits", () => {
       "a recovery nudge must leave a durable child-run wait parked",
     );
 
-    assertEquals(await client.resumeChildRuns(handle.runId), true);
+    const parked = await client.getRun(handle.runId);
+    const waitInstanceId = parked?.nodeStates.children?._waitInstanceId;
+    assertExists(waitInstanceId);
+    assertEquals(
+      await client.resumeChildRuns(handle.runId, [{
+        nodeId: "children",
+        runIds: ["run_child_1", "run_child_2"],
+        waitInstanceId,
+      }]),
+      true,
+    );
     assertEquals((await client.getRun(handle.runId))?.status, "completed");
   });
 

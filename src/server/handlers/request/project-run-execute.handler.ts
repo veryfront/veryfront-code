@@ -268,7 +268,10 @@ interface WorkflowClientView {
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
-  resumeChildRuns?(runId: string): Promise<boolean>;
+  resumeChildRuns?(
+    runId: string,
+    expectedBoundary: ReadonlyArray<{ nodeId: string; runIds: string[]; waitInstanceId: string }>,
+  ): Promise<boolean>;
   approve?(
     runId: string,
     approvalId: string,
@@ -997,7 +1000,7 @@ function isParkedOnApproval(run: WorkflowRunView): boolean {
 interface PendingWorkflowWaits {
   approvals: NonNullable<WorkflowRunView["pendingApprovals"]>;
   eventWaits: WorkflowEventWaitView[];
-  childRunWaits: Array<{ nodeId: string; runIds: string[]; waitInstanceId?: string }>;
+  childRunWaits: Array<{ nodeId: string; runIds: string[]; waitInstanceId: string }>;
 }
 
 function isPendingWait(entry: { status?: string }): boolean {
@@ -1016,12 +1019,13 @@ async function readPendingWaits(
     if (
       input?.type !== "child_run" ||
       !Array.isArray(input.runIds) || input.runIds.length === 0 ||
-      input.runIds.some((runId) => typeof runId !== "string" || runId.length === 0)
+      input.runIds.some((runId) => typeof runId !== "string" || runId.length === 0) ||
+      typeof state?._waitInstanceId !== "string" || state._waitInstanceId.length === 0
     ) return [];
     return [{
       nodeId,
       runIds: input.runIds as string[],
-      ...(state?._waitInstanceId === undefined ? {} : { waitInstanceId: state._waitInstanceId }),
+      waitInstanceId: state._waitInstanceId,
     }];
   });
   return {
@@ -1080,8 +1084,8 @@ function waitKeys({ approvals, eventWaits, childRunWaits }: PendingWorkflowWaits
   return [
     ...approvals.map((approval) => `approval:${approval.id}`),
     ...eventWaits.map(eventWaitKey),
-    ...childRunWaits.flatMap(({ nodeId, runIds, waitInstanceId }) =>
-      runIds.map((runId) => `child:${waitInstanceId ?? nodeId}:${runId}`)
+    ...childRunWaits.flatMap(({ runIds, waitInstanceId }) =>
+      runIds.map((runId) => `child:${waitInstanceId}:${runId}`)
     ),
   ].sort((left, right) => left.localeCompare(right));
 }
@@ -1172,7 +1176,7 @@ async function applyResumeSignal(
     if (!client.resumeChildRuns) {
       return { failure: "Workflow client cannot release child-run waits" };
     }
-    return { released: await client.resumeChildRuns(runId) };
+    return { released: await client.resumeChildRuns(runId, parked.childRunWaits) };
   }
   if (resume.type === "event") return deliverResumeEvent(client, runId, resume);
   if (resume.type === "deadline") {

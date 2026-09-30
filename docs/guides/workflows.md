@@ -501,6 +501,17 @@ backend before relying on `waitForEvent` or `delay`.
 Use `waitForRuns` when a workflow starts or receives the IDs of independently durable runs and
 must continue only after every one of them reaches a terminal status:
 
+Every listed run must be a direct child of the waiting workflow run. When the child runs are
+created, set their `parentRunId` to that workflow run's ID:
+
+```ts
+const child = await runs.createTaskRun({
+  projectId: "<PROJECT_ID>",
+  parentRunId: workflowRunId,
+  target: "task:release-check",
+});
+```
+
 ```ts
 import { dependsOn, step, waitForRuns, workflow } from "veryfront/workflow";
 
@@ -523,6 +534,9 @@ The run ID list is resolved once when the node first parks and is stored with th
 The cloud runtime reports each dependency with the node ID as its correlation, and the control
 plane resumes the same workflow run only after all listed child runs are completed, failed, or
 cancelled. A child-run wait has no timeout. Use between 1 and 1000 run IDs.
+Built-in durable workflow backends apply child completion only while the exact persisted wait
+boundary is still current. A custom backend must support atomic key-merge run patches and atomic
+child-wait boundary updates before it can resume `waitForRuns` nodes.
 
 ## Workflow configuration
 

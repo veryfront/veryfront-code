@@ -643,6 +643,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           currentNodes: ["durable-children"],
           nodeStates: {
             "durable-children": {
+              status: "running",
+              _waitInstanceId: "wait-children",
               input: { type: "child_run", runIds: ["run_child_1", "run_child_2"] },
             },
           },
