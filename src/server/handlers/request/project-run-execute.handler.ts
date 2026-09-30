@@ -38,6 +38,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { findProjectRuntimeTask } from "#veryfront/task/project-runtime.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
+import type { SchemaViolation } from "#veryfront/task/io-contract.ts";
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
@@ -147,6 +148,12 @@ export interface ProjectRunExecuteResponse {
   retryable?: true;
   duration_ms?: number;
   artifacts?: unknown[];
+  /** sha256 of the canonical declared input schema (task runs), or `null` when none. */
+  input_schema_sha256?: string | null;
+  /** sha256 of the canonical declared output schema (task runs), or `null` when none. */
+  output_schema_sha256?: string | null;
+  /** A recorded, non-fatal schema mismatch (warning phase), or `null`. */
+  schema_violation?: SchemaViolation | null;
 }
 
 interface EvalReportUploadInput {
@@ -713,9 +720,15 @@ async function executeDiscoveredTaskRun(
     success: result.success,
     result: result.result,
     error: result.error,
+    ...(result.errorCode === undefined ? {} : { error_code: result.errorCode }),
+    ...(result.errorDetail === undefined ? {} : { error_detail: result.errorDetail }),
     duration_ms: result.durationMs,
     logs: null,
     ...(result.retryable ? { retryable: true as const } : {}),
+    // Omitted rather than null, so a schema-less task response is byte-identical to before.
+    ...(result.inputSchemaSha256 ? { input_schema_sha256: result.inputSchemaSha256 } : {}),
+    ...(result.outputSchemaSha256 ? { output_schema_sha256: result.outputSchemaSha256 } : {}),
+    ...(result.schemaViolation ? { schema_violation: result.schemaViolation } : {}),
   };
 }
 

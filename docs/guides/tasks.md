@@ -58,8 +58,8 @@ interface TaskDefinition {
 | ------------------------- | -------- | ------------------------------------------------ |
 | `name`                    | No       | Human-readable name                              |
 | `description`             | No       | What the task does                               |
-| `inputSchema`             | No       | JSON-schema-like input contract for APIs and UIs |
-| `outputSchema`            | No       | JSON-schema-like output contract                 |
+| `inputSchema`             | No       | Input contract, validated at run time            |
+| `outputSchema`            | No       | Output contract, validated at run time           |
 | `integrationRequirements` | No       | Integration access required by scheduled runs    |
 | `schedulable`             | No       | Scheduling eligibility metadata for APIs and UIs |
 | `run`                     | Yes      | The function to execute                          |
@@ -198,6 +198,49 @@ export default {
 
 A retried task runs again from the start, so make its side effects safe to
 repeat.
+
+## Declared schemas
+
+`inputSchema` and `outputSchema` accept a JSON Schema object or a schema from
+`defineSchema`. The runtime validates against them once, when the task runs.
+This release is the warning phase: only submitted `input` that violates
+`inputSchema` fails. Every other mismatch is recorded on the run and logged
+once as a warning, and the run behaves as before. The enforcement phase, which
+fails those mismatches too, follows in a later release.
+
+| Case                                                               | Result                                                                                                                                                           |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Submitted `input` violates `inputSchema`                           | Fails. `run()` is never called. The run ends `failed` with `error.code: "INPUT_VALIDATION_FAILED"`, the validation errors in `error.detail`, and `output: null`. |
+| Config-only run (no `input`) whose `config` violates `inputSchema` | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                      |
+| `run()` returns a value that violates `outputSchema`               | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                         |
+| A raw JSON Schema that no registered validator can compile         | Warns. The schema is not enforced and is never reported as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                              |
+| The execution result lacks the admitted output schema identity     | Warns. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                                                                     |
+
+When submitted `input` is valid, `run.input` keeps the submitted value and
+`ctx.input` receives the parsed value, with schema defaults and transforms
+applied. When the returned value is valid, `output` is the parsed value.
+Validation applies to the value `run()` returns, before any output filtering
+on reads. Access control and read filtering are unchanged.
+
+A recorded mismatch has this shape. A run keeps the first mismatch detected,
+with at most 20 errors:
+
+```json
+{
+  "phase": "output",
+  "reason": "invalid",
+  "schema_sha256": "<64 hex characters>",
+  "errors": [{ "path": "/confidence", "message": "must be number" }],
+  "detected_at": "2026-09-30T00:00:00.000Z"
+}
+```
+
+`reason` is one of `invalid`, `schema_uncompilable`, `identity_missing`, or
+`identity_mismatch`. Each run records `input_schema_sha256` and
+`output_schema_sha256`: the lowercase sha256 hex of the canonical JSON Schema
+(a `defineSchema` schema converted to JSON Schema, object keys sorted at every
+depth, serialized without whitespace). A task without that schema records
+`null`. Runs created before identities existed are never revalidated.
 
 ## Discovery
 
