@@ -1739,6 +1739,54 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
   });
 
+  it("aborts a pending knowledge upload listing before downloads or writes start", async () => {
+    const controller = new AbortController();
+    const listingStarted = Promise.withResolvers<void>();
+    let listingSignal: AbortSignal | undefined;
+    let laterRequests = 0;
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_knowledge_cancel_listing/execute",
+      {
+        runId: "run_knowledge_cancel_listing",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        config: { path_prefix: "uploads", recursive: true },
+      },
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = withMockFetch(
+      ((_input, init) => {
+        laterRequests++;
+        listingSignal = init?.signal ?? undefined;
+        listingStarted.resolve();
+        if (!listingSignal) return Promise.reject(new Error("missing abort signal"));
+        return new Promise<Response>((_resolve, reject) =>
+          listingSignal.addEventListener("abort", () => reject(listingSignal?.reason), {
+            once: true,
+          })
+        );
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    await listingStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertExists(listingSignal);
+    assertEquals(listingSignal.aborted, true);
+    assertEquals(laterRequests, 1);
+  });
+
   it("dispatches built-in style artifact builds through the reusable style executor", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     let attemptedProjectDiscovery = false;

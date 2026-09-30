@@ -2038,7 +2038,11 @@ function getEndpointProtocol(endpoint?: string): string | undefined {
   }
 }
 
-function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiClient {
+function createRuntimeApiClient(
+  req: Request,
+  ctx: HandlerContext,
+  defaultSignal?: AbortSignal,
+): RuntimeApiClient {
   const apiUrl = getEnvironmentConfig().apiBaseUrl;
   const token = getRuntimeApiToken(req, ctx);
   if (!token) {
@@ -2050,7 +2054,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
     path: string,
     body?: unknown,
     params?: Record<string, string>,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined = defaultSignal,
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
     for (const [key, value] of Object.entries(params ?? {})) {
@@ -2241,7 +2245,7 @@ async function executeKnowledgeIngestRun(input: {
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
-  const client = createRuntimeApiClient(input.req, input.ctx);
+  const client = createRuntimeApiClient(input.req, input.ctx, input.signal);
   const projectReference = input.ctx.projectSlug ?? input.request.projectId;
   const outputDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-run-" });
   const logLines: string[] = [];
