@@ -227,6 +227,63 @@ describe("src/task/runner declared schemas (warning phase)", () => {
     assertEquals(result.schemaViolation?.phase, "output");
   });
 
+  it("treats a raw JSON Schema with a __zod keyword as a raw schema, not a contract", async () => {
+    const { task } = schemaTask({ outputSchema: { type: "object", __zod: true } });
+
+    const result = await runTask({ task, input: {} }, createInMemoryHostRuntime());
+
+    assertEquals(result.success, true);
+    assertEquals(result.result, { category: "billing", confidence: 0.94 });
+  });
+
+  it("records a contract output violation even when the task replaced Array map", async () => {
+    const outputSchema = defineSchema((v) => v.object({ confidence: v.number() }))();
+    const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
+    const task = makeTask({
+      outputSchema,
+      run: () => {
+        Reflect.set(Array.prototype, "map", () => {
+          throw new Error("replaced Array.prototype.map");
+        });
+        return { confidence: "high" };
+      },
+    });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      result = await runTask({ task, input: {} }, createInMemoryHostRuntime());
+    } finally {
+      Reflect.defineProperty(Array.prototype, "map", originalMap);
+    }
+
+    assertEquals(result.success, true);
+    assertEquals(result.result, { confidence: "high" });
+    assertEquals(result.schemaViolation?.phase, "output");
+  });
+
+  it("stamps an output violation even when the task replaced Date", async () => {
+    const originalDate = Reflect.getOwnPropertyDescriptor(globalThis, "Date")!;
+    const { task } = schemaTask({ outputSchema: ticketOutputSchema }, { confidence: "high" });
+    const replacingTask = makeTask({
+      ...task.definition,
+      run: (ctx) => {
+        Reflect.set(globalThis, "Date", class {});
+        return task.definition.run(ctx);
+      },
+    });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      result = await runTask({ task: replacingTask, input: {} }, createInMemoryHostRuntime());
+    } finally {
+      Reflect.defineProperty(globalThis, "Date", originalDate);
+    }
+
+    assertEquals(result.success, true);
+    assertEquals(result.schemaViolation?.phase, "output");
+    assertMatch(result.schemaViolation?.detected_at ?? "", /^\d{4}-\d{2}-\d{2}T/);
+  });
+
   it("returns the validated output with the sha256 identity of the canonical output schema", async () => {
     const { task } = schemaTask({
       inputSchema: ticketInputSchema,

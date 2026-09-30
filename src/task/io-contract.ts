@@ -64,10 +64,34 @@ function fromJsonSchemaIssues(
   return errors;
 }
 
-/** Validate a value against a declared contract schema or raw JSON Schema. */
+// Captured at module load, before task code runs, so a replaced global `Date` cannot fail the
+// warning-phase record.
+const NativeDate = Date;
+const dateToISOString = Date.prototype.toISOString;
+const reflectApply = Reflect.apply;
+
+function isCallableContract(schema: unknown): schema is Schema<unknown> {
+  // A raw JSON Schema may carry any keyword, `__zod` included; only a real contract has safeParse.
+  return isContractSchema(schema) &&
+    typeof (schema as { safeParse?: unknown }).safeParse === "function";
+}
+
+/**
+ * Validate a value against a declared contract schema or raw JSON Schema. A validator that
+ * throws, for example because task code replaced a built-in it relies on, leaves the schema
+ * unenforced for this run: the warning phase records it and never fails the run for it.
+ */
 export async function checkDeclaredSchema(schema: unknown, value: unknown): Promise<SchemaCheck> {
-  if (isContractSchema(schema)) {
-    const result = (schema as Schema<unknown>).safeParse(value);
+  try {
+    return await runDeclaredSchemaCheck(schema, value);
+  } catch {
+    return { outcome: "schema_uncompilable" };
+  }
+}
+
+async function runDeclaredSchemaCheck(schema: unknown, value: unknown): Promise<SchemaCheck> {
+  if (isCallableContract(schema)) {
+    const result = schema.safeParse(value);
     if (result.success) return { outcome: "valid", value: result.data };
     return { outcome: "invalid", errors: toSchemaValidationErrors(result.issues) };
   }
@@ -97,7 +121,7 @@ export function createSchemaViolation(
     reason: check.outcome === "invalid" ? "invalid" : "schema_uncompilable",
     schema_sha256: schemaSha256,
     errors: check.outcome === "invalid" ? check.errors : [],
-    detected_at: new Date().toISOString(),
+    detected_at: reflectApply(dateToISOString, new NativeDate(), []) as string,
   };
 }
 

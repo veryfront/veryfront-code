@@ -212,13 +212,13 @@ This release is the warning phase: only submitted `input` that violates
 once as a warning, and the run behaves as before. The enforcement phase, which
 fails those mismatches too, follows in a later release.
 
-| Case                                                               | Result                                                                                                                                                           |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Submitted `input` violates `inputSchema`                           | Fails. `run()` is never called. The run ends `failed` with `error.code: "INPUT_VALIDATION_FAILED"`, the validation errors in `error.detail`, and `output: null`. |
-| Config-only run (no `input`) whose `config` violates `inputSchema` | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                      |
-| `run()` returns a value that violates `outputSchema`               | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                         |
-| A raw JSON Schema that no registered validator can compile         | Warns. The schema is not enforced and is never reported as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                              |
-| The execution result lacks the admitted output schema identity     | Warns. The platform, not the runtime, records it. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                          |
+| Case                                                                                   | Result                                                                                                                                                           |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Submitted `input` violates `inputSchema`                                               | Fails. `run()` is never called. The run ends `failed` with `error.code: "INPUT_VALIDATION_FAILED"`, the validation errors in `error.detail`, and `output: null`. |
+| Config-only run (no `input`) whose `config` violates `inputSchema`                     | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                      |
+| `run()` returns a value that violates `outputSchema`                                   | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                         |
+| A raw JSON Schema that no registered validator can compile, or a validator that throws | Warns. The schema is not enforced and is never reported as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                              |
+| The execution result lacks the admitted output schema identity                         | Warns. The platform, not the runtime, records it. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                          |
 
 When submitted `input` is valid, `run.input` keeps the submitted value and
 `ctx.input` receives the parsed value, with schema defaults and transforms
