@@ -1,3 +1,4 @@
+import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
@@ -33,6 +34,8 @@ export interface HostedHttpRequestAuthority extends InstalledProjectHttpBinding 
  * Source publication, resolver authorization and executor deployment remain caller prerequisites.
  */
 export interface HostedHttpIngressOptions {
+  /** Maximum source resolutions and executor startup calls in flight. Default 16, maximum 256; excess requests are refused without queuing. */
+  maxPreparing?: number;
   /** Existing executor pool. The caller owns its shutdown and settlement. */
   broker: Pick<ReturnType<typeof createHostedHttpBroker>, "fetch">;
   /** Authorize the exact identity and resolve its immutable image and application configuration without evaluating project code. */
@@ -70,6 +73,11 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
   if (typeof options.resolve !== "function" || typeof options.broker?.fetch !== "function") {
     throw new TypeError("Hosted HTTP ingress requires an authorized resolver and broker");
   }
+  const maxPreparing = options.maxPreparing ?? 16;
+  if (!Number.isSafeInteger(maxPreparing) || maxPreparing < 1 || maxPreparing > 256) {
+    throw new TypeError("Hosted HTTP ingress requires a bounded preparation limit");
+  }
+  const preparations = new PermitSemaphore(maxPreparing, { maxQueueSize: 0 });
   const resolve = options.resolve.bind(options);
   const fetch = options.broker.fetch.bind(options.broker);
   return async (request: Request, selection: IngressSelection): Promise<Response> => {
@@ -80,7 +88,12 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
     ) return unavailable(request);
     const origin = getEffectiveRequestOrigin(request, undefined, true);
     if (!origin) return unavailable(request);
+    if (!await preparations.tryAcquire(0, { signal: request.signal })) {
+      request.signal.throwIfAborted();
+      return unavailable(request);
+    }
     try {
+      request.signal.throwIfAborted();
       const identity = snapshotInstalledProjectHttpBinding({
         projectId: selection.projectId,
         projectSlug: selection.projectSlug,
@@ -131,6 +144,9 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
     } catch {
       request.signal.throwIfAborted();
       return unavailable(request);
+    } finally {
+      // Cancellation notification does not release work still owned by resolve.
+      preparations.release();
     }
   };
 }

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHostedHttpIngress, isHostedHttpApplicationRequest } from "./hosted-http-ingress.ts";
 import { createHostedHttpFixture } from "../../../tests/fixtures/hosted-http-broker.ts";
@@ -190,6 +190,7 @@ describe("hosted HTTP ingress", () => {
     );
   });
   it("does not allocate after an aborted source lookup returns late", async () => {
+    const entered = Promise.withResolvers<void>();
     const ready = Promise.withResolvers<ReturnType<typeof resolvedInput>>();
     let dispatches = 0;
     const fetch = createHostedHttpIngress({
@@ -202,11 +203,13 @@ describe("hosted HTTP ingress", () => {
       resolve(authority, signal) {
         assertEquals(Object.isFrozen(authority), true);
         assertEquals(signal.aborted, false);
+        entered.resolve();
         return ready.promise;
       },
     });
     const abort = new AbortController();
     const response = fetch(new Request("https://app.example", { signal: abort.signal }), selection);
+    await entered.promise;
     abort.abort(new Error("Source lookup canceled"));
     ready.resolve(resolvedInput());
     await assertRejects(() => response, Error, "Source lookup canceled");
@@ -231,6 +234,63 @@ describe("hosted HTTP ingress", () => {
         selection,
       );
       assertEquals(await response.text(), "matched");
+    }
+  });
+  it("bounds preparation without queuing or releasing canceled work before settlement", async () => {
+    const entered = Promise.withResolvers<void>();
+    const ready = Promise.withResolvers<ReturnType<typeof resolvedInput>>();
+    let resolutions = 0;
+    let dispatches = 0;
+    const fetch = createHostedHttpIngress({
+      maxPreparing: 1,
+      broker: {
+        fetch() {
+          dispatches++;
+          return Promise.resolve(new Response("admitted"));
+        },
+      },
+      resolve() {
+        resolutions++;
+        if (resolutions === 1) {
+          entered.resolve();
+          return ready.promise;
+        }
+        return Promise.resolve(resolvedInput());
+      },
+    });
+    const abort = new AbortController();
+    const pending = fetch(new Request("https://app.example", { signal: abort.signal }), selection);
+    void pending.catch(() => {});
+    try {
+      await entered.promise;
+      abort.abort(new Error("Canceled lookup"));
+      const busy = await fetch(request(), selection);
+      assertEquals(busy.status, 503);
+      await busy.body?.cancel();
+      assertEquals(resolutions, 1);
+      assertEquals(dispatches, 0);
+      ready.resolve(resolvedInput());
+      await assertRejects(() => pending, Error, "Canceled lookup");
+      assertEquals(await (await fetch(request(), selection)).text(), "admitted");
+      assertEquals(resolutions, 2);
+      assertEquals(dispatches, 1);
+    } finally {
+      ready.resolve(resolvedInput());
+      await pending.catch(() => {});
+    }
+  });
+  it("refuses invalid preparation limits at construction", () => {
+    for (const maxPreparing of [0, -1, 1.5, 257, Infinity]) {
+      assertThrows(
+        () =>
+          createHostedHttpIngress({
+            maxPreparing,
+            broker: { fetch: () => Promise.resolve(new Response()) },
+            resolve: () => Promise.resolve(resolvedInput()),
+          }),
+        TypeError,
+        "preparation limit",
+      );
     }
   });
 });
