@@ -21,11 +21,17 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { schemaToJsonSchema } from "./json-schema.ts";
 import { isContractSchema, snapshotJsonSchemaObject } from "./schema-input.ts";
 
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value === null || typeof value !== "object") return value;
   const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort()) {
+  // UTF-16 code unit order, byte-identical to the veryfront-api helper; not locale-dependent.
+  for (const key of Object.keys(value).sort(compareCodeUnits)) {
     sorted[key] = canonicalize((value as Record<string, unknown>)[key]);
   }
   return sorted;

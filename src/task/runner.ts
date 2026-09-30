@@ -13,6 +13,7 @@ import { isRetryableError } from "./errors.ts";
 import {
   checkDeclaredSchema,
   createSchemaViolation,
+  type SchemaCheck,
   schemaIdentitySha256,
   type SchemaValidationError,
   type SchemaViolation,
@@ -129,6 +130,33 @@ function assertInjectedTaskEnvIsValid(allEnv: Record<string, string>): void {
   }
 }
 
+type FailedSchemaCheck = Exclude<SchemaCheck, { outcome: "valid" }>;
+
+type TaskInputResolution =
+  | { kind: "rejected"; errors: SchemaValidationError[] }
+  | { kind: "resolved"; value: unknown; check: FailedSchemaCheck | null };
+
+/**
+ * Resolve the value passed to `run()` as `ctx.input`. Submitted input that
+ * violates the declared inputSchema is rejected; config-only runs fall back to
+ * `config` unchanged and return the failed check so it can be recorded.
+ */
+async function resolveTaskInput(
+  inputSchema: unknown,
+  input: unknown,
+  config: unknown,
+): Promise<TaskInputResolution> {
+  const hasInput = input !== undefined && input !== null;
+  const value = hasInput ? input : config;
+  if (inputSchema === undefined) return { kind: "resolved", value, check: null };
+  const check = await checkDeclaredSchema(inputSchema, value);
+  if (check.outcome === "valid") {
+    return { kind: "resolved", value: hasInput ? check.value : value, check: null };
+  }
+  if (check.outcome === "invalid" && hasInput) return { kind: "rejected", errors: check.errors };
+  return { kind: "resolved", value, check };
+}
+
 /**
  * Run a task with the given options
  *
@@ -153,7 +181,6 @@ export async function runTask(
   } = options;
   const start = performance.now();
   const { inputSchema, outputSchema } = task.definition;
-  const hasInput = input !== undefined && input !== null;
   let schemaViolation: SchemaViolation | null = null;
   let inputSchemaSha256: string | null = null;
   let outputSchemaSha256: string | null = null;
@@ -181,32 +208,28 @@ export async function runTask(
     outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
     const identities = { inputSchemaSha256, outputSchemaSha256 };
 
-    let taskInput: unknown = input ?? config;
-    if (inputSchema !== undefined) {
-      const check = await checkDeclaredSchema(inputSchema, taskInput);
-      if (check.outcome === "invalid" && hasInput) {
-        const durationMs = elapsedMilliseconds(start);
-        logger.warn(`Task "${task.id}" input failed its inputSchema`, {
-          taskId: task.id,
-          errorCount: check.errors.length,
-        });
-        return {
-          success: false,
-          error: `Task "${task.id}" input failed inputSchema validation: ${
-            check.errors.map((error) => `${error.path || "<root>"}: ${error.message}`).join("; ")
-          }`,
-          errorCode: "INPUT_VALIDATION_FAILED",
-          errorDetail: { errors: check.errors },
-          durationMs,
-          ...identities,
-          schemaViolation: null,
-        };
-      }
-      if (check.outcome === "valid" && hasInput) taskInput = check.value;
-      // Config-only runs keep reading config unchanged; a mismatch is only recorded.
-      if (check.outcome !== "valid") {
-        recordViolation(createSchemaViolation("input", check, inputSchemaSha256));
-      }
+    const inputCheck = await resolveTaskInput(inputSchema, input, config);
+    if (inputCheck.kind === "rejected") {
+      logger.warn(`Task "${task.id}" input failed its inputSchema`, {
+        taskId: task.id,
+        errorCount: inputCheck.errors.length,
+      });
+      return {
+        success: false,
+        error: `Task "${task.id}" input failed inputSchema validation: ${
+          inputCheck.errors.map((error) => `${error.path || "<root>"}: ${error.message}`).join("; ")
+        }`,
+        errorCode: "INPUT_VALIDATION_FAILED",
+        errorDetail: { errors: inputCheck.errors },
+        durationMs: elapsedMilliseconds(start),
+        ...identities,
+        schemaViolation: null,
+      };
+    }
+    const taskInput = inputCheck.value;
+    // Config-only runs keep reading config unchanged; a mismatch is only recorded.
+    if (inputCheck.check) {
+      recordViolation(createSchemaViolation("input", inputCheck.check, inputSchemaSha256));
     }
 
     const allEnv = host.env.toObject();

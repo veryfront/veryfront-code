@@ -12,7 +12,6 @@
 
 import type { JsonSchemaValidationIssue, Schema } from "#veryfront/extensions/schema/index.ts";
 import { tryCompileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
-import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import { isContractSchema, snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 
 /** At most this many validation errors are kept on a violation or a failed run. */
@@ -109,4 +108,4 @@ export function createSchemaViolation(
   };
 }
 
-export { schemaIdentitySha256 };
+export { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
