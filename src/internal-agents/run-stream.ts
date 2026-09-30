@@ -97,7 +97,11 @@ import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
-import { type ProviderReplayTurnFailure } from "#veryfront/agent/runtime/runtime-tool-config.ts";
+import {
+  getProviderReplayInvokeAgentToolCallsSchema,
+  type ProviderReplayInvokeAgentToolCall,
+  type ProviderReplayTurnFailure,
+} from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
@@ -1017,7 +1021,10 @@ function readProviderReplayTurnErrorCode(error: unknown): string | undefined {
 }
 
 function createProviderReplayCheckpointRelay(): {
-  complete: (messageId: string) => Promise<void>;
+  complete: (
+    messageId: string,
+    invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[],
+  ) => Promise<void>;
   fail: (failure?: ProviderReplayTurnFailure) => Promise<void>;
   takeCompletedTurn: () => Promise<ProviderReplayPrivateFrame[]>;
   hasCompletedTurn: () => boolean;
@@ -1046,12 +1053,18 @@ function createProviderReplayCheckpointRelay(): {
   };
 
   return {
-    complete: async (messageId) => {
+    complete: async (messageId, invokeAgentToolCalls) => {
+      const validatedInvokeAgentToolCalls = invokeAgentToolCalls === undefined
+        ? undefined
+        : getProviderReplayInvokeAgentToolCallsSchema().parse(invokeAgentToolCalls);
       buffered.push({
         event: PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
         payload: {
           type: "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED",
           messageId,
+          ...(validatedInvokeAgentToolCalls
+            ? { invokeAgentToolCalls: validatedInvokeAgentToolCalls }
+            : {}),
         },
       });
       resolveIfReady();
@@ -1344,8 +1357,9 @@ export async function createRuntimeAgentStreamResponse(
           : {}),
         ...(shouldEmitProviderReplayCheckpoints
           ? {
-            __vfProviderReplayCheckpointTurnComplete: () =>
-              providerReplayCheckpointRelay.complete(input.messageId!),
+            __vfProviderReplayCheckpointTurnComplete: (
+              invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[],
+            ) => providerReplayCheckpointRelay.complete(input.messageId!, invokeAgentToolCalls),
             __vfProviderReplayCheckpointTurnFailed: providerReplayCheckpointRelay.fail,
           }
           : {}),

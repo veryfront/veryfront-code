@@ -161,6 +161,7 @@ import {
   RuntimeEmptyResponseError,
 } from "./empty-response-recovery.ts";
 import {
+  getProviderReplayInvokeAgentToolCallsSchema,
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderReplayCheckpointMessageId,
@@ -174,6 +175,7 @@ import {
   getRuntimeToolExposureCheckpointPersister,
   isRuntimeProviderReplayCheckpointPersistenceRequired,
   isRuntimeToolExposureCheckpointPersistenceRequired,
+  type ProviderReplayInvokeAgentToolCall,
   type ProviderReplayTurnFailure,
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
@@ -1166,7 +1168,9 @@ async function persistToolExposureCheckpointBeforeContinuation(input: {
 type RuntimeProviderReplayCheckpointEmission = {
   state: ProviderReplayCheckpointEmissionState | undefined;
   persist: ((checkpoint: ProviderReplayCheckpoint) => void | Promise<void>) | undefined;
-  complete: (() => void | Promise<void>) | undefined;
+  complete:
+    | ((invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[]) => void | Promise<void>)
+    | undefined;
   fail: ((failure?: ProviderReplayTurnFailure) => void | Promise<void>) | undefined;
   failed: boolean;
   required: boolean;
@@ -1212,6 +1216,7 @@ async function failProviderReplayCheckpointTurn(
 async function persistProviderReplayCheckpointAfterTurn(input: {
   emission: RuntimeProviderReplayCheckpointEmission;
   providerMetadata: Record<string, unknown> | undefined;
+  invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[];
 }): Promise<void> {
   try {
     await persistProviderReplayCheckpointAfterTurnUnsafe(input);
@@ -1248,6 +1253,7 @@ function resolveProviderReplayPersistenceFailure(
 async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
   emission: RuntimeProviderReplayCheckpointEmission;
   providerMetadata: Record<string, unknown> | undefined;
+  invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[];
 }): Promise<void> {
   if (!input.emission.state) {
     if (input.emission.required) {
@@ -1255,7 +1261,7 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
         detail: "provider replay checkpoint message identity is required",
       });
     }
-    await input.emission.complete?.();
+    await input.emission.complete?.(input.invokeAgentToolCalls);
     return;
   }
   const checkpoint = captureProviderReplayCheckpoint(
@@ -1263,7 +1269,7 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
     input.providerMetadata,
   );
   if (!checkpoint) {
-    await input.emission.complete?.();
+    await input.emission.complete?.(input.invokeAgentToolCalls);
     return;
   }
   if (!input.emission.persist) {
@@ -1275,7 +1281,38 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
     return;
   }
   await input.emission.persist(checkpoint);
-  await input.emission.complete?.();
+  await input.emission.complete?.(input.invokeAgentToolCalls);
+}
+
+function collectParallelInvokeAgentToolCalls(
+  message: Message,
+): ProviderReplayInvokeAgentToolCall[] | undefined {
+  const calls: ProviderReplayInvokeAgentToolCall[] = [];
+  for (let index = 0; index < message.parts.length; index++) {
+    if (!ObjectHasOwn(message.parts, index)) continue;
+    const part = message.parts[index];
+    if (
+      !part || typeof part !== "object" ||
+      !("toolName" in part) || part.toolName !== "invoke_agent" ||
+      !("toolCallId" in part) || typeof part.toolCallId !== "string"
+    ) {
+      continue;
+    }
+    const args = "args" in part && part.args !== undefined
+      ? part.args
+      : "input" in part
+      ? part.input
+      : undefined;
+    if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+    pushPrivateArray(calls, {
+      toolCallId: part.toolCallId,
+      toolName: "invoke_agent",
+      toolArgsJson: "inputText" in part && typeof part.inputText === "string"
+        ? part.inputText
+        : privateJsonStringify(args),
+    });
+  }
+  return calls.length >= 2 ? getProviderReplayInvokeAgentToolCallsSchema().parse(calls) : undefined;
 }
 
 function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
@@ -2994,6 +3031,9 @@ export class AgentRuntime {
         await persistProviderReplayCheckpointAfterTurn({
           emission: providerReplayCheckpointEmission,
           providerMetadata: readAttachedProviderMetadata(assistantMessage),
+          invokeAgentToolCalls: providerReplayCheckpointEmission.complete
+            ? collectParallelInvokeAgentToolCalls(assistantMessage)
+            : undefined,
         });
         throwIfAborted(abortSignal);
         const generatedToolResults = collectGeneratedToolResults(response.toolResults);
@@ -4160,6 +4200,9 @@ export class AgentRuntime {
       await persistProviderReplayCheckpointAfterTurn({
         emission: providerReplayCheckpointEmission,
         providerMetadata: readAttachedProviderMetadata(assistantMessage),
+        invokeAgentToolCalls: providerReplayCheckpointEmission.complete
+          ? collectParallelInvokeAgentToolCalls(assistantMessage)
+          : undefined,
       });
 
       if (stoppedEmptyAfterCompletedTool) {

@@ -981,6 +981,103 @@ describe("internal-agents/run-stream", () => {
     assertEquals(JSON.stringify(frames).includes("ordered-signature"), false);
   });
 
+  it("emits every parallel invoke_agent call before the first tool dispatch", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const messageId = crypto.randomUUID();
+    let completeProviderReplayTurn:
+      | ((
+        invokeAgentToolCalls?: readonly {
+          toolCallId: string;
+          toolName: "invoke_agent";
+          toolArgsJson: string;
+        }[],
+      ) => void | Promise<void>)
+      | undefined;
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messageId,
+        messages: [],
+        tools: [{ name: "invoke_agent" }],
+        context: [],
+      },
+      agent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: () => Promise.resolve(),
+        createRuntime: (runtimeAgent) => {
+          completeProviderReplayTurn = (runtimeAgent.config as Agent["config"] & {
+            __vfProviderReplayCheckpointTurnComplete?: typeof completeProviderReplayTurn;
+          }).__vfProviderReplayCheckpointTurnComplete;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"step-start"}\n\n' +
+                        'data: {"type":"tool-input-start","toolCallId":"child-1","toolName":"invoke_agent"}\n\n' +
+                        'data: {"type":"tool-input-available","toolCallId":"child-1","toolName":"invoke_agent","input":{"task":"first"}}\n\n' +
+                        'data: {"type":"tool-input-start","toolCallId":"child-2","toolName":"invoke_agent"}\n\n' +
+                        'data: {"type":"tool-input-available","toolCallId":"child-2","toolName":"invoke_agent","input":{"task":"second"}}\n\n',
+                    ),
+                  );
+                  setTimeout(async () => {
+                    await completeProviderReplayTurn?.([
+                      {
+                        toolCallId: "child-1",
+                        toolName: "invoke_agent",
+                        toolArgsJson: '{"task":"first"}',
+                      },
+                      {
+                        toolCallId: "child-2",
+                        toolName: "invoke_agent",
+                        toolArgsJson: '{"task":"second"}',
+                      },
+                    ]);
+                    controller.close();
+                  }, 0);
+                },
+              }),
+          };
+        },
+      },
+    );
+    const frames = parseSseFrames(await response.text());
+    const turnCompleteIndex = frames.findIndex((frame) =>
+      frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
+    );
+    const firstToolCallEndIndex = frames.findIndex((frame) => frame.event === "ToolCallEnd");
+
+    assertEquals(turnCompleteIndex < firstToolCallEndIndex, true);
+    const turnComplete = frames[turnCompleteIndex]?.data as Record<string, unknown>;
+    assertEquals(turnComplete.type, "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED");
+    assertEquals(turnComplete.messageId, messageId);
+    assertEquals(turnComplete.invokeAgentToolCalls, [
+      {
+        toolCallId: "child-1",
+        toolName: "invoke_agent",
+        toolArgsJson: '{"task":"first"}',
+      },
+      {
+        toolCallId: "child-2",
+        toolName: "invoke_agent",
+        toolArgsJson: '{"task":"second"}',
+      },
+    ]);
+  });
+
   it("fails closed when checkpoint emission has no runtime message identity", async () => {
     const sessionManager = new AgentRunSessionManager();
     const agent = {

@@ -40,6 +40,18 @@ function lookupTool(onExecute: () => void = () => {}) {
   });
 }
 
+function invokeAgentTool(onExecute: (task: string) => void = () => {}) {
+  return tool({
+    id: "invoke_agent",
+    description: "Invoke a child agent",
+    inputSchema: defineSchema((v) => v.object({ task: v.string() }))(),
+    execute: ({ task }) => {
+      onExecute(task);
+      return { result: task };
+    },
+  });
+}
+
 describe("provider replay checkpoint emission", () => {
   it("accumulates private provider blocks without consulting the buffer append method", () => {
     const state = createProviderReplayCheckpointEmissionState({ messageId: MESSAGE_ID });
@@ -278,6 +290,108 @@ describe("provider replay checkpoint emission", () => {
       ]);
     });
   }
+
+  it("passes the complete parallel invoke_agent batch before tool execution", async () => {
+    const operations: string[] = [];
+    let completedBatch: unknown;
+    const model = scriptedModel([{
+      toolCalls: [
+        { id: "child-1", name: "invoke_agent", input: { task: "first" } },
+        { id: "child-2", name: "invoke_agent", input: { task: "second" } },
+      ],
+    }], {
+      modelId: "anthropic/parallel-invoke-agent-replay-boundary",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const config = {
+      id: "parallel-invoke-agent-replay-boundary",
+      model: "anthropic/parallel-invoke-agent-replay-boundary",
+      system: "Delegate twice.",
+      skills: false,
+      tools: {
+        invoke_agent: invokeAgentTool((task) => operations.push(`tool:${task}`)),
+      },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls) => {
+        operations.push("turn:complete");
+        completedBatch = invokeAgentToolCalls;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    await (await agent(config).stream({ input: "Delegate both tasks" })).toDataStreamResponse()
+      .text();
+
+    assertEquals(completedBatch, [
+      {
+        toolCallId: "child-1",
+        toolName: "invoke_agent",
+        toolArgsJson: '{"task":"first"}',
+      },
+      {
+        toolCallId: "child-2",
+        toolName: "invoke_agent",
+        toolArgsJson: '{"task":"second"}',
+      },
+    ]);
+    assertEquals(operations, ["turn:complete", "tool:first", "tool:second"]);
+  });
+
+  it("keeps the replay boundary payload unchanged for one invoke_agent call", async () => {
+    let completedBatch: unknown = "not-called";
+    const model = scriptedModel([{
+      toolCalls: [{ id: "child-1", name: "invoke_agent", input: { task: "only" } }],
+    }], {
+      modelId: "anthropic/single-invoke-agent-replay-boundary",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "single-invoke-agent-replay-boundary",
+      model: "anthropic/single-invoke-agent-replay-boundary",
+      system: "Delegate once.",
+      skills: false,
+      tools: { invoke_agent: invokeAgentTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls) => {
+        completedBatch = invokeAgentToolCalls;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    await agent(config).generate({ input: "Delegate one task" });
+
+    assertEquals(completedBatch, undefined);
+  });
+
+  it("does not apply private replay batch limits outside a hosted replay boundary", async () => {
+    const tasks: string[] = [];
+    const model = scriptedModel([{
+      toolCalls: [
+        { id: `child-${"a".repeat(128)}`, name: "invoke_agent", input: { task: "first" } },
+        { id: "child-2", name: "invoke_agent", input: { task: "second" } },
+      ],
+    }], {
+      modelId: "anthropic/direct-parallel-invoke-agent",
+      provider: "anthropic",
+      only: "generate",
+    });
+
+    await agent({
+      id: "direct-parallel-invoke-agent",
+      model: "anthropic/direct-parallel-invoke-agent",
+      system: "Delegate twice.",
+      skills: false,
+      tools: { invoke_agent: invokeAgentTool((task) => tasks.push(task)) },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    }).generate({ input: "Delegate both tasks" });
+
+    assertEquals(tasks, ["first", "second"]);
+  });
 
   it("required replay checkpoint persistence fails closed on the final provider turn", async () => {
     const model = scriptedModel([{
