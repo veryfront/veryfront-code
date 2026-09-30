@@ -1602,9 +1602,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         receivedRepetitions = definition.repetitions;
         options.onProgress?.({
           type: "record-finished",
-          evalId: definition.id,
-          recordId: "q1:1",
-          exampleId: "q1",
+          evalId: "eval:private-customer\nforged-eval-row",
+          recordId: "session-123\nforged-record-row",
+          exampleId: "customer-456\nforged-example-row",
           repetition: 1,
           index: 0,
           total: 2,
@@ -1656,9 +1656,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       contentType: "application/json",
     }]);
     assertEquals(String(payload.logs).split("\n"), [
-      "Eval case q1 (repetition 1) completed (1/2)",
-      "Eval case q1 (repetition 2) completed (2/2)",
+      '{"level":"info","message":"Eval case completed","case_index":1,"total_cases":2,"repetition":1}',
+      '{"level":"info","message":"Eval case completed","case_index":2,"total_cases":2,"repetition":2}',
     ]);
+    assertEquals(String(payload.logs).includes("private-customer"), false);
+    assertEquals(String(payload.logs).includes("session-123"), false);
+    assertEquals(String(payload.logs).includes("customer-456"), false);
+    assertEquals(String(payload.logs).split("\n").length, 2);
     assertEquals(receivedTaskId, "eval");
     assertEquals(receivedEvalId, "eval:deep-research");
     assertEquals(receivedRepetitions, 2);
@@ -1740,8 +1744,68 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const payload = await result.response.json();
     assertEquals(payload.success, false);
     assertStringIncludes(payload.error, "cancelled");
-    assertEquals(payload.logs, "Eval case q1 (repetition 1) completed (1/2)");
+    assertEquals(
+      payload.logs,
+      '{"level":"info","message":"Eval case completed","case_index":1,"total_cases":2,"repetition":1}',
+    );
     assertEquals(startedCases, ["q1"]);
+  });
+
+  it("bounds task:eval progress logs and emits one eval truncation marker", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_task_eval_many_cases",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-09-30T10:00:00.000Z",
+      endedAt: "2026-09-30T10:00:01.000Z",
+      summary: { records: 2_000, passed: 2_000, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (definition, options) => {
+        for (let index = 0; index < 2_000; index += 1) {
+          options.onProgress?.({
+            type: "record-finished",
+            evalId: definition.id,
+            recordId: `private-record-${index}`,
+            exampleId: `private-example-${index}`,
+            repetition: 1,
+            index,
+            total: 2_000,
+            completed: true,
+            durationMs: 1,
+          });
+        }
+        return report;
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_many_cases/execute",
+      {
+        runId: "run_task_eval_many_cases",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    const lines = String(payload.logs).split("\n");
+    assertEquals(lines.length, 1_001);
+    assertEquals(
+      lines.filter((line) => line.includes("Eval progress logs were truncated")).length,
+      1,
+    );
+    assertEquals(String(payload.logs).includes("private-example"), false);
+    assertEquals(String(payload.logs).includes("private-record"), false);
   });
 
   it("fails task:eval with RUN_TIMEOUT when its task deadline expires", async () => {

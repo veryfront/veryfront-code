@@ -103,10 +103,7 @@ const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
   "Workflow paused but runtime workflow persistence is not configured";
 const KNOWLEDGE_LOG_MAX_EVENTS = 1_000;
 const KNOWLEDGE_LOG_MAX_BYTES = 256 * 1_024;
-const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
-  level: "warn",
-  message: "Knowledge ingest logs were truncated",
-});
+const KNOWLEDGE_LOG_TRUNCATED_MESSAGE = "Knowledge ingest logs were truncated";
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
@@ -1962,9 +1959,13 @@ async function resolveUploadIdsToPaths(
   return paths;
 }
 
-export function createKnowledgeEventLogger(lines: string[]): Logger {
+export function createKnowledgeEventLogger(
+  lines: string[],
+  truncatedMessage = KNOWLEDGE_LOG_TRUNCATED_MESSAGE,
+): Logger {
   const encoder = new TextEncoder();
-  const truncatedLineBytes = encoder.encode(KNOWLEDGE_LOG_TRUNCATED_LINE).byteLength;
+  const truncatedLine = JSON.stringify({ level: "warn", message: truncatedMessage });
+  const truncatedLineBytes = encoder.encode(truncatedLine).byteLength;
   let eventCount = 0;
   let byteCount = 0;
   let truncated = false;
@@ -1974,7 +1975,7 @@ export function createKnowledgeEventLogger(lines: string[]): Logger {
     truncated = true;
     const separatorBytes = lines.length > 0 ? 1 : 0;
     if (byteCount + separatorBytes + truncatedLineBytes <= KNOWLEDGE_LOG_MAX_BYTES) {
-      lines.push(KNOWLEDGE_LOG_TRUNCATED_LINE);
+      lines.push(truncatedLine);
     }
   };
   const append = (level: string, message: string, metadata?: Record<string, unknown>) => {
@@ -2294,6 +2295,9 @@ async function executeEvalRun(
   const startedAt = deps.now();
   const evalId = options.evalId ?? request.target;
   const progressLogs = options.progressLogs ?? [];
+  const progressLogger = options.summaryOnly
+    ? createKnowledgeEventLogger(progressLogs, "Eval progress logs were truncated")
+    : undefined;
   await deps.ensureProjectDiscovery(ctx);
   const evalItem = await deps.findEvalById(evalId, {
     projectDir: ctx.projectDir,
@@ -2328,11 +2332,11 @@ async function executeEvalRun(
       ? {
         onProgress: (event) => {
           if (event.type !== "record-finished") return;
-          progressLogs.push(
-            `Eval case ${event.exampleId} (repetition ${event.repetition}) completed (${
-              event.index + 1
-            }/${event.total})`,
-          );
+          progressLogger?.info("Eval case completed", {
+            case_index: event.index + 1,
+            total_cases: event.total,
+            repetition: event.repetition,
+          });
         },
       }
       : {}),
