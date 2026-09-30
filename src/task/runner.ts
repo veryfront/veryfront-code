@@ -134,7 +134,7 @@ export async function runTask(
       env,
       config,
       input: input ?? config,
-      runId,
+      ...(runId === undefined ? {} : { runId }),
       projectId,
       environmentId,
       ...(signal === undefined ? {} : { signal }),

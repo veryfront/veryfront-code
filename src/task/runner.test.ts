@@ -126,6 +126,20 @@ describe("src/task/runner", () => {
       assertEquals(receivedProjectId, "proj-123");
     });
 
+    it("should omit runId from local task context", async () => {
+      let hasRunId = true;
+      const task = makeTask({
+        run: (ctx) => {
+          hasRunId = Object.hasOwn(ctx, "runId");
+          return null;
+        },
+      });
+
+      await runTask({ task }, createInMemoryHostRuntime());
+
+      assertEquals(hasRunId, false);
+    });
+
     it("should pass runId to task context", async () => {
       let receivedRunId: string | undefined;
       const task = makeTask({
