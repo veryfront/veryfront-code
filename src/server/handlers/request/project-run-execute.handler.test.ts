@@ -271,7 +271,7 @@ describe("projectWorkflowRedisPrefix", () => {
 /** The waiting payload without its opaque boundary id, which must be a SHA-256 hex digest. */
 function withoutWaitId(waiting: Record<string, unknown>): Record<string, unknown> {
   const { wait_id: waitId, ...rest } = waiting;
-  assertMatch(String(waitId), /^[0-9a-f]{64}$/);
+  assertMatch(String(waitId), /^w(\.[0-9a-f]{16})*$/);
   return rest;
 }
 
@@ -3539,8 +3539,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       approved: true,
       approver: "user:u1",
     }, { workflowResumeTimeoutMs: 5 });
-    assertEquals(payload.success, false);
-    assertStringIncludes(payload.error, "timed out");
+    // The resumed execution keeps running, so the canonical run stays waiting
+    // and is dispatched again shortly to report where the run got to.
+    assertEquals(payload.success, true);
+    assertEquals(payload.status, "waiting");
+    assertExists(payload.waiting.resume_at);
     assertEquals(destroyed, false);
     settle({ status: "completed", output: {} });
     finish();
@@ -3600,8 +3603,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await handler.handle(request, createCtx(signed.publicKeyPem));
     assertExists(result.response);
     const payload = await result.response.json();
-    assertEquals(payload.success, false);
-    assertStringIncludes(payload.error, "timed out");
+    assertEquals(payload.status, "waiting");
 
     requestController.abort(new Error("request closed after timeout response"));
     settle({ status: "running" });
@@ -3625,6 +3627,143 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertEquals(calls.map(([name]) => name), ["approve"]);
     assertEquals(payload.result, { stage: "paid" });
+  });
+
+  it("delivers the second of two parallel event waits under the wait_id of their shared pause", async () => {
+    const invoiceWait = {
+      id: "wait-invoice",
+      nodeId: "invoice",
+      eventName: "invoice.received",
+      waitKind: "event",
+      status: "pending",
+    };
+    const receiptWait = {
+      id: "wait-receipt",
+      nodeId: "receipt",
+      eventName: "receipt.received",
+      waitKind: "event",
+      status: "pending",
+    };
+    const bothPending = {
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [invoiceWait, receiptWait],
+    };
+    const waitId = await reportedWaitId(bothPending);
+    // The first event was delivered: only the receipt wait is left.
+    const { client, calls } = resumableClient({
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [receiptWait],
+    });
+
+    const { payload, runId } = await executeResume(client, {
+      type: "event",
+      name: "receipt.received",
+      payload: { id: 9 },
+      wait_id: waitId,
+    });
+
+    assertEquals(calls, [["publishEvent", runId, "receipt.received", { id: 9 }]]);
+    assertEquals(payload.result, { invoice: { id: 9 } });
+  });
+
+  it("does not deliver an event to a later pause on the same node than the one its wait_id names", async () => {
+    const earlier = {
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [{
+        id: "wait-1",
+        nodeId: "invoice",
+        eventName: "invoice.received",
+        waitKind: "event",
+      }],
+    };
+    const waitId = await reportedWaitId(earlier);
+    const { client, calls } = resumableClient({
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [{
+        id: "wait-2",
+        nodeId: "invoice",
+        eventName: "invoice.received",
+        waitKind: "event",
+      }],
+    });
+
+    const { payload } = await executeResume(client, {
+      type: "event",
+      name: "invoice.received",
+      wait_id: waitId,
+    });
+
+    assertEquals(calls, []);
+    assertEquals(payload.status, "waiting");
+  });
+
+  it("releases nothing on a deadline dispatch at the exact expiry instant and re-reports the pause", async () => {
+    const at = 1_700_000_000_000;
+    const parked = {
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [{
+        id: "delay-1",
+        nodeId: "cool-off",
+        eventName: "__veryfront_delay__",
+        waitKind: "delay",
+        status: "pending",
+        expiresAt: new Date(at),
+      }],
+    };
+    const waitId = await reportedWaitId(parked);
+    const { client } = resumableClient({ ...parked, onDeadline: parked });
+
+    const { payload } = await executeResume(client, { type: "deadline", wait_id: waitId }, {
+      now: () => at,
+      sleep: () => new Promise((resolve) => setTimeout(resolve, 0)),
+      workflowResumeTimeoutMs: 200,
+    });
+
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting.wait_id, waitId);
+  });
+
+  it("fails fast when the workflow backend cannot persist the event wait a run parked on", async () => {
+    // The run parked on a `waitForEvent()` the backend saved no record for.
+    const { client } = resumableClient({ status: "waiting", pendingApprovals: [] });
+    let clock = 0;
+    let cancelled = 0;
+    const eventless = {
+      ...client,
+      persistsEventWaits: false,
+      start: () => Promise.resolve({ runId: "run_27714e62-7b05-466e-809e-0d8f1cdf1e62" }),
+      cancel: () => {
+        cancelled += 1;
+        return Promise.resolve();
+      },
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => eventless,
+      now: () => clock,
+      sleep: () => {
+        clock += 1_000;
+        return Promise.resolve();
+      },
+    }));
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "cannot persist event waits");
+    assertEquals(cancelled, 1);
+    assertEquals(clock < 60_000, true);
   });
 
   it("reports every awaited event name when a run waits on several", async () => {

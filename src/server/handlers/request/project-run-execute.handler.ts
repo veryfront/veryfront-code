@@ -61,7 +61,7 @@ import { type Logger, serverLogger } from "#veryfront/utils";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
-import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
+import { createWorkflowClient, hasEventWaitSupport, RedisBackend } from "#veryfront/workflow";
 import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import type { WorkflowClientConfig } from "#veryfront/workflow";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
@@ -88,6 +88,16 @@ const TaskAbortSignalAny = AbortSignal.any;
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
+/** How long a durable run may read `waiting` on no record before a backend without event waits is blamed. */
+const WORKFLOW_UNPERSISTED_WAIT_GRACE_MS = 5_000;
+/** When the control plane re-dispatches a resume whose request timed out, to report where the run got to. */
+const WORKFLOW_RESUME_RECHECK_MS = 30_000;
+/** Prefix of a `wait_id` that lists one short hash per wait record of the pause. */
+const WAIT_ID_PREFIX = "w";
+const WAIT_ID_HASH_LENGTH = 16;
+const WAIT_ID_MAX_LENGTH = 256;
+const UNPERSISTED_EVENT_WAIT_ERROR =
+  "The workflow backend cannot persist event waits, so this run cannot be resumed";
 const DEFAULT_LOCAL_AG_UI_PORT = 3001;
 const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
   "Workflow paused but runtime workflow persistence is not configured";
@@ -227,6 +237,8 @@ interface WorkflowStartHandle {
 
 interface WorkflowClientView {
   readonly statePersistence?: "durable" | "ephemeral";
+  /** False when the durable backend cannot save event and delay waits. */
+  readonly persistsEventWaits?: boolean;
   register(workflow: unknown): void;
   start(
     workflowId: string,
@@ -731,6 +743,7 @@ async function createRuntimeWorkflowClient(
 
   return Object.assign(createWorkflowClient({ ...clientConfig, backend, debug: config?.debug }), {
     statePersistence: "durable" as const,
+    persistsEventWaits: hasEventWaitSupport(backend),
   });
 }
 
@@ -884,6 +897,7 @@ async function waitForWorkflowResult(
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
   let previousKeys: string[] | undefined;
+  let parkedOnNothingSince: number | undefined;
 
   while (true) {
     const run = await client.getRun(runId);
@@ -904,6 +918,22 @@ async function waitForWorkflowResult(
     if (run.status === "waiting") {
       if (client.statePersistence !== "durable") return run;
       const keys = waitKeys(await readPendingWaits(client, runId, run));
+      // A backend without event waits saves no record for a `waitForEvent()`
+      // or `delay()`, so nothing can ever resume the run: fail it instead of
+      // polling until the status timeout.
+      if (keys.length === 0 && client.persistsEventWaits === false) {
+        parkedOnNothingSince ??= deps.now();
+        if (deps.now() - parkedOnNothingSince >= WORKFLOW_UNPERSISTED_WAIT_GRACE_MS) {
+          await client.cancel(runId);
+          return {
+            status: "failed",
+            output: run.output,
+            error: { message: UNPERSISTED_EVENT_WAIT_ERROR },
+          };
+        }
+      } else {
+        parkedOnNothingSince = undefined;
+      }
       const settled = keys.length > 0 &&
         !(releasedKeys && sameKeys(keys, releasedKeys)) &&
         previousKeys !== undefined && sameKeys(keys, previousKeys);
@@ -911,6 +941,7 @@ async function waitForWorkflowResult(
       previousKeys = keys;
     } else {
       previousKeys = undefined;
+      parkedOnNothingSince = undefined;
     }
 
     if (deps.now() >= deadline) {
@@ -997,14 +1028,37 @@ function isParkedOnNothing({ approvals, eventWaits }: PendingWorkflowWaits): boo
   return approvals.length === 0 && eventWaits.length === 0;
 }
 
-function waitBoundaryId(parked: PendingWorkflowWaits): Promise<string> {
-  return computeHash(waitKeys(parked).join("\n"));
+async function waitKeyHash(key: string): Promise<string> {
+  return (await computeHash(key)).slice(0, WAIT_ID_HASH_LENGTH);
 }
 
+/**
+ * Identifies a pause by its wait records: one short hash per record, so a
+ * decision for one of several parallel waits still matches after another of
+ * them was released. A pause on too many records to list falls back to one
+ * hash of the whole set.
+ */
+async function waitBoundaryId(parked: PendingWorkflowWaits): Promise<string> {
+  const keys = waitKeys(parked);
+  const hashes = await Promise.all(keys.map(waitKeyHash));
+  const id = [WAIT_ID_PREFIX, ...hashes].join(".");
+  return id.length <= WAIT_ID_MAX_LENGTH ? id : computeHash(keys.join("\n"));
+}
+
+/** The wait-record hashes a listed `wait_id` names, or undefined for a whole-set hash. */
+function listedWaitHashes(waitId: string): Set<string> | undefined {
+  const [prefix, ...hashes] = waitId.split(".");
+  return prefix === WAIT_ID_PREFIX ? new Set(hashes) : undefined;
+}
+
+/**
+ * Matches the runtime's expiry sweeps, which release a wait only once the
+ * clock is past its deadline, not at the deadline itself.
+ */
 function hasDueWait({ approvals, eventWaits }: PendingWorkflowWaits, nowMs: number): boolean {
   return [...approvals, ...eventWaits].some((wait) => {
     const deadline = deadlineMs(wait.expiresAt);
-    return deadline !== undefined && deadline <= nowMs;
+    return deadline !== undefined && deadline < nowMs;
   });
 }
 
@@ -1064,6 +1118,11 @@ async function applyResumeSignal(
  * is parked on now: an earlier dispatch applied it and the run moved on before
  * its response reached the control plane. Such a retry reports where the run
  * is and applies nothing, so it cannot decide a later boundary (#2102).
+ *
+ * An approval or event decision is checked against the waits it targets, so
+ * the second of two parallel waits still accepts its decision after the first
+ * was released. A deadline releases every due wait, so it applies only while
+ * every pending wait belongs to the pause it was scheduled for.
  */
 async function isStaleDecision(
   resume: WorkflowResumeSignal,
@@ -1071,7 +1130,30 @@ async function isStaleDecision(
 ): Promise<boolean> {
   if (resume.wait_id === undefined) return false;
   if (isParkedOnNothing(parked)) return false;
-  return resume.wait_id !== await waitBoundaryId(parked);
+  const named = listedWaitHashes(resume.wait_id);
+  if (!named) return resume.wait_id !== await waitBoundaryId(parked);
+
+  const pending = waitKeys(parked);
+  const targeted = targetedWaitKeys(resume, parked);
+  const hashes = await Promise.all(pending.map(waitKeyHash));
+  const isNamed = (key: string) => named.has(hashes[pending.indexOf(key)]!);
+  if (resume.type === "deadline" || targeted.length === 0) return !pending.every(isNamed);
+  return !targeted.some(isNamed);
+}
+
+/** The pending wait records an approval or event decision would release. */
+function targetedWaitKeys(resume: WorkflowResumeSignal, parked: PendingWorkflowWaits): string[] {
+  if (resume.type === "approval") {
+    return parked.approvals
+      .filter((approval) => approval.nodeId === resume.node_id)
+      .map((approval) => `approval:${approval.id}`);
+  }
+  if (resume.type === "event") {
+    return parked.eventWaits
+      .filter((wait) => wait.waitKind === "event" && wait.eventName === resume.name)
+      .map(eventWaitKey);
+  }
+  return [];
 }
 
 /**
@@ -1188,15 +1270,30 @@ async function executeWorkflowRun(
       let timer: ReturnType<typeof setTimeout> | undefined;
       const resumed = await Promise.race([
         operation,
-        new Promise<never>((_resolve, reject) => {
+        new Promise<{ timedOut: true }>((resolve) => {
           timer = setTimeout(() => {
             resumeTimedOut = true;
-            reject(TIMEOUT_ERROR.create({
-              detail: `Workflow run timed out: ${request.runId}`,
-            }));
+            resolve({ timedOut: true });
           }, deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
         }),
       ]).finally(() => clearTimeout(timer));
+      if ("timedOut" in resumed) {
+        // The resumed execution keeps running durably, so the run did not
+        // fail: keep the canonical run waiting and have the control plane
+        // dispatch it again soon. That dispatch names no pending wait, so it
+        // releases nothing and reports where the run got to.
+        return {
+          success: true,
+          status: "waiting",
+          waiting_reason: "event",
+          waiting: {
+            wait_id: WAIT_ID_PREFIX,
+            resume_at: new Date(deps.now() + WORKFLOW_RESUME_RECHECK_MS).toISOString(),
+          },
+          logs: null,
+          duration_ms: Math.max(0, deps.now() - startedAt),
+        };
+      }
       if ("failure" in resumed) {
         return {
           success: false,
