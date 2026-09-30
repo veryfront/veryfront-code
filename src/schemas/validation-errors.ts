@@ -29,15 +29,31 @@ export function escapePointerSegment(segment: string | number): string {
 export function toSchemaValidationErrors(
   issues: readonly ValidationIssue[],
 ): SchemaValidationError[] {
-  return issues.slice(0, MAX_SCHEMA_VALIDATION_ERRORS).map((issue) => ({
-    path: issue.path.length === 0 ? "" : `/${issue.path.map(escapePointerSegment).join("/")}`,
-    message: issue.message,
-  }));
+  // Index loops and string concatenation only: task code may have replaced Array methods in the
+  // shared realm, and reporting a validation failure must not throw because of it.
+  const errors: SchemaValidationError[] = [];
+  const count = issues.length < MAX_SCHEMA_VALIDATION_ERRORS
+    ? issues.length
+    : MAX_SCHEMA_VALIDATION_ERRORS;
+  for (let index = 0; index < count; index++) {
+    const issue = issues[index]!;
+    let path = "";
+    for (let segment = 0; segment < issue.path.length; segment++) {
+      path += `/${escapePointerSegment(issue.path[segment]!)}`;
+    }
+    errors[errors.length] = { path, message: issue.message };
+  }
+  return errors;
 }
 
 /** One-line summary, e.g. `/amount: Expected number; <root>: Required`. */
 export function formatSchemaValidationErrors(errors: readonly SchemaValidationError[]): string {
-  return errors.map((error) => `${error.path || "<root>"}: ${error.message}`).join("; ");
+  let summary = "";
+  for (let index = 0; index < errors.length; index++) {
+    const error = errors[index]!;
+    summary += `${index === 0 ? "" : "; "}${error.path || "<root>"}: ${error.message}`;
+  }
+  return summary;
 }
 
 /** Read validation errors back from an `INPUT_VALIDATION_FAILED` error's context. */

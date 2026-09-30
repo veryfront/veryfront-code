@@ -254,7 +254,14 @@ export async function runTask(
     signal?.throwIfAborted();
     let result = await task.definition.run(ctx);
     if (outputSchema !== undefined) {
-      const check = await checkDeclaredSchema(outputSchema, result);
+      let check: Awaited<ReturnType<typeof checkDeclaredSchema>>;
+      try {
+        check = await checkDeclaredSchema(outputSchema, result);
+      } catch {
+        // Task code may have replaced built-ins the validator relies on. The task already ran,
+        // so the warning phase records the output schema as unenforced instead of failing.
+        check = { outcome: "schema_uncompilable" };
+      }
       if (check.outcome === "valid") {
         result = check.value;
       } else {

@@ -10,7 +10,7 @@
  * @module task/io-contract
  */
 
-import type { JsonSchemaValidationIssue, Schema } from "#veryfront/extensions/schema/index.ts";
+import type { JsonSchemaValidationIssue } from "#veryfront/extensions/schema/index.ts";
 import { tryCompileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
 import {
   isCallableContractSchema,
@@ -73,20 +73,8 @@ const NativeDate = Date;
 const dateToISOString = Date.prototype.toISOString;
 const reflectApply = Reflect.apply;
 
-/**
- * Validate a value against a declared contract schema or raw JSON Schema. A validator that
- * throws, for example because task code replaced a built-in it relies on, leaves the schema
- * unenforced for this run: the warning phase records it and never fails the run for it.
- */
+/** Validate a value against a declared contract schema or raw JSON Schema. */
 export async function checkDeclaredSchema(schema: unknown, value: unknown): Promise<SchemaCheck> {
-  try {
-    return await runDeclaredSchemaCheck(schema, value);
-  } catch {
-    return { outcome: "schema_uncompilable" };
-  }
-}
-
-async function runDeclaredSchemaCheck(schema: unknown, value: unknown): Promise<SchemaCheck> {
   if (isCallableContractSchema(schema)) {
     const result = schema.safeParse(value);
     if (result.success) return { outcome: "valid", value: result.data };

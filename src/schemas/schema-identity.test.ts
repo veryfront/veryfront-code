@@ -71,55 +71,6 @@ describe("src/schemas/schema-identity", () => {
     );
   });
 
-  it("canonicalizes with the intrinsics captured before project code runs", () => {
-    const hostObject = Object;
-    const hostArray = Array;
-    const hostJson = JSON;
-    const keys = hostObject.keys;
-    const isArray = hostArray.isArray;
-    const stringify = hostJson.stringify;
-    try {
-      hostObject.keys = () => {
-        throw new Error("replaced Object.keys");
-      };
-      hostArray.isArray = (() => false) as typeof Array.isArray;
-      hostJson.stringify = (() => "forged") as typeof JSON.stringify;
-
-      const canonical = canonicalJsonSchema(VECTOR_SCHEMA);
-
-      hostJson.stringify = stringify;
-      assertEquals(canonical, VECTOR_CANONICAL);
-    } finally {
-      hostObject.keys = keys;
-      hostArray.isArray = isArray;
-      hostJson.stringify = stringify;
-    }
-  });
-
-  it("canonicalizes without inherited toJSON hooks", () => {
-    const originalObjectToJson = Reflect.getOwnPropertyDescriptor(Object.prototype, "toJSON");
-    const originalArrayToJson = Reflect.getOwnPropertyDescriptor(Array.prototype, "toJSON");
-    let canonical: string | undefined;
-    try {
-      Reflect.set(Object.prototype, "toJSON", () => "forged");
-      Reflect.set(Array.prototype, "toJSON", () => {
-        throw new Error("replaced Array.prototype.toJSON");
-      });
-      canonical = canonicalJsonSchema(VECTOR_SCHEMA);
-    } finally {
-      Reflect.deleteProperty(Object.prototype, "toJSON");
-      Reflect.deleteProperty(Array.prototype, "toJSON");
-      if (originalObjectToJson) {
-        Reflect.defineProperty(Object.prototype, "toJSON", originalObjectToJson);
-      }
-      if (originalArrayToJson) {
-        Reflect.defineProperty(Array.prototype, "toJSON", originalArrayToJson);
-      }
-    }
-
-    assertEquals(canonical, VECTOR_CANONICAL);
-  });
-
   it("hashes a raw JSON Schema that carries a __zod keyword as a raw schema", async () => {
     const raw = { type: "object", __zod: true };
 

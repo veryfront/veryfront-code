@@ -12,12 +12,15 @@
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { snapshotBoundedJsonValue } from "./json-value.ts";
 
+// Captured at load: project code that runs later may replace the global.
+const arrayIsArray = Array.isArray;
+
 export function snapshotJsonSchemaObject(value: unknown): JsonSchema | undefined {
   const snapshot = snapshotBoundedJsonValue(value);
   return snapshot.success &&
       typeof snapshot.value === "object" &&
       snapshot.value !== null &&
-      !Array.isArray(snapshot.value)
+      !arrayIsArray(snapshot.value)
     ? snapshot.value
     : undefined;
 }
