@@ -1,3 +1,4 @@
+import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
 import {
@@ -336,7 +337,7 @@ function resolveControlPlaneInvokeAgentToolNames(
     const entry = mergedTools[toolName];
     const tool = entry === true ? toolRegistry.get(toolName) : entry;
     if (isRecord(tool) && controlPlaneInjectedTools.get(tool as Tool) === true) {
-      names.push(toolName as ProviderReplayInvokeAgentToolName);
+      appendPrivateArray(names, [toolName as ProviderReplayInvokeAgentToolName]);
     }
   }
   return names;

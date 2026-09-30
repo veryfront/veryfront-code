@@ -1,3 +1,4 @@
+import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import type { AgentConfig } from "../types.ts";
 import { defineSchema } from "#veryfront/schemas";
@@ -212,7 +213,7 @@ export function getRuntimeProviderReplayInvokeAgentToolNames(
   config: AgentConfig,
 ): ProviderReplayInvokeAgentToolName[] {
   const value = (config as RuntimeToolFilterConfig).__vfProviderReplayInvokeAgentToolNames;
-  if (!Array.isArray(value)) return [];
+  if (!ArrayIsArray(value)) return [];
   const names: ProviderReplayInvokeAgentToolName[] = [];
   for (let index = 0; index < value.length; index++) {
     const name = value[index];
@@ -227,7 +228,7 @@ export function getRuntimeProviderReplayInvokeAgentToolNames(
       (name === "invoke_agent" || name === "veryfront__invoke_agent") &&
       !alreadyIncluded
     ) {
-      names.push(name);
+      appendPrivateArray(names, [name]);
     }
   }
   return names;

@@ -7,6 +7,7 @@ import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderReplayCheckpoints,
+  getRuntimeProviderReplayInvokeAgentToolNames,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeSourceIntegrationPolicyFromContext,
@@ -263,4 +264,22 @@ describe("agent/runtime-tool-config", () => {
       );
     });
   });
+});
+
+it("copies delegation authorization without mutable array push", () => {
+  const config = runtimeConfig({
+    __vfProviderReplayInvokeAgentToolNames: ["veryfront__invoke_agent"],
+  });
+  const originalPush = Array.prototype.push;
+  let names: unknown;
+  Array.prototype.push = function (...items) {
+    if (items[0] === "veryfront__invoke_agent") originalPush.call(this, "invoke_agent");
+    return originalPush.apply(this, items);
+  };
+  try {
+    names = getRuntimeProviderReplayInvokeAgentToolNames(config);
+  } finally {
+    Array.prototype.push = originalPush;
+  }
+  assertEquals(names, ["veryfront__invoke_agent"]);
 });
