@@ -4,6 +4,7 @@ import {
   type VeryfrontCloudCatalogScopeKey,
 } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import {
+  getHostBootEnv,
   getHostEnv,
   getHostEnvExcludingEnvFile,
   getHostSecret,
@@ -85,7 +86,11 @@ export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
     normalizeVeryfrontApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
 }
 
-/** Resolve the optional public API origin used for bearer-bound inference requests. */
+/**
+ * Resolve the optional public API origin, including values a project env file
+ * set. Never send a credential here: use
+ * {@link resolveVeryfrontInferenceApiBaseUrlFromHostEnv} for that.
+ */
 export function resolveVeryfrontPublicApiBaseUrlFromHostEnv(): string | undefined {
   return normalizeVeryfrontApiBaseUrl(getHostEnv("VERYFRONT_PUBLIC_API_BASE_URL"));
 }
@@ -93,6 +98,24 @@ export function resolveVeryfrontPublicApiBaseUrlFromHostEnv(): string | undefine
 function resolveHostCredentialApiBaseUrl(): string {
   return normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_URL")) ??
     normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL")) ??
+    DEFAULT_API_BASE_URL;
+}
+
+/**
+ * Resolve the API origin for run-scoped inference credentials from the host
+ * process environment as it was at startup. The Veryfront Cloud context,
+ * project env files, and later environment writes are never consulted: project
+ * code can set all three, and this origin receives the credential.
+ *
+ * @internal The one trusted source for a run-scoped credential's destination.
+ * Every path that attaches such a credential must use it or an explicit
+ * host-configured URL.
+ */
+export function resolveVeryfrontInferenceApiBaseUrlFromHostEnv(): string {
+  return normalizeVeryfrontApiBaseUrl(getHostBootEnv("VERYFRONT_PUBLIC_API_BASE_URL")) ??
+    // Same precedence as resolveVeryfrontApiBaseUrlFromHostEnv().
+    normalizeVeryfrontApiBaseUrl(getHostBootEnv("VERYFRONT_API_BASE_URL")) ??
+    normalizeVeryfrontApiBaseUrl(getHostBootEnv("VERYFRONT_API_URL")) ??
     DEFAULT_API_BASE_URL;
 }
 
