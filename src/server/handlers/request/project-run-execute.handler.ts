@@ -238,8 +238,8 @@ interface WorkflowClientView {
   /** Resolves with the workflow client's `PublishEventOutcome`. */
   publishEvent?(runId: string, eventName: string, payload?: unknown): Promise<string>;
   retryEventDelivery?(runId: string, eventName: string): Promise<boolean>;
-  getApprovalManager?(): { checkExpiredApprovals(): Promise<void> };
-  getEventWaitManager?(): { checkExpiredEventWaits(): Promise<void> };
+  getApprovalManager?(): { checkExpiredApprovals(runId?: string): Promise<void> };
+  getEventWaitManager?(): { checkExpiredEventWaits(runId?: string): Promise<void> };
   destroy(): Promise<void>;
 }
 
@@ -968,8 +968,8 @@ async function applyResumeSignal(
       return { failure: "Workflow client cannot release due waits" };
     }
     const released = hasDueWait(parked, nowMs);
-    await client.getApprovalManager().checkExpiredApprovals();
-    await client.getEventWaitManager().checkExpiredEventWaits();
+    await client.getApprovalManager().checkExpiredApprovals(runId);
+    await client.getEventWaitManager().checkExpiredEventWaits(runId);
     return { released };
   }
   const approval = parked.approvals.find((candidate) => candidate.nodeId === resume.node_id);
