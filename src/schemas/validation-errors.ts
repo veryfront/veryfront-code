@@ -20,7 +20,8 @@ export interface SchemaValidationError {
   message: string;
 }
 
-function escapePointerSegment(segment: string | number): string {
+/** Escape one JSON Pointer reference token (RFC 6901). */
+export function escapePointerSegment(segment: string | number): string {
   return String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
 }
 

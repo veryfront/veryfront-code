@@ -8,6 +8,10 @@
 import { getErrorMessage } from "#veryfront/errors";
 import { type HostRuntime, liveHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { buildTaskContextEnv } from "#veryfront/runs/runtime-env.ts";
+import {
+  formatSchemaValidationErrors,
+  INPUT_VALIDATION_FAILED_CODE,
+} from "#veryfront/schemas/validation-errors.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { isRetryableError } from "./errors.ts";
 import {
@@ -90,7 +94,7 @@ export interface TaskRunResult {
   retryable?: true;
 
   /** Machine-readable failure code, such as `INPUT_VALIDATION_FAILED`. */
-  errorCode?: "INPUT_VALIDATION_FAILED";
+  errorCode?: typeof INPUT_VALIDATION_FAILED_CODE;
 
   /** Validation errors for an `INPUT_VALIDATION_FAILED` failure. */
   errorDetail?: { errors: SchemaValidationError[] };
@@ -217,9 +221,9 @@ export async function runTask(
       return {
         success: false,
         error: `Task "${task.id}" input failed inputSchema validation: ${
-          inputCheck.errors.map((error) => `${error.path || "<root>"}: ${error.message}`).join("; ")
+          formatSchemaValidationErrors(inputCheck.errors)
         }`,
-        errorCode: "INPUT_VALIDATION_FAILED",
+        errorCode: INPUT_VALIDATION_FAILED_CODE,
         errorDetail: { errors: inputCheck.errors },
         durationMs: elapsedMilliseconds(start),
         ...identities,

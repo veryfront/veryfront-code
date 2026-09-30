@@ -13,15 +13,14 @@
 import type { JsonSchemaValidationIssue, Schema } from "#veryfront/extensions/schema/index.ts";
 import { tryCompileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
 import { isContractSchema, snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
+import {
+  escapePointerSegment,
+  MAX_SCHEMA_VALIDATION_ERRORS,
+  type SchemaValidationError,
+  toSchemaValidationErrors,
+} from "#veryfront/schemas/validation-errors.ts";
 
-/** At most this many validation errors are kept on a violation or a failed run. */
-export const MAX_SCHEMA_VALIDATION_ERRORS = 20;
-
-export interface SchemaValidationError {
-  /** JSON Pointer to the invalid value, `""` for the root. */
-  path: string;
-  message: string;
-}
+export type { SchemaValidationError };
 
 export type SchemaViolationPhase = "input" | "output" | "identity";
 export type SchemaViolationReason =
@@ -44,25 +43,17 @@ export type SchemaCheck =
   | { outcome: "invalid"; errors: SchemaValidationError[] }
   | { outcome: "schema_uncompilable" };
 
-function escapePointerSegment(segment: string | number): string {
-  return String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
-}
-
-function limitErrors(errors: SchemaValidationError[]): SchemaValidationError[] {
-  return errors.slice(0, MAX_SCHEMA_VALIDATION_ERRORS);
-}
-
 function fromJsonSchemaIssues(
   issues: readonly JsonSchemaValidationIssue[],
 ): SchemaValidationError[] {
-  return limitErrors(issues.map((issue) => {
+  return issues.slice(0, MAX_SCHEMA_VALIDATION_ERRORS).map((issue) => {
     // A missing required property is reported on its parent; name the property itself.
     const missing = issue.keyword === "required" ? issue.params.missingProperty : undefined;
     const path = typeof missing === "string"
       ? `${issue.instancePath}/${escapePointerSegment(missing)}`
       : issue.instancePath;
     return { path, message: issue.message ?? `failed ${issue.keyword}` };
-  }));
+  });
 }
 
 /** Validate a value against a declared contract schema or raw JSON Schema. */
@@ -70,13 +61,7 @@ export async function checkDeclaredSchema(schema: unknown, value: unknown): Prom
   if (isContractSchema(schema)) {
     const result = (schema as Schema<unknown>).safeParse(value);
     if (result.success) return { outcome: "valid", value: result.data };
-    return {
-      outcome: "invalid",
-      errors: limitErrors(result.issues.map((issue) => ({
-        path: issue.path.length === 0 ? "" : `/${issue.path.map(escapePointerSegment).join("/")}`,
-        message: issue.message,
-      }))),
-    };
+    return { outcome: "invalid", errors: toSchemaValidationErrors(result.issues) };
   }
 
   const jsonSchema = snapshotJsonSchemaObject(schema);
