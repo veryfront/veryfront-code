@@ -168,6 +168,19 @@ describe("platform/compat/http/native-request-init", () => {
     assertEquals(request.signal.aborted, true);
   });
 
+  it("keeps a caller's non-enumerable init fields", async () => {
+    const base = {} as RequestInit;
+    Object.defineProperty(base, "method", { value: "POST", enumerable: false });
+    Object.defineProperty(base, "body", { value: "{}", enumerable: false });
+    Object.defineProperty(base, "headers", { value: { "x-a": "1" }, enumerable: false });
+
+    const request = new Request("https://api.example.test/", createNativeRequestInit(base));
+
+    assertEquals(request.method, "POST");
+    assertEquals(await request.text(), "{}");
+    assertEquals(request.headers.get("x-a"), "1");
+  });
+
   it("reads only own init fields", () => {
     const inherited = Object.create({ method: "DELETE" }) as RequestInit;
     inherited.headers = { accept: "*/*" };

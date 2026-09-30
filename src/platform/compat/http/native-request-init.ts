@@ -216,7 +216,8 @@ export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
 
 /**
  * A null-prototype init with every native field as an own property: the own
- * fields of `base`, then `fields` on top, and `undefined` for the rest. The
+ * fields of `base` (non-enumerable ones included), then `fields` on top, and
+ * `undefined` for the rest. The
  * headers become a null-prototype record, so the native call never iterates
  * them. Own `undefined` fields also survive a later `{ ...init }` spread, which
  * would otherwise produce an ordinary object that inherits them again.
@@ -227,9 +228,13 @@ export function createNativeRequestInit(
 ): RequestInit {
   const init = ObjectCreate(null) as Record<string, unknown>;
   for (let index = 0; index < NATIVE_REQUEST_INIT_FIELDS.length; index++) {
-    init[NATIVE_REQUEST_INIT_FIELDS[index]!] = undefined;
+    // Own fields of `base`, enumerable or not, as the native conversion reads
+    // them; nothing inherited.
+    const field = NATIVE_REQUEST_INIT_FIELDS[index]!;
+    init[field] = readOwnInitField(base, field);
   }
   if (base !== undefined && base !== null) {
+    // Runtime-specific extras the list does not name.
     const names = ObjectKeys(base);
     for (let index = 0; index < names.length; index++) {
       const name = names[index]!;
