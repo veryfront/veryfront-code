@@ -194,6 +194,16 @@ describe("security/http/ingress-credentials", () => {
     assertEquals(await sealed.text(), '{"runId":"run_1"}');
   });
 
+  it("keeps every value of a repeated header on the sealed copy", () => {
+    const headers = new Headers({ "x-token": API_TOKEN });
+    headers.append("set-cookie", "a=1");
+    headers.append("set-cookie", "b=2");
+
+    const sealed = sealIngressCredentials(new Request("https://project.example/", { headers }));
+
+    assertEquals(sealed.headers.get("set-cookie"), "a=1, b=2");
+  });
+
   it("returns a request without credentials unchanged", () => {
     const request = new Request("https://project.example/page", {
       headers: { origin: "https://studio.example" },

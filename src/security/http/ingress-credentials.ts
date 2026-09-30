@@ -24,6 +24,7 @@ const NativeRequest = Request;
 const NativeWeakMap = WeakMap;
 const ObjectCreate = Object.create;
 const ObjectFreeze = Object.freeze;
+const ObjectHasOwn = Object.hasOwn;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const HeadersGet = NativeHeaders.prototype.get;
 const HeadersEntries = NativeHeaders.prototype.entries;
@@ -93,7 +94,10 @@ function toHeaderRecordWithoutCredentials(request: Request): Record<string, stri
       name === INGRESS_API_TOKEN_HEADER || name === INGRESS_INFERENCE_TOKEN_HEADER ||
       name === INGRESS_RUN_EVENT_TOKEN_HEADER
     ) continue;
-    record[name] = step.value[1];
+    // Headers keeps repeated set-cookie entries apart; keep every value.
+    record[name] = IntrinsicReflectApply(ObjectHasOwn, undefined, [record, name])
+      ? `${record[name]}, ${step.value[1]}`
+      : step.value[1];
   }
 }
 
