@@ -504,6 +504,11 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
     allowDelegation: v.boolean().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional(),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
+    resumeToolCall: v.object({
+      id: v.string().min(1).max(256),
+      name: v.string().min(1).max(128),
+      input: v.record(v.string(), v.unknown()),
+    }).strict().optional(),
     runtimeOverrides: getHostedChatRuntimeOverridesSchema().optional(),
     durableRootRun: getHostedDurableRootRunDescriptorSchema().optional(),
   })

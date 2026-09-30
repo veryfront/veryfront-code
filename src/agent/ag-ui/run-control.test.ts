@@ -32,6 +32,15 @@ describe("agent/ag-ui-run-control", () => {
     );
   });
 
+  it("accepts a derived resume tool call id above the public 128-character bound", () => {
+    const toolCallId = `${"a".repeat(128)}:resume-1`;
+    assertEquals(
+      AgUiResumeSignalSchema.parse({ type: "tool_result", toolCallId, result: { ok: true } })
+        .toolCallId,
+      toolCallId,
+    );
+  });
+
   for (const operation of ["resume", "cancel"] as const) {
     for (const callback of ["resolve", "authorize"] as const) {
       it(`bounds standalone ${operation} bodies before the ${callback} callback reads them`, async () => {

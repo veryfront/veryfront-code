@@ -15,6 +15,7 @@ import {
   hostedChatRequestSchema,
 } from "./chat-request.ts";
 import {
+  type RuntimeAgentRunInvocation,
   type RuntimeAgentSourceContext,
   safeParseRuntimeAgentRunInvocationValue,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
@@ -131,6 +132,8 @@ export type ParsedHostedChatRequest = {
    * Ignored unless `serverEnvelopeVerified` is true.
    */
   serverResolvedProviderReplayCheckpoints?: unknown;
+  /** Exact pending invocation supplied only by a verified control-plane envelope. */
+  serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
   /**
    * Integration tools the control plane resolved for this run, taken from the
    * verified run-event token rather than the request body. Absent unless a
@@ -301,6 +304,9 @@ async function withVerifiedRunEventAppendToken(
     ...(grantedIntegrationToolNames.length > 0
       ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
       : {}),
+    ...(trustServerEnvelope && parsedRequest.serverResolvedResumeToolCall
+      ? { serverResolvedResumeToolCall: parsedRequest.serverResolvedResumeToolCall }
+      : {}),
     forwardedProps: trustServerEnvelope
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
@@ -322,6 +328,7 @@ function stripUnverifiedServerResolvedRequestState(
 ): ParsedHostedChatRequest {
   const {
     serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
+    serverResolvedResumeToolCall: _serverResolvedResumeToolCall,
     ...publicParsedRequest
   } = parsedRequest;
   return publicParsedRequest;
@@ -569,6 +576,7 @@ async function buildParsedHostedChatRequestInternal(
     allowDelegation,
     forwardedProps,
     serverResolvedProviderReplayCheckpoints,
+    resumeToolCall,
     runtimeOverrides,
     durableRootRun,
   } = input.chatRequest;
@@ -636,6 +644,7 @@ async function buildParsedHostedChatRequestInternal(
     ...(Object.hasOwn(input.chatRequest, "serverResolvedProviderReplayCheckpoints")
       ? { serverResolvedProviderReplayCheckpoints }
       : {}),
+    ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
     runtimeOverrides,
     durableRootRun,
     persistLatestUserMessageBeforeDurableRun: false,
@@ -767,6 +776,9 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   }
   if (verifiedRequest.serverEnvelopeVerified === true && invocation.data.taskId) {
     verifiedRequest.taskId = invocation.data.taskId;
+  }
+  if (verifiedRequest.serverEnvelopeVerified === true && invocation.data.resumeToolCall) {
+    verifiedRequest.serverResolvedResumeToolCall = invocation.data.resumeToolCall;
   }
   registerHostedInferenceCredential(
     verifiedRequest,

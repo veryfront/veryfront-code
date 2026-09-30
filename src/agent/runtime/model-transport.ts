@@ -74,6 +74,31 @@ const modelRuntimeResolverRevokers = createPrivateWeakStore<
   RevokerState
 >();
 
+/**
+ * The served catalog a private resolver's own credential sees: `load` fetches
+ * it with that credential, and `read` runs synchronous catalog reads against
+ * it. A resolver drawn at call time (a project-run execution) registers one so
+ * its default-model and served-model decisions come from the same credential
+ * as its model call, never from the ambient one.
+ */
+export type ModelRuntimeResolverCatalog = {
+  load(): Promise<void>;
+  read<T>(fn: () => T): T;
+};
+
+const modelRuntimeResolverCatalogs = createPrivateWeakStore<
+  AgentModelRuntimeResolver,
+  ModelRuntimeResolverCatalog
+>();
+
+/** @internal Attach the credential-scoped served catalog to a private resolver. */
+export function registerModelRuntimeResolverCatalog(
+  resolver: AgentModelRuntimeResolver,
+  catalog: ModelRuntimeResolverCatalog,
+): void {
+  modelRuntimeResolverCatalogs.set(resolver, catalog);
+}
+
 /** @internal Attach invocation-scoped cleanup to a privately resolved model runtime. */
 export function registerModelRuntimeResolverRevoker(
   resolver: AgentModelRuntimeResolver,
@@ -221,14 +246,22 @@ export async function resolveAgentModelTransport(
   // Veryfront Cloud loads the catalog before any of them. A run with a private
   // model resolver was prepared from the catalog as it stood then, and its call
   // must keep what that preparation reserved, so it does not load it here.
-  if (
-    !input.resolveModelRuntime && isVeryfrontCloudEnabled() &&
-    !(typeof configuredModel === "string" && configuredModel.startsWith("local/"))
-  ) {
+  //
+  // A private resolver that carries its own catalog (a project-run execution)
+  // loads and reads that catalog with its own credential instead: the ambient
+  // credential must not decide which model its credential pays for.
+  const privateCatalog = input.resolveModelRuntime
+    ? modelRuntimeResolverCatalogs.get(input.resolveModelRuntime)
+    : undefined;
+  const isLocalModel = typeof configuredModel === "string" && configuredModel.startsWith("local/");
+  if (privateCatalog) {
+    if (!isLocalModel) await privateCatalog.load();
+  } else if (!input.resolveModelRuntime && isVeryfrontCloudEnabled() && !isLocalModel) {
     await warmVeryfrontCloudCatalog();
   }
-  const requestedModel = resolveConfiguredAgentModel(configuredModel);
-  const resolvedModelString = resolveRuntimeModel(configuredModel);
+  const readCatalog = <T>(fn: () => T): T => privateCatalog ? privateCatalog.read(fn) : fn();
+  const requestedModel = readCatalog(() => resolveConfiguredAgentModel(configuredModel));
+  const resolvedModelString = readCatalog(() => resolveRuntimeModel(configuredModel));
   const usesVeryfrontCloud = startsWithCloudPrefix(resolvedModelString);
   const privatelyResolvedModel = input.resolveModelRuntime && usesVeryfrontCloud
     ? input.resolveModelRuntime(resolvedModelString)
@@ -244,20 +277,24 @@ export async function resolveAgentModelTransport(
     });
 
   const privateThinking = privatelyResolvedModel
-    ? input.modelCallThinking ?? resolveVeryfrontCloudModelThinking(resolvedModelString)
+    ? input.modelCallThinking ??
+      readCatalog(() => resolveVeryfrontCloudModelThinking(resolvedModelString))
     : undefined;
-  const privateReasoning = resolveVeryfrontCloudReasoningOption(
-    resolvedModelString,
-    privateThinking,
+  const privateReasoning = readCatalog(() =>
+    resolveVeryfrontCloudReasoningOption(resolvedModelString, privateThinking)
   );
   // Private managed calls carry audited neutral controls. Only adaptive
   // Anthropic thinking needs native call data; legacy native temperature
   // overrides would replace the broker's persisted neutral input.
   const providerOptions = privatelyResolvedModel
     ? privateThinking?.enabled && privateReasoning === undefined
-      ? resolveVeryfrontCloudThinkingProviderOptions(resolvedModelString, privateThinking)
+      ? readCatalog(() =>
+        resolveVeryfrontCloudThinkingProviderOptions(resolvedModelString, privateThinking)
+      )
       : undefined
-    : resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions);
+    : readCatalog(() =>
+      resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions)
+    );
   const languageModel = privatelyResolvedModel ?? transport?.model ??
     resolveModel(resolvedModelString);
   // A Veryfront Cloud model settles its protocol and capabilities on its first
@@ -270,7 +307,9 @@ export async function resolveAgentModelTransport(
   ) {
     await Promise.resolve(languageModel.prepare()).catch(() => {});
   }
-  const providerOptionKey = resolveModelProviderOptionKey(resolvedModelString, languageModel);
+  const providerOptionKey = readCatalog(() =>
+    resolveModelProviderOptionKey(resolvedModelString, languageModel)
+  );
 
   return {
     requestedModel,
@@ -279,10 +318,10 @@ export async function resolveAgentModelTransport(
     ...(providerOptionKey ? { providerOptionKey } : {}),
     headers: transport?.headers,
     providerOptions,
-    reasoning: privatelyResolvedModel ? privateReasoning : resolveReasoningWithDefaults(
-      resolvedModelString,
-      transport?.reasoning,
-      providerOptions,
-    ),
+    reasoning: privatelyResolvedModel
+      ? privateReasoning
+      : readCatalog(() =>
+        resolveReasoningWithDefaults(resolvedModelString, transport?.reasoning, providerOptions)
+      ),
   };
 }

@@ -68,6 +68,22 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("agent/runtime-agent-invocation-contract", () => {
+  it("keeps an exact pending tool invocation in the trusted envelope", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      resumeToolCall: {
+        id: `${"x".repeat(128)}:resume-1`,
+        name: "outlook__list_messages",
+        input: { folder: "inbox", limit: 20 },
+      },
+    }));
+
+    assertEquals(parsed.resumeToolCall, {
+      id: `${"x".repeat(128)}:resume-1`,
+      name: "outlook__list_messages",
+      input: { folder: "inbox", limit: 20 },
+    });
+  });
+
   it("preserves separate execution and immutable source projects", () => {
     const sourceProject = {
       projectId: "20000000-1000-4000-8000-100000000005",

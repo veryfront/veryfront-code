@@ -2315,3 +2315,102 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     assertEquals(requests, []);
   });
 });
+
+describe("provider/veryfront-cloud revoked inference credentials", () => {
+  afterEach(() => {
+    __resetVeryfrontCloudCatalogForTests();
+    restoreMockFetch();
+    clearModelProviders();
+    for (const key of CLOUD_ENV_KEYS) deleteEnv(key);
+  });
+
+  function revocable(): { assert: () => void; revoke: () => void } {
+    let active = true;
+    return {
+      assert() {
+        if (!active) throw new TypeError("credential revoked");
+      },
+      revoke() {
+        active = false;
+      },
+    };
+  }
+
+  it("refuses to construct a model for an already revoked credential", () => {
+    setCloudBootstrap();
+    seedServedCatalogForTests();
+    const credential = revocable();
+    credential.revoke();
+
+    assertThrows(
+      () =>
+        createVeryfrontCloudInferenceModel("openai/gpt-test", "run-scoped-inference-token", {
+          assertInferenceCredentialActive: credential.assert,
+        }),
+      TypeError,
+      "credential revoked",
+    );
+  });
+
+  for (const catalog of ["uncached", "cached"] as const) {
+    it(`sends nothing for a revoked credential with ${catalog === "cached" ? "a" : "an"} ${catalog} catalog`, async () => {
+      setCloudBootstrap();
+      if (catalog === "cached") seedServedCatalogForTests();
+      const urls: string[] = [];
+      installMockFetch(
+        ((input: URL | Request | string) => {
+          urls.push(String(input instanceof Request ? input.url : input));
+          return Promise.resolve(new Response("{}", { status: 500 }));
+        }) as typeof fetch,
+      );
+      const credential = revocable();
+      const model = createVeryfrontCloudInferenceModel(
+        "openai/gpt-test",
+        "run-scoped-inference-token",
+        { assertInferenceCredentialActive: credential.assert },
+      );
+      credential.revoke();
+
+      await model.prepare?.();
+      await assertRejects(
+        async () => await model.doStream({ prompt: [] }),
+        TypeError,
+        "credential revoked",
+      );
+      await assertRejects(
+        async () => await model.doGenerate({ prompt: [] }),
+        TypeError,
+        "credential revoked",
+      );
+      assertEquals(urls, []);
+    });
+  }
+
+  it("checks the credential before a catalog load it starts", async () => {
+    setCloudBootstrap();
+    let checks = 0;
+    let loads = 0;
+    installMockFetch(
+      ((input: URL | Request | string) => {
+        if (String(input instanceof Request ? input.url : input).includes("/models")) loads++;
+        return Promise.resolve(new Response("{}", { status: 500 }));
+      }) as typeof fetch,
+    );
+    const model = createVeryfrontCloudInferenceModel(
+      "openai/gpt-test",
+      "run-scoped-inference-token",
+      {
+        assertInferenceCredentialActive() {
+          checks++;
+        },
+      },
+    );
+    const afterConstruction = checks;
+
+    await model.prepare?.();
+
+    assertEquals(loads, 1);
+    // One check before preparation starts the load, one inside the loader.
+    assertEquals(checks - afterConstruction, 2);
+  });
+});

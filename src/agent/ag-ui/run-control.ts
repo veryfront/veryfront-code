@@ -28,7 +28,7 @@ export const getAgUiResumeSignalSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({
       type: v.literal("tool_result"),
-      toolCallId: v.string().min(1).max(128),
+      toolCallId: v.string().min(1).max(256),
       result: v.unknown(),
       isError: v.boolean().optional().default(false),
     }),

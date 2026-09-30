@@ -37,6 +37,7 @@ import {
 } from "./catalog-client.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const PromiseReject: (reason: unknown) => Promise<never> = Promise.reject.bind(Promise);
 const HostCrypto = globalThis.crypto;
 const CryptoRandomUuid = HostCrypto.randomUUID;
 const FunctionBind = Function.prototype.bind;
@@ -144,6 +145,7 @@ function withServedCatalog(
   current: () => ModelRuntime,
   settled: () => ModelRuntime | undefined,
   ready: (abortSignal?: AbortSignal) => Promise<ModelRuntime>,
+  assertCredentialActive: () => void,
 ): ModelRuntime {
   const readSignal = (options: unknown): AbortSignal | undefined =>
     options !== null && typeof options === "object"
@@ -158,6 +160,12 @@ function withServedCatalog(
     },
     doGenerate: {
       value: (options: unknown) => {
+        // A revoked credential rejects the call, as a failed request would.
+        try {
+          assertCredentialActive();
+        } catch (error) {
+          return PromiseReject(error);
+        }
         const target = settled();
         if (target) return target.doGenerate(options);
         return (async () => await (await ready(readSignal(options))).doGenerate(options))();
@@ -165,6 +173,12 @@ function withServedCatalog(
     },
     doStream: {
       value: (options: unknown) => {
+        // A revoked credential rejects the call, as a failed request would.
+        try {
+          assertCredentialActive();
+        } catch (error) {
+          return PromiseReject(error);
+        }
         const target = settled();
         if (target) return target.doStream(options);
         return (async () => await (await ready(readSignal(options))).doStream(options))();
@@ -216,6 +230,15 @@ function createVeryfrontCloudModelInternal(
   // catalog lists the model is checked against this model's own catalog: now
   // when it has loaded, otherwise once the first async step has loaded it.
   parseVeryfrontCloudModelId(modelId, "language", { catalogChecks: false });
+  // The one check every step that can send this model's credential goes
+  // through: construction, the catalog load (which preparation skips when it
+  // fails), each call, and (via the fetch wrapper) each request, retries
+  // included. A revoked credential fails there
+  // before anything reaches the network. Ambient credentials have no revoker.
+  const assertCredentialActive = (): void => {
+    (options.assertCredentialActive ?? options.assertInferenceCredentialActive)?.();
+  };
+  assertCredentialActive();
   const { apiBaseUrl, apiToken, projectSlug } = options.credentialSource === "application"
     ? requireApplicationBootstrap()
     : requireVeryfrontCloudBootstrap(inferenceCredential, options.apiBaseUrl);
@@ -331,16 +354,24 @@ function createVeryfrontCloudModelInternal(
   // underlying catalog request (one per credentials and project, in the
   // catalog client), so one caller giving up never decides for another.
   const ready = async (abortSignal?: AbortSignal): Promise<ModelRuntime> => {
+    // A revoked credential loads no catalog. Preparation then leaves the model
+    // unsettled, and its call rejects with the revocation, as it always did.
+    try {
+      assertCredentialActive();
+    } catch {
+      return current;
+    }
     const catalog = await loadVeryfrontCloudCatalog({
       ...catalogScope,
       fresh: true,
+      assertCredentialActive,
       ...(abortSignal ? { signal: abortSignal } : {}),
     });
     // Settle (and run the listing check) only on a fresh catalog. A stale one
     // answers this call, and a later call tries the refresh again.
     return rebuildIfChanged(catalog !== undefined && isVeryfrontCloudCatalogFresh(catalogScope));
   };
-  const wrapped = withServedCatalog(built, () => current, settled, ready);
+  const wrapped = withServedCatalog(built, () => current, settled, ready, assertCredentialActive);
   registerVeryfrontCloudModelFacts(wrapped, () => facts);
   return wrapped;
 }

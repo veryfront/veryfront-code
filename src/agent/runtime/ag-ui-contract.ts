@@ -100,7 +100,7 @@ export const getAgUiRuntimeToolFunctionCallSchema = defineSchema((v) =>
 
 export const getAgUiRuntimeToolCallSchema = defineSchema((v) =>
   v.object({
-    id: v.string().min(1).max(128),
+    id: v.string().min(1).max(256),
     type: v.literal("function"),
     function: getAgUiRuntimeToolFunctionCallSchema(),
   }).strict()
@@ -164,7 +164,7 @@ export const getAgUiRuntimeToolMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
     role: v.literal("tool"),
-    toolCallId: v.string().min(1).max(128),
+    toolCallId: v.string().min(1).max(256),
     content: v.string(),
     error: v.string().optional(),
     ...runtimeMessageExtensionFields(v),
