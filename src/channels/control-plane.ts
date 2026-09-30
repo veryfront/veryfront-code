@@ -824,7 +824,6 @@ export function getRuntimeAgentPublicMetadata(
  * fails on its own, so the list stays usable.
  */
 function resolveDeclaredOutputSchemaDocument(outputSchema: unknown): JsonSchema | undefined {
-  if (outputSchema === undefined || outputSchema === null) return undefined;
   try {
     return resolveJsonSchemaDocument(outputSchema);
   } catch {

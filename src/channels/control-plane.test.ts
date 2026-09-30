@@ -866,6 +866,18 @@ describe("channels/control-plane", () => {
       assertEquals(response.agents[0]?.output_schema, outputSchema);
     });
 
+    it("omits an outputSchema that cannot be converted and keeps listing the agent", async () => {
+      const outputSchema = { __zod: true, parse() {}, safeParse() {} };
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) => (id === "broken" ? createAgent({ id, outputSchema }) : undefined),
+        getAllAgentIds: () => ["broken"],
+      });
+
+      assertEquals(response.agents[0]?.id, "broken");
+      assertEquals("output_schema" in (response.agents[0] ?? {}), false);
+    });
+
     it("omits output_schema for an agent that declares none", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
         ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
