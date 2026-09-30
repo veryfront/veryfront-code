@@ -150,7 +150,7 @@ describe("src/task/runner declared schemas (warning phase)", () => {
     const inputSchema = defineSchema((v) =>
       v.object({ ticketText: v.string(), priority: v.string().default("normal") })
     )();
-    const { task, calls } = schemaTask({ inputSchema: inputSchema as never });
+    const { task, calls } = schemaTask({ inputSchema });
     const submitted = { ticketText: "Refund INV-7731" };
 
     const result = await runTask({ task, input: submitted }, createInMemoryHostRuntime());
@@ -218,7 +218,7 @@ describe("src/task/runner declared schemas (warning phase)", () => {
 
   it("validates the value run() returned, before any output filtering on reads", async () => {
     const outputSchema = defineSchema((v) => v.object({ category: v.string() }))();
-    const { task } = schemaTask({ outputSchema: outputSchema as never }, {
+    const { task } = schemaTask({ outputSchema }, {
       category: "billing",
       internalNote: "kept",
     });
