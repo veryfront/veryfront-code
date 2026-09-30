@@ -3453,6 +3453,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         calls.push(["retryEventDelivery", runId, name]);
         return Promise.resolve(false);
       },
+      resumeChildRuns: (...args: unknown[]) => {
+        calls.push(["resumeChildRuns", ...args]);
+        return Promise.resolve(true);
+      },
       getApprovalManager: () => ({
         checkExpiredApprovals: () => {
           calls.push(["releaseDueWaits"]);
@@ -3908,10 +3912,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       pendingApprovals: [],
     };
     const { client, calls } = resumableClient(state);
-    client.resumeChildRuns = (...args: unknown[]) => {
-      calls.push(["resumeChildRuns", ...args]);
-      return Promise.resolve(true);
-    };
     const firstHash = (await computeHash("child:wait-first:run_child_a")).slice(0, 16);
 
     const { payload } = await executeResume(client, {
