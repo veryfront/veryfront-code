@@ -138,10 +138,10 @@ import {
 
 #### Types
 
-| Name                              | Description                                                                             | Source                                                                                                         |
-| --------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `ConnectExecutorTransportOptions` |                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-node-transport.ts)    |
-| `HostedHttpInput`                 | Trusted ingress authority; none of these values are inferred from HTTP headers or URLs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-broker.ts) |
+| Name                              | Description                                                                                                                                                                                                                                                                    | Source                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `ConnectExecutorTransportOptions` |                                                                                                                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-node-transport.ts)    |
+| `HostedHttpInput`                 | Trusted ingress authority; none of these values are inferred from HTTP headers or URLs. `projectTracing` binds collector settings to the installed project/environment and imports executor spans under the broker's request parent. Collector credentials stay on the broker. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-broker.ts) |
 
 ### `veryfront/server/http-runtime`
 

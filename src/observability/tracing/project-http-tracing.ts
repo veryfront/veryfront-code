@@ -62,6 +62,7 @@ export async function runProjectHttpTracing<T extends Response | undefined>(
   identity: { projectId?: string; environmentId?: string },
   request: Request,
   operation: () => Promise<T>,
+  options: { errorOnAbort?: boolean } = {},
 ): Promise<T> {
   const executorScope = getExecutorHttpTraceScope();
   if (executorScope) {
@@ -85,6 +86,7 @@ export async function runProjectHttpTracing<T extends Response | undefined>(
         {
           runDeferredOperation: run,
           cancellationTimeoutMs: 1000,
+          errorOnAbort: options.errorOnAbort,
         },
       ) as T
       : response;
@@ -157,7 +159,11 @@ export async function runProjectHttpTracing<T extends Response | undefined>(
       complete,
       request.signal,
       { highWaterMark: 0 },
-      { runDeferredOperation: runInProject, cancellationTimeoutMs: 1000 },
+      {
+        runDeferredOperation: runInProject,
+        cancellationTimeoutMs: 1000,
+        errorOnAbort: options.errorOnAbort,
+      },
     ) as T;
   } catch (error) {
     try {
