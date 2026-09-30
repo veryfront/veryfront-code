@@ -95,4 +95,28 @@ describe("src/schemas/schema-identity", () => {
       hostJson.stringify = stringify;
     }
   });
+
+  it("canonicalizes without inherited toJSON hooks", () => {
+    const originalObjectToJson = Reflect.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const originalArrayToJson = Reflect.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    let canonical: string | undefined;
+    try {
+      Reflect.set(Object.prototype, "toJSON", () => "forged");
+      Reflect.set(Array.prototype, "toJSON", () => {
+        throw new Error("replaced Array.prototype.toJSON");
+      });
+      canonical = canonicalJsonSchema(VECTOR_SCHEMA);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "toJSON");
+      Reflect.deleteProperty(Array.prototype, "toJSON");
+      if (originalObjectToJson) {
+        Reflect.defineProperty(Object.prototype, "toJSON", originalObjectToJson);
+      }
+      if (originalArrayToJson) {
+        Reflect.defineProperty(Array.prototype, "toJSON", originalArrayToJson);
+      }
+    }
+
+    assertEquals(canonical, VECTOR_CANONICAL);
+  });
 });

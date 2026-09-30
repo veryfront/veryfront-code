@@ -43,6 +43,10 @@ veryfront task sync-data
 A task file exports a `TaskDefinition` object as its default export:
 
 ```ts
+import type { Schema } from "veryfront/extensions/schema";
+import type { ScheduleIntegrationRequirementConfig } from "veryfront/schedule";
+import type { TaskContext } from "veryfront/task";
+
 interface TaskDefinition {
   name?: string;
   description?: string;

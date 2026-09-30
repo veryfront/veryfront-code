@@ -26,7 +26,6 @@ import { isContractSchema, snapshotJsonSchemaObject } from "./schema-input.ts";
 const arrayIsArray = Array.isArray;
 const arrayPrototypeSort = Array.prototype.sort;
 const jsonStringify = JSON.stringify;
-const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
 const reflectApply = Reflect.apply;
 
@@ -35,34 +34,35 @@ function compareCodeUnits(a: string, b: string): number {
   return a > b ? 1 : 0;
 }
 
-function canonicalize(value: unknown): unknown {
-  if (arrayIsArray(value)) {
-    const items: unknown[] = [];
-    for (let index = 0; index < value.length; index++) {
-      objectDefineProperty(items, index, {
-        value: canonicalize(value[index]),
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
-    }
-    return items;
+/**
+ * Serialize like `JSON.stringify` with keys sorted at every depth. Containers are walked here
+ * and only primitives reach `JSON.stringify`, so no `toJSON` a project installs on a prototype
+ * is ever called, and an own `__proto__` key is written like any other key.
+ */
+function serializeCanonical(value: unknown): string | undefined {
+  if (value === null || typeof value !== "object") {
+    return typeof value === "bigint" ? undefined : jsonStringify(value);
   }
-  if (value === null || typeof value !== "object") return value;
-  const sorted: Record<string, unknown> = {};
+  if (arrayIsArray(value)) {
+    let out = "[";
+    for (let index = 0; index < value.length; index++) {
+      if (index > 0) out += ",";
+      out += serializeCanonical(value[index]) ?? "null";
+    }
+    return out + "]";
+  }
   // UTF-16 code unit order, byte-identical to the veryfront-api helper; not locale-dependent.
   const keys = reflectApply(arrayPrototypeSort, objectKeys(value), [compareCodeUnits]) as string[];
+  let out = "{";
+  let first = true;
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
-    // A data property, so an own `__proto__` key stays a key instead of hitting the setter.
-    objectDefineProperty(sorted, key, {
-      value: canonicalize((value as Record<string, unknown>)[key]),
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
+    const serialized = serializeCanonical((value as Record<string, unknown>)[key]);
+    if (serialized === undefined) continue;
+    out += `${first ? "" : ","}${jsonStringify(key)}:${serialized}`;
+    first = false;
   }
-  return sorted;
+  return out + "}";
 }
 
 /**
@@ -77,7 +77,7 @@ export function resolveJsonSchemaDocument(schema: unknown): JsonSchema | undefin
 /** Serialize a JSON Schema document in the canonical form the identity hashes. */
 export function canonicalJsonSchema(schema: unknown): string | undefined {
   const document = resolveJsonSchemaDocument(schema);
-  return document === undefined ? undefined : jsonStringify(canonicalize(document));
+  return document === undefined ? undefined : serializeCanonical(document);
 }
 
 /**
