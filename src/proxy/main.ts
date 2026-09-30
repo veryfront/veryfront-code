@@ -639,7 +639,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             } catch (error) {
               clearTimeout(timeoutId);
               lastError = error as Error;
-              if (req.signal.aborted) break;
+              if (req.signal.aborted) throw error;
 
               if (error instanceof Error && error.name === "AbortError") {
                 const ms = Math.round(performance.now() - startTime);
@@ -709,6 +709,10 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
         },
       );
     } catch (error) {
+      if (req.signal.aborted) {
+        lifecycle.end(499);
+        return withProxyTiming(jsonErrorResponse(499, { error: "Client Closed Request" }));
+      }
       const ms = Math.round(performance.now() - startTime);
       if (error instanceof DedicatedServerLookupUnavailable) {
         proxyLogger.warn(`503 ${req.method} ${url.pathname}`, { ms });
@@ -800,6 +804,7 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
       },
     });
   } catch (error) {
+    if (req.signal.aborted) return jsonErrorResponse(499, { error: "Client Closed Request" });
     proxyLogger.error("API proxy error", error as Error);
     // Real error logged above; keep body generic so internal hostnames/paths in
     // error.message are not leaked to clients.

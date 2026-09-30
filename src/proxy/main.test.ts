@@ -233,7 +233,7 @@ describe("proxy client abort propagation", () => {
         catchBlock.indexOf('error.name === "AbortError"'),
       true,
     );
-    assertStringIncludes(catchBlock, "if (req.signal.aborted) break;");
+    assertStringIncludes(catchBlock, "if (req.signal.aborted) throw error;");
   });
 
   it("preserves cancellation in the API forward path", async () => {
@@ -243,5 +243,39 @@ describe("proxy client abort propagation", () => {
       source.indexOf("// Create server"),
     );
     assertStringIncludes(forward, "signal: req.signal,");
+  });
+});
+
+describe("proxy cancellation responses", () => {
+  it("classifies renderer cancellation as client closed before reporting failures", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+    const handler = source.slice(
+      source.indexOf("function forwardToServer"),
+      source.indexOf("async function handleStats"),
+    );
+    const outerCatch = handler.slice(handler.lastIndexOf("} catch (error)"));
+    assertStringIncludes(outerCatch, "if (req.signal.aborted)");
+    assertStringIncludes(outerCatch, "lifecycle.end(499);");
+    assertStringIncludes(outerCatch, 'jsonErrorResponse(499, { error: "Client Closed Request" })');
+    assertEquals(
+      outerCatch.indexOf("if (req.signal.aborted)") <
+        outerCatch.indexOf("captureApplicationError("),
+      true,
+    );
+  });
+
+  it("classifies API cancellation as client closed before reporting gateway errors", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+    const handler = source.slice(source.indexOf("async function handleApiProxy"));
+    const catchBlock = handler.slice(
+      handler.indexOf("} catch (error)"),
+      handler.indexOf("// Real error logged above"),
+    );
+    assertStringIncludes(catchBlock, 'jsonErrorResponse(499, { error: "Client Closed Request" })');
+    assertEquals(
+      catchBlock.indexOf("if (req.signal.aborted)") <
+        catchBlock.indexOf('proxyLogger.error("API proxy error"'),
+      true,
+    );
   });
 });
