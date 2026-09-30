@@ -211,3 +211,37 @@ describe("proxy main request URL parsing", () => {
     assertEquals(serverCloseIndex > busCloseIndex, true);
   });
 });
+
+describe("proxy client abort propagation", () => {
+  it("checks cancellation before resolution and again after retry backoff", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+    const loop = source.slice(
+      source.indexOf("for (let attempt = 0;"),
+      source.indexOf("// All retries exhausted"),
+    );
+    assertStringIncludes(
+      loop.slice(0, loop.indexOf("const dedicatedServerUrl")),
+      "req.signal.throwIfAborted();",
+    );
+    assertStringIncludes(
+      loop.slice(loop.indexOf("proxy.retry_delay"), loop.indexOf("const abortController")),
+      "req.signal.throwIfAborted();",
+    );
+    const catchBlock = loop.slice(loop.indexOf("} catch (error)"));
+    assertEquals(
+      catchBlock.indexOf("if (req.signal.aborted)") <
+        catchBlock.indexOf('error.name === "AbortError"'),
+      true,
+    );
+    assertStringIncludes(catchBlock, "if (req.signal.aborted) break;");
+  });
+
+  it("preserves cancellation in the API forward path", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+    const forward = source.slice(
+      source.indexOf("async function handleApiProxy"),
+      source.indexOf("// Create server"),
+    );
+    assertStringIncludes(forward, "signal: req.signal,");
+  });
+});

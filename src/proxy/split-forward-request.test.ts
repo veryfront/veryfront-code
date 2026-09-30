@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetShimForTests, propagation } from "#veryfront/observability/tracing/api-shim.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { shouldRetryUpstreamRequest } from "./retry.ts";
 import type { ProxyContext } from "./handler.ts";
 import { createSplitForwardRequestInit } from "./split-forward-request.ts";
 
@@ -28,6 +30,55 @@ function previewContext(): ProxyContext {
 }
 
 describe("split proxy forward request", () => {
+  it("aborts the upstream fetch when the incoming request aborts", async () => {
+    const client = new AbortController();
+    const timeout = new AbortController();
+    const request = new Request("https://proxy.test/slow", { signal: client.signal });
+    const init = createSplitForwardRequestInit(request, previewContext(), null, timeout.signal);
+    let attempts = 0;
+    await withMockFetch((_url, upstreamInit) => {
+      attempts++;
+      return new Promise((_resolve, reject) => {
+        upstreamInit?.signal?.addEventListener("abort", () => reject(upstreamInit.signal?.reason), {
+          once: true,
+        });
+      });
+    }, async () => {
+      const upstream = fetch("https://runtime.test/slow", init);
+      client.abort(new Error("connection refused"));
+      assertEquals(init.signal?.aborted, true);
+      await assertRejects(() => upstream, Error, "connection refused");
+      assertEquals(shouldRetryUpstreamRequest(request, "/slow", client.signal.reason), false);
+      assertEquals(attempts, 1);
+      assertStrictEquals(init.signal?.reason, client.signal.reason);
+      assertEquals(timeout.signal.aborted, false);
+    });
+  });
+
+  it("still aborts the upstream request on timeout", () => {
+    const client = new AbortController();
+    const timeout = new AbortController();
+    const request = new Request("https://proxy.test/slow", { signal: client.signal });
+    const init = createSplitForwardRequestInit(request, previewContext(), null, timeout.signal);
+    timeout.abort();
+    assertEquals(init.signal?.aborted, true);
+    assertStrictEquals(init.signal?.reason, timeout.signal.reason);
+    assertEquals(client.signal.aborted, false);
+  });
+
+  it("preserves an incoming request that was already aborted", () => {
+    const client = new AbortController();
+    client.abort();
+    const request = new Request("https://proxy.test/slow", { signal: client.signal });
+    const init = createSplitForwardRequestInit(
+      request,
+      previewContext(),
+      null,
+      new AbortController().signal,
+    );
+    assertEquals(init.signal?.aborted, true);
+  });
+
   it("uses the shared end-to-end header policy", () => {
     const body = new ReadableStream<Uint8Array>();
     const request = new Request(
@@ -75,7 +126,7 @@ describe("split proxy forward request", () => {
 
     assertEquals(init.method, "POST");
     assertEquals(init.redirect, "manual");
-    assertStrictEquals(init.signal, signal);
+    assertEquals(init.signal?.aborted, false);
     assertStrictEquals(init.body, request.body);
     assertEquals(init.duplex, "half");
     assertEquals(headers.get("connection"), null);

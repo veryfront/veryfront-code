@@ -173,7 +173,7 @@ export function shouldRetryUpstreamRequest(
   pathname: string,
   error: unknown,
 ): boolean {
-  if (!isRetryableConnectionError(error)) return false;
+  if (request.signal.aborted || !isRetryableConnectionError(error)) return false;
   if (isIdempotentMethod(request.method)) return true;
   if (!isControlPlaneRunStreamPost(request, pathname)) return false;
 

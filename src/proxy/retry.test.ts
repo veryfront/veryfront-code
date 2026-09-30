@@ -402,3 +402,17 @@ describe("getReplayableRequestBodies", () => {
     }
   });
 });
+
+describe("aborted upstream requests", () => {
+  for (const method of ["GET", "POST"]) {
+    it(`does not retry an aborted ${method} after a connection error`, () => {
+      const client = new AbortController();
+      const request = new Request(RUN_STREAM_URL, { method, signal: client.signal });
+      client.abort(new Error("connection refused"));
+      assertEquals(
+        shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, client.signal.reason),
+        false,
+      );
+    });
+  }
+});

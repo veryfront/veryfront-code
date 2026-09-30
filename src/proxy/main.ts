@@ -547,6 +547,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
           let pinnedDedicatedUrl: string | null = null;
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            req.signal.throwIfAborted();
             const dedicatedServerUrl = pinnedDedicatedUrl ??
               (skipDedicated ? null : await profileProxyServerTimingPhase(
                 proxyTiming,
@@ -579,6 +580,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
               );
             }
 
+            req.signal.throwIfAborted();
             const abortController = new AbortController();
             const timeoutId = setTimeout(() => {
               abortController.abort();
@@ -637,6 +639,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             } catch (error) {
               clearTimeout(timeoutId);
               lastError = error as Error;
+              if (req.signal.aborted) break;
 
               if (error instanceof Error && error.name === "AbortError") {
                 const ms = Math.round(performance.now() - startTime);
@@ -777,6 +780,7 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
             "Content-Type": req.headers.get("Content-Type") || "application/json",
           },
           body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
+          signal: req.signal,
         }),
       {
         "http.method": req.method,
