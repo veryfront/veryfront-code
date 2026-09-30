@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
-import { createExecutorHttpApplicationRuntime } from "./application-runtime.ts";
+import { createExecutorHttpApplicationRuntime } from "#veryfront/server/isolated-http/application-runtime.ts";
 import type { ExecutorHttpInstall } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 
 const installation: ExecutorHttpInstall = {
@@ -151,5 +151,46 @@ describe("installed HTTP application admission", () => {
       Error,
       "Synthetic installation shutdown",
     );
+  });
+});
+
+describe("installed HTTP application startup cleanup", () => {
+  it("shuts down the adapter on bootstrap failure and preserves the startup error", async () => {
+    const { NodeAdapter } = await import("#veryfront/platform/adapters/runtime/node/adapter.ts");
+    const projectDir = await Deno.makeTempDir({ prefix: "http-admission-" });
+    const originalShutdown = NodeAdapter.prototype.shutdown;
+    let shutdowns = 0;
+    NodeAdapter.prototype.shutdown = async function () {
+      shutdowns++;
+      await originalShutdown.call(this);
+      throw new Error("Synthetic cleanup failure");
+    };
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        'export default { fs: { type: "memory" } };',
+      );
+      await withEnv({ PROXY_MODE: "0" }, async () => {
+        await assertRejects(
+          () =>
+            createExecutorHttpApplicationRuntime({
+              installation,
+              configuration,
+              projectDir,
+              signal: new AbortController().signal,
+            }),
+          TypeError,
+          "one fixed local source",
+        );
+      });
+      assertEquals(shutdowns, 1);
+    } finally {
+      NodeAdapter.prototype.shutdown = originalShutdown;
+      const { projectIsolation } = await import(
+        "#veryfront/server/runtime-handler/project-isolation.ts"
+      );
+      projectIsolation.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });

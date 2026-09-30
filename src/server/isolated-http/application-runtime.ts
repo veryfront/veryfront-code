@@ -80,11 +80,20 @@ export async function createExecutorHttpApplicationRuntime(
   ]);
   signal.throwIfAborted();
   const adapter = new NodeAdapter();
-  const bootstrap = await run(() =>
-    bootstrapProd(projectDir, adapter, {
-      fixedProjectSource: true,
-    })
-  );
+  let bootstrap: Awaited<ReturnType<typeof bootstrapProd>>;
+  try {
+    bootstrap = await run(() =>
+      bootstrapProd(projectDir, adapter, {
+        fixedProjectSource: true,
+      })
+    );
+  } catch (error) {
+    // Preserve the startup failure even if resource retirement also fails.
+    try {
+      await adapter.shutdown();
+    } catch { /* The installation still retires the owning process. */ }
+    throw error;
+  }
   try {
     signal.throwIfAborted();
     const handler = run(() =>
