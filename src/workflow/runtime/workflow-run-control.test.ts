@@ -848,16 +848,18 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     const run = { ...createRun("selector-throws"), status: "running" as const };
     await backend.createRun(run);
 
-    await assertRejects(
-      () =>
-        execute(backend, run, () => completedResult(), {
-          selectOutput: () => {
-            throw new Error("output does not match the schema");
-          },
-        }),
-      Error,
-      "output does not match the schema",
-    );
+    const errors: string[] = [];
+    const outcome = await execute(backend, run, () => completedResult(), {
+      selectOutput: () => {
+        throw new Error("output does not match the schema");
+      },
+      onError: (_run, error) => {
+        errors.push(error.message);
+      },
+    });
+
+    assertEquals(outcome.status, "failed");
+    assertEquals(errors, ["output does not match the schema"]);
 
     const persisted = await backend.getRun(run.id);
     assertEquals(persisted?.status, "failed");

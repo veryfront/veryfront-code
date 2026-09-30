@@ -640,6 +640,7 @@ export class WorkflowExecutor {
     if (!workflow) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
+    const { output: selectOutput, outputSchema } = workflow;
 
     // One span per execution, always its own trace root.
     //
@@ -702,18 +703,18 @@ export class WorkflowExecutor {
         // A declared selector picks the final output, and `outputSchema`
         // checks it before it is stored: the parsed value is the output, and
         // a mismatch fails the run instead of completing it (#2107).
-        ...(workflow.output
+        ...(selectOutput
           ? {
-            selectOutput: async (context: WorkflowContext) => {
-              const selected = await workflow.output!(context);
-              return workflow.outputSchema ? workflow.outputSchema.parse(selected) : selected;
+            selectOutput: (context: WorkflowContext) => {
+              const selected = selectOutput(context);
+              return outputSchema ? outputSchema.parse(selected) : selected;
             },
           }
           : {}),
         onComplete: async (finalRun) => {
           // Without a selector the output keeps its historical shape: the
           // context minus `input`, checked after completion as before.
-          if (!workflow.output) workflow.outputSchema?.parse(finalRun.output);
+          if (!selectOutput) outputSchema?.parse(finalRun.output);
           await workflow.onComplete?.(finalRun.output, finalRun.context);
           this.config.onComplete?.(finalRun);
         },

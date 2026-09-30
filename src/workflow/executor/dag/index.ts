@@ -2498,8 +2498,14 @@ export class DAGExecutor {
     const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
 
     let finalOutput: unknown = result.context;
+    if (result.completed && workflowDef.output) {
+      // A nested workflow hands its parent the output it selects, checked by
+      // its own outputSchema, exactly as it would as a top-level run (#2107).
+      const selected = workflowDef.output(result.context);
+      finalOutput = workflowDef.outputSchema ? workflowDef.outputSchema.parse(selected) : selected;
+    }
     if (result.completed && config.output) {
-      finalOutput = config.output(result.context);
+      finalOutput = config.output(finalOutput);
       abortSignal?.throwIfAborted();
     }
 

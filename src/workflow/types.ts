@@ -332,13 +332,14 @@ export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
   /**
-   * Selects the run's final output from its context, the same shape as a
-   * `subWorkflow` node's `output` mapper. When declared, `outputSchema` checks
-   * the selected value and the parsed value becomes the output; a value that
-   * fails it fails the run. Without it, the output is the context minus
-   * `input`: every step's output keyed by step id.
+   * Selects the run's final output from its context, like a `subWorkflow`
+   * node's `output` mapper. The selector is synchronous and must treat the
+   * context as read-only. When declared, `outputSchema` checks the selected
+   * value and the parsed value becomes the output; a value that fails it fails
+   * the run. Nested as a `subWorkflow`, the workflow hands its parent the
+   * selected value. Without `output`, the output is the context minus `input`.
    */
-  output?: (context: WorkflowContext) => TOutput | Promise<TOutput>;
+  output?: (context: WorkflowContext) => TOutput;
   /** Explicit integration scopes and resources required by scheduled runs. */
   integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   retry?: RetryConfig;
