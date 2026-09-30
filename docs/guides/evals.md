@@ -1037,7 +1037,8 @@ Use `project.evals.read` for listing reports and definitions. Use
 can start durable runs also include `project.evals.run`. Triggering an eval run
 through the durable run API records a canonical run with kind `task`, target
 `task:eval`, and the definition ID in `config.eval_id`. Existing kind `eval`
-runs remain readable.
+runs remain readable, but new `kind: "eval"` requests are rejected with guidance
+to use `task:eval`.
 
 ## Verify it worked
 

@@ -9,10 +9,10 @@ evals are definitions. A run is what executes one of those definitions.
 
 - A **task run** executes a `task:<task-id>` target.
 - A **workflow run** executes a `workflow:<workflow-id>` target.
-- An **eval run** executes an `eval:<eval-id>` target.
+- An **eval run** executes the built-in `task:eval` target with its
+  `eval:<eval-id>` definition ID in `config.eval_id`.
 - A **target** names the capability being executed, for example
-  `task:knowledge-ingest`, `workflow:content-pipeline`, or
-  `eval:deep-research`.
+  `task:knowledge-ingest`, `workflow:content-pipeline`, or `task:eval`.
 - **events** are the canonical user-visible output stream.
 - The run record stores the terminal execution shape directly: `target`,
   `input`, `config`, `output`, `error`, `logs`, `artifacts`, `duration_ms`,
@@ -109,6 +109,11 @@ await runs.createEvalRun({
 
 The deprecated `startMode` option remains accepted for source compatibility,
 but task-based eval runs ignore it.
+
+`createEvalRun()` sends a task run with target `task:eval` and places the
+provided eval target in `config.eval_id`. Direct `POST /runs` callers should use
+the same shape. New `kind: "eval"` requests are rejected. Runs created before
+this change with kind `eval` remain available through read and list APIs.
 
 ## Observe a run
 
