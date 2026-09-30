@@ -63,6 +63,14 @@ import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
+const TaskDate = Date;
+const TaskDateNow = Date.now;
+const TaskDateParse = Date.parse;
+const TaskSetTimeout = globalThis.setTimeout;
+const TaskClearTimeout = globalThis.clearTimeout;
+const TaskAbortController = AbortController;
+const TaskAbort = AbortController.prototype.abort;
+
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -293,6 +301,20 @@ function validateRuntimeTargetSelection(
   }
 }
 
+function isValidTaskDeadline(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/
+      .test(value) ||
+    !NumberIsFinite(TaskDateParse(value))
+  ) return false;
+  // Date.parse normalizes invalid days, so check the calendar date separately
+  // from the timezone offset before accepting its instant.
+  const day = value.slice(0, 10);
+  const midnight = TaskDateParse(`${day}T00:00:00Z`);
+  return NumberIsFinite(midnight) && new TaskDate(midnight).toISOString().slice(0, 10) === day;
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
@@ -327,12 +349,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   }
 
   const deadlineAt = value.deadlineAt;
-  if (
-    deadlineAt !== undefined &&
-    (typeof deadlineAt !== "string" ||
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(deadlineAt) ||
-      !Number.isFinite(Date.parse(deadlineAt)))
-  ) {
+  if (deadlineAt !== undefined && !isValidTaskDeadline(deadlineAt)) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid deadlineAt" });
   }
 
@@ -545,14 +562,20 @@ function withRuntimeStepRegistries(config?: WorkflowClientConfig): WorkflowClien
   };
 }
 
+interface TaskDeadlineControl {
+  signal: AbortSignal;
+  throwIfExpired(): void;
+}
+
 async function executeTaskRun(
   request: ProjectRunExecuteRequest,
-  ctx: HandlerContext,
-  deps: ProjectRunExecuteHandlerDeps,
+  execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
 ): Promise<ProjectRunExecuteResponse> {
-  if (!request.deadlineAt) return executeTaskRunWithSignal(request, ctx, deps);
-  const deadline = Date.parse(request.deadlineAt);
-  const controller = new AbortController();
+  if (!request.deadlineAt) return execute();
+  const deadline = TaskDateParse(request.deadlineAt);
+  const controller = new TaskAbortController();
+  let expired = false;
+  const signal = controller.signal;
   const error = TIMEOUT_ERROR.create({
     detail:
       "Task exceeded its execution deadline; non-cooperative task code may continue inside the runtime process",
@@ -561,41 +584,49 @@ async function executeTaskRun(
   // The abort reason and the thrown value are the same error: once the signal
   // is aborted, the catch below knows the deadline, not the task, failed.
   const expire = () => {
-    controller.abort(error);
+    expired = true;
+    ReflectApply(TaskAbort, controller, [error]);
     return error;
   };
+  const control: TaskDeadlineControl = {
+    signal,
+    throwIfExpired() {
+      if (TaskDateNow() >= deadline) throw expire();
+    },
+  };
   try {
-    if (Date.now() >= deadline) throw expire();
-    const expired = new Promise<never>((_resolve, reject) => {
+    control.throwIfExpired();
+    const expiration = new Promise<never>((_resolve, reject) => {
       const arm = () => {
-        const remaining = deadline - Date.now();
+        const remaining = deadline - TaskDateNow();
         if (remaining <= 0) {
           reject(expire());
         } else {
-          timer = setTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
+          timer = TaskSetTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
         }
       };
       arm();
     });
     const result = await Promise.race([
-      expired,
-      executeTaskRunWithSignal(request, ctx, deps, controller.signal),
+      expiration,
+      execute(control),
     ]);
-    if (Date.now() >= deadline) throw expire();
+    control.throwIfExpired();
     return result;
   } catch (failure) {
-    if (!controller.signal.aborted) throw failure;
+    if (!expired && TaskDateNow() >= deadline) expire();
+    if (!expired) throw failure;
     return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
   } finally {
-    clearTimeout(timer);
+    TaskClearTimeout(timer);
   }
 }
 
-async function executeTaskRunWithSignal(
+async function executeDiscoveredTaskRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
   deps: ProjectRunExecuteHandlerDeps,
-  signal?: AbortSignal,
+  control?: TaskDeadlineControl,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -616,10 +647,10 @@ async function executeTaskRunWithSignal(
     };
   }
 
-  signal?.throwIfAborted();
+  control?.throwIfExpired();
   const result = await deps.runTask({
     task,
-    signal,
+    signal: control?.signal,
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
     input: request.input,
@@ -2096,18 +2127,20 @@ function executeProjectRun(
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
-    switch (request.target) {
-      case "task:knowledge-ingest":
-        return deps.executeKnowledgeIngest({ request, ctx, req });
-      case "task:release-asset-build":
-        return deps.executeReleaseAssetBuild({ request, ctx, req });
-      case "task:dependency-artifact-build":
-        return deps.executeDependencyArtifactBuild({ request, ctx, req });
-      case "task:style-artifact-build":
-        return deps.executeStyleArtifactBuild({ request, ctx, req });
-      default:
-        return executeTaskRun(request, ctx, deps);
-    }
+    return executeTaskRun(request, (control) => {
+      switch (request.target) {
+        case "task:knowledge-ingest":
+          return deps.executeKnowledgeIngest({ request, ctx, req });
+        case "task:release-asset-build":
+          return deps.executeReleaseAssetBuild({ request, ctx, req });
+        case "task:dependency-artifact-build":
+          return deps.executeDependencyArtifactBuild({ request, ctx, req });
+        case "task:style-artifact-build":
+          return deps.executeStyleArtifactBuild({ request, ctx, req });
+        default:
+          return executeDiscoveredTaskRun(request, ctx, deps, control);
+      }
+    });
   }
   if (request.kind === "eval") return executeEvalRun(request, ctx, req, deps);
   return executeWorkflowRun(request, ctx, deps);

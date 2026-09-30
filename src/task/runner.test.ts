@@ -208,6 +208,37 @@ describe("src/task/runner", () => {
       assertEquals(final.retryable, undefined);
     });
 
+    it("contains thrown retry brand accessors and proxy descriptor traps", async () => {
+      const failure = new Error("original failure");
+      Object.defineProperty(failure, Symbol.for("veryfront.task.RetryableError"), {
+        get() {
+          throw new Error("accessor failure");
+        },
+      });
+      const proxy = new Proxy(new Error("original failure"), {
+        getOwnPropertyDescriptor() {
+          throw new Error("proxy failure");
+        },
+      });
+      for (
+        const [thrown, message] of [[failure, "original failure"], [
+          proxy,
+          "Error: original failure",
+        ]] as const
+      ) {
+        const result = await runTask({
+          task: makeTask({
+            run: () => {
+              throw thrown;
+            },
+          }),
+        }, createInMemoryHostRuntime());
+        assertEquals(result.success, false);
+        assertEquals(result.error, message);
+        assertEquals(result.retryable, undefined);
+      }
+    });
+
     it("recognizes a RetryableError thrown by another copy of the framework", async () => {
       // A project bundle can carry its own copy of veryfront/task, so instanceof alone is not enough.
       const foreignBrand = Symbol.for("veryfront.task.RetryableError");

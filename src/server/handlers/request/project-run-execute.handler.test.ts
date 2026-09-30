@@ -575,6 +575,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       12,
       "2026-09-29Tgarbage",
       "2099-01-01T00:00:00",
+      "2099-02-30T00:00:00Z",
+      "2099-01-01T24:00:00Z",
       "2000-01-01T00:00:00.000Z",
     ]
   ) {
@@ -625,14 +627,52 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals((await result.response.json()).result, { synced: 12 });
   });
 
-  it("rejects a task result at the deadline even before the timer callback runs", async () => {
+  for (const discoveryThrows of [false, true]) {
+    it(`does not start task code when discovery blocks past the deadline (throws: ${discoveryThrows})`, async () => {
+      const deps = createDeps();
+      const deadline = Date.now() + 100;
+      let started = false;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        ensureProjectDiscovery: async (ctx) => {
+          const discovery = await deps.ensureProjectDiscovery(ctx);
+          while (Date.now() <= deadline) { /* simulate synchronous module initialization */ }
+          if (discoveryThrows) throw new Error("discovery failed after deadline");
+          return discovery;
+        },
+        runTask: async () => {
+          started = true;
+          return { success: true, durationMs: 0 };
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          deadlineAt: new Date(deadline).toISOString(),
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      assertEquals(started, false);
+    });
+  }
+
+  it("enforces the deadline despite task changes to the clock and abort method", async () => {
     const originalNow = Date.now;
-    let clock = originalNow();
-    const deadline = clock + 10_000;
+    const originalAbort = AbortController.prototype.abort;
+    const deadline = originalNow() + 100;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async () => {
-        clock = deadline;
-        return { success: true, result: "late", durationMs: 10_000 };
+        while (originalNow() <= deadline) { /* simulate blocking task code */ }
+        Date.now = () => 0;
+        AbortController.prototype.abort = () => {
+          throw new Error("patched abort");
+        };
+        return { success: true, result: "late", durationMs: 100 };
       },
     }));
     const { request, publicKeyPem } = await signedRequest(
@@ -646,23 +686,132 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       },
     );
     try {
-      Date.now = () => clock;
       const result = await handler.handle(request, createCtx(publicKeyPem));
       assertExists(result.response);
       const body = await result.response.json();
       assertEquals(body.success, false);
       assertEquals(body.error_code, "RUN_TIMEOUT");
-      assertEquals(body.result, undefined);
     } finally {
       Date.now = originalNow;
+      AbortController.prototype.abort = originalAbort;
     }
   });
 
-  // Named after the #2088 Done-when items they prove.
+  it("preserves the result when task code replaces timer cleanup", async () => {
+    const originalClearTimeout = globalThis.clearTimeout;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        globalThis.clearTimeout = () => {
+          throw new Error("patched cleanup");
+        };
+        return { success: true, result: "finished", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_deadline/execute",
+      {
+        runId: "run_deadline",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        deadlineAt: new Date(Date.now() + 100).toISOString(),
+      },
+    );
+    try {
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).result, "finished");
+    } finally {
+      globalThis.clearTimeout = originalClearTimeout;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+  });
+
   for (
-    const [name, cooperative] of [
-      ["hands the task an abort signal that fires at the invocation deadline", true],
-      ["answers with an explicit timeout when a task ignores the signal past its deadline", false],
+    const target of [
+      "knowledge-ingest",
+      "release-asset-build",
+      "dependency-artifact-build",
+      "style-artifact-build",
+    ]
+  ) {
+    it(`bounds a non-cooperative reserved task: ${target}`, async () => {
+      let finish: (() => void) | undefined;
+      const execute = async () => {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+          deadlineAt: new Date(Date.now() + 100).toISOString(),
+        },
+      );
+      const guard = setTimeout(() => finish?.(), 1_000);
+      try {
+        const result = await handler.handle(request, createCtx(publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      } finally {
+        clearTimeout(guard);
+        finish?.();
+      }
+    });
+
+    it(`refuses an expired reserved task: ${target}`, async () => {
+      let started = false;
+      const execute = async () => {
+        started = true;
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+          deadlineAt: "2000-01-01T00:00:00Z",
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      assertEquals(started, false);
+    });
+  }
+
+  for (
+    const [name, cooperative, maskAborted] of [
+      ["hands the task an abort signal that fires at the invocation deadline", true, false],
+      [
+        "answers with an explicit timeout when a task ignores the signal past its deadline",
+        false,
+        false,
+      ],
+      ["preserves timeout classification when a task masks the aborted flag", true, true],
     ] as const
   ) {
     it(name, async () => {
@@ -674,7 +823,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           await new Promise<void>((resolve) => {
             settle = resolve;
             if (cooperative) {
-              signal?.addEventListener("abort", () => resolve(), {
+              signal?.addEventListener("abort", () => {
+                if (maskAborted) Object.defineProperty(signal, "aborted", { value: false });
+                resolve();
+              }, {
                 once: true,
               });
             }
@@ -704,7 +856,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           }),
         ]);
         assertExists(signal);
-        assertEquals(signal.aborted, true);
+        assertEquals(signal.aborted, !maskAborted);
         assertExists(result.response);
         const body = await result.response.json();
         assertEquals(body.success, false);

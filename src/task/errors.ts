@@ -40,8 +40,14 @@ export class RetryableError extends Error {
   }
 }
 
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
 /** True for a {@link RetryableError} from any copy of the framework. */
 export function isRetryableError(error: unknown): error is RetryableError {
-  return typeof error === "object" && error !== null &&
-    (error as Record<symbol, unknown>)[RETRYABLE_ERROR_BRAND] === true;
+  if (typeof error !== "object" || error === null) return false;
+  try {
+    return getOwnPropertyDescriptor(error, RETRYABLE_ERROR_BRAND)?.value === true;
+  } catch {
+    return false;
+  }
 }
