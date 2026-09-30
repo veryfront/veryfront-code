@@ -104,6 +104,8 @@ export interface ProjectRunExecuteRequest {
   runtimeTargetEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
   deadlineAt?: string;
+  /** 1-based attempt under the run's backoff_limit; tasks read it as ctx.attempt. */
+  attempt?: number;
   config?: Record<string, unknown>;
   /** Business input: any JSON value. Absent when the run was created without input. */
   input?: unknown;
@@ -117,6 +119,8 @@ export interface ProjectRunExecuteResponse {
   logs?: string | null;
   error?: string | null;
   error_code?: "RUN_TIMEOUT";
+  /** The task threw a RetryableError; the API may start another attempt. */
+  retryable?: true;
   duration_ms?: number;
   artifacts?: unknown[];
 }
@@ -330,6 +334,14 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid deadlineAt" });
   }
 
+  const attempt = value.attempt;
+  if (
+    attempt !== undefined &&
+    (typeof attempt !== "number" || !Number.isInteger(attempt) || attempt < 1)
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid attempt" });
+  }
+
   const runtimeTargetKind = parseRuntimeTargetKind(value.runtimeTargetKind);
   const runtimeTargetEnvironmentId = parseOptionalNullableString(
     value.runtimeTargetEnvironmentId,
@@ -355,6 +367,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     runtimeTargetEnvironmentId,
     runtimeTargetBranchId,
     deadlineAt,
+    attempt,
     config: parseRecord(value.config),
     input: value.input,
     parentRunId: parseOptionalNullableString(value.parentRunId, "parentRunId"),
@@ -603,6 +616,7 @@ async function executeTaskRunWithSignal(
   const result = await deps.runTask({
     task,
     signal,
+    ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
     input: request.input,
     projectId: request.projectId,
@@ -618,6 +632,7 @@ async function executeTaskRunWithSignal(
     error: result.error,
     duration_ms: result.durationMs,
     logs: null,
+    ...(result.retryable ? { retryable: true as const } : {}),
   };
 }
 

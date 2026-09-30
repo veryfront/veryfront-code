@@ -29,6 +29,12 @@ export interface TaskContext {
   environmentId?: string;
   /** Cooperative cancellation for request- or runtime-scoped execution */
   signal?: AbortSignal;
+  /**
+   * 1-based attempt number. A project task run starts again, with a higher
+   * attempt, only after it threw a `RetryableError` or the runtime never
+   * started it; see `backoff_limit`.
+   */
+  attempt?: number;
 }
 
 /**

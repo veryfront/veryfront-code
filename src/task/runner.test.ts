@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { RetryableError } from "./errors.ts";
 import { type RunnableTask, runTask } from "./runner.ts";
 import type { TaskDefinition } from "./types.ts";
 
@@ -160,6 +161,70 @@ describe("src/task/runner", () => {
 
       assertEquals(result.success, true);
       assertStrictEquals(receivedSignal, controller.signal);
+    });
+
+    // veryfront/veryfront-issue-inbox#2100
+    it("exposes the 1-based attempt number as ctx.attempt, defaulting to 1", async () => {
+      const attempts: Array<number | undefined> = [];
+      const task = makeTask({
+        run: (ctx) => {
+          attempts.push(ctx.attempt);
+          return null;
+        },
+      });
+
+      await runTask({ task }, createInMemoryHostRuntime());
+      await runTask({ task, attempt: 3 }, createInMemoryHostRuntime());
+
+      assertEquals(attempts, [1, 3]);
+    });
+
+    it("reports a thrown RetryableError as a retryable failure and any other error as final", async () => {
+      const retryable = await runTask(
+        {
+          task: makeTask({
+            run: () => {
+              throw new RetryableError("upstream returned 503");
+            },
+          }),
+        },
+        createInMemoryHostRuntime(),
+      );
+      const final = await runTask(
+        {
+          task: makeTask({
+            run: () => {
+              throw Object.assign(new Error("bad input"), { retryable: true });
+            },
+          }),
+        },
+        createInMemoryHostRuntime(),
+      );
+
+      assertEquals(retryable.success, false);
+      assertEquals(retryable.error, "upstream returned 503");
+      assertEquals(retryable.retryable, true);
+      assertEquals(final.success, false);
+      assertEquals(final.retryable, undefined);
+    });
+
+    it("recognizes a RetryableError thrown by another copy of the framework", async () => {
+      // A project bundle can carry its own copy of veryfront/task, so instanceof alone is not enough.
+      class ForeignRetryableError extends Error {
+        readonly [Symbol.for("veryfront.task.RetryableError")] = true;
+      }
+      const result = await runTask(
+        {
+          task: makeTask({
+            run: () => {
+              throw new ForeignRetryableError("rate limited");
+            },
+          }),
+        },
+        createInMemoryHostRuntime(),
+      );
+
+      assertEquals(result.retryable, true);
     });
 
     it("should not invoke a task when its cancellation signal is already aborted", async () => {

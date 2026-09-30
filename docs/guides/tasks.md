@@ -157,6 +157,40 @@ the signal. The run fails with `RUN_TIMEOUT`. Code that ignores cancellation
 can continue executing inside the runtime process after the response returns;
 a timeout does not roll back side effects.
 
+### Retries
+
+A project task run is retried under its `backoff_limit` (default 3), so it
+makes at most `backoff_limit + 1` attempts. Only two failures start another
+attempt, after an exponential backoff:
+
+- The runtime never started the task: the connection was refused, or the
+  runtime answered HTTP 502 or 503 before accepting the request.
+- The task threw `RetryableError`.
+
+Any other thrown error fails the run at once. A network error after the
+request was sent is never retried, because the task may already have run. No
+retry starts when its backoff would pass the `timeout_seconds` deadline; the
+run then fails with the last attempt's error. `ctx.attempt` is the 1-based
+attempt number.
+
+```ts
+import { RetryableError, type TaskContext } from "veryfront/task";
+
+export default {
+  name: "Sync invoices",
+  async run(ctx: TaskContext) {
+    const response = await fetch("https://api.example.com/invoices", { signal: ctx.signal });
+    if (response.status === 503) {
+      throw new RetryableError(`Upstream unavailable on attempt ${ctx.attempt}`);
+    }
+    return await response.json();
+  },
+};
+```
+
+A retried task runs again from the start, so make its side effects safe to
+repeat.
+
 ## Discovery
 
 Tasks are discovered automatically from the `tasks/` directory:

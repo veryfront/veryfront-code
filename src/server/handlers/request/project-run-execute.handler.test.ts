@@ -712,6 +712,92 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  // veryfront/veryfront-issue-inbox#2100: the API numbers attempts under backoff_limit.
+  it("#2100 hands the invocation attempt to the task runner", async () => {
+    let receivedAttempt: number | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: (options) => {
+        receivedAttempt = options.attempt;
+        return Promise.resolve({ success: true, result: null, durationMs: 1 });
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_attempt/execute",
+      {
+        runId: "run_attempt",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        attempt: 3,
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedAttempt, 3);
+  });
+
+  for (const attempt of [0, -1, 1.5, "2"]) {
+    it(`#2100 rejects an invalid attempt number: ${JSON.stringify(attempt)}`, async () => {
+      let started = false;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: () => {
+          started = true;
+          return Promise.resolve({ success: true, durationMs: 0 });
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_attempt/execute",
+        {
+          runId: "run_attempt",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          attempt,
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+      assertEquals(started, false);
+    });
+  }
+
+  for (const retryable of [true, undefined]) {
+    it(`#2100 answers a ${retryable ? "RetryableError" : "final"} task failure with retryable: ${retryable}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: () =>
+          Promise.resolve({
+            success: false,
+            error: "Transient failure on attempt 1",
+            durationMs: 1,
+            ...(retryable ? { retryable } : {}),
+          }),
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_retryable/execute",
+        {
+          runId: "run_retryable",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          attempt: 1,
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      const body = await result.response.json();
+      assertEquals(body.success, false);
+      assertEquals(body.retryable, retryable);
+    });
+  }
+
   // veryfront/veryfront-issue-inbox#2105: business input is any JSON value and reaches the
   // task separately from config.
   it("#2091 forwards non-object task input to the runner", async () => {
