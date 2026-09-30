@@ -103,6 +103,7 @@ export interface ProjectRunExecuteRequest {
   runtimeTargetKind?: "main_branch" | "environment" | "preview_branch";
   runtimeTargetEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
+  deadlineAt?: string;
   config?: Record<string, unknown>;
   /** Business input: any JSON value. Absent when the run was created without input. */
   input?: unknown;
@@ -115,6 +116,7 @@ export interface ProjectRunExecuteResponse {
   result?: unknown;
   logs?: string | null;
   error?: string | null;
+  error_code?: "RUN_TIMEOUT";
   duration_ms?: number;
   artifacts?: unknown[];
 }
@@ -318,6 +320,16 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
   }
 
+  const deadlineAt = value.deadlineAt;
+  if (
+    deadlineAt !== undefined &&
+    (typeof deadlineAt !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T/.test(deadlineAt) ||
+      !Number.isFinite(Date.parse(deadlineAt)))
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid deadlineAt" });
+  }
+
   const runtimeTargetKind = parseRuntimeTargetKind(value.runtimeTargetKind);
   const runtimeTargetEnvironmentId = parseOptionalNullableString(
     value.runtimeTargetEnvironmentId,
@@ -342,6 +354,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     runtimeTargetKind,
     runtimeTargetEnvironmentId,
     runtimeTargetBranchId,
+    deadlineAt,
     config: parseRecord(value.config),
     input: value.input,
     parentRunId: parseOptionalNullableString(value.parentRunId, "parentRunId"),
@@ -522,6 +535,51 @@ async function executeTaskRun(
   ctx: HandlerContext,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<ProjectRunExecuteResponse> {
+  if (!request.deadlineAt) return executeTaskRunWithSignal(request, ctx, deps);
+  const deadline = Date.parse(request.deadlineAt);
+  const controller = new AbortController();
+  const error = TIMEOUT_ERROR.create({
+    detail:
+      "Task exceeded its execution deadline; non-cooperative task code may continue inside the runtime process",
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = () => {
+    controller.abort(error);
+    return error;
+  };
+  try {
+    if (Date.now() >= deadline) throw timeout();
+    const expired = new Promise<never>((_resolve, reject) => {
+      const arm = () => {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          reject(timeout());
+        } else {
+          timer = setTimeout(arm, Math.min(remaining, 2_147_483_647));
+        }
+      };
+      arm();
+    });
+    const result = await Promise.race([
+      expired,
+      executeTaskRunWithSignal(request, ctx, deps, controller.signal),
+    ]);
+    if (Date.now() >= deadline) throw timeout();
+    return result;
+  } catch (failure) {
+    if (!controller.signal.aborted) throw failure;
+    return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function executeTaskRunWithSignal(
+  request: ProjectRunExecuteRequest,
+  ctx: HandlerContext,
+  deps: ProjectRunExecuteHandlerDeps,
+  signal?: AbortSignal,
+): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
     throw NOT_SUPPORTED.create({
@@ -541,8 +599,10 @@ async function executeTaskRun(
     };
   }
 
+  signal?.throwIfAborted();
   const result = await deps.runTask({
     task,
+    signal,
     config: request.config ?? {},
     input: request.input,
     projectId: request.projectId,

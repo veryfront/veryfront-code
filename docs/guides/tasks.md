@@ -149,6 +149,13 @@ should pass the signal to cancellable operations such as `fetch`; JavaScript
 functions that ignore the signal cannot be forcibly terminated by the task
 runner.
 
+For project task runs, `timeout_seconds` defaults to 300 and bounds the whole
+run from its first start, including any retry attempts. The runtime aborts
+`ctx.signal` at that deadline and reports a timeout even if the task ignores
+the signal. The run fails with `RUN_TIMEOUT`. Code that ignores cancellation
+can continue executing inside the runtime process after the response returns;
+a timeout does not roll back side effects.
+
 ## Discovery
 
 Tasks are discovered automatically from the `tasks/` directory:

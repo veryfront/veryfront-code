@@ -569,6 +569,115 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     await stopEsbuild();
   });
 
+  for (
+    const deadlineAt of [
+      "invalid",
+      12,
+      "2026-09-29Tgarbage",
+      "2000-01-01T00:00:00.000Z",
+    ]
+  ) {
+    it(`does not start task code for an invalid or expired deadline: ${deadlineAt}`, async () => {
+      let started = false;
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          runTask: async () => {
+            started = true;
+            return { success: true, durationMs: 0 };
+          },
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          deadlineAt,
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(started, false);
+      if (deadlineAt === "2000-01-01T00:00:00.000Z") {
+        assertEquals(result.response.status, 200);
+        assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      } else assertEquals(result.response.status, 400);
+    });
+  }
+
+  it("preserves a successful task result within its deadline", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps());
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_deadline/execute",
+      {
+        runId: "run_deadline",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        deadlineAt: new Date(Date.now() + 30_000).toISOString(),
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    assertEquals((await result.response.json()).result, { synced: 12 });
+  });
+
+  for (const cooperative of [true, false]) {
+    it(`bounds a ${cooperative ? "cooperative" : "non-cooperative"} task at its deadline`, async () => {
+      let signal: AbortSignal | undefined;
+      let settle: (() => void) | undefined;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async (options) => {
+          signal = options.signal;
+          await new Promise<void>((resolve) => {
+            settle = resolve;
+            if (cooperative) {
+              signal?.addEventListener("abort", () => resolve(), {
+                once: true,
+              });
+            }
+          });
+          return { success: true, result: "late", durationMs: 1 };
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          deadlineAt: new Date(Date.now() + 100).toISOString(),
+        },
+      );
+      let guard: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          handler.handle(request, createCtx(publicKeyPem)),
+          new Promise<never>((_resolve, reject) => {
+            guard = setTimeout(
+              () => reject(new Error("execution exceeded deadline grace")),
+              1_000,
+            );
+          }),
+        ]);
+        assertExists(signal);
+        assertEquals(signal.aborted, true);
+        assertExists(result.response);
+        const body = await result.response.json();
+        assertEquals(body.success, false);
+        assertEquals(body.error_code, "RUN_TIMEOUT");
+        assertStringIncludes(body.error, "deadline");
+        assertStringIncludes(body.error, "non-cooperative");
+      } finally {
+        clearTimeout(guard);
+        settle?.();
+      }
+    });
+  }
+
   // veryfront/veryfront-issue-inbox#2105: business input is any JSON value and reaches the
   // task separately from config.
   it("#2091 forwards non-object task input to the runner", async () => {
