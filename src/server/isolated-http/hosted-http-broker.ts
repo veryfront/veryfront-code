@@ -71,15 +71,17 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
     },
     shutdown: pool.shutdown.bind(pool),
     async fetch(request: Request, input: HostedHttpInput): Promise<Response> {
+      request.signal.throwIfAborted();
+      const prepared = prepareHostedHttpInput(input);
       const settings = input.projectTracing;
-      if (settings === undefined) return dispatch(request, input);
+      if (settings === undefined) return dispatch(request, prepared);
       if (input.tracing !== undefined) {
         throw new TypeError("Project tracing cannot be combined with explicit tracing");
       }
-      const owner = input.installation.owner;
+      const owner = prepared.installation.owner;
       const identity = {
         projectId: owner.scopeKind === "project" ? owner.projectId : undefined,
-        environmentId: input.installation.environmentId,
+        environmentId: prepared.installation.environmentId,
       };
       if (
         settings.status === "enabled" && (
@@ -91,43 +93,19 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
         settings,
         identity,
         request,
-        () => dispatch(request, { ...input, tracing: captureProjectTracing() }),
+        () => dispatch(request, prepared, captureProjectTracing()),
         { errorOnAbort: true },
       );
     },
   };
 
-  async function dispatch(request: Request, input: HostedHttpInput): Promise<Response> {
+  async function dispatch(
+    request: Request,
+    input: ReturnType<typeof prepareHostedHttpInput>,
+    tracing = input.tracing,
+  ): Promise<Response> {
     request.signal.throwIfAborted();
-    const allocation = parseHostedExecutorData(
-      getHostedExecutorAllocationRequestSchema(),
-      input.session.request,
-    );
-    if (allocation.executionProfile !== undefined && allocation.executionProfile !== "http") {
-      throw new TypeError("HTTP executor requires the HTTP allocation profile");
-    }
-    allocation.executionProfile = "http";
-    const installation = parseExecutorInstallation(getExecutorHttpInstallSchema(), {
-      ...input.installation,
-      // Validate before reserving capacity. The authenticated allocator's
-      // actual generation replaces this validation-only value below.
-      binding: {
-        allocationId: allocation.allocationId,
-        invocationId: allocation.invocationId,
-        generation: 1,
-      },
-    });
-    if (
-      !sameHostedExecutorOwner(allocation.owner, installation.owner) ||
-      verifyHostedRuntimeSourceBinding(allocation.source, installation.source) !== undefined
-    ) {
-      throw new TypeError("HTTP executor installation does not match its allocation");
-    }
-    const configuration = input.configuration === undefined
-      ? undefined
-      : snapshotExecutorHttpApplicationConfiguration(input.configuration, installation);
-    const headerOptions = { denyHeaders: input.headers?.denyHeaders?.slice() };
-    const tracing = input.tracing ? { ...input.tracing } : undefined;
+    const { allocation, installation, configuration, headerOptions } = input;
     const lifetime = new AbortController();
     let channel: ExecutorChannel | undefined;
     let client: ReturnType<typeof createExecutorHttpClient> | undefined;
@@ -206,6 +184,47 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
       throw error;
     }
   }
+}
+
+/** Validate and detach execution authority before opening a project telemetry scope. */
+function prepareHostedHttpInput(input: HostedHttpInput) {
+  const allocation = parseHostedExecutorData(
+    getHostedExecutorAllocationRequestSchema(),
+    input.session.request,
+  );
+  if (allocation.executionProfile !== undefined && allocation.executionProfile !== "http") {
+    throw new TypeError("HTTP executor requires the HTTP allocation profile");
+  }
+  allocation.executionProfile = "http";
+  const installation = parseExecutorInstallation(getExecutorHttpInstallSchema(), {
+    ...input.installation,
+    // Validate before reserving capacity. The authenticated allocator's
+    // actual generation replaces this validation-only value below.
+    binding: {
+      allocationId: allocation.allocationId,
+      invocationId: allocation.invocationId,
+      generation: 1,
+    },
+  });
+  if (
+    !sameHostedExecutorOwner(allocation.owner, installation.owner) ||
+    verifyHostedRuntimeSourceBinding(allocation.source, installation.source) !== undefined
+  ) {
+    throw new TypeError("HTTP executor installation does not match its allocation");
+  }
+  const configuration = input.configuration === undefined
+    ? undefined
+    : snapshotExecutorHttpApplicationConfiguration(input.configuration, installation);
+  const headerOptions = { denyHeaders: input.headers?.denyHeaders?.slice() };
+  const tracing = input.tracing ? { ...input.tracing } : undefined;
+  return {
+    allocation,
+    installation,
+    configuration,
+    headerOptions,
+    tracing,
+    session: { ...input.session },
+  };
 }
 
 /** Capture this request's provider and parent before asynchronous executor delivery. */

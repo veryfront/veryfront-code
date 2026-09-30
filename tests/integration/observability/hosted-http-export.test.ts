@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -70,6 +70,41 @@ it("exports 100 interleaved executor requests per project without mixed destinat
       }));
       await flushProjectHttpTracing();
       deliveries.length = 0;
+      for (const [projectIndex, projectId] of projects.entries()) {
+        for (const invalid of ["allocation", "source", "configuration"]) {
+          const fixture = createHostedHttpFixture(
+            () => new Response("must not execute"),
+            undefined,
+            projectId,
+          );
+          if (invalid === "allocation") fixture.input.session.request.invocationId = "invalid";
+          if (invalid === "source") {
+            fixture.input.installation.source = { type: "release", releaseId: "foreign-release" };
+          }
+          if (invalid === "configuration") {
+            fixture.input.configuration = {
+              projectId,
+              projectSlug: projectId,
+              releaseId: "foreign-release",
+              environmentId: "environment-a",
+              environmentName: "production",
+              configurationId: "config-a",
+              variables: {},
+            };
+          }
+          await assertRejects(
+            () =>
+              broker.fetch(new Request("https://application.example/rejected"), {
+                ...fixture.input,
+                projectTracing: settings[projectIndex]!,
+              }),
+            Error,
+          );
+          assertEquals(fixture.calls, []);
+          await flushProjectHttpTracing();
+          assertEquals(deliveries.length, 0, "Rejected authority must not enter project telemetry");
+        }
+      }
       for (let index = 0; index < 100; index++) {
         const responses = await Promise.all(projects.map((projectId, projectIndex) => {
           const fixture = createHostedHttpFixture(
