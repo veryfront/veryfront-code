@@ -158,11 +158,29 @@ function rebaseWorkflowDefinition(
   newPrefix: string,
   definition: WorkflowDefinition,
 ): WorkflowDefinition {
-  const steps = definition.steps;
+  const { steps, output } = definition;
   return {
     ...definition,
     steps: Array.isArray(steps)
       ? rebaseWorkflowNodes(oldPrefix, newPrefix, steps)
       : (context) => rebaseWorkflowNodes(oldPrefix, newPrefix, steps(context)),
+    // The output selector reads the step ids the definition declares, so hand
+    // it the context keyed by those ids rather than the rebased ones.
+    ...(output === undefined
+      ? {}
+      : { output: (context) => output(rebaseContextKeys(newPrefix, oldPrefix, context)) }),
   };
+}
+
+function rebaseContextKeys<T extends Record<string, unknown>>(
+  fromPrefix: string,
+  toPrefix: string,
+  context: T,
+): T {
+  return Object.fromEntries(
+    Object.entries(context).map(([key, value]) => [
+      key.startsWith(fromPrefix) ? `${toPrefix}${key.slice(fromPrefix.length)}` : key,
+      value,
+    ]),
+  ) as T;
 }

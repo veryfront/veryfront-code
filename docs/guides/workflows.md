@@ -566,8 +566,10 @@ completed output. Without `output`, the output keeps the default shape above.
 A workflow nested with `subWorkflow` or `map` hands its parent the same selected
 output. The node's own `output` mapper, when declared, receives that value.
 
-Steps receive the parsed input: `inputSchema` transforms and defaults apply
-before the first step runs. The run keeps the input as it was submitted.
+A started run's steps receive the parsed input: `inputSchema` transforms and
+defaults apply before the first step runs. The run keeps the input as it was
+submitted. A workflow nested with `subWorkflow` or `map` receives the input its
+parent passes as is; its `inputSchema` is not applied.
 
 A run that pauses on an approval or an event has no output until it completes.
 
