@@ -41,7 +41,7 @@ describe("WorkflowClient shutdown", () => {
       sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
       status: "completed",
       input: {},
-      context: {},
+      context: { input: {} },
       nodeStates: {},
       createdAt: new Date(),
       updatedAt: new Date(),
