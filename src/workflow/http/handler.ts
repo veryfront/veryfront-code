@@ -81,7 +81,7 @@ class WorkflowRequestError extends Error {}
  */
 const CONTROL_PLANE_RUN_ID = /^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function isControlPlaneOwnedWorkflowRunId(runId: string): boolean {
+function isControlPlaneOwnedWorkflowRunId(runId: string): boolean {
   return CONTROL_PLANE_RUN_ID.test(runId);
 }
 
@@ -500,6 +500,19 @@ export function createWorkflowHandler(
         const body = await readJson(request);
         const handle = await client.start(first, body.input);
         return Response.json({ runId: handle.runId });
+      }
+
+      // Cancel and retry would move the durable run without the canonical run
+      // knowing, the same as an approval decision.
+      if (
+        segments.length === 3 && first === "runs" && second &&
+        (third === "cancel" || third === "retry") && isControlPlaneOwnedWorkflowRunId(second)
+      ) {
+        return problem(
+          `Workflow run ${second} belongs to the Veryfront control plane. ` +
+            `Cancel it with POST /runs/${second}/cancel.`,
+          409,
+        );
       }
 
       if (segments.length === 3 && first === "runs" && second && third === "cancel") {

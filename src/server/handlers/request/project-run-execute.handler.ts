@@ -187,9 +187,11 @@ interface WorkflowClientView {
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
   approve?(runId: string, approvalId: string, approver: string, comment?: string): Promise<unknown>;
   reject?(runId: string, approvalId: string, approver: string, comment?: string): Promise<unknown>;
-  publishEvent?(runId: string, eventName: string, payload?: unknown): Promise<unknown>;
-  /** Expire every approval and event wait whose deadline passed, and wake every due `delay()`. */
-  releaseDueWaits?(): Promise<void>;
+  /** Resolves with the workflow client's `PublishEventOutcome`. */
+  publishEvent?(runId: string, eventName: string, payload?: unknown): Promise<string>;
+  retryEventDelivery?(runId: string, eventName: string): Promise<boolean>;
+  getApprovalManager?(): { checkExpiredApprovals(): Promise<void> };
+  getEventWaitManager?(): { checkExpiredEventWaits(): Promise<void> };
   destroy(): Promise<void>;
 }
 
@@ -392,11 +394,23 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   };
 }
 
-function parseNonEmptyString(value: unknown, fieldName: string): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 4_000) {
+/** The resume field limits the control plane enforces on `POST /runs/{run_id}/resume`. */
+const RESUME_ID_MAX_LENGTH = 256;
+const RESUME_COMMENT_MAX_LENGTH = 4_000;
+
+function parseBoundedString(
+  value: unknown,
+  fieldName: string,
+  { minLength, maxLength }: { minLength: number; maxLength: number },
+): string {
+  if (typeof value !== "string" || value.length < minLength || value.length > maxLength) {
     throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
   }
   return value;
+}
+
+function parseResumeId(value: unknown, fieldName: string): string {
+  return parseBoundedString(value, fieldName, { minLength: 1, maxLength: RESUME_ID_MAX_LENGTH });
 }
 
 function parseResumeSignal(
@@ -414,18 +428,22 @@ function parseResumeSignal(
       }
       return {
         type: "approval",
-        node_id: parseNonEmptyString(value.node_id, "resume.node_id"),
+        node_id: parseResumeId(value.node_id, "resume.node_id"),
         approved: value.approved,
-        approver: parseNonEmptyString(value.approver, "resume.approver"),
-        ...(value.comment === undefined
-          ? {}
-          : { comment: parseNonEmptyString(value.comment, "resume.comment") }),
+        approver: parseResumeId(value.approver, "resume.approver"),
+        // An empty comment is valid, as on the control plane's resume route.
+        ...(value.comment === undefined ? {} : {
+          comment: parseBoundedString(value.comment, "resume.comment", {
+            minLength: 0,
+            maxLength: RESUME_COMMENT_MAX_LENGTH,
+          }),
+        }),
       };
     }
     case "event":
       return {
         type: "event",
-        name: parseNonEmptyString(value.name, "resume.name"),
+        name: parseResumeId(value.name, "resume.name"),
         ...(value.payload === undefined ? {} : { payload: value.payload }),
       };
     case "deadline":
@@ -584,13 +602,8 @@ async function createRuntimeWorkflowClient(
     await backend.initialize();
   }
 
-  const client = createWorkflowClient({ ...clientConfig, backend, debug: config?.debug });
-  return Object.assign(client, {
+  return Object.assign(createWorkflowClient({ ...clientConfig, backend, debug: config?.debug }), {
     statePersistence: "durable" as const,
-    releaseDueWaits: async () => {
-      await client.getApprovalManager().checkExpiredApprovals();
-      await client.getEventWaitManager().checkExpiredEventWaits();
-    },
   });
 }
 
@@ -681,10 +694,31 @@ async function waitForWorkflowResult(
   }
 }
 
-function toIsoTimestamp(value: Date | string | undefined): string | undefined {
+interface PendingWorkflowWaits {
+  approvals: NonNullable<WorkflowRunView["pendingApprovals"]>;
+  eventWaits: WorkflowEventWaitView[];
+}
+
+function isPendingWait(entry: { status?: string }): boolean {
+  return entry.status === undefined || entry.status === "pending";
+}
+
+/** The approvals and event waits (including `delay()`) a run is still parked on. */
+async function readPendingWaits(
+  client: WorkflowClientView,
+  runId: string,
+  run: WorkflowRunView,
+): Promise<PendingWorkflowWaits> {
+  return {
+    approvals: (run.pendingApprovals ?? []).filter(isPendingWait),
+    eventWaits: (await client.getPendingEventWaits?.(runId) ?? []).filter(isPendingWait),
+  };
+}
+
+function deadlineMs(value: Date | string | undefined): number | undefined {
   if (value === undefined) return undefined;
-  const date = value instanceof Date ? value : new Date(value);
-  return NumberIsFinite(date.getTime()) ? date.toISOString() : undefined;
+  const ms = new Date(value).getTime();
+  return NumberIsFinite(ms) ? ms : undefined;
 }
 
 /**
@@ -693,21 +727,12 @@ function toIsoTimestamp(value: Date | string | undefined): string | undefined {
  * earliest deadline among them, which the control plane uses to dispatch the
  * run again when nothing else will (#2110).
  */
-async function describeWorkflowWait(
-  client: WorkflowClientView,
-  runId: string,
-  run: WorkflowRunView,
-): Promise<WorkflowWaitingDetails> {
-  const approvals = (run.pendingApprovals ?? []).filter((approval) =>
-    approval.status === undefined || approval.status === "pending"
-  );
-  const eventWaits = (await client.getPendingEventWaits?.(runId) ?? []).filter((wait) =>
-    wait.status === undefined || wait.status === "pending"
-  );
+function describeWorkflowWait(
+  { approvals, eventWaits }: PendingWorkflowWaits,
+): WorkflowWaitingDetails {
   const deadlines = [...approvals, ...eventWaits]
-    .map((entry) => toIsoTimestamp(entry.expiresAt))
-    .filter((deadline): deadline is string => deadline !== undefined)
-    .sort();
+    .map((entry) => deadlineMs(entry.expiresAt))
+    .filter((deadline): deadline is number => deadline !== undefined);
   const event = eventWaits.find((wait) => wait.waitKind === "event")?.eventName;
 
   return {
@@ -715,8 +740,45 @@ async function describeWorkflowWait(
       ? { pending_approvals: approvals.map((approval) => approval.nodeId) }
       : {}),
     ...(event === undefined ? {} : { event }),
-    ...(deadlines[0] === undefined ? {} : { resume_at: deadlines[0] }),
+    ...(deadlines.length ? { resume_at: new Date(Math.min(...deadlines)).toISOString() } : {}),
   };
+}
+
+function waitKeys({ approvals, eventWaits }: PendingWorkflowWaits): string[] {
+  return [
+    ...approvals.map((approval) => `approval:${approval.id}`),
+    ...eventWaits.map((wait) => `wait:${wait.nodeId}:${wait.eventName}`),
+  ].sort();
+}
+
+function sameKeys(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((key, index) => key === right[index]);
+}
+
+function hasDueWait({ approvals, eventWaits }: PendingWorkflowWaits, nowMs: number): boolean {
+  return [...approvals, ...eventWaits].some((wait) => {
+    const deadline = deadlineMs(wait.expiresAt);
+    return deadline !== undefined && deadline <= nowMs;
+  });
+}
+
+/**
+ * Deliver the event the run waits on. Resolves with whether a wait was
+ * released, or a failure when delivery failed even after one retry of the same
+ * buffered envelope. A `buffered` or `run-terminal` outcome released nothing,
+ * so the caller reports where the run is now.
+ */
+async function deliverResumeEvent(
+  client: WorkflowClientView,
+  runId: string,
+  resume: Extract<WorkflowResumeSignal, { type: "event" }>,
+): Promise<{ released: boolean } | { failure: string }> {
+  if (!client.publishEvent) return { failure: "Workflow client cannot deliver events" };
+  const outcome = await client.publishEvent(runId, resume.name, resume.payload);
+  if (outcome === "delivered") return { released: true };
+  if (outcome !== "delivery-failed") return { released: false };
+  if (await client.retryEventDelivery?.(runId, resume.name)) return { released: true };
+  return { failure: `Delivering event "${resume.name}" to the workflow run failed` };
 }
 
 /**
@@ -725,6 +787,11 @@ async function describeWorkflowWait(
  * deadline passed (#2110), then poll to the next boundary. The decision is
  * applied through the workflow client, exactly as the runtime's own approval
  * route would, so the resumed execution is the same.
+ *
+ * A deadline release runs the workflow client's own expiry pass, which covers
+ * every due wait on this project's backend, not only this run's, exactly as
+ * the runtime's periodic expiry timer does. Other runs released that way are
+ * reported to the control plane at their own deadline dispatch.
  */
 async function resumeWaitingWorkflowRun(
   client: WorkflowClientView,
@@ -744,17 +811,10 @@ async function resumeWaitingWorkflowRun(
     return { run: await waitForWorkflowResult(client, runId, deps) };
   }
 
-  // The decision can resume the run in the background, so the run may still
-  // read `waiting` on the boundary it was just released from. Poll past that
-  // boundary; a later pause on a different boundary is a new `waiting`.
-  const released = await pendingWaitKeys(client, runId, current);
-  const nowMs = Date.now();
+  const parked = await readPendingWaits(client, runId, current);
   let releasedAny = false;
   if (resume.type === "approval") {
-    const approval = (current.pendingApprovals ?? []).find((candidate) =>
-      candidate.nodeId === resume.node_id &&
-      (candidate.status === undefined || candidate.status === "pending")
-    );
+    const approval = parked.approvals.find((candidate) => candidate.nodeId === resume.node_id);
     if (approval) {
       const decide = resume.approved ? client.approve : client.reject;
       if (!decide) return { failure: "Workflow client cannot decide approvals" };
@@ -762,53 +822,30 @@ async function resumeWaitingWorkflowRun(
       releasedAny = true;
     }
   } else if (resume.type === "event") {
-    if (!client.publishEvent) return { failure: "Workflow client cannot deliver events" };
-    await client.publishEvent(runId, resume.name, resume.payload);
-    releasedAny = true;
+    const delivered = await deliverResumeEvent(client, runId, resume);
+    if ("failure" in delivered) return delivered;
+    releasedAny = delivered.released;
   } else {
-    if (!client.releaseDueWaits) return { failure: "Workflow client cannot release due waits" };
-    releasedAny = await hasDueWait(client, runId, current, nowMs);
-    await client.releaseDueWaits();
+    if (!client.getApprovalManager || !client.getEventWaitManager) {
+      return { failure: "Workflow client cannot release due waits" };
+    }
+    releasedAny = hasDueWait(parked, deps.now());
+    await client.getApprovalManager().checkExpiredApprovals();
+    await client.getEventWaitManager().checkExpiredEventWaits();
   }
 
+  // The decision can resume the run in the background, so the run may still
+  // read `waiting` on the boundary it was just released from, or with nothing
+  // pending at all while the released node completes. Poll past both; a later
+  // pause on a different boundary is a new `waiting`.
+  const released = waitKeys(parked);
   const stillParked = releasedAny
-    ? async (run: WorkflowRunView) => sameKeys(await pendingWaitKeys(client, runId, run), released)
+    ? async (run: WorkflowRunView) => {
+      const keys = waitKeys(await readPendingWaits(client, runId, run));
+      return keys.length === 0 || sameKeys(keys, released);
+    }
     : undefined;
   return { run: await waitForWorkflowResult(client, runId, deps, stillParked) };
-}
-
-async function pendingWaitKeys(
-  client: WorkflowClientView,
-  runId: string,
-  run: WorkflowRunView,
-): Promise<string[]> {
-  const approvals = (run.pendingApprovals ?? [])
-    .filter((approval) => approval.status === undefined || approval.status === "pending")
-    .map((approval) => `approval:${approval.id}`);
-  const waits = (await client.getPendingEventWaits?.(runId) ?? [])
-    .filter((wait) => wait.status === undefined || wait.status === "pending")
-    .map((wait) => `wait:${wait.nodeId}:${wait.eventName}`);
-  return [...approvals, ...waits].sort();
-}
-
-function sameKeys(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((key, index) => key === right[index]);
-}
-
-async function hasDueWait(
-  client: WorkflowClientView,
-  runId: string,
-  run: WorkflowRunView,
-  nowMs: number,
-): Promise<boolean> {
-  const waits = [
-    ...(run.pendingApprovals ?? []),
-    ...(await client.getPendingEventWaits?.(runId) ?? []),
-  ];
-  return waits.some((wait) => {
-    const deadline = toIsoTimestamp(wait.expiresAt);
-    return deadline !== undefined && new Date(deadline).getTime() <= nowMs;
-  });
 }
 
 async function executeWorkflowRun(
@@ -882,7 +919,7 @@ async function executeWorkflowRun(
       // A pause is not a result: report what the run waits on so the control
       // plane keeps the canonical run `waiting` (#2085) and knows when to
       // dispatch it again (#2110). The pause payload is never sent as output.
-      const waiting = await describeWorkflowWait(client, request.runId, run);
+      const waiting = describeWorkflowWait(await readPendingWaits(client, request.runId, run));
       return {
         success: true,
         status: "waiting",

@@ -547,6 +547,30 @@ describe("createWorkflowHandler", () => {
     expect((await client.getPendingApprovals(runId)).length).toBe(1);
   });
 
+  it("rejects cancel and retry for a run the control plane owns and points to the canonical run routes", async () => {
+    client.register(
+      workflow({
+        id: "needs-approval-owned",
+        steps: [waitForApproval("sign-off", { message: "ok?" })],
+      }),
+    );
+    const runId = "run_5b0c1f5e-2d4a-4b8e-9d33-6f1b0a7c2e90";
+    await client.start("needs-approval-owned", {}, { runId });
+    await until(
+      async () => (await client.getPendingApprovals(runId)).length > 0,
+      `run ${runId} to pause for approval`,
+    );
+
+    for (const action of ["cancel", "retry"]) {
+      const response = await handlers.POST(post(`/api/workflows/runs/${runId}/${action}`, {}));
+      expect(response.status).toBe(409);
+      expect(JSON.stringify(await response.json())).toContain(
+        "belongs to the Veryfront control plane",
+      );
+    }
+    expect((await client.getRun(runId))?.status).toBe("waiting");
+  });
+
   it("fails the run when an approval is rejected", async () => {
     client.register(
       workflow({
