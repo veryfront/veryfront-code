@@ -6,6 +6,22 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: a run waiting on a delegated child reads `waiting_reason: "child_run"`
+
+A run parked on `invoke_agent` now reports `waiting_reason: "child_run"` instead
+of `"tool"`, and the new `waiting_on` field lists the run it waits on with the
+tool call that started it:
+`[{ kind: "run", run_id, correlation: { kind: "tool_call", id } }]`. Several
+entries mean the run waits for all of them. `Run.waiting_on` is null for every
+other wait and absent from APIs that predate it.
+
+- The reason is an additive value. If your code matches `waiting_reason`
+  exhaustively, handle `"child_run"` before you upgrade the API you talk to.
+- Runs that waited before this change keep their stored reason and read
+  `waiting_on: null`; they are not backfilled.
+- A child adopted through `task_id` is not listed: only the parent that spawned
+  a child waits on it, and only that parent's cancel cancels it.
+
 ### Breaking: the bundled Veryfront Cloud model list is removed
 
 The Veryfront Cloud catalog facts this package bundled now come only from the

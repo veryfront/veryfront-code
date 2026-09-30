@@ -13,6 +13,7 @@ import { branch } from "./branch.ts";
 import { loop } from "./loop.ts";
 import { parallel } from "./parallel.ts";
 import { step } from "./step.ts";
+import { namespaceWorkflowDefinition } from "./validation.ts";
 import type {
   BranchNodeConfig,
   LoopNodeConfig,
@@ -165,5 +166,31 @@ describe("composite node namespacing", () => {
     ]);
 
     assertEquals(parallelConfig(node).nodes[0]?.dependsOn, []);
+  });
+});
+
+describe("namespaceWorkflowDefinition output selector", () => {
+  it("keeps an already-prefixed descendant id in the selector context", () => {
+    const namespaced = namespaceWorkflowDefinition("tickets_0/", {
+      id: "processor",
+      steps: [{
+        id: "group",
+        config: {
+          type: "parallel",
+          nodes: [{ id: "tickets_0/group/classify", config: { type: "step", tool: "noop" } }],
+          strategy: "all",
+        },
+      }],
+      output: (context) => context["tickets_0/group/classify"],
+    });
+
+    assertEquals(
+      parallelConfig((namespaced.steps as WorkflowNode[])[0]!).nodes.map((child) => child.id),
+      ["tickets_0/group/classify"],
+    );
+    assertEquals(
+      namespaced.output?.({ input: {}, "tickets_0/group/classify": { category: "billing" } }),
+      { category: "billing" },
+    );
   });
 });

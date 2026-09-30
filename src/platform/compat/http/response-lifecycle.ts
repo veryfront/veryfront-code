@@ -4,6 +4,8 @@
  * responses complete only after their body closes, errors, or is cancelled.
  */
 
+type ResponseBodyOutcome = "completed" | "canceled" | "error";
+
 export function isEventStreamResponse(response: Response): boolean {
   if (!response.body) return false;
 
@@ -27,24 +29,37 @@ export function completeOnResponseBodyConsumption(
   options: {
     runDeferredOperation?: <T>(operation: () => Promise<T>) => Promise<T>;
     cancellationTimeoutMs?: number;
+    /** Error the returned body on abort instead of making an unfinished stream look complete. */
+    errorOnAbort?: boolean;
+    /** Optional terminal notification. It does not change ownership of pending cancellation work. */
+    onOutcome?: (outcome: ResponseBodyOutcome) => void;
   } = {},
 ): Response {
+  const notifyOutcome = (outcome: ResponseBodyOutcome): void => {
+    try {
+      if (options.onOutcome) void Promise.resolve(options.onOutcome(outcome)).catch(() => {});
+    } catch { /* Observers cannot change the response outcome. */ }
+  };
   if (!response.body) {
+    notifyOutcome(signal?.aborted ? "canceled" : "completed");
     onComplete();
     return response;
   }
 
   const runDeferredOperation = options.runDeferredOperation ?? ((operation) => operation());
+  const errorOnAbort = options.errorOnAbort === true;
+  let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
   let completed = false;
   let abortBody = (): void => {};
   let cancellationPending = false;
   let cancellationPromise: Promise<void> | undefined;
-  const complete = (): void => {
+  const complete = (outcome: ResponseBodyOutcome): void => {
     if (completed) return;
     completed = true;
     clearTimeout(cancellationTimer);
     signal?.removeEventListener("abort", abortBody);
+    notifyOutcome(outcome);
     onComplete();
   };
 
@@ -52,7 +67,7 @@ export function completeOnResponseBodyConsumption(
   try {
     reader = response.body.getReader();
   } catch (error) {
-    complete();
+    complete("error");
     throw error;
   }
 
@@ -60,18 +75,19 @@ export function completeOnResponseBodyConsumption(
     if (cancellationPromise) return cancellationPromise;
     cancellationPending = true;
     if (options.cancellationTimeoutMs !== undefined) {
-      cancellationTimer = setTimeout(complete, options.cancellationTimeoutMs);
+      cancellationTimer = setTimeout(() => complete("canceled"), options.cancellationTimeoutMs);
     }
     cancellationPromise = runDeferredOperation(() => reader.cancel(reason)).then(
-      () => complete(),
+      () => complete("canceled"),
       (error) => {
-        complete();
+        complete("canceled");
         throw error;
       },
     );
     return cancellationPromise;
   };
   abortBody = (): void => {
+    if (errorOnAbort) bodyController?.error(signal?.reason);
     void cancelBody(signal?.reason).catch(() => undefined);
   };
 
@@ -79,10 +95,10 @@ export function completeOnResponseBodyConsumption(
   // response without explicitly consuming or cancelling the wrapper.
   void reader.closed.then(
     () => {
-      if (!cancellationPending) complete();
+      if (!cancellationPending) complete("completed");
     },
     () => {
-      if (!cancellationPending) complete();
+      if (!cancellationPending) complete("error");
     },
   );
 
@@ -95,17 +111,21 @@ export function completeOnResponseBodyConsumption(
   let body: ReadableStream<Uint8Array>;
   try {
     body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller;
+        if (errorOnAbort && signal?.aborted) controller.error(signal.reason);
+      },
       async pull(controller) {
         try {
           const result = await runDeferredOperation(() => reader.read());
           if (result.done) {
-            if (!cancellationPending) complete();
+            if (!cancellationPending) complete("completed");
             controller.close();
             return;
           }
           controller.enqueue(result.value);
         } catch (error) {
-          if (!cancellationPending) complete();
+          if (!cancellationPending) complete("error");
           controller.error(error);
         }
       },
@@ -121,7 +141,7 @@ export function completeOnResponseBodyConsumption(
     });
   } catch (error) {
     void cancelBody(error).catch(() => undefined);
-    complete();
+    complete("error");
     throw error;
   }
 }

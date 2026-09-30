@@ -94,6 +94,7 @@ interface TaskContext {
   env: Record<string, string>;
   config: Record<string, unknown>;
   input?: unknown;
+  runId?: string;
   projectId?: string;
   environmentId?: string;
   signal?: AbortSignal;
@@ -107,6 +108,10 @@ interface TaskContext {
   be any JSON value: an object, array, string, number, or boolean. When the
   run was created without input, or with `null` input, `ctx.input` falls back
   to `ctx.config`
+- **`runId`**: public run identifier for platform-executed tasks. Derive a stable
+  key for each external operation, such as `${ctx.runId}:charge-order`, to avoid
+  collisions between different writes in one run. It is absent for local
+  `veryfront task <name>` runs
 - **`projectId`**: project identifier (available in cloud context)
 - **`environmentId`**: runtime-target environment identifier, when selected
 - **`signal`**: optional cooperative cancellation signal
@@ -115,7 +120,9 @@ Use `ctx.input` for the data a task works on and `ctx.config` for settings
 that control how it runs. Tasks that read business data from `ctx.config`
 keep working: a run created with only `config` sees the same object in
 `ctx.input`. To move such a task to `ctx.input`, read `ctx.input` and create
-new runs with `input` instead of `config`.
+new runs with `input` instead of `config`. See
+[Run input and output](./run-input-output.md) for how the return value becomes
+the run's output.
 
 ```ts
 import type { TaskContext } from "veryfront/task";
@@ -148,6 +155,49 @@ is already aborted prevents the task from starting. Long-running task code
 should pass the signal to cancellable operations such as `fetch`; JavaScript
 functions that ignore the signal cannot be forcibly terminated by the task
 runner.
+
+For project task runs, `timeout_seconds` defaults to 300 and bounds the whole
+run from its first start, including any retry attempts. The runtime aborts
+`ctx.signal` at the supplied deadline and reports a timeout even if the task
+ignores the signal. The run fails with `RUN_TIMEOUT`. Code that ignores cancellation
+can continue executing inside the runtime process after the response returns;
+a timeout does not roll back side effects.
+
+### Retries
+
+A project task run is retried under its `backoff_limit` (default 3), so it
+makes at most `backoff_limit + 1` attempts. Only two failures start another
+attempt, after an exponential backoff:
+
+- The runtime never started the task: the connection was refused, or the
+  runtime answered HTTP 503 because it was shutting down and admitted no new
+  work.
+- The task threw `RetryableError`.
+
+Any other thrown error fails the run at once. A network error after the
+request was sent, or an HTTP 502 (a proxy also answers it when the runtime
+stops mid-request), is never retried, because the task may already have run. No
+retry starts when its backoff would pass the `timeout_seconds` deadline; the
+run then fails with the last attempt's error. `ctx.attempt` is the 1-based
+attempt number.
+
+```ts
+import { RetryableError, type TaskContext } from "veryfront/task";
+
+export default {
+  name: "Sync invoices",
+  async run(ctx: TaskContext) {
+    const response = await fetch("https://api.example.com/invoices", { signal: ctx.signal });
+    if (response.status === 503) {
+      throw new RetryableError(`Upstream unavailable on attempt ${ctx.attempt}`);
+    }
+    return await response.json();
+  },
+};
+```
+
+A retried task runs again from the start, so make its side effects safe to
+repeat.
 
 ## Discovery
 

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { agent as createAgent } from "#veryfront/agent";
 import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
@@ -10,6 +11,11 @@ import {
   registerHostedInferenceCredential,
 } from "#veryfront/agent/hosted/inference-credential.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import {
+  clearEnvFileValueSources,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
+import { resolveVeryfrontPublicApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { clearModelProviders, registerModelProvider, resolveModel } from "#veryfront/provider";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
@@ -33,7 +39,10 @@ import {
   withMockFetch,
 } from "#veryfront/testing/mock-fetch.ts";
 import { createRunScopedVeryfrontCloudContextSummaryGenerator } from "#veryfront/agent/hosted/context-summary-generator.ts";
-import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
+  getCurrentVeryfrontCloudContext,
+  runWithVeryfrontCloudContext,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createVeryfrontCloudFetch,
   requireVeryfrontCloudBootstrap,
@@ -74,6 +83,55 @@ function runtimeAgentInvocation(inferenceAuthToken: string): Record<string, unkn
   };
 }
 
+async function captureInternalAgentInferenceRequests(
+  install: () => () => void,
+): Promise<Array<{ url: string; authorization: string | null }>> {
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+  const encoder = new TextEncoder();
+  installMockFetch(
+    (async (input: URL | Request | string, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requests.push({ url: request.url, authorization: request.headers.get("Authorization") });
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'));
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch,
+  );
+  const runtimeAgent = createAgent({
+    id: "internal-trusted-origin-agent",
+    model: "veryfront-cloud/openai/gpt-test",
+    system: "Answer concisely.",
+    skills: false,
+  });
+  const runtimeInput = {
+    agentId: runtimeAgent.id,
+    threadId: crypto.randomUUID(),
+    runId: "run_internal_trusted_origin",
+    messages: [{ id: "user-1", role: "user", content: "Hello" }],
+    tools: [],
+    context: [],
+  } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+  registerRuntimeInferenceCredential(runtimeInput, "run-scoped-inference-token");
+
+  const uninstall = install();
+  try {
+    const response = await createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+      sessionManager: new AgentRunSessionManager(),
+    });
+    await response.text();
+  } finally {
+    uninstall();
+  }
+  return requests;
+}
+
 describe("run-scoped inference credential", () => {
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
@@ -82,6 +140,9 @@ describe("run-scoped inference credential", () => {
     clearModelProviders();
     deleteEnv("VERYFRONT_API_TOKEN");
     deleteEnv("VERYFRONT_PUBLIC_API_BASE_URL");
+    deleteEnv("VERYFRONT_API_URL");
+    deleteEnv("VERYFRONT_API_BASE_URL");
+    clearEnvFileValueSources();
     deleteEnv("VERYFRONT_PROJECT_SLUG");
   });
 
@@ -1150,11 +1211,7 @@ describe("run-scoped inference credential", () => {
 
   it("requires HTTPS, a loopback, or a host-allowed internal provider origin for run-scoped inference credentials", () => {
     const error = assertThrows(
-      () =>
-        runWithVeryfrontCloudContext(
-          { apiBaseUrl: "http://api.example.test", apiToken: "broader-token" },
-          () => requireVeryfrontCloudBootstrap("run-scoped-inference-token"),
-        ),
+      () => requireVeryfrontCloudBootstrap("run-scoped-inference-token", "http://api.example.test"),
       VeryfrontError,
       "Run-scoped inference credentials require HTTPS, a loopback, or a VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
     );
@@ -1164,10 +1221,7 @@ describe("run-scoped inference credential", () => {
     assertEquals(error.slug, "config-invalid");
     for (const apiBaseUrl of ["http://localhost:4000", "http://[::1]:4000"]) {
       assertEquals(
-        runWithVeryfrontCloudContext(
-          { apiBaseUrl, apiToken: "broader-token" },
-          () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiToken,
-        ),
+        requireVeryfrontCloudBootstrap("run-scoped-inference-token", apiBaseUrl).apiToken,
         "run-scoped-inference-token",
       );
     }
@@ -1185,6 +1239,201 @@ describe("run-scoped inference credential", () => {
         () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
       ),
       "https://api.staging.veryfront.example",
+    );
+  });
+
+  it("never takes a run-scoped credential's destination from the cloud context", () => {
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
+
+    assertEquals(
+      runWithVeryfrontCloudContext(
+        { apiBaseUrl: "https://evil.example" },
+        () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+      ),
+      "https://trusted-api.example.test",
+    );
+    // A context without a credential override keeps its scoped endpoint.
+    assertEquals(
+      runWithVeryfrontCloudContext(
+        { apiBaseUrl: "https://scoped-api.example.test", apiToken: "scoped-token" },
+        () => requireVeryfrontCloudBootstrap(),
+      ),
+      {
+        apiBaseUrl: "https://scoped-api.example.test",
+        apiToken: "scoped-token",
+        projectSlug: undefined,
+      },
+    );
+  });
+
+  it("sends internal-agent inference to the trusted host origin when the cloud context is forged", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
+    const requests = await captureInternalAgentInferenceRequests(() => {
+      // Project code in the same process can patch AsyncLocalStorage and find
+      // the cloud-context store the same way.
+      const sentinel = {};
+      const originalGetStore = AsyncLocalStorage.prototype.getStore;
+      let cloudContextStorage: unknown;
+      AsyncLocalStorage.prototype.getStore = function (this: AsyncLocalStorage<unknown>) {
+        const store = Reflect.apply(originalGetStore, this, []);
+        if (store === sentinel) cloudContextStorage = this;
+        return store;
+      };
+      runWithVeryfrontCloudContext(sentinel, () => getCurrentVeryfrontCloudContext());
+      AsyncLocalStorage.prototype.getStore = function (this: AsyncLocalStorage<unknown>) {
+        return this === cloudContextStorage
+          ? { apiBaseUrl: "https://evil.example" }
+          : Reflect.apply(originalGetStore, this, []);
+      };
+      if (!cloudContextStorage) throw new TypeError("Expected to find the cloud context store");
+      return () => {
+        AsyncLocalStorage.prototype.getStore = originalGetStore;
+      };
+    });
+
+    assertEquals(requests.length > 0, true);
+    for (const request of requests) {
+      assertEquals(new URL(request.url).origin, "https://trusted-api.example.test");
+    }
+    assertEquals(
+      requests.some((request) => request.authorization === "Bearer run-scoped-inference-token"),
+      true,
+    );
+  });
+
+  it("sends internal-agent inference to the trusted host origin without a forged context", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
+    const requests = await captureInternalAgentInferenceRequests(() => () => {});
+
+    assertEquals(
+      requests.filter((request) => request.authorization === "Bearer run-scoped-inference-token")
+        .map((request) => request.url),
+      ["https://trusted-api.example.test/ai/v1/chat/completions"],
+    );
+  });
+
+  it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL for run-scoped inference", () => {
+    setEnv("VERYFRONT_API_URL", "https://control-plane.example.test");
+    setEnv("VERYFRONT_API_BASE_URL", "https://rest-api.example.test");
+
+    assertEquals(
+      requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+      "https://rest-api.example.test",
+    );
+  });
+
+  it("never takes a run-scoped credential's destination from a project env file", () => {
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
+    setEnv("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
+    markEnvFileValue("VERYFRONT_PUBLIC_API_BASE_URL");
+
+    assertEquals(
+      requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+      "https://trusted-api.example.test",
+    );
+    // Credential-free readers still see the project env-file value.
+    assertEquals(resolveVeryfrontPublicApiBaseUrlFromHostEnv(), "https://evil.example");
+  });
+
+  it("never takes a run-scoped credential's destination from a later process environment write", async () => {
+    // A child process without the test env overlay: the host boots, then
+    // project code writes the raw process environment.
+    const resolverModule = JSON.stringify(
+      import.meta.resolve("#veryfront/platform/cloud/resolver.ts"),
+    );
+    const sharedModule = JSON.stringify(
+      import.meta.resolve("#veryfront/provider/veryfront-cloud/shared.ts"),
+    );
+    const envModule = JSON.stringify(
+      import.meta.resolve("#veryfront/platform/compat/process/env.ts"),
+    );
+    const script = `
+      const resolver = await import(${resolverModule});
+      const { requireVeryfrontCloudBootstrap } = await import(${sharedModule});
+      if (Deno.args[0] === "login") {
+        const { setHostSecret } = await import(${envModule});
+        setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      }
+      const { default: nodeProcess } = await import("node:process");
+      for (const key of [
+        "VERYFRONT_PUBLIC_API_BASE_URL",
+        "VERYFRONT_API_URL",
+        "VERYFRONT_API_BASE_URL",
+      ]) {
+        Deno.env.set(key, "https://evil.example");
+      }
+      nodeProcess.env.VERYFRONT_PUBLIC_API_BASE_URL = "https://evil.example";
+      console.log(JSON.stringify([
+        requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+        resolver.resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+        resolver.resolveVeryfrontPublicApiBaseUrlFromHostEnv(),
+      ]));
+    `;
+    const runChild = async (bootEnv: Record<string, string>, login = false) => {
+      const env: Record<string, string> = {
+        VERYFRONT_API_URL: "https://trusted-api.example.test",
+        ...bootEnv,
+      };
+      for (const key of ["PATH", "HOME", "DENO_DIR", "XDG_CACHE_HOME"]) {
+        const value = Deno.env.get(key);
+        if (value !== undefined) env[key] = value;
+      }
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          `--config=${new URL("../../../deno.json", import.meta.url).pathname}`,
+          script,
+          ...(login ? ["login"] : []),
+        ],
+        clearEnv: true,
+        env,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.code, 0, stderr);
+      const lines = new TextDecoder().decode(output.stdout).trim().split("\n");
+      return JSON.parse(lines[lines.length - 1]!) as string[];
+    };
+
+    for (const login of [false, true]) {
+      assertEquals(await runChild({}, login), [
+        "https://trusted-api.example.test",
+        "https://trusted-api.example.test",
+        // Credential-free readers still see the live value.
+        "https://evil.example",
+      ], login ? "with a registered host login" : "without a registered host login");
+    }
+    // A public origin the host booted with still wins over the later write.
+    assertEquals(
+      await runChild({ VERYFRONT_PUBLIC_API_BASE_URL: "https://public-api.example.test" }),
+      [
+        "https://public-api.example.test",
+        "https://public-api.example.test",
+        "https://evil.example",
+      ],
+    );
+  });
+
+  it("sends internal-agent inference to the trusted host origin when a project env file sets the public API URL", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    setEnv("VERYFRONT_API_URL", "https://trusted-api.example.test");
+    setEnv("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
+    markEnvFileValue("VERYFRONT_PUBLIC_API_BASE_URL");
+    const requests = await captureInternalAgentInferenceRequests(() => () => {});
+
+    assertEquals(requests.length > 0, true);
+    for (const request of requests) {
+      assertEquals(new URL(request.url).origin, "https://trusted-api.example.test");
+    }
+    assertEquals(
+      requests.some((request) => request.authorization === "Bearer run-scoped-inference-token"),
+      true,
     );
   });
 

@@ -20,6 +20,7 @@ export { isTaskDefinition } from "./types.ts";
 export { deriveTaskId, discoverTasks, findTaskById } from "./discovery.ts";
 export type { DiscoveredTask, TaskDiscoveryOptions, TaskDiscoveryResult } from "./discovery.ts";
 export { runTask } from "./runner.ts";
+export { RetryableError } from "./errors.ts";
 export type { RunnableTask, RunTaskOptions, TaskRunResult } from "./runner.ts";
 export {
   discoverProjectTaskRuntime,

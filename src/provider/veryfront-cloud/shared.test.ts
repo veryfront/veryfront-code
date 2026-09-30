@@ -198,11 +198,7 @@ describe("provider/veryfront-cloud/shared", () => {
 
   it("still rejects an arbitrary plain-HTTP API base URL for run-scoped inference credentials", () => {
     assertThrows(
-      () =>
-        runWithVeryfrontCloudContext(
-          { apiBaseUrl: "http://evil.example.com", apiToken: "vf_scoped_token" },
-          () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
-        ),
+      () => requireVeryfrontCloudBootstrap("vf_scoped_token", "http://evil.example.com"),
       Error,
       "HTTPS, a loopback, or a VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS-allowed API base URL",
     );
@@ -216,10 +212,7 @@ describe("provider/veryfront-cloud/shared", () => {
         "http://127.0.0.1:4000",
       ]
     ) {
-      const bootstrap = runWithVeryfrontCloudContext(
-        { apiBaseUrl, apiToken: "vf_scoped_token" },
-        () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
-      );
+      const bootstrap = requireVeryfrontCloudBootstrap("vf_scoped_token", apiBaseUrl);
       assertEquals(bootstrap.apiBaseUrl, apiBaseUrl);
     }
   });

@@ -10,14 +10,94 @@ function getSetCookies(headers: Headers): string[] {
 }
 
 describe("response body lifecycle", () => {
+  it("can fail an unfinished body on abort while still canceling its source", async () => {
+    const abort = new AbortController();
+    let canceled = false;
+    const failure = new Error("Synthetic session stopped");
+    const response = completeOnResponseBodyConsumption(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("partial"));
+          },
+          cancel() {
+            canceled = true;
+          },
+        }),
+      ),
+      () => {},
+      abort.signal,
+      { highWaterMark: 0 },
+      { errorOnAbort: true },
+    );
+    const outcome = response.text().then(() => undefined, (error) => error);
+    abort.abort(failure);
+    assertStrictEquals(await outcome, failure);
+    assertEquals(canceled, true);
+  });
+
+  it("reports normal completion, cancellation and source errors separately", async () => {
+    for (const expected of ["completed", "canceled", "error"] as const) {
+      const outcomes: string[] = [];
+      let completions = 0;
+      const response = expected === "completed" ? new Response("ok") : new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            if (expected === "error") controller.error(new Error("synthetic stream failure"));
+          },
+        }),
+      );
+      const tracked = completeOnResponseBodyConsumption(response, () => completions++, undefined, {
+        highWaterMark: 0,
+      }, {
+        onOutcome: (outcome) => outcomes.push(outcome),
+      });
+      if (expected === "canceled") await tracked.body!.cancel();
+      else if (expected === "error") await assertRejects(() => tracked.text());
+      else assertEquals(await tracked.text(), "ok");
+      assertEquals(outcomes, [expected]);
+      assertEquals(completions, 1);
+    }
+  });
+
   it("completes bodyless responses without changing their identity", () => {
     let completions = 0;
+    const outcomes: string[] = [];
     const response = new Response(null, { status: 204 });
 
-    const tracked = completeOnResponseBodyConsumption(response, () => completions++);
+    const tracked = completeOnResponseBodyConsumption(
+      response,
+      () => completions++,
+      undefined,
+      undefined,
+      { onOutcome: (outcome) => outcomes.push(outcome) },
+    );
 
     assertStrictEquals(tracked, response);
     assertEquals(completions, 1);
+    assertEquals(outcomes, ["completed"]);
+  });
+
+  it("contains synchronous and asynchronous outcome observer failures", async () => {
+    for (
+      const onOutcome of [
+        () => {
+          throw new Error("Synthetic observer failure");
+        },
+        () => Promise.reject(new Error("Synthetic async observer failure")),
+      ]
+    ) {
+      let completions = 0;
+      const response = completeOnResponseBodyConsumption(
+        new Response("ok"),
+        () => completions++,
+        undefined,
+        undefined,
+        { onOutcome },
+      );
+      assertEquals(await response.text(), "ok");
+      assertEquals(completions, 1);
+    }
   });
 
   it("preserves transport fields and completes after the body is consumed", async () => {

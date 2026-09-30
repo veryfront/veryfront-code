@@ -530,6 +530,52 @@ export default workflow({
 });
 ```
 
+### Select the final output
+
+By default, a completed run's output is its context without `input`: every
+step's output keyed by step id, plus `env` when the project injects environment
+values. Declare `output` to choose the value callers receive instead. It takes
+the context and returns the output synchronously, like the `output` mapper of a
+nested workflow. Treat the context as read-only: it is also stored on the run.
+
+```ts
+import { defineSchema } from "veryfront/schemas";
+import { step, workflow } from "veryfront/workflow";
+
+export default workflow({
+  id: "expense-approval",
+  outputSchema: defineSchema((v) =>
+    v.object({
+      claimId: v.string(),
+      stage: v.string(),
+    })
+  )(),
+  steps: [
+    step("prepare", { tool: "prepare-claim" }),
+    step("finalize", { tool: "finalize-claim" }),
+  ],
+  output: (context) => context.finalize as { claimId: string; stage: string },
+});
+```
+
+When a workflow declares both `output` and `outputSchema`, the schema checks the
+selected value before the run completes. The parsed value is stored as the
+output. A value that fails the schema fails the run, so it is never stored as a
+completed output. Without `output`, the output keeps the default shape above.
+
+A workflow nested with `subWorkflow` or `map` hands its parent the same selected
+output. The node's own `output` mapper, when declared, receives that value.
+
+A started run's steps receive the parsed input: `inputSchema` transforms and
+defaults apply before the first step runs. The run keeps the input as it was
+submitted. A workflow nested with `subWorkflow` or `map` receives the input its
+parent passes as is; its `inputSchema` is not applied.
+
+A run that pauses on an approval or an event has no output until it completes.
+
+See [Run input and output](./run-input-output.md) for what a workflow run
+stores as input and output, and how `inputSchema` and `outputSchema` apply.
+
 ## Verify it worked
 
 `createWorkflowClient()` stores runs in memory, private to the client that

@@ -62,6 +62,7 @@ details, see [API reference](../api-reference/index.md).
 | Coordinate multi-step work                 | [Workflows](./workflows.md)                             |
 | Add loops, large artifacts, or progress UI | [Workflows: advanced](./workflows-advanced.md)          |
 | Run durable work                           | [Runs](./runs.md)                                       |
+| Know what a run stores as input and output | [Run input and output](./run-input-output.md)           |
 | Ingest documents into project knowledge    | [CLI knowledge ingestion](./cli-knowledge-ingestion.md) |
 
 ## Connect external systems
