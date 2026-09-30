@@ -115,7 +115,9 @@ Use `ctx.input` for the data a task works on and `ctx.config` for settings
 that control how it runs. Tasks that read business data from `ctx.config`
 keep working: a run created with only `config` sees the same object in
 `ctx.input`. To move such a task to `ctx.input`, read `ctx.input` and create
-new runs with `input` instead of `config`.
+new runs with `input` instead of `config`. See
+[Run input and output](./run-input-output.md) for how the return value becomes
+the run's output.
 
 ```ts
 import type { TaskContext } from "veryfront/task";

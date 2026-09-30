@@ -573,6 +573,9 @@ parent passes as is; its `inputSchema` is not applied.
 
 A run that pauses on an approval or an event has no output until it completes.
 
+See [Run input and output](./run-input-output.md) for what a workflow run
+stores as input and output, and how `inputSchema` and `outputSchema` apply.
+
 ## Verify it worked
 
 `createWorkflowClient()` stores runs in memory, private to the client that
