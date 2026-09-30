@@ -1756,6 +1756,116 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedBranchName, "main");
   });
 
+  it("rejects schema-invalid eval input before the eval executes", async () => {
+    let executed = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async () => ({
+        id: "eval:invoice-lookup",
+        name: "Invoice lookup",
+        filePath: "evals/invoice-lookup.eval.ts",
+        exportName: "default",
+        definition: evalAgent({
+          id: "eval:invoice-lookup",
+          target: "agent:invoice-lookup",
+          dataset: datasets.inline([{ id: "invoice-1", input: "Find an invoice" }]),
+          inputSchema: defineSchema((v) => v.object({ invoiceId: v.string() }))(),
+        }),
+      }),
+      runEval: async () => {
+        executed = true;
+        throw new Error("eval must not execute");
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_invalid_input/execute",
+      {
+        runId: "run_eval_invalid_input",
+        kind: "eval",
+        target: "eval:invoice-lookup",
+        projectId: "proj-1",
+        input: { invoiceId: 42 },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const body = await result.response.json();
+    assertEquals(body.success, false);
+    assertEquals(body.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(body.error_detail.errors.length, 1);
+    assertEquals(body.error_detail.errors[0].path, "/invoiceId");
+    assertEquals(executed, false);
+  });
+
+  it("executes an eval whose run input matches its schema", async () => {
+    let executed = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async () => ({
+        id: "eval:invoice-lookup",
+        name: "Invoice lookup",
+        filePath: "evals/invoice-lookup.eval.ts",
+        exportName: "default",
+        definition: evalAgent({
+          id: "eval:invoice-lookup",
+          target: "agent:invoice-lookup",
+          dataset: datasets.inline([{ id: "invoice-1", input: "Find an invoice" }]),
+          inputSchema: defineSchema((v) => v.object({ invoiceId: v.string() }))(),
+        }),
+      }),
+      runEval: async (definition, options) => {
+        executed = true;
+        return createDeps().runEval(definition, options);
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_valid_input/execute",
+      {
+        runId: "run_eval_valid_input",
+        kind: "eval",
+        target: "eval:invoice-lookup",
+        projectId: "proj-1",
+        input: { invoiceId: "INV-7731" },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(executed, true);
+  });
+
+  it("executes a schema-less eval with any JSON run input", async () => {
+    let executed = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runEval: async (definition, options) => {
+        executed = true;
+        return createDeps().runEval(definition, options);
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_schema_less/execute",
+      {
+        runId: "run_eval_schema_less",
+        kind: "eval",
+        target: "eval:deep-research",
+        projectId: "proj-1",
+        input: ["any", { json: true }, 42],
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(executed, true);
+  });
+
   it("parses the eval step ceiling with intrinsics captured before project discovery", async () => {
     const definition = evalAgent({
       id: "eval:deep-research",

@@ -100,6 +100,9 @@ function createEvalDefinition(
     repetitions: normalizeRepetitions(input.repetitions),
     tags,
     metadata: normalizeMetadata(input.metadata),
+    ...("inputSchema" in input && input.inputSchema !== undefined
+      ? { inputSchema: input.inputSchema }
+      : {}),
     ...("input" in input && input.input ? { input: input.input } : {}),
     ...("mockTools" in input && input.mockTools ? { mockTools: input.mockTools } : {}),
     ...(input.check ? { check: input.check } : {}),

@@ -5,6 +5,7 @@
  */
 
 import type { ToolSet } from "#veryfront/tool";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
 /** Primitive kind an eval can execute. */
 export type EvalTargetKind = "agent" | "tool" | "dataset";
@@ -436,6 +437,8 @@ export interface EvalDefinition {
   repetitions: number;
   tags: string[];
   metadata: Record<string, unknown>;
+  /** Optional run input contract, enforced before this eval executes. */
+  inputSchema?: Schema<unknown> | Record<string, unknown>;
   source?: EvalSource;
   input?: (
     example: EvalExample,
@@ -456,6 +459,8 @@ export interface EvalAgentInput {
   repetitions?: number;
   tags?: string[];
   metadata?: Record<string, unknown>;
+  /** Optional run input contract, enforced before this eval executes. */
+  inputSchema?: Schema<unknown> | Record<string, unknown>;
   mockTools?: EvalMockTools;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
