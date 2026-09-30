@@ -28,8 +28,11 @@ as input. `run.output` is the final business result.
 
 Task, workflow, and eval `input` is any JSON value: an object, an array, a
 string, a number, a boolean, or `null`. `null` counts as no input, the same as
-leaving the field out. Veryfront forwards the submitted value to the runtime
-unchanged.
+leaving the field out. `run.input` keeps the submitted value, and Veryfront
+forwards it to the runtime unchanged. What your code receives can differ: a
+task falls back to `config`, a workflow starts from `{}` without input, and a
+declared `inputSchema` can apply defaults and transforms. The sections below
+describe each run kind.
 
 ### Agents
 
@@ -124,9 +127,12 @@ keeps the first mismatch detected, with at most 20 errors:
 }
 ```
 
-When a value is valid, the run stores the parsed value: schema defaults and
-transforms apply, and a schema that strips unknown keys strips them from the
-stored output. `ctx.input` on a task run created with `input`, and the
+When a checked output is valid, the run stores the parsed value: schema
+defaults and transforms apply, and a schema that strips unknown keys strips
+them from the stored output. This applies to a task's return value on a
+runtime with task schema validation, to a workflow's `output` selection, and to
+an agent's structured result. A workflow without `output` stores its default
+output unchanged, even when `outputSchema` accepts it. `ctx.input` on a task run created with `input`, and the
 workflow's steps, receive the parsed input. `run.input` keeps the input as
 submitted.
 
