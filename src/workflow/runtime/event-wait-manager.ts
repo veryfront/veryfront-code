@@ -1296,8 +1296,8 @@ export class EventWaitManager {
   }
 
   /** Recover abandoned claims and promptly retry any restored mailbox state. */
-  private async recoverAndDrainAbandonedDeliveries(): Promise<void> {
-    for (const runId of await this.recoverAbandonedDeliveries()) {
+  private async recoverAndDrainAbandonedDeliveries(targetRunId?: string): Promise<void> {
+    for (const runId of await this.recoverAbandonedDeliveries(targetRunId)) {
       if (this.destroyed) return;
       try {
         await this.drain(runId, false);
@@ -1641,15 +1641,16 @@ export class EventWaitManager {
    * backend, so one run whose expiry cannot be applied must not deny every
    * other run its deadline.
    */
-  async checkExpiredEventWaits(): Promise<void> {
+  async checkExpiredEventWaits(targetRunId?: string): Promise<void> {
     const backend = this.config.backend;
     if (this.destroyed || !hasEventWaitSupport(backend)) return;
 
-    await this.recoverAndDrainAbandonedDeliveries();
+    await this.recoverAndDrainAbandonedDeliveries(targetRunId);
 
     const runStatuses = new Map<string, WorkflowRun["status"] | null>();
     const activeRunIds = new Set<string>();
     for (const { runId, wait } of await backend.listPendingEventWaits()) {
+      if (targetRunId !== undefined && runId !== targetRunId) continue;
       await this.sweepPendingWait(runId, wait, runStatuses, activeRunIds);
     }
 

@@ -2638,10 +2638,11 @@ describe("RedisBackend", () => {
       assertEquals(retrieved.error, { message: "boom" });
     });
 
-    it("should persist workerId and tenant context", async () => {
+    it("should persist internal ownership and tenant context", async () => {
       await backend.createRun(
         createTestRun("run-tenant", {
           workerId: "worker-1",
+          _controlPlaneOwned: true,
           heartbeatAt: new Date("2025-06-15T12:10:00Z"),
           _tenant: {
             projectSlug: "acme",
@@ -2655,6 +2656,7 @@ describe("RedisBackend", () => {
 
       const retrieved = await backend.getRun("run-tenant");
       assertEquals(retrieved?.workerId, "worker-1");
+      assertEquals(retrieved?._controlPlaneOwned, true);
       assertEquals(retrieved?.heartbeatAt?.toISOString(), "2025-06-15T12:10:00.000Z");
       assertEquals(retrieved?._tenant?.projectSlug, "acme");
       assertEquals(retrieved?._tenant?.token, "vf_token");

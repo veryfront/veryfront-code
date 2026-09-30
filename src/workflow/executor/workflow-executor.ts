@@ -64,7 +64,11 @@ import {
 } from "../runtime/workflow-run-control.ts";
 import { projectRunPendingApprovals } from "../runtime/pending-approval-metadata.ts";
 import { reconcileApprovalDecisionClaimsBeforeRetry } from "../runtime/approval-manager.ts";
-import { validateWorkflowPathSegment } from "../dsl/validation.ts";
+import {
+  CONTROL_PLANE_OWNED_START,
+  isControlPlaneWorkflowRunId,
+  validateWorkflowPathSegment,
+} from "../dsl/validation.ts";
 import { captureWorkflowNodes } from "./workflow-definition-snapshot.ts";
 
 const logger = baseLogger.component("workflow-executor");
@@ -323,11 +327,19 @@ export class WorkflowExecutor {
   async start<TInput, TOutput>(
     workflowId: string,
     input: TInput,
-    options?: { runId?: string },
+    options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true },
   ): Promise<WorkflowHandle<TOutput>> {
     requireDurableWorkflowSourceContext();
     if (options?.runId !== undefined) {
       validateWorkflowPathSegment(options.runId, "Workflow run ID");
+      if (
+        isControlPlaneWorkflowRunId(options.runId) && options[CONTROL_PLANE_OWNED_START] !== true
+      ) {
+        throw INVALID_ARGUMENT.create({
+          detail:
+            "Workflow run IDs of the form run_<uuid> are reserved for the Veryfront control plane",
+        });
+      }
     }
     const workflow = this.workflows.get(workflowId);
     if (!workflow) {
@@ -375,6 +387,7 @@ export class WorkflowExecutor {
       pendingApprovals: [],
       createdAt: new Date(),
       workerId: executionWorkerId,
+      ...(options?.[CONTROL_PLANE_OWNED_START] === true ? { _controlPlaneOwned: true } : {}),
       sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       _tenant: tenant,
     };

@@ -253,6 +253,10 @@ describe("ApprovalManager", () => {
       await backend.savePendingApproval("run-b", expiredB);
       await backend.savePendingApproval("run-c", futureC);
 
+      await manager.checkExpiredApprovals("run-a");
+      assertEquals((await backend.getPendingApproval("run-a", "apr-a"))?.status, "rejected");
+      assertEquals((await backend.getPendingApproval("run-b", "apr-b"))?.status, "pending");
+
       await manager.checkExpiredApprovals();
 
       const a = await backend.getPendingApproval("run-a", "apr-a");

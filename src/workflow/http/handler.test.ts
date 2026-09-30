@@ -15,6 +15,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import { sequence, step, waitForApproval, workflow } from "../dsl/index.ts";
 import type { PendingApproval, RunFilter, WorkflowDefinition, WorkflowRun } from "../types.ts";
 import { createWorkflowHandler } from "./handler.ts";
+import { CONTROL_PLANE_OWNED_START } from "../dsl/validation.ts";
 
 class CountingMemoryBackend extends MemoryBackend {
   pendingApprovalReads = 0;
@@ -529,6 +530,111 @@ describe("createWorkflowHandler", () => {
       `run ${runId} to complete after approval`,
     );
     expect((await client.getRun(runId))?.context.after).toBeDefined();
+  });
+
+  // veryfront-issue-inbox#2102: a workflow run the control plane owns is
+  // decided only through POST /runs/{run_id}/resume, so the canonical run moves.
+  it("rejects an approval decision for a run the control plane owns and points to the canonical resume", async () => {
+    client.register(
+      workflow({
+        id: "needs-approval",
+        steps: [
+          waitForApproval("sign-off", { message: "ok?" }),
+          step("after", { tool: passthroughTool("after") }),
+        ],
+      }),
+    );
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    await client.start("needs-approval", {}, { runId, [CONTROL_PLANE_OWNED_START]: true });
+    await until(
+      async () => (await client.getPendingApprovals(runId)).length > 0,
+      `run ${runId} to pause for approval`,
+    );
+    const approvalId = (await client.getPendingApprovals(runId))[0]?.id;
+
+    const decided = await handlers.POST(
+      post(`/api/workflows/runs/${runId}/approvals/${approvalId}`, {
+        approved: true,
+        approver: "tester",
+      }),
+    );
+
+    expect(decided.status).toBe(409);
+    expect(JSON.stringify(await decided.json())).toContain(`POST /runs/${runId}/resume`);
+    expect((await client.getRun(runId))?.status).toBe("waiting");
+    expect((await client.getPendingApprovals(runId)).length).toBe(1);
+  });
+
+  it("rejects cancel for a run the control plane owns and points to the canonical cancel, but keeps retry", async () => {
+    client.register(
+      workflow({
+        id: "needs-approval-owned",
+        steps: [waitForApproval("sign-off", { message: "ok?" })],
+      }),
+    );
+    const runId = "run_5b0c1f5e-2d4a-4b8e-9d33-6f1b0a7c2e90";
+    await client.start("needs-approval-owned", {}, { runId, [CONTROL_PLANE_OWNED_START]: true });
+    await until(
+      async () => (await client.getPendingApprovals(runId)).length > 0,
+      `run ${runId} to pause for approval`,
+    );
+
+    const response = await handlers.POST(post(`/api/workflows/runs/${runId}/cancel`, {}));
+    expect(response.status).toBe(409);
+    expect(JSON.stringify(await response.json())).toContain(
+      "belongs to the Veryfront control plane",
+    );
+    expect((await client.getRun(runId))?.status).toBe("waiting");
+
+    // The control plane has no retry operation, so the runtime keeps its own.
+    const retried = await handlers.POST(post(`/api/workflows/runs/${runId}/retry`, {}));
+    expect(JSON.stringify(await retried.json())).not.toContain(
+      "belongs to the Veryfront control plane",
+    );
+  });
+
+  it("keeps cancel and approval routes available for legacy unmarked run_<uuid> IDs", async () => {
+    const runId = "run_4f849e55-8719-4862-82fe-c3e9a0d43143";
+    const approvalId = "apr_legacy";
+    const cancelled: string[] = [];
+    const approved: string[] = [];
+    Object.defineProperty(client, "getRun", {
+      configurable: true,
+      value: () => Promise.resolve({ id: runId } as WorkflowRun),
+    });
+    Object.defineProperty(client, "cancel", {
+      configurable: true,
+      value: (id: string) => {
+        cancelled.push(id);
+        return Promise.resolve();
+      },
+    });
+    Object.defineProperty(client, "getPendingApprovals", {
+      configurable: true,
+      value: () => Promise.resolve([{ id: approvalId }]),
+    });
+    Object.defineProperty(client, "approve", {
+      configurable: true,
+      value: (id: string) => {
+        approved.push(id);
+        return Promise.resolve();
+      },
+    });
+
+    const cancelledResponse = await handlers.POST(
+      post(`/api/workflows/runs/${runId}/cancel`, {}),
+    );
+    const approvedResponse = await handlers.POST(
+      post(`/api/workflows/runs/${runId}/approvals/${approvalId}`, {
+        approved: true,
+        approver: "tester",
+      }),
+    );
+
+    expect(cancelledResponse.status).toBe(200);
+    expect(approvedResponse.status).toBe(200);
+    expect(cancelled).toEqual([runId]);
+    expect(approved).toEqual([runId]);
   });
 
   it("fails the run when an approval is rejected", async () => {

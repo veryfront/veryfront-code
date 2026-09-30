@@ -986,7 +986,7 @@ export class ApprovalManager {
   }
 
   /** Check and expire stale approvals */
-  async checkExpiredApprovals(): Promise<void> {
+  async checkExpiredApprovals(targetRunId?: string): Promise<void> {
     if (this.destroyed) {
       return;
     }
@@ -1002,6 +1002,7 @@ export class ApprovalManager {
     const now = new Date();
 
     for (const { runId, approval } of pending) {
+      if (targetRunId !== undefined && runId !== targetRunId) continue;
       if (!approval.expiresAt || now <= approval.expiresAt) {
         continue;
       }

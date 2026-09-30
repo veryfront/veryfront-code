@@ -490,6 +490,20 @@ export function createWorkflowHandler(
         return Response.json({ runId: handle.runId });
       }
 
+      // Cancel would move the durable run without the canonical run knowing,
+      // the same as an approval decision. Retry stays: the control plane has
+      // no retry operation of its own yet.
+      if (
+        segments.length === 3 && first === "runs" && second && third === "cancel" &&
+        (await client.getRun(second))?._controlPlaneOwned === true
+      ) {
+        return problem(
+          `Workflow run ${second} belongs to the Veryfront control plane. ` +
+            `Cancel it with POST /runs/${second}/cancel.`,
+          409,
+        );
+      }
+
       if (segments.length === 3 && first === "runs" && second && third === "cancel") {
         await client.cancel(second);
         return Response.json({ runId: second, status: "cancelled" });
@@ -503,6 +517,13 @@ export function createWorkflowHandler(
       if (
         segments.length === 4 && first === "runs" && second && third === "approvals" && approvalId
       ) {
+        if ((await client.getRun(second))?._controlPlaneOwned === true) {
+          return problem(
+            `Workflow run ${second} belongs to the Veryfront control plane. ` +
+              `Decide its approvals with POST /runs/${second}/resume.`,
+            409,
+          );
+        }
         let decision: ApprovalDecision;
         try {
           decision = ApprovalDecisionSchema.parse(await readJson(request));

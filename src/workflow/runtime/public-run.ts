@@ -421,6 +421,7 @@ export function toPublicWorkflowRun(run: WorkflowRun): WorkflowRun {
     projected._workflowProjection?.context,
   );
   Reflect.deleteProperty(projected, "_tenant");
+  Reflect.deleteProperty(projected, "_controlPlaneOwned");
   Reflect.deleteProperty(projected, INTERNAL_WORKFLOW_RUNTIME_STATE_VERSION_FIELD);
   Reflect.deleteProperty(projected, INTERNAL_WORKFLOW_PROJECTION_STATE_FIELD);
   Reflect.deleteProperty(projected, INTERNAL_WORKFLOW_TRACE_CONTEXT_FIELD);

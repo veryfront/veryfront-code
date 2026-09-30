@@ -38,6 +38,7 @@ import { captureWorkflowDefinition } from "../executor/workflow-definition-snaps
 
 export type { PublishEventOutcome };
 import type { Workflow } from "../dsl/workflow.ts";
+import type { CONTROL_PLANE_OWNED_START } from "../dsl/validation.ts";
 import {
   getPendingApprovalResponseSchemaId,
   projectRunPendingApprovals,
@@ -406,7 +407,7 @@ export class WorkflowClient {
   start<TInput, TOutput = unknown>(
     workflowId: string,
     input: TInput,
-    options?: { runId?: string },
+    options?: { runId?: string; [CONTROL_PLANE_OWNED_START]?: true },
   ): Promise<WorkflowHandle<TOutput>> {
     return this.executor.start<TInput, TOutput>(workflowId, input, options);
   }

@@ -47,6 +47,7 @@ import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowDefinition, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
+import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -157,6 +158,23 @@ describe("WorkflowClient", () => {
         "path segment",
       );
     }
+  });
+
+  it("reserves control-plane shaped run IDs for control-plane owned starts (#2102)", async () => {
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    await assertRejects(
+      () => client.start("test-workflow", {}, { runId }),
+      VeryfrontError,
+      "reserved for the Veryfront control plane",
+    );
+    assertEquals(await backend.getRun(runId), null);
+
+    const handle = await client.start("test-workflow", {}, {
+      runId,
+      [CONTROL_PLANE_OWNED_START]: true,
+    });
+    assertEquals(handle.runId, runId);
+    assertEquals((await backend.getRun(runId))?._controlPlaneOwned, true);
   });
 
   it("stores the registered workflow's selected output on the run (#2107)", async () => {
@@ -2983,6 +3001,38 @@ describe("WorkflowClient durable event waits", () => {
     } finally {
       await sweepingClient.destroy();
     }
+  });
+
+  it("expires event waits only for the requested run", async () => {
+    for (const id of ["scoped-expiry", "unrelated-expiry"]) {
+      await backend.createRun({
+        id,
+        workflowId: "event-expiry",
+        status: "waiting",
+        input: {},
+        nodeStates: { event: { nodeId: "event", status: "running", attempt: 1 } },
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(0),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingEventWait(id, {
+        id: `wait_${id}`,
+        runId: id,
+        nodeId: "event",
+        eventName: "ready",
+        waitKind: "event",
+        requestedAt: new Date(0),
+        expiresAt: new Date(1),
+        status: "pending",
+      });
+    }
+    await client.getEventWaitManager().checkExpiredEventWaits("scoped-expiry");
+    assertEquals((await backend.getRun("scoped-expiry"))?.status, "failed");
+    assertEquals((await backend.getRun("unrelated-expiry"))?.status, "waiting");
+    assertEquals((await backend.getPendingEventWaits("unrelated-expiry")).length, 1);
   });
 
   it("continues recovered-run drains after one run fails", async () => {
