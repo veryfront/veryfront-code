@@ -489,6 +489,23 @@ describe("merge quality gate workflow", () => {
     assertEquals(runCommands.includes("curl"), false);
   });
 
+  it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
+    const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
+    const shards = asRecord(jobs["coverage-shards"], "coverage shards job");
+    assert(Array.isArray(shards.steps), "coverage shard steps must be an array");
+    const steps = shards.steps.map((step) => asRecord(step, "coverage shard step"));
+    const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
+    assertEquals(runCommands.includes("mergeLcovReports"), false);
+    assertStringIncludes(runCommands, "> coverage-shard-1/history/lcov.info");
+    assertStringIncludes(runCommands, "> coverage-shard-1/cli/lcov.info");
+    const upload = steps.find((step) => step.name === "Upload unit coverage lcov");
+    assert(upload, "coverage shards must upload their reports");
+    assertEquals(
+      asRecord(upload.with, "coverage shard upload options").path,
+      "coverage-shard-${{ matrix.shard }}/**/lcov.info",
+    );
+  });
+
   it("runs native executor coverage independently without extending the unit coverage path", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
     const native = asRecord(
