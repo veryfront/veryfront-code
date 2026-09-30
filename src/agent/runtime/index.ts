@@ -2165,7 +2165,6 @@ export class AgentRuntime {
           modelOverride,
           mode,
           resolveModelRuntime,
-          ...(projectRunResolver ? { loadServedCatalog: true } : {}),
           modelCallThinking: this.#modelCallThinking,
         }),
         ...(resolveModelRuntime ? { resolveModelRuntime } : {}),

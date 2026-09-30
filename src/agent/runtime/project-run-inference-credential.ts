@@ -1,9 +1,17 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
-import { requireSecureInferenceApiBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
+import {
+  requireSecureInferenceApiBaseUrl,
+  requireVeryfrontCloudBootstrap,
+} from "#veryfront/provider/veryfront-cloud/shared.ts";
+import {
+  loadVeryfrontCloudCatalog,
+  withVeryfrontCloudCatalogScope,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { resolveVeryfrontInferenceApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import {
   type AgentModelRuntimeResolver,
+  registerModelRuntimeResolverCatalog,
   registerModelRuntimeResolverRevoker,
 } from "./model-transport.ts";
 
@@ -18,6 +26,8 @@ const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 const IntrinsicReflectApply = Reflect.apply;
 const StringStartsWith = String.prototype.startsWith;
 const StringSlice = String.prototype.slice;
+/** Same bound as the ambient catalog warm-up, so a slow catalog never stalls a call longer. */
+const CATALOG_LOAD_MAX_WAIT_MS = 3_000;
 
 type ProjectRunInferenceScope = {
   readonly credential: string;
@@ -112,6 +122,28 @@ export function createProjectRunInferenceModelResolver(): AgentModelRuntimeResol
       },
     );
   };
+  // The served catalog as this credential sees it, from the trusted origin and
+  // keyed exactly as the models this resolver builds key theirs, so the
+  // default-model and served-model decisions and the call agree.
+  const catalogScope = () => {
+    const bootstrap = requireVeryfrontCloudBootstrap(readActiveCredential(), scope.apiBaseUrl);
+    return {
+      apiBaseUrl: bootstrap.apiBaseUrl,
+      apiToken: bootstrap.apiToken,
+      ...(bootstrap.projectSlug ? { projectSlug: bootstrap.projectSlug } : {}),
+    };
+  };
+  registerModelRuntimeResolverCatalog(resolver, {
+    async load() {
+      await loadVeryfrontCloudCatalog({
+        ...catalogScope(),
+        fresh: true,
+        maxWaitMs: CATALOG_LOAD_MAX_WAIT_MS,
+        assertCredentialActive: () => void readActiveCredential(),
+      });
+    },
+    read: (fn) => withVeryfrontCloudCatalogScope(catalogScope(), fn),
+  });
   registerModelRuntimeResolverRevoker(resolver, () => {
     active = false;
   });

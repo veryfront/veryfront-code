@@ -6,9 +6,13 @@ import {
 } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearModelProviders } from "#veryfront/provider";
+import { resolveAgentModelTransport } from "#veryfront/agent/runtime/model-transport.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  seedServedCatalogForTests,
+  servedCatalogPayload,
+} from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
@@ -550,5 +554,140 @@ describe("project-run inference credential boundaries", () => {
       }
     });
     assertEquals(seen.some((value) => value.includes(INFERENCE_TOKEN)), false);
+  });
+});
+
+describe("project-run inference credential catalog", () => {
+  beforeEach(() => {
+    // Cold: nothing seeded or cached, so the call has to load the catalog.
+    __resetVeryfrontCloudCatalogForTests();
+    setEnv("VERYFRONT_API_TOKEN", BROADER_TOKEN);
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+  });
+  afterEach(() => {
+    __resetVeryfrontCloudCatalogForTests();
+    restoreMockFetch();
+    clearModelProviders();
+    deleteEnv("VERYFRONT_API_TOKEN");
+    deleteEnv("VERYFRONT_PROJECT_SLUG");
+  });
+
+  /** Serves the catalog and a streamed answer, recording each request's kind, origin and bearer. */
+  function captureRequests(): Array<
+    { catalog: boolean; origin: string; authorization: string | null }
+  > {
+    const requests: Array<{ catalog: boolean; origin: string; authorization: string | null }> = [];
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        const catalog = request.method === "GET" && url.pathname.endsWith("/models");
+        requests.push({
+          catalog,
+          origin: url.origin,
+          authorization: request.headers.get("Authorization"),
+        });
+        if (catalog) {
+          return new Response(JSON.stringify(servedCatalogPayload()), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+              );
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+    return requests;
+  }
+
+  for (const model of ["veryfront-cloud/openai/gpt-test", undefined] as const) {
+    it(`loads a cold catalog only with the scoped credential (${model ?? "default model"})`, async () => {
+      const requests = captureRequests();
+      const managed = createAgent({
+        id: `project-run-cold-catalog-${model ? "explicit" : "default"}`,
+        ...(model ? { model } : {}),
+        system: "Answer concisely.",
+        skills: false,
+      });
+
+      const response = await runWithProjectRunInferenceCredential(
+        INFERENCE_TOKEN,
+        () => managed.generate({ input: "Hello" }),
+      );
+
+      assertEquals(response.text, "Hello");
+      const catalogLoads = requests.filter((request) => request.catalog);
+      assertEquals(catalogLoads.length > 0, true);
+      // No request of any kind, catalog included, went out with the ambient credential.
+      assertEquals(
+        requests.filter((request) => request.authorization?.includes(BROADER_TOKEN)),
+        [],
+      );
+      for (const request of requests) {
+        assertEquals(request.authorization, `Bearer ${INFERENCE_TOKEN}`);
+        assertEquals(request.origin, "https://api.veryfront.com");
+      }
+    });
+  }
+
+  it("takes thinking and reasoning defaults from the scoped catalog on a cold call", async () => {
+    const model = "veryfront-cloud/anthropic/claude-opus-4-6";
+    const resolveInScope = () =>
+      runWithProjectRunInferenceCredential(INFERENCE_TOKEN, async () => {
+        const resolver = createProjectRunInferenceModelResolver();
+        assertExists(resolver);
+        return await resolveAgentModelTransport({
+          agentId: "project-run-thinking-agent",
+          config: { model, system: "Answer concisely." } as never,
+          context: undefined,
+          modelOverride: undefined,
+          mode: "stream",
+          resolveModelRuntime: resolver,
+        });
+      });
+    // Reference: the same resolution with the catalog already in memory.
+    seedServedCatalogForTests();
+    const warm = await resolveInScope();
+    __resetVeryfrontCloudCatalogForTests();
+
+    const requests = captureRequests();
+    const cold = await resolveInScope();
+
+    assertExists(warm.reasoning);
+    assertEquals(cold.reasoning, warm.reasoning);
+    assertEquals(cold.providerOptions, warm.providerOptions);
+    assertEquals(requests.filter((request) => request.authorization?.includes(BROADER_TOKEN)), []);
+  });
+
+  it("loads a cold catalog with the ambient credential outside a scope (negative control)", async () => {
+    const requests = captureRequests();
+    const managed = createAgent({
+      id: "project-run-cold-catalog-ambient",
+      model: "veryfront-cloud/openai/gpt-test",
+      system: "Answer concisely.",
+      skills: false,
+    });
+
+    await managed.generate({ input: "Hello" });
+
+    const catalogLoads = requests.filter((request) => request.catalog);
+    assertEquals(catalogLoads.length > 0, true);
+    assertEquals(
+      catalogLoads.every((request) => request.authorization === `Bearer ${BROADER_TOKEN}`),
+      true,
+    );
   });
 });
