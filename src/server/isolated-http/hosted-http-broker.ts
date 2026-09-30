@@ -57,6 +57,10 @@ export function createHostedHttpBroker(options: HostedExecutorSessionPoolOptions
         getHostedExecutorAllocationRequestSchema(),
         input.session.request,
       );
+      if (allocation.executionProfile !== undefined && allocation.executionProfile !== "http") {
+        throw new TypeError("HTTP executor requires the HTTP allocation profile");
+      }
+      allocation.executionProfile = "http";
       const installation = parseExecutorInstallation(getExecutorHttpInstallSchema(), {
         ...input.installation,
         // Validate before reserving capacity. The authenticated allocator's
