@@ -36,7 +36,11 @@ describe("child-run transcript scan complexity", () => {
     const shorterScans = await measureScans(8_000);
     const longerScans = await measureScans(16_000);
     assertEquals(shorterScans > 0, true);
-    assertEquals(longerScans <= shorterScans * 2, true, { shorterScans, longerScans });
+    assertEquals(
+      longerScans <= shorterScans * 2,
+      true,
+      JSON.stringify({ shorterScans, longerScans }),
+    );
   });
 
   it("detects repeated scans for unclosed tags when missing closers are rescanned", async () => {
