@@ -4544,6 +4544,80 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(interceptedTokens, []);
   });
 
+  it("allows reserved agent data writes during branch config loading", async () => {
+    let configReads = 0;
+    let dataRevision = 0;
+    let reservedDataWrites = 0;
+    const fingerprintPurposes: Array<string | undefined> = [];
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = "run-scoped-token";
+    const fs = createNoopFsAdapter([]);
+    const readFile = fs.readFile.bind(fs);
+    fs.readFile = (path) => {
+      configReads += 1;
+      if (path === "/veryfront.config.js") return Promise.resolve("export default {};");
+      return readFile(path);
+    };
+    fs.writeFile = (path) => {
+      if (path === "knowledge/config-run.md") {
+        reservedDataWrites += 1;
+        dataRevision += 1;
+      }
+      return Promise.resolve();
+    };
+    fs.getSourceSnapshotFingerprint = (options) => {
+      fingerprintPurposes.push(options?.purpose);
+      return options?.purpose === "agent-config"
+        ? "stable-agent-config-snapshot"
+        : `complete-snapshot-${dataRevision}`;
+    };
+    ctx.adapter = { ...ctx.adapter, fs };
+    __setHostedConfigEvaluatorForTests(async () => {
+      await fs.writeFile("knowledge/config-run.md", "config evaluation output");
+      return {};
+    });
+
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
+    Deno.env.set(signingKeyEnv, publicKeyPem);
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      __setHostedConfigEvaluatorForTests();
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 404);
+    assertEquals(configReads > 0, true);
+    assertEquals(reservedDataWrites, 1);
+    assertEquals(fingerprintPurposes.length >= 4, true);
+    assertEquals(fingerprintPurposes.every((purpose) => purpose === "agent-config"), true);
+  });
+
   it("rejects a branch run when the credential handoff changes the source snapshot", async () => {
     let discoveryCalls = 0;
     let requestFingerprintCalls = 0;

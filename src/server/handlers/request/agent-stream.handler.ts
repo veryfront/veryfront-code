@@ -126,7 +126,10 @@ import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithoutRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
-import type { SourceSnapshotFreshnessOptions } from "#veryfront/platform/adapters/base.ts";
+import type {
+  SourceSnapshotFingerprintOptions,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import { createRunScopedProviderReplayCheckpointPersister } from "#veryfront/internal-agents/provider-replay-checkpoint-persister.ts";
 
 export interface AgentStreamHandlerDeps
@@ -810,7 +813,7 @@ type SourceContextFsWrapper = {
   ) => Promise<void>;
   sourceSnapshotFreshnessOptionsVersion?: 1;
   refreshSourceSnapshot?: (reason?: string) => Promise<void>;
-  getSourceSnapshotFingerprint?: () =>
+  getSourceSnapshotFingerprint?: (options?: SourceSnapshotFingerprintOptions) =>
     | string
     | undefined
     | Promise<string | undefined>;
@@ -903,7 +906,9 @@ async function requireAgentSourceSnapshotFingerprint(
   }
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const fingerprint = await IntrinsicReflectApply(getSourceSnapshotFingerprint, fs, []);
+    const fingerprint = await IntrinsicReflectApply(getSourceSnapshotFingerprint, fs, [{
+      purpose: "agent-config",
+    }]);
     if (fingerprint) return fingerprint;
   }
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({

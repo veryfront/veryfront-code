@@ -16,6 +16,7 @@ import type {
 import type {
   FileInfo,
   ResolveFileOptions,
+  SourceSnapshotFingerprintOptions,
   SourceSnapshotFreshnessOptions,
 } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
@@ -87,6 +88,9 @@ const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const SourceSnapshotHashPrototype = IntrinsicReflectApply(
   IntrinsicObjectGetPrototypeOf,
   Object,
@@ -312,6 +316,7 @@ function addSourceSnapshotDigest(
 
 async function computeSourceSnapshotFingerprint(
   files: SourceSnapshotFile[],
+  purpose: "complete" | "agent-config",
 ): Promise<string | undefined> {
   // A modular sum of cryptographic per-record digests is independent of list
   // order and keeps working memory constant. Reject invalid or repeated paths
@@ -319,6 +324,7 @@ async function computeSourceSnapshotFingerprint(
   const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
   const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
   const seenPaths = new IntrinsicMap<string, true>();
+  let includedFileCount = 0;
   for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
     const record = captureSourceSnapshotRecord(files[fileIndex]!);
     const path = record[0];
@@ -329,6 +335,20 @@ async function computeSourceSnapshotFingerprint(
       return undefined;
     }
     IntrinsicReflectApply(MapPrototypeSet, seenPaths, [path, true]);
+    const projectPath = IntrinsicReflectApply(StringPrototypeCharCodeAt, path, [0]) === 47
+      ? IntrinsicReflectApply(StringPrototypeSlice, path, [1]) as string
+      : path;
+    if (
+      purpose === "agent-config" &&
+      ((IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["knowledge/"]) === true &&
+        IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".md"]) === true) ||
+        (IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["evals/reports/"]) ===
+            true &&
+          IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".json"]) === true))
+    ) {
+      continue;
+    }
+    includedFileCount++;
     const recordHash = createHash("sha256");
     updateSourceSnapshotHashString(recordHash, "r");
     for (let valueIndex = 0; valueIndex < 7; valueIndex++) {
@@ -363,8 +383,13 @@ async function computeSourceSnapshotFingerprint(
   }
   await yieldSourceSnapshotTask();
   const fingerprintHash = createHash("sha256");
-  updateSourceSnapshotHashString(fingerprintHash, "veryfront-source-snapshot-multiset-v1");
-  updateSourceSnapshotHashString(fingerprintHash, `${files.length}:`);
+  updateSourceSnapshotHashString(
+    fingerprintHash,
+    purpose === "agent-config"
+      ? "veryfront-agent-config-snapshot-multiset-v1"
+      : "veryfront-source-snapshot-multiset-v1",
+  );
+  updateSourceSnapshotHashString(fingerprintHash, `${includedFileCount}:`);
   IntrinsicReflectApply(HashPrototypeUpdate, fingerprintHash, [accumulator]);
   return IntrinsicReflectApply(HashPrototypeDigest, fingerprintHash, ["hex"]) as string;
 }
@@ -443,6 +468,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private sourceSnapshotFiles: SourceSnapshotFile[] | undefined;
   private hasAppliedSourceSnapshot = false;
   private sourceSnapshotFingerprint:
+    | { version: number; value: Promise<string | undefined> }
+    | undefined;
+  private agentConfigSourceSnapshotFingerprint:
     | { version: number; value: Promise<string | undefined> }
     | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
@@ -1307,6 +1335,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotIdentity = undefined;
     this.sourceSnapshotFiles = undefined;
     this.sourceSnapshotFingerprint = undefined;
+    this.agentConfigSourceSnapshotFingerprint = undefined;
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
@@ -1611,7 +1640,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.sourceSnapshotVersion;
   }
 
-  getSourceSnapshotFingerprint(): Promise<string | undefined> {
+  getSourceSnapshotFingerprint(
+    options?: SourceSnapshotFingerprintOptions,
+  ): Promise<string | undefined> {
+    const purpose = options?.purpose === "agent-config" ? "agent-config" : "complete";
     const files = this.sourceSnapshotFiles;
     if (!files) {
       return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, [undefined]) as Promise<
@@ -1620,17 +1652,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const version = this.sourceSnapshotVersion;
-    if (this.sourceSnapshotFingerprint?.version === version) {
-      return this.sourceSnapshotFingerprint.value;
+    const cached = purpose === "agent-config"
+      ? this.agentConfigSourceSnapshotFingerprint
+      : this.sourceSnapshotFingerprint;
+    if (cached?.version === version) {
+      return cached.value;
     }
 
     const value = (async () => {
-      const fingerprint = await computeSourceSnapshotFingerprint(files);
+      const fingerprint = await computeSourceSnapshotFingerprint(files, purpose);
       return this.sourceSnapshotVersion === version && this.sourceSnapshotFiles === files
         ? fingerprint
         : undefined;
     })();
-    this.sourceSnapshotFingerprint = { version, value };
+    if (purpose === "agent-config") {
+      this.agentConfigSourceSnapshotFingerprint = { version, value };
+    } else {
+      this.sourceSnapshotFingerprint = { version, value };
+    }
     return value;
   }
 
@@ -1741,6 +1780,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotIdentity = undefined;
     this.sourceSnapshotFiles = undefined;
     this.sourceSnapshotFingerprint = undefined;
+    this.agentConfigSourceSnapshotFingerprint = undefined;
     this.sourceSnapshotRefreshPromise = null;
     this.wsManager.dispose();
     this.manifestFetcherCleanup?.();

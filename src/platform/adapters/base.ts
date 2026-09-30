@@ -361,7 +361,9 @@ export interface FileSystemAdapter {
    */
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
   /** Stable content digest for the active source snapshot. */
-  getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
+  getSourceSnapshotFingerprint?(
+    options?: SourceSnapshotFingerprintOptions,
+  ): string | undefined | Promise<string | undefined>;
   /**
    * Stable name for the source context the snapshot currently targets, such
    * as the bound project/branch, environment, or release. Per-request context
@@ -411,6 +413,14 @@ export interface SourceSnapshotFreshnessOptions {
    * source round trip rather than the whole default lease.
    */
   maxAgeMs?: number;
+}
+
+export interface SourceSnapshotFingerprintOptions {
+  /**
+   * Agent configuration identity excludes reserved mutable data artifacts while
+   * retaining every executable and configuration source file.
+   */
+  purpose?: "agent-config";
 }
 
 export interface DirEntry {

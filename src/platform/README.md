@@ -158,6 +158,8 @@ Virtual filesystems may publish `symlinkSemantics: "none"` together with a monot
 
 Mutable multi-project adapters that verify one source across credential scopes must also publish `ensureSourceSnapshotFresh()` or `refreshSourceSnapshot()`, plus `getSourceSnapshotFingerprint()`. The fingerprint must identify the complete active source snapshot and return unavailable when that snapshot changes during hashing.
 
+Agent configuration handoff checks request `getSourceSnapshotFingerprint({ purpose: "agent-config" })`. Veryfront's hosted adapter excludes only the reserved mutable data files `knowledge/**/*.md` and `evals/reports/**/*.json` from that identity. These files must not contain configuration or executable dependencies. Other files in those directories, plus `agents/*` and `veryfront.config.*`, remain part of the identity. Calling the method without options still fingerprints the complete snapshot.
+
 The native implementations use runtime or standard-library primitives only. Provider-specific filesystem behavior belongs behind an adapter or extension boundary.
 
 ### Platform Detection

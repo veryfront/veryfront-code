@@ -1023,6 +1023,127 @@ describe("VeryfrontFSAdapter", () => {
   });
 
   describe("source snapshot fingerprints", () => {
+    it("ignores agent data artifacts only for agent configuration fingerprints", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{
+          path: string;
+          content?: string;
+        }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "agents/support.ts", content: "export default supportAgent" },
+        { path: "veryfront.config.ts", content: "export default {}" },
+        { path: "knowledge/support.md", content: "first note" },
+        { path: "evals/reports/support/run.json", content: '{"score":1}' },
+        { path: "knowledge/load.ts", content: "export const load = true" },
+        { path: "evals/reports/load.ts", content: "export const load = true" },
+      ];
+      const complete = await adapter.getSourceSnapshotFingerprint();
+      const config = await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        file.path === "knowledge/support.md" ||
+          file.path === "evals/reports/support/run.json"
+          ? { ...file, content: `${file.content} changed` }
+          : file
+      );
+
+      assertNotEquals(await adapter.getSourceSnapshotFingerprint(), complete);
+      assertEquals(
+        await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
+        config,
+      );
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = [
+        ...internals.sourceSnapshotFiles,
+        { path: "/knowledge/new.md", content: "new note" },
+      ];
+      assertEquals(
+        await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
+        config,
+      );
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.filter((file) =>
+        file.path !== "evals/reports/support/run.json"
+      );
+      assertEquals(
+        await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
+        config,
+      );
+
+      const dataOnlyFiles = internals.sourceSnapshotFiles;
+      for (
+        const path of [
+          "agents/support.ts",
+          "veryfront.config.ts",
+          "knowledge/load.ts",
+          "evals/reports/load.ts",
+        ]
+      ) {
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = dataOnlyFiles;
+        const before = await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = dataOnlyFiles.map((file) =>
+          file.path === path ? { ...file, content: `${file.content} changed` } : file
+        );
+        assertNotEquals(
+          await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
+          before,
+          `${path} must remain part of the agent configuration fingerprint`,
+        );
+      }
+    });
+
+    it("captures the agent configuration fingerprint purpose before hashing", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      const executable = {
+        path: "agents/support.ts",
+        content: "x".repeat(3 * 1_024 * 1_024),
+      };
+      internals.sourceSnapshotFiles = [
+        executable,
+        { path: "knowledge/support.md", content: "first note" },
+      ];
+      const baseline = await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = [
+        executable,
+        { path: "knowledge/support.md", content: "changed note" },
+      ];
+      const options: { purpose?: "agent-config" } = { purpose: "agent-config" };
+      const pending = adapter.getSourceSnapshotFingerprint(options);
+      options.purpose = undefined;
+
+      assertEquals(await pending, baseline);
+    });
+
+    it("rejects duplicate reserved data paths from agent configuration fingerprints", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "knowledge/support.md", content: "first" },
+        { path: "knowledge/support.md", content: "second" },
+      ];
+
+      assertEquals(
+        await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
+        undefined,
+      );
+    });
+
     it("identifies snapshot contents independently of file-list order", async () => {
       const adapter = createAdapter();
       const internals = adapter as unknown as {
