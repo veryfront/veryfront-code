@@ -62,7 +62,10 @@ export const getProviderReplayInvokeAgentToolCallsSchema = defineSchema((v) =>
   v.array(
     v.object({
       toolCallId: v.string().min(1).max(MAX_PROVIDER_REPLAY_TOOL_CALL_ID_LENGTH),
-      toolName: v.literal("invoke_agent"),
+      toolName: v.union([
+        v.literal("invoke_agent"),
+        v.literal("veryfront__invoke_agent"),
+      ]),
       toolArgsJson: v.string().min(1).max(MAX_PROVIDER_REPLAY_TOOL_ARGS_JSON_LENGTH),
     }),
   ).min(2).max(MAX_PROVIDER_REPLAY_INVOKE_AGENT_TOOL_CALLS).refine(
@@ -74,6 +77,7 @@ export const getProviderReplayInvokeAgentToolCallsSchema = defineSchema((v) =>
 export type ProviderReplayInvokeAgentToolCall = InferSchema<
   ReturnType<typeof getProviderReplayInvokeAgentToolCallsSchema>
 >[number];
+export type ProviderReplayInvokeAgentToolName = ProviderReplayInvokeAgentToolCall["toolName"];
 
 export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
@@ -82,6 +86,7 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
   __vfProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   __vfProviderReplayCheckpointMessageId?: string;
+  __vfProviderReplayInvokeAgentToolNames?: ProviderReplayInvokeAgentToolName[];
   __vfPersistProviderReplayCheckpoint?: (
     checkpoint: ProviderReplayCheckpoint,
   ) => void | Promise<void>;
@@ -196,6 +201,25 @@ export function getRuntimeProviderReplayCheckpointMessageId(
 ): string | undefined {
   const value = (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpointMessageId;
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** Return the trusted control-plane delegation names active for this run. */
+export function getRuntimeProviderReplayInvokeAgentToolNames(
+  config: AgentConfig,
+): ProviderReplayInvokeAgentToolName[] {
+  const value = (config as RuntimeToolFilterConfig).__vfProviderReplayInvokeAgentToolNames;
+  if (!Array.isArray(value)) return [];
+  const names: ProviderReplayInvokeAgentToolName[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const name = value[index];
+    if (
+      (name === "invoke_agent" || name === "veryfront__invoke_agent") &&
+      !names.includes(name)
+    ) {
+      names.push(name);
+    }
+  }
+  return names;
 }
 
 /** Return the trusted private provider replay checkpoint persistence hook. */

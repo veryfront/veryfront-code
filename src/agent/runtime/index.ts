@@ -169,6 +169,7 @@ import {
   getRuntimeProviderReplayCheckpoints,
   getRuntimeProviderReplayCheckpointTurnComplete,
   getRuntimeProviderReplayCheckpointTurnFailed,
+  getRuntimeProviderReplayInvokeAgentToolNames,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
@@ -176,6 +177,7 @@ import {
   isRuntimeProviderReplayCheckpointPersistenceRequired,
   isRuntimeToolExposureCheckpointPersistenceRequired,
   type ProviderReplayInvokeAgentToolCall,
+  type ProviderReplayInvokeAgentToolName,
   type ProviderReplayTurnFailure,
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
@@ -1171,6 +1173,7 @@ type RuntimeProviderReplayCheckpointEmission = {
   complete:
     | ((invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[]) => void | Promise<void>)
     | undefined;
+  invokeAgentToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>;
   fail: ((failure?: ProviderReplayTurnFailure) => void | Promise<void>) | undefined;
   failed: boolean;
   required: boolean;
@@ -1198,6 +1201,7 @@ function resolveRuntimeProviderReplayCheckpointEmission(
       : undefined,
     persist: getRuntimeProviderReplayCheckpointPersister(config),
     complete: getRuntimeProviderReplayCheckpointTurnComplete(config),
+    invokeAgentToolNames: new Set(getRuntimeProviderReplayInvokeAgentToolNames(config)),
     fail: getRuntimeProviderReplayCheckpointTurnFailed(config),
     failed: false,
     required: isRuntimeProviderReplayCheckpointPersistenceRequired(config),
@@ -1284,32 +1288,51 @@ async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
   await input.emission.complete?.(input.invokeAgentToolCalls);
 }
 
-function collectParallelInvokeAgentToolCalls(
-  message: Message,
+function collectGeneratedParallelInvokeAgentToolCalls(
+  toolCalls: RuntimeGenerateTextResult["toolCalls"],
+  allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
 ): ProviderReplayInvokeAgentToolCall[] | undefined {
   const calls: ProviderReplayInvokeAgentToolCall[] = [];
-  for (let index = 0; index < message.parts.length; index++) {
-    if (!ObjectHasOwn(message.parts, index)) continue;
-    const part = message.parts[index];
+  if (!toolCalls) return undefined;
+  for (let index = 0; index < toolCalls.length; index++) {
+    if (!ObjectHasOwn(toolCalls, index)) continue;
+    const toolCall = toolCalls[index];
     if (
-      !part || typeof part !== "object" ||
-      !("toolName" in part) || part.toolName !== "invoke_agent" ||
-      !("toolCallId" in part) || typeof part.toolCallId !== "string"
+      !toolCall || !allowedToolNames.has(toolCall.toolName as ProviderReplayInvokeAgentToolName) ||
+      !toolCall.input || typeof toolCall.input !== "object" || Array.isArray(toolCall.input)
     ) {
       continue;
     }
-    const args = "args" in part && part.args !== undefined
-      ? part.args
-      : "input" in part
-      ? part.input
-      : undefined;
-    if (!args || typeof args !== "object" || Array.isArray(args)) continue;
     pushPrivateArray(calls, {
-      toolCallId: part.toolCallId,
-      toolName: "invoke_agent",
-      toolArgsJson: "inputText" in part && typeof part.inputText === "string"
-        ? part.inputText
-        : privateJsonStringify(args),
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName as ProviderReplayInvokeAgentToolName,
+      toolArgsJson: privateJsonStringify(toolCall.input),
+    });
+  }
+  return calls.length >= 2 ? getProviderReplayInvokeAgentToolCallsSchema().parse(calls) : undefined;
+}
+
+function collectStreamedParallelInvokeAgentToolCalls(
+  toolCalls: readonly StreamingToolCall[],
+  allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
+): ProviderReplayInvokeAgentToolCall[] | undefined {
+  const calls: ProviderReplayInvokeAgentToolCall[] = [];
+  for (let index = 0; index < toolCalls.length; index++) {
+    if (!ObjectHasOwn(toolCalls, index)) continue;
+    const toolCall = toolCalls[index];
+    if (
+      !toolCall || toolCall.inputAvailable !== true ||
+      !allowedToolNames.has(toolCall.name as ProviderReplayInvokeAgentToolName)
+    ) {
+      continue;
+    }
+    const materialized = materializeStreamedToolCall(toolCall);
+    if (materialized.kind !== "complete") continue;
+    const args = "args" in materialized.part ? materialized.part.args : {};
+    pushPrivateArray(calls, {
+      toolCallId: toolCall.id,
+      toolName: toolCall.name as ProviderReplayInvokeAgentToolName,
+      toolArgsJson: toolCall.arguments.length > 0 ? toolCall.arguments : privateJsonStringify(args),
     });
   }
   return calls.length >= 2 ? getProviderReplayInvokeAgentToolCallsSchema().parse(calls) : undefined;
@@ -3032,7 +3055,10 @@ export class AgentRuntime {
           emission: providerReplayCheckpointEmission,
           providerMetadata: readAttachedProviderMetadata(assistantMessage),
           invokeAgentToolCalls: providerReplayCheckpointEmission.complete
-            ? collectParallelInvokeAgentToolCalls(assistantMessage)
+            ? collectGeneratedParallelInvokeAgentToolCalls(
+              response.toolCalls,
+              providerReplayCheckpointEmission.invokeAgentToolNames,
+            )
             : undefined,
         });
         throwIfAborted(abortSignal);
@@ -4201,7 +4227,10 @@ export class AgentRuntime {
         emission: providerReplayCheckpointEmission,
         providerMetadata: readAttachedProviderMetadata(assistantMessage),
         invokeAgentToolCalls: providerReplayCheckpointEmission.complete
-          ? collectParallelInvokeAgentToolCalls(assistantMessage)
+          ? collectStreamedParallelInvokeAgentToolCalls(
+            streamedToolCalls,
+            providerReplayCheckpointEmission.invokeAgentToolNames,
+          )
           : undefined,
       });
 

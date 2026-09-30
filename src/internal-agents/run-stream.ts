@@ -100,6 +100,7 @@ import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider
 import {
   getProviderReplayInvokeAgentToolCallsSchema,
   type ProviderReplayInvokeAgentToolCall,
+  type ProviderReplayInvokeAgentToolName,
   type ProviderReplayTurnFailure,
 } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
@@ -133,9 +134,13 @@ export const PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME = "AgentRunProviderRep
 export const PROVIDER_REPLAY_PROTOCOL_HEADER = "X-Veryfront-Provider-Replay-Protocol";
 
 type RuntimeFilteredAgent = Agent & {
-  config: Agent["config"] & {
-    __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
-  } & RuntimeRemoteToolConfig;
+  config:
+    & Agent["config"]
+    & {
+      __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
+      __vfProviderReplayInvokeAgentToolNames?: ProviderReplayInvokeAgentToolName[];
+    }
+    & RuntimeRemoteToolConfig;
 };
 
 type SandboxShellToolsExtensionModule = {
@@ -313,6 +318,21 @@ function resolveChildRunToolNames(mergedTools: Agent["config"]["tools"]): Set<st
         controlPlaneInjectedTools.has(tool as Tool))
     ) {
       names.add(toolName);
+    }
+  }
+  return names;
+}
+
+function resolveControlPlaneInvokeAgentToolNames(
+  mergedTools: Agent["config"]["tools"],
+): ProviderReplayInvokeAgentToolName[] {
+  const names: ProviderReplayInvokeAgentToolName[] = [];
+  if (!mergedTools || mergedTools === true) return names;
+  for (const toolName of CHILD_RUN_CONTROL_PLANE_TOOL_NAMES) {
+    const entry = mergedTools[toolName];
+    const tool = entry === true ? toolRegistry.get(toolName) : entry;
+    if (isRecord(tool) && controlPlaneInjectedTools.has(tool as Tool)) {
+      names.push(toolName as ProviderReplayInvokeAgentToolName);
     }
   }
   return names;
@@ -1152,6 +1172,7 @@ export async function createRuntimeAgentStreamResponse(
   const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
   let shouldEmitProviderReplayCheckpoints = false;
   let childRunToolNames = new Set<string>();
+  let controlPlaneInvokeAgentToolNames = new Set<ProviderReplayInvokeAgentToolName>();
   try {
     const executionModel = getAgentExecutionConfig(agent.config).model ??
       resolveConfiguredAgentModel();
@@ -1256,6 +1277,9 @@ export async function createRuntimeAgentStreamResponse(
       !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName, deps.localTools)
     );
     childRunToolNames = resolveChildRunToolNames(mergedTools);
+    controlPlaneInvokeAgentToolNames = new Set(
+      resolveControlPlaneInvokeAgentToolNames(mergedTools),
+    );
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
     const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
     const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
@@ -1357,6 +1381,7 @@ export async function createRuntimeAgentStreamResponse(
           : {}),
         ...(shouldEmitProviderReplayCheckpoints
           ? {
+            __vfProviderReplayInvokeAgentToolNames: [...controlPlaneInvokeAgentToolNames],
             __vfProviderReplayCheckpointTurnComplete: (
               invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[],
             ) => providerReplayCheckpointRelay.complete(input.messageId!, invokeAgentToolCalls),
@@ -1603,6 +1628,15 @@ export async function createRuntimeAgentStreamResponse(
               if (mappedEvent.event === "StepStarted") {
                 await flushProviderReplayTurn();
                 providerReplayStepOpen = shouldEmitProviderReplayCheckpoints;
+              }
+              if (
+                mappedEvent.event === "ToolCallStart" &&
+                typeof mappedEvent.payload.toolCallName === "string" &&
+                controlPlaneInvokeAgentToolNames.has(
+                  mappedEvent.payload.toolCallName as ProviderReplayInvokeAgentToolName,
+                )
+              ) {
+                await flushProviderReplayTurn();
               }
               if (mappedEvent.event === "ToolCallEnd") {
                 await flushProviderReplayTurn();

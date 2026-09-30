@@ -9,7 +9,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
-import { agent, type AgentConfig } from "#veryfront/agent";
+import { agent, type AgentConfig, AgentRuntime } from "#veryfront/agent";
 import { VeryfrontError } from "#veryfront/errors";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
@@ -315,6 +315,7 @@ describe("provider replay checkpoint emission", () => {
       maxSteps: 1,
       resolveModelTransport: () => ({ model }),
       __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
       __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls) => {
         operations.push("turn:complete");
         completedBatch = invokeAgentToolCalls;
@@ -337,6 +338,124 @@ describe("provider replay checkpoint emission", () => {
       },
     ]);
     assertEquals(operations, ["turn:complete", "tool:first", "tool:second"]);
+  });
+
+  it("uses the trusted aliased control-plane name for a parallel batch", async () => {
+    let completedBatch: unknown;
+    const model = scriptedModel([{
+      toolCalls: [
+        { id: "child-1", name: "veryfront__invoke_agent", input: { task: "first" } },
+        { id: "child-2", name: "veryfront__invoke_agent", input: { task: "second" } },
+      ],
+    }], {
+      modelId: "anthropic/aliased-parallel-invoke-agent-replay-boundary",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "aliased-parallel-invoke-agent-replay-boundary",
+      model: "anthropic/aliased-parallel-invoke-agent-replay-boundary",
+      system: "Delegate twice.",
+      skills: false,
+      tools: { veryfront__invoke_agent: invokeAgentTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayInvokeAgentToolNames: ["veryfront__invoke_agent"],
+      __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+        completedBatch = invokeAgentToolCalls;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig & {
+      __vfProviderReplayInvokeAgentToolNames: string[];
+    };
+
+    await new AgentRuntime(config.id, config).generate("Delegate both tasks");
+
+    assertEquals(completedBatch, [
+      {
+        toolCallId: "child-1",
+        toolName: "veryfront__invoke_agent",
+        toolArgsJson: '{"task":"first"}',
+      },
+      {
+        toolCallId: "child-2",
+        toolName: "veryfront__invoke_agent",
+        toolArgsJson: '{"task":"second"}',
+      },
+    ]);
+  });
+
+  it("does not publish custom invoke_agent name collisions", async () => {
+    let completedBatch: unknown = "not-called";
+    const model = scriptedModel([{
+      toolCalls: [
+        { id: "custom-1", name: "invoke_agent", input: { task: "first" } },
+        { id: "custom-2", name: "invoke_agent", input: { task: "second" } },
+      ],
+    }], {
+      modelId: "anthropic/custom-invoke-agent-name-collision",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "custom-invoke-agent-name-collision",
+      model: "anthropic/custom-invoke-agent-name-collision",
+      system: "Use the custom tool twice.",
+      skills: false,
+      tools: { invoke_agent: invokeAgentTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayInvokeAgentToolNames: [],
+      __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+        completedBatch = invokeAgentToolCalls;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig & {
+      __vfProviderReplayInvokeAgentToolNames: string[];
+    };
+
+    await agent(config).generate({ input: "Call both custom tools" });
+
+    assertEquals(completedBatch, undefined);
+  });
+
+  it("excludes incomplete and malformed streamed calls from the parallel batch", async () => {
+    let completedBatch: unknown = "not-called";
+    const model = scriptedModel([{
+      parts: [
+        { type: "tool-input-start", id: "child-incomplete", toolName: "invoke_agent" },
+        { type: "tool-input-delta", id: "child-incomplete", delta: '{"task":"partial"' },
+        { type: "tool-input-start", id: "child-malformed", toolName: "invoke_agent" },
+        { type: "tool-input-delta", id: "child-malformed", delta: '{"task":}' },
+        { type: "tool-input-end", id: "child-malformed" },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ],
+    }], {
+      modelId: "anthropic/uncommitted-parallel-invoke-agent",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const config = {
+      id: "uncommitted-parallel-invoke-agent",
+      model: "anthropic/uncommitted-parallel-invoke-agent",
+      system: "Delegate twice.",
+      skills: false,
+      tools: { invoke_agent: invokeAgentTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+      __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+        completedBatch = invokeAgentToolCalls;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig & {
+      __vfProviderReplayInvokeAgentToolNames: string[];
+    };
+
+    await (await agent(config).stream({ input: "Delegate both tasks" })).toDataStreamResponse()
+      .text();
+
+    assertEquals(completedBatch, undefined);
   });
 
   it("keeps the replay boundary payload unchanged for one invoke_agent call", async () => {
