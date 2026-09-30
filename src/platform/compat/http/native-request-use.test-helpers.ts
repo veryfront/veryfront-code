@@ -73,7 +73,7 @@ export function recordNativePrototypeUse(
     return result.then(
       () => {
         restore();
-        return [...used].sort();
+        return [...used].sort((a, b) => a.localeCompare(b));
       },
       (error) => {
         restore();
@@ -82,7 +82,7 @@ export function recordNativePrototypeUse(
     );
   }
   restore();
-  return [...used].sort();
+  return [...used].sort((a, b) => a.localeCompare(b));
 }
 
 /** True for a member `assertNativeRequestProcessing` refuses to see replaced. */
