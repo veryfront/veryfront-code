@@ -542,20 +542,13 @@ jobs:
           name: unit
           fail_ci_if_error: false
 
-  # Automatic Analysis runs on Sonar's servers and cannot see coverage, which is
-  # only produced where the tests run. Reuses the shard artifacts; runs no
-  # repository code, like codecov-upload.
-  #
-  # Skipped for forks and for Dependabot: both reach the scan without SONAR_TOKEN
-  # (Dependabot branches live in this repository, but Actions secrets are not
-  # exposed to Dependabot-triggered runs), and an empty token fails the scan.
-  # The scan waits for SonarCloud's server-side Quality Gate before this
-  # required job succeeds; the timeout leaves room for the observed analysis
-  # and report-processing latency.
-  sonar:
+  # Merges every coverage report into the one LCOV file Sonar reads. Merging
+  # runs repository code (`deno task coverage:ci:merge`), so it happens here,
+  # in a job with no secrets, and hands the scan job only the finished report.
+  sonar-coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
-    name: SonarQube Cloud scan
+    timeout-minutes: 10
+    name: Sonar coverage report
     needs: [coverage-shards, coverage-node-executor, coverage-integration-client]
     if: ${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
@@ -564,8 +557,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Sonar reads git history for new-code and blame.
-          fetch-depth: 0
       - name: Download unit coverage lcov files
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -592,6 +583,45 @@ jobs:
       - name: Normalize lcov paths
         run: |
           sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" coverage/lcov.info
+      - name: Upload merged Sonar coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-sonar
+          path: coverage/lcov.info
+          retention-days: 1
+
+  # Automatic Analysis runs on Sonar's servers and cannot see coverage, which is
+  # only produced where the tests run. This job holds SONAR_TOKEN, so it runs no
+  # repository code: it downloads the merged report from `sonar-coverage` and
+  # calls the scan action.
+  #
+  # Skipped for forks and for Dependabot: both reach the scan without SONAR_TOKEN
+  # (Dependabot branches live in this repository, but Actions secrets are not
+  # exposed to Dependabot-triggered runs), and an empty token fails the scan.
+  # The scan waits up to 20 minutes for SonarCloud's server-side Quality Gate
+  # before this required job succeeds; the remaining 8 minutes cover checkout,
+  # the report download and analysis upload (the whole job takes about 6
+  # minutes today). 28 minutes keeps the coverage and Sonar path inside the
+  # merge queue response budget now that `sonar-coverage` sits before it.
+  sonar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    name: SonarQube Cloud scan
+    needs: [sonar-coverage]
+    if: ${{ needs.sonar-coverage.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Sonar reads git history for new-code and blame.
+          fetch-depth: 0
+      - name: Download merged Sonar coverage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-sonar
+          path: coverage
       - name: SonarQube Cloud scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
