@@ -1,4 +1,8 @@
-import { appendPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  appendPrivateArray,
+  slicePrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
 import {
@@ -118,6 +122,7 @@ const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetHas = Set.prototype.has;
 const _Set = Set;
+const IntrinsicArrayIsArray = Array.isArray;
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
@@ -1054,7 +1059,7 @@ function createProviderReplayCheckpointRelay(): {
   takeCompletedTurn: () => Promise<ProviderReplayPrivateFrame[]>;
   hasCompletedTurn: () => boolean;
 } {
-  const buffered: ProviderReplayPrivateFrame[] = [];
+  let buffered: ProviderReplayPrivateFrame[] = [];
   let resolvePending:
     | ((frames: ProviderReplayPrivateFrame[]) => void)
     | undefined;
@@ -1062,10 +1067,13 @@ function createProviderReplayCheckpointRelay(): {
   let terminalError: ProviderReplayTurnError | undefined;
 
   const takeReadyTurn = (): ProviderReplayPrivateFrame[] | undefined => {
-    const boundaryIndex = buffered.findIndex((frame) =>
-      frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
-    );
-    return boundaryIndex >= 0 ? buffered.splice(0, boundaryIndex + 1) : undefined;
+    for (let index = 0; index < buffered.length; index++) {
+      if (buffered[index]?.event !== PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME) continue;
+      const frames = slicePrivateArray(buffered, 0, index + 1);
+      buffered = slicePrivateArray(buffered, index + 1);
+      return frames;
+    }
+    return undefined;
   };
   const resolveIfReady = () => {
     if (!resolvePending) return;
@@ -1082,7 +1090,7 @@ function createProviderReplayCheckpointRelay(): {
       const validatedInvokeAgentToolCalls = invokeAgentToolCalls === undefined
         ? undefined
         : getProviderReplayInvokeAgentToolCallsSchema().parse(invokeAgentToolCalls);
-      buffered.push({
+      appendPrivateArray(buffered, [{
         event: PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
         payload: {
           type: "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED",
@@ -1091,7 +1099,7 @@ function createProviderReplayCheckpointRelay(): {
             ? { invokeAgentToolCalls: validatedInvokeAgentToolCalls }
             : {}),
         },
-      });
+      }]);
       resolveIfReady();
     },
     fail: async (failure) => {
@@ -1105,7 +1113,7 @@ function createProviderReplayCheckpointRelay(): {
         failure?.message ?? "Provider replay turn failed before its boundary",
       );
       if (failure?.code) terminalError.vfRunErrorCode = failure.code;
-      buffered.splice(0);
+      buffered.length = 0;
       const reject = rejectPending;
       resolvePending = undefined;
       rejectPending = undefined;
@@ -1124,7 +1132,10 @@ function createProviderReplayCheckpointRelay(): {
       });
     },
     hasCompletedTurn: () =>
-      buffered.some((frame) => frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME),
+      somePrivateArray(
+        buffered,
+        (frame) => frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
+      ),
   };
 }
 
@@ -1621,9 +1632,11 @@ export async function createRuntimeAgentStreamResponse(
             let providerReplayStepOpen = false;
             const flushProviderReplayTurn = async () => {
               if (!providerReplayStepOpen) return;
-              for (const frame of await providerReplayCheckpointRelay.takeCompletedTurn()) {
+              const frames = await providerReplayCheckpointRelay.takeCompletedTurn();
+              for (let index = 0; index < frames.length; index++) {
+                const frame = frames[index]!;
                 const invokeAgentToolCalls = frame.payload.invokeAgentToolCalls;
-                if (Array.isArray(invokeAgentToolCalls)) {
+                if (IntrinsicArrayIsArray(invokeAgentToolCalls)) {
                   for (let index = 0; index < invokeAgentToolCalls.length; index++) {
                     const toolCall = invokeAgentToolCalls[index];
                     if (
@@ -1716,7 +1729,9 @@ export async function createRuntimeAgentStreamResponse(
             throwIfAborted();
             await flushProviderReplayTurn();
             while (providerReplayCheckpointRelay.hasCompletedTurn()) {
-              for (const frame of await providerReplayCheckpointRelay.takeCompletedTurn()) {
+              const frames = await providerReplayCheckpointRelay.takeCompletedTurn();
+              for (let index = 0; index < frames.length; index++) {
+                const frame = frames[index]!;
                 enqueueProviderReplayFrame(frame);
               }
             }

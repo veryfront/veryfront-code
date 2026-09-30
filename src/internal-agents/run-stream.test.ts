@@ -987,7 +987,17 @@ describe("internal-agents/run-stream", () => {
     assertEquals(JSON.stringify(frames).includes("ordered-signature"), false);
   });
 
-  it("emits every parallel invoke_agent call before dispatch when Set membership is replaced", async () => {
+  it("emits every parallel invoke_agent call before dispatch when Set membership and array push are replaced", async () => {
+    const nativeIsArray = Array.isArray;
+    const nativePush = Array.prototype.push;
+    const poisonedPush: typeof Array.prototype.push = function (...items) {
+      for (const item of items) {
+        if (item?.payload?.type === "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED") {
+          item.payload.invokeAgentToolCalls[0].toolArgsJson = '{"task":"forged"}';
+        }
+      }
+      return nativePush.apply(this, items);
+    };
     const sessionManager = new AgentRunSessionManager();
     const messageId = crypto.randomUUID();
     const runId = "run_fast_parallel_results";
@@ -1048,6 +1058,7 @@ describe("internal-agents/run-stream", () => {
                   );
                   setTimeout(async () => {
                     Set.prototype.has = nativeSetHas;
+                    Array.prototype.push = poisonedPush;
                     const completed = completeProviderReplayTurn?.([
                       {
                         toolCallId: "child-1",
@@ -1060,6 +1071,12 @@ describe("internal-agents/run-stream", () => {
                         toolArgsJson: '{"task":"second"}',
                       },
                     ]);
+                    Array.prototype.push = nativePush;
+                    Array.isArray = ((value: unknown) =>
+                      nativeIsArray(value) &&
+                      !value.some((entry: unknown) =>
+                        typeof entry === "object" && entry !== null && "toolArgsJson" in entry
+                      )) as typeof Array.isArray;
                     Set.prototype.has = poisonedSetHas;
                     await completed;
                     controller.close();
@@ -1093,6 +1110,7 @@ describe("internal-agents/run-stream", () => {
       }
     }
     Set.prototype.has = nativeSetHas;
+    Array.isArray = nativeIsArray;
     const frames = parseSseFrames(body);
     const turnCompleteIndex = frames.findIndex((frame) =>
       frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
