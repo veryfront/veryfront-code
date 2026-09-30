@@ -2284,10 +2284,18 @@ async function executeEvalRun(
   ctx: HandlerContext,
   req: Request,
   deps: ProjectRunExecuteHandlerDeps,
+  options: {
+    evalId?: string;
+    signal?: AbortSignal;
+    summaryOnly?: boolean;
+    progressLogs?: string[];
+  } = {},
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
+  const evalId = options.evalId ?? request.target;
+  const progressLogs = options.progressLogs ?? [];
   await deps.ensureProjectDiscovery(ctx);
-  const evalItem = await deps.findEvalById(request.target, {
+  const evalItem = await deps.findEvalById(evalId, {
     projectDir: ctx.projectDir,
     adapter: ctx.adapter,
     config: ctx.config,
@@ -2298,7 +2306,7 @@ async function executeEvalRun(
   if (!evalItem) {
     return {
       success: false,
-      error: `Eval not found: ${request.target}`,
+      error: `Eval not found: ${evalId}`,
       logs: null,
       duration_ms: 0,
     };
@@ -2315,7 +2323,21 @@ async function executeEvalRun(
       : {},
     baseDir: ctx.projectDir,
     runId: request.runId,
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.summaryOnly
+      ? {
+        onProgress: (event) => {
+          if (event.type !== "record-finished") return;
+          progressLogs.push(
+            `Eval case ${event.exampleId} (repetition ${event.repetition}) completed (${
+              event.index + 1
+            }/${event.total})`,
+          );
+        },
+      }
+      : {}),
   });
+  options.signal?.throwIfAborted();
   const failed = Math.max(report.summary.failed, countFailedEvalRecords(report));
   const projectReference = ctx.projectSlug ?? request.projectId;
   const requestedReportPath = buildEvalReportPath(report, request);
@@ -2331,16 +2353,80 @@ async function executeEvalRun(
     uploadError = `Eval report upload failed: ${errorMessage(error)}`;
     return null;
   });
-  const result = reportPath ? { ...report, reportPath } : report;
+  const result = options.summaryOnly
+    ? report.summary
+    : reportPath
+    ? { ...report, reportPath }
+    : report;
+  const logs = [...progressLogs, ...(uploadError ? [uploadError] : [])].join("\n") || null;
 
   return {
     success: failed === 0,
     result,
     ...(reportPath ? { artifacts: [createEvalReportArtifact(reportPath)] } : {}),
     ...(failed > 0 ? { error: `${failed} eval record${failed === 1 ? "" : "s"} failed` } : {}),
-    logs: uploadError,
+    logs,
     duration_ms: Math.max(0, deps.now() - startedAt),
   };
+}
+
+async function executeEvalTaskRun(
+  request: ProjectRunExecuteRequest,
+  ctx: HandlerContext,
+  req: Request,
+  signal: AbortSignal,
+  deps: ProjectRunExecuteHandlerDeps,
+  control?: TaskDeadlineControl,
+): Promise<ProjectRunExecuteResponse> {
+  const evalId = getStringConfig(request.config ?? {}, ["eval_id"]);
+  if (!evalId) {
+    return {
+      success: false,
+      error: "task:eval requires config.eval_id",
+      logs: null,
+      duration_ms: 0,
+    };
+  }
+  const taskSignal = control
+    ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[signal, control.signal]])
+    : signal;
+  const progressLogs: string[] = [];
+  const taskResult = await deps.runTask({
+    task: {
+      id: "eval",
+      name: "Run eval",
+      definition: {
+        name: "Run eval",
+        run: (taskContext) =>
+          executeEvalRun(request, ctx, req, deps, {
+            evalId,
+            signal: taskContext.signal ?? taskSignal,
+            summaryOnly: true,
+            progressLogs,
+          }),
+      },
+    },
+    ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
+    config: request.config ?? {},
+    input: request.input,
+    runId: request.runId,
+    projectId: request.projectId,
+    environmentId: request.runtimeTargetEnvironmentId === undefined
+      ? ctx.environmentId
+      : request.runtimeTargetEnvironmentId ?? undefined,
+    signal: taskSignal,
+    debug: ctx.debug,
+  });
+  if (!taskResult.success) {
+    return {
+      success: false,
+      error: taskResult.error,
+      logs: progressLogs.join("\n") || null,
+      duration_ms: taskResult.durationMs,
+      ...(taskResult.retryable ? { retryable: true as const } : {}),
+    };
+  }
+  return taskResult.result as ProjectRunExecuteResponse;
 }
 
 async function executeReleaseAssetBuildRun(input: {
@@ -2819,6 +2905,8 @@ function executeProjectRun(
   if (request.kind === "task") {
     return executeTaskRun(request, (control) => {
       switch (request.target) {
+        case "task:eval":
+          return executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
         case "task:knowledge-ingest":
           return deps.executeKnowledgeIngest({ request, ctx, req });
         case "task:release-asset-build":

@@ -438,6 +438,30 @@ function createDeps(
   };
 }
 
+const runTaskDefinition: ProjectRunExecuteHandlerDeps["runTask"] = async (options) => {
+  const startedAt = performance.now();
+  try {
+    options.signal?.throwIfAborted();
+    const result = await options.task.definition.run({
+      env: {},
+      config: options.config ?? {},
+      input: options.input ?? options.config ?? {},
+      runId: options.runId,
+      projectId: options.projectId,
+      environmentId: options.environmentId,
+      signal: options.signal,
+      attempt: options.attempt ?? 1,
+    });
+    return { success: true, result, durationMs: performance.now() - startedAt };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: performance.now() - startedAt,
+    };
+  }
+};
+
 function requestJsonBody(
   init: Parameters<typeof globalThis.fetch>[1],
 ): Record<string, unknown> | null {
@@ -1545,6 +1569,211 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       input: { release: "v1" },
       options: { runId: "run_workflow_1", [CONTROL_PLANE_OWNED_START]: true },
     });
+  });
+
+  it("runs task:eval through the task runner and returns its summary and report artifact", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_task_eval_1",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-09-30T10:00:00.000Z",
+      endedAt: "2026-09-30T10:00:01.000Z",
+      summary: { records: 2, passed: 2, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const reportPath = "evals/reports/deep-research/run_task_eval_1.json";
+    let receivedEvalId: string | undefined;
+    let receivedRepetitions: number | undefined;
+    let receivedTaskId: string | undefined;
+    let receivedAgentId: string | null | undefined;
+    let receivedAuthToken: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async (options) => {
+        receivedTaskId = options.task.id;
+        return await runTaskDefinition(options);
+      },
+      findEvalById: async (evalId, options) => {
+        receivedEvalId = evalId;
+        return await createDeps().findEvalById(evalId, options);
+      },
+      runEval: async (definition, options) => {
+        receivedRepetitions = definition.repetitions;
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: definition.id,
+          recordId: "q1:1",
+          exampleId: "q1",
+          repetition: 1,
+          index: 0,
+          total: 2,
+          completed: true,
+          durationMs: 10,
+        });
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: definition.id,
+          recordId: "q1:2",
+          exampleId: "q1",
+          repetition: 2,
+          index: 1,
+          total: 2,
+          completed: true,
+          durationMs: 11,
+        });
+        return report;
+      },
+      createEvalAgentAdapter: (config) => {
+        receivedAgentId = config.agentId;
+        receivedAuthToken = config.authToken;
+        return async () => ({ text: "Paris" });
+      },
+      uploadEvalReport: async () => reportPath,
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_1/execute",
+      {
+        runId: "run_task_eval_1",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research", repetitions: 2 },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result, report.summary);
+    assertEquals(payload.artifacts, [{
+      kind: "eval-report",
+      path: reportPath,
+      contentType: "application/json",
+    }]);
+    assertEquals(String(payload.logs).split("\n"), [
+      "Eval case q1 (repetition 1) completed (1/2)",
+      "Eval case q1 (repetition 2) completed (2/2)",
+    ]);
+    assertEquals(receivedTaskId, "eval");
+    assertEquals(receivedEvalId, "eval:deep-research");
+    assertEquals(receivedRepetitions, 2);
+    assertEquals(receivedAgentId, "researcher");
+    assertEquals(receivedAuthToken, "runtime-token");
+  });
+
+  it("reports a clear error when task:eval names an unknown eval", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({ runTask: runTaskDefinition }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_missing/execute",
+      {
+        runId: "run_task_eval_missing",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:missing" },
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Eval not found: eval:missing",
+      logs: null,
+      duration_ms: 0,
+    });
+  });
+
+  it("reports task:eval as cancelled and does not begin another case", async () => {
+    const startedCases: string[] = [];
+    const firstCaseFinished = Promise.withResolvers<void>();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (definition, options) => {
+        const signal = options.signal;
+        startedCases.push("q1");
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: definition.id,
+          recordId: "q1:1",
+          exampleId: "q1",
+          repetition: 1,
+          index: 0,
+          total: 2,
+          completed: true,
+          durationMs: 1,
+        });
+        firstCaseFinished.resolve();
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+        startedCases.push("q2");
+        throw new Error("unreachable");
+      },
+    }));
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_cancel/execute",
+      {
+        runId: "run_task_eval_cancel",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { "x-token": "runtime-token" },
+    );
+    const controller = new AbortController();
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+    await firstCaseFinished.promise;
+    controller.abort(new Error("Run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "cancelled");
+    assertEquals(payload.logs, "Eval case q1 (repetition 1) completed (1/2)");
+    assertEquals(startedCases, ["q1"]);
+  });
+
+  it("fails task:eval with RUN_TIMEOUT when its task deadline expires", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (_definition, options) => {
+        const signal = options.signal;
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+        throw new Error("unreachable");
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_timeout/execute",
+      {
+        runId: "run_task_eval_timeout",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+        deadlineAt: new Date(Date.now() + 25).toISOString(),
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error_code, "RUN_TIMEOUT");
   });
 
   it("runs a discovered eval with the canonical run id and local routed AG-UI adapter endpoint", async () => {

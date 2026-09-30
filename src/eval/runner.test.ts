@@ -858,6 +858,64 @@ describe("eval/runner", () => {
     assertEquals(report.summary.passed, 1);
   });
 
+  it("stops before loading a cancelled eval", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("run cancelled"));
+    let loaded = false;
+    const dataset = datasets.inline([{ id: "q1", input: "First" }]);
+    dataset.load = async () => {
+      loaded = true;
+      return [];
+    };
+    const definition = evalAgent({
+      id: "eval:cancelled",
+      target: "agent:researcher",
+      dataset,
+    });
+    await assertRejects(
+      () => runEval(definition, { signal: controller.signal, adapters: {} }),
+      Error,
+      "run cancelled",
+    );
+    assertEquals(loaded, false);
+  });
+
+  for (const recordTimeoutMs of [0, 1_000]) {
+    it(`passes cancellation to the active case and stops later cases (timeout ${recordTimeoutMs})`, async () => {
+      const controller = new AbortController();
+      const started: string[] = [];
+      let activeSignal: AbortSignal | undefined;
+      const definition = evalAgent({
+        id: "eval:cancel-mid-run",
+        target: "agent:researcher",
+        dataset: datasets.inline([
+          { id: "q1", input: "First" },
+          { id: "q2", input: "Second" },
+        ]),
+      });
+      await assertRejects(
+        () =>
+          runEval(definition, {
+            signal: controller.signal,
+            recordTimeoutMs,
+            adapters: {
+              agent: ({ example, signal }) => {
+                started.push(example.id);
+                activeSignal = signal;
+                controller.abort(new Error("run cancelled"));
+                return { text: "Paris" };
+              },
+            },
+          }),
+        Error,
+        "run cancelled",
+      );
+      assertEquals(started, ["q1"]);
+      assertExists(activeSignal);
+      assertEquals(activeSignal.aborted, true);
+    });
+  }
+
   it("reports progress for every record in dataset order", async () => {
     const definition = evalAgent({
       id: "eval:progress",
