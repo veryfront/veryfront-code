@@ -1,3 +1,8 @@
+import {
+  createHostedHttpIngress,
+  type HostedHttpIngressOptions,
+  isHostedHttpApplicationRequest,
+} from "../isolated-http/hosted-http-ingress.ts";
 /**
  * Veryfront Core HTTP Handler - Composition Root
  *
@@ -419,6 +424,8 @@ export function createHandlerRegistry(
 }
 
 export interface RuntimeHandlerOptions {
+  /** Host-owned immutable-release ingress, admitted before project adapter/configuration loading. */
+  hostedHttp?: HostedHttpIngressOptions;
   projectDir: string;
   /** Image-owned immutable release identity; never derived from request metadata. */
   installedProject?: InstalledProjectHttpBinding;
@@ -460,6 +467,13 @@ export function createVeryfrontHandler(
   ) {
     throw new TypeError("Installed projects require one fixed local source");
   }
+  if (
+    opts.hostedHttp && (
+      installedProject || opts.config?.fs?.veryfront?.proxyMode !== true ||
+      opts.localProjects !== undefined || opts.allowHostProjectCodeExecution === true
+    )
+  ) throw new TypeError("Hosted HTTP ingress requires a proxy without host project execution");
+  const hostedHttp = opts.hostedHttp ? createHostedHttpIngress(opts.hostedHttp) : undefined;
   const handleApplicationAuthRequest = createApplicationAuthRequestHandler();
   const isDebugEnabled = (): boolean => {
     if (opts.debug) return true;
@@ -766,6 +780,23 @@ export function createVeryfrontHandler(
 
           setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
 
+          if (hostedHttp && isHostedHttpApplicationRequest(request)) {
+            if (!requestMetricsIncremented) {
+              await incrementRequestMetrics();
+              requestMetricsIncremented = true;
+            }
+            return hostedHttp(request, {
+              projectId: projectRes.projectId,
+              projectSlug: projectRes.projectSlug,
+              releaseId: projectRes.releaseId,
+              environmentId: headers.environmentId,
+              environmentName: projectRes.environmentName,
+              mode: projectRes.proxyEnv,
+              proxyTrusted,
+              sourceToken: reqCtx.token,
+            });
+          }
+
           // Handle projects discovery UI
           if (
             shouldHandleProjectsUI(
@@ -1017,7 +1048,14 @@ export function createVeryfrontHandler(
             // closes with an unexpected EOF.
             const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
               ? req
-              : inheritRequestPeerProvenance(req, new Request(req, { signal }));
+              : inheritRequestPeerProvenance(
+                req,
+                new Request(req, {
+                  // The timeout manager detaches its parent listener when headers
+                  // arrive. Hosted executor streams still own the inbound abort.
+                  signal: hostedHttp ? AbortSignal.any([req.signal, signal]) : signal,
+                }),
+              );
             return runWithRequestProfiling(
               {
                 category: profileCategory,
