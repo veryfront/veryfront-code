@@ -818,6 +818,18 @@ async function executeWorkflowRun(
     await handle.settled?.();
     const durationMs = Math.max(0, deps.now() - startedAt);
 
+    // The cancel can arrive after the last poll, while the pause is persisted.
+    if (run.status === "waiting" && signal.aborted) {
+      await client.cancel(handle.runId);
+      return {
+        success: false,
+        result: run.output,
+        error: "Workflow run cancelled",
+        logs: null,
+        duration_ms: durationMs,
+      };
+    }
+
     if (run.status === "waiting") {
       if (client.statePersistence !== "durable") {
         return {
