@@ -658,8 +658,6 @@ async function runRecord(
   if (evaluationErrors.length > 0) {
     record.error = [record.error, ...evaluationErrors].filter(Boolean).join("; ");
     record.completed = false;
-  } else if (isBlockingFailure(record)) {
-    record.completed = false;
   }
 
   return record;
@@ -846,7 +844,8 @@ export async function runEval(
     notifyEvalProgress(options, {
       type: "record-finished",
       ...progress,
-      completed: record.completed,
+      // Progress consumers use completion as the case outcome, including grading.
+      completed: recordPassed(record),
       durationMs: Date.now() - startedAt,
     });
   }
