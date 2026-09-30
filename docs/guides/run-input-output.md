@@ -103,7 +103,7 @@ enforced as shown in every release.
 | A task's execution result lacks, or differs from, the admitted output schema identity | Warns. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                                                                     |
 | Submitted workflow `input` violates `inputSchema`                                     | Fails before the first step runs. The validation message is in `error.message`.                                                                                  |
 | A workflow's selected output violates `outputSchema`                                  | Fails. No output is stored, `onError` runs, and `onComplete` does not.                                                                                           |
-| An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output.                                                                                                                         |
+| An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output. A run that stops at its step limit completes instead, with no structured result and `output: null`.                     |
 
 An agent's raw `outputSchema` that no validator can compile is logged and not
 enforced, and its output is stored unvalidated.
