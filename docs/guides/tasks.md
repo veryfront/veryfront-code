@@ -218,11 +218,14 @@ fails those mismatches too, follows in a later release.
 | Config-only run (no `input`) whose `config` violates `inputSchema` | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                      |
 | `run()` returns a value that violates `outputSchema`               | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                         |
 | A raw JSON Schema that no registered validator can compile         | Warns. The schema is not enforced and is never reported as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                              |
-| The execution result lacks the admitted output schema identity     | Warns. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                                                                     |
+| The execution result lacks the admitted output schema identity     | Warns. The platform, not the runtime, records it. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                          |
 
 When submitted `input` is valid, `run.input` keeps the submitted value and
 `ctx.input` receives the parsed value, with schema defaults and transforms
-applied. When the returned value is valid, `output` is the parsed value.
+applied. When the returned value is valid, `output` is the parsed value: a
+`defineSchema` object schema drops keys it does not declare, with no warning,
+so declare every key the output should keep. An invalid value is stored as
+returned.
 Validation applies to the value `run()` returns, before any output filtering
 on reads. Access control and read filtering are unchanged.
 
@@ -239,8 +242,9 @@ with at most 20 errors:
 }
 ```
 
-`reason` is one of `invalid`, `schema_uncompilable`, `identity_missing`, or
-`identity_mismatch`. Each run records `input_schema_sha256` and
+The runtime records `reason` `invalid` or `schema_uncompilable` for the
+`input` and `output` phases. The platform records the `identity` phase, with
+`reason` `identity_missing` or `identity_mismatch`, when it finalizes the run. Each run records `input_schema_sha256` and
 `output_schema_sha256`: the lowercase sha256 hex of the canonical JSON Schema
 (a `defineSchema` schema converted to JSON Schema, object keys sorted at every
 depth, serialized without whitespace). A task without that schema records

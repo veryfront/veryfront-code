@@ -46,14 +46,22 @@ export type SchemaCheck =
 function fromJsonSchemaIssues(
   issues: readonly JsonSchemaValidationIssue[],
 ): SchemaValidationError[] {
-  return issues.slice(0, MAX_SCHEMA_VALIDATION_ERRORS).map((issue) => {
+  // Index loops, not slice/map: task code may have replaced Array methods before its output
+  // is checked, and a warning-phase mismatch must still be recorded rather than throw.
+  const errors: SchemaValidationError[] = [];
+  const count = issues.length < MAX_SCHEMA_VALIDATION_ERRORS
+    ? issues.length
+    : MAX_SCHEMA_VALIDATION_ERRORS;
+  for (let index = 0; index < count; index++) {
+    const issue = issues[index]!;
     // A missing required property is reported on its parent; name the property itself.
     const missing = issue.keyword === "required" ? issue.params.missingProperty : undefined;
     const path = typeof missing === "string"
       ? `${issue.instancePath}/${escapePointerSegment(missing)}`
       : issue.instancePath;
-    return { path, message: issue.message ?? `failed ${issue.keyword}` };
-  });
+    errors[errors.length] = { path, message: issue.message ?? `failed ${issue.keyword}` };
+  }
+  return errors;
 }
 
 /** Validate a value against a declared contract schema or raw JSON Schema. */

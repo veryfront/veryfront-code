@@ -197,6 +197,36 @@ describe("src/task/runner declared schemas (warning phase)", () => {
     assertMatch(result.schemaViolation?.detected_at ?? "", /^\d{4}-\d{2}-\d{2}T/);
   });
 
+  it("records an output violation even when the task replaced Array slice and map", async () => {
+    const originalSlice = Reflect.getOwnPropertyDescriptor(Array.prototype, "slice")!;
+    const originalMap = Reflect.getOwnPropertyDescriptor(Array.prototype, "map")!;
+    const task = makeTask({
+      outputSchema: ticketOutputSchema,
+      run: () => {
+        Reflect.set(Array.prototype, "slice", () => {
+          throw new Error("replaced Array.prototype.slice");
+        });
+        Reflect.set(Array.prototype, "map", () => {
+          throw new Error("replaced Array.prototype.map");
+        });
+        return { category: "billing", confidence: "high" };
+      },
+    });
+
+    let result: Awaited<ReturnType<typeof runTask>>;
+    try {
+      result = await runTask({ task, input: { ticketText: "x" } }, createInMemoryHostRuntime());
+    } finally {
+      Reflect.defineProperty(Array.prototype, "slice", originalSlice);
+      Reflect.defineProperty(Array.prototype, "map", originalMap);
+    }
+
+    // The warning phase holds: the run completes with the returned value and a recorded mismatch.
+    assertEquals(result.success, true);
+    assertEquals(result.result, { category: "billing", confidence: "high" });
+    assertEquals(result.schemaViolation?.phase, "output");
+  });
+
   it("returns the validated output with the sha256 identity of the canonical output schema", async () => {
     const { task } = schemaTask({
       inputSchema: ticketInputSchema,
