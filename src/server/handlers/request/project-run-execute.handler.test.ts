@@ -3028,6 +3028,154 @@ describe("project run inference credential header", () => {
     });
   }
 
+  it("keeps the credential out of reach of eval project code that patches Headers.get", async () => {
+    const seen: unknown[] = [];
+    const originalGet = Headers.prototype.get;
+    let receivedAuthToken: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      // Stands in for loading the project eval module: from here on, project
+      // code has replaced Headers.prototype.get and records every value.
+      findEvalById: async (target, options) => {
+        Headers.prototype.get = function (this: Headers, name: string) {
+          // Whatever header the framework asks for, also read the credential
+          // from the same Headers object with the saved original getter.
+          seen.push(originalGet.call(this, "X-Veryfront-Inference-Token"));
+          return originalGet.call(this, name);
+        };
+        return await createDeps().findEvalById(target, options);
+      },
+      createEvalAgentAdapter: (config) => {
+        receivedAuthToken = config.authToken;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_inference",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      config: { agent_id: "researcher" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_inference/execute",
+      body,
+      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+    );
+
+    let result;
+    try {
+      result = await handler.handle(request, createCtx(publicKeyPem));
+    } finally {
+      Headers.prototype.get = originalGet;
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    // The patched getter ran against the execution's request, which has no credential.
+    assertEquals(seen.length > 0, true);
+    assertEquals(seen.includes(INFERENCE_TOKEN), false);
+    assertEquals(receivedAuthToken, "project-runtime-token");
+  });
+
+  it("copies the request without running patched header iteration over the credential", async () => {
+    const seen: string[] = [];
+    const record = (value: unknown) => seen.push(JSON.stringify(value) ?? "");
+    const prototype = Headers.prototype as unknown as Record<PropertyKey, unknown>;
+    const iteratorPrototype = Object.getPrototypeOf(new Headers().entries()) as Record<
+      string,
+      unknown
+    >;
+    const originals = {
+      iterator: prototype[Symbol.iterator] as (this: Headers) => IterableIterator<[string, string]>,
+      entries: prototype.entries as (this: Headers) => IterableIterator<[string, string]>,
+      forEach: prototype.forEach as (this: Headers, ...args: unknown[]) => void,
+      next: iteratorPrototype.next as (this: unknown) => IteratorResult<unknown>,
+    };
+    // Installed before the execute request, as by a project module from an earlier run.
+    prototype[Symbol.iterator] = function (this: Headers) {
+      for (const entry of originals.entries.call(this)) record(entry);
+      return originals.iterator.call(this);
+    };
+    prototype.entries = function (this: Headers) {
+      for (const entry of originals.iterator.call(this)) record(entry);
+      return originals.entries.call(this);
+    };
+    prototype.forEach = function (this: Headers, ...args: unknown[]) {
+      for (const entry of originals.iterator.call(this)) record(entry);
+      return originals.forEach.apply(this, args);
+    };
+    iteratorPrototype.next = function (this: unknown) {
+      const step = originals.next.call(this);
+      record(step.value);
+      return step;
+    };
+    let received: Request | undefined;
+    let result;
+    try {
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        executeKnowledgeIngest: async ({ req }) => {
+          received = req;
+          return { success: true, result: null, logs: null, duration_ms: 0 };
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_iterate_inference/execute",
+        {
+          runId: "run_iterate_inference",
+          kind: "task",
+          target: "task:knowledge-ingest",
+          projectId: "proj-1",
+        },
+        { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+      );
+      // Only what the handler does from here on is observed.
+      seen.length = 0;
+      result = await handler.handle(request, createCtx(publicKeyPem));
+    } finally {
+      prototype[Symbol.iterator] = originals.iterator;
+      prototype.entries = originals.entries;
+      prototype.forEach = originals.forEach;
+      iteratorPrototype.next = originals.next;
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertExists(received);
+    assertEquals(received.headers.get("x-token"), "project-runtime-token");
+    assertEquals(seen.some((value) => value.includes(INFERENCE_TOKEN)), false);
+  });
+
+  it("passes execution a request without the credential but with its other headers", async () => {
+    let received: Request | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      executeKnowledgeIngest: async ({ req }) => {
+        received = req;
+        return { success: true, result: null, logs: null, duration_ms: 0 };
+      },
+    }));
+    const body = {
+      runId: "run_ingest_inference",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_ingest_inference/execute",
+      body,
+      { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertExists(received);
+    assertEquals(received.headers.get("X-Veryfront-Inference-Token"), null);
+    assertEquals(received.headers.get("x-token"), "project-runtime-token");
+    assertEquals(received.url, request.url);
+    assertEquals(received.method, "POST");
+  });
+
   it("reads the header without a patched Headers.prototype.get seeing it", async () => {
     const seen: unknown[] = [];
     const originalGet = Headers.prototype.get;
