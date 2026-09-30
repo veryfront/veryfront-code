@@ -42,6 +42,7 @@ import { MemoryBackend } from "#veryfront/workflow/backends/memory.ts";
 import { dependsOn } from "#veryfront/workflow/dsl/workflow.ts";
 import { waitForApproval, waitForEvent } from "#veryfront/workflow/dsl/wait.ts";
 import type { WorkflowNode } from "#veryfront/workflow/types.ts";
+import type { DiscoveredWorkflow } from "#veryfront/workflow/discovery";
 import { delay } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -3469,6 +3470,96 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload.error, "workflow backend unavailable");
     assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
     assertEquals(payload.output_schema_sha256, await schemaIdentitySha256(outputSchema));
+  });
+
+  function publishWorkflow(): DiscoveredWorkflow {
+    const definition = workflow({
+      id: "publish",
+      inputSchema: defineSchema((v) => v.object({ release: v.string() }))(),
+      steps: [
+        step("noop", {
+          tool: tool({
+            id: "noop",
+            description: "Does nothing",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => Promise.resolve({}),
+          }),
+        }),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    return { id: "publish", filePath: "workflows/publish.ts", exportName: "default", definition };
+  }
+
+  it("answers a workflow run whose client cleanup never settles (#2109)", async () => {
+    let destroyCalls = 0;
+    const client = createWorkflowClient();
+    const releaseClient = client.destroy.bind(client);
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => publishWorkflow(),
+      // Durable Redis cleanup can wait forever for a reply that never comes.
+      createWorkflowClient: () =>
+        Object.assign(client, {
+          destroy: () => {
+            destroyCalls++;
+            return new Promise<void>(() => {});
+          },
+        }),
+      workflowClientDestroyTimeoutMs: 5,
+    }));
+    const body = {
+      runId: "run_workflow_cleanup_hang_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: 1 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_cleanup_hang_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail.errors[0].path, "/release");
+    assertEquals(destroyCalls, 1);
+    await releaseClient();
+  });
+
+  it("answers a workflow run whose client cleanup fails (#2109)", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => publishWorkflow(),
+      createWorkflowClient: () => {
+        const client = createWorkflowClient();
+        const releaseClient = client.destroy.bind(client);
+        return Object.assign(client, {
+          destroy: async () => {
+            await releaseClient();
+            throw new Error("socket already closed");
+          },
+        });
+      },
+    }));
+    const body = {
+      runId: "run_workflow_cleanup_fail_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "1.0.0" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_cleanup_fail_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, true);
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {

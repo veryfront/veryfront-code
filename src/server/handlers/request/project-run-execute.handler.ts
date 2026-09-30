@@ -96,6 +96,11 @@ const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
 /** How long a durable run may read `waiting` on no record before a backend without event waits is blamed. */
 const WORKFLOW_UNPERSISTED_WAIT_GRACE_MS = 5_000;
+/**
+ * How long the response waits for the workflow client to release its backend.
+ * Cleanup must never hold back a run's result (veryfront-issue-inbox#2109).
+ */
+const DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS = 5_000;
 /** When the control plane re-dispatches a resume whose request timed out, to report where the run got to. */
 const WORKFLOW_RESUME_RECHECK_MS = 30_000;
 /** Prefix of a `wait_id` that lists one short hash per wait record of the pause. */
@@ -333,6 +338,8 @@ export interface ProjectRunExecuteHandlerDeps {
     req: Request;
   }): Promise<ProjectRunExecuteResponse>;
   workflowResumeTimeoutMs?: number;
+  /** How long a response waits for workflow client cleanup; defaults to 5 seconds. */
+  workflowClientDestroyTimeoutMs?: number;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -1443,8 +1450,48 @@ async function runDiscoveredWorkflow(
         });
       });
     } else {
-      await client.destroy();
+      await destroyWorkflowClient(
+        client,
+        request.runId,
+        deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+      );
     }
+  }
+}
+
+/**
+ * Release the workflow client without letting cleanup decide the response: a
+ * cleanup that fails or does not finish in time is logged, and the run's
+ * result is still returned (veryfront-issue-inbox#2109). Uses the host timers
+ * captured at load, because project code may have replaced the globals.
+ */
+async function destroyWorkflowClient(
+  client: WorkflowClientView,
+  runId: string,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const destroyed = client.destroy().then(
+    () => true,
+    (error: unknown) => {
+      serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
+        runId,
+        errorName: error instanceof Error ? error.name : "unknown",
+      });
+      return true;
+    },
+  );
+  const finished = await Promise.race([
+    destroyed,
+    new Promise<false>((resolve) => {
+      timer = TaskSetTimeout(() => resolve(false), timeoutMs);
+    }),
+  ]).finally(() => TaskClearTimeout(timer));
+  if (!finished) {
+    serverLogger.warn("[project-run-execute] Workflow client cleanup did not finish", {
+      runId,
+      timeoutMs,
+    });
   }
 }
 
