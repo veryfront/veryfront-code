@@ -35,6 +35,8 @@ export interface RegistryPackageMetadata {
   version?: string;
   gitHead?: string;
   dist?: {
+    tarball?: string;
+    integrity?: string;
     attestations?: {
       provenance?: {
         predicateType?: string;
@@ -81,6 +83,7 @@ export const REQUEST_TIMEOUT_MS = 15_000;
 
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
 const DEFAULT_REGISTRY_URL = "https://registry.npmjs.org";
+const INSTALL_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 
 function defaultDelay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -106,18 +109,25 @@ function normalizedRegistryUrl(registryUrl: string): URL {
   return parsed;
 }
 
-function registryVersionUrl(
+function registryPackageUrl(
   registryUrl: string,
   packageName: string,
-  version: string,
 ): string {
   const encodedPackageName = packageName.startsWith("@")
     ? `@${encodeURIComponent(packageName.slice(1))}`
     : encodeURIComponent(packageName);
   return new URL(
-    `${encodedPackageName}/${encodeURIComponent(version)}`,
+    encodedPackageName,
     normalizedRegistryUrl(registryUrl),
   ).href;
+}
+
+function registryVersionUrl(
+  registryUrl: string,
+  packageName: string,
+  version: string,
+): string {
+  return `${registryPackageUrl(registryUrl, packageName)}/${encodeURIComponent(version)}`;
 }
 
 function registryErrorContext(
@@ -195,6 +205,16 @@ function incompleteMetadataError(
       registryErrorContext(options, "SLSA provenance missing"),
     );
   }
+  if (
+    typeof metadata.dist?.tarball !== "string" || !metadata.dist.tarball ||
+    typeof metadata.dist.integrity !== "string" || !metadata.dist.integrity
+  ) {
+    return new RegistryReleaseError(
+      "provenance",
+      `${spec} distribution metadata is incomplete.`,
+      registryErrorContext(options, "distribution metadata missing"),
+    );
+  }
   return undefined;
 }
 
@@ -210,6 +230,90 @@ type RegistryAttempt =
     readonly failure: RegistryReleaseError | "timeout";
   };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** npm installs from this package index, which can lag the version endpoint. */
+async function verifyInstallIndex(
+  metadata: RegistryPackageMetadata,
+  options: PollRegistryPackageOptions,
+  fetcher: typeof fetch,
+  spec: string,
+  signal: AbortSignal,
+): Promise<RegistryReleaseError | undefined> {
+  const missing = () =>
+    new RegistryReleaseError(
+      "missing-version",
+      `${spec} is not available in the install index yet.`,
+      registryErrorContext(options, "install index metadata missing"),
+    );
+  signal.throwIfAborted();
+  const url = registryPackageUrl(options.registryUrl ?? DEFAULT_REGISTRY_URL, options.packageName);
+  let response = await fetcher(url, { signal, headers: { accept: INSTALL_ACCEPT } });
+  // Match npm's fallback when a registry does not support abbreviated metadata.
+  if (response.status === 404) {
+    await response.body?.cancel();
+    signal.throwIfAborted();
+    response = await fetcher(url, { signal, headers: { accept: "application/json" } });
+  }
+  if (response.status === 404) return missing();
+  if (!response.ok) {
+    throw new RegistryReleaseError(
+      "lookup",
+      `${spec} install index lookup failed.`,
+      registryErrorContext(
+        options,
+        `install index lookup failed with HTTP ${response.status}`,
+      ),
+    );
+  }
+  const index: unknown = await response.json();
+  signal.throwIfAborted();
+  if (!isRecord(index) || index.name !== options.packageName) {
+    throw new RegistryReleaseError(
+      "wrong-name",
+      `${spec} install index name does not match.`,
+      registryErrorContext(options, "install index package name mismatch"),
+    );
+  }
+  if (
+    !isRecord(index.versions) || !Object.hasOwn(index.versions, options.version)
+  ) return missing();
+  const entry = index.versions[options.version];
+  if (!isRecord(entry) || entry.version === undefined) return missing();
+  if (entry.name !== options.packageName) {
+    throw new RegistryReleaseError(
+      "wrong-name",
+      `${spec} install entry name does not match.`,
+      registryErrorContext(options, "install entry package name mismatch"),
+    );
+  }
+  if (entry.version !== options.version) {
+    throw new RegistryReleaseError(
+      "wrong-version",
+      `${spec} install entry version does not match.`,
+      registryErrorContext(options, "install entry version mismatch"),
+    );
+  }
+  if (
+    !isRecord(entry.dist) || typeof entry.dist.tarball !== "string" ||
+    !entry.dist.tarball ||
+    typeof entry.dist.integrity !== "string" || !entry.dist.integrity
+  ) return missing();
+  if (
+    entry.dist.tarball !== metadata.dist?.tarball ||
+    entry.dist.integrity !== metadata.dist?.integrity
+  ) {
+    throw new RegistryReleaseError(
+      "provenance",
+      `${spec} install distribution does not match.`,
+      registryErrorContext(options, "install index distribution mismatch"),
+    );
+  }
+  return undefined;
+}
+
 /** One registry lookup. Throws terminal failures; returns retryable ones. */
 async function attemptRegistryLookup(
   options: PollRegistryPackageOptions,
@@ -217,13 +321,15 @@ async function attemptRegistryLookup(
   spec: string,
 ): Promise<RegistryAttempt> {
   try {
+    // Both surfaces share one request deadline; retries retain the existing poll budget.
+    const signal = AbortSignal.timeout(options.requestTimeoutMs);
     const response = await fetcher(
       registryVersionUrl(
         options.registryUrl ?? DEFAULT_REGISTRY_URL,
         options.packageName,
         options.version,
       ),
-      { signal: AbortSignal.timeout(options.requestTimeoutMs) },
+      { signal },
     );
     if (response.status === 404) {
       return {
@@ -249,6 +355,14 @@ async function attemptRegistryLookup(
     const incomplete = incompleteMetadataError(metadata, options);
     if (incomplete) return { kind: "failure", failure: incomplete };
     validateMetadata(metadata, options);
+    const installFailure = await verifyInstallIndex(
+      metadata,
+      options,
+      fetcher,
+      spec,
+      signal,
+    );
+    if (installFailure) return { kind: "failure", failure: installFailure };
     return { kind: "metadata", metadata };
   } catch (error) {
     if (error instanceof RegistryReleaseError) throw error;
@@ -278,7 +392,8 @@ export async function pollRegistryPackage(
   );
 
   const now = options.now ?? Date.now;
-  const budgetMs = options.budgetMs ?? (options.maxAttempts - 1) * options.retryDelayMs;
+  const budgetMs = options.budgetMs ??
+    (options.maxAttempts - 1) * options.retryDelayMs;
   const deadline = now() + budgetMs;
 
   for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
