@@ -1115,6 +1115,7 @@ export function createVeryfrontHandler(
           isTimeout,
           requestProfileRecord,
           settled,
+          hostedHttp !== undefined,
         );
       } finally {
         endRequestLifecycle(lifecycle);

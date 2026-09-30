@@ -205,6 +205,40 @@ describe("server/runtime-handler/request-lifecycle", () => {
       assertEquals(requestTracker.getInFlightCount(), beforeCount);
     });
 
+    it("keeps opted-in non-SSE hosted bodies in the shutdown drain", async () => {
+      const beforeCount = requestTracker.getInFlightCount();
+      let release: (() => void) | undefined;
+      startRequestTracking(
+        "lifecycle-hosted-stream",
+        "slug",
+        "/api/stream",
+        "GET",
+        "production",
+        "rel-1",
+      );
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-hosted-stream",
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(new TextEncoder().encode("prefix"));
+              release = () => controller.close();
+            },
+          }, { highWaterMark: 0 }),
+        ),
+        false,
+        undefined,
+        undefined,
+        true,
+      );
+      const reader = response.body!.getReader();
+      await reader.read();
+      assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+      release!();
+      await reader.read();
+      assertEquals(requestTracker.getInFlightCount(), beforeCount);
+    });
+
     it("should complete tracking once when cancellation races a pending read", async () => {
       const beforeCount = requestTracker.getInFlightCount();
       const beforeCompleted = requestTracker.getStats().completed;
