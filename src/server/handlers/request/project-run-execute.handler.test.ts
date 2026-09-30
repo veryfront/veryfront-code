@@ -3192,6 +3192,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     client: ReturnType<typeof resumableClient>["client"],
     resume: Record<string, unknown>,
     deps: Partial<ProjectRunExecuteHandlerDeps> = {},
+    signal?: AbortSignal,
   ) {
     const handler = new ProjectRunExecuteHandler(
       createDeps({ createWorkflowClient: () => client, ...deps }),
@@ -3201,7 +3202,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       `/api/control-plane/runs/${runId}/execute`,
       { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1", resume },
     );
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(
+      signal ? new Request(request, { signal }) : request,
+      createCtx(publicKeyPem),
+    );
     assertExists(result.response);
     return { status: result.response.status, payload: await result.response.json(), runId };
   }
@@ -3486,6 +3490,45 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     finish();
     await new Promise((resolve) => setTimeout(resolve, 0));
     assertEquals(destroyed, true);
+  });
+
+  it("does not cancel durable execution when a timed-out resume request disconnects", async () => {
+    const { client } = resumableClient(waitingOnReview);
+    let finish!: () => void;
+    let destroyed = false;
+    let cancelled = false;
+    const controller = new AbortController();
+    client.cancel = () => {
+      cancelled = true;
+      return Promise.resolve();
+    };
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    client.destroy = () => {
+      destroyed = true;
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "timed out");
+    assertEquals(destroyed, false);
+    controller.abort();
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(destroyed, true);
+    assertEquals(cancelled, false);
   });
 
   it("applies a decision whose wait_id names the boundary the run is parked on", async () => {

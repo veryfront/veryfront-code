@@ -869,6 +869,7 @@ async function waitForWorkflowResult(
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   stillParkedOnReleasedBoundary?: (run: WorkflowRunView) => Promise<boolean>,
+  pollingStopped?: AbortSignal,
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
 
@@ -884,6 +885,10 @@ async function waitForWorkflowResult(
         output: run.output,
         error: { message: "Workflow run cancelled" },
       };
+    }
+
+    if (pollingStopped?.aborted) {
+      throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
     if (
@@ -1069,6 +1074,7 @@ async function resumeWaitingWorkflowRun(
   resume: WorkflowResumeSignal,
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
+  pollingStopped: AbortSignal,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
     return { failure: "Cannot resume a workflow run without durable workflow persistence" };
@@ -1079,12 +1085,19 @@ async function resumeWaitingWorkflowRun(
   // A re-dispatch that repeats a decision already applied (the previous
   // attempt died after applying it) just reports where the run is now.
   if (current.status !== "waiting") {
-    return { run: await waitForWorkflowResult(client, runId, signal, deps) };
+    return {
+      run: await waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped),
+    };
   }
 
   const parked = await readPendingWaits(client, runId, current);
   if (await isStaleDecision(resume, parked)) {
-    return { run: await waitForWorkflowResult(client, runId, signal, deps) };
+    return {
+      run: await waitForWorkflowResult(client, runId, signal, deps, undefined, pollingStopped),
+    };
+  }
+  if (pollingStopped.aborted) {
+    throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
   }
   const applied = isParkedOnNothing(parked)
     ? { released: true }
@@ -1105,7 +1118,9 @@ async function resumeWaitingWorkflowRun(
       return keys.length === 0 || sameKeys(keys, released);
     }
     : undefined;
-  return { run: await waitForWorkflowResult(client, runId, signal, deps, stillParked) };
+  return {
+    run: await waitForWorkflowResult(client, runId, signal, deps, stillParked, pollingStopped),
+  };
 }
 
 function isTerminalWorkflowStatus(status: string): boolean {
@@ -1162,12 +1177,18 @@ async function executeWorkflowRun(
 
     let run: WorkflowRunView;
     if (request.resume) {
+      const resumeRequest = new AbortController();
+      const pollingStopped = new AbortController();
+      const forwardCancellation = () => resumeRequest.abort();
+      signal.addEventListener("abort", forwardCancellation, { once: true });
+      if (signal.aborted) forwardCancellation();
       const operation = resumeWaitingWorkflowRun(
         client,
         request.runId,
         request.resume,
-        signal,
+        resumeRequest.signal,
         deps,
+        pollingStopped.signal,
       );
       activeResume = operation;
       void operation.then(() => {
@@ -1179,12 +1200,18 @@ async function executeWorkflowRun(
       const resumed = await Promise.race([
         operation,
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() =>
+          timer = setTimeout(() => {
+            signal.removeEventListener("abort", forwardCancellation);
+            pollingStopped.abort();
             reject(TIMEOUT_ERROR.create({
               detail: `Workflow run timed out: ${request.runId}`,
-            })), deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
+            }));
+          }, deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
         }),
-      ]).finally(() => clearTimeout(timer));
+      ]).finally(() => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", forwardCancellation);
+      });
       if ("failure" in resumed) {
         return {
           success: false,
