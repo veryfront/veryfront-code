@@ -95,12 +95,16 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
 }
 
 export function mergeLcovReports(reports: string[]): string {
+  const blockLayouts = reports.map(collectBranchBlockLayouts);
+  const unstableBlockLines = findUnstableBranchBlockLines(blockLayouts);
   const files = new Map<string, {
     lines: Map<number, number>;
     branches: Map<string, { key: [number, number, number]; hits: number }>;
   }>();
 
-  for (const report of reports) {
+  for (let reportIndex = 0; reportIndex < reports.length; reportIndex++) {
+    const report = reports[reportIndex];
+    if (report === undefined) continue;
     let currentFile: string | undefined;
 
     for (const line of report.split(/\r?\n/)) {
@@ -131,15 +135,26 @@ export function mergeLcovReports(reports: string[]): string {
       } else if (line.startsWith("BRDA:")) {
         // Deno emits numeric BRDA:<line>,<block>,<branch>,<hits|-> only. Other
         // forms (for example lcov 2.x `e`-prefixed exception blocks) are
-        // intentionally dropped. Branches are keyed by (line, block, branch),
-        // the same key Sonar uses. Deno numbers blocks by V8 function index,
-        // so one condition can carry different block ids in different shards;
-        // those entries stay separate here as they would in Sonar.
+        // intentionally dropped. Deno derives block ids from V8 function
+        // indexes, which can differ between otherwise equivalent reports. If
+        // the block layout differs on a line, use each block's source-order
+        // ordinal so Sonar sees one stable condition set. Consistent ids stay
+        // unchanged.
         const match = /^BRDA:(\d+),(\d+),(\d+),(\d+|-)\s*$/.exec(line);
         if (!match) continue;
+        const lineNumber = Number(match[1]);
+        const emittedBlock = Number(match[2]);
+        const layout = blockLayouts[reportIndex]?.get(currentFile)?.get(
+          lineNumber,
+        );
+        const blockOrdinal = layout?.indexOf(emittedBlock) ?? -1;
+        const block = unstableBlockLines.get(currentFile)?.has(lineNumber) &&
+            blockOrdinal >= 0
+          ? blockOrdinal
+          : emittedBlock;
         const key: [number, number, number] = [
-          Number(match[1]),
-          Number(match[2]),
+          lineNumber,
+          block,
           Number(match[3]),
         ];
         const hits = match[4] === "-" ? 0 : Number(match[4]);
@@ -178,6 +193,71 @@ export function mergeLcovReports(reports: string[]): string {
       ].join("\n");
     })
     .join("\n");
+}
+
+function collectBranchBlockLayouts(
+  report: string,
+): Map<string, Map<number, number[]>> {
+  const blocks = new Map<string, Map<number, Set<number>>>();
+  let currentFile: string | undefined;
+
+  for (const line of report.split(/\r?\n/)) {
+    if (line.startsWith("SF:")) {
+      currentFile = line.slice(3).trim();
+      continue;
+    }
+    if (line === "end_of_record") {
+      currentFile = undefined;
+      continue;
+    }
+    if (!currentFile) continue;
+
+    const match = /^BRDA:(\d+),(\d+),\d+,(?:\d+|-)\s*$/.exec(line);
+    if (!match) continue;
+    const lineNumber = Number(match[1]);
+    const block = Number(match[2]);
+    const fileBlocks = blocks.get(currentFile) ??
+      new Map<number, Set<number>>();
+    const lineBlocks = fileBlocks.get(lineNumber) ?? new Set<number>();
+    lineBlocks.add(block);
+    fileBlocks.set(lineNumber, lineBlocks);
+    blocks.set(currentFile, fileBlocks);
+  }
+
+  return new Map(
+    [...blocks].map(([file, lines]) => [
+      file,
+      new Map(
+        [...lines].map(([line, ids]) => [line, [...ids].sort((a, b) => a - b)]),
+      ),
+    ]),
+  );
+}
+
+function findUnstableBranchBlockLines(
+  layouts: Map<string, Map<number, number[]>>[],
+): Map<string, Set<number>> {
+  const firstLayout = new Map<string, string>();
+  const unstable = new Map<string, Set<number>>();
+
+  for (const layout of layouts) {
+    for (const [file, lines] of layout) {
+      for (const [line, blocks] of lines) {
+        const id = `${file}\0${line}`;
+        const signature = blocks.join(",");
+        const first = firstLayout.get(id);
+        if (first === undefined) {
+          firstLayout.set(id, signature);
+        } else if (first !== signature) {
+          const fileLines = unstable.get(file) ?? new Set<number>();
+          fileLines.add(line);
+          unstable.set(file, fileLines);
+        }
+      }
+    }
+  }
+
+  return unstable;
 }
 
 async function runShard(args: string[]): Promise<void> {

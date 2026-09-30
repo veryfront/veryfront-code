@@ -292,7 +292,7 @@ describe("merge quality gate workflow", () => {
     }
   });
 
-  it("imports normalized shard coverage with pinned actions and no private-measures API", async () => {
+  it("imports one normalized merged coverage report with pinned actions and no private-measures API", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
     const sonar = asRecord(jobs.sonar, "sonar job");
@@ -312,6 +312,10 @@ describe("merge quality gate workflow", () => {
       name: "coverage-integration-client",
       path: "coverage-profiles/coverage-integration-client",
     });
+    const setupIndex = steps.findIndex((step) => step.uses === "./.github/actions/setup-deno");
+    const mergeIndex = steps.findIndex((step) =>
+      step.name === "Merge coverage reports for SonarQube"
+    );
     const normalizeIndex = steps.findIndex((step) => step.name === "Normalize lcov paths");
     const scanIndex = steps.findIndex((step) => step.name === "SonarQube Cloud scan");
 
@@ -327,8 +331,26 @@ describe("merge quality gate workflow", () => {
       path: "coverage-profiles/coverage-native-executor",
     });
     assert(
-      normalizeIndex > clientDownloadIndex,
-      "sonar must normalize downloaded coverage",
+      setupIndex > clientDownloadIndex,
+      "sonar must install pinned Deno after downloading coverage",
+    );
+    assert(mergeIndex > setupIndex, "sonar must merge every report before normalizing paths");
+    assertStringIncludes(
+      String(steps[mergeIndex].run),
+      "deno task coverage:ci:merge -- --threshold=0",
+    );
+    assertStringIncludes(String(steps[mergeIndex].run), "coverage-profiles/coverage-shard-*");
+    assertStringIncludes(
+      String(steps[mergeIndex].run),
+      "coverage-profiles/coverage-native-executor",
+    );
+    assertStringIncludes(
+      String(steps[mergeIndex].run),
+      "coverage-profiles/coverage-integration-client",
+    );
+    assert(
+      normalizeIndex > mergeIndex,
+      "sonar must normalize merged coverage",
     );
     assert(
       scanIndex > normalizeIndex,
@@ -340,7 +362,7 @@ describe("merge quality gate workflow", () => {
     );
     assertStringIncludes(
       String(steps[normalizeIndex].run),
-      "coverage-profiles/coverage-native-executor/lcov.info",
+      "coverage/lcov.info",
     );
 
     const sonarProperties = parseProperties(
@@ -348,7 +370,7 @@ describe("merge quality gate workflow", () => {
     );
     assertEquals(
       sonarProperties.get("sonar.javascript.lcov.reportPaths"),
-      "coverage-profiles/coverage-shard-*/lcov.info,coverage-profiles/coverage-native-executor/lcov.info,coverage-profiles/coverage-integration-client/lcov.info",
+      "coverage/lcov.info",
     );
 
     for (const step of steps) {

@@ -121,6 +121,28 @@ describe("mergeLcovReports", () => {
     );
   });
 
+  it("merges the same condition when Deno assigns different block ids", () => {
+    const merged = mergeLcovReports([
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,3,0,1\nBRDA:6,3,1,-\nend_of_record",
+      "SF:src/nested.ts\nDA:6,1\nBRDA:6,2,0,-\nBRDA:6,2,1,1\nend_of_record",
+    ]);
+
+    assertEquals(
+      merged,
+      [
+        "SF:src/nested.ts",
+        "DA:6,2",
+        "LH:1",
+        "LF:1",
+        "BRDA:6,0,0,1",
+        "BRDA:6,0,1,1",
+        "BRF:2",
+        "BRH:2",
+        "end_of_record",
+      ].join("\n"),
+    );
+  });
+
   it("keeps line-only reports unchanged and isolates files", () => {
     assertEquals(
       mergeLcovReports([
