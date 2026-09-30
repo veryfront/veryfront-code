@@ -226,14 +226,39 @@ describe("eval/runner", () => {
     assertEquals(report.summary.failed, 1, "a failing budget metric fails the run");
     assertEquals(
       overBudget.completed,
-      false,
-      "a failing budget metric marks the record incomplete",
+      true,
+      "a failing budget metric leaves the target complete",
     );
+    assertEquals(report.summary.gateFailures?.map((failure) => failure.name), ["ops.cost"]);
     assertEquals(
       softOnly.completed,
       true,
       "a failing soft metric leaves the record complete",
     );
+  });
+
+  it("reports only failed gates when the target completes", async () => {
+    const definition = evalAgent({
+      id: "eval:failed-gates",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?", reference: "Paris" }]),
+      metrics: [metrics.answer.exactMatch().gate()],
+      check(ctx) {
+        ctx.expect.outputContains("Paris").gate();
+      },
+    });
+    const report = await runEval(definition, {
+      adapters: { agent: async () => ({ text: "Wrong answer." }) },
+    });
+
+    assertEquals(report.records[0]?.completed, true);
+    assertEquals(report.records[0]?.error, undefined);
+    assertEquals(report.summary.failed, 1);
+    assertEquals(report.summary.passed, 0);
+    assertEquals(report.summary.gateFailures?.map((failure) => failure.name), [
+      "answer.exactMatch",
+      "expect.outputContains",
+    ]);
   });
 
   it("matches an agent's strict JSON text as structured output", async () => {
@@ -947,7 +972,7 @@ describe("eval/runner", () => {
       "record-started q1:1 1/2",
       "record-finished q1:1 completed=true",
       "record-started q2:1 2/2",
-      "record-finished q2:1 completed=false",
+      "record-finished q2:1 completed=true",
     ]);
   });
 

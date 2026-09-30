@@ -658,8 +658,6 @@ async function runRecord(
   if (evaluationErrors.length > 0) {
     record.error = [record.error, ...evaluationErrors].filter(Boolean).join("; ");
     record.completed = false;
-  } else if (isBlockingFailure(record)) {
-    record.completed = false;
   }
 
   return record;

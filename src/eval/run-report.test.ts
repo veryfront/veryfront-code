@@ -9,6 +9,7 @@ import type {
   EvalRunProvenance,
 } from "./types.ts";
 import { runEvalReport } from "./run-report.ts";
+import { datasets, evalAgent, runEval } from "veryfront/eval";
 import { createEvalModelAccessDeniedError } from "./model-access.ts";
 
 const now = new Date("2026-06-21T01:02:03.004Z");
@@ -583,6 +584,38 @@ describe("runEvalReport single mode", () => {
     const junit = writes.find((write) => write.path === "artifacts/error.xml")?.content ?? "";
     assertStringIncludes(junit, '<failure message="record.error failed">');
     assertStringIncludes(junit, "adapter contract failed");
+  });
+
+  it("emits one JUnit failure per failed check for a completed target", async () => {
+    const report = await runEval(
+      evalAgent({
+        id: "eval:failed-check",
+        target: "agent:answers",
+        dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+        check(ctx) {
+          ctx.expect.outputContains("Paris").gate();
+        },
+      }),
+      { adapters: { agent: async () => ({ text: "Wrong answer." }) } },
+    );
+    const { adapters, writes } = createAdapters({ report });
+
+    await runEvalReport({
+      kind: "single",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      evalItem: createDiscoveredEval(),
+      targetKind: "agent",
+      target: "agent:answers",
+      targetAdapter: {},
+      junit: "artifacts/failed-check.xml",
+    }, adapters);
+
+    const junit = writes.find((write) => write.path === "artifacts/failed-check.xml")?.content ??
+      "";
+    assertEquals(junit.match(/<failure /g)?.length, 1);
+    assertStringIncludes(junit, '<failure message="expect.outputContains failed">');
+    assertEquals(junit.includes("record.error"), false);
   });
 
   it("emits blocking metric failures as JUnit testcase failures", async () => {
