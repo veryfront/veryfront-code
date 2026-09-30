@@ -533,7 +533,8 @@ export default workflow({
 The run ID list is resolved once when the node first parks and is stored with the workflow state.
 The cloud runtime reports each dependency with the node ID as its correlation, and the control
 plane resumes the same workflow run only after all listed child runs are completed, failed, or
-cancelled. A child-run wait has no timeout. Use between 1 and 1000 run IDs.
+cancelled. A child-run wait has no timeout. Use between 1 and 1000 run IDs per node, and keep the
+combined child dependencies across one parallel pause at or below 1000.
 Built-in durable workflow backends apply child completion only while the exact persisted wait
 boundary is still current. A custom backend must support atomic key-merge run patches and atomic
 child-wait boundary updates before it can resume `waitForRuns` nodes.

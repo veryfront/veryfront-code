@@ -65,6 +65,7 @@ import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/d
 import { createWorkflowClient, hasEventWaitSupport, RedisBackend } from "#veryfront/workflow";
 import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import type { WorkflowClientConfig } from "#veryfront/workflow";
+import { MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES } from "#veryfront/workflow/limits.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import {
   PROJECT_RUN_INFERENCE_TOKEN_HEADER,
@@ -1220,6 +1221,9 @@ async function isStaleDecision(
   const targeted = targetedWaitKeys(resume, parked);
   const hashes = await Promise.all(pending.map(waitKeyHash));
   const isNamed = (key: string) => named.has(hashes[pending.indexOf(key)]!);
+  if (resume.type === "child_run") {
+    return targeted.length === 0 || !targeted.every(isNamed);
+  }
   if (resume.type === "deadline" || targeted.length === 0) return !pending.every(isNamed);
   return !targeted.some(isNamed);
 }
@@ -1435,6 +1439,15 @@ async function executeWorkflowRun(
       const parked = await readPendingWaits(client, request.runId, run);
       const waiting = await describeWorkflowWait(parked);
       const waitingOn = childRunDependencies(parked);
+      if (waitingOn.length > MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES) {
+        return {
+          success: false,
+          error: `A workflow pause can wait on at most ` +
+            `${MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES} child-run dependencies`,
+          logs: null,
+          duration_ms: durationMs,
+        };
+      }
       return {
         success: true,
         status: "waiting",

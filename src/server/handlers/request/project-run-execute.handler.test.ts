@@ -688,6 +688,53 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     ]);
   });
 
+  it("fails the bridge response when parallel child-run waits exceed the aggregate cap", async () => {
+    const childIds = (prefix: string) =>
+      Array.from({ length: 600 }, (_, index) => `run_${prefix}_${index}`);
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "waiting",
+          currentNodes: ["first-children", "second-children"],
+          nodeStates: {
+            "first-children": {
+              status: "running",
+              _waitInstanceId: "wait-first",
+              input: { type: "child_run", runIds: childIds("first") },
+            },
+            "second-children": {
+              status: "running",
+              _waitInstanceId: "wait-second",
+              input: { type: "child_run", runIds: childIds("second") },
+            },
+          },
+          pendingApprovals: [],
+        }),
+        getPendingEventWaits: async () => [],
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+    }));
+    const runId = "run_workflow_too_many_child_dependencies";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "at most 1000 child-run dependencies");
+    assertEquals(payload.waiting_on, undefined);
+  });
+
   it("preserves a successful task result within its deadline", async () => {
     const handler = new ProjectRunExecuteHandler(createDeps());
     const { request, publicKeyPem } = await signedRequest(
@@ -3840,6 +3887,53 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertEquals(calls, [["publishEvent", runId, "receipt.received", { id: 9 }]]);
     assertEquals(payload.result, { invoice: { id: 9 } });
+  });
+
+  it("does not let an old child-only wait_id release a boundary that gained another child wait", async () => {
+    const state = {
+      status: "waiting",
+      currentNodes: ["first-children", "second-children"],
+      nodeStates: {
+        "first-children": {
+          status: "running",
+          _waitInstanceId: "wait-first",
+          input: { type: "child_run", runIds: ["run_child_a"] },
+        },
+        "second-children": {
+          status: "running",
+          _waitInstanceId: "wait-second",
+          input: { type: "child_run", runIds: ["run_child_b"] },
+        },
+      },
+      pendingApprovals: [],
+    };
+    const { client, calls } = resumableClient(state);
+    client.resumeChildRuns = (...args: unknown[]) => {
+      calls.push(["resumeChildRuns", ...args]);
+      return Promise.resolve(true);
+    };
+    const firstHash = (await computeHash("child:wait-first:run_child_a")).slice(0, 16);
+
+    const { payload } = await executeResume(client, {
+      type: "child_run",
+      wait_id: `w.${firstHash}`,
+    });
+
+    assertEquals(calls, []);
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting_reason, "child_run");
+    assertEquals(payload.waiting_on, [
+      {
+        kind: "run",
+        run_id: "run_child_a",
+        correlation: { kind: "workflow_node", id: "first-children" },
+      },
+      {
+        kind: "run",
+        run_id: "run_child_b",
+        correlation: { kind: "workflow_node", id: "second-children" },
+      },
+    ]);
   });
 
   it("does not deliver an event to a later pause on the same node than the one its wait_id names", async () => {
