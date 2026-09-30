@@ -39,7 +39,11 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { findProjectRuntimeTask } from "#veryfront/task/project-runtime.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
-import { checkDeclaredSchema, type SchemaViolation } from "#veryfront/task/io-contract.ts";
+import {
+  checkDeclaredSchema,
+  schemaIdentitySha256,
+  type SchemaViolation,
+} from "#veryfront/task/io-contract.ts";
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
@@ -203,9 +207,9 @@ export interface ProjectRunExecuteResponse {
   retryable?: true;
   duration_ms?: number;
   artifacts?: unknown[];
-  /** sha256 of the canonical declared input schema (task runs), or `null` when none. */
+  /** sha256 of the canonical declared input schema (task and workflow runs), or `null` when none. */
   input_schema_sha256?: string | null;
-  /** sha256 of the canonical declared output schema (task runs), or `null` when none. */
+  /** sha256 of the canonical declared output schema (task and workflow runs), or `null` when none. */
   output_schema_sha256?: string | null;
   /** A recorded, non-fatal schema mismatch (warning phase), or `null`. */
   schema_violation?: SchemaViolation | null;
@@ -1258,6 +1262,34 @@ async function executeWorkflowRun(
     };
   }
 
+  // The same identity a task run reports, from the same helper, so the API stores one
+  // canonical sha256 per declared schema whatever the run kind (#2108).
+  const { inputSchema, outputSchema } = workflow.definition;
+  const inputSchemaSha256 = await schemaIdentitySha256(inputSchema);
+  const outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
+  let response: ProjectRunExecuteResponse;
+  try {
+    response = await runDiscoveredWorkflow(request, ctx, workflow, signal, deps, startedAt);
+  } catch (error) {
+    // A failure after discovery still ran against the declared schemas; keep their identity.
+    response = createExecutionFailure(error, Math.max(0, deps.now() - startedAt));
+  }
+  return {
+    ...response,
+    // Omitted rather than null, so a schema-less workflow response is byte-identical to before.
+    ...(inputSchemaSha256 ? { input_schema_sha256: inputSchemaSha256 } : {}),
+    ...(outputSchemaSha256 ? { output_schema_sha256: outputSchemaSha256 } : {}),
+  };
+}
+
+async function runDiscoveredWorkflow(
+  request: ProjectRunExecuteRequest,
+  ctx: HandlerContext,
+  workflow: DiscoveredWorkflow,
+  signal: AbortSignal,
+  deps: ProjectRunExecuteHandlerDeps,
+  startedAt: number,
+): Promise<ProjectRunExecuteResponse> {
   const client = await deps.createWorkflowClient(
     withRuntimeStepRegistries({ debug: ctx.debug }),
     {

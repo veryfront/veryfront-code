@@ -15,6 +15,7 @@ import type { Agent } from "#veryfront/agent";
 import { tool } from "#veryfront/tool";
 import { createWorkflowClient, step, workflow, type WorkflowDefinition } from "#veryfront/workflow";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
@@ -2942,6 +2943,145 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(response.error_detail.errors[0].path, "/release");
     assertStringIncludes(response.error, "/release");
     assertEquals(executions, 0);
+  });
+
+  it("#2108 returns the declared workflow input and output schema identities on the wire", async () => {
+    const inputSchema = defineSchema((v) => v.object({ ticketText: v.string() }))();
+    const outputSchema = defineSchema((v) =>
+      v.object({ category: v.string(), confidence: v.number() })
+    )();
+    const definition = {
+      id: "classify-ticket-flow",
+      inputSchema,
+      outputSchema,
+      steps: [],
+    } as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "classify-ticket-flow",
+        filePath: "workflows/classify-ticket-flow.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "completed",
+          output: { category: "billing", confidence: 0.9 },
+        }),
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_schema_identity",
+      kind: "workflow",
+      target: "workflow:classify-ticket-flow",
+      projectId: "proj-1",
+      input: { ticketText: "I was charged twice" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_schema_identity/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
+    assertEquals(payload.output_schema_sha256, await schemaIdentitySha256(outputSchema));
+    assertMatch(payload.input_schema_sha256, /^[0-9a-f]{64}$/);
+    assertMatch(payload.output_schema_sha256, /^[0-9a-f]{64}$/);
+    assertEquals("schema_violation" in payload, false);
+  });
+
+  it("#2108 reports the workflow input schema identity with INPUT_VALIDATION_FAILED", async () => {
+    const inputSchema = defineSchema((v) => v.object({ release: v.string() }))();
+    const definition = workflow({
+      id: "publish",
+      inputSchema,
+      steps: [step("noop", {
+        tool: tool({
+          id: "noop",
+          description: "Must not run",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => Promise.resolve({}),
+        }),
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_identity_invalid_input",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: 1 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_identity_invalid_input/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
+    // No outputSchema is declared, so the field is omitted as on a schema-less task.
+    assertEquals("output_schema_sha256" in payload, false);
+  });
+
+  it("#2108 keeps the workflow schema identities when execution throws after discovery", async () => {
+    const inputSchema = defineSchema((v) => v.object({ ticketText: v.string() }))();
+    const outputSchema = defineSchema((v) => v.object({ category: v.string() }))();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "classify-ticket-flow",
+        filePath: "workflows/classify-ticket-flow.ts",
+        exportName: "default",
+        definition: {
+          id: "classify-ticket-flow",
+          inputSchema,
+          outputSchema,
+          steps: [],
+        } as unknown as WorkflowDefinition,
+      }),
+      createWorkflowClient: () => Promise.reject(new Error("workflow backend unavailable")),
+    }));
+    const body = {
+      runId: "run_workflow_identity_throws",
+      kind: "workflow",
+      target: "workflow:classify-ticket-flow",
+      projectId: "proj-1",
+      input: { ticketText: "I was charged twice" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_identity_throws/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error, "workflow backend unavailable");
+    assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
+    assertEquals(payload.output_schema_sha256, await schemaIdentitySha256(outputSchema));
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
