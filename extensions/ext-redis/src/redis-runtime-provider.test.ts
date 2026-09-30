@@ -3,7 +3,8 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RedisClient } from "veryfront/extensions/distributed";
 import { openRedisClient } from "./redis-client-manager.ts";
-import { createRedisRuntimeProvider } from "./redis-runtime-provider.ts";
+import { createRedisRuntimeProvider, withNumericScanCursor } from "./redis-runtime-provider.ts";
+import type { NodeRedisClient } from "veryfront/extensions/distributed";
 
 interface FakeRedisClient extends RedisClient {
   disconnectCalls: number;
@@ -329,5 +330,32 @@ describe("Redis runtime provider owned clients", () => {
 
     await provider.close();
     assertEquals(client.disconnectCalls, 2);
+  });
+});
+
+describe("withNumericScanCursor (#2109)", () => {
+  it("sends the SCAN cursor to redis v5 as a string and returns it as a number", async () => {
+    // redis v5 rejects a numeric cursor while encoding the command, so the
+    // approval claim recovery scan never reached Redis.
+    const calls: unknown[][] = [];
+    const client = withNumericScanCursor({
+      scan: (...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve({ cursor: "0", keys: ["k1"] });
+      },
+    } as unknown as NodeRedisClient);
+
+    assertEquals(await client.scan(7, { MATCH: "prefix:*", COUNT: 100 }), {
+      cursor: 0,
+      keys: ["k1"],
+    });
+    assertEquals(calls, [["7", { MATCH: "prefix:*", COUNT: 100 }]]);
+  });
+
+  it("keeps the other client methods", () => {
+    const get = () => Promise.resolve("value");
+    const client = withNumericScanCursor({ get, scan: get } as unknown as NodeRedisClient);
+
+    assertEquals(client.get, get);
   });
 });

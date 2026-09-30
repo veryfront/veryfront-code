@@ -133,6 +133,26 @@ function bindClientMethods<T>(
   return Object.freeze(adapter) as T;
 }
 
+/**
+ * redis v5 takes and returns the SCAN cursor as a string, and rejects a
+ * numeric cursor while encoding the command, so the command never reaches
+ * Redis. The core `NodeRedisClient` contract uses numeric cursors, so convert
+ * at this boundary (veryfront-issue-inbox#2109).
+ */
+export function withNumericScanCursor(client: NodeRedisClient): NodeRedisClient {
+  return Object.freeze({
+    ...client,
+    async scan(cursor: number, options?: { MATCH?: string; COUNT?: number }) {
+      const page: { cursor: string | number; keys: string[] } = await Reflect.apply(
+        client.scan,
+        client,
+        [String(cursor), options],
+      );
+      return { cursor: Number(page.cursor), keys: page.keys };
+    },
+  });
+}
+
 export interface RedisRuntimeProviderDependencies {
   clientManagerDependencies?: RedisClientManagerDependencies;
   openClient?: (
@@ -159,7 +179,7 @@ export function createRedisRuntimeProvider(
     createClient(options: Parameters<NodeRedisModule["createClient"]>[0]) {
       requireOpen();
       const client = NodeRedis.createClient(options);
-      return bindClientMethods<NodeRedisClient>(client, NODE_CLIENT_METHODS);
+      return withNumericScanCursor(bindClientMethods<NodeRedisClient>(client, NODE_CLIENT_METHODS));
     },
   });
   let state: "open" | "closing" | "close-failed" | "closed" = "open";
