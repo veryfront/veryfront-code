@@ -1,3 +1,4 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import {
   appendPrivateArray,
   slicePrivateArray,
@@ -123,6 +124,9 @@ const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetHas = Set.prototype.has;
 const _Set = Set;
 const IntrinsicArrayIsArray = Array.isArray;
+const providerReplayEncoder = new TextEncoder();
+const IntrinsicTextEncoderEncode = TextEncoder.prototype.encode;
+const IntrinsicDateNow = Date.now;
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
@@ -1620,7 +1624,14 @@ export async function createRuntimeAgentStreamResponse(
               }
               try {
                 controller.enqueue(
-                  formatAgUiEvent(frame.event, frame.payload),
+                  IntrinsicReflectApply(IntrinsicTextEncoderEncode, providerReplayEncoder, [
+                    `event: ${frame.event}\ndata: ${
+                      privateJsonStringify({
+                        ...frame.payload,
+                        emittedAt: IntrinsicDateNow(),
+                      })
+                    }\n\n`,
+                  ]) as Uint8Array<ArrayBuffer>,
                 );
               } catch {
                 clientAttached = false;

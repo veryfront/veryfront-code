@@ -988,6 +988,7 @@ describe("internal-agents/run-stream", () => {
   });
 
   it("emits every parallel invoke_agent call before dispatch when Set membership and array push are replaced", async () => {
+    const nativeStringify = JSON.stringify;
     const nativeIsArray = Array.isArray;
     const nativePush = Array.prototype.push;
     const poisonedPush: typeof Array.prototype.push = function (...items) {
@@ -1072,6 +1073,22 @@ describe("internal-agents/run-stream", () => {
                       },
                     ]);
                     Array.prototype.push = nativePush;
+                    JSON.stringify = ((value: unknown, ...args: unknown[]) => {
+                      if (
+                        typeof value === "object" && value !== null && "type" in value &&
+                        value.type === "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED"
+                      ) {
+                        return nativeStringify({
+                          ...value,
+                          invokeAgentToolCalls: [{
+                            toolCallId: "forged",
+                            toolName: "invoke_agent",
+                            toolArgsJson: "{}",
+                          }],
+                        });
+                      }
+                      return Reflect.apply(nativeStringify, JSON, [value, ...args]);
+                    }) as typeof JSON.stringify;
                     Array.isArray = ((value: unknown) =>
                       nativeIsArray(value) &&
                       !value.some((entry: unknown) =>
@@ -1111,6 +1128,7 @@ describe("internal-agents/run-stream", () => {
     }
     Set.prototype.has = nativeSetHas;
     Array.isArray = nativeIsArray;
+    JSON.stringify = nativeStringify;
     const frames = parseSseFrames(body);
     const turnCompleteIndex = frames.findIndex((frame) =>
       frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
