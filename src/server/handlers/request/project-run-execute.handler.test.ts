@@ -28,6 +28,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
@@ -3510,13 +3511,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const { client, settle } = resumableClient(waitingOnReview);
     let finish!: () => void;
     let destroyed = false;
+    const messages: string[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => messages.push(entry.message));
     client.approve = () =>
       new Promise<void>((resolve) => {
         finish = resolve;
       });
     client.destroy = () => {
       destroyed = true;
-      return Promise.resolve();
+      return Promise.reject(new Error("cleanup unavailable"));
     };
     const { payload } = await executeResume(client, {
       type: "approval",
@@ -3530,6 +3533,70 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     settle({ status: "completed", output: {} });
     finish();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(destroyed, true);
+    assertEquals(
+      messages.some((message) => message.includes("Failed to destroy workflow client")),
+      true,
+    );
+    unsubscribe();
+  });
+
+  it("does not turn a timed-out resume request into durable workflow cancellation", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    const requestController = new AbortController();
+    let finish!: () => void;
+    let cancelCalls = 0;
+    let destroyed = false;
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    client.cancel = () => {
+      cancelCalls += 1;
+      return Promise.resolve();
+    };
+    client.destroy = () => {
+      destroyed = true;
+      return Promise.resolve();
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => client,
+      workflowResumeTimeoutMs: 5,
+      sleep: () => {
+        settle({ status: "completed", output: {} });
+        return Promise.resolve();
+      },
+    }));
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    const signed = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+        resume: {
+          type: "approval",
+          node_id: "manager-review",
+          approved: true,
+          approver: "user:u1",
+        },
+      },
+    );
+    const request = new Request(signed.request, { signal: requestController.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "timed out");
+
+    requestController.abort(new Error("request closed after timeout response"));
+    settle({ status: "running" });
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assertEquals(cancelCalls, 0);
     assertEquals(destroyed, true);
   });
 

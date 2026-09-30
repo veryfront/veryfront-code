@@ -387,6 +387,7 @@ export class WorkflowExecutor {
       pendingApprovals: [],
       createdAt: new Date(),
       workerId: executionWorkerId,
+      ...(options?.[CONTROL_PLANE_OWNED_START] === true ? { _controlPlaneOwned: true } : {}),
       sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       _tenant: tenant,
     };

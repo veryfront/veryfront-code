@@ -1360,7 +1360,12 @@ async function executeWorkflowRun(
   } finally {
     if (activeResume) {
       // A timed-out request must not destroy resources still used by durable execution.
-      void activeResume.then(() => client.destroy(), () => client.destroy()).catch(() => {});
+      void activeResume.then(() => client.destroy(), () => client.destroy()).catch((error) => {
+        serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
+          runId: request.runId,
+          errorName: error instanceof Error ? error.name : "unknown",
+        });
+      });
     } else {
       await client.destroy();
     }

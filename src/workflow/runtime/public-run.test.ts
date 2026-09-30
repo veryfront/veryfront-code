@@ -170,6 +170,7 @@ describe("workflow/runtime/public-run", () => {
       completedAt: new Date(3),
       sourceIntegrationPolicy: SOURCE_POLICY,
       _tenant: frameworkTenant,
+      _controlPlaneOwned: true,
       _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
       _traceContext: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     };
@@ -178,6 +179,7 @@ describe("workflow/runtime/public-run", () => {
     const output = projected.output as Record<string, unknown>;
 
     assertEquals(projected._tenant, undefined);
+    assertEquals(projected._controlPlaneOwned, undefined);
     assertEquals(projected._runtimeStateVersion, undefined);
     // Trace identity is telemetry infrastructure, not run data.
     assertEquals(projected._traceContext, undefined);

@@ -47,7 +47,7 @@ import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowDefinition, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
-import { CONTROL_PLANE_OWNED_START } from "../dsl/validation.ts";
+import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -174,6 +174,7 @@ describe("WorkflowClient", () => {
       [CONTROL_PLANE_OWNED_START]: true,
     });
     assertEquals(handle.runId, runId);
+    assertEquals((await backend.getRun(runId))?._controlPlaneOwned, true);
   });
 
   it("stores the registered workflow's selected output on the run (#2107)", async () => {

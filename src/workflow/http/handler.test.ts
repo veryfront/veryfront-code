@@ -593,6 +593,50 @@ describe("createWorkflowHandler", () => {
     );
   });
 
+  it("keeps cancel and approval routes available for legacy unmarked run_<uuid> IDs", async () => {
+    const runId = "run_4f849e55-8719-4862-82fe-c3e9a0d43143";
+    const approvalId = "apr_legacy";
+    const cancelled: string[] = [];
+    const approved: string[] = [];
+    Object.defineProperty(client, "getRun", {
+      configurable: true,
+      value: () => Promise.resolve({ id: runId } as WorkflowRun),
+    });
+    Object.defineProperty(client, "cancel", {
+      configurable: true,
+      value: (id: string) => {
+        cancelled.push(id);
+        return Promise.resolve();
+      },
+    });
+    Object.defineProperty(client, "getPendingApprovals", {
+      configurable: true,
+      value: () => Promise.resolve([{ id: approvalId }]),
+    });
+    Object.defineProperty(client, "approve", {
+      configurable: true,
+      value: (id: string) => {
+        approved.push(id);
+        return Promise.resolve();
+      },
+    });
+
+    const cancelledResponse = await handlers.POST(
+      post(`/api/workflows/runs/${runId}/cancel`, {}),
+    );
+    const approvedResponse = await handlers.POST(
+      post(`/api/workflows/runs/${runId}/approvals/${approvalId}`, {
+        approved: true,
+        approver: "tester",
+      }),
+    );
+
+    expect(cancelledResponse.status).toBe(200);
+    expect(approvedResponse.status).toBe(200);
+    expect(cancelled).toEqual([runId]);
+    expect(approved).toEqual([runId]);
+  });
+
   it("fails the run when an approval is rejected", async () => {
     client.register(
       workflow({

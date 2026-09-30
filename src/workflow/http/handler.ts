@@ -37,7 +37,6 @@ import {
 } from "#veryfront/workflow/events.ts";
 import type { ApprovalDecision, RunFilter } from "#veryfront/workflow/types.ts";
 import { DEFAULT_WORKFLOW_RUN_LIST_LIMIT } from "#veryfront/workflow/limits.ts";
-import { isControlPlaneWorkflowRunId } from "#veryfront/workflow/dsl/validation.ts";
 import { projectWorkflowRunSummary } from "#veryfront/workflow/http/run-summary.ts";
 
 /** Options for {@linkcode createWorkflowHandler}. */
@@ -496,7 +495,7 @@ export function createWorkflowHandler(
       // no retry operation of its own yet.
       if (
         segments.length === 3 && first === "runs" && second && third === "cancel" &&
-        isControlPlaneWorkflowRunId(second)
+        (await client.getRun(second))?._controlPlaneOwned === true
       ) {
         return problem(
           `Workflow run ${second} belongs to the Veryfront control plane. ` +
@@ -518,7 +517,7 @@ export function createWorkflowHandler(
       if (
         segments.length === 4 && first === "runs" && second && third === "approvals" && approvalId
       ) {
-        if (isControlPlaneWorkflowRunId(second)) {
+        if ((await client.getRun(second))?._controlPlaneOwned === true) {
           return problem(
             `Workflow run ${second} belongs to the Veryfront control plane. ` +
               `Decide its approvals with POST /runs/${second}/resume.`,
