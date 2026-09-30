@@ -63,6 +63,11 @@ import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/d
 import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
 import type { WorkflowClientConfig } from "#veryfront/workflow";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
+import {
+  PROJECT_RUN_INFERENCE_TOKEN_HEADER,
+  runWithProjectRunInferenceCredential,
+} from "#veryfront/agent/runtime/project-run-inference-credential.ts";
+import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
@@ -875,6 +880,71 @@ interface RuntimeApiClient {
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
+}
+
+const IntrinsicReflectApply = Reflect.apply;
+const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!.get!;
+const RequestUrlGetter = Object.getOwnPropertyDescriptor(Request.prototype, "url")!.get!;
+const RequestMethodGetter = Object.getOwnPropertyDescriptor(Request.prototype, "method")!.get!;
+const RequestSignalGetter = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!.get!;
+const HeadersGet = Headers.prototype.get;
+const HeadersAppend = Headers.prototype.append;
+const HeadersEntries = Headers.prototype.entries;
+const HeadersIteratorNext = Object.getPrototypeOf(new Headers().entries()).next as (
+  this: IterableIterator<[string, string]>,
+) => IteratorResult<[string, string]>;
+const StringToLowerCase = String.prototype.toLowerCase;
+const NativeHeaders = Headers;
+
+/**
+ * The execute request as the run sees it: the same URL, method and headers,
+ * and cancellation signal, minus the inference credential. Project code (a task, workflow or eval
+ * module) loads during execution and can patch `Headers.prototype.get`, so the
+ * request it can reach must no longer carry the credential. The body was read
+ * and verified before this point and is not needed again.
+ */
+function withoutProjectRunInferenceToken(req: Request): Request {
+  // Copied entry by entry with iteration primitives captured at load, and the
+  // credential is skipped rather than deleted afterwards: handing the original
+  // Headers to a constructor would run a patchable `Symbol.iterator` over it.
+  const source = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
+  const iterator = IntrinsicReflectApply(HeadersEntries, source, []) as IterableIterator<
+    [string, string]
+  >;
+  const skipped = IntrinsicReflectApply(StringToLowerCase, PROJECT_RUN_INFERENCE_TOKEN_HEADER, []);
+  const headers = new NativeHeaders();
+  while (true) {
+    const step = IntrinsicReflectApply(HeadersIteratorNext, iterator, []) as IteratorResult<
+      [string, string]
+    >;
+    if (step.done) break;
+    const name = step.value[0];
+    if (IntrinsicReflectApply(StringToLowerCase, name, []) === skipped) continue;
+    IntrinsicReflectApply(HeadersAppend, headers, [name, step.value[1]]);
+  }
+  return new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
+    method: IntrinsicReflectApply(RequestMethodGetter, req, []) as string,
+    headers,
+    // The run is cancelled through this signal; the copy must keep it.
+    signal: IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
+  });
+}
+
+/**
+ * The execute request's gateway-only inference credential, validated with the
+ * same visible-ASCII and size checks hosted runs apply to theirs. Read raw:
+ * trimming first would turn a malformed header into a valid one. `undefined`
+ * when the control plane sent none, which keeps the pre-header behaviour.
+ */
+function readProjectRunInferenceToken(req: Request): string | undefined {
+  // Captured accessors: a project that patches `Headers.prototype.get` must not
+  // see the credential of this or any later execute request on the same host.
+  const headers = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
+  const value = IntrinsicReflectApply(HeadersGet, headers, [
+    PROJECT_RUN_INFERENCE_TOKEN_HEADER,
+  ]) as string | null;
+  if (value === null) return undefined;
+  return requireInferenceProviderCredential(value, "Inference token header");
 }
 
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
@@ -2280,13 +2350,25 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         ) {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
+        const inferenceToken = readProjectRunInferenceToken(req);
 
         return await withSpan(
           "project_run.execute",
           async () => {
             const startedAt = this.deps.now();
             try {
-              const response = await executeProjectRun(request, ctx, req, this.deps);
+              const response = inferenceToken === undefined
+                ? await executeProjectRun(request, ctx, req, this.deps)
+                : await runWithProjectRunInferenceCredential(
+                  inferenceToken,
+                  () =>
+                    executeProjectRun(
+                      request,
+                      ctx,
+                      withoutProjectRunInferenceToken(req),
+                      this.deps,
+                    ),
+                );
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
               return this.respond(builder.json(response, 200));
             } catch (error) {
