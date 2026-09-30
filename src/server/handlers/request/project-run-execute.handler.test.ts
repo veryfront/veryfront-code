@@ -3766,6 +3766,50 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(clock < 60_000, true);
   });
 
+  it("keeps polling an approval pause whose record is slow to persist on a backend without event waits", async () => {
+    // The run is marked waiting on an approval node before its approval record is saved.
+    let clock = 0;
+    let cancelled = 0;
+    const saved = {
+      status: "waiting",
+      currentNodes: ["sign-off"],
+      nodeStates: { "sign-off": { input: { type: "approval" } } },
+      pendingApprovals: [{ id: "approval-1", nodeId: "sign-off", status: "pending" }],
+    };
+    const { client } = resumableClient(saved);
+    const eventless = {
+      ...client,
+      persistsEventWaits: false,
+      start: () => Promise.resolve({ runId: "run_27714e62-7b05-466e-809e-0d8f1cdf1e62" }),
+      getRun: () => Promise.resolve(clock < 20_000 ? { ...saved, pendingApprovals: [] } : saved),
+      cancel: () => {
+        cancelled += 1;
+        return Promise.resolve();
+      },
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => eventless,
+      now: () => clock,
+      sleep: () => {
+        clock += 1_000;
+        return Promise.resolve();
+      },
+    }));
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+
+    assertEquals(cancelled, 0);
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting_reason, "approval");
+  });
+
   it("reports every awaited event name when a run waits on several", async () => {
     const parked = {
       status: "waiting",

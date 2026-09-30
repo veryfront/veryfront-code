@@ -215,6 +215,9 @@ interface EvalReportUploadInput {
 interface WorkflowRunView {
   status: string;
   output?: unknown;
+  /** The nodes a `waiting` run is parked on. */
+  currentNodes?: ReadonlyArray<string>;
+  nodeStates?: Readonly<Record<string, { input?: unknown } | undefined>>;
   error?: { message?: string } | null;
   pendingApprovals?: ReadonlyArray<
     { id: string; nodeId: string; status?: string; expiresAt?: Date | string }
@@ -920,8 +923,11 @@ async function waitForWorkflowResult(
       const keys = waitKeys(await readPendingWaits(client, runId, run));
       // A backend without event waits saves no record for a `waitForEvent()`
       // or `delay()`, so nothing can ever resume the run: fail it instead of
-      // polling until the status timeout.
-      if (keys.length === 0 && client.persistsEventWaits === false) {
+      // polling until the status timeout. An approval pause still saves its
+      // record on such a backend, so a slow write there is only awaited.
+      if (
+        keys.length === 0 && client.persistsEventWaits === false && !isParkedOnApproval(run)
+      ) {
         parkedOnNothingSince ??= deps.now();
         if (deps.now() - parkedOnNothingSince >= WORKFLOW_UNPERSISTED_WAIT_GRACE_MS) {
           await client.cancel(runId);
@@ -950,6 +956,15 @@ async function waitForWorkflowResult(
 
     await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
   }
+}
+
+/** True when a `waiting` run is parked on an approval node, whose record every durable backend saves. */
+function isParkedOnApproval(run: WorkflowRunView): boolean {
+  return (run.currentNodes ?? []).some((nodeId) => {
+    const input = run.nodeStates?.[nodeId]?.input;
+    return typeof input === "object" && input !== null &&
+      (input as { type?: unknown }).type === "approval";
+  });
 }
 
 interface PendingWorkflowWaits {
