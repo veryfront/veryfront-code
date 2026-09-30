@@ -87,6 +87,11 @@ export interface WorkflowRunControlExecuteInput {
   }): Promise<WorkflowRunControlExecuteResult>;
   onStart?(run: WorkflowRun): void | Promise<void>;
   onComplete?(run: WorkflowRun): void | Promise<void>;
+  /**
+   * The final output for a completed context. A throw fails the run instead of
+   * completing it. Defaults to the context minus `input`.
+   */
+  selectOutput?(context: WorkflowContext): unknown;
   onError?(
     run: WorkflowRun,
     error: Error,
@@ -1273,7 +1278,9 @@ async function completeRun(
   ) return null;
 
   const publicContext = toPersistedWorkflowContext(result.context);
-  const output = determineOutput(publicContext);
+  const output = input.selectOutput
+    ? await input.selectOutput(publicContext)
+    : determineWorkflowOutput(publicContext);
   const completed = await updateRunIfStatus(
     backend,
     run.id,
@@ -1415,7 +1422,8 @@ export function toPersistedWorkflowContext(context: WorkflowContext): WorkflowCo
   return publicContext;
 }
 
-function determineOutput(context: WorkflowContext): unknown {
+/** The default final output: the context minus `input`, i.e. every step's output by step id. */
+function determineWorkflowOutput(context: WorkflowContext): unknown {
   const { input: _input, _tenant: _tenant, ...rest } = context;
   return rest;
 }

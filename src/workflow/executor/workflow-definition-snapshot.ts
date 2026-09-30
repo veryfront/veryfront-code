@@ -116,6 +116,7 @@ const DEFINITION_KEYS = new Set([
   "version",
   "inputSchema",
   "outputSchema",
+  "output",
   "integrationRequirements",
   "retry",
   "timeout",
@@ -1296,8 +1297,10 @@ function captureDefinition<TInput, TOutput>(
   }
   const onError = fields.get("onError");
   const onComplete = fields.get("onComplete");
+  const output = fields.get("output");
   assertOptionalFunction(onError, `Workflow "${id}" onError`);
   assertOptionalFunction(onComplete, `Workflow "${id}" onComplete`);
+  assertOptionalFunction(output, `Workflow "${id}" output`);
   const stepsValue = fields.get("steps");
   if (typeof stepsValue !== "function" && !arrayIsArray(stepsValue)) {
     fail(`Workflow "${id}" steps must be an array or builder function`);
@@ -1326,6 +1329,7 @@ function captureDefinition<TInput, TOutput>(
       ...(fields.has("version") ? { version } : {}),
       ...(fields.has("inputSchema") ? { inputSchema: fields.get("inputSchema") } : {}),
       ...(fields.has("outputSchema") ? { outputSchema: fields.get("outputSchema") } : {}),
+      ...(fields.has("output") ? { output } : {}),
       ...(fields.has("integrationRequirements") ? { integrationRequirements } : {}),
       ...(fields.has("retry") ? { retry } : {}),
       ...(fields.has("timeout") ? { timeout } : {}),
