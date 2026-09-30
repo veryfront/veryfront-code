@@ -1471,7 +1471,8 @@ async function destroyWorkflowClient(
   timeoutMs: number,
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const destroyed = client.destroy().then(
+  // Started inside a promise so a synchronous throw is logged like a rejection.
+  const destroyed = Promise.resolve().then(() => client.destroy()).then(
     () => true,
     (error: unknown) => {
       serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
