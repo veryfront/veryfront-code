@@ -133,7 +133,7 @@ function getOwnDataProperty(value: Record<string, unknown>, key: string): unknow
 
 export interface ProjectRunExecuteRequest {
   runId: string;
-  kind: "task" | "workflow" | "eval";
+  kind: "task" | "workflow";
   target: string;
   projectId: string;
   runtimeAgUiEndpoint?: string;
@@ -445,7 +445,13 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   if (runId !== pathRunId) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Run id does not match request path" });
   }
-  if (kind !== "task" && kind !== "workflow" && kind !== "eval") {
+  if (kind === "eval") {
+    throw new ControlPlaneRequestError(
+      400,
+      "Run kind 'eval' is retired; use kind 'task' with target 'task:eval'",
+    );
+  }
+  if (kind !== "task" && kind !== "workflow") {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid run kind" });
   }
   if (typeof target !== "string" || !target) {
@@ -459,9 +465,6 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   }
   if (kind === "workflow" && !target.startsWith("workflow:")) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid workflow target" });
-  }
-  if (kind === "eval" && !target.startsWith("eval:")) {
-    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
   }
 
   const deadlineAt = value.deadlineAt;
@@ -2973,7 +2976,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   now: () => Date.now(),
 };
 
-/** Runs the task, eval or workflow a control-plane execute request names. */
+/** Runs the task or workflow a control-plane execute request names. */
 function executeProjectRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
@@ -2998,7 +3001,6 @@ function executeProjectRun(
       }
     });
   }
-  if (request.kind === "eval") return executeEvalRun(request, ctx, req, deps);
   return executeWorkflowRun(request, ctx, req.signal, deps);
 }
 

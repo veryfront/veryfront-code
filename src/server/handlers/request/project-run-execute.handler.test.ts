@@ -396,7 +396,7 @@ function createDeps(
       records: [],
     }),
     createEvalAgentAdapter: () => async () => ({ text: "Paris" }),
-    uploadEvalReport: async () => null,
+    uploadEvalReport: async () => "evals/reports/default.json",
     executeKnowledgeIngest: async () => ({
       success: true,
       result: { kind: "knowledge_ingest", summary: { ingested_count: 1 } },
@@ -1864,6 +1864,25 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
+  it("rejects the retired eval run kind and points callers to task:eval", async () => {
+    const handler = new ProjectRunExecuteHandler();
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_legacy/execute",
+      {
+        runId: "run_eval_legacy",
+        kind: "eval",
+        target: "eval:deep-research",
+        projectId: "proj-1",
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertStringIncludes(await result.response.text(), "task:eval");
+  });
+
   it("reports task:eval as cancelled and does not begin another case", async () => {
     const startedCases: string[] = [];
     const firstCaseFinished = Promise.withResolvers<void>();
@@ -2035,6 +2054,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedProjectIdHeader: unknown;
     let receivedBranchName: unknown;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       runEval: async (_definition, options) => {
         receivedRunId = options.runId;
         receivedBaseDir = options.baseDir;
@@ -2056,12 +2076,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_1",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
       input: { dataset: "smoke" },
-      config: { repetitions: 2 },
+      config: { eval_id: "eval:deep-research", repetitions: 2 },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_1/execute",
@@ -2086,7 +2106,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: true,
-      result: report,
+      result: report.summary,
+      artifacts: [{
+        kind: "eval-report",
+        path: "evals/reports/default.json",
+        contentType: "application/json",
+      }],
       duration_ms: 0,
       logs: null,
     });
@@ -2107,6 +2132,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("rejects schema-invalid eval input before the eval executes", async () => {
     let executed = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async () => ({
         id: "eval:invoice-lookup",
         name: "Invoice lookup",
@@ -2128,10 +2154,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "/api/control-plane/runs/run_eval_invalid_input/execute",
       {
         runId: "run_eval_invalid_input",
-        kind: "eval",
-        target: "eval:invoice-lookup",
+        kind: "task",
+        target: "task:eval",
         projectId: "proj-1",
         input: { invoiceId: 42 },
+        config: { eval_id: "eval:invoice-lookup" },
       },
       { "x-token": "runtime-token" },
     );
@@ -2151,6 +2178,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("executes an eval whose run input matches its schema", async () => {
     let executed = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async () => ({
         id: "eval:invoice-lookup",
         name: "Invoice lookup",
@@ -2172,10 +2200,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "/api/control-plane/runs/run_eval_valid_input/execute",
       {
         runId: "run_eval_valid_input",
-        kind: "eval",
-        target: "eval:invoice-lookup",
+        kind: "task",
+        target: "task:eval",
         projectId: "proj-1",
         input: { invoiceId: "INV-7731" },
+        config: { eval_id: "eval:invoice-lookup" },
       },
       { "x-token": "runtime-token" },
     );
@@ -2190,6 +2219,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("executes a schema-less eval with any JSON run input", async () => {
     let executed = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       runEval: async (definition, options) => {
         executed = true;
         return createDeps().runEval(definition, options);
@@ -2199,10 +2229,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "/api/control-plane/runs/run_eval_schema_less/execute",
       {
         runId: "run_eval_schema_less",
-        kind: "eval",
-        target: "eval:deep-research",
+        kind: "task",
+        target: "task:eval",
         projectId: "proj-1",
         input: ["any", { json: true }, 42],
+        config: { eval_id: "eval:deep-research" },
       },
       { "x-token": "runtime-token" },
     );
@@ -2226,6 +2257,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const originalTrunc = Math.trunc;
     let receivedMaxSteps: number | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async () => ({
         id: "eval:deep-research",
         name: "Deep research quality",
@@ -2249,10 +2281,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_intrinsic_step_limit",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
-      config: { max_steps: "2.9" },
+      config: { eval_id: "eval:deep-research", max_steps: "2.9" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_intrinsic_step_limit/execute",
@@ -2279,6 +2311,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("runs a dataset eval without a runtime API token", async () => {
     let adapterCreated = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:dataset"
           ? {
@@ -2301,9 +2334,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "/api/control-plane/runs/run_eval_dataset/execute",
       {
         runId: "run_eval_dataset",
-        kind: "eval",
-        target: "eval:dataset",
+        kind: "task",
+        target: "task:eval",
         projectId: "proj-1",
+        config: { eval_id: "eval:dataset" },
       },
     );
 
@@ -2332,6 +2366,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedProjectReference: string | undefined;
     let receivedReportPath: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       runEval: async () => report,
       uploadEvalReport: async (input) => {
         receivedReport = input.report;
@@ -2342,9 +2377,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_report_artifact",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_report_artifact/execute",
@@ -2358,7 +2394,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: true,
-      result: { ...report, reportPath },
+      result: report.summary,
       artifacts: [{ kind: "eval-report", path: reportPath, contentType: "application/json" }],
       duration_ms: 0,
       logs: null,
@@ -2368,49 +2404,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedReportPath, reportPath);
   });
 
-  it("keeps legacy kind:eval report upload failures best-effort", async () => {
-    const report: EvalReport = {
-      kind: "eval-report",
-      runId: "run_eval_report_upload_failed",
-      definitionId: "eval:deep-research",
-      targetKind: "agent",
-      target: "agent:researcher",
-      startedAt: "2026-06-20T10:00:00.000Z",
-      endedAt: "2026-06-20T10:00:01.000Z",
-      summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
-      records: [],
-    };
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      runEval: async () => report,
-      uploadEvalReport: async () => {
-        throw new Error("project file service unavailable");
-      },
-    }));
-    const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_eval_report_upload_failed/execute",
-      {
-        runId: "run_eval_report_upload_failed",
-        kind: "eval",
-        target: "eval:deep-research",
-        projectId: "proj-1",
-      },
-      { "x-token": "runtime-token" },
-    );
-
-    const result = await handler.handle(request, createCtx(publicKeyPem));
-
-    assertExists(result.response);
-    assertEquals(await result.response.json(), {
-      success: true,
-      result: report,
-      duration_ms: 0,
-      logs: "Eval report upload failed: project file service unavailable",
-    });
-  });
-
   it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedEndpoint = config.endpoint;
         return async () => ({ text: "Paris" });
@@ -2418,10 +2415,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_local_endpoint",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_local_endpoint/execute",
@@ -2471,6 +2469,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       } as Agent["config"],
     });
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:deep-research"
           ? {
@@ -2494,10 +2493,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_source_agent",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_source_agent/execute",
@@ -2517,18 +2517,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const payload = await result.response.json();
       assertEquals(payload.success, true);
       assertEquals(payload.error, undefined);
-      assertEquals(payload.result.summary.failed, 0);
-      assertEquals(payload.result.summary.usage, {
+      assertEquals(payload.result.failed, 0);
+      assertEquals(payload.result.usage, {
         inputTokens: 12,
         outputTokens: 8,
         totalTokens: 20,
       });
-      assertEquals(payload.result.records[0]?.usage, {
-        inputTokens: 12,
-        outputTokens: 8,
-        totalTokens: 20,
-      });
-      assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
       assertEquals(capturedContext?.runIdBindsToolAuthorization, false);
     } finally {
       agentRegistry.delete("researcher");
@@ -2577,6 +2571,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
 
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:deep-research"
           ? {
@@ -2600,11 +2595,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_restricted_tools",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
-      config: { allowedTools: ["eval_allowed_lookup", "web_fetch"], max_steps: 2 },
+      config: {
+        eval_id: "eval:deep-research",
+        allowedTools: ["eval_allowed_lookup", "web_fetch"],
+        max_steps: 2,
+      },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_restricted_tools/execute",
@@ -2754,6 +2753,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     > = [];
     const conversationId = "11111111-1111-4111-8111-111111111111";
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:deep-research"
           ? {
@@ -2775,10 +2775,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_durable_agent",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_durable_agent/execute",
@@ -2828,8 +2829,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     const payload = await result.response.json();
     assertEquals(payload.success, true);
-    assertEquals(payload.result.summary.failed, 0);
-    assertEquals(payload.result.records[0]?.output?.text, "Paris");
+    assertEquals(payload.result.failed, 0);
 
     assertEquals(requests.length, 2);
     const createRequest = requests[0];
@@ -2873,6 +2873,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const conversationId = "22222222-2222-4222-8222-222222222222";
     const environmentId = "33333333-3333-4333-8333-333333333333";
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:deep-research"
           ? {
@@ -2940,13 +2941,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     };
     const body = {
       runId: "run_eval_durable_env_agent",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
       runtimeTargetKind: "environment",
       runtimeTargetEnvironmentId: environmentId,
-      config: { model: "model-override-1", max_steps: 3 },
+      config: { eval_id: "eval:deep-research", model: "model-override-1", max_steps: 3 },
     };
     const result = await execute(body);
 
@@ -3010,6 +3011,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedForwardedProto: unknown;
     let receivedEnvironment: unknown;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedEndpoint = config.endpoint;
         receivedForwardedHost = config.forwardedHost;
@@ -3020,10 +3022,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_generic_control_host",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_generic_control_host/execute",
@@ -3053,6 +3056,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("preserves non-sibling eval AG-UI endpoints", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedEndpoint = config.endpoint;
         return async () => ({ text: "Paris" });
@@ -3060,10 +3064,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_custom_endpoint",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://agent-service.example.com/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_custom_endpoint/execute",
@@ -3081,6 +3086,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("uses local AG-UI endpoints for managed preview URLs when control-plane requests use an internal runtime host", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedEndpoint = config.endpoint;
         return async () => ({ text: "Paris" });
@@ -3088,10 +3094,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_internal_host",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_internal_host/execute",
@@ -3139,13 +3146,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       }],
     };
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       runEval: async () => report,
     }));
     const body = {
       runId: "run_eval_failed_adapter",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_failed_adapter/execute",
@@ -3159,8 +3168,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: false,
-      result: report,
+      result: report.summary,
       error: "1 eval record failed",
+      artifacts: [{
+        kind: "eval-report",
+        path: "evals/reports/default.json",
+        contentType: "application/json",
+      }],
       logs: null,
       duration_ms: 0,
     });
@@ -5502,6 +5516,7 @@ describe("project run inference credential header", () => {
     const originalGet = Headers.prototype.get;
     let receivedAuthToken: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       // Stands in for loading the project eval module: from here on, project
       // code has replaced Headers.prototype.get and records every value.
       findEvalById: async (target, options) => {
@@ -5520,10 +5535,10 @@ describe("project run inference credential header", () => {
     }));
     const body = {
       runId: "run_eval_inference",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
-      config: { agent_id: "researcher" },
+      config: { eval_id: "eval:deep-research", agent_id: "researcher" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_inference/execute",
