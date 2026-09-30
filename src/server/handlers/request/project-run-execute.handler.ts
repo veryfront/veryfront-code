@@ -57,7 +57,7 @@ import type {
   EvalReport,
   RunEvalOptions,
 } from "#veryfront/eval/types.ts";
-import type { Logger } from "#veryfront/utils";
+import { type Logger, serverLogger } from "#veryfront/utils";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
@@ -866,7 +866,7 @@ async function executeDiscoveredTaskRun(
 async function waitForWorkflowResult(
   client: WorkflowClientView,
   runId: string,
-  signal: AbortSignal,
+  shouldCancel: () => boolean,
   deps: ProjectRunExecuteHandlerDeps,
   stillParkedOnReleasedBoundary?: (run: WorkflowRunView) => Promise<boolean>,
 ): Promise<WorkflowRunView> {
@@ -877,7 +877,7 @@ async function waitForWorkflowResult(
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
     // A waiting run is resumable, so an aborted request cancels it too.
-    if (signal.aborted && !isTerminalWorkflowStatus(run.status)) {
+    if (shouldCancel() && !isTerminalWorkflowStatus(run.status)) {
       await client.cancel(runId);
       return {
         status: "cancelled",
@@ -1067,7 +1067,7 @@ async function resumeWaitingWorkflowRun(
   client: WorkflowClientView,
   runId: string,
   resume: WorkflowResumeSignal,
-  signal: AbortSignal,
+  shouldCancel: () => boolean,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
@@ -1079,12 +1079,12 @@ async function resumeWaitingWorkflowRun(
   // A re-dispatch that repeats a decision already applied (the previous
   // attempt died after applying it) just reports where the run is now.
   if (current.status !== "waiting") {
-    return { run: await waitForWorkflowResult(client, runId, signal, deps) };
+    return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps) };
   }
 
   const parked = await readPendingWaits(client, runId, current);
   if (await isStaleDecision(resume, parked)) {
-    return { run: await waitForWorkflowResult(client, runId, signal, deps) };
+    return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps) };
   }
   const applied = isParkedOnNothing(parked)
     ? { released: true }
@@ -1105,7 +1105,7 @@ async function resumeWaitingWorkflowRun(
       return keys.length === 0 || sameKeys(keys, released);
     }
     : undefined;
-  return { run: await waitForWorkflowResult(client, runId, signal, deps, stillParked) };
+  return { run: await waitForWorkflowResult(client, runId, shouldCancel, deps, stillParked) };
 }
 
 function isTerminalWorkflowStatus(status: string): boolean {
@@ -1162,11 +1162,12 @@ async function executeWorkflowRun(
 
     let run: WorkflowRunView;
     if (request.resume) {
+      let resumeTimedOut = false;
       const operation = resumeWaitingWorkflowRun(
         client,
         request.runId,
         request.resume,
-        signal,
+        () => !resumeTimedOut && signal.aborted,
         deps,
       );
       activeResume = operation;
@@ -1179,10 +1180,12 @@ async function executeWorkflowRun(
       const resumed = await Promise.race([
         operation,
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() =>
+          timer = setTimeout(() => {
+            resumeTimedOut = true;
             reject(TIMEOUT_ERROR.create({
               detail: `Workflow run timed out: ${request.runId}`,
-            })), deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
+            }));
+          }, deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
         }),
       ]).finally(() => clearTimeout(timer));
       if ("failure" in resumed) {
@@ -1207,7 +1210,7 @@ async function executeWorkflowRun(
         if (failure) return failure;
         throw error;
       }
-      run = await waitForWorkflowResult(client, handle.runId, signal, deps);
+      run = await waitForWorkflowResult(client, handle.runId, () => signal.aborted, deps);
       await handle.settled?.();
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
@@ -1269,7 +1272,12 @@ async function executeWorkflowRun(
   } finally {
     if (activeResume) {
       // A timed-out request must not destroy resources still used by durable execution.
-      void activeResume.then(() => client.destroy(), () => client.destroy()).catch(() => {});
+      void activeResume.then(() => client.destroy(), () => client.destroy()).catch((error) => {
+        serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
+          runId: request.runId,
+          errorName: error instanceof Error ? error.name : "unknown",
+        });
+      });
     } else {
       await client.destroy();
     }

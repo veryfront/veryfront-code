@@ -415,6 +415,8 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   /** Worker ID for distributed execution */
   workerId?: string;
+  /** @internal Marks runs created by the signed control-plane dispatch path. */
+  _controlPlaneOwned?: true;
   /** Captured tenant context for multi-tenant job execution */
   _tenant?: CapturedTenantContext;
   /**
