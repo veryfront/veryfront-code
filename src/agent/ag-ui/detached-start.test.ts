@@ -700,7 +700,11 @@ describe("agent/ag-ui-detached-start", () => {
     let executions = 0;
     const signals: AbortSignal[] = [];
     const startRun = sessionManager.startRun.bind(sessionManager);
-    sessionManager.startRun = (input) => {
+    sessionManager.startRun = (input: {
+      runId: string;
+      threadId: string;
+      startedFromEventId?: number;
+    }) => {
       const signal = startRun(input);
       signals.push(signal);
       return signal;
@@ -733,8 +737,10 @@ describe("agent/ag-ui-detached-start", () => {
       threadId: crypto.randomUUID(),
     });
     sessionManager.completeRun("run_1", replacementSignal);
+    const cancelledSignal = signals[0];
+    assertExists(cancelledSignal);
     assertEquals(
-      sessionManager.isSupersededRun("run_1", signals[0]),
+      sessionManager.isSupersededRun("run_1", cancelledSignal),
       false,
       "a cancelled start that never executed must not occupy settling bookkeeping",
     );
