@@ -1082,10 +1082,11 @@ describe("internal-agents/run-stream", () => {
   it("does not deadlock the real runtime while publishing an aliased batch before dispatch", async () => {
     const sessionManager = new AgentRunSessionManager();
     const messageId = crypto.randomUUID();
+    const runId = "run_real_aliased_parallel_delegation";
     const model = scriptedModel([{
       toolCalls: [
-        { id: "child-1", name: "veryfront__invoke_agent", input: { task: "first" } },
-        { id: "child-2", name: "veryfront__invoke_agent", input: { task: "second" } },
+        { id: "child-1", name: "veryfront__invoke_agent", input: '{}{"task":"first"}' },
+        { id: "child-2", name: "veryfront__invoke_agent", input: '{}{"task":"second"}' },
       ],
     }], {
       modelId: "anthropic/hosted-aliased-parallel-delegation",
@@ -1104,7 +1105,7 @@ describe("internal-agents/run-stream", () => {
       {
         agentId: runtimeAgent.id,
         threadId: crypto.randomUUID(),
-        runId: "run_real_aliased_parallel_delegation",
+        runId,
         messageId,
         messages: [{ id: "user-1", role: "user", content: "Delegate both tasks" }],
         tools: [{ name: "veryfront__invoke_agent" }],
@@ -1117,15 +1118,25 @@ describe("internal-agents/run-stream", () => {
         persistProviderReplayCheckpoint: () => Promise.resolve(),
       },
     );
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let body = "";
-    while (!body.includes("event: ToolCallStart")) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      body += decoder.decode(chunk.value, { stream: true });
-    }
-    await reader.cancel();
+    sessionManager.prepareForToolResult(runId, "child-1");
+    sessionManager.prepareForToolResult(runId, "child-2");
+    sessionManager.submitToolResult(runId, {
+      toolCallId: "child-1",
+      result: { result: "first complete" },
+    });
+    sessionManager.submitToolResult(runId, {
+      toolCallId: "child-2",
+      result: { result: "second complete" },
+    });
+    const body = await response.text();
+    const frames = parseSseFrames(body);
+    const replayBoundary = frames.find((frame) =>
+      frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
+    )?.data as Record<string, unknown>;
+    const firstToolArgs = frames.find((frame) => frame.event === "ToolCallArgs")?.data as Record<
+      string,
+      unknown
+    >;
 
     assertEquals(body.includes(PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME), true);
     assertEquals(
@@ -1134,6 +1145,11 @@ describe("internal-agents/run-stream", () => {
       true,
     );
     assertStringIncludes(body, '"toolName":"veryfront__invoke_agent"');
+    assertEquals(
+      (replayBoundary.invokeAgentToolCalls as Array<Record<string, unknown>>)[0]?.toolArgsJson,
+      '{"task":"first"}',
+    );
+    assertEquals(firstToolArgs.delta, '{"task":"first"}');
   });
 
   it("does not authorize a custom invoke_agent collision for replay dispatch", async () => {

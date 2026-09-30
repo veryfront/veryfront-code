@@ -1332,7 +1332,7 @@ function collectStreamedParallelInvokeAgentToolCalls(
     pushPrivateArray(calls, {
       toolCallId: toolCall.id,
       toolName: toolCall.name as ProviderReplayInvokeAgentToolName,
-      toolArgsJson: toolCall.arguments.length > 0 ? toolCall.arguments : privateJsonStringify(args),
+      toolArgsJson: privateJsonStringify(args),
     });
   }
   return calls.length >= 2 ? getProviderReplayInvokeAgentToolCallsSchema().parse(calls) : undefined;
