@@ -18,11 +18,11 @@ const weakSetHas = WeakSet.prototype.has;
 const frameworkInvokeAgentTools = new NativeWeakSet<object>();
 const frameworkDelegateTools = new NativeWeakSet<object>();
 
-function hasFrameworkTool(set: WeakSet<object>, value: object): boolean {
+function hasFrameworkTool<T extends object>(set: WeakSet<T>, value: T): boolean {
   return applyIntrinsic(weakSetHas, set, [value]) as boolean;
 }
 
-function markFrameworkTool(set: WeakSet<object>, value: object): void {
+function markFrameworkTool<T extends object>(set: WeakSet<T>, value: T): void {
   applyIntrinsic(weakSetAdd, set, [value]);
 }
 
