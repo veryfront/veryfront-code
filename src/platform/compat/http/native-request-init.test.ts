@@ -181,6 +181,28 @@ describe("platform/compat/http/native-request-init", () => {
     assertEquals(request.headers.get("x-a"), "1");
   });
 
+  it("reads each own init accessor once", () => {
+    let reads = 0;
+    const base = {} as RequestInit;
+    Object.defineProperty(base, "method", {
+      enumerable: true,
+      get: () => (reads++ === 0 ? "POST" : "GET"),
+    });
+
+    const init = createNativeRequestInit(base);
+
+    assertEquals(reads, 1);
+    assertEquals(init.method, "POST");
+  });
+
+  it("keeps every set-cookie value", () => {
+    const headers = new Headers();
+    headers.append("set-cookie", "a=1");
+    headers.append("set-cookie", "b=2");
+
+    assertEquals(toNativeHeaderRecord(headers)["set-cookie"], "a=1, b=2");
+  });
+
   it("reads only own init fields", () => {
     const inherited = Object.create({ method: "DELETE" }) as RequestInit;
     inherited.headers = { accept: "*/*" };

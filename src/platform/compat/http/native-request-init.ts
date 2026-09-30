@@ -138,6 +138,13 @@ export const NATIVE_REQUEST_INIT_FIELDS = Object.freeze(
 
 export type NativeRequestInitField = typeof NATIVE_REQUEST_INIT_FIELDS[number];
 
+function isNativeRequestInitField(name: string): boolean {
+  for (let index = 0; index < NATIVE_REQUEST_INIT_FIELDS.length; index++) {
+    if (NATIVE_REQUEST_INIT_FIELDS[index] === name) return true;
+  }
+  return false;
+}
+
 /** Only what `init` itself holds for `field`; never an inherited value. */
 export function readOwnInitField<K extends NativeRequestInitField>(
   init: RequestInit | undefined | null,
@@ -197,8 +204,11 @@ export function copyNativeHeaders(source: HeadersInit | undefined | null): Heade
 
 /**
  * `headers` as a null-prototype record for a native constructor or `fetch`,
- * which then reads it by own key rather than through iteration. Values of a
- * repeated name are already joined by `Headers`, as the wire joins them.
+ * which then reads it by own key rather than through iteration. `Headers`
+ * already joins the values of a repeated name, except `set-cookie`, whose
+ * entries it keeps apart; a record holds one value per name, so those are
+ * joined here the way `Headers.get("set-cookie")` reports them rather than
+ * dropped. A request has no other use for several `Set-Cookie` lines.
  */
 export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
   const record = ObjectCreate(null) as Record<string, string>;
@@ -210,7 +220,10 @@ export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
       [string, string]
     >;
     if (step.done) return record;
-    record[step.value[0]] = step.value[1];
+    const [name, value] = step.value;
+    record[name] = IntrinsicReflectApply(ObjectHasOwn, undefined, [record, name])
+      ? `${record[name]}, ${value}`
+      : value;
   }
 }
 
@@ -234,10 +247,12 @@ export function createNativeRequestInit(
     init[field] = readOwnInitField(base, field);
   }
   if (base !== undefined && base !== null) {
-    // Runtime-specific extras the list does not name.
+    // Runtime-specific extras the list does not name. Named fields were read
+    // above; reading an accessor twice could yield a different value.
     const names = ObjectKeys(base);
     for (let index = 0; index < names.length; index++) {
       const name = names[index]!;
+      if (isNativeRequestInitField(name)) continue;
       init[name] = (base as Record<string, unknown>)[name];
     }
   }
