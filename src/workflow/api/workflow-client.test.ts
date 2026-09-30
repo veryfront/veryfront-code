@@ -229,6 +229,29 @@ describe("WorkflowClient", () => {
     });
   });
 
+  it("keeps a map processor's already-prefixed step id in its selector context (#2107)", async () => {
+    const processor = workflow({
+      id: "prefixed-map-processor",
+      steps: [
+        step("tickets_0/classify", {
+          tool: createMockTool("classify", { category: "billing" }),
+        }),
+      ],
+      output: (context) => context["tickets_0/classify"],
+    }).definition;
+    client.register(workflow({
+      id: "prefixed-map-parent",
+      steps: [map("tickets", { items: [{ ticket: "one" }], processor })],
+    }));
+
+    const handle = await client.start("prefixed-map-parent", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, { tickets: [{ category: "billing" }] });
+  });
+
   describe("typed approval payload", () => {
     const schemaWorkflow = workflow({
       id: "typed-approval-workflow",

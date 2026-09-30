@@ -843,6 +843,35 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     }]);
   });
 
+  it("stores the selected output in its JSON form", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("selected-json-output"), status: "running" as const };
+    await backend.createRun(run);
+
+    await execute(backend, run, () => completedResult(), {
+      selectOutput: () => ({ category: "billing", note: undefined }),
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "completed");
+    assertEquals(persisted?.output, { category: "billing" });
+  });
+
+  it("fails the run when the selected output is not JSON-serializable", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("selected-function-output"), status: "running" as const };
+    await backend.createRun(run);
+
+    const outcome = await execute(backend, run, () => completedResult(), {
+      selectOutput: () => () => "not data",
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(outcome.status, "failed");
+    assertEquals(persisted?.status, "failed");
+    assertEquals(persisted?.output, undefined);
+  });
+
   it("fails the run and stores no output when the output selector throws", async () => {
     const backend = new MemoryBackend();
     const run = { ...createRun("selector-throws"), status: "running" as const };
