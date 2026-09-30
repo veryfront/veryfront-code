@@ -572,9 +572,13 @@ export class WorkflowClient {
   }
 
   async destroy(): Promise<void> {
-    this.approvalManager.stop();
-    this.eventWaitManager.stop();
-    await this.backend.destroy();
+    try {
+      await this.approvalManager.checkApprovalDecisionClaims();
+    } finally {
+      this.approvalManager.stop();
+      this.eventWaitManager.stop();
+      await this.backend.destroy();
+    }
     logger.debug("Destroyed");
   }
 }
