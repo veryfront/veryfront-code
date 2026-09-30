@@ -324,7 +324,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
   if (
     deadlineAt !== undefined &&
     (typeof deadlineAt !== "string" ||
-      !/^\d{4}-\d{2}-\d{2}T/.test(deadlineAt) ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(deadlineAt) ||
       !Number.isFinite(Date.parse(deadlineAt)))
   ) {
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid deadlineAt" });

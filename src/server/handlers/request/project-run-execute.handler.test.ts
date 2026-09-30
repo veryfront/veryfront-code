@@ -574,6 +574,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "invalid",
       12,
       "2026-09-29Tgarbage",
+      "2099-01-01T00:00:00",
       "2000-01-01T00:00:00.000Z",
     ]
   ) {
@@ -622,6 +623,39 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await handler.handle(request, createCtx(publicKeyPem));
     assertExists(result.response);
     assertEquals((await result.response.json()).result, { synced: 12 });
+  });
+
+  it("rejects a task result at the deadline even before the timer callback runs", async () => {
+    const originalNow = Date.now;
+    let clock = originalNow();
+    const deadline = clock + 10_000;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        clock = deadline;
+        return { success: true, result: "late", durationMs: 10_000 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_deadline/execute",
+      {
+        runId: "run_deadline",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        deadlineAt: new Date(deadline).toISOString(),
+      },
+    );
+    try {
+      Date.now = () => clock;
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      const body = await result.response.json();
+      assertEquals(body.success, false);
+      assertEquals(body.error_code, "RUN_TIMEOUT");
+      assertEquals(body.result, undefined);
+    } finally {
+      Date.now = originalNow;
+    }
   });
 
   for (const cooperative of [true, false]) {
