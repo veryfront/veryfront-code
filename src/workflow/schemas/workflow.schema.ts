@@ -182,6 +182,8 @@ export const getWorkflowErrorSchema = defineSchema((v) =>
     message: v.string(),
     stack: v.string().optional(),
     nodeId: v.string().optional(),
+    code: v.string().optional(),
+    detail: v.unknown().optional(),
   })
 );
 

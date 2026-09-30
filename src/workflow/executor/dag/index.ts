@@ -30,6 +30,7 @@ import {
 import { INVALID_ARGUMENT, NOT_SUPPORTED, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import type { CheckpointOwnership } from "../checkpoint-manager.ts";
 import { toJsonOutput } from "../json-output.ts";
+import { parseWorkflowInput } from "../workflow-input.ts";
 
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
@@ -2423,10 +2424,11 @@ export class DAGExecutor {
 
     const workflowDef = config.workflow;
 
-    const input = typeof config.input === "function"
+    const submittedInput = typeof config.input === "function"
       ? await config.input(context)
       : (config.input ?? context.input);
     abortSignal?.throwIfAborted();
+    const input = parseWorkflowInput(workflowDef, submittedInput);
 
     const steps = typeof workflowDef.steps === "function"
       ? workflowDef.steps({ input, context })
