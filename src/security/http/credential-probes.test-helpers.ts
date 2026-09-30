@@ -56,6 +56,17 @@ export function installCredentialProbes(): CredentialProbes {
     originalInitDescriptors.set(field, Object.getOwnPropertyDescriptor(Object.prototype, field));
   }
   const originalObjectIterator = Object.getOwnPropertyDescriptor(Object.prototype, Symbol.iterator);
+  const requestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!.get!;
+  const collectionMethods = [
+    [WeakMap.prototype, "WeakMap", ["delete", "get", "has", "set"]],
+    [WeakSet.prototype, "WeakSet", ["add", "delete", "has"]],
+  ] as const;
+  const originalCollectionMethods: [object, string, unknown][] = [];
+  for (const [target, , names] of collectionMethods) {
+    for (const name of names) {
+      originalCollectionMethods.push([target, name, Reflect.get(target, name)]);
+    }
+  }
 
   const observed: string[] = [];
   const calls: Record<string, number> = {};
@@ -117,6 +128,18 @@ export function installCredentialProbes(): CredentialProbes {
       },
     });
   }
+  // A request used as a collection key reaches whoever replaced the method.
+  for (const [target, label, names] of collectionMethods) {
+    for (const name of names) {
+      const original = Reflect.get(target, name) as (...args: unknown[]) => unknown;
+      Reflect.set(target, name, function (this: unknown, ...args: unknown[]) {
+        if (args[0] instanceof Request) {
+          record(`${label}.${name}`, Reflect.apply(requestHeadersGetter, args[0], []));
+        }
+        return original.apply(this, args);
+      });
+    }
+  }
   // A native header conversion asks a record for its iterator first, and an
   // ordinary record inherits the answer.
   Object.defineProperty(Object.prototype, Symbol.iterator, {
@@ -139,6 +162,9 @@ export function installCredentialProbes(): CredentialProbes {
       for (const [field, descriptor] of originalInitDescriptors) {
         if (descriptor) Object.defineProperty(Object.prototype, field, descriptor);
         else delete (Object.prototype as Record<string, unknown>)[field];
+      }
+      for (const [target, name, original] of originalCollectionMethods) {
+        Reflect.set(target, name, original);
       }
       if (originalObjectIterator) {
         Object.defineProperty(Object.prototype, Symbol.iterator, originalObjectIterator);

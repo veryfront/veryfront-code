@@ -5,6 +5,7 @@ import {
   readBodyWithLimit,
 } from "#veryfront/security/input-validation/limits.ts";
 import { assertNativeRequestDefaults } from "#veryfront/security/http/native-request-processing.ts";
+import { inheritIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
@@ -43,7 +44,11 @@ export async function boundAgUiRequestBody(
     assertNativeRequestDefaults();
     // The bytes are a BufferSource; the cast only narrows the buffer-backing
     // type parameter that `BodyInit` spells more strictly than the reader does.
-    return new NativeRequest(request, { body: body as BodyInit });
+    // The copy reads the same ingress credentials as the request it replaces.
+    return inheritIngressCredentials(
+      request,
+      new NativeRequest(request, { body: body as BodyInit }),
+    );
   }, errorLabel);
 }
 

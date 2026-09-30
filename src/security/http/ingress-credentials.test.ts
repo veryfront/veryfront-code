@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/ass
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getRequestPeerProvenance,
+  recordDenoServeRequestPeer,
   recordRequestPeerFromTransport,
 } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
@@ -58,6 +59,10 @@ describe("security/http/ingress-credentials", () => {
     const probes = installCredentialProbes();
     let sealed: Request;
     try {
+      // The server adapter records the transport peer before the handler runs.
+      recordDenoServeRequestPeer(request, {
+        remoteAddr: { transport: "tcp", hostname: "10.0.0.7" },
+      });
       sealed = sealIngressCredentials(request);
       readLikeFramework(sealed);
     } finally {
@@ -89,6 +94,7 @@ describe("security/http/ingress-credentials", () => {
     assertEquals(readIngressCredential(sealed, INGRESS_API_TOKEN_HEADER), API_TOKEN);
     assertEquals(readIngressCredential(sealed, INGRESS_INFERENCE_TOKEN_HEADER), INFERENCE_TOKEN);
     assertEquals(readIngressCredential(sealed, INGRESS_RUN_EVENT_TOKEN_HEADER), RUN_EVENT_TOKEN);
+    assertEquals(getRequestPeerProvenance(sealed)?.hostname, "10.0.0.7");
   });
 
   it("reads the credential without a patched intrinsic seeing it", () => {
