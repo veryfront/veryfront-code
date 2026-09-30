@@ -1035,7 +1035,9 @@ the eval capabilities required by the panel.
 Use `project.evals.read` for listing reports and definitions. Use
 `project.evals.write` for editing eval source definitions. Source documents that
 can start durable runs also include `project.evals.run`. Triggering an eval run
-records a canonical run with kind `eval` when the durable run API is used.
+through the durable run API records a canonical run with kind `task`, target
+`task:eval`, and the definition ID in `config.eval_id`. Existing kind `eval`
+runs remain readable.
 
 ## Verify it worked
 

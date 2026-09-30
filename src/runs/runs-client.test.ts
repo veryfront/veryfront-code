@@ -229,15 +229,15 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
-  it("creates eval runs through canonical /runs", async () => {
+  it("creates eval runs as task:eval through canonical /runs", async () => {
     mockFetch([
       jsonResponse({
         accepted: true,
         run: makeRun({
-          kind: "eval",
-          target: "eval:capital-basic-eval",
+          kind: "task",
+          target: "task:eval",
           input: { dataset: "smoke" },
-          config: { repetitions: 2 },
+          config: { repetitions: 2, eval_id: "eval:capital-basic-eval" },
         }),
       }, 202),
     ]);
@@ -255,17 +255,50 @@ describe("VeryfrontRunsClient", () => {
     });
 
     assertEquals(jsonBody(0), {
-      kind: "eval",
+      kind: "task",
       owner: { kind: "project", id: projectId },
       request: {
-        target: "eval:capital-basic-eval",
+        target: "task:eval",
         runtime_target_kind: "environment",
         runtime_target_environment_id: "44444444-4444-4444-8444-444444444444",
         input: { dataset: "smoke" },
-        config: { repetitions: 2 },
-        start_mode: "manual",
+        config: { repetitions: 2, eval_id: "eval:capital-basic-eval" },
       },
     });
+  });
+
+  it("preserves the API 404 when task:eval admission cannot find the eval", async () => {
+    mockFetch([
+      jsonResponse({
+        type: "https://veryfront.com/errors/resource-not-found",
+        title: "Resource not found",
+        status: 404,
+        detail: 'Eval "eval:missing" not found',
+      }, 404),
+    ]);
+
+    const error = await assertRejects(() =>
+      createTestClient().createEvalRun({
+        projectId,
+        target: "eval:missing",
+      })
+    );
+
+    assertEquals((error as { status?: number }).status, 404);
+  });
+
+  it("continues reading legacy eval-kind runs", async () => {
+    mockFetch([
+      jsonResponse(makeRun({
+        kind: "eval",
+        target: "eval:capital-basic-eval",
+      })),
+    ]);
+
+    const run = await createTestClient().get("run_11111111-1111-4111-8111-111111111111");
+
+    assertEquals(run.kind, "eval");
+    assertEquals(run.target, "eval:capital-basic-eval");
   });
 
   it("sends any JSON value as task, workflow and eval run input (#2109)", async () => {
