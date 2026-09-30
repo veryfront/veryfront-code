@@ -19,6 +19,8 @@ function publishedPackage(
     version: VERSION,
     gitHead: GIT_HEAD,
     dist: {
+      tarball: "https://registry.example.test/package.tgz",
+      integrity: `sha512-${"A".repeat(86)}==`,
       attestations: {
         provenance: {
           predicateType: "https://slsa.dev/provenance/v1",
@@ -26,6 +28,23 @@ function publishedPackage(
       },
     },
     ...overrides,
+  };
+}
+
+function installIndex(entryOverrides: Record<string, unknown> = {}) {
+  return {
+    name: PACKAGE_NAME,
+    versions: {
+      [VERSION]: {
+        name: PACKAGE_NAME,
+        version: VERSION,
+        dist: {
+          tarball: "https://registry.example.test/package.tgz",
+          integrity: `sha512-${"A".repeat(86)}==`,
+        },
+        ...entryOverrides,
+      },
+    },
   };
 }
 
@@ -103,7 +122,10 @@ describe("registry propagation budget", () => {
         now += ms;
         return Promise.resolve();
       },
-      fetcher: () => {
+      fetcher: (input) => {
+        if (!String(input).endsWith(`/${VERSION}`)) {
+          return Promise.resolve(Response.json(installIndex()));
+        }
         seenAt.push(now);
         now += 12_000;
         return Promise.resolve(
@@ -161,7 +183,9 @@ describe("registry propagation budget", () => {
     // Anything unusable leaves the default in place rather than a zero budget.
     // A digit-only value can still be unusable: `Infinity` never exhausts the
     // loop, and an unsafe integer stops the attempt counter advancing.
-    for (const value of ["0", "-1", "abc", "", "1e400", "99999999999999999999"]) {
+    for (
+      const value of ["0", "-1", "abc", "", "1e400", "99999999999999999999"]
+    ) {
       assertEquals(
         readPropagationBudget({ VF_REGISTRY_PROPAGATION_ATTEMPTS: value })
           .maxAttempts,
@@ -184,7 +208,10 @@ describe("registry release integrity polling", () => {
       maxAttempts: 3,
       retryDelayMs: 25,
       requestTimeoutMs: 100,
-      fetcher: () => {
+      fetcher: (input) => {
+        if (!String(input).endsWith(`/${VERSION}`)) {
+          return Promise.resolve(Response.json(installIndex()));
+        }
         attempts++;
         return Promise.resolve(
           attempts < 3
@@ -204,7 +231,7 @@ describe("registry release integrity polling", () => {
   });
 
   it("looks up the exact version on the configured registry", async () => {
-    let requestedUrl = "";
+    const requestedUrls: string[] = [];
 
     await pollRegistryPackage({
       packageName: PACKAGE_NAME,
@@ -215,15 +242,22 @@ describe("registry release integrity polling", () => {
       retryDelayMs: 0,
       requestTimeoutMs: 100,
       fetcher: (input) => {
-        requestedUrl = String(input);
-        return Promise.resolve(Response.json(publishedPackage()));
+        requestedUrls.push(String(input));
+        return Promise.resolve(
+          Response.json(
+            String(input).endsWith(`/${VERSION}`) ? publishedPackage() : installIndex(),
+          ),
+        );
       },
       delay: () => Promise.resolve(),
     });
 
     assertEquals(
-      requestedUrl,
-      `https://registry.example.test/npm/@veryfront%2Fext-auth-jwt/${VERSION}`,
+      requestedUrls,
+      [
+        `https://registry.example.test/npm/@veryfront%2Fext-auth-jwt/${VERSION}`,
+        "https://registry.example.test/npm/@veryfront%2Fext-auth-jwt",
+      ],
     );
   });
 
@@ -238,7 +272,10 @@ describe("registry release integrity polling", () => {
       maxAttempts: 3,
       retryDelayMs: 25,
       requestTimeoutMs: 100,
-      fetcher: () => {
+      fetcher: (input) => {
+        if (!String(input).endsWith(`/${VERSION}`)) {
+          return Promise.resolve(Response.json(installIndex()));
+        }
         attempts++;
         if (attempts === 1) {
           return Promise.resolve(
@@ -462,5 +499,286 @@ describe("registry release integrity polling", () => {
     assertEquals(error.classification, "timeout");
     assertEquals(attempts, 2);
     assertStringIncludes(error.message, "timed out");
+  });
+});
+
+describe("registry install-index readiness", () => {
+  it("waits when the exact-version endpoint is ready before npm's install index", async () => {
+    let indexes = 0;
+    const delays: number[] = [];
+    const metadata = await pollRegistryPackage({
+      packageName: PACKAGE_NAME,
+      version: VERSION,
+      expectedGitHead: GIT_HEAD,
+      maxAttempts: 3,
+      retryDelayMs: 25,
+      requestTimeoutMs: 100,
+      fetcher: (input, init) => {
+        if (String(input).endsWith(`/${VERSION}`)) {
+          return Promise.resolve(Response.json(publishedPackage()));
+        }
+        assertEquals(
+          new Headers(Reflect.get(init ?? {}, "headers")).get("accept"),
+          "application/vnd.npm.install-v1+json",
+        );
+        indexes++;
+        return Promise.resolve(
+          Response.json(
+            indexes < 3 ? { name: PACKAGE_NAME, versions: {} } : installIndex(),
+          ),
+        );
+      },
+      delay: (ms) => {
+        delays.push(ms);
+        return Promise.resolve();
+      },
+    });
+    assertEquals(metadata.version, VERSION);
+    assertEquals(indexes, 3);
+    assertEquals(delays, [25, 25]);
+  });
+});
+
+describe("registry install-index integrity", () => {
+  const options = {
+    packageName: PACKAGE_NAME,
+    version: VERSION,
+    expectedGitHead: GIT_HEAD,
+    maxAttempts: 2,
+    retryDelayMs: 0,
+    requestTimeoutMs: 100,
+    delay: () => Promise.resolve(),
+  };
+
+  for (
+    const [label, index, classification] of [
+      [
+        "package name",
+        { ...installIndex(), name: "private-registry-value" },
+        "wrong-name",
+      ],
+      [
+        "entry name",
+        installIndex({ name: "private-registry-value" }),
+        "wrong-name",
+      ],
+      [
+        "entry version",
+        installIndex({ version: "private-registry-value" }),
+        "wrong-version",
+      ],
+      [
+        "tarball",
+        installIndex({
+          dist: {
+            tarball: "private-registry-value",
+            integrity: `sha512-${"A".repeat(86)}==`,
+          },
+        }),
+        "provenance",
+      ],
+      [
+        "integrity",
+        installIndex({
+          dist: {
+            tarball: "https://registry.example.test/package.tgz",
+            integrity: "private-registry-value",
+          },
+        }),
+        "provenance",
+      ],
+    ] as const
+  ) {
+    it(`refuses a substituted install ${label} without retrying or logging its value`, async () => {
+      let indexes = 0;
+      const error = await captureError(() =>
+        pollRegistryPackage({
+          ...options,
+          fetcher: (input) => {
+            if (String(input).endsWith(`/${VERSION}`)) {
+              return Promise.resolve(Response.json(publishedPackage()));
+            }
+            indexes++;
+            return Promise.resolve(Response.json(index));
+          },
+        })
+      );
+      assertEquals(error.classification, classification);
+      assertEquals(indexes, 1);
+      assertEquals(
+        formatRegistryReleaseFailure(error).includes("private-registry-value"),
+        false,
+      );
+    });
+  }
+
+  it("does not report readiness if the install index never exposes the version", async () => {
+    let indexes = 0;
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        ...options,
+        fetcher: (input) => {
+          if (String(input).endsWith(`/${VERSION}`)) {
+            return Promise.resolve(Response.json(publishedPackage()));
+          }
+          indexes++;
+          return Promise.resolve(
+            Response.json({ name: PACKAGE_NAME, versions: {} }),
+          );
+        },
+      })
+    );
+    assertEquals(error.classification, "missing-version");
+    assertEquals(indexes, 2);
+    assertStringIncludes(
+      formatRegistryReleaseFailure(error),
+      "install index metadata missing",
+    );
+  });
+
+  for (
+    const [label, response, classification, expectedRequests] of [
+      [
+        "missing index",
+        () => new Response("missing", { status: 404 }),
+        "missing-version",
+        2,
+      ],
+      [
+        "missing entry version",
+        () => Response.json(installIndex({ version: undefined })),
+        "missing-version",
+        2,
+      ],
+      [
+        "missing tarball",
+        () =>
+          Response.json(
+            installIndex({ dist: { integrity: "sha512-example" } }),
+          ),
+        "missing-version",
+        2,
+      ],
+      [
+        "missing integrity",
+        () =>
+          Response.json(
+            installIndex({
+              dist: { tarball: "https://registry.example.test/package.tgz" },
+            }),
+          ),
+        "missing-version",
+        2,
+      ],
+      [
+        "failed index lookup",
+        () => new Response("private-registry-value", { status: 503 }),
+        "lookup",
+        1,
+      ],
+    ] as const
+  ) {
+    it(`classifies ${label} without reporting readiness`, async () => {
+      let indexes = 0;
+      const error = await captureError(() =>
+        pollRegistryPackage({
+          ...options,
+          fetcher: (input) => {
+            if (String(input).endsWith(`/${VERSION}`)) {
+              return Promise.resolve(Response.json(publishedPackage()));
+            }
+            indexes++;
+            return Promise.resolve(response());
+          },
+        })
+      );
+      assertEquals(error.classification, classification);
+      assertEquals(indexes, expectedRequests);
+      assertEquals(
+        formatRegistryReleaseFailure(error).includes("private-registry-value"),
+        false,
+      );
+    });
+  }
+
+  for (const field of ["tarball", "integrity"]) {
+    it(`waits for canonical ${field} metadata before consulting the index`, async () => {
+      const incomplete = publishedPackage();
+      delete (incomplete.dist as Record<string, unknown>)[field];
+      let indexes = 0;
+      const error = await captureError(() =>
+        pollRegistryPackage({
+          ...options,
+          fetcher: (input) => {
+            if (String(input).endsWith(`/${VERSION}`)) {
+              return Promise.resolve(Response.json(incomplete));
+            }
+            indexes++;
+            return Promise.resolve(Response.json(installIndex()));
+          },
+        })
+      );
+      assertEquals(error.classification, "provenance");
+      assertEquals(indexes, 0);
+    });
+  }
+
+  it("shares one request timeout between version and install-index lookups", async () => {
+    let versionSignal: AbortSignal | null | undefined;
+    let indexes = 0;
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        ...options,
+        maxAttempts: 1,
+        fetcher: (input, init) => {
+          if (String(input).endsWith(`/${VERSION}`)) {
+            versionSignal = Reflect.get(init ?? {}, "signal");
+            assertInstanceOf(versionSignal, AbortSignal);
+            return Promise.resolve(Response.json(publishedPackage()));
+          }
+          indexes++;
+          assertEquals(
+            Reflect.get(init ?? {}, "signal") === versionSignal &&
+              versionSignal !== undefined,
+            true,
+          );
+          return Promise.reject(new DOMException("timed out", "TimeoutError"));
+        },
+      })
+    );
+    assertEquals(error.classification, "timeout");
+    assertEquals(indexes, 1);
+  });
+
+  it("spends the existing budget on a slow install index without extending it", async () => {
+    let now = 0;
+    let indexes = 0;
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        ...options,
+        maxAttempts: 1000,
+        retryDelayMs: 10000,
+        requestTimeoutMs: 15000,
+        budgetMs: 60000,
+        now: () => now,
+        delay: (ms) => {
+          now += ms;
+          return Promise.resolve();
+        },
+        fetcher: (input) => {
+          if (String(input).endsWith(`/${VERSION}`)) {
+            return Promise.resolve(Response.json(publishedPackage()));
+          }
+          indexes++;
+          now += 15000;
+          return Promise.resolve(
+            Response.json({ name: PACKAGE_NAME, versions: {} }),
+          );
+        },
+      })
+    );
+    assertEquals(error.classification, "missing-version");
+    assertEquals(indexes, 3);
+    assertEquals(now, 65000);
   });
 });
