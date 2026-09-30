@@ -1,8 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { requireSecureInferenceApiBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
-import { normalizeVeryfrontApiBaseUrl } from "#veryfront/platform/cloud/resolver.ts";
-import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
+import { resolveVeryfrontInferenceApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import {
   type AgentModelRuntimeResolver,
   registerModelRuntimeResolverRevoker,
@@ -27,25 +26,17 @@ type ProjectRunInferenceScope = {
   active: boolean;
 };
 
-const DEFAULT_INFERENCE_API_BASE_URL = "https://api.veryfront.com";
-
 /**
- * The inference origin, read once when the framework loads this module, before
- * any project module runs. It is never re-read: project code can change the
- * live process environment (`Deno.env.set`), the Veryfront Cloud request
- * context and its `.env` file, and the origin chosen here receives the
- * credential. Values that came from a project `.env` file are excluded.
+ * The inference origin, from the host's boot-time environment only (see
+ * {@link resolveVeryfrontInferenceApiBaseUrlFromHostEnv}): neither the Veryfront
+ * Cloud request context, a project `.env` file, nor a later `Deno.env.set`
+ * can move it, and it receives the credential. Validated per execution, so a
+ * bad host value fails the run rather than the import.
  */
-const HOST_INFERENCE_API_BASE_URL: string = (() => {
-  const fromHost = (key: string) => normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile(key));
-  return fromHost("VERYFRONT_PUBLIC_API_BASE_URL") ?? fromHost("VERYFRONT_API_URL") ??
-    fromHost("VERYFRONT_API_BASE_URL") ?? DEFAULT_INFERENCE_API_BASE_URL;
-})();
-
-/** The load-time origin, validated where it is used so a bad value fails the run, not the import. */
 function resolveTrustedInferenceApiBaseUrl(): string {
-  requireSecureInferenceApiBaseUrl(HOST_INFERENCE_API_BASE_URL);
-  return HOST_INFERENCE_API_BASE_URL;
+  const apiBaseUrl = resolveVeryfrontInferenceApiBaseUrlFromHostEnv();
+  requireSecureInferenceApiBaseUrl(apiBaseUrl);
+  return apiBaseUrl;
 }
 
 // Module-private: the credential is reachable only through the resolvers this

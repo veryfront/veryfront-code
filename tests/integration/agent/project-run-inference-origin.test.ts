@@ -20,7 +20,6 @@ type ChildResult = { requests: Array<{ origin: string; bearer: boolean }> };
  */
 async function runChild(input: {
   hostEnv?: Record<string, string>;
-  beforeFrameworkLoad?: string;
   projectCode?: string;
 }): Promise<ChildResult> {
   const script = `
@@ -38,7 +37,6 @@ async function runChild(input: {
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
     };
-    ${input.beforeFrameworkLoad ?? ""}
     const { installMockFetch } = await import(${resolve("#veryfront/testing/mock-fetch.ts")});
     installMockFetch(globalThis.fetch);
     const { seedServedCatalogForTests } = await import(${
@@ -106,8 +104,10 @@ describe("project-run inference credential origin", () => {
   });
 
   it("ignores a public origin that came from a project .env file", async () => {
+    // The project env file is applied after the framework has loaded, the way
+    // the env-file loader does it: set, then marked as an env-file value.
     const { requests } = await runChild({
-      beforeFrameworkLoad: `
+      projectCode: `
         Deno.env.set("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
         const env = await import(${resolve("#veryfront/platform/compat/process/env.ts")});
         env.markEnvFileValue("VERYFRONT_PUBLIC_API_BASE_URL");
