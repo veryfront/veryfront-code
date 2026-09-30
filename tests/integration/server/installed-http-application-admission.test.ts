@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withEnv } from "#veryfront/testing";
+import { makeTempDir, withEnv } from "#veryfront/testing";
 import { createExecutorHttpApplicationRuntime } from "#veryfront/server/isolated-http/application-runtime.ts";
 import type { ExecutorHttpInstall } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 
@@ -157,7 +157,7 @@ describe("installed HTTP application admission", () => {
 describe("installed HTTP application startup cleanup", () => {
   it("shuts down the adapter on bootstrap failure and preserves the startup error", async () => {
     const { NodeAdapter } = await import("#veryfront/platform/adapters/runtime/node/adapter.ts");
-    const projectDir = await Deno.makeTempDir({ prefix: "http-admission-" });
+    const projectDir = await makeTempDir({ prefix: "http-admission-" });
     const originalShutdown = NodeAdapter.prototype.shutdown;
     let shutdowns = 0;
     NodeAdapter.prototype.shutdown = async function () {
