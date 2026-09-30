@@ -2585,3 +2585,37 @@ describe("workflow/executor/workflow-executor final output selection (#2107)", (
     assertEquals(run?.context.input, { amount: 42.5, currency: "EUR" });
   });
 });
+
+describe("workflow/executor/workflow-executor input validation (#2091)", () => {
+  it("rejects input that fails the inputSchema with INPUT_VALIDATION_FAILED and the validation errors", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let executions = 0;
+    executor.register(
+      workflow({
+        id: "invalid-input",
+        inputSchema: defineSchema((v) => v.object({ amount: v.number(), currency: v.string() }))(),
+        steps: [
+          step("side-effect", {
+            tool: createTool("side-effect", () => {
+              executions++;
+              return {};
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    const error = await assertRejects(
+      () => executor.start("invalid-input", { amount: "not a number" }),
+      VeryfrontError,
+    ) as VeryfrontError;
+
+    assertEquals(error.slug, "input-validation-failed");
+    const errors = (error.context as { errors: { path: string; message: string }[] }).errors;
+    assertEquals(errors.map((entry) => entry.path), ["/amount", "/currency"]);
+    assert(errors.every((entry) => entry.message.length > 0));
+    assertEquals(executions, 0);
+    assertEquals(await backend.listRuns({ workflowId: "invalid-input" }), []);
+  });
+});

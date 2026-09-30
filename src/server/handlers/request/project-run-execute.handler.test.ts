@@ -10,6 +10,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import { tool } from "#veryfront/tool";
+import { createWorkflowClient, step, workflow, type WorkflowDefinition } from "#veryfront/workflow";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { Message } from "#veryfront/agent/types.ts";
@@ -2632,6 +2633,59 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       runtimeTargetEnvironmentId: "env-1",
       runtimeTargetBranchId: undefined,
     });
+  });
+
+  it("fails a workflow run whose input fails its inputSchema with INPUT_VALIDATION_FAILED (#2091)", async () => {
+    let executions = 0;
+    const definition = workflow({
+      id: "publish",
+      inputSchema: defineSchema((v) => v.object({ release: v.string() }))(),
+      steps: [
+        step("side-effect", {
+          tool: tool({
+            id: "side-effect",
+            description: "Must not run",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => {
+              executions++;
+              return Promise.resolve({});
+            },
+          }),
+        }),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_invalid_input_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: 1 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_invalid_input_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail.errors.length, 1);
+    assertEquals(response.error_detail.errors[0].path, "/release");
+    assertStringIncludes(response.error, "/release");
+    assertEquals(executions, 0);
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
