@@ -169,6 +169,12 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   /** @internal Verified provider replay state for persisted assistant turns. */
   serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
+  /** @internal Exact pending integration call from a verified control-plane invocation. */
+  serverResolvedResumeToolCall?: {
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+  };
   /** @internal Durable assistant message id for emitted provider replay state. */
   providerReplayCheckpointMessageId?: string;
   /** @internal Persists private provider replay state outside model messages. */

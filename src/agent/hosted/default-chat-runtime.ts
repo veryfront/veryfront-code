@@ -662,6 +662,9 @@ export function createPreparedHostedRuntimeAgent(
   const resolvedRuntimeOptions = {
     ...runtimeOptions,
     modelCallThinking: runtimeOptions.modelCallThinking ?? input.options.thinking,
+    ...(input.options.serverResolvedResumeToolCall
+      ? { resumeToolCall: input.options.serverResolvedResumeToolCall }
+      : {}),
   };
   objectSetPrototypeOf(resolvedRuntimeOptions, null);
   return createEphemeralAgentWithRuntimeOptions(

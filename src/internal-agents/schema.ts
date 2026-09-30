@@ -51,9 +51,17 @@ export const getRuntimeInjectedToolSchema = getAgUiRuntimeInjectedToolSchema;
 export const getRuntimeContextItemSchema = getAgUiRuntimeContextItemSchema;
 export const getRuntimeMessageSchema = getAgUiRuntimeMessageSchema;
 export const getRuntimeContextSchema = getAgUiRuntimeContextSchema;
+const getRuntimeResumeToolCallSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1).max(256),
+    name: v.string().min(1).max(128),
+    input: v.record(v.string(), v.unknown()),
+  }).strict()
+);
 export const getRuntimeRunAgentInputSchema = defineSchema((v) =>
   getAgUiRuntimeRequestSchema().extend({
     allowDelegation: v.boolean().optional(),
+    resumeToolCall: getRuntimeResumeToolCallSchema().optional(),
   })
 );
 
@@ -102,6 +110,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       { message: "forwardedProps must be less than 192 KB" },
     ),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
+    resumeToolCall: getRuntimeResumeToolCallSchema().optional(),
   }).strict().superRefine((input, ctx) => {
     if (input.sourceProject || input.executionProject) {
       if (!input.sourceProject || !input.executionProject || !input.credentials?.sourceAuthToken) {
@@ -441,6 +450,7 @@ export function toRuntimeRunAgentInput(
         serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
       }
       : {}),
+    ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
   } as RuntimeRunAgentInput;
 }
 
@@ -448,7 +458,7 @@ export const getResumeSignalSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({
       type: v.literal("tool_result"),
-      toolCallId: v.string().min(1).max(128),
+      toolCallId: v.string().min(1).max(256),
       result: v.unknown().refine(
         (value) => isWithinJsonSizeLimit(value, MAX_TOOL_RESULT_BYTES),
         { message: "Tool result must be less than 64 KB" },
@@ -467,6 +477,7 @@ export type RuntimeRunAgentInput = AgUiRuntimeRequest & {
   allowDelegation?: boolean;
   messageId?: string;
   serverResolvedProviderReplayCheckpoints?: unknown;
+  resumeToolCall?: { id: string; name: string; input: Record<string, unknown> };
 };
 export type InternalAgentStreamRequest = InferSchema<
   ReturnType<typeof getInternalAgentStreamRequestSchema>

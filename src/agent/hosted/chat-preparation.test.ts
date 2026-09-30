@@ -971,6 +971,25 @@ Deno.test("prepareHostedChatRuntimeCreationOptions forwards the verified integra
   );
 });
 
+Deno.test("prepareHostedChatRuntimeCreationOptions forwards a verified exact resume call", async () => {
+  const resumeToolCall = {
+    id: "call-1:resume-1",
+    name: "outlook__list_messages",
+    input: { folder: "inbox" },
+  };
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest({ serverResolvedResumeToolCall: resumeToolCall }),
+    agentConfig: { id: "agent-1", model: "configured-model" },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  assertEquals(result.creationOptions.serverResolvedResumeToolCall, resumeToolCall);
+});
+
 Deno.test("prepareHostedChatExecution forwards the verified integration tool grant to runtime creation", async () => {
   let recordedOptions: { serverResolvedIntegrationToolNames?: readonly string[] } | undefined;
 

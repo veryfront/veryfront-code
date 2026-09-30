@@ -537,6 +537,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
           serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
         }
         : {}),
+      ...(input.request.serverResolvedResumeToolCall
+        ? { serverResolvedResumeToolCall: input.request.serverResolvedResumeToolCall }
+        : {}),
       ...(input.serverResolvedIntegrationToolNames?.length
         ? { serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames }
         : {}),
