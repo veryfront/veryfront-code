@@ -3610,6 +3610,30 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(destroyed, true);
   });
 
+  it("cancels a persisted resume when its request aborts during discovery", async () => {
+    const { client, calls } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let cancellations = 0;
+    client.cancel = () => {
+      cancellations++;
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+    }, {
+      ensureProjectDiscovery: () => {
+        controller.abort();
+        return Promise.resolve(createEmptyDiscoveryResult());
+      },
+    }, controller.signal);
+    assertEquals(payload.success, false);
+    assertEquals(cancellations, 1);
+    assertEquals(calls, []);
+  });
+
   it("preserves completion when request cancellation races a resumed result", async () => {
     const { client, settle } = resumableClient(waitingOnReview);
     const controller = new AbortController();

@@ -1195,8 +1195,8 @@ async function executeWorkflowRun(
   let activeResume: Promise<unknown> | undefined;
   try {
     client.register(workflow.definition);
-    // The run was cancelled while the workflow was being loaded: do not start or resume it.
-    if (signal.aborted) {
+    // A first dispatch has no durable run yet. A resume must cancel its persisted run below.
+    if (signal.aborted && !request.resume) {
       return {
         success: false,
         error: "Workflow run cancelled",
