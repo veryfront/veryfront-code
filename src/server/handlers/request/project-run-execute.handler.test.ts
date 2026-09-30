@@ -3531,6 +3531,113 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(cancelled, false);
   });
 
+  it("cancels durable execution immediately while an approval decision is pending", async () => {
+    const { client } = resumableClient(waitingOnReview);
+    let finish!: () => void;
+    let destroyed = false;
+    let cancelled = false;
+    let cancellations = 0;
+    const controller = new AbortController();
+    client.cancel = () => {
+      cancelled = true;
+      cancellations++;
+      if (cancellations > 1) return Promise.reject(new Error("already cancelled"));
+      return Promise.resolve();
+    };
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+        controller.abort();
+      });
+    client.destroy = () => {
+      destroyed = true;
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "timed out");
+    assertEquals(destroyed, false);
+    assertEquals(cancelled, true);
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(destroyed, true);
+    assertEquals(cancellations, 1);
+    assertEquals(cancelled, true);
+  });
+
+  it("keeps the client alive until cancellation settles after resume rejects", async () => {
+    const { client } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let finishCancel!: () => void;
+    let destroyed = false;
+    client.cancel = () =>
+      new Promise<void>((resolve) => {
+        finishCancel = resolve;
+      });
+    client.destroy = () => {
+      destroyed = true;
+      return Promise.resolve();
+    };
+    client.approve = () => {
+      controller.abort();
+      return Promise.reject(new Error("resume failed"));
+    };
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    assertStringIncludes(payload.error, "timed out");
+    assertEquals(destroyed, false);
+    finishCancel();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(destroyed, true);
+  });
+
+  it("preserves completion when request cancellation races a resumed result", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let cancellations = 0;
+    client.cancel = () => {
+      cancellations++;
+      return Promise.reject(new Error("already completed"));
+    };
+    client.approve = () => {
+      settle({ status: "completed", output: { done: true } });
+      controller.abort();
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      {},
+      controller.signal,
+    );
+    assertEquals(payload.result, { done: true });
+    assertEquals(cancellations, 0);
+  });
+
   it("applies a decision whose wait_id names the boundary the run is parked on", async () => {
     const { client, calls } = resumableClient(waitingOnReview);
 
