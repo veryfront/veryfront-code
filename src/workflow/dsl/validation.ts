@@ -28,6 +28,20 @@ export function validateWorkflowPathSegment(id: string, label: string): void {
   }
 }
 
+/**
+ * Canonical run ids the Veryfront control plane mints (`run_` + a UUID). The
+ * control plane starts a project workflow under that id, and decisions for it
+ * must go through `POST /runs/{run_id}/resume` so the canonical run moves with
+ * them (#2102). The shape is reserved: ids this runtime generates
+ * (`run_` + 12 characters) never match, and `start` refuses a caller-chosen id
+ * of this shape unless the start is control-plane owned.
+ */
+const CONTROL_PLANE_RUN_ID = /^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isControlPlaneWorkflowRunId(runId: string): boolean {
+  return CONTROL_PLANE_RUN_ID.test(runId);
+}
+
 /** Namespace child IDs and every dependency reference into the same graph. */
 export function namespaceWorkflowNodes(
   prefix: string,

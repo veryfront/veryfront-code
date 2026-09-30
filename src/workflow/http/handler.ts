@@ -37,6 +37,7 @@ import {
 } from "#veryfront/workflow/events.ts";
 import type { ApprovalDecision, RunFilter } from "#veryfront/workflow/types.ts";
 import { DEFAULT_WORKFLOW_RUN_LIST_LIMIT } from "#veryfront/workflow/limits.ts";
+import { isControlPlaneWorkflowRunId } from "#veryfront/workflow/dsl/validation.ts";
 import { projectWorkflowRunSummary } from "#veryfront/workflow/http/run-summary.ts";
 
 /** Options for {@linkcode createWorkflowHandler}. */
@@ -72,18 +73,6 @@ const DEFAULT_MAX_EVENT_STREAMS_PER_IDENTITY = 8;
 const logger = baseLogger.component("workflow-http");
 
 class WorkflowRequestError extends Error {}
-
-/**
- * Canonical run ids the Veryfront control plane mints (`run_` + a UUID). The
- * control plane starts a project workflow under that id, and decisions for it
- * must go through `POST /runs/{run_id}/resume` so the canonical run moves with
- * them (#2102). Ids this runtime generates (`run_` + 12 characters) never match.
- */
-const CONTROL_PLANE_RUN_ID = /^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isControlPlaneOwnedWorkflowRunId(runId: string): boolean {
-  return CONTROL_PLANE_RUN_ID.test(runId);
-}
 
 function readPositiveLimit(value: number | undefined, fallback: number, name: string): number {
   const limit = value ?? fallback;
@@ -506,7 +495,7 @@ export function createWorkflowHandler(
       // knowing, the same as an approval decision.
       if (
         segments.length === 3 && first === "runs" && second &&
-        (third === "cancel" || third === "retry") && isControlPlaneOwnedWorkflowRunId(second)
+        (third === "cancel" || third === "retry") && isControlPlaneWorkflowRunId(second)
       ) {
         return problem(
           `Workflow run ${second} belongs to the Veryfront control plane. ` +
@@ -528,7 +517,7 @@ export function createWorkflowHandler(
       if (
         segments.length === 4 && first === "runs" && second && third === "approvals" && approvalId
       ) {
-        if (isControlPlaneOwnedWorkflowRunId(second)) {
+        if (isControlPlaneWorkflowRunId(second)) {
           return problem(
             `Workflow run ${second} belongs to the Veryfront control plane. ` +
               `Decide its approvals with POST /runs/${second}/resume.`,

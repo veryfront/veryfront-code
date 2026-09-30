@@ -159,6 +159,19 @@ describe("WorkflowClient", () => {
     }
   });
 
+  it("reserves control-plane shaped run IDs for control-plane owned starts (#2102)", async () => {
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    await assertRejects(
+      () => client.start("test-workflow", {}, { runId }),
+      VeryfrontError,
+      "reserved for the Veryfront control plane",
+    );
+    assertEquals(await backend.getRun(runId), null);
+
+    const handle = await client.start("test-workflow", {}, { runId, controlPlaneOwned: true });
+    assertEquals(handle.runId, runId);
+  });
+
   describe("typed approval payload", () => {
     const schemaWorkflow = workflow({
       id: "typed-approval-workflow",

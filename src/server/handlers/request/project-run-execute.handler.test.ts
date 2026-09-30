@@ -4,6 +4,8 @@ import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertMatch,
+  assertNotEquals,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -263,6 +265,13 @@ describe("projectWorkflowRedisPrefix", () => {
     assertStringIncludes(error.detail ?? "", "requires a project scope");
   });
 });
+
+/** The waiting payload without its opaque boundary id, which must be a SHA-256 hex digest. */
+function withoutWaitId(waiting: Record<string, unknown>): Record<string, unknown> {
+  const { wait_id: waitId, ...rest } = waiting;
+  assertMatch(String(waitId), /^[0-9a-f]{64}$/);
+  return rest;
+}
 
 function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
@@ -1089,12 +1098,20 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("runs a discovered workflow with the canonical run id and input", async () => {
     let started:
-      | { workflowId: string; input: unknown; options?: { runId?: string } }
+      | {
+        workflowId: string;
+        input: unknown;
+        options?: { runId?: string; controlPlaneOwned?: boolean };
+      }
       | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       createWorkflowClient: () => ({
         register: () => {},
-        start: async (workflowId: string, input: unknown, options?: { runId?: string }) => {
+        start: async (
+          workflowId: string,
+          input: unknown,
+          options?: { runId?: string; controlPlaneOwned?: boolean },
+        ) => {
           started = { workflowId, input, options };
           return { runId: options?.runId ?? "workflow-run" };
         },
@@ -1130,7 +1147,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(started, {
       workflowId: "publish",
       input: { release: "v1" },
-      options: { runId: "run_workflow_1" },
+      options: { runId: "run_workflow_1", controlPlaneOwned: true },
     });
   });
 
@@ -2456,7 +2473,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(await result.response.json(), {
+    const waitingBody = await result.response.json();
+    assertEquals({ ...waitingBody, waiting: withoutWaitId(waitingBody.waiting) }, {
       success: true,
       status: "waiting",
       waiting_reason: "approval",
@@ -2478,7 +2496,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "pending",
           expiresAt: "2026-09-29T22:00:00.000Z",
         }],
-        waiting: { event: "invoice.received", resume_at: "2026-09-29T22:00:00.000Z" },
+        waiting: {
+          event: "invoice.received",
+          events: ["invoice.received"],
+          resume_at: "2026-09-29T22:00:00.000Z",
+        },
       },
       {
         name: "a delay reports only its wake-up",
@@ -2494,7 +2516,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       {
         name: "an event wait without a timeout reports no deadline",
         waits: [{ nodeId: "invoice", eventName: "invoice.received", waitKind: "event" }],
-        waiting: { event: "invoice.received" },
+        waiting: { event: "invoice.received", events: ["invoice.received"] },
       },
     ] as const
   ) {
@@ -2531,7 +2553,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const payload = await result.response.json();
       assertEquals(payload.status, "waiting");
       assertEquals(payload.waiting_reason, "event");
-      assertEquals(payload.waiting, scenario.waiting);
+      assertEquals(withoutWaitId(payload.waiting), scenario.waiting);
       assertEquals("result" in payload, false);
     });
   }
@@ -2840,6 +2862,72 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload.result, { stage: "paid" });
   });
 
+  /** The wait_id a pause reports: a deadline dispatch with nothing due re-reports it. */
+  async function reportedWaitId(parked: Record<string, unknown>): Promise<string> {
+    const { client } = resumableClient({ ...parked, onDeadline: parked });
+    const { payload } = await executeResume(client, { type: "deadline" });
+    return payload.waiting.wait_id;
+  }
+
+  it("applies nothing when a retried decision names a boundary the run already left", async () => {
+    // The first dispatch approved apr_1 and the run parked again on the same
+    // node (a loop), but its response never reached the control plane.
+    const parkedAgain = {
+      status: "waiting",
+      pendingApprovals: [{ id: "apr_2", nodeId: "manager-review", status: "pending" }],
+    };
+    const earlierWaitId = await reportedWaitId(waitingOnReview);
+    const { client, calls } = resumableClient(parkedAgain);
+
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+      wait_id: earlierWaitId,
+    });
+
+    assertEquals(calls, []);
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting.wait_id, await reportedWaitId(parkedAgain));
+    assertNotEquals(payload.waiting.wait_id, earlierWaitId);
+  });
+
+  it("applies a decision whose wait_id names the boundary the run is parked on", async () => {
+    const { client, calls } = resumableClient(waitingOnReview);
+
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+      wait_id: await reportedWaitId(waitingOnReview),
+    });
+
+    assertEquals(calls.map(([name]) => name), ["approve"]);
+    assertEquals(payload.result, { stage: "paid" });
+  });
+
+  it("reports every awaited event name when a run waits on several", async () => {
+    const parked = {
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [
+        { nodeId: "invoice", eventName: "invoice.received", waitKind: "event" },
+        { nodeId: "receipt", eventName: "receipt.received", waitKind: "event" },
+        { nodeId: "cool-off", eventName: "__veryfront_delay__", waitKind: "delay" },
+      ],
+    };
+    const { client } = resumableClient({ ...parked, onDeadline: parked });
+
+    const { payload } = await executeResume(client, { type: "deadline" });
+
+    assertEquals(withoutWaitId(payload.waiting), {
+      event: "invoice.received",
+      events: ["invoice.received", "receipt.received"],
+    });
+  });
+
   it("reports a resumed run that paused again on a new approval as waiting", async () => {
     const { client, settle } = resumableClient(waitingOnReview);
     client.approve = () => {
@@ -2858,7 +2946,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
 
     assertEquals(payload.status, "waiting");
-    assertEquals(payload.waiting, { pending_approvals: ["finance-review"] });
+    assertEquals(withoutWaitId(payload.waiting), { pending_approvals: ["finance-review"] });
   });
 
   it("keeps polling while the decided approval has left the pending set but the run still reads waiting", async () => {
@@ -2986,7 +3074,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertEquals(polls, 0);
     assertEquals(payload.status, "waiting");
-    assertEquals(payload.waiting, { event: "invoice.received" });
+    assertEquals(withoutWaitId(payload.waiting), {
+      event: "invoice.received",
+      events: ["invoice.received"],
+    });
   });
 
   // The production wiring: a real workflow client on a shared durable backend.
@@ -3000,7 +3091,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const definition = workflow({ id: "publish", steps }).definition;
       const first = createWorkflowClient({ backend });
       first.register(definition);
-      const handle = await first.start("publish", {}, { runId });
+      const handle = await first.start("publish", {}, { runId, controlPlaneOwned: true });
       await handle.settled?.();
       first.getApprovalManager().stop();
       first.getEventWaitManager().stop();

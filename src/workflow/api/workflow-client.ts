@@ -406,7 +406,7 @@ export class WorkflowClient {
   start<TInput, TOutput = unknown>(
     workflowId: string,
     input: TInput,
-    options?: { runId?: string },
+    options?: { runId?: string; controlPlaneOwned?: boolean },
   ): Promise<WorkflowHandle<TOutput>> {
     return this.executor.start<TInput, TOutput>(workflowId, input, options);
   }
