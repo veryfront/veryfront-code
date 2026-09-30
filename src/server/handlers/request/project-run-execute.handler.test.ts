@@ -5749,6 +5749,7 @@ describe("project run inference credential header", () => {
     let receivedAuthToken: string | undefined;
     let resolverInScope: boolean | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedAuthToken = config.authToken;
         resolverInScope = createProjectRunInferenceModelResolver() !== undefined;
@@ -5759,10 +5760,10 @@ describe("project run inference credential header", () => {
       "/api/control-plane/runs/run_eval_sealed/execute",
       {
         runId: "run_eval_sealed",
-        kind: "eval",
-        target: "eval:deep-research",
+        kind: "task",
+        target: "task:eval",
         projectId: "proj-1",
-        config: { agent_id: "researcher" },
+        config: { eval_id: "eval:deep-research", agent_id: "researcher" },
       },
       { "x-token": "project-runtime-token", "X-Veryfront-Inference-Token": INFERENCE_TOKEN },
     );
@@ -5773,7 +5774,7 @@ describe("project run inference credential header", () => {
     const result = await handler.handle(sealed, createCtx(publicKeyPem));
 
     assertExists(result.response);
-    assertEquals(result.response.status, 200);
+    assertEquals(result.response.status, 200, JSON.stringify(await result.response.json()));
     assertEquals(receivedAuthToken, "project-runtime-token");
     assertEquals(resolverInScope, true);
   });
