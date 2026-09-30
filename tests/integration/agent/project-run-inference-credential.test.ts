@@ -107,7 +107,7 @@ describe("project-run inference credential", () => {
     assertExists(retained);
 
     await assertRejects(
-      () => retained.doStream({ prompt: [] }),
+      async () => await retained.doStream({ prompt: [] }),
       TypeError,
       "Project run inference credential is no longer active",
     );
@@ -273,8 +273,8 @@ describe("project-run inference credential revocation", () => {
 
       for (
         const call of [
-          () => retained.doStream({ prompt: [] }),
-          () => retained.doGenerate({ prompt: [] }),
+          async () => await retained.doStream({ prompt: [] }),
+          async () => await retained.doGenerate({ prompt: [] }),
         ]
       ) {
         await assertRejects(
@@ -333,7 +333,7 @@ describe("project-run inference credential revocation", () => {
     assertEquals(requests.map((request) => request.authorization), [`Bearer ${INFERENCE_TOKEN}`]);
 
     await assertRejects(
-      () => model.doStream({ prompt: [] }),
+      async () => await model.doStream({ prompt: [] }),
       TypeError,
       "Project run inference credential is no longer active",
     );
@@ -505,7 +505,7 @@ describe("project-run inference credential boundaries", () => {
     assertEquals(parts > 0, true);
     assertEquals(requests.length, 1);
     await assertRejects(
-      () => model.doStream({ prompt: [] }),
+      async () => await model.doStream({ prompt: [] }),
       TypeError,
       "Project run inference credential is no longer active",
     );

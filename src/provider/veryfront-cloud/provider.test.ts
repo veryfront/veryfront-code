@@ -2372,8 +2372,16 @@ describe("provider/veryfront-cloud revoked inference credentials", () => {
       credential.revoke();
 
       await model.prepare?.();
-      await assertRejects(() => model.doStream({ prompt: [] }), TypeError, "credential revoked");
-      await assertRejects(() => model.doGenerate({ prompt: [] }), TypeError, "credential revoked");
+      await assertRejects(
+        async () => await model.doStream({ prompt: [] }),
+        TypeError,
+        "credential revoked",
+      );
+      await assertRejects(
+        async () => await model.doGenerate({ prompt: [] }),
+        TypeError,
+        "credential revoked",
+      );
       assertEquals(urls, []);
     });
   }

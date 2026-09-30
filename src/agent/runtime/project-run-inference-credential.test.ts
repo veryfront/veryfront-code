@@ -62,8 +62,12 @@ describe("agent/runtime/project-run-inference-credential", () => {
     );
     assertExists(liveModel);
 
-    await assertRejects(() => revokedModel.doGenerate({ prompt: [] }), TypeError, REVOKED);
-    await assertRejects(() => liveModel.doStream({ prompt: [] }), TypeError, REVOKED);
+    await assertRejects(
+      async () => await revokedModel.doGenerate({ prompt: [] }),
+      TypeError,
+      REVOKED,
+    );
+    await assertRejects(async () => await liveModel.doStream({ prompt: [] }), TypeError, REVOKED);
     assertThrows(() => resolver(MODEL), TypeError, REVOKED);
   });
 
