@@ -193,12 +193,6 @@ The run record does not distinguish an explicit `null` output from no output.
 Read `status` and `error` to tell a completed run that produced `null` from a
 run that failed.
 
-When a parent agent delegates with `invoke_agent`, the tool result carries the
-child's `output` next to its summary. There, the difference is kept: `output`
-set to `null` means the child's run output is `null`, and a missing `output`
-key means the output was left out, for example because it is too large for the
-tool result. The tool result never carries a truncated output.
-
 ## JSON serialization
 
 `run.input` and `run.output` are stored and returned as JSON. The runtime
