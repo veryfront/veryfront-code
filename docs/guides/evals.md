@@ -90,6 +90,26 @@ from running.
 `--report`, baselines, model overrides, and model comparison are single-eval
 options. Name the eval when using them.
 
+## Run input schemas
+
+An agent eval can declare the input accepted when a durable run is created:
+
+```ts
+import { datasets, evalAgent } from "veryfront/eval";
+import { defineSchema } from "veryfront/schemas";
+
+export default evalAgent({
+  target: "agent:invoice-lookup",
+  inputSchema: defineSchema((v) => v.object({ invoiceId: v.string() }))(),
+  dataset: datasets.inline([{ id: "lookup", input: "Find the invoice." }]),
+});
+```
+
+Veryfront creates the run, then validates its submitted `input` in the runtime before the eval
+executes. Invalid input fails with `INPUT_VALIDATION_FAILED` and structured `{ path, message }`
+errors. Without `inputSchema`, durable eval runs continue to accept any JSON input. The run input
+is separate from each dataset example's `input`.
+
 The report and summary artifacts include `schemaVersion`. New reports also
 include dataset metadata with the dataset kind, optional path, example count,
 and a stable SHA-256 hash when examples were loaded. The hash is based on the

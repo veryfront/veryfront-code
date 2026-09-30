@@ -8,6 +8,7 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import {
+  formatSchemaValidationErrors,
   INPUT_VALIDATION_FAILED_CODE,
   readSchemaValidationErrors,
   type SchemaValidationError,
@@ -38,7 +39,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { findProjectRuntimeTask } from "#veryfront/task/project-runtime.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
-import type { SchemaViolation } from "#veryfront/task/io-contract.ts";
+import { checkDeclaredSchema, type SchemaViolation } from "#veryfront/task/io-contract.ts";
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
@@ -2315,6 +2316,27 @@ async function executeEvalRun(
       logs: null,
       duration_ms: 0,
     };
+  }
+
+  if (evalItem.definition.inputSchema !== undefined) {
+    const check = await checkDeclaredSchema(evalItem.definition.inputSchema, request.input);
+    if (check.outcome === "invalid") {
+      return {
+        success: false,
+        error: `Eval "${evalItem.id}" input failed inputSchema validation: ${
+          formatSchemaValidationErrors(check.errors)
+        }`,
+        error_code: INPUT_VALIDATION_FAILED_CODE,
+        error_detail: { errors: check.errors },
+        logs: null,
+        duration_ms: Math.max(0, deps.now() - startedAt),
+      };
+    }
+    if (check.outcome === "schema_uncompilable") {
+      throw INVALID_ARGUMENT.create({
+        detail: `Eval "${evalItem.id}" inputSchema could not be compiled`,
+      });
+    }
   }
 
   const config = request.config ?? {};
