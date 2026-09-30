@@ -9,6 +9,7 @@ import {
   ensureError,
   INPUT_VALIDATION_FAILED,
   INVALID_ARGUMENT,
+  NOT_SUPPORTED,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
@@ -18,6 +19,7 @@ import type {
   NodeState,
   StepBuilderContext,
   WaitNodeConfig,
+  WorkflowChildRunWaitBoundary,
   WorkflowContext,
   WorkflowDefinition,
   WorkflowNode,
@@ -26,6 +28,7 @@ import type {
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
 import {
+  hasChildRunWaitBoundaryUpdateSupport,
   hasEventWaitSupport,
   hasExecutionOwnershipSupport,
   hasRunPatchKeyMergeSupport,
@@ -34,6 +37,7 @@ import {
   updateRunIfStatus,
   type WorkflowBackend,
 } from "../backends/types.ts";
+import { childRunWaitBoundary, sameChildRunWaitBoundary } from "../child-run-wait-boundary.ts";
 import { hasRuntimeRequestContextOverride } from "#veryfront/platform/runtime-request-context.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
@@ -427,6 +431,57 @@ export class WorkflowExecutor {
       run,
       () => this.resumeRun(run, fromCheckpoint, executionWorkerId),
     );
+  }
+
+  /** Complete every child-run wait in the current durable pause, then continue the same run. */
+  async resumeChildRuns(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+  ): Promise<boolean> {
+    requireDurableWorkflowSourceContext();
+    const backend = this.config.backend;
+    if (
+      !hasRunPatchKeyMergeSupport(backend) ||
+      !hasChildRunWaitBoundaryUpdateSupport(backend)
+    ) {
+      throw NOT_SUPPORTED.create({
+        detail:
+          "Durable child-run waits require atomic boundary updates on a key-merge workflow backend",
+      });
+    }
+    if (expectedBoundary.length === 0) return false;
+    const run = await backend.getRun(runId);
+    if (!run || run.status !== "waiting") return false;
+    const currentBoundary = childRunWaitBoundary(run);
+    if (!sameChildRunWaitBoundary(currentBoundary, expectedBoundary)) return false;
+    const workerId = run.workerId;
+
+    const completedAt = new Date();
+    const contextPatch: Record<string, unknown> = {};
+    const nodeStatePatch: Record<string, NodeState> = {};
+    for (const boundary of currentBoundary) {
+      const state = run.nodeStates[boundary.nodeId]!;
+      if (state.status === "completed") continue;
+      const output = { runIds: [...boundary.runIds] };
+      contextPatch[boundary.nodeId] = output;
+      nodeStatePatch[boundary.nodeId] = {
+        ...state,
+        status: "completed",
+        output,
+        error: undefined,
+        completedAt,
+      };
+    }
+
+    const updated = await backend.updateRunIfChildWaitBoundary(
+      runId,
+      expectedBoundary,
+      { context: contextPatch, nodeStates: nodeStatePatch },
+      workerId,
+    );
+    if (!updated) return false;
+    await this.resume(runId, undefined, workerId);
+    return true;
   }
 
   /**

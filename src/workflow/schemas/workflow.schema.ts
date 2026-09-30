@@ -235,7 +235,9 @@ export const getParallelStrategySchema = defineSchema((v) =>
 /**
  * Wait type schema
  */
-export const getWaitTypeSchema = defineSchema((v) => v.enum(["approval", "event"] as const));
+export const getWaitTypeSchema = defineSchema((v) =>
+  v.enum(["approval", "event", "child_run"] as const)
+);
 
 // Backward-compat aliases (consumed by schemas/index.ts and other unmigrated callers)
 export const WorkflowStatusSchema = lazySchema(getWorkflowStatusSchema);

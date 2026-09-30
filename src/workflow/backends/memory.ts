@@ -14,6 +14,8 @@ import type {
   WorkflowQueueItem,
   WorkflowRun,
 } from "../types.ts";
+import type { WorkflowChildRunWaitBoundary } from "../types.ts";
+import { childRunWaitBoundary, sameChildRunWaitBoundary } from "../child-run-wait-boundary.ts";
 import {
   serializeWorkflowContext,
   serializeWorkflowJson,
@@ -532,12 +534,14 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId?: string,
+    extraMatches?: (run: WorkflowRun) => boolean,
   ): PreparedMemoryRunCondition {
     this.requireRun(runId);
     const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     const matches = (candidate: WorkflowRun) =>
       hasExpectedRunStatus(expectedStatusSnapshot, candidate.status) &&
-      (expectedWorkerId === undefined || candidate.workerId === expectedWorkerId);
+      (expectedWorkerId === undefined || candidate.workerId === expectedWorkerId) &&
+      (extraMatches === undefined || extraMatches(candidate));
     const run = this.requireRun(runId);
     return { matches, run: matches(run) ? run : null };
   }
@@ -631,10 +635,16 @@ export class MemoryBackend implements WorkflowBackend {
     patch: WorkflowRunUpdate,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId?: string,
+    extraMatches?: (run: WorkflowRun) => boolean,
   ): Promise<boolean> {
     let prepared: PreparedMemoryRunCondition;
     try {
-      prepared = this.prepareRunCondition(runId, expectedStatuses, expectedWorkerId);
+      prepared = this.prepareRunCondition(
+        runId,
+        expectedStatuses,
+        expectedWorkerId,
+        extraMatches,
+      );
     } catch (error) {
       return Promise.reject(error);
     }
@@ -670,6 +680,22 @@ export class MemoryBackend implements WorkflowBackend {
       patch,
       expectedStatuses,
       expectedWorkerId,
+    );
+  }
+
+  updateRunIfChildWaitBoundary(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const boundarySnapshot = structuredCloneValue(expectedBoundary);
+    return this.updateRunConditionally(
+      runId,
+      patch,
+      ["waiting"],
+      expectedWorkerId,
+      (run) => sameChildRunWaitBoundary(childRunWaitBoundary(run), boundarySnapshot),
     );
   }
 

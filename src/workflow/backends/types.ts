@@ -4,6 +4,7 @@ import type {
   PendingApproval,
   PendingEventWait,
   RunFilter,
+  WorkflowChildRunWaitBoundary,
   WorkflowQueueItem,
   WorkflowRun,
   WorkflowStatus,
@@ -286,6 +287,13 @@ export interface WorkflowBackend {
     runId: string,
     expectedStatuses: WorkflowStatus[],
     snapshot: WorkflowRunStateSnapshot,
+    expectedWorkerId?: string,
+  ): Promise<boolean>;
+  /** Atomically patch a waiting run only while its exact child-run pause still matches. */
+  updateRunIfChildWaitBoundary?(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
     expectedWorkerId?: string,
   ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
@@ -717,6 +725,10 @@ type WithRunObservationSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "openRunObservation">>;
 
+export type WithChildRunWaitBoundaryUpdateSupport =
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "updateRunIfChildWaitBoundary">>;
+
 /** Workflow backend with atomic terminal-run retention support. */
 export type WithTerminalRunRetentionSupport =
   & WorkflowBackend
@@ -747,6 +759,12 @@ export function hasRunObservationSupport(
   backend: WorkflowBackend,
 ): backend is WithRunObservationSupport {
   return typeof backend.openRunObservation === "function";
+}
+
+export function hasChildRunWaitBoundaryUpdateSupport(
+  backend: WorkflowBackend,
+): backend is WithChildRunWaitBoundaryUpdateSupport {
+  return typeof backend.updateRunIfChildWaitBoundary === "function";
 }
 
 /** Check whether fenced terminal-run deletion is available. */

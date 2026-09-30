@@ -32,6 +32,11 @@ import {
 } from "../source-integration-policy.ts";
 import type { RunExecutionConfig } from "../worker/executors/types.ts";
 import type { DurableTimedWaitKind } from "../timed-wait-state.ts";
+import {
+  MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES,
+  MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS,
+} from "../limits.ts";
+import { isCanonicalNonEmptyString } from "../dsl/validation.ts";
 
 const logger = baseLogger.component("workflow-run-control");
 
@@ -1362,6 +1367,19 @@ async function hasLiveNodeWait(
 ): Promise<boolean> {
   try {
     const expected = { nodeId, waitInstanceId };
+    const run = await backend.getRun(runId);
+    const nodeState = run?.nodeStates[nodeId];
+    const nodeInput = nodeState?.input as { type?: unknown; runIds?: unknown } | undefined;
+    if (
+      nodeState?.status === "running" && nodeInput?.type === "child_run" &&
+      Array.isArray(nodeInput.runIds) && nodeInput.runIds.length > 0 &&
+      nodeInput.runIds.length <= MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES &&
+      nodeInput.runIds.every((runId) =>
+        isCanonicalNonEmptyString(runId) &&
+        runId.length <= MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS &&
+        /^[a-zA-Z0-9_-]+$/.test(runId)
+      )
+    ) return true;
     const approvals = await backend.getPendingApprovals(runId);
     if (approvals.some((approval) => isSameWaitNodeExecution(approval, expected))) return true;
     const approvalClaims = await backend.listApprovalDecisionClaims?.(runId) ?? [];

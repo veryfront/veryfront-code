@@ -75,6 +75,7 @@ export {
   unless,
   waitForApproval,
   waitForEvent,
+  waitForRuns,
   when,
   workflow,
 } from "./dsl/index.ts";
@@ -88,6 +89,7 @@ export type {
   SubWorkflowOptions,
   WaitForApprovalOptions,
   WaitForEventOptions,
+  WaitForRunsOptions,
   Workflow,
   WorkflowOptions,
 } from "./dsl/index.ts";
@@ -101,6 +103,7 @@ export type {
   TerminalRunRetentionBatch,
   TerminalRunRetentionCandidate,
   TerminalWorkflowStatus,
+  WithChildRunWaitBoundaryUpdateSupport,
   WithTerminalRunRetentionSupport,
   WorkflowBackend,
   WorkflowQueueDelivery,
@@ -108,7 +111,9 @@ export type {
   WorkflowRunObservedState,
   WorkflowRunUpdate,
 } from "./backends/types.ts";
+export type { WorkflowChildRunWaitBoundary } from "./types.ts";
 export {
+  hasChildRunWaitBoundaryUpdateSupport,
   hasEventWaitSupport,
   hasRunObservationSupport,
   hasTerminalRunRetentionSupport,

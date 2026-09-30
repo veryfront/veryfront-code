@@ -22,8 +22,8 @@ export type { SubWorkflowOptions } from "./sub-workflow.ts";
 export { branch, unless, when } from "./branch.ts";
 export type { BranchOptions } from "./branch.ts";
 
-export { delay, waitForApproval, waitForEvent } from "./wait.ts";
-export type { WaitForApprovalOptions, WaitForEventOptions } from "./wait.ts";
+export { delay, waitForApproval, waitForEvent, waitForRuns } from "./wait.ts";
+export type { WaitForApprovalOptions, WaitForEventOptions, WaitForRunsOptions } from "./wait.ts";
 
 export { doWhile, loop, times } from "./loop.ts";
 export type { LoopContext, LoopNodeConfig, LoopOptions } from "./loop.ts";

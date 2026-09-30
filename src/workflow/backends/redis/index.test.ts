@@ -1102,7 +1102,30 @@ class MockRedisAdapter implements RedisAdapter {
       const streamKey = args[expectedCount + 5]!;
       const maxLength = Number(args[expectedCount + 6]);
       const replaceMaps = args[expectedCount + 7] === "1";
-      for (let i = expectedCount + 8; i < args.length; i += 2) {
+      const expectedBoundaryRaw = args[expectedCount + 8] ?? "";
+      if (expectedBoundaryRaw) {
+        const expectedBoundary = JSON.parse(expectedBoundaryRaw) as Array<{
+          nodeId: string;
+          waitInstanceId: string;
+          runIds: string[];
+        }>;
+        const nodeStates = JSON.parse(hash.get("nodeStates") ?? "{}") as WorkflowRun["nodeStates"];
+        const currentNodeIds = JSON.parse(hash.get("currentNodes") ?? "[]") as string[];
+        const currentBoundary = currentNodeIds.flatMap((nodeId) => {
+          const state = nodeStates[nodeId];
+          const input = state?.input as { type?: unknown; runIds?: unknown } | undefined;
+          if (
+            (state?.status !== "running" && state?.status !== "completed") ||
+            input?.type !== "child_run" || !Array.isArray(input.runIds) ||
+            input.runIds.length === 0 || !state._waitInstanceId
+          ) return [];
+          return [{ nodeId, waitInstanceId: state._waitInstanceId, runIds: input.runIds }];
+        });
+        if (JSON.stringify(currentBoundary) !== JSON.stringify(expectedBoundary)) {
+          return Promise.resolve(0);
+        }
+      }
+      for (let i = expectedCount + 9; i < args.length; i += 2) {
         this.applyRunPatchField(hash, args[i]!, args[i + 1]!, replaceMaps);
       }
       this.appendRunObservation(hash, streamKey, maxLength);
@@ -3287,6 +3310,105 @@ describe("RedisBackend", () => {
       );
       assertEquals(await backend.countRuns({ status: "pending" }), 0);
       assertEquals(await backend.countRuns({ status: "running" }), 1);
+    });
+
+    it("updates only the exact current child-run wait boundary", async () => {
+      const runId = "run-child-boundary-cas";
+      await backend.createRun(createTestRun(runId));
+      const boundaryA = [{
+        nodeId: "children",
+        waitInstanceId: "wait-a",
+        runIds: ["run_child_a"],
+      }];
+      await backend.updateRun(runId, {
+        status: "waiting",
+        workerId: "worker-1",
+        currentNodes: ["children"],
+        nodeStates: {
+          children: {
+            nodeId: "children",
+            status: "running",
+            attempt: 1,
+            _waitInstanceId: "wait-a",
+            input: { type: "child_run", runIds: ["run_child_a"] },
+          },
+        },
+      });
+
+      assertEquals(
+        await backend.updateRunIfChildWaitBoundary(runId, boundaryA, {
+          context: { children: { runIds: ["run_child_a"] } },
+          nodeStates: {
+            children: {
+              nodeId: "children",
+              status: "completed",
+              attempt: 1,
+              _waitInstanceId: "wait-a",
+              input: { type: "child_run", runIds: ["run_child_a"] },
+              output: { runIds: ["run_child_a"] },
+            },
+          },
+        }, "worker-1"),
+        true,
+      );
+      assertEquals((await backend.getRun(runId))?.nodeStates.children?.status, "completed");
+
+      await backend.updateRun(runId, {
+        currentNodes: ["children"],
+        nodeStates: {
+          children: {
+            nodeId: "children",
+            status: "running",
+            attempt: 2,
+            _waitInstanceId: "wait-b",
+            input: { type: "child_run", runIds: ["run_child_b"] },
+          },
+        },
+      });
+      assertEquals(
+        await backend.updateRunIfChildWaitBoundary(runId, boundaryA, {
+          nodeStates: {
+            children: { nodeId: "children", status: "completed", attempt: 2 },
+          },
+        }, "worker-1"),
+        false,
+      );
+      const boundaryBRun = await backend.getRun(runId);
+      assertEquals(boundaryBRun?.nodeStates.children?.status, "running");
+      assertEquals(boundaryBRun?.nodeStates.children?._waitInstanceId, "wait-b");
+
+      const boundaryB = [{
+        nodeId: "children",
+        waitInstanceId: "wait-b",
+        runIds: ["run_child_b"],
+      }];
+      assertEquals(
+        await backend.updateRunIfChildWaitBoundary(
+          runId,
+          [
+            ...boundaryB,
+            { nodeId: "extra", waitInstanceId: "wait-extra", runIds: ["run_child_extra"] },
+          ],
+          {},
+          "worker-1",
+        ),
+        false,
+      );
+      await backend.updateRun(runId, {
+        nodeStates: {
+          children: {
+            ...boundaryBRun!.nodeStates.children!,
+            status: "completed",
+          },
+        },
+      });
+      assertEquals(
+        await backend.updateRunIfChildWaitBoundary(runId, boundaryB, {}, "worker-1"),
+        true,
+      );
+      assertStringIncludes(mockRedis.lastScript, "expectedChildBoundaryRaw");
+      const expectedCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(JSON.parse(mockRedis.lastArgs[expectedCount + 8]!), boundaryB);
     });
 
     it("moves conditional status updates between current-schema index sets", async () => {
