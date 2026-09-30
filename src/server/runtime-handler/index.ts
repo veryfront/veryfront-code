@@ -1080,7 +1080,7 @@ export function createVeryfrontHandler(
           },
           url.pathname,
           req.method,
-          { signal: req.signal },
+          { signal: req.signal, settleResponseBody: hostedHttp !== undefined },
         );
 
         if (error) {
