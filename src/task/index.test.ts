@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as discoveryModule from "./discovery.ts";
+import * as errorsModule from "./errors.ts";
 import * as taskModule from "./index.ts";
 import * as projectRuntimeModule from "./project-runtime.ts";
 import * as publicTaskModule from "veryfront/task";
@@ -9,6 +10,7 @@ import * as runnerModule from "./runner.ts";
 import * as typesModule from "./types.ts";
 
 const expectedRuntimeExports = [
+  "RetryableError",
   "deriveTaskId",
   "discoverProjectTaskRuntime",
   "discoverTasks",
@@ -31,6 +33,7 @@ describe("task/index.ts exports", () => {
     assertStrictEquals(taskModule.discoverTasks, discoveryModule.discoverTasks);
     assertStrictEquals(taskModule.findTaskById, discoveryModule.findTaskById);
     assertStrictEquals(taskModule.runTask, runnerModule.runTask);
+    assertStrictEquals(taskModule.RetryableError, errorsModule.RetryableError);
     assertStrictEquals(taskModule.isTaskDefinition, typesModule.isTaskDefinition);
     assertStrictEquals(
       taskModule.discoverProjectTaskRuntime,

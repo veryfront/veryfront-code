@@ -128,6 +128,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "project-structure.md",
   "project-metrics.md",
   "quickstart.md",
+  "run-input-output.md",
   "sandbox.md",
   "schedule.md",
   "webhook.md",

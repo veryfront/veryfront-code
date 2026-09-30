@@ -48,6 +48,12 @@ export default {
 | `listProjectRuntimeTasks`             | List project-runtime tasks in deterministic ID order.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts) |
 | `runTask`                             | Run a task with the given options                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts)          |
 
+### Classes
+
+| Name             | Description                                            | Source                                                                             |
+| ---------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `RetryableError` | Throw from a task to ask the platform to run it again. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/errors.ts) |
+
 ### Types
 
 | Name                          | Description                                                                 | Source                                                                                      |

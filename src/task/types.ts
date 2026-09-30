@@ -23,12 +23,22 @@ export interface TaskContext {
    * back to `config`, so tasks that read business data from `config` keep working.
    */
   input?: unknown;
+  /** Public run ID (when executed by the platform) */
+  runId?: string;
   /** Project ID (when executed by the platform) */
   projectId?: string;
   /** Environment ID for the runtime target executing this task */
   environmentId?: string;
   /** Cooperative cancellation for request- or runtime-scoped execution */
   signal?: AbortSignal;
+  /**
+   * 1-based attempt number. A project task run starts again, with a higher
+   * attempt, only after it threw a `RetryableError` or the runtime never
+   * started it; see `backoff_limit`. `runTask` always sets it (1 when the
+   * caller gives none); it is optional only so hand-built contexts, such as
+   * in tests, need not name it.
+   */
+  attempt?: number;
 }
 
 /**

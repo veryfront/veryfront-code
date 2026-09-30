@@ -7,6 +7,7 @@
 import { logger as baseLogger, sleep } from "#veryfront/utils";
 import {
   ensureError,
+  INPUT_VALIDATION_FAILED,
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
@@ -38,6 +39,10 @@ import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfr
 import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
+import {
+  formatSchemaValidationErrors,
+  toSchemaValidationErrors,
+} from "#veryfront/schemas/validation-errors.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import { retryTelemetryErrorType } from "./retry-policy.ts";
@@ -71,6 +76,24 @@ function requireDurableWorkflowSourceContext(): void {
         "Durable workflow recovery requires an independently authorized source binding.",
     });
   }
+}
+
+/**
+ * Parse submitted input against the declared inputSchema. Invalid input fails
+ * before the run is created, with INPUT_VALIDATION_FAILED and the validation
+ * errors in `context.errors` (veryfront/veryfront-issue-inbox#2091).
+ */
+function parseWorkflowInput(workflow: WorkflowDefinition, input: unknown): unknown {
+  if (!workflow.inputSchema) return input;
+  const result = workflow.inputSchema.safeParse(input);
+  if (result.success) return result.data;
+  const errors = toSchemaValidationErrors(result.issues ?? []);
+  throw INPUT_VALIDATION_FAILED.create({
+    detail: `Workflow "${workflow.id}" input failed inputSchema validation: ${
+      formatSchemaValidationErrors(errors)
+    }`,
+    context: { errors },
+  });
 }
 
 /** Default polling interval for waiting on workflow result */
@@ -313,7 +336,7 @@ export class WorkflowExecutor {
 
     // Steps see the parsed input (schema transforms and defaults applied);
     // the run record keeps the input as submitted (#2107).
-    const parsedInput = workflow.inputSchema ? workflow.inputSchema.parse(input) : input;
+    const parsedInput = parseWorkflowInput(workflow, input);
 
     // Capture current tenant context for multi-tenant run execution.
     // When a workflow is started from an API route, the request context

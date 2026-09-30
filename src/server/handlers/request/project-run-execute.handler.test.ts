@@ -10,6 +10,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import { tool } from "#veryfront/tool";
+import { createWorkflowClient, step, workflow, type WorkflowDefinition } from "#veryfront/workflow";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { Message } from "#veryfront/agent/types.ts";
@@ -363,6 +364,7 @@ function createDeps(
         status: "completed",
         output: { deployed: true },
       }),
+      cancel: async () => {},
       destroy: async () => {},
     }),
     runEval: async (definition, options) => ({
@@ -570,6 +572,393 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     await stopEsbuild();
   });
 
+  for (
+    const deadlineAt of [
+      "invalid",
+      12,
+      "2026-09-29Tgarbage",
+      "2099-01-01T00:00:00",
+      "2099-02-30T00:00:00Z",
+      "2099-01-01T24:00:00Z",
+      "2000-01-01T00:00:00.000Z",
+    ]
+  ) {
+    it(`does not start task code for an invalid or expired deadline: ${deadlineAt}`, async () => {
+      let started = false;
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          runTask: async () => {
+            started = true;
+            return { success: true, durationMs: 0 };
+          },
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          deadlineAt,
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(started, false);
+      if (deadlineAt === "2000-01-01T00:00:00.000Z") {
+        assertEquals(result.response.status, 200);
+        assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      } else assertEquals(result.response.status, 400);
+    });
+  }
+
+  it("preserves a successful task result within its deadline", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps());
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_deadline/execute",
+      {
+        runId: "run_deadline",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        deadlineAt: new Date(Date.now() + 30_000).toISOString(),
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    assertEquals((await result.response.json()).result, { synced: 12 });
+  });
+
+  for (const discoveryThrows of [false, true]) {
+    it(`does not start task code when discovery blocks past the deadline (throws: ${discoveryThrows})`, async () => {
+      const deps = createDeps();
+      const deadline = Date.now() + 100;
+      let started = false;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        ensureProjectDiscovery: async (ctx) => {
+          const discovery = await deps.ensureProjectDiscovery(ctx);
+          while (Date.now() <= deadline) { /* simulate synchronous module initialization */ }
+          if (discoveryThrows) throw new Error("discovery failed after deadline");
+          return discovery;
+        },
+        runTask: async () => {
+          started = true;
+          return { success: true, durationMs: 0 };
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          deadlineAt: new Date(deadline).toISOString(),
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      assertEquals(started, false);
+    });
+  }
+
+  it("enforces the deadline despite task changes to the clock and abort method", async () => {
+    const originalNow = Date.now;
+    const originalAbort = AbortController.prototype.abort;
+    const deadline = originalNow() + 100;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        while (originalNow() <= deadline) { /* simulate blocking task code */ }
+        Date.now = () => 0;
+        AbortController.prototype.abort = () => {
+          throw new Error("patched abort");
+        };
+        return { success: true, result: "late", durationMs: 100 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_deadline/execute",
+      {
+        runId: "run_deadline",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        deadlineAt: new Date(deadline).toISOString(),
+      },
+    );
+    try {
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      const body = await result.response.json();
+      assertEquals(body.success, false);
+      assertEquals(body.error_code, "RUN_TIMEOUT");
+    } finally {
+      Date.now = originalNow;
+      AbortController.prototype.abort = originalAbort;
+    }
+  });
+
+  it("preserves the result when task code replaces timer cleanup", async () => {
+    const originalClearTimeout = globalThis.clearTimeout;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        globalThis.clearTimeout = () => {
+          throw new Error("patched cleanup");
+        };
+        return { success: true, result: "finished", durationMs: 0 };
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_deadline/execute",
+      {
+        runId: "run_deadline",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        deadlineAt: new Date(Date.now() + 100).toISOString(),
+      },
+    );
+    try {
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).result, "finished");
+    } finally {
+      globalThis.clearTimeout = originalClearTimeout;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+  });
+
+  for (
+    const target of [
+      "knowledge-ingest",
+      "release-asset-build",
+      "dependency-artifact-build",
+      "style-artifact-build",
+    ]
+  ) {
+    it(`bounds a non-cooperative reserved task: ${target}`, async () => {
+      let finish: (() => void) | undefined;
+      const execute = async () => {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+          deadlineAt: new Date(Date.now() + 100).toISOString(),
+        },
+      );
+      const guard = setTimeout(() => finish?.(), 1_000);
+      try {
+        const result = await handler.handle(request, createCtx(publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      } finally {
+        clearTimeout(guard);
+        finish?.();
+      }
+    });
+
+    it(`refuses an expired reserved task: ${target}`, async () => {
+      let started = false;
+      const execute = async () => {
+        started = true;
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+          deadlineAt: "2000-01-01T00:00:00Z",
+        },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+      assertEquals(started, false);
+    });
+  }
+
+  for (
+    const [name, cooperative, maskAborted] of [
+      ["hands the task an abort signal that fires at the invocation deadline", true, false],
+      [
+        "answers with an explicit timeout when a task ignores the signal past its deadline",
+        false,
+        false,
+      ],
+      ["preserves timeout classification when a task masks the aborted flag", true, true],
+    ] as const
+  ) {
+    it(name, async () => {
+      let signal: AbortSignal | undefined;
+      let settle: (() => void) | undefined;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async (options) => {
+          signal = options.signal;
+          await new Promise<void>((resolve) => {
+            settle = resolve;
+            if (cooperative) {
+              signal?.addEventListener("abort", () => {
+                if (maskAborted) Object.defineProperty(signal, "aborted", { value: false });
+                resolve();
+              }, {
+                once: true,
+              });
+            }
+          });
+          return { success: true, result: "late", durationMs: 1 };
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          deadlineAt: new Date(Date.now() + 100).toISOString(),
+        },
+      );
+      let guard: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          handler.handle(request, createCtx(publicKeyPem)),
+          new Promise<never>((_resolve, reject) => {
+            guard = setTimeout(
+              () => reject(new Error("execution exceeded deadline grace")),
+              1_000,
+            );
+          }),
+        ]);
+        assertExists(signal);
+        assertEquals(signal.aborted, !maskAborted);
+        assertExists(result.response);
+        const body = await result.response.json();
+        assertEquals(body.success, false);
+        assertEquals(body.error_code, "RUN_TIMEOUT");
+        assertStringIncludes(body.error, "deadline");
+        assertStringIncludes(body.error, "non-cooperative");
+      } finally {
+        clearTimeout(guard);
+        settle?.();
+      }
+    });
+  }
+
+  // veryfront/veryfront-issue-inbox#2100: the API numbers attempts under backoff_limit.
+  it("#2100 hands the invocation attempt to the task runner", async () => {
+    let receivedAttempt: number | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: (options) => {
+        receivedAttempt = options.attempt;
+        return Promise.resolve({ success: true, result: null, durationMs: 1 });
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_attempt/execute",
+      {
+        runId: "run_attempt",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        attempt: 3,
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedAttempt, 3);
+  });
+
+  for (const attempt of [0, -1, 1.5, "2"]) {
+    it(`#2100 rejects an invalid attempt number: ${JSON.stringify(attempt)}`, async () => {
+      let started = false;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: () => {
+          started = true;
+          return Promise.resolve({ success: true, durationMs: 0 });
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_attempt/execute",
+        {
+          runId: "run_attempt",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          attempt,
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+      assertEquals(started, false);
+    });
+  }
+
+  for (const retryable of [true, undefined]) {
+    it(`#2100 answers a ${retryable ? "RetryableError" : "final"} task failure with retryable: ${retryable}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: () =>
+          Promise.resolve({
+            success: false,
+            error: "Transient failure on attempt 1",
+            durationMs: 1,
+            ...(retryable ? { retryable } : {}),
+          }),
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_retryable/execute",
+        {
+          runId: "run_retryable",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          attempt: 1,
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      const body = await result.response.json();
+      assertEquals(body.success, false);
+      assertEquals(body.retryable, retryable);
+    });
+  }
+
   // veryfront/veryfront-issue-inbox#2105: business input is any JSON value and reaches the
   // task separately from config.
   it("#2091 forwards non-object task input to the runner", async () => {
@@ -639,6 +1028,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             return Promise.resolve({ runId: options?.runId ?? "workflow-run" });
           },
           getRun: () => Promise.resolve({ status: "completed", output: null }),
+          cancel: async () => {},
           destroy: () => Promise.resolve(),
         }),
       }));
@@ -672,6 +1062,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           return Promise.resolve({ runId: options?.runId ?? "workflow-run" });
         },
         getRun: () => Promise.resolve({ status: "completed", output: null }),
+        cancel: async () => {},
         destroy: () => Promise.resolve(),
       }),
     }));
@@ -696,10 +1087,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     let receivedEnvironmentId: string | undefined;
+    let receivedRunId: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async (options) => {
         receivedConfig = options.config;
         receivedEnvironmentId = options.environmentId;
+        receivedRunId = options.runId;
         return {
           success: true,
           result: { synced: 12 },
@@ -724,6 +1117,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await handler.handle(request, createCtx(publicKeyPem));
 
     assertExists(result.response);
+    assertEquals(receivedRunId, "run_task_1");
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: true,
@@ -1096,6 +1490,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "completed",
           output: { deployed: true },
         }),
+        cancel: async () => {},
         destroy: async () => {},
       }),
     }));
@@ -2163,6 +2558,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             status: "completed",
             output: { agent: "ok" },
           }),
+          cancel: async () => {},
           destroy: async () => {},
         };
       },
@@ -2215,6 +2611,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             status: "completed",
             output: { deployed: true },
           }),
+          cancel: async () => {},
           destroy: async () => {},
         };
       },
@@ -2243,6 +2640,59 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       runtimeTargetEnvironmentId: "env-1",
       runtimeTargetBranchId: undefined,
     });
+  });
+
+  it("fails a workflow run whose input fails its inputSchema with INPUT_VALIDATION_FAILED (#2091)", async () => {
+    let executions = 0;
+    const definition = workflow({
+      id: "publish",
+      inputSchema: defineSchema((v) => v.object({ release: v.string() }))(),
+      steps: [
+        step("side-effect", {
+          tool: tool({
+            id: "side-effect",
+            description: "Must not run",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => {
+              executions++;
+              return Promise.resolve({});
+            },
+          }),
+        }),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_invalid_input_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: 1 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_invalid_input_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail.errors.length, 1);
+    assertEquals(response.error_detail.errors[0].path, "/release");
+    assertStringIncludes(response.error, "/release");
+    assertEquals(executions, 0);
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
@@ -2373,6 +2823,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "failed",
           error: { message: "step failed" },
         }),
+        cancel: async () => {},
         destroy: async () => {
           order.push("destroy");
         },
@@ -2416,6 +2867,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "waiting",
           output: { approvalId: "approval-1" },
         }),
+        cancel: async () => {},
         destroy: async () => {
           destroyed = true;
         },
@@ -2470,6 +2922,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           getRunCalls++;
           return { status: "running" };
         },
+        cancel: async () => {},
         destroy: async () => {},
       }),
     }));
@@ -2513,6 +2966,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           status: "waiting",
           output: { approvalId: "approval-1" },
         }),
+        cancel: async () => {},
         destroy: async () => {
           destroyed = true;
         },
@@ -2948,6 +3402,7 @@ describe("project run inference credential header", () => {
           return { runId: options?.runId ?? "workflow-run" };
         },
         getRun: async () => ({ status: "completed", output: { deployed: true } }),
+        cancel: async () => {},
         destroy: async () => {},
       }),
     }));
@@ -3196,5 +3651,232 @@ describe("project run inference credential header", () => {
       Headers.prototype.get = originalGet;
     }
     assertEquals(seen.includes(INFERENCE_TOKEN), false);
+  });
+});
+
+// veryfront-issue-inbox#2086: a cancelled project run must reach the running
+// task or workflow, not only the control-plane row.
+describe("server/handlers/request/project-run-execute.handler cancellation", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  function abortable(request: Request): { request: Request; controller: AbortController } {
+    const controller = new AbortController();
+    return { request: new Request(request, { signal: controller.signal }), controller };
+  }
+
+  it("hands the task its supported cooperative cancellation signal", async () => {
+    let taskSignal: AbortSignal | undefined;
+    let releaseTask!: () => void;
+    const taskStarted = Promise.withResolvers<void>();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async (options) => {
+        taskSignal = options.signal;
+        taskStarted.resolve();
+        await new Promise<void>((resolve) => {
+          releaseTask = resolve;
+        });
+        return { success: true, result: { synced: 1 }, durationMs: 1 };
+      },
+    }));
+    const body = {
+      runId: "run_task_cancel",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const signed = await signedRequest("/api/control-plane/runs/run_task_cancel/execute", body);
+    const { request, controller } = abortable(signed.request);
+
+    const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+    await taskStarted.promise;
+    controller.abort(new Error("run cancelled"));
+
+    try {
+      assertExists(taskSignal, "runTask must receive a signal");
+      assertEquals(taskSignal.aborted, true);
+    } finally {
+      releaseTask();
+      await pending;
+    }
+  });
+
+  it("cancels the workflow run instead of polling it to completion", async () => {
+    const cancelled: string[] = [];
+    let status = "running";
+    const controller = new AbortController();
+    const client = {
+      register: () => {},
+      start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+        runId: options?.runId ?? "workflow-run",
+      }),
+      getRun: async () => {
+        // Cancellation arrives while the workflow is still running.
+        if (!controller.signal.aborted) controller.abort(new Error("run cancelled"));
+        return { status, output: null };
+      },
+      cancel: async (runId: string) => {
+        cancelled.push(runId);
+        status = "cancelled";
+      },
+      destroy: async () => {},
+    };
+    let polls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => client,
+      sleep: async () => {
+        polls += 1;
+        // Stand in for the real poll timeout so a missing cancel fails fast.
+        if (polls > 5) status = "completed";
+      },
+    }));
+    const body = {
+      runId: "run_workflow_cancel",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: {},
+    };
+    const signed = await signedRequest("/api/control-plane/runs/run_workflow_cancel/execute", body);
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertEquals(cancelled, ["run_workflow_cancel"]);
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+  });
+
+  it("cancels a workflow run that reached waiting when the request was aborted", async () => {
+    const cancelled: string[] = [];
+    let status = "waiting";
+    const controller = new AbortController();
+    const client = {
+      register: () => {},
+      statePersistence: "durable" as const,
+      start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+        runId: options?.runId ?? "workflow-run",
+      }),
+      getRun: async () => {
+        // The cancel lands in the same poll in which the workflow parks.
+        if (!controller.signal.aborted) controller.abort(new Error("run cancelled"));
+        return { status, output: null };
+      },
+      cancel: async (runId: string) => {
+        cancelled.push(runId);
+        status = "cancelled";
+      },
+      destroy: async () => {},
+    };
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({ createWorkflowClient: () => client }),
+    );
+    const body = {
+      runId: "run_workflow_waiting_cancel",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: {},
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_waiting_cancel/execute",
+      body,
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertEquals(cancelled, ["run_workflow_waiting_cancel"]);
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+  });
+
+  it("cancels a waiting workflow when the abort arrives while its pause is persisted", async () => {
+    const cancelled: string[] = [];
+    let status = "waiting";
+    const controller = new AbortController();
+    const client = {
+      register: () => {},
+      statePersistence: "durable" as const,
+      start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+        runId: options?.runId ?? "workflow-run",
+        // Cancellation lands after the last poll, while the pause is persisted.
+        settled: async () => {
+          controller.abort(new Error("run cancelled"));
+        },
+      }),
+      getRun: async () => ({ status, output: null }),
+      cancel: async (runId: string) => {
+        cancelled.push(runId);
+        status = "cancelled";
+      },
+      destroy: async () => {},
+    };
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({ createWorkflowClient: () => client }),
+    );
+    const body = {
+      runId: "run_workflow_settle_cancel",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: {},
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_settle_cancel/execute",
+      body,
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertEquals(cancelled, ["run_workflow_settle_cancel"]);
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+  });
+
+  it("does not start a workflow whose run was cancelled before it started", async () => {
+    const started: string[] = [];
+    const controller = new AbortController();
+    const client = {
+      register: () => {},
+      start: async (workflowId: string, _input: unknown, options?: { runId?: string }) => {
+        started.push(workflowId);
+        return { runId: options?.runId ?? "workflow-run" };
+      },
+      getRun: async () => ({ status: "completed", output: { done: true } }),
+      cancel: async () => {},
+      destroy: async () => {},
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => {
+        // The cancel lands while the workflow is still being loaded.
+        controller.abort(new Error("run cancelled"));
+        return client;
+      },
+    }));
+    const body = {
+      runId: "run_workflow_cancel_before_start",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: {},
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_cancel_before_start/execute",
+      body,
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertEquals(started, []);
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
   });
 });

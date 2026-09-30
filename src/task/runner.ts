@@ -9,6 +9,7 @@ import { getErrorMessage } from "#veryfront/errors";
 import { type HostRuntime, liveHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { buildTaskContextEnv } from "#veryfront/runs/runtime-env.ts";
 import { logger as baseLogger } from "#veryfront/utils";
+import { isRetryableError } from "./errors.ts";
 import type { TaskContext } from "./types.ts";
 import type { TaskDefinition } from "./types.ts";
 
@@ -39,6 +40,9 @@ export interface RunTaskOptions {
   /** Business input for `ctx.input`. When omitted or `null`, `ctx.input` falls back to `config`. */
   input?: unknown;
 
+  /** Public run ID (for cloud context) */
+  runId?: string;
+
   /** Project ID (for cloud context) */
   projectId?: string;
 
@@ -47,6 +51,9 @@ export interface RunTaskOptions {
 
   /** Cooperative cancellation propagated to the task context */
   signal?: AbortSignal;
+
+  /** 1-based attempt number exposed as `ctx.attempt`. Defaults to 1. */
+  attempt?: number;
 
   /** If set, only these env var names are passed to the task. */
   envAllowlist?: string[];
@@ -70,6 +77,9 @@ export interface TaskRunResult {
 
   /** Execution duration in milliseconds */
   durationMs: number;
+
+  /** Set when the task threw a `RetryableError`: the platform may run it again. */
+  retryable?: true;
 }
 
 function elapsedMilliseconds(start: number): number {
@@ -108,9 +118,11 @@ export async function runTask(
     task,
     config = {},
     input,
+    runId,
     projectId,
     environmentId,
     signal,
+    attempt = 1,
     envAllowlist,
     debug = false,
   } = options;
@@ -130,9 +142,11 @@ export async function runTask(
       env,
       config,
       input: input ?? config,
+      ...(runId === undefined ? {} : { runId }),
       projectId,
       environmentId,
       ...(signal === undefined ? {} : { signal }),
+      attempt,
     };
 
     const result = await task.definition.run(ctx);
@@ -149,6 +163,11 @@ export async function runTask(
 
     logger.error(`Task "${task.id}" failed: ${errorMsg}`);
 
-    return { success: false, error: errorMsg, durationMs };
+    return {
+      success: false,
+      error: errorMsg,
+      durationMs,
+      ...(isRetryableError(error) ? { retryable: true as const } : {}),
+    };
   }
 }
