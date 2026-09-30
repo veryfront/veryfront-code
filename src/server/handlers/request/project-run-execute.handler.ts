@@ -57,7 +57,7 @@ import type {
   EvalReport,
   RunEvalOptions,
 } from "#veryfront/eval/types.ts";
-import type { Logger } from "#veryfront/utils";
+import { type Logger, serverLogger } from "#veryfront/utils";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
