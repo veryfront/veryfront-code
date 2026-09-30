@@ -239,8 +239,9 @@ curl -sS "$VERYFRONT_API_URL/runs/<RUN_ID>" \
 ```
 
 A completed task run shows the submitted `input` and the returned value as
-`output`. A run rejected for its input shows `status: "failed"`, `output: null`,
-and `error.code: "INPUT_VALIDATION_FAILED"`.
+`output`. On a project runtime with task schema validation, a task run rejected
+for its input shows `status: "failed"`, `output: null`, and
+`error.code: "INPUT_VALIDATION_FAILED"`.
 
 ## Next steps
 
