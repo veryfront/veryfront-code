@@ -75,7 +75,9 @@ export async function startExecutorRuntimeEntrypoint(
     /** Trusted image profile, fixed before project discovery. */
     mode?: "runtime" | "project-tools" | "http";
     /**
-     * Required for the HTTP image profile. Bind the authenticated environment
+     * Optional image-owned replacement for the built-in application runtime.
+     * The default loads matched configuration through the authenticated broker.
+     * Bind the authenticated environment
      * configuration and fixed project root before loading tenant modules. Never
      * select a loader, executable or filesystem path from channel input.
      */
@@ -94,7 +96,7 @@ export async function startExecutorRuntimeEntrypoint(
   }
   const createHttpRuntime = options.createHttpRuntime;
   if (
-    (mode === "http" && typeof createHttpRuntime !== "function") ||
+    (createHttpRuntime !== undefined && typeof createHttpRuntime !== "function") ||
     (mode !== "http" && createHttpRuntime !== undefined)
   ) {
     throw new TypeError("HTTP runtime factory requires the HTTP profile");
@@ -119,7 +121,7 @@ export async function startExecutorRuntimeEntrypoint(
       binding,
       artifact: artifact.manifest,
       signal,
-      async install(input, runtimeSignal) {
+      async install(input, runtimeSignal, context) {
         if (input.owner.scopeKind !== "project") {
           throw new TypeError("HTTP requires project ownership");
         }
@@ -129,11 +131,31 @@ export async function startExecutorRuntimeEntrypoint(
         };
         const connected = await channel.promise;
         runtimeSignal.throwIfAborted();
-        const runtime = await createHttpRuntime!({
+        const runtimeInput = {
           installation: input,
           projectDir: artifact.projectDir,
           signal: runtimeSignal,
-        });
+        };
+        const runtime = createHttpRuntime
+          ? await createHttpRuntime(runtimeInput)
+          : await (async () => {
+            const { readExecutorHttpApplicationConfiguration } = await import(
+              "#veryfront/server/isolated-http/application-configuration.ts"
+            );
+            const remaining = context.deadline - Date.now();
+            if (remaining <= 0) throw new Error("Executor installation unavailable");
+            const configuration = await readExecutorHttpApplicationConfiguration(
+              connected,
+              input,
+              runtimeSignal,
+              remaining,
+            );
+            runtimeSignal.throwIfAborted();
+            const { createExecutorHttpApplicationRuntime } = await import(
+              "#veryfront/server/isolated-http/application-runtime.ts"
+            );
+            return createExecutorHttpApplicationRuntime({ ...runtimeInput, configuration });
+          })();
         return {
           operations: new Map([[
             "http.request",

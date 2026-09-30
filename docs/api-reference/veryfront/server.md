@@ -142,3 +142,31 @@ import {
 | --------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `ConnectExecutorTransportOptions` |                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/executor-node-transport.ts)    |
 | `HostedHttpInput`                 | Trusted ingress authority; none of these values are inferred from HTTP headers or URLs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/hosted-http-broker.ts) |
+
+### `veryfront/server/http-runtime`
+
+```ts
+import {
+  createExecutorHttpApplicationRuntime,
+  getExecutorHttpApplicationConfigurationSchema,
+} from "veryfront/server/http-runtime";
+```
+
+#### Functions
+
+| Name                                   | Description                                                                                                                                                                                                                                                                                                               | Source                                                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `createExecutorHttpApplicationRuntime` | Image-owned application factory for startExecutorRuntimeEntrypoint's HTTP hook. Call only after its owner/source gate succeeds, inside the isolated process. The installation owns operation settlement; the allocator owns process exit. This factory retires bootstrap resources and does not itself provide a sandbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/application-runtime.ts) |
+
+#### Types
+
+| Name                                   | Description | Source                                                                                                                |
+| -------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------- |
+| `ExecutorHttpApplicationConfiguration` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/application-configuration.ts) |
+| `ExecutorHttpApplicationOptions`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/application-runtime.ts)       |
+
+#### Constants
+
+| Name                                            | Description                                                           | Source                                                                                                                |
+| ----------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `getExecutorHttpApplicationConfigurationSchema` | Project-authorized snapshot. Collector settings remain on the broker. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/isolated-http/application-configuration.ts) |
