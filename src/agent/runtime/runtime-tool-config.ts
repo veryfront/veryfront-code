@@ -13,6 +13,10 @@ import {
 import { type ProviderReplayCheckpoint } from "./provider-replay.ts";
 
 const ArrayIsArray = Array.isArray;
+const NativeSet = Set;
+const SetAdd = Set.prototype.add;
+const SetHas = Set.prototype.has;
+const reflectApply = Reflect.apply;
 
 function snapshotStringArray(value: unknown): string[] | undefined {
   if (!ArrayIsArray(value)) return undefined;
@@ -48,11 +52,11 @@ export const MAX_PROVIDER_REPLAY_TOOL_ARGS_JSON_LENGTH = 512 * 1_024;
 function hasUniqueProviderReplayToolCallIds(
   calls: readonly { toolCallId: string }[],
 ): boolean {
-  const ids = new Set<string>();
+  const ids = new NativeSet<string>();
   for (let index = 0; index < calls.length; index++) {
     const toolCallId = calls[index]?.toolCallId;
-    if (!toolCallId || ids.has(toolCallId)) return false;
-    ids.add(toolCallId);
+    if (!toolCallId || reflectApply(SetHas, ids, [toolCallId]) as boolean) return false;
+    reflectApply(SetAdd, ids, [toolCallId]);
   }
   return true;
 }
@@ -212,9 +216,16 @@ export function getRuntimeProviderReplayInvokeAgentToolNames(
   const names: ProviderReplayInvokeAgentToolName[] = [];
   for (let index = 0; index < value.length; index++) {
     const name = value[index];
+    let alreadyIncluded = false;
+    for (let nameIndex = 0; nameIndex < names.length; nameIndex++) {
+      if (names[nameIndex] === name) {
+        alreadyIncluded = true;
+        break;
+      }
+    }
     if (
       (name === "invoke_agent" || name === "veryfront__invoke_agent") &&
-      !names.includes(name)
+      !alreadyIncluded
     ) {
       names.push(name);
     }

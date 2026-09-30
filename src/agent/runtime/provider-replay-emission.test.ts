@@ -414,7 +414,13 @@ describe("provider replay checkpoint emission", () => {
       __vfProviderReplayInvokeAgentToolNames: string[];
     };
 
-    await agent(config).generate({ input: "Call both custom tools" });
+    const setHas = Set.prototype.has;
+    Set.prototype.has = () => true;
+    try {
+      await agent(config).generate({ input: "Call both custom tools" });
+    } finally {
+      Set.prototype.has = setHas;
+    }
 
     assertEquals(completedBatch, undefined);
   });

@@ -1617,6 +1617,18 @@ export async function createRuntimeAgentStreamResponse(
             const flushProviderReplayTurn = async () => {
               if (!providerReplayStepOpen) return;
               for (const frame of await providerReplayCheckpointRelay.takeCompletedTurn()) {
+                const invokeAgentToolCalls = frame.payload.invokeAgentToolCalls;
+                if (Array.isArray(invokeAgentToolCalls)) {
+                  for (let index = 0; index < invokeAgentToolCalls.length; index++) {
+                    const toolCall = invokeAgentToolCalls[index];
+                    if (
+                      typeof toolCall === "object" && toolCall !== null &&
+                      "toolCallId" in toolCall && typeof toolCall.toolCallId === "string"
+                    ) {
+                      deps.sessionManager.prepareForToolResult(input.runId, toolCall.toolCallId);
+                    }
+                  }
+                }
                 enqueueProviderReplayFrame(frame);
               }
               providerReplayStepOpen = false;

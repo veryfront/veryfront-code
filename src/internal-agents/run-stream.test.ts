@@ -985,6 +985,7 @@ describe("internal-agents/run-stream", () => {
   it("emits every parallel invoke_agent call before the first tool dispatch", async () => {
     const sessionManager = new AgentRunSessionManager();
     const messageId = crypto.randomUUID();
+    const runId = "run_fast_parallel_results";
     let completeProviderReplayTurn:
       | ((
         invokeAgentToolCalls?: readonly {
@@ -1006,7 +1007,7 @@ describe("internal-agents/run-stream", () => {
     const response = await createRuntimeAgentStreamResponse(
       {
         threadId: crypto.randomUUID(),
-        runId: "run_1",
+        runId,
         messageId,
         messages: [],
         tools: [{ name: "veryfront__invoke_agent" }],
@@ -1055,7 +1056,29 @@ describe("internal-agents/run-stream", () => {
         },
       },
     );
-    const frames = parseSseFrames(await response.text());
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    const submissionOutcomes: unknown[] = [];
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      const text = decoder.decode(chunk.value, { stream: true });
+      body += text;
+      if (text.includes(PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME)) {
+        submissionOutcomes.push(
+          sessionManager.submitToolResult(runId, {
+            toolCallId: "child-1",
+            result: { result: "first complete" },
+          }),
+          sessionManager.submitToolResult(runId, {
+            toolCallId: "child-2",
+            result: { result: "second complete" },
+          }),
+        );
+      }
+    }
+    const frames = parseSseFrames(body);
     const turnCompleteIndex = frames.findIndex((frame) =>
       frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
     );
@@ -1077,6 +1100,7 @@ describe("internal-agents/run-stream", () => {
         toolArgsJson: '{"task":"second"}',
       },
     ]);
+    assertEquals(submissionOutcomes, [{ accepted: true }, { accepted: true }]);
   });
 
   it("does not deadlock the real runtime while publishing an aliased batch before dispatch", async () => {

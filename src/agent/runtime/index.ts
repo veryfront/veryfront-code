@@ -1298,7 +1298,10 @@ function collectGeneratedParallelInvokeAgentToolCalls(
     if (!ObjectHasOwn(toolCalls, index)) continue;
     const toolCall = toolCalls[index];
     if (
-      !toolCall || !allowedToolNames.has(toolCall.toolName as ProviderReplayInvokeAgentToolName) ||
+      !toolCall ||
+      !IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
+        toolCall.toolName as ProviderReplayInvokeAgentToolName,
+      ]) ||
       !toolCall.input || typeof toolCall.input !== "object" || Array.isArray(toolCall.input)
     ) {
       continue;
@@ -1324,7 +1327,9 @@ function collectStreamedParallelInvokeAgentToolCalls(
     const toolCall = toolCalls[index];
     if (
       !toolCall || toolCall.inputAvailable !== true ||
-      !allowedToolNames.has(toolCall.name as ProviderReplayInvokeAgentToolName)
+      !IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
+        toolCall.name as ProviderReplayInvokeAgentToolName,
+      ])
     ) {
       continue;
     }
