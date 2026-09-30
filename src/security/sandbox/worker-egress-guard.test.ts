@@ -1293,7 +1293,7 @@ describe("worker-egress-guard guardedEgressFetch credential headers", () => {
             { fetchImpl },
           ),
         TypeError,
-        "modified native request processing",
+        "Refused a credential-bearing request",
       );
     } finally {
       probes.restore();

@@ -336,7 +336,7 @@ describe("provider/veryfront-cloud/shared", () => {
                 body: '{"model":"gpt-test"}',
               }),
             TypeError,
-            "modified native request processing",
+            "Refused a credential-bearing request",
           ),
       );
     } finally {

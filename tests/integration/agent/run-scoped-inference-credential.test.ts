@@ -1596,7 +1596,7 @@ describe("run-scoped inference credential", () => {
             async () =>
               await wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
             TypeError,
-            "modified native request processing",
+            "Refused a credential-bearing request",
           ),
       );
     } finally {

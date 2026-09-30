@@ -69,7 +69,11 @@ describe("platform/compat/http/native-request-init", () => {
       try {
         // The probes replace Headers.prototype.has and append, which the native
         // Request constructor and fetch call with the headers as `this`.
-        assertThrows(() => assertNativeRequestProcessing(), TypeError);
+        assertThrows(
+          () => assertNativeRequestProcessing(),
+          TypeError,
+          "Headers.prototype.has was replaced",
+        );
       } finally {
         probes.restore();
       }
@@ -77,7 +81,11 @@ describe("platform/compat/http/native-request-init", () => {
 
       const restoreSignal = replaceRequestSignalGetter();
       try {
-        assertThrows(() => assertNativeRequestProcessing(), TypeError);
+        assertThrows(
+          () => assertNativeRequestProcessing(),
+          TypeError,
+          "Request.prototype.signal was replaced",
+        );
       } finally {
         restoreSignal();
       }

@@ -129,7 +129,7 @@ describe("native fetch with credential headers", () => {
               guardedDeps(),
             ),
           TypeError,
-          "modified native request processing",
+          "Refused a credential-bearing request",
         );
       } finally {
         probes.restore();

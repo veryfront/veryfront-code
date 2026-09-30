@@ -37,8 +37,8 @@ describe("workflow API private request token", () => {
             path: "README.md",
             content: "ok",
             type: "file",
-          size: 2,
-          updated_at: "2026-09-05T00:00:00.000Z",
+            size: 2,
+            updated_at: "2026-09-05T00:00:00.000Z",
           });
         },
         () =>

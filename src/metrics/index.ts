@@ -28,6 +28,10 @@ import {
   isProjectEnvActive,
 } from "#veryfront/server/project-env/storage.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import {
+  assertNativeRequestProcessing,
+  createNativeRequestInit,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 
 export type MetricAttributeValue = string | number | boolean | null | undefined;
 export type MetricAttributes = Record<string, MetricAttributeValue>;
@@ -1021,21 +1025,25 @@ function projectTokenHeader(target: DirectMetricsTarget): Record<string, string>
 async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
   const deadline = createDirectExportDeadline();
   try {
+    // The headers can carry the project's x-token: a null-prototype init with
+    // every field its own, so no inherited getter or iterator reaches them.
+    const init = createNativeRequestInit(undefined, {
+      method: "POST",
+      headers: {
+        ...group.target.headers,
+        ...projectTokenHeader(group.target),
+        "Content-Type": "application/json",
+      },
+      redirect: group.target.internal ? "error" : "follow",
+      body: jsonStringify(
+        toHookFreeJsonValue(buildDirectOtlpBody(group.samples, group.target, group.key)),
+      ),
+      signal: deadline.signal,
+    });
+    assertNativeRequestProcessing();
     const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
       group.target.url,
-      {
-        method: "POST",
-        headers: {
-          ...group.target.headers,
-          ...projectTokenHeader(group.target),
-          "Content-Type": "application/json",
-        },
-        redirect: group.target.internal ? "error" : "follow",
-        body: jsonStringify(
-          toHookFreeJsonValue(buildDirectOtlpBody(group.samples, group.target, group.key)),
-        ),
-        signal: deadline.signal,
-      },
+      init,
     );
     if (!response.ok) logDirectExportFailure(`HTTP ${response.status}`);
   } catch (error) {

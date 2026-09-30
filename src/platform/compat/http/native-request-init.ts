@@ -29,6 +29,7 @@ const ObjectCreate = Object.create;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectKeys = Object.keys;
 const NativeString = String;
+const StringToLowerCase = String.prototype.toLowerCase;
 const HeadersAppend = NativeHeaders.prototype.append;
 const HeadersEntries = NativeHeaders.prototype.entries;
 const HeadersIteratorNext = Object.getPrototypeOf(new NativeHeaders().entries()).next as (
@@ -108,9 +109,21 @@ export function assertNativeRequestProcessing(): void {
         snapshot.descriptor,
       )
     ) {
-      throw new NativeTypeError("Cannot send credentials with modified native request processing");
+      throw new NativeTypeError(
+        `Refused a credential-bearing request to protect its token: ${describeMember(snapshot)} ` +
+          "was replaced, and Deno's fetch calls it with the request headers in reach. " +
+          "Do not patch Request or Headers members that fetch uses (use msw in tests only).",
+      );
     }
   }
+}
+
+function describeMember(snapshot: PropertySnapshot): string {
+  const owner = snapshot.target === NativeHeaders.prototype ? "Headers" : "Request";
+  const key = snapshot.key;
+  return typeof key === "symbol"
+    ? `${owner}.prototype[${NativeString(key)}]`
+    : `${owner}.prototype.${NativeString(key)}`;
 }
 
 /** Every `RequestInit` field Deno, Node (undici) or Bun reads by name. */
@@ -220,11 +233,47 @@ export function toNativeHeaderRecord(headers: Headers): Record<string, string> {
       [string, string]
     >;
     if (step.done) return record;
-    const [name, value] = step.value;
+    // Indexed, not destructured: destructuring runs Array.prototype's iterator.
+    const name = step.value[0];
+    const value = step.value[1];
     record[name] = IntrinsicReflectApply(ObjectHasOwn, undefined, [record, name])
       ? `${record[name]}, ${value}`
       : value;
   }
+}
+
+function appendToRecord(record: Record<string, string>, name: unknown, value: unknown): void {
+  const key = IntrinsicReflectApply(StringToLowerCase, NativeString(name), []) as string;
+  const text = NativeString(value);
+  record[key] = IntrinsicReflectApply(ObjectHasOwn, undefined, [record, key])
+    ? `${record[key]}, ${text}`
+    : text;
+}
+
+/**
+ * An array or record header init as a null-prototype record, built without a
+ * native `Headers`: filling one pushes onto internal arrays, which a setter on
+ * an `Array.prototype` index would observe. The native call validates the
+ * names and values when it reads the record.
+ */
+function toNativeHeaderRecordFromInit(source: HeadersInit): Record<string, string> {
+  const record = ObjectCreate(null) as Record<string, string>;
+  if (ArrayIsArray(source)) {
+    for (let index = 0; index < source.length; index++) {
+      const pair = source[index] as readonly unknown[];
+      if (!ArrayIsArray(pair) || pair.length !== 2) {
+        throw new TypeError("Header pairs must contain exactly a name and a value");
+      }
+      appendToRecord(record, pair[0], pair[1]);
+    }
+    return record;
+  }
+  const names = ObjectKeys(source);
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index]!;
+    appendToRecord(record, name, (source as Record<string, string>)[name]);
+  }
+  return record;
 }
 
 /**
@@ -265,9 +314,9 @@ export function createNativeRequestInit(
   if (headers !== undefined && headers !== null) {
     // Even an ordinary record is rebuilt: the native conversion first looks up
     // its `Symbol.iterator`, which an ordinary object inherits.
-    init.headers = toNativeHeaderRecord(
-      isNativeHeaders(headers) ? headers : copyNativeHeaders(headers as HeadersInit),
-    );
+    init.headers = isNativeHeaders(headers)
+      ? toNativeHeaderRecord(headers)
+      : toNativeHeaderRecordFromInit(headers as HeadersInit);
   }
   return init as RequestInit;
 }
