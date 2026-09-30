@@ -29,6 +29,12 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DnsPermissionError, resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
 import { getDenoRuntime, isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
+import {
+  assertNativeRequestProcessing,
+  copyNativeHeaders,
+  createNativeRequestInit,
+  readOwnInitField,
+} from "#veryfront/platform/compat/http/native-request-init.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
@@ -1184,18 +1190,18 @@ async function fetchThroughHttpBroker(
   targetUrl: string,
   init: RequestInit,
 ): Promise<Response> {
-  const headers = new NativeHeaders(init.headers);
+  const headers = copyNativeHeaders(readOwnInitField(init, "headers"));
   stripHopByHopHeaders(headers);
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
   IntrinsicReflectApply(HeadersSet, headers, [BROKER_AUTH_HEADER, broker.token]);
   IntrinsicReflectApply(HeadersSet, headers, [BROKER_TARGET_HEADER, targetUrl]);
 
-  const brokerInit = {
-    ...init,
+  const brokerInit = createNativeRequestInit(init, {
     headers,
     redirect: "manual",
-  } as RequestInit & Record<PropertyKey, unknown>;
-  delete brokerInit.client;
+    client: undefined,
+  });
+  assertNativeRequestProcessing();
   const brokerResponse = await fetchImpl(broker.url, brokerInit);
   if (IntrinsicReflectApply(HeadersGet, brokerResponse.headers, [BROKER_ERROR_HEADER]) === "1") {
     let message = "Worker network egress failed";
@@ -1313,7 +1319,10 @@ export async function guardedEgressFetch(
   let pendingRedirect: WorkerEgressRedirect | undefined;
   const requestInput = isNativeRequest(input) ? input : undefined;
 
-  const requestedRedirect: RequestRedirect = init?.redirect ??
+  // Every init field is read as an own property: an inherited getter would
+  // run with the caller's init, and its credential headers, as `this`.
+  const initRedirect = readOwnInitField(init, "redirect");
+  const requestedRedirect: RequestRedirect = initRedirect ??
     (requestInput ? getOptionalNativeRequestProperty(requestInput, "redirect") : undefined) ??
     "follow";
 
@@ -1322,10 +1331,11 @@ export async function guardedEgressFetch(
     : isNativeUrl(input)
     ? IntrinsicReflectApply(UrlHrefGet!, input, []) as string
     : String(input);
-  let method = (init?.method ??
+  let method = (readOwnInitField(init, "method") ??
     (requestInput ? getNativeRequestProperty(requestInput, "method") : "GET")).toUpperCase();
-  const headers = new NativeHeaders(
-    init?.headers ??
+  // Copied with captured iteration, and handed to the native call as a record.
+  const headers = copyNativeHeaders(
+    readOwnInitField(init, "headers") ??
       (requestInput ? getNativeRequestProperty(requestInput, "headers") : undefined),
   );
   // Following a redirect means resending the body, and a stream cannot replay,
@@ -1337,10 +1347,11 @@ export async function guardedEgressFetch(
   // return or throw first.
   const mayFollowRedirect = requestedRedirect === "follow";
   let body: BodyInit | undefined;
-  if (init?.body != null) {
-    body = mayFollowRedirect && init.body instanceof ReadableStream
-      ? new Uint8Array(await new NativeResponse(init.body).arrayBuffer())
-      : init.body as BodyInit;
+  const initBody = readOwnInitField(init, "body");
+  if (initBody != null) {
+    body = mayFollowRedirect && initBody instanceof ReadableStream
+      ? new Uint8Array(await new NativeResponse(initBody).arrayBuffer())
+      : initBody as BodyInit;
   } else if (requestInput && getNativeRequestProperty(requestInput, "body")) {
     body = mayFollowRedirect
       ? new Uint8Array(
@@ -1354,19 +1365,19 @@ export async function guardedEgressFetch(
   // rather than an init bag, and that must persist across every redirect hop.
   const reqInput = requestInput;
   const carryInit: RequestInit = {
-    signal: init?.signal ??
+    signal: readOwnInitField(init, "signal") ??
       (reqInput ? getOptionalNativeRequestProperty(reqInput, "signal") : undefined),
-    credentials: init?.credentials ??
+    credentials: readOwnInitField(init, "credentials") ??
       (reqInput ? getOptionalNativeRequestProperty(reqInput, "credentials") : undefined),
-    cache: init?.cache ??
+    cache: readOwnInitField(init, "cache") ??
       (reqInput ? getOptionalNativeRequestProperty(reqInput, "cache") : undefined),
-    mode: init?.mode ??
+    mode: readOwnInitField(init, "mode") ??
       (reqInput ? getOptionalNativeRequestProperty(reqInput, "mode") : undefined),
-    referrer: init?.referrer ??
+    referrer: readOwnInitField(init, "referrer") ??
       (reqInput ? getOptionalNativeRequestProperty(reqInput, "referrer") : undefined),
-    referrerPolicy: init?.referrerPolicy ??
+    referrerPolicy: readOwnInitField(init, "referrerPolicy") ??
       (reqInput ? getOptionalNativeRequestProperty(reqInput, "referrerPolicy") : undefined),
-    keepalive: init?.keepalive ??
+    keepalive: readOwnInitField(init, "keepalive") ??
       (reqInput ? getOptionalNativeRequestProperty(reqInput, "keepalive") : undefined),
   };
 
@@ -1380,16 +1391,15 @@ export async function guardedEgressFetch(
     let pinnedResponse: Promise<Response> | undefined;
     const isNetworkRequest = hostname !== null &&
       (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:");
-    const requestInit: RequestInit & { duplex?: "half" } = {
-      ...init,
+    const requestInit: RequestInit & { duplex?: "half" } = createNativeRequestInit(init, {
       ...carryInit,
       method,
       headers,
       body,
       redirect: "manual",
       // Streaming a request body requires the half-duplex opt-in.
-      ...(body instanceof ReadableStream ? { duplex: "half" as const } : {}),
-    };
+      duplex: body instanceof ReadableStream ? "half" : readOwnInitField(init, "duplex"),
+    });
 
     if (options.httpBroker && isNetworkRequest) {
       response = await fetchThroughHttpBroker(doFetch, options.httpBroker, url, requestInit);
@@ -1413,7 +1423,11 @@ export async function guardedEgressFetch(
             const pinnedFetch = deps.pinnedFetch ?? fetchWithPinnedAddresses;
             pinnedResponse = chainPrivatePromise(
               resolvePrivatePromise(),
-              () => pinnedFetch(parsedUrl, addresses, requestInit),
+              () => {
+                // Checked in the same turn as the call, after the last await.
+                assertNativeRequestProcessing();
+                return pinnedFetch(parsedUrl, addresses, requestInit);
+              },
             );
           } else {
             tunnel = startPinnedSocksTunnel(hostname, addresses, port, getRuntime());
@@ -1424,11 +1438,13 @@ export async function guardedEgressFetch(
 
       const pendingResponse = pinnedResponse
         ? pinnedResponse
-        : chainPrivatePromise(resolvePrivatePromise(), () =>
-          doFetch(url, {
-            ...requestInit,
-            ...(client ? { client } : {}),
-          }));
+        : chainPrivatePromise(resolvePrivatePromise(), () => {
+          assertNativeRequestProcessing();
+          return doFetch(
+            url,
+            client ? createNativeRequestInit(requestInit, { client }) : requestInit,
+          );
+        });
       try {
         response = await waitForOperation(pendingResponse, requestInit.signal ?? undefined);
       } catch (error) {

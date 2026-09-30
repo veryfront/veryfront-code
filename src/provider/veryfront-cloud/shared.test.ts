@@ -1,9 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { seedServedCatalogForTests } from "./catalog-client.test-helpers.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  HEADER_METHODS,
+  installCredentialProbes,
+} from "#veryfront/security/http/credential-probes.test-helpers.ts";
 import { isVeryfrontGatewayResponse } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import {
   runWithVeryfrontCloudContext,
@@ -15,6 +20,10 @@ import {
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
+
+// Probe tests pin what Deno 2.7.7's own Request and fetch call through the
+// live prototypes; Node's undici and Bun take different internal paths.
+const DENO_INTERNALS = { ignore: !isDeno };
 
 describe("provider/veryfront-cloud/shared", () => {
   beforeEach(seedServedCatalogForTests);
@@ -249,6 +258,93 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(capturedRequest?.headers.get("x-extra-header"), "kept");
     assertEquals(capturedRequest?.headers.get("x-veryfront-project-slug"), null);
     assertEquals(capturedRequest?.headers.get("x-veryfront-billing-group-id"), null);
+  });
+
+  it(
+    "sends a model call without a patched intrinsic seeing the gateway bearer",
+    DENO_INTERNALS,
+    async () => {
+      const bearer = "vf_model_call_bearer_31d7";
+      const wrappedFetch = createVeryfrontCloudFetch(bearer, "https://93.184.216.34/ai/v1");
+      const caller = new AbortController();
+      let captured:
+        | { authorization: string | null; method: string; body: string; redirect: string }
+        | undefined;
+      let transportSignal: AbortSignal | undefined;
+      // The mock stands in for native fetch, so it reads with the originals.
+      const headersGet = Headers.prototype.get;
+      // Everything but Headers has/append, which native fetch calls with the
+      // headers as `this`; replacing those makes the call refuse (next test).
+      const probes = installCredentialProbes({
+        headerMethods: HEADER_METHODS.filter((name) => name !== "has" && name !== "append"),
+      });
+      try {
+        await withMockFetch(
+          async (input: URL | Request | string, init?: RequestInit) => {
+            const request = new Request(input, init);
+            transportSignal = request.signal;
+            captured = {
+              authorization: Reflect.apply(headersGet, request.headers, ["authorization"]),
+              method: request.method,
+              body: await request.text(),
+              redirect: request.redirect,
+            };
+            return new Response(null, { status: 204 });
+          },
+          () =>
+            wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: '{"model":"gpt-test"}',
+              signal: caller.signal,
+            }),
+        );
+      } finally {
+        probes.restore();
+      }
+
+      assertEquals(probes.saw(bearer), false);
+      assertEquals(captured, {
+        authorization: `Bearer ${bearer}`,
+        method: "POST",
+        body: '{"model":"gpt-test"}',
+        // The egress guard follows redirects itself, so the wire request never does.
+        redirect: "manual",
+      });
+      assertEquals(transportSignal?.aborted, false);
+      caller.abort();
+      assertEquals(transportSignal?.aborted, true);
+    },
+  );
+
+  it("refuses a model call once Headers has or append was replaced", DENO_INTERNALS, async () => {
+    const bearer = "vf_model_call_bearer_31d7";
+    const wrappedFetch = createVeryfrontCloudFetch(bearer, "https://93.184.216.34/ai/v1");
+    let transportCalls = 0;
+    const probes = installCredentialProbes();
+    try {
+      await withMockFetch(
+        () => {
+          transportCalls++;
+          return Promise.resolve(new Response(null, { status: 204 }));
+        },
+        () =>
+          assertRejects(
+            async () =>
+              await wrappedFetch("https://93.184.216.34/ai/v1/chat/completions", {
+                method: "POST",
+                body: '{"model":"gpt-test"}',
+              }),
+            TypeError,
+            "modified native request processing",
+          ),
+      );
+    } finally {
+      probes.restore();
+    }
+
+    assertEquals(transportCalls, 0);
+    assertEquals(probes.saw(bearer), false);
   });
 
   it("aborts an in-flight gateway request when the caller signal aborts (#1815)", async () => {
