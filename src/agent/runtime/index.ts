@@ -1201,7 +1201,7 @@ function resolveRuntimeProviderReplayCheckpointEmission(
       : undefined,
     persist: getRuntimeProviderReplayCheckpointPersister(config),
     complete: getRuntimeProviderReplayCheckpointTurnComplete(config),
-    invokeAgentToolNames: new IntrinsicSet(getRuntimeProviderReplayInvokeAgentToolNames(config)),
+    invokeAgentToolNames: createPrivateSet(getRuntimeProviderReplayInvokeAgentToolNames(config)),
     fail: getRuntimeProviderReplayCheckpointTurnFailed(config),
     failed: false,
     required: isRuntimeProviderReplayCheckpointPersistenceRequired(config),

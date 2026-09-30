@@ -1,3 +1,4 @@
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
 import {
   isVeryfrontCloudRuntimeModel,
@@ -1280,7 +1281,7 @@ export async function createRuntimeAgentStreamResponse(
       !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName, deps.localTools)
     );
     childRunToolNames = resolveChildRunToolNames(mergedTools);
-    controlPlaneInvokeAgentToolNames = new _Set(
+    controlPlaneInvokeAgentToolNames = createPrivateSet(
       resolveControlPlaneInvokeAgentToolNames(mergedTools),
     );
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
