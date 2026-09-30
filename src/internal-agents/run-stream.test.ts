@@ -991,7 +991,10 @@ describe("internal-agents/run-stream", () => {
     const nativeStringify = JSON.stringify;
     const nativeIsArray = Array.isArray;
     const nativePush = Array.prototype.push;
-    const poisonedPush: typeof Array.prototype.push = function (...items) {
+    const poisonedPush: typeof Array.prototype.push = function (
+      this: unknown[],
+      ...items
+    ) {
       for (const item of items) {
         if (item?.payload?.type === "AGENT_RUN_PROVIDER_REPLAY_TURN_FINISHED") {
           item.payload.invokeAgentToolCalls[0].toolArgsJson = '{"task":"forged"}';
@@ -1178,7 +1181,6 @@ describe("internal-agents/run-stream", () => {
     });
     const response = await createRuntimeAgentStreamResponse(
       {
-        agentId: runtimeAgent.id,
         threadId: crypto.randomUUID(),
         runId,
         messageId,
@@ -1248,7 +1250,6 @@ describe("internal-agents/run-stream", () => {
     WeakSet.prototype.has = () => true;
     await createRuntimeAgentStreamResponse(
       {
-        agentId: runtimeAgent.id,
         threadId: crypto.randomUUID(),
         runId: "run_custom_invoke_agent_collision",
         messageId: crypto.randomUUID(),

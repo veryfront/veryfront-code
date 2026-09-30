@@ -762,7 +762,7 @@ describe("provider replay checkpoint emission", () => {
       __vfProviderReplayInvokeAgentToolNames: string[];
     };
 
-    await new AgentRuntime(config.id, config).generate("Delegate both tasks");
+    await new AgentRuntime(config.id!, config).generate("Delegate both tasks");
 
     assertEquals(completedBatch, [
       {
