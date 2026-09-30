@@ -458,6 +458,58 @@ describe("provider replay checkpoint emission", () => {
     assertEquals(completedBatch, undefined);
   });
 
+  it("suppresses a finalized delegation prefix when a sibling call is interrupted", async () => {
+    let completedBatch: unknown = "not-called";
+    const executedTasks: string[] = [];
+    const model = scriptedModel([{
+      parts: [
+        {
+          type: "tool-call",
+          toolCallId: "child-1",
+          toolName: "invoke_agent",
+          input: { task: "first" },
+        },
+        {
+          type: "tool-call",
+          toolCallId: "child-2",
+          toolName: "invoke_agent",
+          input: { task: "second" },
+        },
+        { type: "tool-input-start", id: "child-interrupted", toolName: "invoke_agent" },
+        { type: "tool-input-delta", id: "child-interrupted", delta: '{"task":"partial"' },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ],
+    }], {
+      modelId: "anthropic/interrupted-parallel-invoke-agent-sibling",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const config = {
+      id: "interrupted-parallel-invoke-agent-sibling",
+      model: "anthropic/interrupted-parallel-invoke-agent-sibling",
+      system: "Delegate three times.",
+      skills: false,
+      tools: {
+        invoke_agent: invokeAgentTool((task) => executedTasks.push(task)),
+      },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+      __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+        completedBatch = invokeAgentToolCalls;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig & {
+      __vfProviderReplayInvokeAgentToolNames: string[];
+    };
+
+    await (await agent(config).stream({ input: "Delegate all tasks" })).toDataStreamResponse()
+      .text();
+
+    assertEquals(completedBatch, undefined);
+    assertEquals(executedTasks, []);
+  });
+
   it("keeps the replay boundary payload unchanged for one invoke_agent call", async () => {
     let completedBatch: unknown = "not-called";
     const model = scriptedModel([{

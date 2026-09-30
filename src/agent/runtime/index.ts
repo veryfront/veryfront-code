@@ -1315,7 +1315,9 @@ function collectGeneratedParallelInvokeAgentToolCalls(
 function collectStreamedParallelInvokeAgentToolCalls(
   toolCalls: readonly StreamingToolCall[],
   allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
+  shouldContinue: boolean,
 ): ProviderReplayInvokeAgentToolCall[] | undefined {
+  if (!shouldContinue) return undefined;
   const calls: ProviderReplayInvokeAgentToolCall[] = [];
   for (let index = 0; index < toolCalls.length; index++) {
     if (!ObjectHasOwn(toolCalls, index)) continue;
@@ -4230,6 +4232,7 @@ export class AgentRuntime {
           ? collectStreamedParallelInvokeAgentToolCalls(
             streamedToolCalls,
             providerReplayCheckpointEmission.invokeAgentToolNames,
+            shouldContinue,
           )
           : undefined,
       });
