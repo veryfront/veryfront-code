@@ -250,6 +250,14 @@ The runtime records `reason` `invalid` or `schema_uncompilable` for the
 depth, serialized without whitespace). A task without that schema records
 `null`. Runs created before identities existed are never revalidated.
 
+## Waiting on child runs
+
+Tasks do not support durable child-dependency waiting. Using `await` inside
+`run(ctx)` does not checkpoint the task or put its run into
+`status: "waiting"` with `waiting_reason: "child_run"` and `waiting_on`.
+Local awaiting is unchanged: the task runner awaits the function's returned
+promise, but cannot resume that promise after a process restart.
+
 ## Discovery
 
 Tasks are discovered automatically from the `tasks/` directory:
