@@ -1453,17 +1453,15 @@ function streamedSameTurnSkillDelegationOrder(
   for (let index = 0; index < toolCalls.length; index++) {
     if (!ObjectHasOwn(toolCalls, index)) continue;
     const toolCall = toolCalls[index]!;
-    if (
-      toolCall.inputAvailable !== true || toolCall.providerExecuted === true ||
-      toolResults.has(toolCall.id)
-    ) {
-      continue;
-    }
+    if (toolCall.inputAvailable !== true) continue;
+    // Execution folds a streamed load_skill result in call order, so a completed
+    // skill call still orders its overrides relative to the delegations.
     if (toolCall.name === LOAD_SKILL_TOOL_ID) {
       if (sawDelegation) sawSkillAfterDelegation = true;
       else sawSkillBeforeDelegation = true;
       continue;
     }
+    if (toolCall.providerExecuted === true || toolResults.has(toolCall.id)) continue;
     if (
       IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
         toolCall.name as ProviderReplayInvokeAgentToolName,

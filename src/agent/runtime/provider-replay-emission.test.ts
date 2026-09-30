@@ -553,6 +553,99 @@ describe("provider replay checkpoint emission", () => {
     });
   }
 
+  it("publishes a completed same-turn streamed skill result in a parallel batch", async () => {
+    const operations: string[] = [];
+    const executedInputs: unknown[] = [];
+    let completedBatch: unknown;
+    const model = scriptedModel([{
+      parts: [
+        {
+          type: "tool-call" as const,
+          toolCallId: "load-1",
+          toolName: "load_skill",
+          input: { skillId: "delegate" },
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "load-1",
+          toolName: "load_skill",
+          output: {
+            skillId: "delegate",
+            instructions: "# Delegate",
+            allowedTools: ["invoke_agent"],
+            references: [],
+            scripts: [],
+            model: "anthropic/claude-sonnet-4-5",
+            thinking: false,
+            maxSteps: 6,
+          },
+        },
+        {
+          type: "tool-call" as const,
+          toolCallId: "child-1",
+          toolName: "invoke_agent",
+          input: { task: "first" },
+        },
+        {
+          type: "tool-call" as const,
+          toolCallId: "child-2",
+          toolName: "invoke_agent",
+          input: { task: "second" },
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ],
+    }], {
+      modelId: "anthropic/completed-skill-parallel-stream-replay-boundary",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const config = {
+      id: "completed-skill-parallel-stream-replay-boundary",
+      model: "anthropic/completed-skill-parallel-stream-replay-boundary",
+      system: "Load the skill, then delegate twice.",
+      skills: true,
+      tools: skillDelegationTools({
+        onLoad: () => operations.push("load"),
+        onInvoke: (task) => operations.push(`invoke:${task}`),
+      }),
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      onToolResult: (request: { toolName: string; input: unknown }) => {
+        if (request.toolName === "invoke_agent") executedInputs.push(request.input);
+      },
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+      __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+        operations.push("turn:complete");
+        completedBatch = invokeAgentToolCalls;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig & {
+      __vfProviderReplayInvokeAgentToolNames: string[];
+    };
+
+    await (await agent(config).stream({ input: "Delegate both tasks" })).toDataStreamResponse()
+      .text();
+
+    const effectiveArgs = [
+      { task: "first", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+      { task: "second", model: "anthropic/claude-sonnet-4-5", thinking: 0, max_steps: 6 },
+    ];
+    assertEquals(executedInputs, effectiveArgs);
+    assertEquals(completedBatch, [
+      {
+        toolCallId: "child-1",
+        toolName: "invoke_agent",
+        toolArgsJson: JSON.stringify(effectiveArgs[0]),
+      },
+      {
+        toolCallId: "child-2",
+        toolName: "invoke_agent",
+        toolArgsJson: JSON.stringify(effectiveArgs[1]),
+      },
+    ]);
+    assertEquals(operations, ["turn:complete", "invoke:first", "invoke:second"]);
+  });
+
   for (const mode of ["generate", "stream"] as const) {
     it(`keeps interleaved skill delegation sequential in ${mode}`, async () => {
       const operations: string[] = [];
