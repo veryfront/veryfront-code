@@ -19,3 +19,7 @@ export function createUpstreamFailureResponse(_error: unknown): Response {
     message: "Bad Gateway",
   });
 }
+
+export function createClientClosedRequestResponse(): Response {
+  return jsonErrorResponse(499, { error: "Client Closed Request" });
+}

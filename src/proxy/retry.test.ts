@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
@@ -8,6 +8,7 @@ import {
   isConnectionRefusedError,
   isRetryableConnectionError,
   shouldRetryUpstreamRequest,
+  waitForUpstreamRetryDelay,
 } from "./retry.ts";
 
 const RUN_STREAM_PATH = "/api/control-plane/runs/run_1/stream";
@@ -415,4 +416,29 @@ describe("aborted upstream requests", () => {
       );
     });
   }
+});
+
+describe("upstream retry delay cancellation", () => {
+  it("completes backoff for a live request", async () => {
+    const client = new AbortController();
+    await waitForUpstreamRetryDelay(0, client.signal);
+    assertEquals(client.signal.aborted, false);
+  });
+
+  it("rejects without waiting when the request is already aborted", async () => {
+    const client = new AbortController();
+    client.abort(new Error("client disconnected"));
+    await assertRejects(
+      () => waitForUpstreamRetryDelay(60_000, client.signal),
+      Error,
+      "client disconnected",
+    );
+  });
+
+  it("stops pending backoff immediately and cleans up its timer", async () => {
+    const client = new AbortController();
+    const waiting = waitForUpstreamRetryDelay(60_000, client.signal);
+    client.abort(new Error("client disconnected"));
+    await assertRejects(() => waiting, Error, "client disconnected");
+  });
 });

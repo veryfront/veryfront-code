@@ -227,6 +227,10 @@ describe("proxy client abort propagation", () => {
       loop.slice(loop.indexOf("proxy.retry_delay"), loop.indexOf("const abortController")),
       "req.signal.throwIfAborted();",
     );
+    assertStringIncludes(
+      loop,
+      "await waitForUpstreamRetryDelay(VERYFRONT_SERVER_RETRY_DELAY_MS, req.signal)",
+    );
     const catchBlock = loop.slice(loop.indexOf("} catch (error)"));
     assertEquals(
       catchBlock.indexOf("if (req.signal.aborted)") <
@@ -255,8 +259,7 @@ describe("proxy cancellation responses", () => {
     );
     const outerCatch = handler.slice(handler.lastIndexOf("} catch (error)"));
     assertStringIncludes(outerCatch, "if (req.signal.aborted)");
-    assertStringIncludes(outerCatch, "lifecycle.end(499);");
-    assertStringIncludes(outerCatch, 'jsonErrorResponse(499, { error: "Client Closed Request" })');
+    assertStringIncludes(outerCatch, "if (req.signal.aborted) throw error;");
     assertEquals(
       outerCatch.indexOf("if (req.signal.aborted)") <
         outerCatch.indexOf("captureApplicationError("),
@@ -271,7 +274,7 @@ describe("proxy cancellation responses", () => {
       handler.indexOf("} catch (error)"),
       handler.indexOf("// Real error logged above"),
     );
-    assertStringIncludes(catchBlock, 'jsonErrorResponse(499, { error: "Client Closed Request" })');
+    assertStringIncludes(catchBlock, "createClientClosedRequestResponse()");
     assertEquals(
       catchBlock.indexOf("if (req.signal.aborted)") <
         catchBlock.indexOf('proxyLogger.error("API proxy error"'),

@@ -35,6 +35,7 @@ import {
   getReplayableRequestBodies,
   getUpstreamRetryCount,
   shouldRetryUpstreamRequest,
+  waitForUpstreamRetryDelay,
 } from "./retry.ts";
 import {
   authorizeWebSocketRequest,
@@ -89,6 +90,7 @@ import { ProxyRequestHostError, resolveProxyRequestHost } from "./request-host.t
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
 import { type ProxyRequestLifecycle, runProxyRequestLifecycle } from "./request-lifecycle.ts";
 import {
+  createClientClosedRequestResponse,
   createUpstreamFailureResponse,
   createUpstreamTimeoutResponse,
   UPSTREAM_FAILURE_STATUS,
@@ -572,7 +574,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                 },
               );
               const retryDelayStartedAt = performance.now();
-              await new Promise((resolve) => setTimeout(resolve, VERYFRONT_SERVER_RETRY_DELAY_MS)); // no cleanup needed: one-shot
+              await waitForUpstreamRetryDelay(VERYFRONT_SERVER_RETRY_DELAY_MS, req.signal);
               markProxyServerTimingPhase(
                 proxyTiming,
                 "proxy.retry_delay",
@@ -709,10 +711,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
         },
       );
     } catch (error) {
-      if (req.signal.aborted) {
-        lifecycle.end(499);
-        return withProxyTiming(jsonErrorResponse(499, { error: "Client Closed Request" }));
-      }
+      if (req.signal.aborted) throw error;
       const ms = Math.round(performance.now() - startTime);
       if (error instanceof DedicatedServerLookupUnavailable) {
         proxyLogger.warn(`503 ${req.method} ${url.pathname}`, { ms });
@@ -804,7 +803,7 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
       },
     });
   } catch (error) {
-    if (req.signal.aborted) return jsonErrorResponse(499, { error: "Client Closed Request" });
+    if (req.signal.aborted) return createClientClosedRequestResponse();
     proxyLogger.error("API proxy error", error as Error);
     // Real error logged above; keep body generic so internal hostnames/paths in
     // error.message are not leaked to clients.

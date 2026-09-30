@@ -209,3 +209,24 @@ export function getReplayableRequestBodies(
   bodies.push(remainingBody);
   return bodies;
 }
+
+/** Stop retry backoff immediately when the incoming request is cancelled. */
+export async function waitForUpstreamRetryDelay(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  signal.throwIfAborted();
+}
