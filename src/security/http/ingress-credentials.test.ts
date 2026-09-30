@@ -1,4 +1,9 @@
-import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getRequestPeerProvenance,
@@ -95,6 +100,23 @@ describe("security/http/ingress-credentials", () => {
     assertEquals(readIngressCredential(sealed, INGRESS_INFERENCE_TOKEN_HEADER), INFERENCE_TOKEN);
     assertEquals(readIngressCredential(sealed, INGRESS_RUN_EVENT_TOKEN_HEADER), RUN_EVENT_TOKEN);
     assertEquals(getRequestPeerProvenance(sealed)?.hostname, "10.0.0.7");
+  });
+
+  it("locks the symbol-keyed internals that captured accessors still reach", () => {
+    for (const target of [Request.prototype, Headers.prototype]) {
+      const internals = Object.getOwnPropertySymbols(target).filter((key) =>
+        key !== Symbol.iterator && key !== Symbol.toStringTag
+      );
+      assert(internals.length > 0);
+      for (const key of internals) {
+        assertEquals(
+          Object.getOwnPropertyDescriptor(target, key)?.configurable,
+          false,
+          String(key),
+        );
+        assertThrows(() => Object.defineProperty(target, key, { get: () => undefined }), TypeError);
+      }
+    }
   });
 
   it("reads the credential without a patched intrinsic seeing it", () => {

@@ -103,6 +103,19 @@ export function installCredentialProbes(): CredentialProbes {
     }
   };
 
+  // For probes whose reach itself runs other probes.
+  const recordLazy = (name: string, reach: () => unknown) => {
+    if (recording) return;
+    recording = true;
+    let value: unknown;
+    try {
+      value = reach();
+    } finally {
+      recording = false;
+    }
+    record(name, value);
+  };
+
   for (const [name, original] of originalMethods) {
     const label = typeof name === "symbol" ? "Symbol.iterator" : String(name);
     Reflect.set(prototype, name, function (this: Headers, ...args: unknown[]) {
@@ -127,6 +140,42 @@ export function installCredentialProbes(): CredentialProbes {
         return undefined;
       },
     });
+  }
+  // Symbol-keyed members are reachable through Object.getOwnPropertySymbols,
+  // and the native Request constructor calls some of them on the headers.
+  const symbolRestores: (() => void)[] = [];
+  for (const target of [Headers.prototype, Request.prototype]) {
+    for (const key of Object.getOwnPropertySymbols(target)) {
+      if (key === Symbol.iterator || key === Symbol.toStringTag) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(target, key)!;
+      // Locked by the framework, so project code cannot replace it either.
+      if (!descriptor.configurable) continue;
+      const label = `${target === Headers.prototype ? "Headers" : "Request"}.${String(key)}`;
+      const reach = (self: unknown) =>
+        self instanceof Request ? Reflect.apply(requestHeadersGetter, self, []) : self;
+      if (descriptor.get) {
+        const getter = descriptor.get;
+        Object.defineProperty(target, key, {
+          ...descriptor,
+          get(this: unknown) {
+            recordLazy(label, () => reach(this));
+            return Reflect.apply(getter, this, []);
+          },
+        });
+      } else if (typeof descriptor.value === "function") {
+        const method = descriptor.value as (...args: unknown[]) => unknown;
+        Object.defineProperty(target, key, {
+          ...descriptor,
+          value: function (this: unknown, ...args: unknown[]) {
+            recordLazy(label, () => reach(this));
+            return Reflect.apply(method, this, args);
+          },
+        });
+      } else {
+        continue;
+      }
+      symbolRestores.push(() => Object.defineProperty(target, key, descriptor));
+    }
   }
   // A request used as a collection key reaches whoever replaced the method.
   for (const [target, label, names] of collectionMethods) {
@@ -163,6 +212,7 @@ export function installCredentialProbes(): CredentialProbes {
         if (descriptor) Object.defineProperty(Object.prototype, field, descriptor);
         else delete (Object.prototype as Record<string, unknown>)[field];
       }
+      for (const undo of symbolRestores) undo();
       for (const [target, name, original] of originalCollectionMethods) {
         Reflect.set(target, name, original);
       }

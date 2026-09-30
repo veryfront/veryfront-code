@@ -14,6 +14,7 @@
  */
 
 import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { lockNativeRequestInternals } from "#veryfront/platform/compat/http/native-request-internals.ts";
 import { assertNativeHeaderProcessing } from "./native-header-processing.ts";
 import { assertNativeRequestDefaults } from "./native-request-processing.ts";
 
@@ -50,6 +51,10 @@ export type IngressCredentialHeader =
 type IngressCredentials = { readonly [name in IngressCredentialHeader]: string | null };
 
 const ingressCredentials = new NativeWeakMap<Request, IngressCredentials>();
+
+// Captured accessors still reach the request's headers through symbol-keyed
+// prototype internals, so those are locked before project code can run.
+lockNativeRequestInternals();
 
 function readNativeHeader(request: Request, name: string): string | null {
   const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
