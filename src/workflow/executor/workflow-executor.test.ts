@@ -18,6 +18,7 @@ import {
   step,
   waitForApproval,
   waitForEvent,
+  waitForRuns,
   workflow,
 } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
@@ -199,6 +200,38 @@ class RejectingNodeStateBoundaryBackend extends MemoryBackend {
       return Promise.resolve(false);
     }
     return super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
+class ConcurrentSiblingChildRunBackend extends MemoryBackend {
+  injected = false;
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (!this.injected && patch.nodeStates?.children?.status === "completed") {
+      this.injected = true;
+      await super.updateRun(runId, {
+        context: { sibling: { approved: true } },
+        nodeStates: {
+          sibling: {
+            nodeId: "sibling",
+            status: "completed",
+            attempt: 1,
+            output: { approved: true },
+          },
+        },
+      });
+    }
+    return await super.updateRunIfStatusAndWorker(
       runId,
       expectedStatuses,
       expectedWorkerId,
@@ -457,6 +490,40 @@ describe("workflow/executor/workflow-executor", () => {
       backend.boundaryPatches.every((patch) => !("nodeStateDeletes" in patch)),
       true,
     );
+  });
+
+  it("preserves a concurrently completed sibling while consuming child-run waits", async () => {
+    const backend = new ConcurrentSiblingChildRunBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(
+      workflow({
+        id: "child-run-sibling-race",
+        steps: [waitForRuns("children", { runIds: ["run_child_1"] })],
+      }).definition,
+    );
+    const run: WorkflowRun = {
+      ...createRun("child-run-sibling-race"),
+      status: "waiting",
+      workerId: "worker-1",
+      nodeStates: {
+        children: {
+          nodeId: "children",
+          status: "running",
+          attempt: 1,
+          input: { type: "child_run", runIds: ["run_child_1"] },
+        },
+        sibling: { nodeId: "sibling", status: "running", attempt: 1 },
+      },
+      currentNodes: ["children"],
+    };
+    await backend.createRun(run);
+
+    assertEquals(await executor.resumeChildRuns(run.id), true);
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals(completed?.nodeStates.sibling?.status, "completed");
+    assertEquals(completed?.context.sibling, { approved: true });
   });
 
   it("persists the exact source integration policy when a run starts", async () => {

@@ -29,6 +29,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
@@ -39,7 +40,7 @@ import {
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { MemoryBackend } from "#veryfront/workflow/backends/memory.ts";
 import { dependsOn } from "#veryfront/workflow/dsl/workflow.ts";
-import { waitForApproval, waitForEvent } from "#veryfront/workflow/dsl/wait.ts";
+import { waitForApproval, waitForEvent, waitForRuns } from "#veryfront/workflow/dsl/wait.ts";
 import type { WorkflowNode } from "#veryfront/workflow/types.ts";
 import { delay } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
@@ -628,6 +629,62 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       } else assertEquals(result.response.status, 400);
     });
   }
+
+  it("reports every durable workflow-node child dependency with all-of semantics", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "waiting",
+          currentNodes: ["durable-children"],
+          nodeStates: {
+            "durable-children": {
+              input: { type: "child_run", runIds: ["run_child_1", "run_child_2"] },
+            },
+          },
+          pendingApprovals: [],
+        }),
+        getPendingEventWaits: async () => [],
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+    }));
+    const runId = "run_workflow_waiting_on_children";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting_reason, "child_run");
+    assertMatch(payload.waiting.wait_id, /^w\.[0-9a-f]{16}(?:\.[0-9a-f]{16})*$/);
+    assertEquals(payload.waiting_on, [
+      {
+        kind: "run",
+        run_id: "run_child_1",
+        correlation: { kind: "workflow_node", id: "durable-children" },
+      },
+      {
+        kind: "run",
+        run_id: "run_child_2",
+        correlation: { kind: "workflow_node", id: "durable-children" },
+      },
+    ]);
+  });
 
   it("preserves a successful task result within its deadline", async () => {
     const handler = new ProjectRunExecuteHandler(createDeps());
@@ -4148,6 +4205,22 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       return await result.response.json();
     }
 
+    async function childRunWaitId(
+      parked: Awaited<ReturnType<typeof parkRun>>,
+      nodeId: string,
+      runIds: string[],
+    ): Promise<string> {
+      const run = await parked.backend.getRun(runId);
+      const waitInstanceId = run?.nodeStates[nodeId]?._waitInstanceId;
+      assertExists(waitInstanceId);
+      const hashes = await Promise.all(
+        runIds.map((childRunId) =>
+          computeHash(`child:${waitInstanceId}:${childRunId}`).then((hash) => hash.slice(0, 16))
+        ),
+      );
+      return ["w", ...hashes].join(".");
+    }
+
     const finalize = step("finalize", {
       tool: {
         id: "finalize-tool",
@@ -4256,6 +4329,63 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       });
     });
 
+    it("continues all child-run waits without resolving their ids or replaying earlier nodes", async () => {
+      let resolutions = 0;
+      const parked = await parkRun([
+        waitForRuns("durable-children", {
+          runIds: () => {
+            resolutions++;
+            return ["run_child_1", "run_child_2"];
+          },
+        }),
+        dependsOn(finalize, "durable-children"),
+      ]);
+      assertEquals(resolutions, 1);
+      const waitId = await childRunWaitId(
+        parked,
+        "durable-children",
+        ["run_child_1", "run_child_2"],
+      );
+
+      const payload = await dispatchResume(parked, { type: "child_run", wait_id: waitId });
+
+      assertEquals(payload.success, true);
+      assertEquals(
+        resolutions,
+        1,
+        "resume must consume persisted ids instead of replaying the node",
+      );
+    });
+
+    it("continues after the child completion patch committed before its resume nudge", async () => {
+      const parked = await parkRun([
+        waitForRuns("children", { runIds: ["run_child_1"] }),
+        dependsOn(finalize, "children"),
+      ]);
+      const waiting = await parked.backend.getRun(runId);
+      const childState = waiting?.nodeStates.children;
+      assertExists(childState?._waitInstanceId);
+      await parked.backend.updateRun(runId, {
+        context: { children: { runIds: ["run_child_1"] } },
+        nodeStates: {
+          children: {
+            ...childState,
+            nodeId: "children",
+            status: "completed",
+            attempt: childState?.attempt ?? 1,
+            output: { runIds: ["run_child_1"] },
+            completedAt: new Date(),
+          },
+        },
+      });
+      const waitId = await childRunWaitId(parked, "children", ["run_child_1"]);
+
+      const payload = await dispatchResume(parked, { type: "child_run", wait_id: waitId });
+
+      assertEquals(payload.success, true);
+      assertEquals(payload.status, undefined);
+    });
+
     it("fails an approval that timed out on a deadline dispatch", async () => {
       const parked = await parkRun([
         waitForApproval("manager-review", { message: "Ship it?", timeout: 50 }),
@@ -4316,6 +4446,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           target: "workflow:x",
           projectId: "proj-1",
           resume: { type: "later" },
+        },
+        {
+          runId: "run_task_1",
+          kind: "workflow",
+          target: "workflow:x",
+          projectId: "proj-1",
+          resume: { type: "child_run" },
         },
       ]
     ) {

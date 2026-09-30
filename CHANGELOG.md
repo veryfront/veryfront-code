@@ -34,6 +34,14 @@ other wait and absent from APIs that predate it.
 - A child adopted through `task_id` is not listed: only the parent that spawned
   a child waits on it, and only that parent's cancel cancels it.
 
+### Added: workflows can wait on independently durable child runs
+
+`waitForRuns(nodeId, { runIds })` pauses a workflow until every listed run is
+terminal. The runtime reports each child through `waiting_on` with
+`correlation.kind: "workflow_node"` and the wait node ID, then continues the
+same workflow run when the control plane dispatches its child-run resume.
+Resolved run IDs are checkpointed once, and one node accepts 1 to 1000 IDs.
+
 ### Breaking: the bundled Veryfront Cloud model list is removed
 
 The Veryfront Cloud catalog facts this package bundled now come only from the

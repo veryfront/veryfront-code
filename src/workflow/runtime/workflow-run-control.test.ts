@@ -963,6 +963,50 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     );
   });
 
+  it("re-parks a stalled child-run wait from its persisted node input", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("stalled-live-child-runs"),
+      status: "running" as const,
+      nodeStates: {
+        children: {
+          nodeId: "children",
+          status: "running" as const,
+          attempt: 1,
+          input: { type: "child_run", runIds: ["run_child_1", "run_child_2"] },
+        },
+      },
+      currentNodes: ["children"],
+    };
+    await backend.createRun(run);
+    const result = stalledWaitResult("children");
+    result.nodeStates = run.nodeStates;
+    result.stalledWaitNodes = [{
+      nodeId: "children",
+      waitConfig: {
+        type: "wait",
+        waitType: "child_run",
+        runIds: ["run_child_1", "run_child_2"],
+      },
+    }];
+    let persistedAgain = 0;
+    let announcedAgain = 0;
+
+    const outcome = await execute(backend, run, () => result, {
+      onWaitingPersist: () => {
+        persistedAgain++;
+      },
+      onWaiting: () => {
+        announcedAgain++;
+      },
+    });
+
+    assertEquals(outcome.status, "waiting");
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+    assertEquals(persistedAgain, 0, "the persisted child ids are the durable wait record");
+    assertEquals(announcedAgain, 0, "recovery must not announce the child-run wait again");
+  });
+
   it("reconstructs every missing wait after a live sibling in the stalled batch", async () => {
     const backend = new MemoryBackend();
     const run = {

@@ -35,7 +35,7 @@ import { map } from "../dsl/map.ts";
 import { parallel } from "../dsl/parallel.ts";
 import { step } from "../dsl/step.ts";
 import { subWorkflow } from "../dsl/sub-workflow.ts";
-import { delay as delayNode, waitForApproval, waitForEvent } from "../dsl/wait.ts";
+import { delay as delayNode, waitForApproval, waitForEvent, waitForRuns } from "../dsl/wait.ts";
 import { waitFor } from "#veryfront/testing/index.ts";
 import { delay } from "#veryfront/testing/deno-compat.ts";
 import {
@@ -5835,6 +5835,28 @@ describe("WorkflowClient durable event waits", () => {
       async () => (await client.getRun(handle.runId))?.status === "completed",
       { message: "the reconstructed wait could not be woken by its event" },
     );
+  });
+
+  it("treats a persisted child-run input as the durable wait record during recovery", async () => {
+    client.register(workflow({
+      id: "child-run-recovery",
+      steps: [
+        waitForRuns("children", { runIds: ["run_child_1", "run_child_2"] }),
+        step("after", { tool: createMockTool("after-child-runs", { done: true }) }),
+      ],
+    }));
+    const handle = await client.start("child-run-recovery", {});
+    await handle.settled();
+
+    await client.resume(handle.runId);
+    assertEquals(
+      (await client.getRun(handle.runId))?.status,
+      "waiting",
+      "a recovery nudge must leave a durable child-run wait parked",
+    );
+
+    assertEquals(await client.resumeChildRuns(handle.runId), true);
+    assertEquals((await client.getRun(handle.runId))?.status, "completed");
   });
 
   it("drains mail buffered before a live stalled wait is resumed", async () => {

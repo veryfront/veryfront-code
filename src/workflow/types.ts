@@ -227,6 +227,8 @@ export interface WaitNodeConfig extends BaseNodeConfig {
    */
   approvers?: string[];
   eventName?: string;
+  /** Canonical child run ids this node waits for, resolved once when the node first parks. */
+  runIds?: string[] | ((context: WorkflowContext) => string[]);
   /**
    * Shape a human's structured answer must satisfy. Validated when the decision
    * is submitted, so a non-conformant answer is refused rather than persisted.

@@ -496,6 +496,34 @@ backend before relying on `waitForEvent` or `delay`.
 
 `publishEvent` is run-scoped. There is no broadcast by workflow id.
 
+### Wait for child runs
+
+Use `waitForRuns` when a workflow starts or receives the IDs of independently durable runs and
+must continue only after every one of them reaches a terminal status:
+
+```ts
+import { dependsOn, step, waitForRuns, workflow } from "veryfront/workflow";
+
+export default workflow({
+  id: "batch-release",
+  steps: [
+    step("start-children", { tool: "start-release-checks" }),
+    dependsOn(
+      waitForRuns("release-checks", {
+        runIds: (ctx) => ctx["start-children"].runIds,
+      }),
+      "start-children",
+    ),
+    dependsOn(step("publish", { tool: "publish-release" }), "release-checks"),
+  ],
+});
+```
+
+The run ID list is resolved once when the node first parks and is stored with the workflow state.
+The cloud runtime reports each dependency with the node ID as its correlation, and the control
+plane resumes the same workflow run only after all listed child runs are completed, failed, or
+cancelled. A child-run wait has no timeout. Use between 1 and 1000 run IDs.
+
 ## Workflow configuration
 
 ```ts

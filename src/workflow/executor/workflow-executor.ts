@@ -429,6 +429,57 @@ export class WorkflowExecutor {
     );
   }
 
+  /** Complete every child-run wait in the current durable pause, then continue the same run. */
+  async resumeChildRuns(runId: string): Promise<boolean> {
+    requireDurableWorkflowSourceContext();
+    const run = await this.config.backend.getRun(runId);
+    if (!run || run.status !== "waiting") return false;
+
+    const completedAt = new Date();
+    const contextPatch: Record<string, unknown> = {};
+    const nodeStatePatch: Record<string, NodeState> = {};
+    let foundBoundary = false;
+    for (const nodeId of run.currentNodes) {
+      const state = run.nodeStates[nodeId];
+      if (!state) continue;
+      const input = state.input as { type?: unknown; runIds?: unknown } | undefined;
+      if (
+        (state.status !== "running" && state.status !== "completed") ||
+        input?.type !== "child_run"
+      ) continue;
+      if (!Array.isArray(input.runIds) || input.runIds.length === 0) continue;
+      foundBoundary = true;
+      if (state.status === "completed") continue;
+      const output = { runIds: input.runIds };
+      contextPatch[nodeId] = output;
+      nodeStatePatch[nodeId] = {
+        ...state,
+        status: "completed",
+        output,
+        error: undefined,
+        completedAt,
+      };
+    }
+    if (!foundBoundary) return false;
+
+    if (Object.keys(nodeStatePatch).length > 0) {
+      const keyMerge = hasRunPatchKeyMergeSupport(this.config.backend);
+      const updated = await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        ["waiting"],
+        keyMerge ? { context: contextPatch, nodeStates: nodeStatePatch } : {
+          context: { ...run.context, ...contextPatch },
+          nodeStates: { ...run.nodeStates, ...nodeStatePatch },
+        },
+        run.workerId,
+      );
+      if (!updated) return false;
+    }
+    await this.resume(runId, undefined, run.workerId);
+    return true;
+  }
+
   /**
    * Retry a failed workflow run from its failed node state.
    */

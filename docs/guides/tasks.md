@@ -308,6 +308,11 @@ curl -X POST "$VERYFRONT_API_URL/runs" \
 
 See [Runs](./runs.md) for run creation and event monitoring.
 
+Task code can await a request or promise during its current process execution. Tasks do not expose
+a durable child-run waiting contract: if a run must pause, survive process replacement, and resume
+after independently durable child runs finish, define that orchestration as a workflow and use
+`waitForRuns`.
+
 ## Verify it worked
 
 Run the task locally first:

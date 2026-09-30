@@ -155,6 +155,7 @@ const CONFIG_KEYS = {
     "payload",
     "approvers",
     "eventName",
+    "runIds",
     "responseSchema",
     INTERNAL_WAIT_KIND_FIELD,
   ]),
@@ -994,7 +995,9 @@ function captureNodeConfig(
     }
     case "wait": {
       const waitType = fields.get("waitType");
-      if (waitType !== "approval" && waitType !== "event") fail(`${label} waitType is invalid`);
+      if (waitType !== "approval" && waitType !== "event" && waitType !== "child_run") {
+        fail(`${label} waitType is invalid`);
+      }
       const message = fields.get("message");
       if (message !== undefined) assertString(message, `${label} message`);
       const eventName = fields.get("eventName");
@@ -1003,6 +1006,11 @@ function captureNodeConfig(
       }
       if (waitType === "event" && eventName === undefined) {
         fail(`${label} event wait requires eventName`);
+      }
+      const runIds = fields.get("runIds");
+      if (waitType === "child_run") {
+        if (typeof runIds === "function") assertFunction(runIds, `${label} runIds builder`);
+        else if (!Array.isArray(runIds)) fail(`${label} child-run wait requires runIds`);
       }
       const configuredWaitKind = fields.get(INTERNAL_WAIT_KIND_FIELD);
       if (
@@ -1050,6 +1058,11 @@ function captureNodeConfig(
           requireNonEmpty: true,
         }),
         eventName,
+        ...(waitType === "child_run"
+          ? {
+            runIds: typeof runIds === "function" ? runIds : staticValue(runIds, "runIds"),
+          }
+          : {}),
         ...(waitType === "event"
           ? {
             [INTERNAL_WAIT_KIND_FIELD]: configuredWaitKind === "delay" ? "delay" : "event",

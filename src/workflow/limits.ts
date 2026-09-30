@@ -4,6 +4,15 @@ export const DEFAULT_WORKFLOW_RUN_LIST_LIMIT = 100;
 /** Maximum workflow-run page size accepted by built-in backends and schemas. */
 export const MAX_WORKFLOW_RUN_LIST_LIMIT = 1_000;
 
+/** Maximum durable child-run dependencies one workflow pause may report. */
+export const MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES = 1_000;
+
+/** Control-plane bound for child run ids. */
+export const MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS = 128;
+
+/** Control-plane bound for workflow-node correlation ids. */
+export const MAX_WORKFLOW_CHILD_RUN_NODE_ID_CODE_UNITS = 255;
+
 /** Maximum public offset, bounding ordered-index work performed per request. */
 export const MAX_WORKFLOW_RUN_LIST_OFFSET = 10_000;
 

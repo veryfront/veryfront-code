@@ -168,7 +168,14 @@ export type WorkflowResumeSignal =
     wait_id?: string;
   }
   | { type: "event"; name: string; payload?: unknown; wait_id?: string }
-  | { type: "deadline"; wait_id?: string };
+  | { type: "deadline"; wait_id?: string }
+  | { type: "child_run"; wait_id: string };
+
+export interface WorkflowWaitingDependency {
+  kind: "run";
+  run_id: string;
+  correlation: { kind: "workflow_node"; id: string };
+}
 
 /** What a paused workflow run waits on, reported with `status: "waiting"` (#2085, #2102, #2110). */
 export interface WorkflowWaitingDetails {
@@ -190,7 +197,9 @@ export interface ProjectRunExecuteResponse {
   success: boolean;
   /** Lifecycle outcome. Sent for a pause, which `success` alone cannot express (#2085). */
   status?: "waiting";
-  waiting_reason?: "approval" | "event";
+  waiting_reason?: "approval" | "event" | "child_run";
+  /** Every independently durable run that must terminate before this workflow continues. */
+  waiting_on?: WorkflowWaitingDependency[];
   waiting?: WorkflowWaitingDetails;
   result?: unknown;
   logs?: string | null;
@@ -224,7 +233,9 @@ interface WorkflowRunView {
   output?: unknown;
   /** The nodes a `waiting` run is parked on. */
   currentNodes?: ReadonlyArray<string>;
-  nodeStates?: Readonly<Record<string, { input?: unknown } | undefined>>;
+  nodeStates?: Readonly<
+    Record<string, { input?: unknown; status?: string; _waitInstanceId?: string } | undefined>
+  >;
   error?: { message?: string } | null;
   pendingApprovals?: ReadonlyArray<
     { id: string; nodeId: string; status?: string; expiresAt?: Date | string }
@@ -257,6 +268,7 @@ interface WorkflowClientView {
   ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
   getPendingEventWaits?(runId: string): Promise<WorkflowEventWaitView[]>;
+  resumeChildRuns?(runId: string): Promise<boolean>;
   approve?(
     runId: string,
     approvalId: string,
@@ -570,6 +582,8 @@ function parseResumeSignal(
       };
     case "deadline":
       return { type: "deadline", ...parseResumeWaitId(value.wait_id) };
+    case "child_run":
+      return { type: "child_run", wait_id: parseResumeId(value.wait_id, "resume.wait_id") };
     default:
       throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid resume.type" });
   }
@@ -983,6 +997,7 @@ function isParkedOnApproval(run: WorkflowRunView): boolean {
 interface PendingWorkflowWaits {
   approvals: NonNullable<WorkflowRunView["pendingApprovals"]>;
   eventWaits: WorkflowEventWaitView[];
+  childRunWaits: Array<{ nodeId: string; runIds: string[]; waitInstanceId?: string }>;
 }
 
 function isPendingWait(entry: { status?: string }): boolean {
@@ -995,9 +1010,24 @@ async function readPendingWaits(
   runId: string,
   run: WorkflowRunView,
 ): Promise<PendingWorkflowWaits> {
+  const childRunWaits = (run.currentNodes ?? []).flatMap((nodeId) => {
+    const state = run.nodeStates?.[nodeId];
+    const input = state?.input as { type?: unknown; runIds?: unknown } | undefined;
+    if (
+      input?.type !== "child_run" ||
+      !Array.isArray(input.runIds) || input.runIds.length === 0 ||
+      input.runIds.some((runId) => typeof runId !== "string" || runId.length === 0)
+    ) return [];
+    return [{
+      nodeId,
+      runIds: input.runIds as string[],
+      ...(state?._waitInstanceId === undefined ? {} : { waitInstanceId: state._waitInstanceId }),
+    }];
+  });
   return {
     approvals: (run.pendingApprovals ?? []).filter(isPendingWait),
     eventWaits: (await client.getPendingEventWaits?.(runId) ?? []).filter(isPendingWait),
+    childRunWaits,
   };
 }
 
@@ -1032,14 +1062,27 @@ async function describeWorkflowWait(parked: PendingWorkflowWaits): Promise<Workf
   };
 }
 
+function childRunDependencies(parked: PendingWorkflowWaits): WorkflowWaitingDependency[] {
+  return parked.childRunWaits.flatMap(({ nodeId, runIds }) =>
+    runIds.map((runId) => ({
+      kind: "run" as const,
+      run_id: runId,
+      correlation: { kind: "workflow_node" as const, id: nodeId },
+    }))
+  );
+}
+
 /**
  * The approval and wait records a run is parked on. A later pause, even on
  * the same node (a loop), creates new records, so the keys change with it.
  */
-function waitKeys({ approvals, eventWaits }: PendingWorkflowWaits): string[] {
+function waitKeys({ approvals, eventWaits, childRunWaits }: PendingWorkflowWaits): string[] {
   return [
     ...approvals.map((approval) => `approval:${approval.id}`),
     ...eventWaits.map(eventWaitKey),
+    ...childRunWaits.flatMap(({ nodeId, runIds, waitInstanceId }) =>
+      runIds.map((runId) => `child:${waitInstanceId ?? nodeId}:${runId}`)
+    ),
   ].sort((left, right) => left.localeCompare(right));
 }
 
@@ -1052,8 +1095,10 @@ function sameKeys(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((key, index) => key === right[index]);
 }
 
-function isParkedOnNothing({ approvals, eventWaits }: PendingWorkflowWaits): boolean {
-  return approvals.length === 0 && eventWaits.length === 0;
+function isParkedOnNothing(
+  { approvals, eventWaits, childRunWaits }: PendingWorkflowWaits,
+): boolean {
+  return approvals.length === 0 && eventWaits.length === 0 && childRunWaits.length === 0;
 }
 
 async function waitKeyHash(key: string): Promise<string> {
@@ -1123,6 +1168,12 @@ async function applyResumeSignal(
   parked: PendingWorkflowWaits,
   nowMs: number,
 ): Promise<{ released: boolean } | { failure: string }> {
+  if (resume.type === "child_run") {
+    if (!client.resumeChildRuns) {
+      return { failure: "Workflow client cannot release child-run waits" };
+    }
+    return { released: await client.resumeChildRuns(runId) };
+  }
   if (resume.type === "event") return deliverResumeEvent(client, runId, resume);
   if (resume.type === "deadline") {
     if (!client.getApprovalManager || !client.getEventWaitManager) {
@@ -1171,6 +1222,9 @@ async function isStaleDecision(
 
 /** The pending wait records an approval or event decision would release. */
 function targetedWaitKeys(resume: WorkflowResumeSignal, parked: PendingWorkflowWaits): string[] {
+  if (resume.type === "child_run") {
+    return waitKeys({ approvals: [], eventWaits: [], childRunWaits: parked.childRunWaits });
+  }
   if (resume.type === "approval") {
     return parked.approvals
       .filter((approval) => approval.nodeId === resume.node_id)
@@ -1374,13 +1428,18 @@ async function executeWorkflowRun(
       // A pause is not a result: report what the run waits on so the control
       // plane keeps the canonical run `waiting` (#2085) and knows when to
       // dispatch it again (#2110). The pause payload is never sent as output.
-      const waiting = await describeWorkflowWait(
-        await readPendingWaits(client, request.runId, run),
-      );
+      const parked = await readPendingWaits(client, request.runId, run);
+      const waiting = await describeWorkflowWait(parked);
+      const waitingOn = childRunDependencies(parked);
       return {
         success: true,
         status: "waiting",
-        waiting_reason: waiting.pending_approvals?.length ? "approval" : "event",
+        waiting_reason: waitingOn.length > 0
+          ? "child_run"
+          : waiting.pending_approvals?.length
+          ? "approval"
+          : "event",
+        ...(waitingOn.length > 0 ? { waiting_on: waitingOn } : {}),
         waiting,
         logs: null,
         duration_ms: durationMs,

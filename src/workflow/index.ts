@@ -75,6 +75,7 @@ export {
   unless,
   waitForApproval,
   waitForEvent,
+  waitForRuns,
   when,
   workflow,
 } from "./dsl/index.ts";
@@ -88,6 +89,7 @@ export type {
   SubWorkflowOptions,
   WaitForApprovalOptions,
   WaitForEventOptions,
+  WaitForRunsOptions,
   Workflow,
   WorkflowOptions,
 } from "./dsl/index.ts";

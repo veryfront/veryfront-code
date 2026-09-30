@@ -416,6 +416,11 @@ export class WorkflowClient {
     return this.executor.resume(runId, undefined, expectedWorkerId);
   }
 
+  /** Continue a durable pause after every child run reported by it became terminal. */
+  resumeChildRuns(runId: string): Promise<boolean> {
+    return this.executor.resumeChildRuns(runId);
+  }
+
   retry(runId: string): Promise<void> {
     return this.executor.retry(runId);
   }

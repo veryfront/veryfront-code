@@ -53,6 +53,7 @@ import {
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
 import {
   collectWorkflowNodeIds,
+  isCanonicalNonEmptyString,
   namespaceWorkflowDefinition,
   rebaseCompositeDescendants,
 } from "#veryfront/workflow/dsl/validation.ts";
@@ -70,6 +71,11 @@ import {
   createSetContextPatch,
   mergeContextPatches,
 } from "./context-patch.ts";
+import {
+  MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES,
+  MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS,
+  MAX_WORKFLOW_CHILD_RUN_NODE_ID_CODE_UNITS,
+} from "#veryfront/workflow/limits.ts";
 
 const RESUMABLE_COMPOSITE_TYPES = new Set(["branch", "parallel", "map", "loop", "subWorkflow"]);
 const MAX_STALLED_GRAPH_NODE_DETAILS = 10;
@@ -2347,6 +2353,26 @@ export class DAGExecutor {
     const payload = typeof config.payload === "function"
       ? await config.payload(context)
       : config.payload;
+    const resolvedRunIds = config.waitType === "child_run"
+      ? (typeof config.runIds === "function" ? await config.runIds(context) : config.runIds)
+      : undefined;
+    if (config.waitType === "child_run") {
+      if (
+        node.id.length > MAX_WORKFLOW_CHILD_RUN_NODE_ID_CODE_UNITS ||
+        !Array.isArray(resolvedRunIds) || resolvedRunIds.length === 0 ||
+        resolvedRunIds.length > MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES ||
+        resolvedRunIds.some((runId) =>
+          !isCanonicalNonEmptyString(runId) ||
+          runId.length > MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS ||
+          !/^[a-zA-Z0-9_-]+$/.test(runId)
+        )
+      ) {
+        throw INVALID_ARGUMENT.create({
+          detail: `waitForRuns "${node.id}" requires a node id of at most 255 code units and ` +
+            `1 to 1000 run ids matching [a-zA-Z0-9_-]+ with at most 128 code units`,
+        });
+      }
+    }
     abortSignal?.throwIfAborted();
 
     const state: NodeState = {
@@ -2363,6 +2389,7 @@ export class DAGExecutor {
         ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
         ...(config.message !== undefined ? { message: config.message } : {}),
         ...(payload !== undefined ? { payload } : {}),
+        ...(resolvedRunIds !== undefined ? { runIds: [...new Set(resolvedRunIds)] } : {}),
       },
       attempt: 1,
       startedAt: new Date(),
