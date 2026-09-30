@@ -698,6 +698,13 @@ describe("agent/ag-ui-detached-start", () => {
     });
     const reported: string[] = [];
     let executions = 0;
+    const signals: AbortSignal[] = [];
+    const startRun = sessionManager.startRun.bind(sessionManager);
+    sessionManager.startRun = (input) => {
+      const signal = startRun(input);
+      signals.push(signal);
+      return signal;
+    };
 
     const handler = createAgUiDetachedStartHandler({
       sessionManager,
@@ -720,6 +727,17 @@ describe("agent/ag-ui-detached-start", () => {
 
     assertEquals(executions, 0, "a cancelled start must not execute");
     assertEquals(reported, ["error:run_1"], "the cancellation is still reported to the host");
+
+    const replacementSignal = sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+    });
+    sessionManager.completeRun("run_1", replacementSignal);
+    assertEquals(
+      sessionManager.isSupersededRun("run_1", signals[0]),
+      false,
+      "a cancelled start that never executed must not occupy settling bookkeeping",
+    );
   });
 
   it("returns 400 for malformed detached start payloads", async () => {

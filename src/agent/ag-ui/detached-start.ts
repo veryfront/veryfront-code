@@ -337,6 +337,10 @@ export async function executeAgUiDetachedStart(
     // signal that a provider could ignore. Report an ordinary cancellation to the
     // host, but stay silent when a resumed start already owns the run id.
     if (abortSignal.aborted) {
+      // No execution was started, so this cancelled signal has already settled.
+      // Forget its settling record before a later reuse of the run id can mark
+      // it superseded and displace a genuinely still-running cancelled turn.
+      options.sessionManager.failRun(input.request.runId, abortSignal);
       if (!options.sessionManager.isSupersededRun(input.request.runId, abortSignal)) {
         await options.onError?.({
           runId: input.request.runId,
