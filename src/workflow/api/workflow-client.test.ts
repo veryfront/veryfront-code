@@ -201,6 +201,34 @@ describe("WorkflowClient", () => {
     assertEquals(run?.output, { triage: { category: "billing", confidence: 0.94 } });
   });
 
+  it("selects a map workflow processor's output by its declared step ids (#2107)", async () => {
+    const processor = workflow({
+      id: "selecting-map-processor",
+      steps: [
+        step("classify", {
+          tool: createMockTool("classify", { category: "billing", confidence: 0.94 }),
+        }),
+      ],
+      output: (context) => context.classify,
+    }).definition;
+    client.register(workflow({
+      id: "selecting-map-parent",
+      steps: [map("tickets", { items: [{ ticket: "one" }, { ticket: "two" }], processor })],
+    }));
+
+    const handle = await client.start("selecting-map-parent", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, {
+      tickets: [
+        { category: "billing", confidence: 0.94 },
+        { category: "billing", confidence: 0.94 },
+      ],
+    });
+  });
+
   describe("typed approval payload", () => {
     const schemaWorkflow = workflow({
       id: "typed-approval-workflow",
