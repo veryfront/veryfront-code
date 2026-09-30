@@ -606,7 +606,10 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
     }),
     v.object({
       eventName: v.literal("RunFinished"),
-      payload: v.object({ metadata: getAgUiRunFinishedMetadataSchema().optional() }),
+      payload: v.object({
+        metadata: getAgUiRunFinishedMetadataSchema().optional(),
+        result: v.unknown().optional(),
+      }),
     }),
     v.object({
       eventName: v.literal("RunError"),

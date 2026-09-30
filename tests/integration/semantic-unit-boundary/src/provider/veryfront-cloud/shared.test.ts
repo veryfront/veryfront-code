@@ -16,7 +16,6 @@ import {
   createVeryfrontCloudFetch,
   requireVeryfrontCloudBootstrap,
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
-import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 
 // Fictional placeholder standing in for a real internal-cluster Service DNS
 // name -- the ".svc.cluster.local" suffix is what's under test, not any
@@ -32,10 +31,7 @@ describe("provider/veryfront-cloud internal-provider-origin allowlist boundary",
           "http://some-service.some-namespace.svc.cluster.local",
       },
       async () => {
-        const bootstrap = runWithVeryfrontCloudContext(
-          { apiBaseUrl: INTERNAL_API_BASE_URL, apiToken: "vf_scoped_token" },
-          () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
-        );
+        const bootstrap = requireVeryfrontCloudBootstrap("vf_scoped_token", INTERNAL_API_BASE_URL);
         assertEquals(bootstrap.apiBaseUrl, INTERNAL_API_BASE_URL);
       },
     );
@@ -293,9 +289,9 @@ describe("provider/veryfront-cloud internal-provider-origin allowlist boundary",
           [HOST_INTERNAL_EGRESS_OVERRIDE_ENV]: "true",
         },
         async () => {
-          const bootstrap = runWithVeryfrontCloudContext(
-            { apiBaseUrl: INTERNAL_API_BASE_URL, apiToken: "vf_scoped_token" },
-            () => requireVeryfrontCloudBootstrap("vf_scoped_token"),
+          const bootstrap = requireVeryfrontCloudBootstrap(
+            "vf_scoped_token",
+            INTERNAL_API_BASE_URL,
           );
           assertEquals(bootstrap.apiBaseUrl, INTERNAL_API_BASE_URL);
         },

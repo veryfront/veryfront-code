@@ -18,6 +18,7 @@ import {
   type WorkflowRunUpdate,
 } from "../backends/types.ts";
 import type { CheckpointOwnership } from "../executor/checkpoint-manager.ts";
+import { toJsonOutput } from "../executor/json-output.ts";
 import type {
   ApprovalDecision,
   NodeState,
@@ -87,6 +88,12 @@ export interface WorkflowRunControlExecuteInput {
   }): Promise<WorkflowRunControlExecuteResult>;
   onStart?(run: WorkflowRun): void | Promise<void>;
   onComplete?(run: WorkflowRun): void | Promise<void>;
+  /**
+   * The final output for a completed context. A throw fails the run, with the
+   * completed context, instead of completing it. Defaults to the context minus
+   * `input`.
+   */
+  selectOutput?(context: WorkflowContext): unknown;
   onError?(
     run: WorkflowRun,
     error: Error,
@@ -975,7 +982,19 @@ export async function executeWorkflowRunControl(
     }
 
     if (result.completed) {
-      const finalRun = await completeRun(input, executionController, result);
+      let output: unknown;
+      try {
+        output = selectFinalOutput(input, result.context);
+      } catch (selectionError) {
+        // Fail with the completed context the selector saw, not the last
+        // checkpoint, so the failed run keeps its final step outputs.
+        const error = ensureError(selectionError);
+        const failed = await failRun(input, executionController, error, result, ["running"]);
+        if (!failed) return { status: "ownership-lost" };
+        await input.onError?.(run, error, result.context);
+        return { status: "failed" };
+      }
+      const finalRun = await completeRun(input, executionController, result, output);
       if (!finalRun) return { status: "ownership-lost" };
       if (finalRun.status === "cancelled") return { status: "cancelled", run: finalRun };
       await input.onComplete?.(finalRun);
@@ -1261,6 +1280,7 @@ async function completeRun(
   input: WorkflowRunControlExecuteInput,
   executionController: AbortController,
   result: WorkflowRunControlExecuteResult,
+  output: unknown,
 ): Promise<WorkflowRun | null> {
   const { backend, run, expectedWorkerId } = input;
   await input.waitForCancellationUpdate(run.id);
@@ -1273,7 +1293,6 @@ async function completeRun(
   ) return null;
 
   const publicContext = toPersistedWorkflowContext(result.context);
-  const output = determineOutput(publicContext);
   const completed = await updateRunIfStatus(
     backend,
     run.id,
@@ -1413,6 +1432,15 @@ async function pauseRun(
 export function toPersistedWorkflowContext(context: WorkflowContext): WorkflowContext {
   const { _tenant: _tenant, ...publicContext } = context;
   return publicContext;
+}
+
+function selectFinalOutput(
+  input: WorkflowRunControlExecuteInput,
+  context: WorkflowContext,
+): unknown {
+  const publicContext = toPersistedWorkflowContext(context);
+  if (!input.selectOutput) return determineOutput(publicContext);
+  return toJsonOutput(input.selectOutput(publicContext));
 }
 
 function determineOutput(context: WorkflowContext): unknown {

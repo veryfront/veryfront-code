@@ -268,6 +268,54 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
+  it("sends any JSON value as task, workflow and eval run input (#2109)", async () => {
+    const input = ["INV-7731", "Harbor Office"];
+    mockFetch([
+      jsonResponse({ accepted: true, run: makeRun({ input }) }, 202),
+      jsonResponse({ accepted: true, run: makeRun({ kind: "workflow", input }) }, 202),
+      jsonResponse({ accepted: true, run: makeRun({ kind: "eval", input }) }, 202),
+    ]);
+    const client = createTestClient();
+
+    const task = await client.createTaskRun({
+      projectId,
+      target: "task:classify-ticket",
+      input,
+      config: { urgent: true },
+    });
+    await client.createWorkflowRun({
+      projectId,
+      workflowId: "classify-ticket-flow",
+      target: "workflow:classify-ticket-flow",
+      input,
+    });
+    await client.createEvalRun({ projectId, target: "eval:invoice-lookup", input });
+
+    assertEquals(task.run.input, input);
+    assertEquals(jsonBody(0), {
+      kind: "task",
+      owner: { kind: "project", id: projectId },
+      request: { target: "task:classify-ticket", input, config: { urgent: true } },
+    });
+    assertEquals((jsonBody(1) as { request: { input: unknown } }).request.input, input);
+    assertEquals((jsonBody(2) as { request: { input: unknown } }).request.input, input);
+  });
+
+  it("omits task input when none is given, so config-only callers are unchanged", async () => {
+    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+
+    await createTestClient().createTaskRun({
+      projectId,
+      target: "task:sync-data",
+      config: { a: 1 },
+    });
+
+    assertEquals(
+      Object.hasOwn((jsonBody(0) as { request: Record<string, unknown> }).request, "input"),
+      false,
+    );
+  });
+
   it("creates schedule runs by resolving the source trigger id", async () => {
     mockFetch([
       jsonResponse({
@@ -593,6 +641,31 @@ describe("VeryfrontRunsClient", () => {
         config: { path_prefix: "handbook/" },
       },
     });
+  });
+
+  it("never sends a stray input from a knowledge ingest call (#2109)", async () => {
+    mockFetch([
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+      jsonResponse({ accepted: true, run: makeRun() }, 202),
+    ]);
+    const client = createTestClient();
+    // Structural typing lets a wider object through the `Omit<..., "input">` input types.
+    const stray = { projectId, input: ["INV-7731"] };
+
+    await client.knowledge.ingestByUploadIds({
+      ...stray,
+      uploadIds: ["33333333-3333-4333-8333-333333333333"],
+    });
+    await client.knowledge.ingestByUploadPaths({ ...stray, uploadPaths: ["docs/a.md"] });
+    await client.knowledge.ingestByUploadPrefix({ ...stray, uploadPrefix: "docs/" });
+
+    for (const index of [0, 1, 2]) {
+      assertEquals(
+        Object.hasOwn((jsonBody(index) as { request: Record<string, unknown> }).request, "input"),
+        false,
+      );
+    }
   });
 
   it("creates knowledge ingest task runs from upload paths", async () => {

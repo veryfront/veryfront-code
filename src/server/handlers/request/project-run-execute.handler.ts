@@ -109,7 +109,8 @@ export interface ProjectRunExecuteRequest {
   runtimeTargetEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
   config?: Record<string, unknown>;
-  input?: Record<string, unknown>;
+  /** Business input: any JSON value. Absent when the run was created without input. */
+  input?: unknown;
   parentRunId?: string | null;
   rootRunId?: string | null;
 }
@@ -347,7 +348,7 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     runtimeTargetEnvironmentId,
     runtimeTargetBranchId,
     config: parseRecord(value.config),
-    input: parseRecord(value.input),
+    input: value.input,
     parentRunId: parseOptionalNullableString(value.parentRunId, "parentRunId"),
     rootRunId: parseOptionalNullableString(value.rootRunId, "rootRunId"),
   };
@@ -548,6 +549,7 @@ async function executeTaskRun(
   const result = await deps.runTask({
     task,
     config: request.config ?? {},
+    input: request.input,
     projectId: request.projectId,
     environmentId: request.runtimeTargetEnvironmentId === undefined
       ? ctx.environmentId
@@ -628,6 +630,7 @@ async function executeWorkflowRun(
   );
   try {
     client.register(workflow.definition);
+    // A null input counts as no input, the same as on the API run record.
     const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
     const run = await waitForWorkflowResult(client, handle.runId, deps);
     await handle.settled?.();
@@ -1433,7 +1436,8 @@ function createEvalAdapterConfig(input: {
   ctx: HandlerContext;
 }): AgentServiceEvalAdapterConfig {
   const config = input.request.config ?? {};
-  const runInput = input.request.input ?? {};
+  // Eval input is an optional bag of target hints (branch_id); other JSON shapes carry no hints.
+  const runInput = isRecord(input.request.input) ? input.request.input : {};
   const authToken = getRuntimeApiToken(input.req, input.ctx);
   if (!authToken) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });

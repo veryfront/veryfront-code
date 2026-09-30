@@ -2,7 +2,7 @@ import { CONFIG_INVALID, createError, NOT_SUPPORTED, toError } from "#veryfront/
 import {
   getVeryfrontCloudBootstrap,
   normalizeVeryfrontApiBaseUrl,
-  resolveVeryfrontPublicApiBaseUrlFromHostEnv,
+  resolveVeryfrontInferenceApiBaseUrlFromHostEnv,
 } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -267,8 +267,9 @@ export function parseVeryfrontCloudModelId(
 }
 
 /**
- * Refuse a Mistral model the catalog in effect does not list, so a caller gets
- * a clear error rather than a gateway-side failure.
+ * Refuse a Mistral model a fresh served catalog does not list, so a caller gets
+ * a clear error rather than a gateway-side failure. Without one, nothing is
+ * refused and the gateway answers for the model.
  */
 export function assertVeryfrontCloudModelListed(provider: string, upstreamModelId: string): void {
   if (
@@ -296,9 +297,10 @@ export function requireVeryfrontCloudBootstrap(
   const normalizedInferenceApiBaseUrlOverride = inferenceApiBaseUrlOverride === undefined
     ? undefined
     : normalizeVeryfrontApiBaseUrl(inferenceApiBaseUrlOverride) ?? inferenceApiBaseUrlOverride;
+  // A run-scoped credential never takes its destination from the cloud
+  // context: project code in the same process can forge that context.
   const apiBaseUrl = apiTokenOverride
-    ? normalizedInferenceApiBaseUrlOverride ?? resolveVeryfrontPublicApiBaseUrlFromHostEnv() ??
-      bootstrap.apiBaseUrl
+    ? normalizedInferenceApiBaseUrlOverride ?? resolveVeryfrontInferenceApiBaseUrlFromHostEnv()
     : bootstrap.apiBaseUrl;
 
   if (apiTokenOverride) {
@@ -330,8 +332,10 @@ export function requireVeryfrontCloudBootstrap(
  * afterward (thinking defaults, short aliases such as `opus`, the default
  * model) come from it. Resolves to whether a catalog is available. Never
  * throws. When a refresh fails, the last catalog loaded for these credentials
- * stays in use; only when none has loaded (no credentials, or no load has
- * succeeded yet) do the facts shipped with this package apply.
+ * stays in use. While none has loaded (no credentials, or no load has
+ * succeeded yet), reads use protocol defaults only:
+ * `resolveVeryfrontCloudModelId()` resolves no short alias and no model has a
+ * thinking default.
  */
 export async function loadVeryfrontCloudModelCatalog(
   options: { signal?: AbortSignal; maxWaitMs?: number } = {},

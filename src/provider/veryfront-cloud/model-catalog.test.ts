@@ -1,44 +1,41 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { seedServedCatalogForTests } from "./catalog-client.test-helpers.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "./catalog-client.ts";
 import {
   canonicalVeryfrontCloudModelKey,
-  DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL,
+  canVeryfrontCloudCatalogRefuse,
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
   DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
   DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID,
-  findVeryfrontCloudModel,
-  findVeryfrontCloudModelByModelId,
   getVeryfrontCloudProviderFromModelId,
-  groupVeryfrontCloudModelsByProvider,
+  isListedInServedVeryfrontCloudCatalog,
   isRetiredVeryfrontCloudModelId,
+  isServedVeryfrontCloudProvider,
   isSupportedMistralModelId,
+  isVeryfrontCloudCatalogLoaded,
   resolveHostedVeryfrontCloudModelId,
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudOpenAICallTransport,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAIChatSystemMessages,
   resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudOpenAITransportPlan,
+  resolveVeryfrontCloudProviderRouting,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
   tryGetVeryfrontCloudProviderFromModelId,
-  VERYFRONT_CLOUD_CHAT_MODELS,
 } from "./model-catalog.ts";
-import { VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES } from "./model-catalog.data.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
   it("retires DeepSeek from managed selections while retaining Mistral as default", () => {
-    assertEquals(findVeryfrontCloudModelByModelId("deepseek/deepseek-v4-flash"), undefined);
-    assertEquals(
-      groupVeryfrontCloudModelsByProvider().some((group) => group.provider === "deepseek"),
-      false,
-    );
+    assertEquals(isListedInServedVeryfrontCloudCatalog("deepseek/deepseek-v4-flash"), false);
+    assertEquals(isServedVeryfrontCloudProvider("deepseek"), false);
     assertEquals(DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID, "mistral/mistral-small-2503");
     assertThrows(() => resolveVeryfrontCloudModelId("deepseek-v4-flash"));
   });
@@ -51,10 +48,9 @@ describe("provider/veryfront-cloud/model-catalog", () => {
         "mistral/mistral-large-2512",
       ]
     ) {
-      assertEquals(findVeryfrontCloudModelByModelId(modelId), undefined);
+      assertEquals(isListedInServedVeryfrontCloudCatalog(modelId), false);
     }
     for (const alias of ["gpt-5.4-nano", "gemini-3.1-pro-preview", "mistral-large-2512"]) {
-      assertEquals(findVeryfrontCloudModel(alias), undefined);
       assertThrows(() => resolveVeryfrontCloudModelId(alias));
     }
     assertThrows(
@@ -112,34 +108,23 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     // The catalog publishes Gemini under the `google-ai-studio` alias; a caller
     // spelling the canonical provider (or carrying the gateway prefix) must
     // reach the same entry, thinking defaults included.
-    const aliased = findVeryfrontCloudModelByModelId(
-      "google-ai-studio/gemini-2.5-pro",
-    );
-    assertExists(aliased);
-    assertEquals(
-      findVeryfrontCloudModelByModelId("google/gemini-2.5-pro"),
-      aliased,
-    );
-    assertEquals(
-      findVeryfrontCloudModelByModelId("veryfront-cloud/google/gemini-2.5-pro"),
-      aliased,
-    );
-    assertEquals(
-      resolveVeryfrontCloudModelThinking("google/gemini-2.5-pro")?.enabled,
-      true,
-    );
-    assertEquals(
-      findVeryfrontCloudModelByModelId("google/not-a-listed-model"),
-      undefined,
-    );
+    for (
+      const modelId of [
+        "google-ai-studio/gemini-2.5-pro",
+        "google/gemini-2.5-pro",
+        "veryfront-cloud/google/gemini-2.5-pro",
+      ]
+    ) {
+      assertEquals(isListedInServedVeryfrontCloudCatalog(modelId), true);
+      assertEquals(resolveVeryfrontCloudModelThinking(modelId)?.enabled, true);
+    }
+    assertEquals(isListedInServedVeryfrontCloudCatalog("google/not-a-listed-model"), false);
   });
 
   it("recognizes a supported Mistral model through any spelling of its id", () => {
-    const [mistral] = VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === "mistral");
-    assertExists(mistral);
-    assertEquals(isSupportedMistralModelId(mistral.modelId), true);
+    assertEquals(isSupportedMistralModelId("mistral/mistral-small-2503"), true);
     assertEquals(
-      isSupportedMistralModelId(`veryfront-cloud/${mistral.modelId}`),
+      isSupportedMistralModelId("veryfront-cloud/mistral/mistral-small-2503"),
       true,
     );
     assertEquals(
@@ -151,7 +136,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
   it("resolves Mistral Small 3.1 through the hosted catalog", () => {
     const modelId = "mistral/mistral-small-2503";
 
-    assertEquals(findVeryfrontCloudModelByModelId(modelId)?.id, "mistral-small-2503");
+    assertEquals(resolveVeryfrontCloudModelId("mistral-small-2503"), modelId);
     assertEquals(isSupportedMistralModelId(modelId), true);
     assertEquals(resolveVeryfrontCloudModelId(modelId), modelId);
     assertEquals(
@@ -183,51 +168,34 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "acme-labs/model-x",
     );
     assertEquals(canonicalVeryfrontCloudModelKey("no-slash"), "no-slash");
-    // The rows the runtime ships resolve the same through either spelling.
-    for (const [key] of VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES) {
-      assertEquals(
-        canonicalVeryfrontCloudModelKey(`veryfront-cloud/${key}`),
-        key,
-      );
+  });
+
+  it("resolves served short IDs and aliases", () => {
+    assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
+    assertEquals(resolveVeryfrontCloudModelId("sonnet"), "anthropic/claude-sonnet-4-6");
+    for (
+      const [alias, modelId] of [
+        ["gpt-5.5", "openai/gpt-5.5"],
+        ["gpt-5.4-mini", "openai/gpt-5.4-mini"],
+        ["gpt-5.4", "openai/gpt-5.4"],
+        ["gpt-5.2", "openai/gpt-5.2"],
+        ["gemini-3.5-flash", "google-ai-studio/gemini-3.5-flash"],
+        ["gemini-2.5-pro", "google-ai-studio/gemini-2.5-pro"],
+        ["gemini-2.5-flash", "google-ai-studio/gemini-2.5-flash"],
+        ["mistral-small-2503", "mistral/mistral-small-2503"],
+        ["kimi-k2.6", "moonshotai/kimi-k2.6"],
+        ["kimi-k2.5", "moonshotai/kimi-k2.5"],
+      ]
+    ) {
+      assertEquals(resolveVeryfrontCloudModelId(alias), modelId);
     }
+    assertThrows(() => resolveVeryfrontCloudModelId("nonexistent"), Error, "Unknown model alias");
   });
 
-  it("finds catalog models by alias", () => {
-    const opus = findVeryfrontCloudModel("opus");
-    assertExists(opus);
-    assertEquals(opus.provider, "anthropic");
-    assertEquals(findVeryfrontCloudModel("sonnet")?.provider, "anthropic");
-    assertEquals(opus.modelId, "anthropic/claude-opus-4-8");
-    assertEquals(findVeryfrontCloudModel("gpt-5.5")?.provider, "openai");
-    assertEquals(findVeryfrontCloudModel("gpt-5.4-mini")?.provider, "openai");
-    assertEquals(findVeryfrontCloudModel("gpt-5.4")?.provider, "openai");
-    assertEquals(findVeryfrontCloudModel("gpt-5.2")?.provider, "openai");
-    assertEquals(
-      findVeryfrontCloudModel("gemini-3.5-flash")?.provider,
-      "google",
-    );
-    assertEquals(findVeryfrontCloudModel("gemini-2.5-pro")?.provider, "google");
-    assertEquals(
-      findVeryfrontCloudModel("gemini-2.5-flash")?.provider,
-      "google",
-    );
-    assertEquals(
-      findVeryfrontCloudModel("mistral-small-2503")?.provider,
-      "mistral",
-    );
-    assertEquals(findVeryfrontCloudModel("kimi-k2.6")?.provider, "moonshotai");
-    assertEquals(findVeryfrontCloudModel("kimi-k2.5")?.provider, "moonshotai");
-    assertEquals(findVeryfrontCloudModel("nonexistent"), undefined);
-  });
-
-  it("derives every default-model representation from one catalog entry", () => {
-    assertEquals(
-      DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.id,
-      DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
-    );
+  it("derives every default-model representation from one built-in default", () => {
     assertEquals(
       DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
-      DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.modelId,
+      `mistral/${DEFAULT_VERYFRONT_CLOUD_MODEL_ID}`,
     );
     assertEquals(
       DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID,
@@ -308,26 +276,6 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     );
   });
 
-  it("keeps the exported catalog immutable", () => {
-    const originalFirstModelId = VERYFRONT_CLOUD_CHAT_MODELS[0]?.id;
-    assertThrows(
-      () =>
-        (VERYFRONT_CLOUD_CHAT_MODELS as unknown as Array<{ id: string }>).push({
-          id: "injected",
-        }),
-      TypeError,
-    );
-    assertThrows(
-      () => {
-        (VERYFRONT_CLOUD_CHAT_MODELS[0] as { id: string }).id = "corrupted";
-      },
-      TypeError,
-    );
-
-    assertEquals(VERYFRONT_CLOUD_CHAT_MODELS[0]?.id, originalFirstModelId);
-    assertEquals(findVeryfrontCloudModel("injected"), undefined);
-  });
-
   it("returns undefined for unusable provider prefixes in the try helper", () => {
     assertEquals(
       tryGetVeryfrontCloudProviderFromModelId(
@@ -342,36 +290,14 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(tryGetVeryfrontCloudProviderFromModelId("opus"), undefined);
   });
 
-  it("finds catalog entries for direct and hosted model ids", () => {
-    assertEquals(
-      findVeryfrontCloudModelByModelId("anthropic/claude-opus-4-8")?.id,
-      "opus",
-    );
-    assertEquals(
-      findVeryfrontCloudModelByModelId(
-        "veryfront-cloud/anthropic/claude-opus-4-8",
-      )
-        ?.thinkingBudgetTokens,
-      2048,
-    );
-  });
-
-  it("groups models by provider in a stable order", () => {
-    const groups = groupVeryfrontCloudModelsByProvider();
-    assertEquals(groups.map((group) => group.provider), [
-      "anthropic",
-      "openai",
-      "google",
-      "mistral",
-      "moonshotai",
-    ]);
-    assertEquals(groups[0]?.label, "Anthropic");
-    assertEquals(groups[1]?.label, "OpenAI");
-    for (const group of groups) {
-      assertEquals(
-        group.models.every((model) => model.provider === group.provider),
-        true,
-      );
+  it("reads served thinking budgets for direct and hosted model ids", () => {
+    for (
+      const modelId of [
+        "anthropic/claude-sonnet-4-6",
+        "veryfront-cloud/anthropic/claude-sonnet-4-6",
+      ]
+    ) {
+      assertEquals(resolveVeryfrontCloudModelThinking(modelId)?.budgetTokens, 2048);
     }
   });
 
@@ -466,12 +392,6 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       resolveVeryfrontCloudModelThinking("mistral/mistral-small-2503"),
       undefined,
     );
-    for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
-      if (model.thinkingBudgetTokens !== undefined) {
-        assertEquals(Number.isSafeInteger(model.thinkingBudgetTokens), true);
-        assertEquals(model.thinkingBudgetTokens > 0, true);
-      }
-    }
   });
 
   it("resolves model-specific OpenAI transport overrides", () => {
@@ -734,6 +654,167 @@ describe("provider/veryfront-cloud/model-catalog", () => {
         budgetTokens: 2048,
       }),
       undefined,
+    );
+  });
+});
+
+describe("provider/veryfront-cloud/model-catalog without a loaded catalog", () => {
+  beforeEach(__resetVeryfrontCloudCatalogForTests);
+  afterEach(__resetVeryfrontCloudCatalogForTests);
+
+  it("refuses no unlisted model, because there is no list to refuse against", () => {
+    assertEquals(isVeryfrontCloudCatalogLoaded(), false);
+    assertEquals(canVeryfrontCloudCatalogRefuse(), false);
+    assertEquals(isSupportedMistralModelId("mistral/mistral-small-2503"), false);
+    for (
+      const modelId of [
+        "mistral/mistral-small-2603",
+        "veryfront-cloud/mistral/mistral-medium-3-5",
+        "zai/glm-5.2",
+        "qwen/qwen3-max",
+        "acme-labs/mystery-1",
+      ]
+    ) {
+      assertEquals(resolveVeryfrontCloudModelId(modelId), modelId);
+    }
+    assertEquals(
+      resolveVeryfrontCloudGatewayModelId("mistral/mistral-small-2603"),
+      "veryfront-cloud/mistral/mistral-small-2603",
+    );
+    assertEquals(
+      resolveVeryfrontCloudGatewayModelId("zai/glm-5.2"),
+      "veryfront-cloud/zai/glm-5.2",
+    );
+  });
+
+  it("still refuses every model the gateway has retired", () => {
+    for (
+      const modelId of [
+        "openai/gpt-5.4-nano",
+        "google/gemini-3.1-pro-preview",
+        "google-ai-studio/gemini-3.1-pro-preview",
+        "mistral/mistral-large-2512",
+      ]
+    ) {
+      assertEquals(isRetiredVeryfrontCloudModelId(modelId), true, modelId);
+      assertThrows(
+        () => resolveVeryfrontCloudModelId(modelId),
+        Error,
+        "is no longer available through Veryfront Cloud",
+      );
+    }
+  });
+
+  it("resolves the built-in default but no short alias", () => {
+    assertEquals(resolveVeryfrontCloudModelId(), DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID);
+    for (const alias of ["opus", "sonnet", "haiku", DEFAULT_VERYFRONT_CLOUD_MODEL_ID]) {
+      assertThrows(
+        () => resolveVeryfrontCloudModelId(alias),
+        Error,
+        "Call loadVeryfrontCloudModelCatalog() first",
+      );
+    }
+  });
+
+  it("routes by protocol defaults", () => {
+    for (const provider of ["openai", "anthropic", "google"]) {
+      assertEquals(resolveVeryfrontCloudProviderRouting(provider), {
+        surface: provider,
+        native: true,
+      });
+    }
+    assertEquals(resolveVeryfrontCloudProviderRouting("google-ai-studio"), {
+      surface: "google",
+      native: true,
+    });
+    for (const provider of ["mistral", "moonshotai", "deepseek", "zai", "qwen"]) {
+      assertEquals(resolveVeryfrontCloudProviderRouting(provider), { surface: "openai" });
+      assertEquals(
+        resolveVeryfrontCloudOpenAITransportPlan(provider, "some-model"),
+        { transport: "chat-completions", pinned: true },
+      );
+    }
+    // OpenAI reasoning families are pinned to Responses by their ID alone.
+    for (const model of ["gpt-5-nano", "gpt-5.4", "o3", "o4-mini", "o1"]) {
+      assertEquals(
+        resolveVeryfrontCloudOpenAITransportPlan("openai", model),
+        { transport: "responses", pinned: true },
+        model,
+      );
+    }
+    // Any other openai model stays on Chat Completions until a call carries a hosted tool.
+    for (const model of ["gpt-5.1", "gpt-5-chat-latest", "gpt-6-sol", "gpt-4o"]) {
+      assertEquals(
+        resolveVeryfrontCloudOpenAITransportPlan("openai", model),
+        { transport: "chat-completions", pinned: false },
+        model,
+      );
+      assertEquals(
+        resolveVeryfrontCloudOpenAICallTransport("openai", model, false),
+        "chat-completions",
+      );
+      assertEquals(resolveVeryfrontCloudOpenAICallTransport("openai", model, true), "responses");
+    }
+    // A reasoning-style ID on another provider never leaves Chat Completions.
+    assertEquals(
+      resolveVeryfrontCloudOpenAICallTransport("zai", "gpt-5.4", true),
+      "chat-completions",
+    );
+  });
+
+  it("knows no model facts", () => {
+    for (
+      const modelId of [
+        "anthropic/claude-opus-4-8",
+        "anthropic/claude-sonnet-4-6",
+        "google-ai-studio/gemini-2.5-pro",
+        "moonshotai/kimi-k2.6",
+      ]
+    ) {
+      assertEquals(resolveVeryfrontCloudModelThinking(modelId), undefined);
+      assertEquals(isListedInServedVeryfrontCloudCatalog(modelId), false);
+    }
+    assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.5"), undefined);
+    assertEquals(resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("openai/gpt-5.5"), undefined);
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatSystemMessages("mistral/mistral-small-2503"),
+      undefined,
+    );
+    assertEquals(isServedVeryfrontCloudProvider("anthropic"), false);
+  });
+
+  it("takes adaptive Anthropic thinking only from a served model", () => {
+    // No model is pinned to adaptive thinking by this package. A model the
+    // catalog does not serve with `reasoning_mode: "adaptive"`, including
+    // claude-opus-4-7 that the platform no longer lists, gets the budget form.
+    for (const modelId of ["anthropic/claude-opus-4-8", "anthropic/claude-opus-4-7"]) {
+      assertEquals(
+        resolveVeryfrontCloudThinkingProviderOptions(modelId, {
+          enabled: true,
+          budgetTokens: 2048,
+        }),
+        { anthropic: { temperature: 1, thinking: { type: "enabled", budget_tokens: 2048 } } },
+      );
+    }
+    seedServedCatalogForTests();
+    assertEquals(
+      resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-opus-4-8", {
+        enabled: true,
+        budgetTokens: 2048,
+      }),
+      {
+        anthropic: {
+          thinking: { type: "adaptive", display: "summarized" },
+          output_config: { effort: "high" },
+        },
+      },
+    );
+    assertEquals(
+      resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-opus-4-7", {
+        enabled: true,
+        budgetTokens: 2048,
+      }),
+      { anthropic: { temperature: 1, thinking: { type: "enabled", budget_tokens: 2048 } } },
     );
   });
 });

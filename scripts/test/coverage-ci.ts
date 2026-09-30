@@ -95,7 +95,10 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
 }
 
 export function mergeLcovReports(reports: string[]): string {
-  const files = new Map<string, Map<number, number>>();
+  const files = new Map<string, {
+    lines: Map<number, number>;
+    branches: Map<string, { key: [number, number, number]; hits: number }>;
+  }>();
 
   for (const report of reports) {
     let currentFile: string | undefined;
@@ -104,34 +107,73 @@ export function mergeLcovReports(reports: string[]): string {
       if (line.startsWith("SF:")) {
         currentFile = line.slice(3).trim();
         if (!files.has(currentFile)) {
-          files.set(currentFile, new Map());
+          files.set(currentFile, { lines: new Map(), branches: new Map() });
         }
         continue;
       }
 
-      if (!currentFile || !line.startsWith("DA:")) continue;
+      if (line === "end_of_record") {
+        currentFile = undefined;
+        continue;
+      }
+      if (!currentFile) continue;
+      const file = files.get(currentFile);
+      if (!file) continue;
 
-      const record = parseLcovLine(line);
-      if (!record) continue;
-
-      const lines = files.get(currentFile);
-      if (!lines) continue;
-
-      lines.set(record.line, (lines.get(record.line) ?? 0) + record.covered);
+      if (line.startsWith("DA:")) {
+        const record = parseLcovLine(line);
+        if (record) {
+          file.lines.set(
+            record.line,
+            (file.lines.get(record.line) ?? 0) + record.covered,
+          );
+        }
+      } else if (line.startsWith("BRDA:")) {
+        // Deno emits numeric BRDA:<line>,<block>,<branch>,<hits|-> only. Other
+        // forms (for example lcov 2.x `e`-prefixed exception blocks) are
+        // intentionally dropped. Branches are keyed by (line, block, branch),
+        // the same key Sonar uses. Deno numbers blocks by V8 function index,
+        // so one condition can carry different block ids in different shards;
+        // those entries stay separate here as they would in Sonar.
+        const match = /^BRDA:(\d+),(\d+),(\d+),(\d+|-)\s*$/.exec(line);
+        if (!match) continue;
+        const key: [number, number, number] = [
+          Number(match[1]),
+          Number(match[2]),
+          Number(match[3]),
+        ];
+        const hits = match[4] === "-" ? 0 : Number(match[4]);
+        const id = key.join(",");
+        const existing = file.branches.get(id);
+        file.branches.set(id, { key, hits: (existing?.hits ?? 0) + hits });
+      }
     }
   }
 
   return [...files.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([file, lines]) => {
+    .map(([file, { lines, branches }]) => {
       const sortedLines = [...lines.entries()].sort(([a], [b]) => a - b);
       const coveredLines = sortedLines.filter(([, hits]) => hits > 0).length;
+
+      const sortedBranches = [...branches.values()].sort((
+        { key: a },
+        { key: b },
+      ) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+      const branchRecords = sortedBranches.length === 0 ? [] : [
+        ...sortedBranches.map(({ key, hits }) =>
+          `BRDA:${key.join(",")},${hits}`
+        ),
+        `BRF:${sortedBranches.length}`,
+        `BRH:${sortedBranches.filter(({ hits }) => hits > 0).length}`,
+      ];
 
       return [
         `SF:${file}`,
         ...sortedLines.map(([line, hits]) => `DA:${line},${hits}`),
         `LH:${coveredLines}`,
         `LF:${sortedLines.length}`,
+        ...branchRecords,
         "end_of_record",
       ].join("\n");
     })

@@ -14,24 +14,14 @@ import {
   veryfrontCloudCatalogScopeKey,
   withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
-import { SHIPPED_VERYFRONT_CLOUD_CATALOG } from "./model-catalog.deprecated.ts";
-
-export {
-  DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL,
-  findVeryfrontCloudModel,
-  findVeryfrontCloudModelByModelId,
-  groupVeryfrontCloudModelsByProvider,
-  VERYFRONT_CLOUD_CATALOG_PROVIDER_NAMES,
-  VERYFRONT_CLOUD_CHAT_MODELS,
-} from "./model-catalog.deprecated.ts";
 
 /**
- * Veryfront Cloud providers listed in the catalog of this package.
+ * Veryfront Cloud provider IDs offered for autocompletion.
  *
- * Internal to the catalog: it keeps the label and display-order tables
- * exhaustive. It is deliberately not part of the public barrel, because the set
- * of providers is open and a caller that switched on it exhaustively would
- * break as soon as a provider is added.
+ * Not a list of what the platform serves: that comes from the served catalog.
+ * It is deliberately not part of the public barrel, because the set of
+ * providers is open and a caller that switched on it exhaustively would break
+ * as soon as a provider is added.
  */
 export type KnownVeryfrontCloudProviderId =
   | "anthropic"
@@ -99,17 +89,6 @@ export type VeryfrontCloudModelThinkingConfig = {
   budgetTokens?: number;
 };
 
-/** Public API contract for Veryfront Cloud chat model. */
-export type VeryfrontCloudChatModel = {
-  readonly id: string;
-  readonly modelId: string;
-  readonly provider: VeryfrontCloudProviderId;
-  readonly name: string;
-  readonly description: string;
-  readonly thinking?: boolean;
-  readonly thinkingBudgetTokens?: number;
-};
-
 function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
@@ -125,8 +104,11 @@ function requireThinkingBudgetTokens(value: unknown): number | undefined {
 }
 
 /**
- * Short ID of the built-in default model, used when no model is configured
- * and the served catalog has not been loaded.
+ * Short ID of the built-in default model. `resolveVeryfrontCloudModelId()`
+ * resolves a short ID only through a loaded served catalog. Where no catalog
+ * may have loaded, use
+ * `resolveVeryfrontCloudDefaultModelId()`, which returns the
+ * provider-qualified default either way.
  */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "mistral-small-2503";
 /** Shared Veryfront Cloud model prefix value. */
@@ -279,13 +261,15 @@ function loadedCatalog(): VeryfrontCloudCatalog | undefined {
 }
 
 /**
- * Whether the catalog reads use may refuse a model it does not list: a fresh
- * served catalog, or the shipped list while none has loaded. A stale served
- * catalog may miss a model the platform has enabled since, so a refusal waits
- * until it is refreshed and the platform answers for the model meanwhile.
+ * Whether the catalog reads use may refuse a model it does not list: only a
+ * fresh served catalog. Before one loads there is no list to refuse against,
+ * and a stale one may miss a model the platform has enabled since, so the
+ * platform answers for the model until a fresh catalog has loaded. The
+ * gateway retirement guard ({@link isRetiredVeryfrontCloudModelId}) does not
+ * depend on this and applies either way.
  */
 export function canVeryfrontCloudCatalogRefuse(): boolean {
-  if (loadedCatalog() === undefined) return true;
+  if (loadedCatalog() === undefined) return false;
   if (hasActiveVeryfrontCloudCatalogScope()) return isVeryfrontCloudCatalogFresh();
   const key = currentVeryfrontCloudCatalogScopeKey();
   return key ? isVeryfrontCloudCatalogFresh(key) : isVeryfrontCloudCatalogFresh();
@@ -304,19 +288,34 @@ export function isListedInServedVeryfrontCloudCatalog(modelId: string): boolean 
 
 /**
  * Whether a served catalog has loaded for the scope reads use right now. While
- * it has not, reads fall back to the shipped list, which cannot know models
- * the platform added since, so a caller should not refuse a model on it alone.
+ * it has not, reads know no catalog facts and use protocol defaults only.
  */
 export function isVeryfrontCloudCatalogLoaded(): boolean {
   return loadedCatalog() !== undefined;
 }
 
 /**
- * The index reads use: the served catalog loaded for the current scope, or the
- * shipped list while none has loaded for it.
+ * Whether the served catalog loaded for the current scope serves any model of
+ * this provider, under any provider spelling it uses. False before it loads.
+ */
+export function isServedVeryfrontCloudProvider(provider: string): boolean {
+  if (loadedCatalog() === undefined) return false;
+  const aliases = servedIndex().providerAliases;
+  return aliases.has(provider) ||
+    aliases.has(PROTOCOL_PROVIDER_ALIASES.get(provider) ?? provider);
+}
+
+/** Catalog read while none has loaded: no models, so reads use protocol defaults only. */
+const EMPTY_VERYFRONT_CLOUD_CATALOG: VeryfrontCloudCatalog = Object.freeze({
+  models: Object.freeze([]),
+});
+
+/**
+ * The index reads use: the served catalog loaded for the current scope, or an
+ * empty one while none has loaded for it.
  */
 function servedIndex(): ServedCatalogIndex {
-  const catalog = loadedCatalog() ?? SHIPPED_VERYFRONT_CLOUD_CATALOG;
+  const catalog = loadedCatalog() ?? EMPTY_VERYFRONT_CLOUD_CATALOG;
   let index = servedIndexes.get(catalog);
   if (!index) {
     index = buildServedIndex(catalog);
@@ -652,9 +651,9 @@ function isMistralModelId(modelId: string): boolean {
 /**
  * Model ids the gateway no longer serves, keyed by canonical provider.
  * Removing them from the catalog is not enough: explicit provider ids pass
- * through unlisted, and the shipped list still backs reads before the served
- * catalog loads, so the gateway boundary rejects these by name. They stay
- * usable with the vendor's own key.
+ * through unlisted, and nothing is listed before the served catalog loads, so
+ * the gateway boundary rejects these by name. They stay usable with the
+ * vendor's own key.
  */
 const RETIRED_VERYFRONT_CLOUD_MODEL_KEYS: ReadonlySet<string> = new Set([
   "openai/gpt-5.4-nano",
@@ -676,8 +675,9 @@ export function createRetiredVeryfrontCloudModelError(modelId: string): Error {
 }
 
 /**
- * Whether a Mistral model ID is one the catalog lists: the served catalog once
- * it has loaded for the current scope, otherwise the shipped list.
+ * Whether a Mistral model ID is one the served catalog loaded for the current
+ * scope lists. False before it loads, so a caller refuses on it only when
+ * {@link canVeryfrontCloudCatalogRefuse} allows.
  */
 export function isSupportedMistralModelId(modelId: string): boolean {
   const index = servedIndex();
@@ -745,10 +745,10 @@ export function tryGetVeryfrontCloudProviderFromModelId(
 }
 
 /**
- * Provider-qualified ID of a short alias only the served catalog knows, for
- * example one the platform added after this release. Reads a catalog loaded
- * for the current scope, never the shipped list, and never a retired model.
- * Undefined when no served catalog has loaded or it does not name the alias.
+ * Provider-qualified ID of a short alias the served catalog names, for example
+ * one the platform added after this release. Reads a catalog loaded for the
+ * current scope, and never a retired model. Undefined when no served catalog
+ * has loaded or it does not name the alias.
  */
 export function resolveServedVeryfrontCloudAlias(alias: string): string | undefined {
   if (alias.includes("/") || loadedCatalog() === undefined) return undefined;
@@ -761,10 +761,14 @@ export function resolveServedVeryfrontCloudAlias(alias: string): string | undefi
  * Resolve a model ID or short alias to a provider-qualified model ID.
  *
  * No value resolves to the default model. A provider-qualified ID is returned
- * as written. A short ID or alias resolves through the served catalog, or
- * through the shipped list before the catalog has loaded; use
- * `loadVeryfrontCloudModelCatalog()` first to resolve an alias the platform
- * added since this release.
+ * as written. A short ID or alias resolves only through the served catalog, so
+ * use `loadVeryfrontCloudModelCatalog()` first; before it has loaded, a short
+ * alias is unknown.
+ *
+ * Throws for a short alias no loaded catalog names, for a model the gateway
+ * has retired (with or without a loaded catalog), and for a Mistral model a
+ * catalog loaded within the last five minutes does not list. No other
+ * provider-qualified ID is refused.
  */
 export function resolveVeryfrontCloudModelId(alias?: string): string {
   const requestedModel = alias || resolveVeryfrontCloudDefaultModelId();
@@ -799,7 +803,10 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
   const model = index.byShortId.get(requestedModel);
   if (!model) {
     throw INVALID_ARGUMENT.create({
-      detail: `Unknown model alias "${requestedModel}"`,
+      detail: loadedCatalog() === undefined
+        ? `Unknown model alias "${requestedModel}": short aliases need the served model ` +
+          `catalog. Call loadVeryfrontCloudModelCatalog() first, or use a provider-qualified ID.`
+        : `Unknown model alias "${requestedModel}"`,
     });
   }
   return model.modelId;
@@ -857,7 +864,7 @@ export function resolveVeryfrontCloudGatewayModelId(
 /**
  * @internal The served catalog row for a model, read from the catalog loaded
  * for one scope key. Undefined before a served catalog has loaded for it, for
- * a model it does not list, and for a retired model; never the shipped list.
+ * a model it does not list, and for a retired model.
  */
 export function readServedVeryfrontCloudCatalogModel(
   scopeKey: VeryfrontCloudCatalogScopeKey,

@@ -16,10 +16,10 @@ import { runWithVeryfrontCloudContext } from "./context.ts";
 import {
   seedServedCatalogForTests,
   SERVED_MODEL_ROWS,
-  servedCatalogPayload,
-  UNSERVED_TABLE_MODEL_ROWS,
+  UNSERVED_MODEL_ROWS,
 } from "./catalog-client.test-helpers.ts";
 import {
+  canVeryfrontCloudCatalogRefuse,
   DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
   isRetiredVeryfrontCloudModelId,
   isSupportedMistralModelId,
@@ -33,17 +33,7 @@ import {
   resolveVeryfrontCloudOpenAITransportPlan,
   resolveVeryfrontCloudProviderId,
   resolveVeryfrontCloudProviderRouting,
-  resolveVeryfrontCloudReasoningOption,
-  resolveVeryfrontCloudThinkingProviderOptions,
 } from "./model-catalog.ts";
-import {
-  DEFAULT_VERYFRONT_CLOUD_MODEL_ID as TABLE_DEFAULT_MODEL_ID,
-  VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES,
-  VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES,
-  VERYFRONT_CLOUD_PROVIDER_ALIASES,
-  VERYFRONT_CLOUD_PROVIDER_ROUTING,
-} from "./model-catalog.data.ts";
-import { isOpenAIReasoningModel } from "../shared/openai-reasoning.ts";
 import { resolveVeryfrontCloudGatewayRoute } from "./shared.ts";
 import { VeryfrontError } from "#veryfront/errors";
 
@@ -71,7 +61,7 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
   afterEach(__resetVeryfrontCloudCatalogForTests);
 
   describe("before the catalog is loaded", () => {
-    it("routes on the shipped list: protocol providers natively, Mistral on the OpenAI protocol", () => {
+    it("routes on protocol defaults: protocol providers natively, others on the OpenAI protocol", () => {
       assertEquals(resolveVeryfrontCloudProviderRouting("openai"), {
         surface: "openai",
         native: true,
@@ -84,8 +74,7 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
         surface: "google",
         native: true,
       });
-      assertEquals(resolveVeryfrontCloudProviderRouting("mistral").surface, "openai");
-      assertEquals(resolveVeryfrontCloudProviderRouting("mistral").native, false);
+      assertEquals(resolveVeryfrontCloudProviderRouting("mistral"), { surface: "openai" });
       assertEquals(resolveVeryfrontCloudProviderRouting("acme-labs"), { surface: "openai" });
     });
 
@@ -97,24 +86,21 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
       });
     });
 
-    it("reads the facts shipped with this package, so behaviour matches the previous release", () => {
-      assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"), {
-        enabled: true,
-        budgetTokens: 2048,
-      });
-      assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.5"), "chat-completions");
+    it("knows no model facts and refuses no model", () => {
+      assertEquals(resolveVeryfrontCloudModelThinking("anthropic/claude-sonnet-4-6"), undefined);
+      assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.5"), undefined);
       assertEquals(
         resolveVeryfrontCloudOpenAIChatSystemMessages("mistral/mistral-small-2503"),
-        true,
+        undefined,
       );
-      assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
+      assertThrows(() => resolveVeryfrontCloudModelId("opus"), Error, "Unknown model alias");
       assertEquals(
         resolveVeryfrontCloudDefaultModelId(),
         DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
       );
       assertEquals(resolveVeryfrontCloudModelId(), DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID);
-      assertEquals(isSupportedMistralModelId("mistral/mistral-small-2503"), true);
-      assertEquals(isSupportedMistralModelId("mistral/not-listed"), false);
+      assertEquals(canVeryfrontCloudCatalogRefuse(), false);
+      assertEquals(resolveVeryfrontCloudModelId("mistral/not-listed"), "mistral/not-listed");
     });
   });
 
@@ -162,12 +148,12 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
       assertEquals(peekVeryfrontCloudCatalog(projectA)?.defaultModelId, "openai/gpt-a");
       assertEquals(peekVeryfrontCloudCatalog(sameProjectOtherToken), undefined);
       withVeryfrontCloudCatalogScope(sameProjectOtherToken, () => {
-        // Nothing loaded for this credential: the shipped list applies.
+        // Nothing loaded for this credential: protocol defaults apply.
         assertEquals(
           resolveVeryfrontCloudDefaultModelId(),
           DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
         );
-        assertEquals(resolveVeryfrontCloudModelId("opus"), "anthropic/claude-opus-4-8");
+        assertThrows(() => resolveVeryfrontCloudModelId("opus"), Error, "Unknown model alias");
       });
     });
 
@@ -190,10 +176,10 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
       // It lists only the models it was received for, so it never refuses one.
       assertEquals(isVeryfrontCloudCatalogFresh(key), false);
       forgetReceivedVeryfrontCloudCatalog(key);
-      assertEquals(read(), { enabled: true, budgetTokens: 2048 });
+      assertEquals(read(), undefined);
     });
 
-    it("reads a served row for a scope key, never the shipped list", () => {
+    it("reads a served row for a scope key only once one has loaded", () => {
       const key = veryfrontCloudCatalogScopeKey(projectA);
       assertEquals(
         readServedVeryfrontCloudCatalogModel(key, "anthropic/claude-sonnet-4-6"),
@@ -403,8 +389,8 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
       );
     });
 
-    it("keeps retired models out of the shipped fallback and the parity fixtures", () => {
-      const fixtureIds: string[] = [...SERVED_MODEL_ROWS, ...UNSERVED_TABLE_MODEL_ROWS].map((
+    it("keeps retired models out of the served fixtures", () => {
+      const fixtureIds: string[] = [...SERVED_MODEL_ROWS, ...UNSERVED_MODEL_ROWS].map((
         model,
       ) => model.modelId);
       for (const modelId of retired) {
@@ -418,123 +404,8 @@ describe("provider/veryfront-cloud/model-catalog served facts", () => {
     });
   });
 
-  describe("parity with the shipped table for today's models", () => {
-    const tableAliases = new Map<string, string>(VERYFRONT_CLOUD_PROVIDER_ALIASES);
-    const tableKey = (modelId: string): string => {
-      const slash = modelId.indexOf("/");
-      const provider = modelId.slice(0, slash);
-      return `${tableAliases.get(provider) ?? provider}/${modelId.slice(slash + 1)}`;
-    };
-    const tableRouting = new Map(VERYFRONT_CLOUD_PROVIDER_ROUTING);
-    const tableCapabilities = new Map(VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES);
-    const servedRows = SERVED_MODEL_ROWS as readonly ServedRow[];
-
-    /** The transport plan the table-backed resolver chose, from the table's own inputs. */
-    function tablePlan(provider: string, upstreamModelId: string, modelId: string) {
-      const routing = tableRouting.get(provider);
-      if (routing?.surface !== "openai" || routing.native !== true) {
-        return { transport: "chat-completions", pinned: true };
-      }
-      const declared = tableCapabilities.get(tableKey(modelId))?.openAITransport;
-      if (declared !== undefined) return { transport: declared, pinned: true };
-      const entry = VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES.find((model) =>
-        tableKey(model.modelId) === tableKey(modelId)
-      );
-      if (entry?.thinking === true || entry?.thinkingBudgetTokens !== undefined) {
-        return { transport: "responses", pinned: true };
-      }
-      if (isOpenAIReasoningModel(upstreamModelId, "veryfront-cloud")) {
-        return { transport: "responses", pinned: true };
-      }
-      return { transport: "chat-completions", pinned: false };
-    }
-
-    it("covers every served row with a shipped table entry", () => {
-      for (const served of servedRows) {
-        const entry = VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES.find((model) =>
-          tableKey(model.modelId) === tableKey(served.modelId)
-        );
-        assertEquals(entry !== undefined, true, `${served.modelId} is not in the shipped table`);
-      }
-    });
-
-    for (const served of servedRows) {
-      const entry = VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES.find((model) =>
-        tableKey(model.modelId) === tableKey(served.modelId)
-      );
-      if (!entry) continue;
-
-      it(`serves the shipped facts of ${entry.modelId}`, () => {
-        __setVeryfrontCloudCatalogForTests(servedCatalogPayload());
-        const key = tableKey(entry.modelId);
-        const [provider = "", upstreamModelId = ""] = [
-          key.slice(0, key.indexOf("/")),
-          key.slice(key.indexOf("/") + 1),
-        ];
-        const capabilities = tableCapabilities.get(key);
-        const routing = tableRouting.get(provider);
-
-        assertEquals(resolveVeryfrontCloudProviderId(entry.modelId.split("/")[0] ?? ""), provider);
-        assertEquals(resolveVeryfrontCloudProviderRouting(provider).surface, routing?.surface);
-        assertEquals(
-          resolveVeryfrontCloudProviderRouting(provider).native,
-          routing?.native === true,
-        );
-        assertEquals(resolveVeryfrontCloudModelId(entry.id), entry.modelId);
-        assertEquals(
-          resolveVeryfrontCloudOpenAITransport(entry.modelId),
-          capabilities?.openAITransport,
-        );
-        assertEquals(
-          resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(entry.modelId),
-          capabilities?.openAIChatReasoningWithFunctionTools,
-        );
-        assertEquals(
-          resolveVeryfrontCloudOpenAIChatSystemMessages(entry.modelId),
-          capabilities?.openAIChatPreserveSystemMessages,
-        );
-        if (routing?.surface === "openai") {
-          assertEquals(
-            resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId),
-            tablePlan(provider, upstreamModelId, entry.modelId),
-          );
-        }
-
-        const tableThinking = entry.thinking === true || entry.thinkingBudgetTokens !== undefined
-          ? {
-            enabled: true,
-            ...(entry.thinkingBudgetTokens === undefined
-              ? {}
-              : { budgetTokens: entry.thinkingBudgetTokens }),
-          }
-          : undefined;
-        const servedThinking = resolveVeryfrontCloudModelThinking(entry.modelId);
-        if (capabilities?.anthropicThinkingMode === "adaptive") {
-          // An adaptive model takes no budget, so the served catalog declares
-          // none; what is sent is the same with or without the shipped one.
-          assertEquals(servedThinking?.enabled, true);
-          assertEquals(
-            resolveVeryfrontCloudThinkingProviderOptions(entry.modelId, servedThinking),
-            resolveVeryfrontCloudThinkingProviderOptions(entry.modelId, tableThinking),
-          );
-          assertEquals(
-            resolveVeryfrontCloudReasoningOption(entry.modelId, servedThinking),
-            resolveVeryfrontCloudReasoningOption(entry.modelId, tableThinking),
-          );
-        } else {
-          assertEquals(servedThinking, tableThinking);
-        }
-      });
-    }
-
-    it("serves the shipped default model", () => {
-      seedServedCatalogForTests();
-      const tableDefault = VERYFRONT_CLOUD_CHAT_MODEL_ENTRIES.find((model) =>
-        model.id === TABLE_DEFAULT_MODEL_ID
-      );
-
-      assertEquals(resolveVeryfrontCloudDefaultModelId(), tableDefault?.modelId);
-      assertEquals(DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID, tableDefault?.modelId);
-    });
+  it("serves the built-in default model", () => {
+    seedServedCatalogForTests();
+    assertEquals(resolveVeryfrontCloudDefaultModelId(), DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID);
   });
 });

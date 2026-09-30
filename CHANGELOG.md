@@ -6,6 +6,89 @@ versions are listed at
 
 ## Unreleased
 
+### Changed: a run waiting on a delegated child reads `waiting_reason: "child_run"`
+
+A run parked on `invoke_agent` now reports `waiting_reason: "child_run"` instead
+of `"tool"`, and the new `waiting_on` field lists the run it waits on with the
+tool call that started it:
+`[{ kind: "run", run_id, correlation: { kind: "tool_call", id } }]`. Several
+entries mean the run waits for all of them. `Run.waiting_on` is null for every
+other wait and absent from APIs that predate it.
+
+- The reason is an additive value. If your code matches `waiting_reason`
+  exhaustively, handle `"child_run"` before you upgrade the API you talk to.
+- Runs that waited before this change keep their stored reason and read
+  `waiting_on: null`; they are not backfilled.
+- A child adopted through `task_id` is not listed: only the parent that spawned
+  a child waits on it, and only that parent's cancel cancels it.
+
+### Breaking: the bundled Veryfront Cloud model list is removed
+
+The Veryfront Cloud catalog facts this package bundled now come only from the
+served model catalog (`GET <api>/ai/models`): the model list, the short aliases
+`resolveVeryfrontCloudModelId()` resolves, default thinking budgets, per-model
+transports and Chat Completions capability flags, adaptive thinking, and which
+providers the platform serves. Protocol rules stay in this package, as do the
+retired-model guard, the fixed agent model aliases and the per-model output
+token limits.
+
+- `VERYFRONT_CLOUD_CHAT_MODELS`, `findVeryfrontCloudModel`,
+  `findVeryfrontCloudModelByModelId`, `groupVeryfrontCloudModelsByProvider` and
+  the `VeryfrontCloudChatModel` type are removed from `veryfront/provider`. To
+  list models, call `GET <api>/ai/models` with your Veryfront Cloud
+  credentials. To resolve a short alias, call
+  `loadVeryfrontCloudModelCatalog()` and then `resolveVeryfrontCloudModelId()`.
+- Until a catalog has loaded for the credentials in use, including while every
+  load so far has failed, models use protocol defaults:
+  - `resolveVeryfrontCloudModelId()` resolves no short alias such as `opus`,
+    `sonnet` or `haiku` and throws `Unknown model alias`. A provider-qualified
+    ID such as `anthropic/claude-sonnet-4-6` works. An agent's `model` keeps
+    resolving the fixed agent aliases, such as `sonnet` or `gpt-5.5`.
+  - No model has a default thinking budget or a transport declared by the
+    catalog. `openai`, `anthropic` and `google` (also spelled
+    `google-ai-studio`) speak their own protocol natively, and every other
+    provider uses Chat Completions on the OpenAI protocol.
+  - An `openai` model whose ID names an OpenAI reasoning family (`o1`, `o3`,
+    `o4`, `gpt-5` and `gpt-5.2` or later GPT-5 versions, but not `gpt-5-chat`
+    or `gpt-5.1`) uses the Responses operation. Any other `openai` model,
+    including `gpt-6-*`, uses Chat Completions until a request carries a hosted
+    tool, which moves that request to Responses.
+  - An agent model `<provider>/<model>` with any well-formed provider routes
+    through Veryfront Cloud when Veryfront Cloud credentials are present and no
+    credential of your own applies.
+  - No model is refused for being unlisted, including Mistral models.
+- Once a catalog has loaded:
+  - An agent model whose provider this package cannot call directly (anything
+    but `openai`, `anthropic`, `google`, `google-ai-studio` and `mistral`)
+    routes through Veryfront Cloud only if the catalog serves that provider or
+    lists the model.
+  - A Mistral model is refused only while the catalog is less than five minutes
+    old and does not list it. If a later refresh fails, the last loaded catalog
+    stays in use, and it refuses nothing once it is older than that.
+- A provider your application registered with `registerModelProvider()` keeps
+  your runtime, before and after a catalog loads, whatever credentials are
+  present. This includes `openai`, `anthropic`, `google` and `mistral`, which
+  previously routed through Veryfront Cloud when Veryfront Cloud credentials
+  were present and no vendor key was set. A `google-ai-studio/*` ID uses a
+  `google-ai-studio` registration, or else a `google` one. An omitted or
+  `auto` model and an explicit `veryfront-cloud/*` ID still use Veryfront
+  Cloud.
+- `openai/gpt-5.4-nano`, `google/gemini-3.1-pro-preview` (under either Google
+  spelling) and `mistral/mistral-large-2512` are always refused through
+  Veryfront Cloud, with or without a catalog, because the gateway has retired
+  them. They stay available with the vendor's own API key.
+- Adaptive Anthropic thinking applies only to a model the catalog serves with
+  adaptive reasoning. `anthropic/claude-opus-4-7`, which the catalog no longer
+  lists, already received the budget-based `thinking` option for a
+  `budgetTokens` value once a catalog had loaded, and now receives it before
+  one loads too. Use `anthropic/claude-opus-4-8` for adaptive thinking.
+- `deno task generate:model-catalog` and `generate:model-catalog:check` are
+  removed.
+
+Ensure `loadVeryfrontCloudModelCatalog()` succeeds with the credentials your
+deployment uses before you upgrade if you rely on catalog short aliases,
+thinking defaults or per-model transports.
+
 ### Breaking: `VERYFRONT_CLOUD_GATEWAY_ROUTES` is removed
 
 `veryfront-cloud/*` models always call the vendor-neutral endpoints:
@@ -78,9 +161,9 @@ unchanged.
   `doStream`), with the same credentials and project as inference, and is
   cached for five minutes per API, project and credential.
 - Until the catalog has loaded for the credentials in use, and whenever it
-  cannot be loaded, the facts shipped with this package apply, as in the
-  previous release. A model whose first load failed tries again on a later
-  call.
+  cannot be loaded, models use protocol defaults (see "the bundled Veryfront
+  Cloud model list is removed" above). A model whose first load failed tries
+  again on a later call.
 - A model keeps the facts it settled with for its lifetime. A catalog refreshed
   later applies to models constructed after the refresh.
 - Agents resolve a short alias or a provider the platform added after this
@@ -88,9 +171,8 @@ unchanged.
   built-in aliases, so a bare vendor model name keeps its meaning for your own
   provider key.
 - A model the catalog does not list is refused only against a catalog loaded
-  within the last five minutes, or the shipped list before any has loaded. A
-  model enabled since the catalog was cached is not refused; the catalog is
-  refreshed first.
+  within the last five minutes. A model enabled since the catalog was cached
+  is not refused; the catalog is refreshed first.
 - `loadVeryfrontCloudModelCatalog()` loads the catalog for the Veryfront Cloud
   credentials in effect, so synchronous helpers such as
   `resolveVeryfrontCloudModelId("opus")` and
@@ -101,8 +183,8 @@ unchanged.
   `VeryfrontCloudModelId` types a model ID as `<provider>/<model>`.
 - `VERYFRONT_CLOUD_CHAT_MODELS`, `findVeryfrontCloudModel`,
   `findVeryfrontCloudModelByModelId` and `groupVeryfrontCloudModelsByProvider`
-  are deprecated. They still return the list shipped with this package, and a
-  later release removes them.
+  were deprecated here and are now removed (see "the bundled Veryfront Cloud
+  model list is removed" above).
 
 ### Changed: Veryfront Cloud models call the vendor-neutral endpoints
 

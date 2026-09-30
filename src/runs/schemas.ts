@@ -33,6 +33,24 @@ export const getRunExecutionErrorSchema = defineSchema((v) =>
   })
 );
 
+// Lowercase hex sha256 of the canonical JSON Schema a run was admitted against.
+const getRunSchemaIdentitySchema = defineSchema((v) =>
+  v.string().regex(/^[0-9a-f]{64}$/).nullable().optional()
+);
+
+// A run a waiting run depends on (waiting_reason `child_run`), with the tool call or workflow node
+// that started it. Several entries mean the run waits for all of them.
+const getRunWaitingDependencySchema = defineSchema((v) =>
+  v.object({
+    kind: v.literal("run"),
+    run_id: v.string().min(1),
+    correlation: v.object({
+      kind: v.enum(["tool_call", "workflow_node"] as const),
+      id: v.string().min(1),
+    }),
+  })
+);
+
 export const getRunSchema = defineSchema((v) =>
   v.object({
     run_id: v.string(),
@@ -42,6 +60,9 @@ export const getRunSchema = defineSchema((v) =>
     parent_run_id: v.string().nullable(),
     root_run_id: v.string(),
     waiting_reason: v.string().nullable(),
+    // Active dependencies while `waiting_reason` is `child_run`; null otherwise, and absent from
+    // APIs that predate it.
+    waiting_on: v.array(getRunWaitingDependencySchema()).nullable().optional(),
     metadata: v.unknown().nullable(),
     target: v.string().nullable(),
     workflow_id: v.string().nullable(),
@@ -50,9 +71,15 @@ export const getRunSchema = defineSchema((v) =>
     runtime_target_kind: getRunRuntimeTargetKindSchema().nullable(),
     runtime_target_environment_id: v.string().nullable(),
     runtime_target_branch_id: v.string().nullable(),
+    // Run I/O contract: `input` and `output` are any JSON value (an agent's output is its final
+    // text). The schema identities are the lowercase hex sha256 of the canonical JSON Schema the
+    // run was admitted against, null when the target declares none, and absent from APIs that
+    // predate them.
     input: v.unknown().nullable(),
     config: v.unknown().nullable(),
     output: v.unknown().nullable(),
+    input_schema_sha256: getRunSchemaIdentitySchema(),
+    output_schema_sha256: getRunSchemaIdentitySchema(),
     error: getRunExecutionErrorSchema().nullable(),
     logs: v.string().nullable(),
     artifacts: v.array(v.unknown()),

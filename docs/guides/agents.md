@@ -486,6 +486,11 @@ successful parse sets `response.object`, and a parse or validation failure sets
 `response.metadata.outputSchemaError` next to the max-steps warning so the
 failure stays visible.
 
+When the hosted runtime runs an agent, its AG-UI stream reports the parsed value
+as `result` on the `RunFinished` event, and the Runs API stores it as the run's
+`output`. The event has no `result` when the agent declares no `outputSchema`,
+when the output did not parse, or when the run failed or was cancelled.
+
 ## Runtime UTC context
 
 Veryfront captures UTC once at the start of every `generate()`, `stream()`, and

@@ -62,6 +62,92 @@ describe("runs/schemas", () => {
     assertEquals(RunSchema.parse(run), run);
   });
 
+  it("keeps the run I/O contract schema identities the API returns (#2109)", () => {
+    const identity = "3b1f5c0a9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b";
+    const run = makeRun({ input_schema_sha256: identity, output_schema_sha256: null });
+
+    const parsed: Run = RunSchema.parse(run);
+    const inputIdentity: string | null | undefined = parsed.input_schema_sha256;
+    const outputIdentity: string | null | undefined = parsed.output_schema_sha256;
+
+    assertEquals(inputIdentity, identity);
+    assertEquals(outputIdentity, null);
+    assertEquals(parsed, run);
+  });
+
+  it("keeps the child runs a waiting run depends on (#2092)", () => {
+    const waitingOn = [{
+      kind: "run" as const,
+      run_id: "run_child_1",
+      correlation: { kind: "tool_call" as const, id: "call_invoke_agent_1" },
+    }];
+    const run = makeRun({
+      kind: "agent",
+      status: "waiting",
+      waiting_reason: "child_run",
+      waiting_on: waitingOn,
+    });
+
+    const parsed: Run = RunSchema.parse(run);
+
+    assertEquals(parsed.waiting_reason, "child_run");
+    assertEquals(parsed.waiting_on, waitingOn);
+    assertEquals(RunSchema.parse(makeRun()).waiting_on, undefined);
+    assertEquals(RunSchema.parse(makeRun({ waiting_on: null })).waiting_on, null);
+  });
+
+  it("rejects a malformed waiting dependency", () => {
+    for (
+      const dependency of [
+        { kind: "task", run_id: "run_child_1", correlation: { kind: "tool_call", id: "call_1" } },
+        { kind: "run", run_id: "", correlation: { kind: "tool_call", id: "call_1" } },
+        { kind: "run", run_id: "run_child_1", correlation: { kind: "message", id: "call_1" } },
+        { kind: "run", run_id: "run_child_1", correlation: { kind: "tool_call", id: "" } },
+      ]
+    ) {
+      assertEquals(
+        RunSchema.safeParse(makeRun({ waiting_on: [dependency] } as unknown as Partial<Run>))
+          .success,
+        false,
+        `waiting_on=${JSON.stringify(dependency)} is rejected`,
+      );
+    }
+  });
+
+  it("parses runs from APIs that predate schema identities", () => {
+    const parsed = RunSchema.parse(makeRun());
+
+    assertEquals(parsed.input_schema_sha256, undefined);
+    assertEquals(parsed.output_schema_sha256, undefined);
+  });
+
+  it("rejects a schema identity that is not a lowercase hex sha256", () => {
+    const digest = "3b1f5c0a9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b";
+    for (
+      const identity of [42, "", { sha256: "abc" }, digest.slice(0, 12), digest.toUpperCase()]
+    ) {
+      assertEquals(
+        RunSchema.safeParse(makeRun({ output_schema_sha256: identity } as Partial<Run>)).success,
+        false,
+        `output_schema_sha256=${JSON.stringify(identity)} is rejected`,
+      );
+    }
+  });
+
+  it("keeps any JSON value as run input and output", () => {
+    for (
+      const [input, output] of [
+        [["INV-7731", "Harbor Office"], "billing"],
+        ["Classify ticket INV-7731", 0.94],
+        [7731, true],
+        [false, [{ category: "billing" }]],
+      ] as const
+    ) {
+      const run = makeRun({ input, output });
+      assertEquals(RunSchema.parse(run), run);
+    }
+  });
+
   it("rejects impossible numeric run state", () => {
     for (
       const [field, value] of [

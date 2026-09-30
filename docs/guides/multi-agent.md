@@ -108,6 +108,11 @@ const researcher = getAgent("researcher");
 const researchTool = agentAsTool(researcher, "Research a topic using web search");
 ```
 
+The tool returns the delegate's `text`, its `status`, and the number of tool calls it made
+(`toolCalls`). When the delegate declares an `outputSchema` and its output parses against it,
+the result also carries `object`, the parsed value. If parsing fails (for example, the delegate
+runs out of steps with incomplete JSON), `object` is absent and only `text` is returned.
+
 ## Declarative delegation with `delegates`
 
 Code and markdown agents can opt into orchestration by listing the exact

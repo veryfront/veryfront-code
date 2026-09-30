@@ -84,6 +84,8 @@ async function runAgentAsStreamingTool(
     : execute();
 }
 
+const objectHasOwn = Object.hasOwn;
+
 export function agentAsTool(
   agent: Agent,
   description: string,
@@ -111,8 +113,13 @@ export function agentAsTool(
             "agent.status": response.status,
           });
 
+          // The child's accepted value: its parsed object when it declares an
+          // outputSchema and parsing succeeded, next to the text. Any own `object`
+          // (including null or a transform's undefined) is passed through; an
+          // inherited `object` is never forwarded.
           return {
             text: response.text,
+            ...(objectHasOwn(response, "object") ? { object: response.object } : {}),
             toolCalls: response.toolCalls.length,
             status: response.status,
           };

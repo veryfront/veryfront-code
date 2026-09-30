@@ -2416,8 +2416,8 @@ Synthetic source instructions.`,
     ]
   ) {
     it(`prepares and runs the first run of a fresh executor from served ${served.mode} facts`, async () => {
-      // No catalog is loaded in this process: without the facade the shipped
-      // facts (a 2048 token budget) would apply.
+      // No catalog is loaded in this process: without the facade no thinking
+      // default would apply.
       __setVeryfrontCloudCatalogForTests(undefined);
       const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
       let captured: ModelRuntimeCallOptions | undefined;
@@ -2466,7 +2466,7 @@ Synthetic source instructions.`,
     });
   }
 
-  it("prepares with the shipped facts when loadModelCatalog fails", async () => {
+  it("prepares with protocol defaults when loadModelCatalog fails", async () => {
     __setVeryfrontCloudCatalogForTests(undefined);
     const selectedModel = "veryfront-cloud/anthropic/claude-sonnet-4-6";
     let captured: ModelRuntimeCallOptions | undefined;
@@ -2490,7 +2490,8 @@ Synthetic source instructions.`,
     try {
       await Array.fromAsync(await preparedStream(f));
       assert(captured);
-      assertEquals(captured.reasoning, { enabled: true, budgetTokens: 2048 });
+      // No catalog loaded, so no model fact supplies a thinking default.
+      assertEquals(captured.reasoning, undefined);
     } finally {
       await f.owner.close();
     }

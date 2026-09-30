@@ -443,7 +443,7 @@ export async function createExecutorModelRuntimeResolver(options: {
  * loaded them with credentials this executor never holds, and keep them under
  * a new credential-free key. Resolves to that key, or to undefined when the
  * broker has no served row yet. Rejects on invalid data or when the broker
- * does not serve the operation; the caller then reads the shipped facts.
+ * does not serve the operation; the caller then reads protocol defaults.
  */
 export async function loadExecutorModelCatalog(options: {
   channel: ExecutorChannel;

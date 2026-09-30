@@ -78,6 +78,9 @@ export interface CreateTaskRunInput extends RunCreateBaseInput, RunRuntimeTarget
   name?: string;
   target: `task:${string}`;
   batchId?: string;
+  /** Business input: any JSON value. The task reads it as `ctx.input`. */
+  input?: unknown;
+  /** Execution settings. The task reads them as `ctx.config`. */
   config?: Record<string, unknown>;
   timeoutSeconds?: number;
   backoffLimit?: number;
@@ -86,14 +89,16 @@ export interface CreateTaskRunInput extends RunCreateBaseInput, RunRuntimeTarget
 export interface CreateWorkflowRunInput extends RunCreateBaseInput, RunRuntimeTargetOptions {
   workflowId: string;
   target: `workflow:${string}`;
-  input?: Record<string, unknown>;
+  /** Workflow input: any JSON value. */
+  input?: unknown;
   startMode?: string;
 }
 
 /** Input payload for creating an eval run. */
 export interface CreateEvalRunInput extends RunCreateBaseInput, RunRuntimeTargetOptions {
   target: `eval:${string}`;
-  input?: Record<string, unknown>;
+  /** Eval run input: any JSON value. */
+  input?: unknown;
   config?: Record<string, unknown>;
   startMode?: string;
 }
@@ -121,19 +126,19 @@ export interface CreateScheduleRunFromSourceResult {
 
 /** Input payload for knowledge ingest by upload IDs. */
 export interface KnowledgeIngestByUploadIdsInput
-  extends Omit<CreateTaskRunInput, "target" | "config"> {
+  extends Omit<CreateTaskRunInput, "target" | "input" | "config"> {
   uploadIds: string[];
 }
 
 /** Input payload for knowledge ingest by upload paths. */
 export interface KnowledgeIngestByUploadPathsInput
-  extends Omit<CreateTaskRunInput, "target" | "config"> {
+  extends Omit<CreateTaskRunInput, "target" | "input" | "config"> {
   uploadPaths: string[];
 }
 
 /** Input payload for knowledge ingest by upload prefix. */
 export interface KnowledgeIngestByUploadPrefixInput
-  extends Omit<CreateTaskRunInput, "target" | "config"> {
+  extends Omit<CreateTaskRunInput, "target" | "input" | "config"> {
   uploadPrefix: string;
 }
 
@@ -222,6 +227,7 @@ export class VeryfrontRunsClient {
       name,
       target,
       batchId,
+      input: taskInput,
       config,
       timeoutSeconds,
       backoffLimit,
@@ -240,6 +246,7 @@ export class VeryfrontRunsClient {
           target,
           batch_id: batchId,
           ...runtimeTargetBody(runtimeTarget),
+          input: taskInput,
           config,
           timeout_seconds: timeoutSeconds,
           backoff_limit: backoffLimit,
@@ -404,6 +411,8 @@ export class VeryfrontRunsClient {
     const { uploadIds, ...options } = input;
     return this.createTaskRun({
       ...options,
+      // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+      input: undefined,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
       target: "task:knowledge-ingest",
       config: { upload_ids: uploadIds },
@@ -416,6 +425,8 @@ export class VeryfrontRunsClient {
     const { uploadPaths, ...options } = input;
     return this.createTaskRun({
       ...options,
+      // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+      input: undefined,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
       target: "task:knowledge-ingest",
       config: { paths: uploadPaths },
@@ -428,6 +439,8 @@ export class VeryfrontRunsClient {
     const { uploadPrefix, ...options } = input;
     return this.createTaskRun({
       ...options,
+      // Knowledge ingest carries no business input; drop a stray one a wider object passed in.
+      input: undefined,
       name: options.name ?? DEFAULT_KNOWLEDGE_INGEST_RUN_NAME,
       target: "task:knowledge-ingest",
       config: { path_prefix: uploadPrefix },
