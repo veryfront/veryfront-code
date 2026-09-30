@@ -1,6 +1,9 @@
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import "#veryfront/schemas/_test-setup.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { schemaToJsonSchema } from "#veryfront/schemas/json-schema.ts";
+import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import type { Agent, SuggestionsConfig } from "#veryfront/agent";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -109,6 +112,7 @@ function createAgent(overrides: {
   version?: string;
   skills?: true | string[];
   suggestions?: SuggestionsConfig;
+  outputSchema?: unknown;
 } = {}): Agent {
   return {
     id: overrides.id ?? "agent-1",
@@ -122,6 +126,7 @@ function createAgent(overrides: {
       version: overrides.version ?? "2.0.0",
       skills: overrides.skills,
       suggestions: overrides.suggestions,
+      outputSchema: overrides.outputSchema,
     } as unknown as Agent["config"],
     generate: async () => ({}) as never,
     stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
@@ -824,6 +829,51 @@ describe("channels/control-plane", () => {
           }],
         }),
       );
+    });
+
+    it("lists a contract outputSchema as the JSON Schema document the runtime validates against", async () => {
+      const outputSchema = defineSchema((v) =>
+        v.object({ category: v.enum(["billing", "technical"]), confidence: v.number() })
+      )();
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) => (id === "classifier" ? createAgent({ id, outputSchema }) : undefined),
+        getAllAgentIds: () => ["classifier"],
+      });
+
+      assertEquals(response.agents[0]?.output_schema, schemaToJsonSchema(outputSchema));
+      // The document crosses HTTP as JSON; it must arrive unchanged so the API hashes what the
+      // runtime hashes.
+      const received = JSON.parse(JSON.stringify(response.agents[0]?.output_schema));
+      assertEquals(
+        await schemaIdentitySha256(received),
+        await schemaIdentitySha256(outputSchema),
+      );
+    });
+
+    it("lists a raw JSON Schema outputSchema as declared", async () => {
+      const outputSchema = {
+        type: "object",
+        properties: { headline: { type: "string" } },
+        required: ["headline"],
+      };
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) => (id === "writer" ? createAgent({ id, outputSchema }) : undefined),
+        getAllAgentIds: () => ["writer"],
+      });
+
+      assertEquals(response.agents[0]?.output_schema, outputSchema);
+    });
+
+    it("omits output_schema for an agent that declares none", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) => (id === "assistant" ? createAgent({ id }) : undefined),
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals("output_schema" in (response.agents[0] ?? {}), false);
     });
 
     it("omits invalid suggestions instead of failing the whole agent list", async () => {
