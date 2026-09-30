@@ -5,7 +5,13 @@ import {
   NOT_SUPPORTED,
   RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
+  VeryfrontError,
 } from "#veryfront/errors";
+import {
+  INPUT_VALIDATION_FAILED_CODE,
+  readSchemaValidationErrors,
+  type SchemaValidationError,
+} from "#veryfront/schemas/validation-errors.ts";
 import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import { getEnvironmentConfig } from "#veryfront/config";
 import {
@@ -72,6 +78,7 @@ const TaskSetTimeout = globalThis.setTimeout;
 const TaskClearTimeout = globalThis.clearTimeout;
 const TaskAbortController = AbortController;
 const TaskAbort = AbortController.prototype.abort;
+const TaskAbortSignalAny = AbortSignal.any;
 
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
@@ -145,7 +152,7 @@ export type WorkflowResumeSignal =
     wait_id?: string;
   }
   | { type: "event"; name: string; payload?: unknown; wait_id?: string }
-  | { type: "deadline" };
+  | { type: "deadline"; wait_id?: string };
 
 /** What a paused workflow run waits on, reported with `status: "waiting"` (#2085, #2102, #2110). */
 export interface WorkflowWaitingDetails {
@@ -172,7 +179,9 @@ export interface ProjectRunExecuteResponse {
   result?: unknown;
   logs?: string | null;
   error?: string | null;
-  error_code?: "RUN_TIMEOUT";
+  error_code?: "RUN_TIMEOUT" | "INPUT_VALIDATION_FAILED";
+  /** Structured failure detail, such as the validation errors for `INPUT_VALIDATION_FAILED`. */
+  error_detail?: unknown;
   /** The task threw a RetryableError; the API may start another attempt. */
   retryable?: true;
   duration_ms?: number;
@@ -240,6 +249,7 @@ interface WorkflowClientView {
   retryEventDelivery?(runId: string, eventName: string): Promise<boolean>;
   getApprovalManager?(): { checkExpiredApprovals(runId?: string): Promise<void> };
   getEventWaitManager?(): { checkExpiredEventWaits(runId?: string): Promise<void> };
+  cancel(runId: string): Promise<void>;
   destroy(): Promise<void>;
 }
 
@@ -532,7 +542,7 @@ function parseResumeSignal(
         ...parseResumeWaitId(value.wait_id),
       };
     case "deadline":
-      return { type: "deadline" };
+      return { type: "deadline", ...parseResumeWaitId(value.wait_id) };
     default:
       throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid resume.type" });
   }
@@ -567,6 +577,33 @@ function stripTargetPrefix(target: string, prefix: "task:" | "workflow:"): strin
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A workflow input that failed its inputSchema, as a failed run carrying
+ * `INPUT_VALIDATION_FAILED` and the validation errors (veryfront-issue-inbox#2091).
+ * Any other error yields `null`.
+ */
+function createInputValidationFailure(
+  error: unknown,
+  durationMs: number,
+): ProjectRunExecuteResponse | null {
+  if (!(error instanceof VeryfrontError) || error.slug !== "input-validation-failed") return null;
+  const context = error.context;
+  const errors: SchemaValidationError[] | undefined = readSchemaValidationErrors(
+    typeof context === "object" && context !== null
+      ? (context as { errors?: unknown }).errors
+      : undefined,
+  );
+  if (!errors) return null;
+  return {
+    success: false,
+    error: error.message,
+    error_code: INPUT_VALIDATION_FAILED_CODE,
+    error_detail: { errors },
+    logs: null,
+    duration_ms: durationMs,
+  };
 }
 
 function createExecutionFailure(error: unknown, durationMs: number): ProjectRunExecuteResponse {
@@ -769,6 +806,7 @@ async function executeTaskRun(
 async function executeDiscoveredTaskRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   control?: TaskDeadlineControl,
 ): Promise<ProjectRunExecuteResponse> {
@@ -794,7 +832,6 @@ async function executeDiscoveredTaskRun(
   control?.throwIfExpired();
   const result = await deps.runTask({
     task,
-    signal: control?.signal,
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
     input: request.input,
@@ -803,6 +840,11 @@ async function executeDiscoveredTaskRun(
     environmentId: request.runtimeTargetEnvironmentId === undefined
       ? ctx.environmentId
       : request.runtimeTargetEnvironmentId ?? undefined,
+    // The control plane aborts its request when the run is cancelled; the
+    // task sees that, or its deadline, as ctx.signal and can stop cooperatively.
+    signal: control
+      ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[signal, control.signal]])
+      : signal,
     debug: ctx.debug,
   });
 
@@ -816,9 +858,15 @@ async function executeDiscoveredTaskRun(
   };
 }
 
+/**
+ * Polls a workflow run until it settles. When the control plane aborts the
+ * request (the run was cancelled), the workflow run is cancelled instead of
+ * being polled to completion.
+ */
 async function waitForWorkflowResult(
   client: WorkflowClientView,
   runId: string,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
   stillParkedOnReleasedBoundary?: (run: WorkflowRunView) => Promise<boolean>,
 ): Promise<WorkflowRunView> {
@@ -828,10 +876,18 @@ async function waitForWorkflowResult(
     const run = await client.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
+    // A waiting run is resumable, so an aborted request cancels it too.
+    if (signal.aborted && !isTerminalWorkflowStatus(run.status)) {
+      await client.cancel(runId);
+      return {
+        status: "cancelled",
+        output: run.output,
+        error: { message: "Workflow run cancelled" },
+      };
+    }
+
     if (
-      run.status === "completed" ||
-      run.status === "failed" ||
-      run.status === "cancelled" ||
+      isTerminalWorkflowStatus(run.status) ||
       (run.status === "waiting" && !(await stillParkedOnReleasedBoundary?.(run)))
     ) {
       return run;
@@ -904,8 +960,13 @@ async function describeWorkflowWait(parked: PendingWorkflowWaits): Promise<Workf
 function waitKeys({ approvals, eventWaits }: PendingWorkflowWaits): string[] {
   return [
     ...approvals.map((approval) => `approval:${approval.id}`),
-    ...eventWaits.map((wait) => `wait:${wait.id ?? `${wait.nodeId}:${wait.eventName}`}`),
+    ...eventWaits.map(eventWaitKey),
   ].sort((left, right) => left.localeCompare(right));
+}
+
+function eventWaitKey(wait: WorkflowEventWaitView): string {
+  const identity = wait.id ?? `${wait.nodeId}:${wait.eventName}`;
+  return `wait:${identity}`;
 }
 
 function sameKeys(left: string[], right: string[]): boolean {
@@ -990,7 +1051,7 @@ async function isStaleDecision(
   resume: WorkflowResumeSignal,
   parked: PendingWorkflowWaits,
 ): Promise<boolean> {
-  if (resume.type === "deadline" || resume.wait_id === undefined) return false;
+  if (resume.wait_id === undefined) return false;
   if (isParkedOnNothing(parked)) return false;
   return resume.wait_id !== await waitBoundaryId(parked);
 }
@@ -1006,6 +1067,7 @@ async function resumeWaitingWorkflowRun(
   client: WorkflowClientView,
   runId: string,
   resume: WorkflowResumeSignal,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<{ run: WorkflowRunView } | { failure: string }> {
   if (client.statePersistence !== "durable") {
@@ -1017,12 +1079,12 @@ async function resumeWaitingWorkflowRun(
   // A re-dispatch that repeats a decision already applied (the previous
   // attempt died after applying it) just reports where the run is now.
   if (current.status !== "waiting") {
-    return { run: await waitForWorkflowResult(client, runId, deps) };
+    return { run: await waitForWorkflowResult(client, runId, signal, deps) };
   }
 
   const parked = await readPendingWaits(client, runId, current);
   if (await isStaleDecision(resume, parked)) {
-    return { run: await waitForWorkflowResult(client, runId, deps) };
+    return { run: await waitForWorkflowResult(client, runId, signal, deps) };
   }
   const applied = isParkedOnNothing(parked)
     ? { released: true }
@@ -1043,12 +1105,17 @@ async function resumeWaitingWorkflowRun(
       return keys.length === 0 || sameKeys(keys, released);
     }
     : undefined;
-  return { run: await waitForWorkflowResult(client, runId, deps, stillParked) };
+  return { run: await waitForWorkflowResult(client, runId, signal, deps, stillParked) };
+}
+
+function isTerminalWorkflowStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 async function executeWorkflowRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
@@ -1083,9 +1150,25 @@ async function executeWorkflowRun(
   let activeResume: Promise<unknown> | undefined;
   try {
     client.register(workflow.definition);
+    // The run was cancelled while the workflow was being loaded: do not start or resume it.
+    if (signal.aborted) {
+      return {
+        success: false,
+        error: "Workflow run cancelled",
+        logs: null,
+        duration_ms: Math.max(0, deps.now() - startedAt),
+      };
+    }
+
     let run: WorkflowRunView;
     if (request.resume) {
-      const operation = resumeWaitingWorkflowRun(client, request.runId, request.resume, deps);
+      const operation = resumeWaitingWorkflowRun(
+        client,
+        request.runId,
+        request.resume,
+        signal,
+        deps,
+      );
       activeResume = operation;
       void operation.then(() => {
         activeResume = undefined;
@@ -1113,14 +1196,33 @@ async function executeWorkflowRun(
       run = resumed.run;
     } else {
       // A null input counts as no input, the same as on the API run record.
-      const handle = await client.start(workflow.id, request.input ?? {}, {
-        runId: request.runId,
-        [CONTROL_PLANE_OWNED_START]: true,
-      });
-      run = await waitForWorkflowResult(client, handle.runId, deps);
+      let handle: Awaited<ReturnType<typeof client.start>>;
+      try {
+        handle = await client.start(workflow.id, request.input ?? {}, {
+          runId: request.runId,
+          [CONTROL_PLANE_OWNED_START]: true,
+        });
+      } catch (error) {
+        const failure = createInputValidationFailure(error, Math.max(0, deps.now() - startedAt));
+        if (failure) return failure;
+        throw error;
+      }
+      run = await waitForWorkflowResult(client, handle.runId, signal, deps);
       await handle.settled?.();
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
+
+    // The cancel can arrive after the last poll, while the pause is persisted.
+    if (run.status === "waiting" && signal.aborted) {
+      await client.cancel(request.runId);
+      return {
+        success: false,
+        result: run.output,
+        error: "Workflow run cancelled",
+        logs: null,
+        duration_ms: durationMs,
+      };
+    }
 
     if (run.status === "waiting") {
       if (client.statePersistence !== "durable") {
@@ -2532,12 +2634,12 @@ function executeProjectRun(
         case "task:style-artifact-build":
           return deps.executeStyleArtifactBuild({ request, ctx, req });
         default:
-          return executeDiscoveredTaskRun(request, ctx, deps, control);
+          return executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
       }
     });
   }
   if (request.kind === "eval") return executeEvalRun(request, ctx, req, deps);
-  return executeWorkflowRun(request, ctx, deps);
+  return executeWorkflowRun(request, ctx, req.signal, deps);
 }
 
 export class ProjectRunExecuteHandler extends BaseHandler {

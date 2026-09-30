@@ -8,6 +8,8 @@
  */
 
 import { join } from "#veryfront/compat/path";
+import { isNotFoundError, lstat, readDir as readDirectory } from "#veryfront/compat/fs.ts";
+import type { DirEntry } from "#veryfront/platform/adapters/base.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
   bindExtensionEntrypoint,
@@ -262,26 +264,26 @@ export function mergeExtensions(
 // Filesystem discovery helpers
 // ---------------------------------------------------------------------------
 
-async function readDir(path: string): Promise<Deno.DirEntry[]> {
+async function readDir(path: string): Promise<DirEntry[]> {
   try {
-    const entries: Deno.DirEntry[] = [];
-    for await (const entry of Deno.readDir(path)) {
-      entries.push(entry);
+    const entries: DirEntry[] = [];
+    for await (const entry of readDirectory(path)) {
+      entries.push({ ...entry, isSymlink: entry.isSymlink === true });
     }
     entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     return entries;
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return [];
+    if (isNotFoundError(err)) return [];
     throw err;
   }
 }
 
 async function pathEntryExists(path: string): Promise<boolean> {
   try {
-    await Deno.lstat(path);
+    await lstat(path);
     return true;
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return false;
+    if (isNotFoundError(err)) return false;
     throw err;
   }
 }
@@ -426,7 +428,7 @@ async function tryReadPackageMeta(
       );
     }
     if (error instanceof ExtensionEntrypointIdentityError) return undefined;
-    if (error instanceof Deno.errors.NotFound) return undefined;
+    if (isNotFoundError(error)) return undefined;
     throw new TypeError(
       `Extension package ${
         quotedPath(packageName)

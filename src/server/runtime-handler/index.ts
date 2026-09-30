@@ -9,6 +9,12 @@
 
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isAbsolute } from "#veryfront/compat/path";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import {
+  type InstalledProjectHttpBinding,
+  snapshotInstalledProjectHttpBinding,
+} from "./installed-project.ts";
 import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
@@ -154,7 +160,10 @@ import {
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
 import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
-import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import {
+  isSharedProjectRuntime,
+  requiresIsolatedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -411,6 +420,8 @@ export function createHandlerRegistry(
 
 export interface RuntimeHandlerOptions {
   projectDir: string;
+  /** Image-owned immutable release identity; never derived from request metadata. */
+  installedProject?: InstalledProjectHttpBinding;
   /** When true, expose additional debug logging. */
   debug?: boolean;
   /** Module server URL for ESM imports (e.g., 'http://localhost:8765') */
@@ -436,6 +447,19 @@ export function createVeryfrontHandler(
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
+  const installedProject = opts.installedProject === undefined
+    ? undefined
+    : snapshotInstalledProjectHttpBinding(opts.installedProject);
+  if (
+    installedProject && (
+      !isAbsolute(projectDir) || isExtendedFSAdapter(adapter.fs) ||
+      isSharedProjectRuntime({ adapter }) ||
+      opts.localProjects !== undefined || opts.config?.fs?.veryfront?.proxyMode === true ||
+      (opts.config?.fs?.type !== undefined && opts.config.fs.type !== "local")
+    )
+  ) {
+    throw new TypeError("Installed projects require one fixed local source");
+  }
   const handleApplicationAuthRequest = createApplicationAuthRequestHandler();
   const isDebugEnabled = (): boolean => {
     if (opts.debug) return true;
@@ -472,7 +496,7 @@ export function createVeryfrontHandler(
     projectDir,
     adapter,
     opts.config,
-    opts.defaultEnvironment === "production",
+    installedProject !== undefined || opts.defaultEnvironment === "production",
   );
 
   // Per-project environment variable cache (fetches from API, caches with 60s TTL)
@@ -548,6 +572,7 @@ export function createVeryfrontHandler(
         let requestOrigin: string | null | undefined;
         if (requiresApplicationAuth) {
           const preparedMonitoringRequest = await prepareProjectRequest({
+            installedProject,
             req,
             url,
             isProxyMode,
@@ -590,6 +615,7 @@ export function createVeryfrontHandler(
     }
 
     const preparedRequest = await prepareProjectRequest({
+      installedProject,
       req,
       url,
       isProxyMode,
@@ -723,6 +749,7 @@ export function createVeryfrontHandler(
             "runtime.resolve_project",
             () =>
               resolveProjectIdentity({
+                installedProject,
                 req: request,
                 url,
                 headers,
@@ -763,6 +790,7 @@ export function createVeryfrontHandler(
           }
 
           const runtimeContext = await resolveProjectRuntimeContext({
+            installedProject,
             req: request,
             url,
             projectDir,

@@ -1,7 +1,7 @@
 // Deno-only end-to-end runtime-handler coverage. Node and Bun planners
 // intentionally exclude this file because it exercises Deno.env and the Deno adapter.
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -30,6 +30,7 @@ import {
 } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { requestTracker } from "./request-tracker.ts";
+import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
@@ -260,6 +261,100 @@ describe("server/runtime-handler/index", () => {
   afterAll(async () => {
     const { stop } = await import("veryfront/extensions/bundler");
     await stop();
+  });
+
+  it("rejects multi-project adapters before installed application startup", () => {
+    const adapter = createRouteMockAdapter();
+    Object.defineProperty(adapter.fs, "isMultiProjectMode", { value: () => true });
+    assertThrows(
+      () =>
+        createVeryfrontHandler("/owned/artifact", adapter, {
+          projectDir: "/owned/artifact",
+          installedProject: {
+            projectId: "project",
+            projectSlug: "project",
+            releaseId: "release",
+            environmentId: "environment",
+            environmentName: "staging",
+          },
+        }),
+      TypeError,
+      "one fixed local source",
+    );
+  });
+
+  it("pins installed release identity and source despite conflicting routing inputs", async () => {
+    const installed = {
+      projectId: "installed-project-id",
+      projectSlug: "installed-project",
+      releaseId: "installed-release",
+      environmentId: "installed-environment-id",
+      environmentName: "staging",
+    };
+    const adapter = createRouteMockAdapter();
+    defaultDiscoveryCache.projects.set(installed.projectSlug, "/foreign/source");
+    Object.defineProperty(projectMiddlewareRuntime, "execute", {
+      configurable: true,
+      value: (input: Parameters<ProjectMiddlewareRuntime["execute"]>[0]) =>
+        Promise.resolve(
+          Response.json({
+            projectId: input.handlerContext.projectId,
+            projectSlug: input.handlerContext.projectSlug,
+            projectDir: input.handlerContext.projectDir,
+            releaseId: input.handlerContext.releaseId,
+            environmentId: input.handlerContext.environmentId,
+            environmentName: input.handlerContext.environmentName,
+            environment: input.handlerContext.resolvedEnvironment,
+            token: input.handlerContext.proxyToken,
+            branch: input.handlerContext.requestContext?.branch,
+            sameAdapter: input.handlerContext.adapter === adapter,
+          }),
+        ),
+    });
+    try {
+      const handler = createVeryfrontHandler("/owned/artifact", adapter, {
+        projectDir: "/owned/artifact",
+        config: {},
+        installedProject: installed,
+      });
+      installed.projectId = "mutated-after-construction";
+      const response = await withMockFetch(
+        () => {
+          throw new Error("Installed requests must not fetch another project's context");
+        },
+        () =>
+          handler(
+            new Request("https://foreign.preview.veryfront.com/dashboard?slug=foreign", {
+              headers: {
+                "x-project-slug": "foreign",
+                "x-project-id": "foreign-id",
+                "x-project-path": "/foreign/source",
+                "x-release-id": "foreign-release",
+                "x-environment-id": "foreign-environment",
+                "x-environment-name": "foreign-environment",
+                "x-environment": "preview",
+                "x-token": "synthetic-platform-token",
+              },
+            }),
+          ),
+      );
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), {
+        projectId: "installed-project-id",
+        projectSlug: "installed-project",
+        projectDir: "/owned/artifact",
+        releaseId: "installed-release",
+        environmentId: "installed-environment-id",
+        environmentName: "staging",
+        environment: "production",
+        token: "",
+        branch: null,
+        sameAdapter: true,
+      });
+    } finally {
+      Reflect.deleteProperty(projectMiddlewareRuntime, "execute");
+      defaultDiscoveryCache.projects.delete(installed.projectSlug);
+    }
   });
 
   beforeEach(() => {

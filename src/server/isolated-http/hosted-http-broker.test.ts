@@ -9,9 +9,14 @@ import {
   type HostedExecutorSessionOptions,
 } from "#veryfront/agent/hosted/executor-session.ts";
 import { createExecutorHttpOperation } from "./executor-http.ts";
+import { readExecutorHttpApplicationConfiguration } from "./application-configuration.ts";
+import type { ExecutorHttpInstall } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import { createHostedHttpBroker, type HostedHttpInput } from "veryfront/server/http-broker";
 
-function fixture(handle: (request: Request) => Promise<Response> | Response) {
+function fixture(
+  handle: (request: Request) => Promise<Response> | Response,
+  onInstall?: (peer: ExecutorChannel, installation: ExecutorHttpInstall) => Promise<void>,
+) {
   const now = Date.now();
   const owner = { scopeKind: "project" as const, projectId: "project-a" };
   const source = { type: "release" as const, releaseId: "release-a" };
@@ -86,8 +91,9 @@ function fixture(handle: (request: Request) => Promise<Response> | Response) {
         mode: "http",
         binding: input.binding,
         artifact: { version: 1, owner, source, root: "project" },
-        async install() {
+        async install(installed) {
           calls.push("install");
+          await onInstall?.(peer!, installed);
           return {
             operations: new Map([[
               "http.request",
@@ -138,6 +144,71 @@ function fixture(handle: (request: Request) => Promise<Response> | Response) {
 }
 
 describe("hosted HTTP executor broker", () => {
+  it("delivers only the matched application snapshot through the allocation channel", async () => {
+    let appValue: string | undefined;
+    const setup = fixture(() => new Response(appValue), async (peer, installed) => {
+      const configuration = await readExecutorHttpApplicationConfiguration(
+        peer,
+        installed,
+        new AbortController().signal,
+        10_000,
+      );
+      appValue = configuration.variables.APP_VALUE;
+    });
+    setup.input.configuration = {
+      projectId: "project-a",
+      projectSlug: "project-a",
+      releaseId: "release-a",
+      environmentId: "environment-a",
+      environmentName: "staging",
+      configurationId: "config-a",
+      variables: { APP_VALUE: "matched" },
+    };
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      const response = await broker.fetch(
+        new Request("https://app.example/api/value"),
+        setup.input,
+      );
+      assertEquals(await response.text(), "matched");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("refuses foreign application configuration and collector credentials before allocation", async () => {
+    const setup = fixture(() => new Response("must not run"));
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      for (
+        const [environmentId, variables] of [
+          ["other-environment", {}],
+          ["environment-a", { OTEL_EXPORTER_OTLP_HEADERS: "synthetic-private-value" }],
+        ] as const
+      ) {
+        await assertRejects(() =>
+          broker.fetch(new Request("https://app.example/api/value"), {
+            ...setup.input,
+            configuration: {
+              projectId: "project-a",
+              projectSlug: "project-a",
+              releaseId: "release-a",
+              environmentId,
+              environmentName: "staging",
+              configurationId: "config-a",
+              variables,
+            },
+          })
+        );
+      }
+      assertEquals(setup.calls, []);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("rejects an unfinished response when executor shutdown interrupts it", async () => {
     const f = fixture(() =>
       new Response(

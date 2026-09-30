@@ -13,7 +13,7 @@ import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/log
 import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { sequence, step, waitForApproval, workflow } from "../dsl/index.ts";
-import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
+import type { PendingApproval, RunFilter, WorkflowDefinition, WorkflowRun } from "../types.ts";
 import { createWorkflowHandler } from "./handler.ts";
 import { CONTROL_PLANE_OWNED_START } from "../dsl/validation.ts";
 
@@ -194,6 +194,23 @@ describe("createWorkflowHandler", () => {
     const run = await client.getRun(runId);
     expect(run?.input).toEqual({ topic: "x" });
     expect(run?.nodeStates.only?.output).toEqual({ ok: true, input: { topic: "x" } });
+  });
+
+  it("answers input that fails the workflow inputSchema with 400, not 500 (#2091)", async () => {
+    client.register(
+      workflow({
+        id: "typed",
+        inputSchema: defineSchema((v) => v.object({ topic: v.string() }))(),
+        steps: [step("only", { tool: passthroughTool("typed-noop") })],
+      }).definition as unknown as WorkflowDefinition,
+    );
+
+    const response = await handlers.POST(
+      post("/api/workflows/typed/start", { input: { topic: 1 } }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await client.listRuns({ workflowId: "typed" })).toEqual([]);
   });
 
   it("denies requests that the application does not authorize", async () => {
