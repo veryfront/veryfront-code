@@ -1,8 +1,10 @@
+// Capture encoding before application code can replace the shared prototype.
 const encoder = new TextEncoder();
+const encode = encoder.encode.bind(encoder);
 
 export function constantTimeEqual(a: string, b: string): boolean {
-  const aBuf = encoder.encode(a);
-  const bBuf = encoder.encode(b);
+  const aBuf = encode(a);
+  const bBuf = encode(b);
 
   const len = Math.max(aBuf.length, bBuf.length);
   let xor = aBuf.length ^ bBuf.length;
