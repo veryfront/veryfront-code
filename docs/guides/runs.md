@@ -81,6 +81,10 @@ target declares an input or output schema, the run also carries
 JSON Schema it was admitted against. They are `null` when the target declares
 no schema, and absent on API versions that predate them.
 
+See [Run input and output](./run-input-output.md) for what each run kind
+stores, declared schemas, rejected input, `null` output, and JSON
+serialization.
+
 ## Create a workflow run
 
 ```ts

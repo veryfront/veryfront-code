@@ -757,6 +757,16 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "runs.events",
     ],
   },
+  "guides/run-input-output.md": {
+    references: ["../api-reference/veryfront/runs.md"],
+    snippets: [
+      "INPUT_VALIDATION_FAILED",
+      "schema_violation",
+      "input_schema_sha256",
+      "output_schema_sha256",
+      "JSON.stringify",
+    ],
+  },
   "guides/mcp-server.md": {
     references: [
       "../api-reference/veryfront/mcp.md",
