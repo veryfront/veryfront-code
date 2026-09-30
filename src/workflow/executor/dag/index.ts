@@ -2424,11 +2424,30 @@ export class DAGExecutor {
 
     const workflowDef = config.workflow;
 
-    const submittedInput = typeof config.input === "function"
-      ? await config.input(context)
-      : (config.input ?? context.input);
-    abortSignal?.throwIfAborted();
-    const input = parseWorkflowInput(workflowDef, submittedInput);
+    const previousState = nodeStates[node.id];
+    let input: unknown;
+    if (previousState?._subWorkflowInputParsed) {
+      input = previousState.input;
+    } else {
+      const submittedInput = typeof config.input === "function"
+        ? await config.input(context)
+        : (config.input ?? context.input);
+      abortSignal?.throwIfAborted();
+      input = parseWorkflowInput(workflowDef, submittedInput);
+      // Keep one parsed input through retries and persist it when the child
+      // pauses, so defaults and transforms do not run again on resume.
+      const parsedState: NodeState = {
+        nodeId: node.id,
+        status: "running",
+        attempt: 1,
+        startedAt: new Date(startTime),
+        ...previousState,
+        _subWorkflowInputParsed: true,
+      };
+      if (input === undefined) delete parsedState.input;
+      else parsedState.input = input;
+      nodeStates[node.id] = parsedState;
+    }
 
     const steps = typeof workflowDef.steps === "function"
       ? workflowDef.steps({ input, context })
@@ -2544,6 +2563,8 @@ export class DAGExecutor {
     const state: NodeState = {
       nodeId: node.id,
       status: deriveNodeStatus(result.completed, waiting),
+      ...(input === undefined ? {} : { input }),
+      _subWorkflowInputParsed: true,
       output: finalOutput,
       ...(result.completed ? { _completedCompositeChildIds: [...producedNodeIds] } : {}),
       error: waiting ? undefined : result.error,

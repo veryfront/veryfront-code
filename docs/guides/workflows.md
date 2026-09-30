@@ -614,7 +614,8 @@ defaults apply before the first step runs. The run keeps the input as it was
 submitted. A workflow nested with `subWorkflow` or `map` also parses the input its
 parent passes through its own `inputSchema` before building or running child steps.
 Invalid input fails the parent run with `INPUT_VALIDATION_FAILED` and validation
-errors containing JSON Pointer paths.
+errors containing JSON Pointer paths. A paused nested workflow reuses its parsed
+input when it resumes.
 
 A run that pauses on an approval or an event has no output until it completes.
 

@@ -3682,6 +3682,136 @@ describe("DAGExecutor", () => {
       });
     }
 
+    for (const composite of ["subWorkflow", "map"] as const) {
+      it(`reuses parsed ${composite} input after a wait and executor restart`, async () => {
+        let defaults = 0;
+        let resolutions = 0;
+        const built: unknown[] = [];
+        const seen: unknown[] = [];
+        const child: WorkflowDefinition = {
+          id: "stable-child",
+          inputSchema: defineSchema((v) =>
+            v.object({
+              n: v.number().default(() => ++defaults).transform((n) => n * 10),
+            })
+          )(),
+          steps: ({ input }) => {
+            built.push(input);
+            return [
+              step("read-before", { tool: "read" }),
+              {
+                ...waitForApproval("decision", { message: "Continue" }),
+                dependsOn: ["read-before"],
+              },
+              { ...step("read-after", { tool: "read" }), dependsOn: ["decision"] },
+            ];
+          },
+        };
+        const nodes = composite === "subWorkflow"
+          ? [subWorkflow("nested", {
+            workflow: child,
+            input: () => {
+              resolutions++;
+              return {};
+            },
+          })]
+          : [map("nested", { items: [{}], processor: child })];
+        const stepExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+          seen.push(context.input);
+          return { success: true, output: context.input, executionTime: 1 };
+        });
+        const first = await new DAGExecutor({ stepExecutor }).execute(nodes, createTestRun());
+        assertEquals(first.waiting, true);
+        assertExists(first.waitingNode);
+        const resumed = await new DAGExecutor({ stepExecutor }).execute(
+          nodes,
+          createTestRun({
+            status: "waiting",
+            context: first.context,
+            nodeStates: {
+              ...structuredClone(first.nodeStates),
+              [first.waitingNode]: {
+                ...first.nodeStates[first.waitingNode]!,
+                status: "completed",
+                output: { approved: true },
+                completedAt: new Date(),
+              },
+            },
+          }),
+        );
+        assertEquals(resumed.completed, true);
+        assertEquals(defaults, 1);
+        assertEquals(built, [{ n: 10 }, { n: 10 }]);
+        assertEquals(seen, [{ n: 10 }, { n: 10 }]);
+        assertEquals(resolutions, composite === "subWorkflow" ? 1 : 0);
+      });
+    }
+
+    it("reuses parsed nested input when its step builder retries", async () => {
+      let defaults = 0;
+      let builds = 0;
+      const inputs: unknown[] = [];
+      const result = await executor.execute([
+        subWorkflow("nested", {
+          input: {},
+          retry: { maxAttempts: 2, initialDelay: 1, maxDelay: 1, retryIf: () => true },
+          workflow: {
+            id: "retry-child",
+            inputSchema: defineSchema((v) =>
+              v.object({ n: v.number().default(() => ++defaults) })
+            )(),
+            steps: ({ input }) => {
+              inputs.push(input);
+              if (++builds === 1) throw new Error("Retry the builder");
+              return [];
+            },
+          },
+        }),
+      ], createTestRun());
+      assertEquals(result.completed, true);
+      assertEquals(defaults, 1);
+      assertEquals(inputs, [{ n: 1 }, { n: 1 }]);
+      assertEquals(result.nodeStates.nested?.attempt, 2);
+    });
+
+    it("reuses undefined parsed input on retry without retaining stale input", async () => {
+      let transforms = 0;
+      let builds = 0;
+      const inputs: unknown[] = [];
+      const result = await executor.execute(
+        [
+          subWorkflow("nested", {
+            retry: { maxAttempts: 2, initialDelay: 1, maxDelay: 1, retryIf: () => true },
+            workflow: {
+              id: "undefined-child",
+              inputSchema: defineSchema((v) =>
+                v.unknown().transform(() => {
+                  transforms++;
+                  return undefined;
+                })
+              )(),
+              steps: ({ input }) => {
+                inputs.push(input);
+                if (++builds === 1) throw new Error("Retry the builder");
+                return [];
+              },
+              output: () => null,
+            },
+          }),
+        ],
+        createTestRun({
+          nodeStates: {
+            nested: { nodeId: "nested", status: "running", attempt: 1, input: "legacy input" },
+          },
+        }),
+      );
+      assertEquals(result.completed, true);
+      assertEquals(Object.hasOwn(result.nodeStates.nested!, "input"), false);
+      assertEquals(transforms, 1);
+      assertEquals(inputs, [undefined, undefined]);
+      assertEquals(result.context.nested, null);
+    });
+
     it("rejects invalid nested workflow input before building or executing child steps", async () => {
       let builds = 0;
       let executions = 0;
