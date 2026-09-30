@@ -4104,9 +4104,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   describe("on a real workflow client sharing the durable backend", () => {
     const runId = "run_3f0e6c1a-9b2d-4c7e-8a5f-1d2e3f4a5b6c";
 
-    async function parkRun(steps: WorkflowNode[]) {
+    async function parkRun(
+      steps: WorkflowNode[],
+      output?: (context: Record<string, unknown>) => unknown,
+    ) {
       const backend = new MemoryBackend();
-      const definition = workflow({ id: "publish", steps }).definition;
+      const definition = workflow({ id: "publish", steps, ...(output ? { output } : {}) })
+        .definition;
       const first = createWorkflowClient({ backend });
       first.register(definition);
       const handle = await first.start("publish", {}, { runId, [CONTROL_PLANE_OWNED_START]: true });
@@ -4171,6 +4175,85 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(payload.success, true);
       assertEquals(payload.status, undefined);
       assertEquals(payload.error, undefined);
+    });
+
+    // #2102/#2114: a resumed run must report the workflow's selected final
+    // output (#2107), exactly as the same workflow run without a pause does.
+    describe("final output of a resumed run", () => {
+      const prepare = step("prepare", {
+        tool: {
+          id: "prepare-claim",
+          type: "function",
+          description: "Prepare the claim",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => Promise.resolve({ stage: "awaiting-review", claimId: "EXP-1" }),
+        },
+      });
+      const pay = step("finalize", {
+        tool: {
+          id: "finalize-claim",
+          type: "function",
+          description: "Pay the claim",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => Promise.resolve({ stage: "paid", claimId: "EXP-1" }),
+        },
+      });
+      const selectFinal = (context: Record<string, unknown>) => context.finalize;
+
+      async function uninterruptedOutput(): Promise<unknown> {
+        const client = createWorkflowClient({ backend: new MemoryBackend() });
+        try {
+          client.register(
+            workflow({ id: "publish", steps: [prepare, pay], output: selectFinal }).definition,
+          );
+          const handle = await client.start("publish", {});
+          await handle.settled?.();
+          const run = await client.getRun(handle.runId);
+          assertEquals(run?.status, "completed");
+          return run?.output;
+        } finally {
+          await client.destroy();
+        }
+      }
+
+      it("completes an approved run with the same output as the run without a pause", async () => {
+        const expected = await uninterruptedOutput();
+        assertEquals(expected, { stage: "paid", claimId: "EXP-1" });
+        const parked = await parkRun([
+          prepare,
+          waitForApproval("manager-review", { message: "Pay it?" }),
+          pay,
+        ], selectFinal);
+
+        const payload = await dispatchResume(parked, {
+          type: "approval",
+          node_id: "manager-review",
+          approved: true,
+          approver: "user:u1",
+        });
+
+        assertEquals(payload.success, true);
+        assertEquals(payload.result, expected);
+      });
+
+      it("fails a rejected run with no output", async () => {
+        const parked = await parkRun([
+          prepare,
+          waitForApproval("manager-review", { message: "Pay it?" }),
+          pay,
+        ], selectFinal);
+
+        const payload = await dispatchResume(parked, {
+          type: "approval",
+          node_id: "manager-review",
+          approved: false,
+          approver: "user:u1",
+        });
+
+        assertEquals(payload.success, false);
+        assertEquals(payload.result ?? null, null);
+        assertStringIncludes(payload.error, "rejected");
+      });
     });
 
     it("fails an approval that timed out on a deadline dispatch", async () => {
