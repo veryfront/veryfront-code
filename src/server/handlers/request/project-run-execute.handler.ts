@@ -654,6 +654,7 @@ async function executeDiscoveredTaskRun(
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
     input: request.input,
+    runId: request.runId,
     projectId: request.projectId,
     environmentId: request.runtimeTargetEnvironmentId === undefined
       ? ctx.environmentId

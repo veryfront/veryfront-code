@@ -23,6 +23,8 @@ export interface TaskContext {
    * back to `config`, so tasks that read business data from `config` keep working.
    */
   input?: unknown;
+  /** Public run ID (when executed by the platform) */
+  runId?: string;
   /** Project ID (when executed by the platform) */
   projectId?: string;
   /** Environment ID for the runtime target executing this task */

@@ -94,6 +94,7 @@ interface TaskContext {
   env: Record<string, string>;
   config: Record<string, unknown>;
   input?: unknown;
+  runId?: string;
   projectId?: string;
   environmentId?: string;
   signal?: AbortSignal;
@@ -107,6 +108,10 @@ interface TaskContext {
   be any JSON value: an object, array, string, number, or boolean. When the
   run was created without input, or with `null` input, `ctx.input` falls back
   to `ctx.config`
+- **`runId`**: public run identifier for platform-executed tasks. Derive a stable
+  key for each external operation, such as `${ctx.runId}:charge-order`, to avoid
+  collisions between different writes in one run. It is absent for local
+  `veryfront task <name>` runs
 - **`projectId`**: project identifier (available in cloud context)
 - **`environmentId`**: runtime-target environment identifier, when selected
 - **`signal`**: optional cooperative cancellation signal
