@@ -313,6 +313,29 @@ describe("src/task/runner", () => {
       assertEquals(result.durationMs >= 0, true);
     });
 
+    it("should not invoke a task cancelled while its schemas are being checked", async () => {
+      const controller = new AbortController();
+      let invoked = false;
+      const task = makeTask({
+        inputSchema: { type: "object" },
+        run: () => {
+          invoked = true;
+          return null;
+        },
+      });
+
+      const pending = runTask(
+        { task, input: {}, signal: controller.signal },
+        createInMemoryHostRuntime(),
+      );
+      controller.abort(new Error("cancelled during schema checks"));
+      const result = await pending;
+
+      assertEquals(invoked, false);
+      assertEquals(result.success, false);
+      assertEquals(result.error, "cancelled during schema checks");
+    });
+
     it("should merge injected task env into ctx.env without exposing reserved runtime env", async () => {
       let receivedEnv: Record<string, string> = {};
       const task = makeTask({

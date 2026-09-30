@@ -1006,6 +1006,121 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals((await result.response.json()).result, ["INV-7731", "Harbor Office"]);
   });
 
+  it("#2108 returns schema identities, violations and the input validation code on the wire", async () => {
+    const violation = {
+      phase: "output" as const,
+      reason: "invalid" as const,
+      schema_sha256: "b".repeat(64),
+      errors: [{ path: "/confidence", message: "must be number" }],
+      detected_at: "2026-09-30T00:00:00.000Z",
+    };
+    let receivedRunId: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: (options) => {
+        receivedRunId = options.runId;
+        return Promise.resolve({
+          success: true,
+          result: { confidence: "high" },
+          durationMs: 1,
+          inputSchemaSha256: "a".repeat(64),
+          outputSchemaSha256: "b".repeat(64),
+          schemaViolation: violation,
+        });
+      },
+    }));
+    const body = {
+      runId: "run_task_schema",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_schema/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(receivedRunId, "run_task_schema");
+    assertEquals(payload.input_schema_sha256, "a".repeat(64));
+    assertEquals(payload.output_schema_sha256, "b".repeat(64));
+    assertEquals(payload.schema_violation, violation);
+    assertEquals("error_code" in payload, false);
+  });
+
+  it("#2108 omits schema fields for a schema-less task so the response is unchanged", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({
+          success: true,
+          result: 1,
+          durationMs: 1,
+          inputSchemaSha256: null,
+          outputSchemaSha256: null,
+          schemaViolation: null,
+        }),
+    }));
+    const body = {
+      runId: "run_task_plain",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_plain/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(Object.keys(await result.response.json()).sort(), [
+      "duration_ms",
+      "logs",
+      "result",
+      "success",
+    ]);
+  });
+
+  it("#2108 reports INPUT_VALIDATION_FAILED with the validation errors", async () => {
+    const errors = [{ path: "/ticketText", message: "must be string" }];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({
+          success: false,
+          error: "input failed inputSchema validation",
+          errorCode: "INPUT_VALIDATION_FAILED",
+          errorDetail: { errors },
+          durationMs: 0,
+          inputSchemaSha256: "a".repeat(64),
+          outputSchemaSha256: null,
+          schemaViolation: null,
+        }),
+    }));
+    const body = {
+      runId: "run_task_bad_input",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      input: { ticketText: 42 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_bad_input/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(payload.error_detail, { errors });
+    assertEquals(payload.result, undefined);
+  });
+
   it("#2105 leaves task input undefined when the request carries none", async () => {
     let received: { hasInput?: boolean } = {};
     const handler = new ProjectRunExecuteHandler(createDeps({

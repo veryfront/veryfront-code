@@ -6,6 +6,9 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { register, reset } from "#veryfront/extensions/contracts.ts";
+import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type {
   ModelRuntime,
@@ -129,6 +132,34 @@ describe("agent output schema", () => {
         error.message,
         "/headline",
         "the issue path from formatValidationIssues survives",
+      );
+    });
+
+    it("reports a raw JSON Schema that no validator can compile as unenforced (#2108)", async () => {
+      reset();
+      const { compileJsonSchema: _unsupported, ...legacyAdapter } = createZodAdapter();
+      register<SchemaValidator>("SchemaValidator", legacyAdapter);
+      try {
+        const resolved = resolveAgentOutputSchema(
+          { type: "object", properties: { headline: { type: "string" } }, required: ["headline"] },
+          "news",
+        );
+        assertEquals(resolved?.enforcement, "schema_uncompilable");
+        assertEquals(await resolved!.parseOutput('{"headline":42}'), { headline: 42 });
+      } finally {
+        reset();
+        register<SchemaValidator>("SchemaValidator", createZodAdapter());
+      }
+    });
+
+    it("reports compiled raw and contract schemas as enforced (#2108)", () => {
+      assertEquals(
+        resolveAgentOutputSchema(getTemperatureSchema(), "weather")?.enforcement,
+        "enforced",
+      );
+      assertEquals(
+        resolveAgentOutputSchema({ type: "object" }, "news")?.enforcement,
+        "enforced",
       );
     });
 

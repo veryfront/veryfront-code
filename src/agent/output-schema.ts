@@ -24,6 +24,9 @@ import {
   tryCompileJsonSchemaValidator,
 } from "#veryfront/schemas/json-schema.ts";
 import { AGENT_ERROR, getErrorMessage } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils";
+
+const logger = baseLogger.component("agent-output-schema");
 
 /**
  * Response-format name sent to providers that require one.
@@ -36,6 +39,12 @@ const RESPONSE_FORMAT_NAME = "response";
 /** A requested output schema paired with the parser that enforces it. */
 export interface ResolvedAgentOutputSchema {
   readonly responseFormat: RuntimeResponseFormat;
+  /**
+   * `enforced` when `parseOutput` validates against the schema. `schema_uncompilable` when the
+   * schema is a raw JSON Schema that the registered validator cannot compile: the output then
+   * passes through unvalidated and must never be reported as enforced.
+   */
+  readonly enforcement: "enforced" | "schema_uncompilable";
   /** Parse and validate model text, or throw naming the failure. */
   parseOutput(text: string): Promise<unknown>;
 }
@@ -113,6 +122,7 @@ export function resolveAgentOutputSchema(
     }
     return {
       responseFormat: buildResponseFormat(jsonSchema),
+      enforcement: "enforced",
       async parseOutput(text: string): Promise<unknown> {
         const value = parseOutputJson(text, agentId);
         try {
@@ -132,8 +142,15 @@ export function resolveAgentOutputSchema(
     // A raw JSON Schema is validated only when the registered validator
     // extension implements the optional JSON Schema compilation capability.
     const validate = tryCompileJsonSchemaValidator(jsonSchema);
+    if (!validate) {
+      logger.warn("Agent outputSchema is not enforced: no validator can compile it", {
+        agentId,
+        reason: "schema_uncompilable",
+      });
+    }
     return {
       responseFormat: buildResponseFormat(jsonSchema),
+      enforcement: validate ? "enforced" : "schema_uncompilable",
       async parseOutput(text: string): Promise<unknown> {
         const value = parseOutputJson(text, agentId);
         if (!validate) return value;

@@ -20,23 +20,47 @@ export interface SchemaValidationError {
   message: string;
 }
 
-function escapePointerSegment(segment: string | number): string {
-  return String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
+/** Escape one JSON Pointer reference token (RFC 6901). */
+export function escapePointerSegment(segment: string | number): string {
+  // Character loop, not replaceAll: task code may have replaced String methods in the shared realm.
+  const text = `${segment}`;
+  let escaped = "";
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    escaped += char === "~" ? "~0" : char === "/" ? "~1" : char;
+  }
+  return escaped;
 }
 
 /** Convert schema issues to JSON Pointer validation errors, capped at {@link MAX_SCHEMA_VALIDATION_ERRORS}. */
 export function toSchemaValidationErrors(
   issues: readonly ValidationIssue[],
 ): SchemaValidationError[] {
-  return issues.slice(0, MAX_SCHEMA_VALIDATION_ERRORS).map((issue) => ({
-    path: issue.path.length === 0 ? "" : `/${issue.path.map(escapePointerSegment).join("/")}`,
-    message: issue.message,
-  }));
+  // Index loops and string concatenation only: task code may have replaced Array methods in the
+  // shared realm, and reporting a validation failure must not throw because of it.
+  const errors: SchemaValidationError[] = [];
+  const count = issues.length < MAX_SCHEMA_VALIDATION_ERRORS
+    ? issues.length
+    : MAX_SCHEMA_VALIDATION_ERRORS;
+  for (let index = 0; index < count; index++) {
+    const issue = issues[index]!;
+    let path = "";
+    for (let segment = 0; segment < issue.path.length; segment++) {
+      path += `/${escapePointerSegment(issue.path[segment]!)}`;
+    }
+    errors[errors.length] = { path, message: issue.message };
+  }
+  return errors;
 }
 
 /** One-line summary, e.g. `/amount: Expected number; <root>: Required`. */
 export function formatSchemaValidationErrors(errors: readonly SchemaValidationError[]): string {
-  return errors.map((error) => `${error.path || "<root>"}: ${error.message}`).join("; ");
+  let summary = "";
+  for (let index = 0; index < errors.length; index++) {
+    const error = errors[index]!;
+    summary += `${index === 0 ? "" : "; "}${error.path || "<root>"}: ${error.message}`;
+  }
+  return summary;
 }
 
 /** Read validation errors back from an `INPUT_VALIDATION_FAILED` error's context. */
