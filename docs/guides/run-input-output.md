@@ -77,15 +77,17 @@ report, and a failed eval run keeps its report as `output`.
 
 ## Runs without schemas
 
-A definition that declares no `inputSchema` and no `outputSchema` behaves as
-follows:
+A workflow or task that declares no `inputSchema` and no `outputSchema`
+behaves as follows:
 
-- The runtime passes the submitted input to your code unchanged.
+- The runtime passes the submitted input to your code unchanged, apart from
+  the task `config` fallback and the workflow `{}` default described above.
 - The output is the value your code produced, in its JSON form.
 - The run records no schema violation, and both schema identities are `null`.
 
-An agent without `outputSchema` stores its final text, or `null`. Veryfront never parses old
-assistant text into a structured value.
+An agent without `outputSchema` stores its final text, or `null`. Veryfront
+never parses old assistant text into a structured value. Evals declare no
+schemas: their output is the eval report.
 
 ## Declared schemas
 
