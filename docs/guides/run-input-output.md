@@ -107,7 +107,7 @@ enforced as shown in every release.
 | A task's `run()` returns a value that violates `outputSchema`                         | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                         |
 | A task's raw JSON Schema that no registered validator can compile                     | Warns. The schema is reported as unenforced, never as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                                   |
 | A task's execution result lacks, or differs from, the admitted output schema identity | Warns. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                                                                     |
-| Submitted workflow `input` violates `inputSchema`                                     | Fails before the first step runs. The validation message is in `error.message`.                                                                                  |
+| Submitted workflow `input` violates `inputSchema`                                     | Fails before the first step runs, with `error.code: "INPUT_VALIDATION_FAILED"` and the validation errors in `error.detail`.                                      |
 | A workflow's selected output violates `outputSchema`                                  | Fails. No output is stored, `onError` runs, and `onComplete` does not.                                                                                           |
 | An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output. A run that stops at its step limit completes instead, with no structured result and `output: null`.                     |
 
@@ -171,8 +171,10 @@ validation, a rejected task run looks like this:
 
 `run.input` keeps the rejected value, so you can inspect what was sent.
 `error.detail.errors` lists at most 20 errors, each with a JSON Pointer `path`.
-A rejected workflow run also fails before its first step runs, with the
-validation message in `error.message` and no `error.code`.
+A rejected workflow run fails the same way before its first step runs, with
+`error.code: "INPUT_VALIDATION_FAILED"` and the validation errors in
+`error.detail.errors`. Its `error.message` starts with
+`Workflow "<id>" input failed inputSchema validation:`.
 
 A request that does not match the create-run request shape, for example a
 task `config` that is not an object or an unknown request field, is refused

@@ -5,7 +5,13 @@ import {
   NOT_SUPPORTED,
   RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
+  VeryfrontError,
 } from "#veryfront/errors";
+import {
+  INPUT_VALIDATION_FAILED_CODE,
+  readSchemaValidationErrors,
+  type SchemaValidationError,
+} from "#veryfront/schemas/validation-errors.ts";
 import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import { getEnvironmentConfig } from "#veryfront/config";
 import {
@@ -128,7 +134,9 @@ export interface ProjectRunExecuteResponse {
   result?: unknown;
   logs?: string | null;
   error?: string | null;
-  error_code?: "RUN_TIMEOUT";
+  error_code?: "RUN_TIMEOUT" | "INPUT_VALIDATION_FAILED";
+  /** Structured failure detail, such as the validation errors for `INPUT_VALIDATION_FAILED`. */
+  error_detail?: unknown;
   /** The task threw a RetryableError; the API may start another attempt. */
   retryable?: true;
   duration_ms?: number;
@@ -423,6 +431,33 @@ function stripTargetPrefix(target: string, prefix: "task:" | "workflow:"): strin
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A workflow input that failed its inputSchema, as a failed run carrying
+ * `INPUT_VALIDATION_FAILED` and the validation errors (veryfront-issue-inbox#2091).
+ * Any other error yields `null`.
+ */
+function createInputValidationFailure(
+  error: unknown,
+  durationMs: number,
+): ProjectRunExecuteResponse | null {
+  if (!(error instanceof VeryfrontError) || error.slug !== "input-validation-failed") return null;
+  const context = error.context;
+  const errors: SchemaValidationError[] | undefined = readSchemaValidationErrors(
+    typeof context === "object" && context !== null
+      ? (context as { errors?: unknown }).errors
+      : undefined,
+  );
+  if (!errors) return null;
+  return {
+    success: false,
+    error: error.message,
+    error_code: INPUT_VALIDATION_FAILED_CODE,
+    error_detail: { errors },
+    logs: null,
+    duration_ms: durationMs,
+  };
 }
 
 function createExecutionFailure(error: unknown, durationMs: number): ProjectRunExecuteResponse {
@@ -737,7 +772,14 @@ async function executeWorkflowRun(
   try {
     client.register(workflow.definition);
     // A null input counts as no input, the same as on the API run record.
-    const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
+    let handle: Awaited<ReturnType<typeof client.start>>;
+    try {
+      handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
+    } catch (error) {
+      const failure = createInputValidationFailure(error, Math.max(0, deps.now() - startedAt));
+      if (failure) return failure;
+      throw error;
+    }
     const run = await waitForWorkflowResult(client, handle.runId, deps);
     await handle.settled?.();
     const durationMs = Math.max(0, deps.now() - startedAt);
