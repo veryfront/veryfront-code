@@ -22,6 +22,8 @@
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
+const ObjectCreate = Object.create;
+
 /** How long a loaded catalog is used before it is refreshed. */
 export const VERYFRONT_CLOUD_CATALOG_TTL_MS = 5 * 60_000;
 /** How long a failed load waits before the next attempt for the same key. */
@@ -95,6 +97,13 @@ export interface VeryfrontCloudCatalogLoadOptions extends VeryfrontCloudCatalogS
    * stale entry still answers when the refresh fails or the wait ends.
    */
   readonly fresh?: boolean;
+  /**
+   * Throws when the credential in `apiToken` may no longer be sent. Called
+   * before this caller starts a catalog request, the one step here that sends
+   * the credential; a revoked credential then fails the load instead of
+   * reaching the network.
+   */
+  readonly assertCredentialActive?: () => void;
 }
 
 interface CatalogEntry {
@@ -306,11 +315,13 @@ function loggableErrorMessage(error: unknown): string {
 async function fetchCatalog(
   options: VeryfrontCloudCatalogScope,
 ): Promise<VeryfrontCloudCatalog> {
-  const headers = new Headers({
-    Accept: "application/json",
-    Authorization: `Bearer ${options.apiToken}`,
-  });
-  if (options.projectSlug) headers.set(PROJECT_SLUG_HEADER, options.projectSlug);
+  // A null-prototype record, not a Headers object: project code can replace the
+  // global Headers class and its methods, and a Headers init would run their
+  // patchable iterator over the bearer. A plain record takes neither path.
+  const headers = ObjectCreate(null) as Record<string, string>;
+  headers["accept"] = "application/json";
+  headers["authorization"] = `Bearer ${options.apiToken}`;
+  if (options.projectSlug) headers[PROJECT_SLUG_HEADER] = options.projectSlug;
   // Only the internal timeout bounds the shared request: one caller giving up
   // must not fail the load for every other caller on the same key.
   const timeout = new AbortController();
@@ -409,7 +420,9 @@ function waitFor(
 /**
  * Load the served catalog for a scope. Resolves to the cached catalog when it
  * is fresh, to a stale one while a refresh runs, and to undefined when no
- * catalog could be loaded or the caller stopped waiting first. Never rejects.
+ * catalog could be loaded or the caller stopped waiting first. Never rejects,
+ * except that `assertCredentialActive` throws synchronously, before any request,
+ * when the credential it guards was revoked.
  */
 export function loadVeryfrontCloudCatalog(
   options: VeryfrontCloudCatalogLoadOptions,
@@ -427,6 +440,7 @@ export function loadVeryfrontCloudCatalog(
     return Promise.resolve(entry?.catalog);
   }
   if (lastFailure !== undefined) failedAt.delete(key);
+  options.assertCredentialActive?.();
   const request = refresh(key, {
     apiBaseUrl: options.apiBaseUrl,
     apiToken: options.apiToken,

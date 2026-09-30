@@ -1358,6 +1358,7 @@ export async function createRuntimeAgentStreamResponse(
       : {
         kind: "framework" as const,
         runtime: new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
+          ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
           ...(inferenceAuthToken
             ? {
               // This server surface has no AgentServiceConfig object to thread through, so the

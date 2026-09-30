@@ -156,6 +156,25 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("preserves a signed exact resume tool call in the canonical runtime input", () => {
+    const resumeToolCall = {
+      id: `${"x".repeat(128)}:resume-1`,
+      name: "outlook__list_messages",
+      input: { folder: "inbox", limit: 20 },
+    };
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages: [],
+      resumeToolCall,
+    });
+
+    assertEquals(toRuntimeRunAgentInput(parsed).resumeToolCall, resumeToolCall);
+  });
+
   it("rejects oversized injected tool parameters", () => {
     assertThrows(
       () =>
@@ -330,6 +349,15 @@ describe("internal-agents/schema", () => {
         result: { ok: true },
         isError: false,
       },
+    );
+  });
+
+  it("accepts derived resume ids above the public tool-call id bound", () => {
+    const toolCallId = `${"a".repeat(128)}:resume-1`;
+    assertEquals(
+      getResumeSignalSchema().parse({ type: "tool_result", toolCallId, result: { ok: true } })
+        .toolCallId,
+      toolCallId,
     );
   });
 

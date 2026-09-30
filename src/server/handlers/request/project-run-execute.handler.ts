@@ -65,6 +65,11 @@ import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
 import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import type { WorkflowClientConfig } from "#veryfront/workflow";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
+import {
+  PROJECT_RUN_INFERENCE_TOKEN_HEADER,
+  runWithProjectRunInferenceCredential,
+} from "#veryfront/agent/runtime/project-run-inference-credential.ts";
+import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
@@ -862,17 +867,25 @@ async function executeDiscoveredTaskRun(
  * Polls a workflow run until it settles. When the control plane aborts the
  * request (the run was cancelled), the workflow run is cancelled instead of
  * being polled to completion.
+ *
+ * The runtime marks a run `waiting` before it saves the approvals and event
+ * waits it pauses on, so a durable `waiting` counts as a pause only once it
+ * names at least one pending wait and the same waits on two consecutive polls.
+ * A pause reported earlier would name no wait, or only some of several
+ * parallel waits. `releasedKeys` are the waits a resume just released: the
+ * run may still read `waiting` on them while the resumed execution catches up.
  */
 async function waitForWorkflowResult(
   client: WorkflowClientView,
   runId: string,
   signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
-  stillParkedOnReleasedBoundary?: (run: WorkflowRunView) => Promise<boolean>,
+  releasedKeys?: string[],
   pollingStopped?: AbortSignal,
   cancelRun?: () => Promise<void>,
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
+  let previousKeys: string[] | undefined;
 
   while (true) {
     const run = await client.getRun(runId);
@@ -892,11 +905,18 @@ async function waitForWorkflowResult(
       throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
-    if (
-      isTerminalWorkflowStatus(run.status) ||
-      (run.status === "waiting" && !(await stillParkedOnReleasedBoundary?.(run)))
-    ) {
-      return run;
+    if (isTerminalWorkflowStatus(run.status)) return run;
+
+    if (run.status === "waiting") {
+      if (client.statePersistence !== "durable") return run;
+      const keys = waitKeys(await readPendingWaits(client, runId, run));
+      const settled = keys.length > 0 &&
+        !(releasedKeys && sameKeys(keys, releasedKeys)) &&
+        previousKeys !== undefined && sameKeys(keys, previousKeys);
+      if (settled) return run;
+      previousKeys = keys;
+    } else {
+      previousKeys = undefined;
     }
 
     if (deps.now() >= deadline) {
@@ -1017,10 +1037,8 @@ async function deliverResumeEvent(
  * Apply one decision or deadline to the waits the run is parked on. Resolves
  * with whether anything was released, or a failure.
  *
- * A deadline release runs the workflow client's own expiry pass, which covers
- * every due wait on this project's backend, not only this run's, exactly as
- * the runtime's periodic expiry timer does. Other runs released that way are
- * reported to the control plane at their own deadline dispatch.
+ * A deadline release runs the workflow client's expiry pass for this run
+ * only, so it releases this run's due waits and no other run's.
  */
 async function applyResumeSignal(
   client: WorkflowClientView,
@@ -1127,26 +1145,16 @@ async function resumeWaitingWorkflowRun(
   if ("failure" in applied) return applied;
 
   // The decision can resume the run in the background, so the run may still
-  // read `waiting` on the boundary it was just released from, or with nothing
-  // pending at all while the released node completes. Poll past both; a later
-  // pause on a different boundary is a new `waiting`.
-  const released = waitKeys(parked);
-  // A run that reads `waiting` with nothing pending had its decision applied
-  // by an earlier dispatch, and the released node has not finished yet: poll
-  // on to the next boundary rather than report a pause nothing can release.
-  const stillParked = applied.released || isParkedOnNothing(parked)
-    ? async (run: WorkflowRunView) => {
-      const keys = waitKeys(await readPendingWaits(client, runId, run));
-      return keys.length === 0 || sameKeys(keys, released);
-    }
-    : undefined;
+  // read `waiting` on the boundary it was just released from while the
+  // released node completes. Poll past it; a later pause is a new boundary.
+  const releasedKeys = applied.released ? waitKeys(parked) : undefined;
   return {
     run: await waitForWorkflowResult(
       client,
       runId,
       signal,
       deps,
-      stillParked,
+      releasedKeys,
       pollingStopped,
       cancelRun,
     ),
@@ -1378,6 +1386,71 @@ interface RuntimeApiClient {
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
+}
+
+const IntrinsicReflectApply = Reflect.apply;
+const RequestHeadersGetter = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!.get!;
+const RequestUrlGetter = Object.getOwnPropertyDescriptor(Request.prototype, "url")!.get!;
+const RequestMethodGetter = Object.getOwnPropertyDescriptor(Request.prototype, "method")!.get!;
+const RequestSignalGetter = Object.getOwnPropertyDescriptor(Request.prototype, "signal")!.get!;
+const HeadersGet = Headers.prototype.get;
+const HeadersAppend = Headers.prototype.append;
+const HeadersEntries = Headers.prototype.entries;
+const HeadersIteratorNext = Object.getPrototypeOf(new Headers().entries()).next as (
+  this: IterableIterator<[string, string]>,
+) => IteratorResult<[string, string]>;
+const StringToLowerCase = String.prototype.toLowerCase;
+const NativeHeaders = Headers;
+
+/**
+ * The execute request as the run sees it: the same URL, method and headers,
+ * and cancellation signal, minus the inference credential. Project code (a task, workflow or eval
+ * module) loads during execution and can patch `Headers.prototype.get`, so the
+ * request it can reach must no longer carry the credential. The body was read
+ * and verified before this point and is not needed again.
+ */
+function withoutProjectRunInferenceToken(req: Request): Request {
+  // Copied entry by entry with iteration primitives captured at load, and the
+  // credential is skipped rather than deleted afterwards: handing the original
+  // Headers to a constructor would run a patchable `Symbol.iterator` over it.
+  const source = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
+  const iterator = IntrinsicReflectApply(HeadersEntries, source, []) as IterableIterator<
+    [string, string]
+  >;
+  const skipped = IntrinsicReflectApply(StringToLowerCase, PROJECT_RUN_INFERENCE_TOKEN_HEADER, []);
+  const headers = new NativeHeaders();
+  while (true) {
+    const step = IntrinsicReflectApply(HeadersIteratorNext, iterator, []) as IteratorResult<
+      [string, string]
+    >;
+    if (step.done) break;
+    const name = step.value[0];
+    if (IntrinsicReflectApply(StringToLowerCase, name, []) === skipped) continue;
+    IntrinsicReflectApply(HeadersAppend, headers, [name, step.value[1]]);
+  }
+  return new NativeRequest(IntrinsicReflectApply(RequestUrlGetter, req, []) as string, {
+    method: IntrinsicReflectApply(RequestMethodGetter, req, []) as string,
+    headers,
+    // The run is cancelled through this signal; the copy must keep it.
+    signal: IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
+  });
+}
+
+/**
+ * The execute request's gateway-only inference credential, validated with the
+ * same visible-ASCII and size checks hosted runs apply to theirs. Read raw:
+ * trimming first would turn a malformed header into a valid one. `undefined`
+ * when the control plane sent none, which keeps the pre-header behaviour.
+ */
+function readProjectRunInferenceToken(req: Request): string | undefined {
+  // Captured accessors: a project that patches `Headers.prototype.get` must not
+  // see the credential of this or any later execute request on the same host.
+  const headers = IntrinsicReflectApply(RequestHeadersGetter, req, []) as Headers;
+  const value = IntrinsicReflectApply(HeadersGet, headers, [
+    PROJECT_RUN_INFERENCE_TOKEN_HEADER,
+  ]) as string | null;
+  if (value === null) return undefined;
+  return requireInferenceProviderCredential(value, "Inference token header");
 }
 
 function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
@@ -2783,13 +2856,25 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         ) {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
+        const inferenceToken = readProjectRunInferenceToken(req);
 
         return await withSpan(
           "project_run.execute",
           async () => {
             const startedAt = this.deps.now();
             try {
-              const response = await executeProjectRun(request, ctx, req, this.deps);
+              const response = inferenceToken === undefined
+                ? await executeProjectRun(request, ctx, req, this.deps)
+                : await runWithProjectRunInferenceCredential(
+                  inferenceToken,
+                  () =>
+                    executeProjectRun(
+                      request,
+                      ctx,
+                      withoutProjectRunInferenceToken(req),
+                      this.deps,
+                    ),
+                );
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
               return this.respond(builder.json(response, 200));
             } catch (error) {

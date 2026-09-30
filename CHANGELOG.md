@@ -6,6 +6,18 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: `run_<uuid>` run ids are reserved for control-plane runs
+
+`WorkflowClient.start()` and `WorkflowExecutor.start()` now throw
+`INVALID_ARGUMENT` when you pass a caller-chosen `runId` shaped like
+`run_<uuid>`. That shape is reserved for runs the control plane owns, whose
+approvals and cancellation go through `POST /runs/{run_id}/resume` and
+`POST /runs/{run_id}/cancel`. The runtime approval route answers 409 for these
+runs and the runtime cancel route points to the canonical cancel.
+
+- If you choose your own run ids in the `run_<uuid>` shape, switch to another
+  prefix before you upgrade. Generated run ids are unaffected.
+
 ### Changed: a run waiting on a delegated child reads `waiting_reason: "child_run"`
 
 A run parked on `invoke_agent` now reports `waiting_reason: "child_run"` instead

@@ -335,6 +335,7 @@ import {
   type ResolvedModelTransport,
   revokeModelRuntimeResolver,
 } from "./model-transport.ts";
+import { createProjectRunInferenceModelResolver } from "./project-run-inference-credential.ts";
 import { buildRuntimeUsageTraceAttributes, type RuntimeUsageTraceInput } from "./trace-usage.ts";
 import {
   pickDefinedUsageFields,
@@ -1676,6 +1677,8 @@ export type AgentRuntimeInternalOptions = {
   modelCallThinking?: RuntimeReasoningOption & { enabled: boolean };
   /** Observe original producer settlement before it starts, including its full cleanup. */
   onStreamCompletion?: (completion: Promise<void>) => void;
+  /** Exact pending tool invocation trusted by the hosted control plane. */
+  resumeToolCall?: { id: string; name: string; input: Record<string, unknown> };
 };
 
 type AgentRuntimeGenerateArgs = [
@@ -1766,6 +1769,7 @@ export class AgentRuntime {
   #modelResolverState: AgentRuntimeModelResolverState;
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
+  #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
   private id: string;
   private config: AgentConfig;
   private memory: Memory<Message>;
@@ -1789,6 +1793,7 @@ export class AgentRuntime {
     }
     this.#modelCallThinking = internalOptions.modelCallThinking;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
+    this.#resumeToolCall = internalOptions.resumeToolCall;
     this.#modelResolverState = internalOptions.resolveModelRuntime
       ? { status: "available", resolver: internalOptions.resolveModelRuntime }
       : { status: "absent" };
@@ -2143,9 +2148,15 @@ export class AgentRuntime {
     if (resolverState.status === "consumed") {
       throw new TypeError("AgentRuntime model resolver has already been consumed");
     }
+    // A project-run execution scopes a signed inference credential to its
+    // calls; an agent built without its own resolver draws one fresh resolver
+    // from that scope per call, consumed and revoked like any private resolver.
+    const projectRunResolver = resolverState.status === "absent"
+      ? createProjectRunInferenceModelResolver()
+      : undefined;
     const resolveModelRuntime = resolverState.status === "available"
       ? resolverState.resolver
-      : undefined;
+      : projectRunResolver;
     if (resolverState.status === "available") {
       this.#modelResolverState = { status: "consumed" };
     }
@@ -3507,6 +3518,7 @@ export class AgentRuntime {
     let recoveredInterruptedLocalToolBatch = false;
     let interruptedLocalToolBatchRecoveryStep: number | undefined;
     let interruptedLocalToolBatchRecoveryText: string | undefined;
+    let resumeToolCallExecuted = false;
 
     for (let step = 0; step < maxSteps; step++) {
       throwIfAborted(abortSignal);
@@ -3587,6 +3599,138 @@ export class AgentRuntime {
         preparedStep.integrationToolDiscovery,
       );
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
+
+      if (!resumeToolCallExecuted && this.#resumeToolCall) {
+        const resumeToolCall = this.#resumeToolCall;
+        resumeToolCallExecuted = true;
+        const inputText = privateJsonStringify(resumeToolCall.input);
+        const streamedCall: StreamingToolCall = {
+          id: resumeToolCall.id,
+          name: resumeToolCall.name,
+          arguments: inputText,
+          inputDeltas: [inputText],
+          inputAvailable: true,
+        };
+        announceStreamedToolCallInput(controller, encoder, streamedCall);
+        sendSSE(controller, encoder, {
+          type: "tool-input-available",
+          toolCallId: resumeToolCall.id,
+          toolName: resumeToolCall.name,
+          input: resumeToolCall.input,
+          ...(isDynamicTool(resumeToolCall.name) ? { dynamic: true } : {}),
+        });
+
+        const assistantToolCallMessage: Message = {
+          id: generateMessageId(),
+          role: "assistant",
+          parts: [{
+            type: `tool-${resumeToolCall.name}`,
+            toolCallId: resumeToolCall.id,
+            toolName: resumeToolCall.name,
+            args: resumeToolCall.input,
+          }],
+        };
+        pushPrivateArray(currentMessages, assistantToolCallMessage);
+        await persistMessage(assistantToolCallMessage);
+
+        const toolCall: ToolCall = {
+          id: resumeToolCall.id,
+          name: resumeToolCall.name,
+          args: resumeToolCall.input,
+          status: "executing",
+        };
+        const executionContext = {
+          toolCallId: resumeToolCall.id,
+          ...toolContext,
+          agentId: this.id,
+        };
+        try {
+          if (
+            resolveToolExecutionAuthority({
+              toolName: resumeToolCall.name,
+              plan: effectiveToolExposurePlan,
+            }) === undefined
+          ) {
+            throw new Error(toolNotVisibleError(resumeToolCall.name));
+          }
+          const policyCheck = enforceSkillPolicy(resumeToolCall.name, {
+            activeSkillId: skillState.activeSkillId,
+            hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+            skillToolAvailability: skillState.activeSkillToolAvailability,
+            toolInput: toolCall.args,
+          });
+          if (!policyCheck.allowed) throw new Error(policyCheck.error);
+
+          toolCall.args = applySkillDelegationOverridesToToolInput(
+            resumeToolCall.name,
+            toolCall.args,
+            skillState.activeSkillDelegationOverrides,
+            resolveConfiguredTool(this.config.tools, resumeToolCall.name, { agentId: this.id }) ??
+              undefined,
+          );
+          callbacks?.onToolCall?.(toolCall);
+          const startTime = Date.now();
+          const result = await traceConfiguredToolExecution({
+            mode: "stream",
+            agentId: this.id,
+            toolName: resumeToolCall.name,
+            toolCallId: resumeToolCall.id,
+            args: toolCall.args,
+            toolsConfig: this.config.tools,
+            context: executionContext,
+            allowedRemoteToolNames,
+            remoteToolSources,
+            sourceIntegrationPolicy,
+          });
+          throwIfAborted(abortSignal);
+          await this.notifyToolResult({
+            mode: "stream",
+            toolName: resumeToolCall.name,
+            toolCallId: resumeToolCall.id,
+            input: toolCall.args,
+            result,
+            context: executionContext,
+          });
+          const resultError = getToolResultError(result);
+          toolCall.status = resultError === undefined ? "completed" : "error";
+          toolCall.result = result;
+          toolCall.error = resultError;
+          toolCall.executionTime = Date.now() - startTime;
+          pushPrivateArray(toolCalls, toolCall);
+          if (resultError === undefined) {
+            sendSSE(controller, encoder, {
+              type: "tool-output-available",
+              toolCallId: resumeToolCall.id,
+              output: result,
+              ...(isDynamicTool(resumeToolCall.name) ? { dynamic: true } : {}),
+            });
+          } else {
+            sendSSE(controller, encoder, {
+              type: "tool-output-error",
+              toolCallId: resumeToolCall.id,
+              errorText: resultError,
+              ...(isDynamicTool(resumeToolCall.name) ? { dynamic: true } : {}),
+            });
+          }
+          const toolResultMessage = createToolResultMessage(
+            resumeToolCall.id,
+            resumeToolCall.name,
+            result,
+          );
+          pushPrivateArray(currentMessages, toolResultMessage);
+          await persistMessage(toolResultMessage);
+        } catch (error) {
+          await this.recordToolError(
+            persistMessage,
+            toolCall,
+            error instanceof Error ? error.message : String(error),
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+        }
+      }
 
       const temperature = this.resolveTemperature(
         temperatureModelString ?? effectiveModel,
