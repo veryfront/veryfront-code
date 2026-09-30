@@ -2921,6 +2921,32 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertNotEquals(payload.waiting.wait_id, earlierWaitId);
   });
 
+  it("polls on when a retried decision finds its approval already applied and nothing pending", async () => {
+    // The first dispatch marked apr_1 approved, then died before the released
+    // node finished: the run still reads waiting, with nothing pending.
+    const waitId = await reportedWaitId(waitingOnReview);
+    const { client, calls, settle } = resumableClient({ status: "waiting", pendingApprovals: [] });
+    let polls = 0;
+
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+      wait_id: waitId,
+    }, {
+      sleep: () => {
+        polls += 1;
+        settle({ status: "completed", output: { stage: "paid" } });
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(calls, []);
+    assertEquals(polls, 1);
+    assertEquals(payload.result, { stage: "paid" });
+  });
+
   it("applies a decision whose wait_id names the boundary the run is parked on", async () => {
     const { client, calls } = resumableClient(waitingOnReview);
 

@@ -800,6 +800,10 @@ function sameKeys(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((key, index) => key === right[index]);
 }
 
+function isParkedOnNothing({ approvals, eventWaits }: PendingWorkflowWaits): boolean {
+  return approvals.length === 0 && eventWaits.length === 0;
+}
+
 function waitBoundaryId(parked: PendingWorkflowWaits): Promise<string> {
   return computeHash(waitKeys(parked).join("\n"));
 }
@@ -875,6 +879,7 @@ async function isStaleDecision(
   parked: PendingWorkflowWaits,
 ): Promise<boolean> {
   if (resume.type === "deadline" || resume.wait_id === undefined) return false;
+  if (isParkedOnNothing(parked)) return false;
   return resume.wait_id !== await waitBoundaryId(parked);
 }
 
@@ -915,7 +920,10 @@ async function resumeWaitingWorkflowRun(
   // pending at all while the released node completes. Poll past both; a later
   // pause on a different boundary is a new `waiting`.
   const released = waitKeys(parked);
-  const stillParked = applied.released
+  // A run that reads `waiting` with nothing pending had its decision applied
+  // by an earlier dispatch, and the released node has not finished yet: poll
+  // on to the next boundary rather than report a pause nothing can release.
+  const stillParked = applied.released || isParkedOnNothing(parked)
     ? async (run: WorkflowRunView) => {
       const keys = waitKeys(await readPendingWaits(client, runId, run));
       return keys.length === 0 || sameKeys(keys, released);
