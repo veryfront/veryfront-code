@@ -115,6 +115,7 @@ const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, 
 const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicSetHas = Set.prototype.has;
+const _Set = Set;
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
@@ -164,10 +165,10 @@ function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
 export function getExplicitlyDeniedToolNames(agent: Agent): ReadonlySet<string> {
   const configuredTools = agent.config.tools;
   if (!configuredTools || configuredTools === true) {
-    return new Set<string>();
+    return new _Set<string>();
   }
 
-  return new Set(
+  return new _Set(
     Object.entries(configuredTools)
       .filter(([, entry]) => entry === false)
       .map(([toolName]) => toolName),
@@ -414,12 +415,12 @@ export function buildMergedTools(
   // denials: a request-injected tool must not resurrect a tool the agent
   // author switched off by name (mirroring the AG-UI merge path).
   const authoritativeSourceToolNames = agent.config.tools && agent.config.tools !== true
-    ? new Set(
+    ? new _Set(
       Object.entries(agent.config.tools)
         .filter(([, entry]) => (entry && typeof entry === "object") || entry === false)
         .map(([toolName]) => toolName),
     )
-    : new Set<string>();
+    : new _Set<string>();
   // When the trusted agent configuration declares delegation and the control
   // plane also declares invoke_agent, the control plane owns the execution: it
   // parks the run on the tool call and runs the child itself. The injected
@@ -1279,11 +1280,11 @@ export async function createRuntimeAgentStreamResponse(
       !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName, deps.localTools)
     );
     childRunToolNames = resolveChildRunToolNames(mergedTools);
-    controlPlaneInvokeAgentToolNames = new Set(
+    controlPlaneInvokeAgentToolNames = new _Set(
       resolveControlPlaneInvokeAgentToolNames(mergedTools),
     );
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
-    const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
+    const allowedRemoteToolNameSet = new _Set(allowedRemoteToolNames ?? []);
     const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
       .filter((toolName) => allowedRemoteToolNameSet.has(toolName));
     const localToolNames = getRequiredLocalToolNames({
@@ -1293,7 +1294,7 @@ export async function createRuntimeAgentStreamResponse(
     });
     const runtimeToolNames = selectProviderCompatibleToolNames(
       [
-        ...new Set([
+        ...new _Set([
           ...mergedToolNames,
           ...providerToolNames,
           ...(allowedRemoteToolNames ?? []),
