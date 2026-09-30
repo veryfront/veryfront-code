@@ -37,9 +37,9 @@ import {
   MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS,
 } from "../limits.ts";
 import { isCanonicalNonEmptyString } from "../dsl/validation.ts";
-
 import {
   INPUT_VALIDATION_FAILED_CODE,
+  OutputSchemaValidationError,
   readSchemaValidationErrors,
 } from "#veryfront/schemas/validation-errors.ts";
 
@@ -104,6 +104,8 @@ export interface WorkflowRunControlExecuteInput {
    * `input`.
    */
   selectOutput?(context: WorkflowContext): unknown;
+  /** Parse and validate the selected or default final output before persistence. */
+  parseOutput?(output: unknown): unknown;
   onError?(
     run: WorkflowRun,
     error: Error,
@@ -1343,6 +1345,14 @@ async function failRun(
     error instanceof VeryfrontError && error.slug === "input-validation-failed"
       ? readSchemaValidationErrors((error.context as { errors?: unknown } | undefined)?.errors)
       : undefined;
+  const structuredError = error instanceof OutputSchemaValidationError
+    ? { code: error.code, detail: error.detail }
+    : validationErrors
+    ? {
+      code: INPUT_VALIDATION_FAILED_CODE,
+      detail: { errors: validationErrors },
+    }
+    : {};
   return await updateRunIfStatus(
     backend,
     run.id,
@@ -1354,12 +1364,7 @@ async function failRun(
       error: {
         message: error.message,
         stack: error.stack,
-        ...(validationErrors
-          ? {
-            code: INPUT_VALIDATION_FAILED_CODE,
-            detail: { errors: validationErrors },
-          }
-          : {}),
+        ...structuredError,
       },
       completedAt: new Date(),
     },
@@ -1472,8 +1477,10 @@ function selectFinalOutput(
   context: WorkflowContext,
 ): unknown {
   const publicContext = toPersistedWorkflowContext(context);
-  if (!input.selectOutput) return determineOutput(publicContext);
-  return toJsonOutput(input.selectOutput(publicContext));
+  const selected = input.selectOutput
+    ? input.selectOutput(publicContext)
+    : determineOutput(publicContext);
+  return toJsonOutput(input.parseOutput ? input.parseOutput(selected) : selected);
 }
 
 function determineOutput(context: WorkflowContext): unknown {

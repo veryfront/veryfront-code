@@ -43,6 +43,11 @@ import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { parseWorkflowInput } from "./workflow-input.ts";
+import {
+  formatSchemaValidationErrors,
+  OutputSchemaValidationError,
+  toSchemaValidationErrors,
+} from "#veryfront/schemas/validation-errors.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import { retryTelemetryErrorType } from "./retry-policy.ts";
@@ -82,6 +87,18 @@ function requireDurableWorkflowSourceContext(): void {
   }
 }
 
+function parseWorkflowOutput(workflow: WorkflowDefinition, output: unknown): unknown {
+  if (!workflow.outputSchema) return output;
+  const result = workflow.outputSchema.safeParse(output);
+  if (result.success) return result.data;
+  const errors = toSchemaValidationErrors(result.issues ?? []);
+  throw new OutputSchemaValidationError(
+    `Workflow "${workflow.id}" output failed outputSchema validation: ${
+      formatSchemaValidationErrors(errors)
+    }`,
+    errors,
+  );
+}
 /** Default polling interval for waiting on workflow result */
 const DEFAULT_RESULT_POLL_INTERVAL_MS = 1_000;
 
@@ -769,21 +786,22 @@ export class WorkflowExecutor {
         onStart: (startedRun) => {
           this.config.onStart?.(startedRun);
         },
-        // A declared selector picks the final output, and `outputSchema`
-        // checks it before it is stored: the parsed value is the output, and
-        // a mismatch fails the run instead of completing it (#2107).
+        // A declared selector picks the final output. The schema checks either
+        // selected or default output before completion is persisted (#2175).
         ...(selectOutput
           ? {
-            selectOutput: (context: WorkflowContext) => {
-              const selected = selectOutput(context);
-              return outputSchema ? outputSchema.parse(selected) : selected;
+            selectOutput: (context: WorkflowContext) => selectOutput(context),
+          }
+          : {}),
+        ...(outputSchema
+          ? {
+            parseOutput: (output: unknown) => {
+              const parsed = parseWorkflowOutput(workflow, output);
+              return selectOutput ? parsed : output;
             },
           }
           : {}),
         onComplete: async (finalRun) => {
-          // Without a selector the output keeps its historical shape: the
-          // context minus `input`, checked after completion as before.
-          if (!selectOutput) outputSchema?.parse(finalRun.output);
           await workflow.onComplete?.(finalRun.output, finalRun.context);
           this.config.onComplete?.(finalRun);
         },

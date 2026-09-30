@@ -2690,7 +2690,69 @@ describe("workflow/executor/workflow-executor final output selection (#2107)", (
     assertEquals(run?.status, "failed");
     assertEquals(run?.output, undefined);
     assertExists(run?.error);
+    assertEquals(
+      (run.error as unknown as { code?: string }).code,
+      "OUTPUT_VALIDATION_FAILED",
+    );
+    assertEquals(
+      (run.error as unknown as { detail?: unknown }).detail,
+      { errors: [{ path: "/amount", message: "Invalid input: expected number, received string" }] },
+    );
     assertEquals(completed, 0);
+  });
+
+  it("validates the default output before persisting completion", async () => {
+    let completed = 0;
+    const { executor, backend } = executorWith({
+      id: "invalid-default-output",
+      steps: [step("n", { tool: createTool("n", () => "x") })],
+      outputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      onComplete: () => {
+        completed++;
+      },
+    });
+
+    const handle = await executor.start("invalid-default-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "failed");
+    assertEquals(run?.output, undefined);
+    assertEquals(
+      (run?.error as unknown as { code?: string }).code,
+      "OUTPUT_VALIDATION_FAILED",
+    );
+    assertEquals(
+      (run?.error as unknown as { detail?: unknown }).detail,
+      { errors: [{ path: "/n", message: "Invalid input: expected number, received string" }] },
+    );
+    assertEquals(completed, 0);
+  });
+
+  it("validates default output without transforming or stripping it and runs onComplete once", async () => {
+    let completed = 0;
+    let completedOutput: unknown;
+    const { executor, backend } = executorWith({
+      id: "valid-default-output",
+      steps: [
+        step("n", { tool: createTool("n", () => "42") }),
+        step("extra", { tool: createTool("extra", () => "retained") }),
+      ],
+      outputSchema: defineSchema((v) => v.object({ n: v.coerce.number() }))(),
+      onComplete: (output) => {
+        completed++;
+        completedOutput = output;
+      },
+    });
+
+    const handle = await executor.start("valid-default-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, { n: "42", extra: "retained" });
+    assertEquals(completedOutput, { n: "42", extra: "retained" });
+    assertEquals(completed, 1);
   });
 
   it("keeps the default output without a selector: every step's output by step id", async () => {
