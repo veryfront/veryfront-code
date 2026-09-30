@@ -4,6 +4,7 @@ import {
   INGRESS_API_TOKEN_HEADER,
   INGRESS_INFERENCE_TOKEN_HEADER,
   readIngressCredential,
+  requestForWebSocketUpgrade,
   sealIngressCredentials,
 } from "../../../src/security/http/ingress-credentials.ts";
 
@@ -49,5 +50,36 @@ describe("security/http/ingress-credentials over Deno.serve", () => {
       inferenceToken: INFERENCE_TOKEN,
       body: "streamed body",
     });
+  });
+  it("upgrades a sealed WebSocket request through the server request it came from", async () => {
+    let sealedToken: string | null = "unset";
+    let headerToken: string | null = "unset";
+    const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, (req) => {
+      const sealed = sealIngressCredentials(req);
+      sealedToken = readIngressCredential(sealed, INGRESS_API_TOKEN_HEADER);
+      headerToken = sealed.headers.get("x-token");
+      const { socket, response } = Deno.upgradeWebSocket(requestForWebSocketUpgrade(sealed));
+      socket.onopen = () => socket.send("hello");
+      return response;
+    });
+    try {
+      // Deno's WebSocket client takes custom headers through this option.
+      const client = new WebSocket(`ws://127.0.0.1:${server.addr.port}/_ws`, {
+        headers: { "x-token": API_TOKEN },
+      } as unknown as string[]);
+      const message = await new Promise<string>((resolve, reject) => {
+        client.onmessage = (event) => resolve(String(event.data));
+        client.onerror = () => reject(new Error("WebSocket failed"));
+      });
+      const closed = new Promise((resolve) => client.onclose = resolve);
+      client.close();
+      await closed;
+      assertEquals(message, "hello");
+    } finally {
+      await server.shutdown();
+    }
+
+    assertEquals(sealedToken, API_TOKEN);
+    assertEquals(headerToken, null);
   });
 });

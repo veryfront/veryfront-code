@@ -24,6 +24,7 @@ const NativeRequest = Request;
 const NativeWeakMap = WeakMap;
 const ObjectCreate = Object.create;
 const ObjectFreeze = Object.freeze;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const HeadersGet = NativeHeaders.prototype.get;
 const HeadersEntries = NativeHeaders.prototype.entries;
 const HeadersIteratorNext = Object.getPrototypeOf(new NativeHeaders().entries()).next as (
@@ -51,6 +52,8 @@ export type IngressCredentialHeader =
 type IngressCredentials = { readonly [name in IngressCredentialHeader]: string | null };
 
 const ingressCredentials = new NativeWeakMap<Request, IngressCredentials>();
+// Sealed WebSocket upgrade -> the original server request, for the upgrade only.
+const upgradeSources = new NativeWeakMap<Request, Request>();
 
 // Captured accessors still reach the request's headers through symbol-keyed
 // prototype internals, so those are locked before project code can run.
@@ -99,9 +102,9 @@ function toHeaderRecordWithoutCredentials(request: Request): Record<string, stri
  * URL, method, remaining headers, body, signal and transport peer. Either way
  * the credentials stay readable through {@link readIngressCredential}.
  *
- * A WebSocket upgrade keeps the original request, because Deno can upgrade
- * only the exact Request its server produced; its credentials stay in its
- * headers.
+ * Deno can upgrade a WebSocket only on the exact Request its server
+ * produced, so for an upgrade the original is kept aside and handed out only
+ * by {@link requestForWebSocketUpgrade}, for the upgrade call itself.
  */
 export function sealIngressCredentials(request: Request): Request {
   const credentials: IngressCredentials = ObjectFreeze({
@@ -111,10 +114,9 @@ export function sealIngressCredentials(request: Request): Request {
     [INGRESS_RUN_EVENT_TOKEN_HEADER]: readNativeHeader(request, INGRESS_RUN_EVENT_TOKEN_HEADER),
   } as IngressCredentials);
   if (
-    (credentials[INGRESS_API_TOKEN_HEADER] === null &&
-      credentials[INGRESS_INFERENCE_TOKEN_HEADER] === null &&
-      credentials[INGRESS_RUN_EVENT_TOKEN_HEADER] === null) ||
-    isWebSocketUpgrade(request)
+    credentials[INGRESS_API_TOKEN_HEADER] === null &&
+    credentials[INGRESS_INFERENCE_TOKEN_HEADER] === null &&
+    credentials[INGRESS_RUN_EVENT_TOKEN_HEADER] === null
   ) {
     IntrinsicReflectApply(WeakMapSet, ingressCredentials, [request, credentials]);
     return request;
@@ -128,7 +130,32 @@ export function sealIngressCredentials(request: Request): Request {
   init.headers = toHeaderRecordWithoutCredentials(request);
   const sealed = new NativeRequest(request, init);
   IntrinsicReflectApply(WeakMapSet, ingressCredentials, [sealed, credentials]);
+  if (isWebSocketUpgrade(request)) {
+    IntrinsicReflectApply(WeakMapSet, upgradeSources, [sealed, request]);
+  }
   return inheritRequestPeerProvenance(request, sealed);
+}
+
+/**
+ * The request to pass to the WebSocket upgrade call: the original server
+ * request behind a sealed upgrade, otherwise `request` itself. Deno's upgrade
+ * reads the original's headers through `Request.prototype.headers` and
+ * `Headers.prototype.get`, with the credentials still on it, so it is refused
+ * once project code has replaced either.
+ */
+export function requestForWebSocketUpgrade(request: Request): Request {
+  const source = IntrinsicReflectApply(WeakMapGet, upgradeSources, [request]) as
+    | Request
+    | undefined;
+  if (source === undefined) return request;
+  if (
+    ObjectGetOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get !==
+      RequestHeadersGetter ||
+    ObjectGetOwnPropertyDescriptor(NativeHeaders.prototype, "get")?.value !== HeadersGet
+  ) {
+    throw new TypeError("Cannot upgrade a credential-bearing request with modified headers");
+  }
+  return source;
 }
 
 /**
@@ -161,6 +188,14 @@ export function inheritIngressCredentials<T extends Request>(source: Request, ta
     IntrinsicReflectApply(WeakMapDelete, ingressCredentials, [target]);
   } else {
     IntrinsicReflectApply(WeakMapSet, ingressCredentials, [target, credentials]);
+  }
+  const upgradeSource = IntrinsicReflectApply(WeakMapGet, upgradeSources, [source]) as
+    | Request
+    | undefined;
+  if (upgradeSource === undefined) {
+    IntrinsicReflectApply(WeakMapDelete, upgradeSources, [target]);
+  } else {
+    IntrinsicReflectApply(WeakMapSet, upgradeSources, [target, upgradeSource]);
   }
   return target;
 }

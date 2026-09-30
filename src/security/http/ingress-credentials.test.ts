@@ -5,6 +5,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   getRequestPeerProvenance,
   recordDenoServeRequestPeer,
@@ -16,6 +17,7 @@ import {
   INGRESS_RUN_EVENT_TOKEN_HEADER,
   inheritIngressCredentials,
   readIngressCredential,
+  requestForWebSocketUpgrade,
   sealIngressCredentials,
 } from "./ingress-credentials.ts";
 import { installCredentialProbes } from "./credential-probes.test-helpers.ts";
@@ -58,51 +60,60 @@ function readLikeFramework(request: Request): void {
   new Request(request, { signal: new AbortController().signal });
 }
 
+// These pin what Deno 2.7.7's own Request and Headers call through the live
+// prototypes. Node fails closed instead (assertNativeHeaderProcessing), and
+// Bun's Request neither reads inherited init fields nor has symbol internals.
+const DENO_INTERNALS = { ignore: !isDeno };
+
 describe("security/http/ingress-credentials", () => {
-  it("takes every run credential off the request before a patched intrinsic can see it", () => {
-    const request = credentialRequest();
-    const probes = installCredentialProbes();
-    let sealed: Request;
-    try {
-      // The server adapter records the transport peer before the handler runs.
-      recordDenoServeRequestPeer(request, {
-        remoteAddr: { transport: "tcp", hostname: "10.0.0.7" },
-      });
-      sealed = sealIngressCredentials(request);
-      readLikeFramework(sealed);
-    } finally {
-      probes.restore();
-    }
+  it(
+    "takes every run credential off the request before a patched intrinsic can see it",
+    DENO_INTERNALS,
+    () => {
+      const request = credentialRequest();
+      const probes = installCredentialProbes();
+      let sealed: Request;
+      try {
+        // The server adapter records the transport peer before the handler runs.
+        recordDenoServeRequestPeer(request, {
+          remoteAddr: { transport: "tcp", hostname: "10.0.0.7" },
+        });
+        sealed = sealIngressCredentials(request);
+        readLikeFramework(sealed);
+      } finally {
+        probes.restore();
+      }
 
-    for (const secret of SECRETS) assertEquals(probes.saw(secret), false, secret);
-    // Every probe the framework-style reads reach did run.
-    for (
-      const name of [
-        "get",
-        "has",
-        "set",
-        "append",
-        "forEach",
-        "entries",
-        "keys",
-        "values",
-        "Symbol.iterator",
-        "next",
-        "Object.prototype.body",
-        "Object.prototype.client",
-        "Object.prototype.method",
-        "Object.prototype.redirect",
-      ]
-    ) {
-      assert((probes.calls[name] ?? 0) > 0, `${name} probe never ran`);
-    }
-    assertEquals(readIngressCredential(sealed, INGRESS_API_TOKEN_HEADER), API_TOKEN);
-    assertEquals(readIngressCredential(sealed, INGRESS_INFERENCE_TOKEN_HEADER), INFERENCE_TOKEN);
-    assertEquals(readIngressCredential(sealed, INGRESS_RUN_EVENT_TOKEN_HEADER), RUN_EVENT_TOKEN);
-    assertEquals(getRequestPeerProvenance(sealed)?.hostname, "10.0.0.7");
-  });
+      for (const secret of SECRETS) assertEquals(probes.saw(secret), false, secret);
+      // Every probe the framework-style reads reach did run.
+      for (
+        const name of [
+          "get",
+          "has",
+          "set",
+          "append",
+          "forEach",
+          "entries",
+          "keys",
+          "values",
+          "Symbol.iterator",
+          "next",
+          "Object.prototype.body",
+          "Object.prototype.client",
+          "Object.prototype.method",
+          "Object.prototype.redirect",
+        ]
+      ) {
+        assert((probes.calls[name] ?? 0) > 0, `${name} probe never ran`);
+      }
+      assertEquals(readIngressCredential(sealed, INGRESS_API_TOKEN_HEADER), API_TOKEN);
+      assertEquals(readIngressCredential(sealed, INGRESS_INFERENCE_TOKEN_HEADER), INFERENCE_TOKEN);
+      assertEquals(readIngressCredential(sealed, INGRESS_RUN_EVENT_TOKEN_HEADER), RUN_EVENT_TOKEN);
+      assertEquals(getRequestPeerProvenance(sealed)?.hostname, "10.0.0.7");
+    },
+  );
 
-  it("locks the symbol-keyed internals that captured accessors still reach", () => {
+  it("locks the symbol-keyed internals that captured accessors still reach", DENO_INTERNALS, () => {
     for (const target of [Request.prototype, Headers.prototype]) {
       const internals = Object.getOwnPropertySymbols(target).filter((key) =>
         key !== Symbol.iterator && key !== Symbol.toStringTag
@@ -140,17 +151,21 @@ describe("security/http/ingress-credentials", () => {
     assertEquals(probes.observed, []);
   });
 
-  it("is what stops the probes: the same reads on the original request expose it", () => {
-    const request = credentialRequest();
-    const probes = installCredentialProbes();
-    try {
-      readLikeFramework(request);
-    } finally {
-      probes.restore();
-    }
+  it(
+    "is what stops the probes: the same reads on the original request expose it",
+    DENO_INTERNALS,
+    () => {
+      const request = credentialRequest();
+      const probes = installCredentialProbes();
+      try {
+        readLikeFramework(request);
+      } finally {
+        probes.restore();
+      }
 
-    for (const secret of SECRETS) assertEquals(probes.saw(secret), true, secret);
-  });
+      for (const secret of SECRETS) assertEquals(probes.saw(secret), true, secret);
+    },
+  );
 
   it("keeps the method, other headers, body, redirect, signal and peer", async () => {
     const controller = new AbortController();
@@ -190,15 +205,40 @@ describe("security/http/ingress-credentials", () => {
     assertEquals(readIngressCredential(sealed, INGRESS_INFERENCE_TOKEN_HEADER), null);
   });
 
-  it("leaves a WebSocket upgrade as the request the server can upgrade", () => {
-    const request = new Request("https://project.example/_vf_hmr", {
+  it("seals a WebSocket upgrade and keeps the server request for the upgrade call only", () => {
+    const request = new Request("https://project.example/_ws", {
       headers: { upgrade: "websocket", "x-token": API_TOKEN },
     });
 
     const sealed = sealIngressCredentials(request);
 
-    assertStrictEquals(sealed, request);
+    assert(sealed !== request);
+    assertEquals(sealed.headers.get("x-token"), null);
+    assertEquals(sealed.headers.get("upgrade"), "websocket");
     assertEquals(readIngressCredential(sealed, INGRESS_API_TOKEN_HEADER), API_TOKEN);
+    assertStrictEquals(requestForWebSocketUpgrade(sealed), request);
+    // A framework copy on the way to the upgrade still resolves to it.
+    assertStrictEquals(
+      requestForWebSocketUpgrade(inheritIngressCredentials(sealed, new Request(sealed))),
+      request,
+    );
+    const plain = new Request("https://project.example/page");
+    assertStrictEquals(requestForWebSocketUpgrade(plain), plain);
+  });
+
+  it("refuses to hand out the credential-bearing upgrade request once Headers.get was replaced", () => {
+    const sealed = sealIngressCredentials(
+      new Request("https://project.example/_ws", {
+        headers: { upgrade: "websocket", "x-token": API_TOKEN },
+      }),
+    );
+    const probes = installCredentialProbes();
+    try {
+      assertThrows(() => requestForWebSocketUpgrade(sealed), TypeError);
+    } finally {
+      probes.restore();
+    }
+    assertEquals(probes.saw(API_TOKEN), false);
   });
 
   it("carries the credentials to a framework copy, and none to a copy of an unsealed request", () => {
