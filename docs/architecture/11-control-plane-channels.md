@@ -17,6 +17,15 @@ Project runtimes expose these signed control-plane paths:
 | `POST /api/control-plane/runs/:runId/resume` | Resume a waiting project agent run.                       |
 | `DELETE /api/control-plane/runs/:runId`      | Cancel a project agent run.                               |
 
+Each `agents/list` entry carries `id`, `name`, `description`, `avatar_url`,
+`model`, `version`, `skills` and `suggestions`. When the agent declares an
+`outputSchema`, the entry also carries `output_schema`: the agent's output
+schema as a JSON Schema document, the same document its schema identity
+(the sha256 of the canonical JSON Schema) is computed from. The API hashes it
+into the run's `output_schema_sha256` when it admits the run. The field is
+absent when the agent declares no `outputSchema` or it cannot be converted to
+JSON Schema.
+
 Primary source areas:
 
 - [`src/channels/control-plane.ts`](../../src/channels/control-plane.ts)
