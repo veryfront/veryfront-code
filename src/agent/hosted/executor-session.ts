@@ -200,6 +200,9 @@ class Session implements HostedExecutorSession {
       generation: 1,
       owner: request.owner,
       source: request.source,
+      ...(request.executionProfile === undefined
+        ? {}
+        : { executionProfile: request.executionProfile }),
       brokerInstanceId: this.#expectedBroker,
     });
     this.#allocator = {
@@ -395,6 +398,9 @@ class Session implements HostedExecutorSession {
       invocationId: this.#request.invocationId,
       owner: this.#request.owner,
       source: this.#request.source,
+      ...(this.#request.executionProfile === undefined
+        ? {}
+        : { executionProfile: this.#request.executionProfile }),
       brokerInstanceId: this.#expectedBroker,
       generation: binding.generation,
     };

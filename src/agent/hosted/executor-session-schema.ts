@@ -37,6 +37,8 @@ export const getHostedExecutorOwnerSchema = defineSchema((v) =>
   ])
 );
 
+const getExecutionProfileSchema = defineSchema((v) => v.enum(["project-tools", "http"] as const));
+
 /** The control plane injects authenticated brokerInstanceId; callers cannot submit it here. */
 export const getHostedExecutorAllocationRequestSchema = defineSchema((v) =>
   v.object({
@@ -44,6 +46,7 @@ export const getHostedExecutorAllocationRequestSchema = defineSchema((v) =>
     invocationId: getAllocationIdSchema(),
     owner: getHostedExecutorOwnerSchema(),
     source: getHostedExecutorSourceSchema(),
+    executionProfile: getExecutionProfileSchema().optional(),
     requestedAt: getTimestampSchema(),
     prepareDeadlineAt: getTimestampSchema(),
     hardDeadlineAt: getTimestampSchema(),
@@ -61,6 +64,7 @@ export const getHostedExecutorBindingSchema = defineSchema((v) =>
     brokerInstanceId: getIdentifierSchema(),
     owner: getHostedExecutorOwnerSchema(),
     source: getHostedExecutorSourceSchema(),
+    executionProfile: getExecutionProfileSchema().optional(),
   }).strict()
 );
 
@@ -155,6 +159,7 @@ export function sameHostedExecutorBinding(
     actual.generation === expected.generation &&
     actual.invocationId === expected.invocationId &&
     actual.brokerInstanceId === expected.brokerInstanceId &&
+    actual.executionProfile === expected.executionProfile &&
     sameHostedExecutorOwner(actual.owner, expected.owner) &&
     verifyHostedRuntimeSourceBinding(expected.source, actual.source) === undefined;
 }

@@ -48,6 +48,7 @@ function fixture(
         brokerInstanceId: binding.brokerInstanceId,
         owner,
         source,
+        executionProfile: "http",
       },
       phase,
       expiresAt: now + 30_000,
@@ -144,6 +145,40 @@ function fixture(
 }
 
 describe("hosted HTTP executor broker", () => {
+  it("refuses an explicitly incompatible profile before allocation", async () => {
+    const f = fixture(() => new Response("must not run"));
+    f.input.session.request.executionProfile = "project-tools";
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      await assertRejects(
+        () => broker.fetch(new Request("https://app.example/api"), f.input),
+        TypeError,
+        "HTTP allocation profile",
+      );
+      assertEquals(f.calls.includes("allocate"), false);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
+  it("requests the HTTP allocation profile before installing application code", async () => {
+    const f = fixture(() => new Response("app"));
+    const allocate = f.input.session.allocator.allocate;
+    f.input.session.allocator.allocate = (request, key, signal) => {
+      assertEquals(Reflect.get(request, "executionProfile"), "http");
+      return allocate(request, key, signal);
+    };
+    const broker = createHostedHttpBroker({ maxActive: 1 });
+    try {
+      const response = await broker.fetch(new Request("https://app.example/api"), f.input);
+      assertEquals(await response.text(), "app");
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("delivers only the matched application snapshot through the allocation channel", async () => {
     let appValue: string | undefined;
     const setup = fixture(() => new Response(appValue), async (peer, installed) => {
