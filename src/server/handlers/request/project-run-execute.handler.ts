@@ -63,6 +63,14 @@ import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
+const TaskDate = Date;
+const TaskDateNow = Date.now;
+const TaskDateParse = Date.parse;
+const TaskSetTimeout = globalThis.setTimeout;
+const TaskClearTimeout = globalThis.clearTimeout;
+const TaskAbortController = AbortController;
+const TaskAbort = AbortController.prototype.abort;
+
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -88,6 +96,8 @@ const NativeRequest = Request;
 const RequestPrototypeClone = Request.prototype.clone;
 const RequestPrototypeJson = Request.prototype.json;
 const ParseHostedChatRuntimeOverrides = hostedChatRuntimeOverridesSchema.safeParse;
+/** setTimeout fires at once for a longer delay, so a far deadline is re-armed in steps. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 function getOwnDataProperty(value: Record<string, unknown>, key: string): unknown {
   const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
@@ -103,6 +113,9 @@ export interface ProjectRunExecuteRequest {
   runtimeTargetKind?: "main_branch" | "environment" | "preview_branch";
   runtimeTargetEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
+  deadlineAt?: string;
+  /** 1-based attempt under the run's backoff_limit; tasks read it as ctx.attempt. */
+  attempt?: number;
   config?: Record<string, unknown>;
   /** Business input: any JSON value. Absent when the run was created without input. */
   input?: unknown;
@@ -115,6 +128,9 @@ export interface ProjectRunExecuteResponse {
   result?: unknown;
   logs?: string | null;
   error?: string | null;
+  error_code?: "RUN_TIMEOUT";
+  /** The task threw a RetryableError; the API may start another attempt. */
+  retryable?: true;
   duration_ms?: number;
   artifacts?: unknown[];
 }
@@ -285,6 +301,20 @@ function validateRuntimeTargetSelection(
   }
 }
 
+function isValidTaskDeadline(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/
+      .test(value) ||
+    !NumberIsFinite(TaskDateParse(value))
+  ) return false;
+  // Date.parse normalizes invalid days, so check the calendar date separately
+  // from the timezone offset before accepting its instant.
+  const day = value.slice(0, 10);
+  const midnight = TaskDateParse(`${day}T00:00:00Z`);
+  return NumberIsFinite(midnight) && new TaskDate(midnight).toISOString().slice(0, 10) === day;
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
@@ -318,6 +348,19 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
   }
 
+  const deadlineAt = value.deadlineAt;
+  if (deadlineAt !== undefined && !isValidTaskDeadline(deadlineAt)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid deadlineAt" });
+  }
+
+  const attempt = value.attempt;
+  if (
+    attempt !== undefined &&
+    (typeof attempt !== "number" || !Number.isInteger(attempt) || attempt < 1)
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid attempt" });
+  }
+
   const runtimeTargetKind = parseRuntimeTargetKind(value.runtimeTargetKind);
   const runtimeTargetEnvironmentId = parseOptionalNullableString(
     value.runtimeTargetEnvironmentId,
@@ -342,6 +385,8 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     runtimeTargetKind,
     runtimeTargetEnvironmentId,
     runtimeTargetBranchId,
+    deadlineAt,
+    attempt,
     config: parseRecord(value.config),
     input: value.input,
     parentRunId: parseOptionalNullableString(value.parentRunId, "parentRunId"),
@@ -517,10 +562,71 @@ function withRuntimeStepRegistries(config?: WorkflowClientConfig): WorkflowClien
   };
 }
 
+interface TaskDeadlineControl {
+  signal: AbortSignal;
+  throwIfExpired(): void;
+}
+
 async function executeTaskRun(
+  request: ProjectRunExecuteRequest,
+  execute: (control?: TaskDeadlineControl) => Promise<ProjectRunExecuteResponse>,
+): Promise<ProjectRunExecuteResponse> {
+  if (!request.deadlineAt) return execute();
+  const deadline = TaskDateParse(request.deadlineAt);
+  const controller = new TaskAbortController();
+  let expired = false;
+  const signal = controller.signal;
+  const error = TIMEOUT_ERROR.create({
+    detail:
+      "Task exceeded its execution deadline; non-cooperative task code may continue inside the runtime process",
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // The abort reason and the thrown value are the same error: once the signal
+  // is aborted, the catch below knows the deadline, not the task, failed.
+  const expire = () => {
+    expired = true;
+    ReflectApply(TaskAbort, controller, [error]);
+    return error;
+  };
+  const control: TaskDeadlineControl = {
+    signal,
+    throwIfExpired() {
+      if (TaskDateNow() >= deadline) throw expire();
+    },
+  };
+  try {
+    control.throwIfExpired();
+    const expiration = new Promise<never>((_resolve, reject) => {
+      const arm = () => {
+        const remaining = deadline - TaskDateNow();
+        if (remaining <= 0) {
+          reject(expire());
+        } else {
+          timer = TaskSetTimeout(arm, Math.min(remaining, MAX_TIMER_DELAY_MS));
+        }
+      };
+      arm();
+    });
+    const result = await Promise.race([
+      expiration,
+      execute(control),
+    ]);
+    control.throwIfExpired();
+    return result;
+  } catch (failure) {
+    if (!expired && TaskDateNow() >= deadline) expire();
+    if (!expired) throw failure;
+    return { success: false, error: error.message, error_code: "RUN_TIMEOUT" };
+  } finally {
+    TaskClearTimeout(timer);
+  }
+}
+
+async function executeDiscoveredTaskRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
   deps: ProjectRunExecuteHandlerDeps,
+  control?: TaskDeadlineControl,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -541,8 +647,11 @@ async function executeTaskRun(
     };
   }
 
+  control?.throwIfExpired();
   const result = await deps.runTask({
     task,
+    signal: control?.signal,
+    ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
     config: request.config ?? {},
     input: request.input,
     projectId: request.projectId,
@@ -558,6 +667,7 @@ async function executeTaskRun(
     error: result.error,
     duration_ms: result.durationMs,
     logs: null,
+    ...(result.retryable ? { retryable: true as const } : {}),
   };
 }
 
@@ -2017,18 +2127,20 @@ function executeProjectRun(
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
-    switch (request.target) {
-      case "task:knowledge-ingest":
-        return deps.executeKnowledgeIngest({ request, ctx, req });
-      case "task:release-asset-build":
-        return deps.executeReleaseAssetBuild({ request, ctx, req });
-      case "task:dependency-artifact-build":
-        return deps.executeDependencyArtifactBuild({ request, ctx, req });
-      case "task:style-artifact-build":
-        return deps.executeStyleArtifactBuild({ request, ctx, req });
-      default:
-        return executeTaskRun(request, ctx, deps);
-    }
+    return executeTaskRun(request, (control) => {
+      switch (request.target) {
+        case "task:knowledge-ingest":
+          return deps.executeKnowledgeIngest({ request, ctx, req });
+        case "task:release-asset-build":
+          return deps.executeReleaseAssetBuild({ request, ctx, req });
+        case "task:dependency-artifact-build":
+          return deps.executeDependencyArtifactBuild({ request, ctx, req });
+        case "task:style-artifact-build":
+          return deps.executeStyleArtifactBuild({ request, ctx, req });
+        default:
+          return executeDiscoveredTaskRun(request, ctx, deps, control);
+      }
+    });
   }
   if (request.kind === "eval") return executeEvalRun(request, ctx, req, deps);
   return executeWorkflowRun(request, ctx, deps);
