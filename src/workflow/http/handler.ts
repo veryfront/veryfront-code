@@ -73,6 +73,18 @@ const logger = baseLogger.component("workflow-http");
 
 class WorkflowRequestError extends Error {}
 
+/**
+ * Canonical run ids the Veryfront control plane mints (`run_` + a UUID). The
+ * control plane starts a project workflow under that id, and decisions for it
+ * must go through `POST /runs/{run_id}/resume` so the canonical run moves with
+ * them (#2102). Ids this runtime generates (`run_` + 12 characters) never match.
+ */
+const CONTROL_PLANE_RUN_ID = /^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isControlPlaneOwnedWorkflowRunId(runId: string): boolean {
+  return CONTROL_PLANE_RUN_ID.test(runId);
+}
+
 function readPositiveLimit(value: number | undefined, fallback: number, name: string): number {
   const limit = value ?? fallback;
   if (!Number.isSafeInteger(limit) || limit < 1) {
@@ -503,6 +515,13 @@ export function createWorkflowHandler(
       if (
         segments.length === 4 && first === "runs" && second && third === "approvals" && approvalId
       ) {
+        if (isControlPlaneOwnedWorkflowRunId(second)) {
+          return problem(
+            `Workflow run ${second} belongs to the Veryfront control plane. ` +
+              `Decide its approvals with POST /runs/${second}/resume.`,
+            409,
+          );
+        }
         let decision: ApprovalDecision;
         try {
           decision = ApprovalDecisionSchema.parse(await readJson(request));
