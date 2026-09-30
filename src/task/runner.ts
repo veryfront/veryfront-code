@@ -250,6 +250,8 @@ export async function runTask(
       attempt,
     };
 
+    // Schema identity and input validation await; a cancel in that window must not start the task.
+    signal?.throwIfAborted();
     let result = await task.definition.run(ctx);
     if (outputSchema !== undefined) {
       const check = await checkDeclaredSchema(outputSchema, result);
