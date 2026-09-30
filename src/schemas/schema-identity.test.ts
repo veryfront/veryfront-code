@@ -54,4 +54,45 @@ describe("src/schemas/schema-identity", () => {
     assertEquals(await schemaIdentitySha256(undefined), null);
     assertEquals(await schemaIdentitySha256(null), null);
   });
+
+  it("keeps an own __proto__ key as a property of the canonical document", async () => {
+    const withProto = JSON.parse(
+      '{"type":"object","properties":{"__proto__":{"type":"string"}}}',
+    );
+    const withoutProto = { type: "object", properties: {} };
+
+    assertEquals(
+      canonicalJsonSchema(withProto),
+      '{"properties":{"__proto__":{"type":"string"}},"type":"object"}',
+    );
+    assertEquals(
+      (await schemaIdentitySha256(withProto)) === (await schemaIdentitySha256(withoutProto)),
+      false,
+    );
+  });
+
+  it("canonicalizes with the intrinsics captured before project code runs", () => {
+    const hostObject = Object;
+    const hostArray = Array;
+    const hostJson = JSON;
+    const keys = hostObject.keys;
+    const isArray = hostArray.isArray;
+    const stringify = hostJson.stringify;
+    try {
+      hostObject.keys = () => {
+        throw new Error("replaced Object.keys");
+      };
+      hostArray.isArray = (() => false) as typeof Array.isArray;
+      hostJson.stringify = (() => "forged") as typeof JSON.stringify;
+
+      const canonical = canonicalJsonSchema(VECTOR_SCHEMA);
+
+      hostJson.stringify = stringify;
+      assertEquals(canonical, VECTOR_CANONICAL);
+    } finally {
+      hostObject.keys = keys;
+      hostArray.isArray = isArray;
+      hostJson.stringify = stringify;
+    }
+  });
 });

@@ -21,18 +21,46 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { schemaToJsonSchema } from "./json-schema.ts";
 import { isContractSchema, snapshotJsonSchemaObject } from "./schema-input.ts";
 
+// Captured at module load, before any project module runs: a task module that replaces these
+// in the shared realm must not be able to fail or forge the identity.
+const arrayIsArray = Array.isArray;
+const arrayPrototypeSort = Array.prototype.sort;
+const jsonStringify = JSON.stringify;
+const objectDefineProperty = Object.defineProperty;
+const objectKeys = Object.keys;
+const reflectApply = Reflect.apply;
+
 function compareCodeUnits(a: string, b: string): number {
   if (a < b) return -1;
   return a > b ? 1 : 0;
 }
 
 function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
+  if (arrayIsArray(value)) {
+    const items: unknown[] = [];
+    for (let index = 0; index < value.length; index++) {
+      objectDefineProperty(items, index, {
+        value: canonicalize(value[index]),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    return items;
+  }
   if (value === null || typeof value !== "object") return value;
   const sorted: Record<string, unknown> = {};
   // UTF-16 code unit order, byte-identical to the veryfront-api helper; not locale-dependent.
-  for (const key of Object.keys(value).sort(compareCodeUnits)) {
-    sorted[key] = canonicalize((value as Record<string, unknown>)[key]);
+  const keys = reflectApply(arrayPrototypeSort, objectKeys(value), [compareCodeUnits]) as string[];
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    // A data property, so an own `__proto__` key stays a key instead of hitting the setter.
+    objectDefineProperty(sorted, key, {
+      value: canonicalize((value as Record<string, unknown>)[key]),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   }
   return sorted;
 }
@@ -49,7 +77,7 @@ export function resolveJsonSchemaDocument(schema: unknown): JsonSchema | undefin
 /** Serialize a JSON Schema document in the canonical form the identity hashes. */
 export function canonicalJsonSchema(schema: unknown): string | undefined {
   const document = resolveJsonSchemaDocument(schema);
-  return document === undefined ? undefined : JSON.stringify(canonicalize(document));
+  return document === undefined ? undefined : jsonStringify(canonicalize(document));
 }
 
 /**
