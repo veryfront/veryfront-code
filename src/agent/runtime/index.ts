@@ -1317,6 +1317,7 @@ function applyProviderReplayDelegationOverrides(
 
 function collectGeneratedParallelInvokeAgentToolCalls(
   toolCalls: RuntimeGenerateTextResult["toolCalls"],
+  toolResults: ReadonlyMap<string, RuntimeGenerateToolResult>,
   allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
   delegationArgsContext: ProviderReplayDelegationArgsContext,
 ): ProviderReplayInvokeAgentToolCall[] | undefined {
@@ -1330,7 +1331,8 @@ function collectGeneratedParallelInvokeAgentToolCalls(
       !IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
         toolCall.toolName as ProviderReplayInvokeAgentToolName,
       ]) ||
-      !toolCall.input || typeof toolCall.input !== "object" || Array.isArray(toolCall.input)
+      (!delegationArgsContext.hasToolReplacements && toolResults.has(toolCall.toolCallId)) ||
+      !toolCall.input || typeof toolCall.input !== "object" || ArrayIsArray(toolCall.input)
     ) {
       continue;
     }
@@ -1350,6 +1352,7 @@ function collectGeneratedParallelInvokeAgentToolCalls(
 
 function collectStreamedParallelInvokeAgentToolCalls(
   toolCalls: readonly StreamingToolCall[],
+  toolResults: ReadonlyMap<string, StreamingToolResult>,
   allowedToolNames: ReadonlySet<ProviderReplayInvokeAgentToolName>,
   shouldContinue: boolean,
   delegationArgsContext: ProviderReplayDelegationArgsContext,
@@ -1360,7 +1363,8 @@ function collectStreamedParallelInvokeAgentToolCalls(
     if (!ObjectHasOwn(toolCalls, index)) continue;
     const toolCall = toolCalls[index];
     if (
-      !toolCall || toolCall.inputAvailable !== true ||
+      !toolCall || toolCall.inputAvailable !== true || toolCall.providerExecuted === true ||
+      toolResults.has(toolCall.id) ||
       !IntrinsicReflectApply(IntrinsicSetHas, allowedToolNames, [
         toolCall.name as ProviderReplayInvokeAgentToolName,
       ])
@@ -3091,6 +3095,7 @@ export class AgentRuntime {
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
         }
 
+        const generatedToolResults = collectGeneratedToolResults(response.toolResults);
         const assistantMessage = buildGeneratedAssistantMessage(response, {
           id: `msg_${Date.now()}_${step}`,
           timestamp: Date.now(),
@@ -3103,6 +3108,7 @@ export class AgentRuntime {
           invokeAgentToolCalls: providerReplayCheckpointEmission.complete
             ? collectGeneratedParallelInvokeAgentToolCalls(
               response.toolCalls,
+              generatedToolResults,
               providerReplayCheckpointEmission.invokeAgentToolNames,
               {
                 activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
@@ -3114,7 +3120,6 @@ export class AgentRuntime {
             : undefined,
         });
         throwIfAborted(abortSignal);
-        const generatedToolResults = collectGeneratedToolResults(response.toolResults);
 
         const persistGeneratedToolResult = async (
           generatedToolResult: RuntimeGenerateToolResult,
@@ -4281,6 +4286,7 @@ export class AgentRuntime {
         invokeAgentToolCalls: providerReplayCheckpointEmission.complete
           ? collectStreamedParallelInvokeAgentToolCalls(
             streamedToolCalls,
+            finalToolResults,
             providerReplayCheckpointEmission.invokeAgentToolNames,
             shouldContinue,
             {

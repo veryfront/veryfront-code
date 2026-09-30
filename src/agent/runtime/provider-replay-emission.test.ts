@@ -373,6 +373,170 @@ describe("provider replay checkpoint emission", () => {
     assertEquals(operations, ["turn:complete", "tool:first", "tool:second"]);
   });
 
+  it("collects generated delegation args through the captured array check", async () => {
+    let completedBatch: unknown;
+    const originalIsArray = Array.isArray;
+    const model = scriptedModel([() => {
+      Array.isArray = (value: unknown): value is unknown[] =>
+        originalIsArray(value) ||
+        (value !== null && typeof value === "object" && Object.hasOwn(value, "task"));
+      return {
+        toolCalls: [
+          { id: "child-1", name: "invoke_agent", input: { task: "first" } },
+          { id: "child-2", name: "invoke_agent", input: { task: "second" } },
+        ],
+      };
+    }], {
+      modelId: "anthropic/captured-array-check-replay-boundary",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "captured-array-check-replay-boundary",
+      model: "anthropic/captured-array-check-replay-boundary",
+      system: "Delegate twice.",
+      skills: false,
+      tools: { invoke_agent: invokeAgentTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+      __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+        completedBatch = invokeAgentToolCalls;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig & {
+      __vfProviderReplayInvokeAgentToolNames: string[];
+    };
+
+    try {
+      await agent(config).generate({ input: "Delegate both tasks" });
+    } finally {
+      Array.isArray = originalIsArray;
+    }
+
+    assertEquals(completedBatch, [
+      {
+        toolCallId: "child-1",
+        toolName: "invoke_agent",
+        toolArgsJson: '{"task":"first"}',
+      },
+      {
+        toolCallId: "child-2",
+        toolName: "invoke_agent",
+        toolArgsJson: '{"task":"second"}',
+      },
+    ]);
+  });
+
+  for (const mode of ["generate", "stream"] as const) {
+    it(`excludes precompleted calls from a parallel ${mode} batch`, async () => {
+      let completedBatch: unknown = "not-called";
+      let localExecutions = 0;
+      const localCalls = [
+        { id: "child-1", name: "invoke_agent", input: { task: "first" } },
+        { id: "child-2", name: "invoke_agent", input: { task: "second" } },
+      ] as const;
+      const providerCall = {
+        id: "provider-child",
+        name: "invoke_agent",
+        input: { task: "provider" },
+      } as const;
+      const model = scriptedModel([
+        mode === "generate"
+          ? {
+            content: [
+              ...localCalls.map((call) => ({
+                type: "tool-call",
+                toolCallId: call.id,
+                toolName: call.name,
+                input: JSON.stringify(call.input),
+              })),
+              {
+                type: "tool-call",
+                toolCallId: providerCall.id,
+                toolName: providerCall.name,
+                input: JSON.stringify(providerCall.input),
+              },
+              {
+                type: "tool-result",
+                toolCallId: providerCall.id,
+                toolName: providerCall.name,
+                result: { result: providerCall.input.task },
+              },
+            ],
+            finishReason: "tool-calls",
+          }
+          : {
+            parts: [
+              ...localCalls.map((call) => ({
+                type: "tool-call" as const,
+                toolCallId: call.id,
+                toolName: call.name,
+                input: call.input,
+              })),
+              {
+                type: "tool-call" as const,
+                toolCallId: providerCall.id,
+                toolName: providerCall.name,
+                input: providerCall.input,
+              },
+              {
+                type: "tool-result" as const,
+                toolCallId: providerCall.id,
+                toolName: providerCall.name,
+                output: { result: providerCall.input.task },
+              },
+              { type: "finish", finishReason: "tool-calls", totalUsage: null },
+            ],
+          },
+      ], {
+        modelId: `anthropic/provider-executed-${mode}-replay-boundary`,
+        provider: "anthropic",
+        only: mode,
+      });
+      const config = {
+        id: `provider-executed-${mode}-replay-boundary`,
+        model: `anthropic/provider-executed-${mode}-replay-boundary`,
+        system: "Delegate twice.",
+        skills: false,
+        tools: {
+          invoke_agent: invokeAgentTool(() => localExecutions++),
+        },
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+        __vfProviderReplayInvokeAgentToolNames: ["invoke_agent"],
+        __vfProviderReplayCheckpointTurnComplete: (invokeAgentToolCalls: unknown) => {
+          completedBatch = invokeAgentToolCalls;
+        },
+      } as AgentConfig & RuntimeToolFilterConfig & {
+        __vfProviderReplayInvokeAgentToolNames: string[];
+      };
+
+      const assistant = agent(config);
+      if (mode === "generate") {
+        await assistant.generate({ input: "Delegate both tasks" });
+      } else {
+        await (await assistant.stream({ input: "Delegate both tasks" })).toDataStreamResponse()
+          .text();
+      }
+
+      assertEquals(completedBatch, [
+        {
+          toolCallId: "child-1",
+          toolName: "invoke_agent",
+          toolArgsJson: '{"task":"first"}',
+        },
+        {
+          toolCallId: "child-2",
+          toolName: "invoke_agent",
+          toolArgsJson: '{"task":"second"}',
+        },
+      ]);
+      assertEquals(localExecutions, 2);
+    });
+  }
+
   for (const mode of ["generate", "stream"] as const) {
     it(`publishes effective skill delegation args for a parallel ${mode} batch`, async () => {
       const completedBatches: unknown[] = [];
