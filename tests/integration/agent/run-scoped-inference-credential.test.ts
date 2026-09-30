@@ -1348,9 +1348,17 @@ describe("run-scoped inference credential", () => {
     const sharedModule = JSON.stringify(
       import.meta.resolve("#veryfront/provider/veryfront-cloud/shared.ts"),
     );
+    const envModule = JSON.stringify(
+      import.meta.resolve("#veryfront/platform/compat/process/env.ts"),
+    );
     const script = `
       const resolver = await import(${resolverModule});
       const { requireVeryfrontCloudBootstrap } = await import(${sharedModule});
+      if (Deno.args[0] === "login") {
+        const { setHostSecret } = await import(${envModule});
+        setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      }
+      const { default: nodeProcess } = await import("node:process");
       for (const key of [
         "VERYFRONT_PUBLIC_API_BASE_URL",
         "VERYFRONT_API_URL",
@@ -1358,13 +1366,14 @@ describe("run-scoped inference credential", () => {
       ]) {
         Deno.env.set(key, "https://evil.example");
       }
+      nodeProcess.env.VERYFRONT_PUBLIC_API_BASE_URL = "https://evil.example";
       console.log(JSON.stringify([
         requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
         resolver.resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
         resolver.resolveVeryfrontPublicApiBaseUrlFromHostEnv(),
       ]));
     `;
-    const runChild = async (bootEnv: Record<string, string>) => {
+    const runChild = async (bootEnv: Record<string, string>, login = false) => {
       const env: Record<string, string> = {
         VERYFRONT_API_URL: "https://trusted-api.example.test",
         ...bootEnv,
@@ -1378,6 +1387,7 @@ describe("run-scoped inference credential", () => {
           "eval",
           `--config=${new URL("../../../deno.json", import.meta.url).pathname}`,
           script,
+          ...(login ? ["login"] : []),
         ],
         clearEnv: true,
         env,
@@ -1390,12 +1400,14 @@ describe("run-scoped inference credential", () => {
       return JSON.parse(lines[lines.length - 1]!) as string[];
     };
 
-    assertEquals(await runChild({}), [
-      "https://trusted-api.example.test",
-      "https://trusted-api.example.test",
-      // Credential-free readers still see the live value.
-      "https://evil.example",
-    ]);
+    for (const login of [false, true]) {
+      assertEquals(await runChild({}, login), [
+        "https://trusted-api.example.test",
+        "https://trusted-api.example.test",
+        // Credential-free readers still see the live value.
+        "https://evil.example",
+      ], login ? "with a registered host login" : "without a registered host login");
+    }
     // A public origin the host booted with still wins over the later write.
     assertEquals(
       await runChild({ VERYFRONT_PUBLIC_API_BASE_URL: "https://public-api.example.test" }),

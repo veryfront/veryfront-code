@@ -106,6 +106,10 @@ function resolveHostCredentialApiBaseUrl(): string {
  * process environment as it was at startup. The Veryfront Cloud context,
  * project env files, and later environment writes are never consulted: project
  * code can set all three, and this origin receives the credential.
+ *
+ * @internal The one trusted source for a run-scoped credential's destination.
+ * Every path that attaches such a credential must use it or an explicit
+ * host-configured URL.
  */
 export function resolveVeryfrontInferenceApiBaseUrlFromHostEnv(): string {
   return normalizeVeryfrontApiBaseUrl(getHostBootEnv("VERYFRONT_PUBLIC_API_BASE_URL")) ??
