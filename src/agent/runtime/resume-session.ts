@@ -252,25 +252,33 @@ export class RunResumeSessionManager<T> {
     this.clearWaitingTimeout(session);
     this.clearSessionTimeout(session);
     session.waitingState = null;
-    this.sessions.delete(session.runId);
-    if (status === "cancelled") {
-      this.rememberSettlingCancellation(session.runId, session.abortController.signal);
+    if (
+      status === "cancelled" &&
+      !this.rememberSettlingCancellation(session.runId, session.abortController.signal)
+    ) {
+      // Every tracked cancellation is still executing, so evicting one would
+      // recreate the stale-callback race. Keep this cancelled session in the
+      // bounded session map instead: its run id cannot be reused until its
+      // execution settles and completeRun/failRun removes it.
+      return;
     }
+    this.sessions.delete(session.runId);
   }
 
   /**
    * A cancelled execution can ignore its abort and keep running. Remember its
    * signal until it settles so a start that reuses the run id supersedes it.
-   * Bounded like the cancellation tombstones: the oldest entry is dropped first.
+   * Returns false when every bounded slot is held by a still-settling
+   * execution. The caller then retains the cancelled session as backpressure
+   * instead of evicting live correctness state.
    */
-  private rememberSettlingCancellation(runId: string, signal: AbortSignal): void {
+  private rememberSettlingCancellation(runId: string, signal: AbortSignal): boolean {
     this.settlingCancelledSignals.delete(runId);
-    while (this.settlingCancelledSignals.size >= MAX_SETTLING_CANCELLED_EXECUTIONS) {
-      const oldestRunId = this.settlingCancelledSignals.keys().next().value;
-      if (oldestRunId === undefined) break;
-      this.settlingCancelledSignals.delete(oldestRunId);
+    if (this.settlingCancelledSignals.size >= MAX_SETTLING_CANCELLED_EXECUTIONS) {
+      return false;
     }
     this.settlingCancelledSignals.set(runId, signal);
+    return true;
   }
 
   /** Forget a cancelled execution once it settles; a later start no longer races it. */
@@ -286,7 +294,7 @@ export class RunResumeSessionManager<T> {
     }
 
     const existing = this.sessions.get(input.runId);
-    if (existing && (existing.status === "running" || existing.status === "waiting")) {
+    if (existing) {
       throw new RunAlreadyExistsError(input.runId);
     }
 
@@ -597,6 +605,7 @@ export class RunResumeSessionManager<T> {
     for (const runId of [...this.sessions.keys()]) {
       this.cancelRun(runId);
     }
+    this.sessions.clear();
     this.cancellationTombstones.clear();
     this.settlingCancelledSignals.clear();
   }

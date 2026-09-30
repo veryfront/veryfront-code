@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   RunAlreadyExistsError,
@@ -538,6 +543,34 @@ describe("agent/runtime/resume-session", () => {
     manager.completeRun("run_1", secondSignal);
 
     assertEquals(manager.isSupersededRun("run_1", firstSignal), false);
+  });
+
+  it("backpressures run-id reuse instead of evicting a still-settling cancellation", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    let overflowSignal: AbortSignal | undefined;
+
+    for (let index = 0; index <= 1_000; index += 1) {
+      const runId = `run_${index}`;
+      const signal = manager.startRun({ runId, threadId: crypto.randomUUID() });
+      manager.cancelRun(runId);
+      if (index === 1_000) overflowSignal = signal;
+    }
+
+    assertExists(overflowSignal);
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    assertThrows(
+      () => manager.startRun({ runId: "run_1000", threadId: crypto.randomUUID() }),
+      RunAlreadyExistsError,
+    );
+
+    manager.failRun("run_1000", overflowSignal);
+    const replacement = manager.startRun({
+      runId: "run_1000",
+      threadId: crypto.randomUUID(),
+    });
+    manager.completeRun("run_1000", replacement);
+    assertEquals(manager.isSupersededRun("run_1000", overflowSignal), false);
+    manager.reset();
   });
 
   it("does not leak session slots across repeated completed runs", () => {
