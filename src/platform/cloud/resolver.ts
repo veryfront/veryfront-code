@@ -4,6 +4,7 @@ import {
   type VeryfrontCloudCatalogScopeKey,
 } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import {
+  getHostBootPublicApiBaseUrl,
   getHostEnv,
   getHostEnvExcludingEnvFile,
   getHostSecret,
@@ -102,14 +103,14 @@ function resolveHostCredentialApiBaseUrl(): string {
 
 /**
  * Resolve the API origin for run-scoped inference credentials from host
- * configuration alone. Neither the Veryfront Cloud context nor a project env
- * file is consulted: project code can set both, and this origin receives the
- * credential.
+ * configuration alone. The public origin is the value the host process started
+ * with; the Veryfront Cloud context, project env files, and later environment
+ * writes are never consulted: project code can set all three, and this origin
+ * receives the credential.
  */
 export function resolveVeryfrontInferenceApiBaseUrlFromHostEnv(): string {
-  return normalizeVeryfrontApiBaseUrl(
-    getHostEnvExcludingEnvFile("VERYFRONT_PUBLIC_API_BASE_URL"),
-  ) ?? resolveHostCredentialApiBaseUrl();
+  return normalizeVeryfrontApiBaseUrl(getHostBootPublicApiBaseUrl()) ??
+    resolveHostCredentialApiBaseUrl();
 }
 
 /** Built-in default model, used until the served catalog names one. */

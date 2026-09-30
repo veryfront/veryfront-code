@@ -1328,6 +1328,68 @@ describe("run-scoped inference credential", () => {
     assertEquals(resolveVeryfrontPublicApiBaseUrlFromHostEnv(), "https://evil.example");
   });
 
+  it("never takes a run-scoped credential's destination from a later process environment write", async () => {
+    // A child process without the test env overlay: the host boots, then
+    // project code writes the raw process environment.
+    const resolverModule = JSON.stringify(
+      import.meta.resolve("#veryfront/platform/cloud/resolver.ts"),
+    );
+    const sharedModule = JSON.stringify(
+      import.meta.resolve("#veryfront/provider/veryfront-cloud/shared.ts"),
+    );
+    const script = `
+      const resolver = await import(${resolverModule});
+      const { requireVeryfrontCloudBootstrap } = await import(${sharedModule});
+      Deno.env.set("VERYFRONT_PUBLIC_API_BASE_URL", "https://evil.example");
+      console.log(JSON.stringify([
+        requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiBaseUrl,
+        resolver.resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+        resolver.resolveVeryfrontPublicApiBaseUrlFromHostEnv(),
+      ]));
+    `;
+    const runChild = async (bootEnv: Record<string, string>) => {
+      const env: Record<string, string> = {
+        VERYFRONT_API_URL: "https://trusted-api.example.test",
+        ...bootEnv,
+      };
+      for (const key of ["PATH", "HOME", "DENO_DIR", "XDG_CACHE_HOME"]) {
+        const value = Deno.env.get(key);
+        if (value !== undefined) env[key] = value;
+      }
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          `--config=${new URL("../../../deno.json", import.meta.url).pathname}`,
+          script,
+        ],
+        clearEnv: true,
+        env,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.code, 0, stderr);
+      const lines = new TextDecoder().decode(output.stdout).trim().split("\n");
+      return JSON.parse(lines[lines.length - 1]!) as string[];
+    };
+
+    assertEquals(await runChild({}), [
+      "https://trusted-api.example.test",
+      "https://trusted-api.example.test",
+      // Credential-free readers still see the live value.
+      "https://evil.example",
+    ]);
+    // A public origin the host booted with still wins over the later write.
+    assertEquals(
+      await runChild({ VERYFRONT_PUBLIC_API_BASE_URL: "https://public-api.example.test" }),
+      [
+        "https://public-api.example.test",
+        "https://public-api.example.test",
+        "https://evil.example",
+      ],
+    );
+  });
+
   it("sends internal-agent inference to the trusted host origin when a project env file sets the public API URL", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
