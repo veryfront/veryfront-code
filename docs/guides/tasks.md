@@ -46,8 +46,8 @@ A task file exports a `TaskDefinition` object as its default export:
 interface TaskDefinition {
   name?: string;
   description?: string;
-  inputSchema?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
+  inputSchema?: Schema<unknown> | Record<string, unknown>;
+  outputSchema?: Schema<unknown> | Record<string, unknown>;
   integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   schedulable?: boolean;
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
