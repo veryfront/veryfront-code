@@ -119,4 +119,11 @@ describe("src/schemas/schema-identity", () => {
 
     assertEquals(canonical, VECTOR_CANONICAL);
   });
+
+  it("hashes a raw JSON Schema that carries a __zod keyword as a raw schema", async () => {
+    const raw = { type: "object", __zod: true };
+
+    assertEquals(canonicalJsonSchema(raw), '{"__zod":true,"type":"object"}');
+    assertMatch((await schemaIdentitySha256(raw)) ?? "", /^[0-9a-f]{64}$/);
+  });
 });

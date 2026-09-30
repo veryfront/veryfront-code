@@ -12,7 +12,10 @@
 
 import type { JsonSchemaValidationIssue, Schema } from "#veryfront/extensions/schema/index.ts";
 import { tryCompileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
-import { isContractSchema, snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
+import {
+  isCallableContractSchema,
+  snapshotJsonSchemaObject,
+} from "#veryfront/schemas/schema-input.ts";
 import {
   escapePointerSegment,
   MAX_SCHEMA_VALIDATION_ERRORS,
@@ -70,12 +73,6 @@ const NativeDate = Date;
 const dateToISOString = Date.prototype.toISOString;
 const reflectApply = Reflect.apply;
 
-function isCallableContract(schema: unknown): schema is Schema<unknown> {
-  // A raw JSON Schema may carry any keyword, `__zod` included; only a real contract has safeParse.
-  return isContractSchema(schema) &&
-    typeof (schema as { safeParse?: unknown }).safeParse === "function";
-}
-
 /**
  * Validate a value against a declared contract schema or raw JSON Schema. A validator that
  * throws, for example because task code replaced a built-in it relies on, leaves the schema
@@ -90,7 +87,7 @@ export async function checkDeclaredSchema(schema: unknown, value: unknown): Prom
 }
 
 async function runDeclaredSchemaCheck(schema: unknown, value: unknown): Promise<SchemaCheck> {
-  if (isCallableContract(schema)) {
+  if (isCallableContractSchema(schema)) {
     const result = schema.safeParse(value);
     if (result.success) return { outcome: "valid", value: result.data };
     return { outcome: "invalid", errors: toSchemaValidationErrors(result.issues) };

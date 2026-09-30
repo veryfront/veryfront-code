@@ -108,6 +108,15 @@ export function isInferredJsonSchemaObject(value: JsonSchema): boolean {
   return Object.keys(value).some((key) => JSON_SCHEMA_KEYWORDS.has(key));
 }
 
+/**
+ * A contract schema that can validate: `isContractSchema` plus a callable `safeParse`. A raw
+ * JSON Schema may carry any keyword, `__zod` included, and stays raw under this check.
+ */
+export function isCallableContractSchema(value: unknown): value is Schema<unknown> {
+  return isContractSchema(value) &&
+    typeof (value as { safeParse?: unknown }).safeParse === "function";
+}
+
 export function isContractSchema(value: unknown): value is Schema<unknown> {
   if (value === null || typeof value !== "object") return false;
   if ("__zod" in value) return true;

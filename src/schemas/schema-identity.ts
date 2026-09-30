@@ -19,7 +19,7 @@
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { schemaToJsonSchema } from "./json-schema.ts";
-import { isContractSchema, snapshotJsonSchemaObject } from "./schema-input.ts";
+import { isCallableContractSchema, snapshotJsonSchemaObject } from "./schema-input.ts";
 
 // Captured at module load, before any project module runs: a task module that replaces these
 // in the shared realm must not be able to fail or forge the identity.
@@ -70,7 +70,7 @@ function serializeCanonical(value: unknown): string | undefined {
  * the value is neither a contract schema nor a JSON object.
  */
 export function resolveJsonSchemaDocument(schema: unknown): JsonSchema | undefined {
-  if (isContractSchema(schema)) return schemaToJsonSchema(schema);
+  if (isCallableContractSchema(schema)) return schemaToJsonSchema(schema);
   return snapshotJsonSchemaObject(schema);
 }
 
