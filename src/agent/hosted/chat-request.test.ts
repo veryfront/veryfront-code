@@ -1546,6 +1546,34 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(request.allowDelegation, false);
   });
 
+  it("accepts an exact resume tool call only through the verified runtime envelope", async () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      resumeToolCall: {
+        id: "call-1:resume-1",
+        name: "outlook__list_messages",
+        input: { folder: "inbox", limit: 20 },
+      },
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) throw new Error(`Unexpected response ${parsed.status}`);
+    assertEquals(parsed.serverResolvedResumeToolCall, invocation.resumeToolCall);
+    assertEquals(parsed.serverEnvelopeVerified, true);
+  });
+
   it("builds hosted chat requests with raw replay tool parts from runtime invocations", () => {
     const invocation = RuntimeAgentRunInvocationSchema.parse({
       ...createRuntimeInvocation(),
@@ -2187,6 +2215,11 @@ describe("agent/hosted-chat-request", () => {
         body: JSON.stringify({
           ...createRuntimeInvocation(),
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+          resumeToolCall: {
+            id: "call-1:resume-1",
+            name: "outlook__list_messages",
+            input: { folder: "inbox" },
+          },
         }),
       }),
       {
@@ -2350,6 +2383,11 @@ describe("agent/hosted-chat-request", () => {
           context: { conversationId, projectId, branchId },
           durableRootRun: { runId: "run_root_1", messageId },
           serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+          resumeToolCall: {
+            id: "call-1:resume-1",
+            name: "outlook__list_messages",
+            input: { folder: "inbox" },
+          },
           serverResolvedToolExposureCheckpoint: {
             version: 1,
             loadedToolNames: ["delete_project"],
@@ -2376,6 +2414,7 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
     assertEquals(parsed.serverResolvedProviderReplayCheckpoints, undefined);
+    assertEquals(parsed.serverResolvedResumeToolCall, undefined);
     assertEquals(parsed.forwardedProps, { harmless: "preserved" });
   });
 

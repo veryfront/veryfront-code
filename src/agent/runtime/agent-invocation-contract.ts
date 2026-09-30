@@ -45,6 +45,16 @@ export const RuntimeAgentRunIdSchema = lazySchema(getRuntimeAgentRunIdSchema);
 
 export const getRuntimeAgentToolCallIdSchema = defineSchema((v) => v.string().min(1).max(128));
 
+const getRuntimeAgentResumeToolCallIdSchema = defineSchema((v) => v.string().min(1).max(256));
+
+export const getRuntimeAgentResumeToolCallSchema = defineSchema((v) =>
+  v.object({
+    id: getRuntimeAgentResumeToolCallIdSchema(),
+    name: v.string().min(1).max(128),
+    input: v.record(v.string(), v.unknown()),
+  }).strict()
+);
+
 /** Schema for durable runtime task identity. */
 export const getRuntimeAgentTaskIdSchema = defineSchema((v) =>
   v.string().min(1).max(200).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/)
@@ -405,6 +415,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       { message: "forwardedProps must be less than 192 KB" },
     ),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
+    resumeToolCall: getRuntimeAgentResumeToolCallSchema().optional(),
   }).superRefine((input, ctx) => {
     if (input.sourceProject) {
       const executionTarget = input.run.project;
@@ -548,6 +559,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   serverResolvedProviderReplayCheckpoints?: RuntimeAgentRunInvocation[
     "serverResolvedProviderReplayCheckpoints"
   ];
+  resumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
 };
 
 /** Builds runtime agent control plane stream request from invocation. */
@@ -582,6 +594,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     ...(input.serverResolvedProviderReplayCheckpoints !== undefined
       ? { serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints }
       : {}),
+    ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
   };
 }
 
