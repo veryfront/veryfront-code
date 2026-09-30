@@ -83,6 +83,8 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
 const TaskDate = Date;
+/** Captured before project code runs, which may replace the global. */
+const TaskError = Error;
 const TaskDateNow = Date.now;
 const TaskDateParse = Date.parse;
 const TaskSetTimeout = globalThis.setTimeout;
@@ -1477,7 +1479,7 @@ async function destroyWorkflowClient(
     (error: unknown) => {
       serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
         runId,
-        errorName: error instanceof Error ? error.name : "unknown",
+        errorName: error instanceof TaskError ? error.name : "unknown",
       });
       return true;
     },
