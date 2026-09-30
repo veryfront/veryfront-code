@@ -115,21 +115,31 @@ export function sealIngressCredentials(request: Request): Request {
   // Sealed already (an outer server wrapper ran first), or a framework copy of
   // a sealed request: its headers no longer hold what it arrived with.
   if (IntrinsicReflectApply(WeakMapHas, ingressCredentials, [request])) return request;
-  const credentials: IngressCredentials = ObjectFreeze({
+  const credentials = readCredentialHeaders(request);
+  if (!hasAnyCredential(credentials)) {
+    IntrinsicReflectApply(WeakMapSet, ingressCredentials, [request, credentials]);
+    return request;
+  }
+  return sealWith(request, credentials);
+}
+
+function readCredentialHeaders(request: Request): IngressCredentials {
+  return ObjectFreeze({
     __proto__: null,
     [INGRESS_API_TOKEN_HEADER]: readNativeHeader(request, INGRESS_API_TOKEN_HEADER),
     [INGRESS_INFERENCE_TOKEN_HEADER]: readNativeHeader(request, INGRESS_INFERENCE_TOKEN_HEADER),
     [INGRESS_RUN_EVENT_TOKEN_HEADER]: readNativeHeader(request, INGRESS_RUN_EVENT_TOKEN_HEADER),
   } as IngressCredentials);
-  if (
-    credentials[INGRESS_API_TOKEN_HEADER] === null &&
-    credentials[INGRESS_INFERENCE_TOKEN_HEADER] === null &&
-    credentials[INGRESS_RUN_EVENT_TOKEN_HEADER] === null
-  ) {
-    IntrinsicReflectApply(WeakMapSet, ingressCredentials, [request, credentials]);
-    return request;
-  }
+}
 
+function hasAnyCredential(credentials: IngressCredentials): boolean {
+  return credentials[INGRESS_API_TOKEN_HEADER] !== null ||
+    credentials[INGRESS_INFERENCE_TOKEN_HEADER] !== null ||
+    credentials[INGRESS_RUN_EVENT_TOKEN_HEADER] !== null;
+}
+
+/** A copy of `request` without the credential headers, holding `credentials`. */
+function sealWith(request: Request, credentials: IngressCredentials): Request {
   assertNativeHeaderProcessing();
   assertNativeRequestDefaults();
   // Null prototype: the constructor reads `body`, `method`, `signal` and the
@@ -138,8 +148,12 @@ export function sealIngressCredentials(request: Request): Request {
   init.headers = toHeaderRecordWithoutCredentials(request);
   const sealed = new NativeRequest(request, init);
   IntrinsicReflectApply(WeakMapSet, ingressCredentials, [sealed, credentials]);
-  if (isWebSocketUpgrade(request)) {
-    IntrinsicReflectApply(WeakMapSet, upgradeSources, [sealed, request]);
+  // A request sealed before keeps pointing at its original server request.
+  const upgradeSource = IntrinsicReflectApply(WeakMapGet, upgradeSources, [request]) as
+    | Request
+    | undefined;
+  if (upgradeSource !== undefined || isWebSocketUpgrade(request)) {
+    IntrinsicReflectApply(WeakMapSet, upgradeSources, [sealed, upgradeSource ?? request]);
   }
   return inheritRequestPeerProvenance(request, sealed);
 }
@@ -174,15 +188,30 @@ export function requestForWebSocketUpgrade(request: Request): Request {
  * `source` no longer has carry over from `source`.
  */
 export function sealInterceptedRequest(source: Request, intercepted: Request): Request {
-  const sealed = sealIngressCredentials(intercepted);
-  if (sealed === source) return sealed;
   const before = IntrinsicReflectApply(WeakMapGet, ingressCredentials, [source]) as
     | IngressCredentials
     | undefined;
-  const after = IntrinsicReflectApply(WeakMapGet, ingressCredentials, [sealed]) as
+  // Read what the interceptor put in the headers, even on a request that was
+  // sealed before: one that edits its input in place and returns it would
+  // otherwise leave a new token in the headers.
+  const written = readCredentialHeaders(intercepted);
+  const registered = IntrinsicReflectApply(WeakMapGet, ingressCredentials, [intercepted]) as
     | IngressCredentials
     | undefined;
-  if (before === undefined || after === undefined) return sealed;
+  let sealed: Request;
+  let after: IngressCredentials;
+  if (hasAnyCredential(written)) {
+    sealed = sealWith(intercepted, written);
+    after = written;
+  } else if (registered !== undefined) {
+    if (intercepted === source) return source;
+    sealed = intercepted;
+    after = registered;
+  } else {
+    sealed = sealIngressCredentials(intercepted);
+    after = written;
+  }
+  if (before === undefined) return sealed;
   IntrinsicReflectApply(WeakMapSet, ingressCredentials, [
     sealed,
     ObjectFreeze({

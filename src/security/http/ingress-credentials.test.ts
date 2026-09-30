@@ -282,8 +282,20 @@ describe("security/http/ingress-credentials", () => {
       readIngressCredential(intercepted, INGRESS_RUN_EVENT_TOKEN_HEADER),
       RUN_EVENT_TOKEN,
     );
-    // An interceptor that hands back its input changes nothing.
+    // An interceptor that hands back its input unchanged changes nothing.
     assertStrictEquals(sealInterceptedRequest(source, source), source);
+  });
+
+  it("reseals a token an interceptor set on its input in place", () => {
+    const source = sealIngressCredentials(credentialRequest());
+    source.headers.set("x-token", "proxy-resolved-token");
+
+    const sealed = sealInterceptedRequest(source, source);
+
+    assert(sealed !== source);
+    assertEquals(sealed.headers.get("x-token"), null);
+    assertEquals(readIngressCredential(sealed, INGRESS_API_TOKEN_HEADER), "proxy-resolved-token");
+    assertEquals(readIngressCredential(sealed, INGRESS_INFERENCE_TOKEN_HEADER), INFERENCE_TOKEN);
   });
 
   it("carries the credentials to a framework copy, and none to a copy of an unsealed request", () => {
