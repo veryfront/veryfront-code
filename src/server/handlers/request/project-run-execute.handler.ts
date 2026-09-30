@@ -293,6 +293,7 @@ export interface ProjectRunExecuteHandlerDeps {
     ctx: HandlerContext;
     req: Request;
   }): Promise<ProjectRunExecuteResponse>;
+  workflowResumeTimeoutMs?: number;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -1023,7 +1024,9 @@ async function resumeWaitingWorkflowRun(
   if (await isStaleDecision(resume, parked)) {
     return { run: await waitForWorkflowResult(client, runId, deps) };
   }
-  const applied = await applyResumeSignal(client, runId, resume, parked, deps.now());
+  const applied = isParkedOnNothing(parked)
+    ? { released: true }
+    : await applyResumeSignal(client, runId, resume, parked, deps.now());
   if ("failure" in applied) return applied;
 
   // The decision can resume the run in the background, so the run may still
@@ -1077,11 +1080,28 @@ async function executeWorkflowRun(
       runtimeTargetBranchId: request.runtimeTargetBranchId,
     },
   );
+  let activeResume: Promise<unknown> | undefined;
   try {
     client.register(workflow.definition);
     let run: WorkflowRunView;
     if (request.resume) {
-      const resumed = await resumeWaitingWorkflowRun(client, request.runId, request.resume, deps);
+      const operation = resumeWaitingWorkflowRun(client, request.runId, request.resume, deps);
+      activeResume = operation;
+      void operation.then(() => {
+        activeResume = undefined;
+      }, () => {
+        activeResume = undefined;
+      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const resumed = await Promise.race([
+        operation,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() =>
+            reject(TIMEOUT_ERROR.create({
+              detail: `Workflow run timed out: ${request.runId}`,
+            })), deps.workflowResumeTimeoutMs ?? DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS);
+        }),
+      ]).finally(() => clearTimeout(timer));
       if ("failure" in resumed) {
         return {
           success: false,
@@ -1145,7 +1165,12 @@ async function executeWorkflowRun(
       duration_ms: durationMs,
     };
   } finally {
-    await client.destroy();
+    if (activeResume) {
+      // A timed-out request must not destroy resources still used by durable execution.
+      void activeResume.then(() => client.destroy(), () => client.destroy()).catch(() => {});
+    } else {
+      await client.destroy();
+    }
   }
 }
 

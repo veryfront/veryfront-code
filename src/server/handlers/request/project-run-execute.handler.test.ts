@@ -3337,6 +3337,57 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload.result, { stage: "paid" });
   });
 
+  it("polls on when a retried decision finds its event already applied and nothing pending", async () => {
+    // The first dispatch delivered the event, then died before the released
+    // node finished: publishing it again would buffer a duplicate.
+    const waitId = await reportedWaitId(waitingOnInvoice);
+    const { client, calls, settle } = resumableClient({ status: "waiting", pendingApprovals: [] });
+    let polls = 0;
+
+    const { payload } = await executeResume(client, {
+      type: "event",
+      name: "invoice.received",
+      wait_id: waitId,
+    }, {
+      sleep: () => {
+        polls += 1;
+        settle({ status: "completed", output: { stage: "paid" } });
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(calls, []);
+    assertEquals(polls, 1);
+    assertEquals(payload.result, { stage: "paid" });
+  });
+
+  it("bounds a blocked approval application and keeps its client alive until it settles", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    let finish!: () => void;
+    let destroyed = false;
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    client.destroy = () => {
+      destroyed = true;
+      return Promise.resolve();
+    };
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+    }, { workflowResumeTimeoutMs: 5 });
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "timed out");
+    assertEquals(destroyed, false);
+    settle({ status: "completed", output: {} });
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(destroyed, true);
+  });
+
   it("applies a decision whose wait_id names the boundary the run is parked on", async () => {
     const { client, calls } = resumableClient(waitingOnReview);
 
