@@ -548,7 +548,7 @@ describe("createWorkflowHandler", () => {
     expect((await client.getPendingApprovals(runId)).length).toBe(1);
   });
 
-  it("rejects cancel and retry for a run the control plane owns and points to the canonical run routes", async () => {
+  it("rejects cancel for a run the control plane owns and points to the canonical cancel, but keeps retry", async () => {
     client.register(
       workflow({
         id: "needs-approval-owned",
@@ -562,14 +562,18 @@ describe("createWorkflowHandler", () => {
       `run ${runId} to pause for approval`,
     );
 
-    for (const action of ["cancel", "retry"]) {
-      const response = await handlers.POST(post(`/api/workflows/runs/${runId}/${action}`, {}));
-      expect(response.status).toBe(409);
-      expect(JSON.stringify(await response.json())).toContain(
-        "belongs to the Veryfront control plane",
-      );
-    }
+    const response = await handlers.POST(post(`/api/workflows/runs/${runId}/cancel`, {}));
+    expect(response.status).toBe(409);
+    expect(JSON.stringify(await response.json())).toContain(
+      "belongs to the Veryfront control plane",
+    );
     expect((await client.getRun(runId))?.status).toBe("waiting");
+
+    // The control plane has no retry operation, so the runtime keeps its own.
+    const retried = await handlers.POST(post(`/api/workflows/runs/${runId}/retry`, {}));
+    expect(JSON.stringify(await retried.json())).not.toContain(
+      "belongs to the Veryfront control plane",
+    );
   });
 
   it("fails the run when an approval is rejected", async () => {

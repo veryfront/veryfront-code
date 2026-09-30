@@ -491,11 +491,12 @@ export function createWorkflowHandler(
         return Response.json({ runId: handle.runId });
       }
 
-      // Cancel and retry would move the durable run without the canonical run
-      // knowing, the same as an approval decision.
+      // Cancel would move the durable run without the canonical run knowing,
+      // the same as an approval decision. Retry stays: the control plane has
+      // no retry operation of its own yet.
       if (
-        segments.length === 3 && first === "runs" && second &&
-        (third === "cancel" || third === "retry") && isControlPlaneWorkflowRunId(second)
+        segments.length === 3 && first === "runs" && second && third === "cancel" &&
+        isControlPlaneWorkflowRunId(second)
       ) {
         return problem(
           `Workflow run ${second} belongs to the Veryfront control plane. ` +
