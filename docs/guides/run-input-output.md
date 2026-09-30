@@ -105,8 +105,10 @@ enforced as shown in every release.
 | A workflow's selected output violates `outputSchema`                                  | Fails. No output is stored, `onError` runs, and `onComplete` does not.                                                                                           |
 | An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output. A run that stops at its step limit completes instead, with no structured result and `output: null`.                     |
 
-An agent's raw `outputSchema` that no validator can compile is logged and not
-enforced, and its output is stored unvalidated.
+An agent's raw JSON Schema `outputSchema` that the registered validator fails
+to compile fails the run before the model is called. When the registered
+validator has no JSON Schema compiler, the raw schema is still sent to the
+provider, but the output is not validated locally and is stored as parsed.
 
 The task rows marked "Warns" are the warning phase for task schemas. A later
 release fails those mismatches too. A recorded mismatch has this shape. A run
