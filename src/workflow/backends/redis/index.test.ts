@@ -19,9 +19,10 @@ import {
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { createWorkflowClient, type WorkflowClient } from "../../api/workflow-client.ts";
-import { workflow } from "../../dsl/workflow.ts";
+import { dependsOn, workflow } from "../../dsl/workflow.ts";
 import { map } from "../../dsl/map.ts";
 import { step } from "../../dsl/step.ts";
+import { subWorkflow } from "../../dsl/sub-workflow.ts";
 import { waitForApproval } from "../../dsl/wait.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool";
@@ -45,6 +46,12 @@ import type {
   RunExecutionInfo,
   RunExecutor,
 } from "../../worker/executors/types.ts";
+import { createWorkflowClient } from "../../api/workflow-client.ts";
+import { map } from "../../dsl/map.ts";
+import { step } from "../../dsl/step.ts";
+import { subWorkflow } from "../../dsl/sub-workflow.ts";
+import { waitForApproval } from "../../dsl/wait.ts";
+import { dependsOn, workflow } from "../../dsl/workflow.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 const jsonRawSupport = JSON as typeof JSON & {
@@ -1668,6 +1675,99 @@ describe("RedisBackend", () => {
       first.getEventWaitManager().stop();
       second?.getApprovalManager().stop();
       second?.getEventWaitManager().stop();
+    }
+  });
+
+  describe("WorkflowClient nested approval resume", () => {
+    for (const generatedByMap of [false, true]) {
+      it(
+        `restores completed child output through a ${
+          generatedByMap ? "map" : "direct"
+        } workflow wrapper (#2244)`,
+        async () => {
+          let stampExecutions = 0;
+          const observed: unknown[] = [];
+          const stampTool: Tool = {
+            id: `redis-${generatedByMap ? "map" : "direct"}-stamp`,
+            type: "function",
+            description: "Stamp the nested workflow input",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => {
+              stampExecutions++;
+              return Promise.resolve({ when: "x" });
+            },
+          };
+          const observeTool: Tool = {
+            id: `redis-${generatedByMap ? "map" : "direct"}-observe`,
+            type: "function",
+            description: "Observe the restored nested stamp",
+            inputSchema: defineSchema((v) => v.object({ when: v.string() }))(),
+            execute: (input) => {
+              observed.push(input);
+              return Promise.resolve(input);
+            },
+          };
+          const child = workflow({
+            id: `redis-${generatedByMap ? "map" : "direct"}-resume-child`,
+            steps: [
+              step("stamp", { tool: stampTool }),
+              dependsOn(
+                waitForApproval("child-review", { message: "Approve the stamp" }),
+                "stamp",
+              ),
+              dependsOn(
+                step("observe", {
+                  tool: observeTool,
+                  input: (context) => context[generatedByMap ? "children_0/stamp" : "stamp"],
+                }),
+                "child-review",
+              ),
+            ],
+            output: (context) => context.observe,
+          });
+          const parent = workflow({
+            id: `redis-${generatedByMap ? "map" : "direct"}-resume-parent`,
+            steps: generatedByMap
+              ? [
+                map("children", {
+                  items: [{}],
+                  processor: child.definition,
+                  // #2246 tracks Redis serialization of default map checkpoints.
+                  checkpoint: false,
+                }),
+              ]
+              : [subWorkflow("child", { workflow: child.definition })],
+          });
+          let client = createWorkflowClient({ backend, debug: false });
+          client.register(parent);
+
+          try {
+            const handle = await client.start(parent.id, {});
+            await handle.settled();
+            const [approval] = await backend.getPendingApprovals(handle.runId);
+            assertExists(approval);
+            assertEquals(stampExecutions, 1);
+
+            await client.destroy();
+            const resumedBackend = new RedisBackend({ client: mockRedis, prefix: "test:" });
+            client = createWorkflowClient({ backend: resumedBackend, debug: false });
+            client.register(parent);
+
+            await client.approve(handle.runId, approval.id, "reviewer");
+
+            const completed = await resumedBackend.getRun(handle.runId);
+            assertEquals(completed?.status, "completed");
+            assertEquals(
+              completed?.context[generatedByMap ? "children" : "child"],
+              generatedByMap ? [{ when: "x" }] : { when: "x" },
+            );
+            assertEquals(observed, [{ when: "x" }]);
+            assertEquals(stampExecutions, 1);
+          } finally {
+            await client.destroy();
+          }
+        },
+      );
     }
   });
 

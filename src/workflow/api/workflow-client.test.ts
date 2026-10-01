@@ -1313,6 +1313,67 @@ describe("WorkflowClient", () => {
       ],
     });
 
+    for (const shape of ["direct", "map"] as const) {
+      it(`restores completed child outputs after a ${shape} nested approval (#2244)`, async () => {
+        let stampCalls = 0;
+        const observed: unknown[] = [];
+        const child = workflow({
+          id: `resume-child-${shape}`,
+          steps: [
+            step("stamp", {
+              tool: {
+                ...createMockTool(`stamp-${shape}`, { when: "x" }),
+                execute: () => {
+                  stampCalls++;
+                  return Promise.resolve({ when: "x" });
+                },
+              },
+            }),
+            waitForApproval("child-review", { message: "Review stamp" }),
+            step("observe", {
+              input: (context) => {
+                const value = context[shape === "direct" ? "stamp" : "children_0/stamp"];
+                observed.push(value);
+                return value;
+              },
+              tool: createMockTool(`observe-${shape}`, { observed: true }),
+            }),
+          ],
+          output: (context) => context.stamp,
+        });
+        const parent = workflow({
+          id: `resume-parent-${shape}`,
+          steps: shape === "direct"
+            ? [subWorkflow("child", { workflow: child.definition })]
+            : [map("children", { items: [{}], processor: child.definition })],
+        });
+        client.register(parent);
+        const handle = await client.start(parent.definition.id, {});
+        await handle.settled();
+        const waiting = await backend.getRun(handle.runId);
+        assertEquals(waiting?.status, "waiting");
+        assertEquals(stampCalls, 1);
+        assertEquals(observed, []);
+        assertExists(waiting);
+        const stampState = Object.values(waiting.nodeStates).find((state) =>
+          state.status === "completed" &&
+          (state.output as { when?: string } | undefined)?.when === "x"
+        );
+        assertExists(stampState);
+        const [approval] = await backend.getPendingApprovals(handle.runId);
+        assertExists(approval);
+        await client.approve(handle.runId, approval.id, "reviewer");
+        const completed = await backend.getRun(handle.runId);
+        assertEquals(completed?.status, "completed");
+        assertEquals(observed, [{ when: "x" }]);
+        assertEquals(stampCalls, 1);
+        assertEquals(
+          completed?.context[shape === "direct" ? "child" : "children"],
+          shape === "direct" ? { when: "x" } : [{ when: "x" }],
+        );
+      });
+    }
+
     it("creates a pending approval for a wait nested in a branch", async () => {
       client.register(nestedApprovalWorkflow);
 
