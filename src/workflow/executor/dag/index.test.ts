@@ -527,6 +527,752 @@ describe("DAGExecutor", () => {
       });
     }
 
+    it("refuses legacy completed-loop publication without durable producer evidence", async () => {
+      let childExecutions = 0;
+      let originalContext: WorkflowContext | undefined;
+      const childExecutor = new MockStepExecutor(new Map(), () => {
+        childExecutions++;
+        return { success: true, output: "published child", executionTime: 0 };
+      });
+      const nodes = [subWorkflow("child", {
+        workflow: {
+          id: "legacy-loop-child",
+          steps: [loop("repeat", {
+            steps: [step("read", { tool: "read" })],
+            maxIterations: 2,
+            while: () => true,
+          })],
+          output: (context) => {
+            if (originalContext === undefined) {
+              originalContext = structuredClone(context);
+              throw new Error("selector failed");
+            }
+            return context;
+          },
+        },
+      })];
+      const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+        nodes,
+        createTestRun(),
+      );
+      assertEquals(first.completed, false);
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+        nodes,
+        createTestRun({ nodeStates: states, context: first.context }),
+      );
+      assertEquals(retried.completed, false);
+      assertStringIncludes(retried.error ?? "", "Legacy nested-loop context cannot be restored");
+      assertEquals(childExecutions, 2);
+    });
+
+    it("refuses legacy onComplete output that impersonates max-iteration evidence", async () => {
+      let completionCalls = 0;
+      let outputCalls = 0;
+      const nodes = [subWorkflow("child", {
+        workflow: {
+          id: "legacy-spoofed-loop",
+          steps: [loop("repeat", {
+            steps: [],
+            maxIterations: 2,
+            while: () => false,
+            onComplete: () => {
+              completionCalls++;
+              return {
+                exitReason: "maxIterations",
+                iterations: 2,
+                previousResults: [
+                  { input: {}, _loop: { iteration: 0 } },
+                  { input: {}, _loop: { iteration: 1 }, invented: "not published" },
+                ],
+              };
+            },
+          })],
+          output: (context) => {
+            if (++outputCalls === 1) throw new Error("selector failed");
+            return context;
+          },
+        },
+      })];
+      const first = await executor.execute(nodes, createTestRun());
+      assertEquals(first.completed, false);
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      const retried = await executor.execute(
+        nodes,
+        createTestRun({ nodeStates: states, context: first.context }),
+      );
+      assertEquals(retried.completed, false);
+      assertStringIncludes(retried.error ?? "", "Legacy nested-loop context cannot be restored");
+      assertEquals(completionCalls, 1);
+      assertEquals(outputCalls, 1);
+    });
+
+    it("keeps legacy wait restoration for children without completed loops", async () => {
+      let childExecutions = 0;
+      const childExecutor = new MockStepExecutor(new Map(), () => {
+        childExecutions++;
+        return { success: true, output: "before", executionTime: 0 };
+      });
+      const nodes = [subWorkflow("child", {
+        workflow: {
+          id: "legacy-wait-after-step",
+          steps: [
+            step("before", { tool: "before" }),
+            waitForEvent("gate", { eventName: "ready" }),
+          ],
+        },
+      })];
+      const exec = new DAGExecutor({ stepExecutor: childExecutor });
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      states.gate!.status = "completed";
+      states.gate!.output = "delivered";
+      const resumed = await exec.execute(
+        nodes,
+        createTestRun({ status: "waiting", nodeStates: states, context: first.context }),
+      );
+      assertEquals(resumed.error, undefined);
+      assertEquals(resumed.completed, true);
+      assertEquals((resumed.context.child as WorkflowContext).before, "before");
+      assertEquals(childExecutions, 1);
+    });
+
+    for (const encoding of ["run", "loop"] as const) {
+      it(`resumes a durable legacy no-input step with loop-shaped output (${encoding})`, async () => {
+        let executions = 0;
+        const output = { exitReason: "done", iterations: 1, previousResults: [] };
+        const exec = new DAGExecutor({
+          stepExecutor: new MockStepExecutor(new Map(), () => {
+            executions++;
+            return { success: true, output, executionTime: 0 };
+          }),
+        });
+        const nodes = [subWorkflow("child", {
+          input: () => undefined,
+          workflow: {
+            id: "durable-no-input-step",
+            steps: [
+              step("before", { tool: "before" }),
+              { ...waitForEvent("gate", { eventName: "ready" }), dependsOn: ["before"] },
+            ],
+            output: (context) => context.before,
+          },
+        })];
+        const first = await exec.execute(nodes, createTestRun({ input: undefined }));
+        assertEquals(first.waiting, true);
+        assertEquals(Object.hasOwn(first.nodeStates.before!, "input"), true);
+        const states = structuredClone(first.nodeStates);
+        delete states.child!._subWorkflowContext;
+        // Cross the same durable JSON boundary that drops input: undefined.
+        const persisted = JSON.parse(JSON.stringify(
+          encoding === "loop" ? toPersistedNodeStates(states) : states,
+        )) as Record<string, NodeState>;
+        assertEquals(NodeStateSchema.parse(first.nodeStates.before)._stepInputRecorded, true);
+        assertEquals(persisted.before!._stepInputRecorded, true);
+        assertEquals(Object.hasOwn(persisted.before!, "input"), false);
+        persisted.gate!.status = "completed";
+        persisted.gate!.output = "delivered";
+        const unknownProducer = structuredClone(persisted);
+        delete unknownProducer.before!._stepInputRecorded;
+        const resumed = await exec.execute(
+          nodes,
+          createTestRun({
+            input: undefined,
+            status: "waiting",
+            nodeStates: persisted,
+            context: JSON.parse(JSON.stringify(first.context)),
+          }),
+        );
+        assertEquals(resumed.error, undefined);
+        assertEquals(resumed.completed, true);
+        assertEquals(resumed.context.child, output);
+        assertEquals(executions, 1);
+        const ambiguous = await exec.execute(
+          nodes,
+          createTestRun({
+            input: undefined,
+            status: "waiting",
+            nodeStates: unknownProducer,
+            context: JSON.parse(JSON.stringify(first.context)),
+          }),
+        );
+        assertEquals(ambiguous.completed, false);
+        assertStringIncludes(
+          ambiguous.error ?? "",
+          "Legacy nested-loop context cannot be restored",
+        );
+        assertEquals(executions, 1);
+      });
+    }
+
+    for (const status of ["waiting", "running"] as const) {
+      it(`refuses a legacy parked child with a completed loop on ${status} resume`, async () => {
+        let completionCalls = 0;
+        const nodes = [subWorkflow("child", {
+          workflow: {
+            id: "legacy-wait-after-loop",
+            steps: [
+              loop("repeat", {
+                steps: [],
+                maxIterations: 1,
+                while: () => true,
+                onMaxIterations: () => {
+                  completionCalls++;
+                  return { k: 1 };
+                },
+              }),
+              waitForEvent("gate", { eventName: "ready" }),
+            ],
+          },
+        })];
+        const first = await executor.execute(nodes, createTestRun());
+        assertEquals(first.waiting, true);
+        const states = structuredClone(first.nodeStates);
+        delete states.child!._subWorkflowContext;
+        states.gate!.status = "completed";
+        states.gate!.output = "delivered";
+        const resumed = await executor.execute(
+          nodes,
+          createTestRun({ status, nodeStates: states, context: first.context }),
+        );
+        assertEquals(resumed.completed, false);
+        assertStringIncludes(
+          resumed.error ?? "",
+          "Legacy nested-loop context cannot be restored",
+        );
+        assertEquals(completionCalls, 1);
+      });
+    }
+
+    it("never treats fresh nested loop children as legacy state", async () => {
+      let completionCalls = 0;
+      const nested = {
+        id: "fresh-nested-loop",
+        steps: [loop("inner", {
+          steps: [],
+          maxIterations: 1,
+          while: () => false,
+          onComplete: () => {
+            completionCalls++;
+            return { selected: "callback" };
+          },
+        })],
+      };
+      const result = await executor.execute(
+        [
+          loop("outer", {
+            steps: [subWorkflow("child", { workflow: nested })],
+            maxIterations: 2,
+            while: () => true,
+          }),
+          { ...map("items", { items: [{}, {}], processor: nested }), dependsOn: ["outer"] },
+        ],
+        createTestRun(),
+      );
+      assertEquals(result.error, undefined);
+      assertEquals(result.completed, true);
+      assertEquals(completionCalls, 4);
+    });
+
+    it("refuses legacy loop output after the loop is removed from the definition", async () => {
+      let completionCalls = 0;
+      let outputCalls = 0;
+      const makeNodes = (removed: boolean) => [subWorkflow("child", {
+        workflow: {
+          id: "legacy-loop-removed",
+          steps: removed ? [] : [loop("repeat", {
+            steps: [],
+            maxIterations: 1,
+            while: () => false,
+            onComplete: () => {
+              completionCalls++;
+              return { selected: "callback" };
+            },
+          })],
+          output: (context) => {
+            if (++outputCalls === 1) throw new Error("selector failed");
+            return context;
+          },
+        },
+      })];
+      const first = await executor.execute(makeNodes(false), createTestRun());
+      assertEquals(first.completed, false);
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      const retried = await executor.execute(
+        makeNodes(true),
+        createTestRun({ nodeStates: states, context: first.context }),
+      );
+      assertEquals(retried.completed, false);
+      assertStringIncludes(retried.error ?? "", "Legacy nested-loop context cannot be restored");
+      assertEquals(completionCalls, 1);
+      assertEquals(outputCalls, 1);
+    });
+
+    for (const replacement of ["step", "parallel"] as const) {
+      it(`refuses legacy loop output after the producer becomes a ${replacement}`, async () => {
+        let completionCalls = 0;
+        let outputCalls = 0;
+        let childExecutions = 0;
+        const childExecutor = new MockStepExecutor(new Map(), () => {
+          childExecutions++;
+          return { success: true, output: "replacement", executionTime: 0 };
+        });
+        const makeNodes = (replaced: boolean) => [subWorkflow("child", {
+          workflow: {
+            id: "legacy-loop-type-drift",
+            steps: [
+              !replaced
+                ? loop("repeat", {
+                  steps: [],
+                  maxIterations: 1,
+                  while: () => false,
+                  onComplete: () => {
+                    completionCalls++;
+                    return { selected: "callback" };
+                  },
+                })
+                : replacement === "step"
+                ? step("repeat", { tool: "read" })
+                : parallel("repeat", [step("inside", { tool: "read" })]),
+            ],
+            output: (context) => {
+              if (++outputCalls === 1) throw new Error("selector failed");
+              return context;
+            },
+          },
+        })];
+        const exec = new DAGExecutor({ stepExecutor: childExecutor });
+        const first = await exec.execute(makeNodes(false), createTestRun());
+        assertEquals(first.completed, false);
+        const states = structuredClone(first.nodeStates);
+        delete states.child!._subWorkflowContext;
+        const retried = await exec.execute(
+          makeNodes(true),
+          createTestRun({ nodeStates: states, context: first.context }),
+        );
+        assertEquals(retried.completed, false);
+        assertStringIncludes(
+          retried.error ?? "",
+          "Legacy nested-loop context cannot be restored",
+        );
+        assertEquals(completionCalls, 1);
+        assertEquals(outputCalls, 1);
+        assertEquals(childExecutions, 0);
+      });
+    }
+
+    it("restores legacy step output shaped like loop output", async () => {
+      let childExecutions = 0;
+      let originalContext: WorkflowContext | undefined;
+      const childExecutor = new MockStepExecutor(new Map(), () => {
+        childExecutions++;
+        return {
+          success: true,
+          output: { exitReason: "stop", iterations: 3, previousResults: [], response: "done" },
+          executionTime: 0,
+        };
+      });
+      const nodes = [subWorkflow("child", {
+        workflow: {
+          id: "legacy-step-with-iterations",
+          steps: [step("agent", { tool: "agent" })],
+          output: (context) => {
+            if (originalContext === undefined) {
+              originalContext = structuredClone(context);
+              throw new Error("selector failed");
+            }
+            return context;
+          },
+        },
+      })];
+      const exec = new DAGExecutor({ stepExecutor: childExecutor });
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.completed, false);
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      const retried = await exec.execute(
+        nodes,
+        createTestRun({ nodeStates: states, context: first.context }),
+      );
+      assertEquals(retried.error, undefined);
+      assertEquals(retried.completed, true);
+      assertEquals(retried.context.child, originalContext);
+      assertEquals(childExecutions, 1);
+    });
+
+    it("restores legacy nested workflow output shaped like loop output", async () => {
+      let completionCalls = 0;
+      let originalContext: WorkflowContext | undefined;
+      const nodes = [subWorkflow("child", {
+        workflow: {
+          id: "legacy-nested-loop-output",
+          steps: [subWorkflow("inner", {
+            workflow: {
+              id: "inner-refine",
+              steps: [loop("refine", {
+                steps: [],
+                maxIterations: 1,
+                while: () => false,
+                onComplete: () => {
+                  completionCalls++;
+                  return { selected: "callback" };
+                },
+              })],
+              output: (context) => context.refine,
+            },
+          })],
+          output: (context) => {
+            if (originalContext === undefined) {
+              originalContext = structuredClone(context);
+              throw new Error("selector failed");
+            }
+            return context;
+          },
+        },
+      })];
+      const first = await executor.execute(nodes, createTestRun());
+      assertEquals(first.completed, false);
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      const retried = await executor.execute(
+        nodes,
+        createTestRun({ nodeStates: states, context: first.context }),
+      );
+      assertEquals(retried.error, undefined);
+      assertEquals(retried.completed, true);
+      assertEquals(retried.context.child, originalContext);
+      assertEquals(completionCalls, 1);
+    });
+
+    for (const retainSnapshot of [true, false]) {
+      it(`retries a failed step after a completed loop: snapshot=${retainSnapshot}`, async () => {
+        let completionCalls = 0;
+        const seen: unknown[] = [];
+        const childExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+          seen.push(context.selected);
+          return seen.length === 1
+            ? { success: false, error: "after failed", executionTime: 0 }
+            : { success: true, output: "after", executionTime: 0 };
+        });
+        const nodes = [subWorkflow("child", {
+          workflow: {
+            id: "legacy-step-after-loop",
+            steps: [
+              loop("repeat", {
+                steps: [],
+                maxIterations: 1,
+                while: () => false,
+                onComplete: () => {
+                  completionCalls++;
+                  return { selected: "callback" };
+                },
+              }),
+              step("after", { tool: "after" }),
+            ],
+          },
+        })];
+        const exec = new DAGExecutor({ stepExecutor: childExecutor });
+        const first = await exec.execute(nodes, createTestRun());
+        assertEquals(first.completed, false);
+        const states = structuredClone(first.nodeStates);
+        if (!retainSnapshot) delete states.child!._subWorkflowContext;
+        const retried = await exec.execute(
+          nodes,
+          createTestRun({ nodeStates: states, context: first.context }),
+        );
+        assertEquals(retried.completed, retainSnapshot);
+        if (retainSnapshot) {
+          assertEquals(seen, ["callback", "callback"]);
+        } else {
+          assertStringIncludes(
+            retried.error ?? "",
+            "Legacy nested-loop context cannot be restored",
+          );
+          assertEquals(seen, ["callback"]);
+        }
+        assertEquals(completionCalls, 1);
+      });
+    }
+
+    it("refuses a failed legacy loop child retried by an unrelated wait resume", async () => {
+      let completionCalls = 0;
+      let outputCalls = 0;
+      const nodes = [
+        { ...waitForEvent("gate", { eventName: "ready" }), dependsOn: [] },
+        {
+          ...subWorkflow("child", {
+            workflow: {
+              id: "legacy-loop-beside-wait",
+              steps: [loop("repeat", {
+                steps: [],
+                maxIterations: 1,
+                while: () => false,
+                onComplete: () => {
+                  completionCalls++;
+                  return { selected: "callback" };
+                },
+              })],
+              output: (context) => {
+                if (++outputCalls === 1) throw new Error("selector failed");
+                return context;
+              },
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+      const first = await executor.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.nodeStates.child?.status, "failed");
+      const states = structuredClone(first.nodeStates);
+      delete states.child!._subWorkflowContext;
+      states.gate!.status = "completed";
+      states.gate!.output = "delivered";
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({ status: "waiting", nodeStates: states, context: first.context }),
+      );
+      assertEquals(resumed.completed, false);
+      assertStringIncludes(resumed.error ?? "", "Legacy nested-loop context cannot be restored");
+      assertEquals(completionCalls, 1);
+      assertEquals(outputCalls, 1);
+    });
+
+    for (const retainSnapshot of [false, true]) {
+      it(`uses durable publication evidence after loop definition drift: snapshot=${retainSnapshot}`, async () => {
+        let completionCalls = 0;
+        let outputCalls = 0;
+        let originalContext: WorkflowContext | undefined;
+        const selectOutput = (context: WorkflowContext) => {
+          if (++outputCalls === 1) {
+            originalContext = structuredClone(context);
+            throw new Error("selector failed");
+          }
+          return context;
+        };
+        const makeNodes = (replacement: boolean) => [subWorkflow("child", {
+          workflow: {
+            id: "legacy-changed-loop",
+            steps: [loop("repeat", {
+              steps: [],
+              maxIterations: 2,
+              while: () => replacement,
+              ...(replacement ? {} : {
+                onComplete: () => {
+                  completionCalls++;
+                  return {
+                    exitReason: "maxIterations",
+                    iterations: 2,
+                    previousResults: [
+                      { input: {}, _loop: { iteration: 0 } },
+                      { input: {}, _loop: { iteration: 1 }, invented: "not published" },
+                    ],
+                  };
+                },
+              }),
+            })],
+            output: selectOutput,
+          },
+        })];
+        const first = await executor.execute(makeNodes(false), createTestRun());
+        assertEquals(first.completed, false);
+        const states = structuredClone(first.nodeStates);
+        if (!retainSnapshot) delete states.child!._subWorkflowContext;
+        const retried = await executor.execute(
+          makeNodes(true),
+          createTestRun({ nodeStates: states, context: first.context }),
+        );
+        assertEquals(retried.completed, retainSnapshot);
+        if (retainSnapshot) {
+          assertEquals(retried.context.child, originalContext);
+        } else {
+          assertStringIncludes(
+            retried.error ?? "",
+            "Legacy nested-loop context cannot be restored",
+          );
+        }
+        assertEquals(completionCalls, 1);
+        assertEquals(outputCalls, retainSnapshot ? 2 : 1);
+      });
+    }
+
+    for (const completion of ["onComplete", "onMaxIterations"] as const) {
+      it(`refuses incomplete legacy inner ${completion} publications`, async () => {
+        let childExecutions = 0;
+        let completionCalls = 0;
+        let originalContext: WorkflowContext | undefined;
+        const childExecutor = new MockStepExecutor(new Map(), () => {
+          childExecutions++;
+          return { success: true, output: "child value", executionTime: 0 };
+        });
+        const nodes = [subWorkflow("child", {
+          workflow: {
+            id: "legacy-nested-loop",
+            steps: [loop("outer", {
+              maxIterations: 1,
+              while: () => true,
+              steps: [loop("inner", {
+                steps: [step("read", { tool: "read" })],
+                maxIterations: 2,
+                while: (_context, ctx) => completion === "onMaxIterations" || ctx.iteration === 0,
+                [completion]: () => {
+                  completionCalls++;
+                  return {
+                    selected: "completion",
+                    iterations: "user",
+                    previousResults: [],
+                    exitReason: "user",
+                  };
+                },
+              })],
+            })],
+            output: (context) => {
+              if (originalContext === undefined) {
+                originalContext = structuredClone(context);
+                throw new Error("selector failed");
+              }
+              return context;
+            },
+          },
+        })];
+        const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun(),
+        );
+        assertEquals(first.completed, false);
+        const states = structuredClone(first.nodeStates);
+        delete states.child!._subWorkflowContext;
+        const executionsBeforeRetry = childExecutions;
+        const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+          nodes,
+          createTestRun({ nodeStates: states, context: first.context }),
+        );
+        assertEquals(retried.completed, false);
+        assertStringIncludes(retried.error ?? "", "Legacy nested-loop context cannot be restored");
+        assertEquals(childExecutions, executionsBeforeRetry);
+        assertEquals(completionCalls, 1);
+      });
+    }
+
+    for (
+      const scenario of [
+        "condition exit",
+        "multiple nodes",
+        "parallel",
+        "branch",
+        "missing output",
+      ]
+    ) {
+      it(`refuses unavailable legacy completed-loop evidence: ${scenario}`, async () => {
+        let outputCalls = 0;
+        const repeat = loop("repeat", {
+          steps: [],
+          maxIterations: scenario === "condition exit" ? 2 : 1,
+          while: (context, loopContext) => {
+            if (scenario === "condition exit" && loopContext.iteration === 1) {
+              context.selected = "terminal condition mutation";
+              return false;
+            }
+            return true;
+          },
+        });
+        const steps: WorkflowNode[] = scenario === "multiple nodes"
+          ? [repeat, step("sibling", { tool: "read" })]
+          : scenario === "parallel"
+          ? [parallel("group", [repeat])]
+          : scenario === "branch"
+          ? [{ id: "choice", config: { type: "branch", condition: () => true, then: [repeat] } }]
+          : [repeat];
+        const nodes = [subWorkflow("child", {
+          workflow: {
+            id: "legacy-invalid-loop",
+            steps,
+            output: (context) => {
+              if (++outputCalls === 1) throw new Error("selector failed");
+              return context;
+            },
+          },
+        })];
+        const first = await executor.execute(nodes, createTestRun());
+        assertEquals(first.completed, false);
+        const states = structuredClone(first.nodeStates);
+        delete states.child!._subWorkflowContext;
+        if (scenario === "missing output") delete states.repeat!.output;
+        const retried = await executor.execute(
+          nodes,
+          createTestRun({ nodeStates: states, context: first.context }),
+        );
+        assertEquals(retried.completed, false);
+        assertStringIncludes(retried.error ?? "", "Legacy nested-loop context cannot be restored");
+        assertEquals(outputCalls, 1);
+      });
+    }
+
+    for (const completion of ["onComplete", "onMaxIterations"] as const) {
+      for (
+        const updates of [
+          { selected: "completion" },
+          { selected: "completion", exitReason: "condition" },
+          { iterations: "user value" },
+          { previousResults: [] },
+        ]
+      ) {
+        it(`refuses ambiguous legacy loop ${completion} publication ${JSON.stringify(updates)}`, async () => {
+          let childExecutions = 0;
+          let completionCalls = 0;
+          let outputCalls = 0;
+          const childExecutor = new MockStepExecutor(new Map(), () => {
+            childExecutions++;
+            return { success: true, output: "child value", executionTime: 0 };
+          });
+          const nodes = [subWorkflow("child", {
+            workflow: {
+              id: "legacy-loop-child",
+              steps: [loop("repeat", {
+                steps: [step("read", { tool: "read" })],
+                maxIterations: 2,
+                while: (_context, loopContext) =>
+                  completion === "onMaxIterations" || loopContext.iteration === 0,
+                [completion]: () => {
+                  completionCalls++;
+                  return updates;
+                },
+              })],
+              output: (context) => {
+                if (++outputCalls === 1) throw new Error("selector failed");
+                return context;
+              },
+            },
+          })];
+          const first = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+            nodes,
+            createTestRun(),
+          );
+          assertEquals(first.completed, false);
+          const states = structuredClone(first.nodeStates);
+          delete states.child!._subWorkflowContext;
+          const executionsBeforeRetry = childExecutions;
+          const retried = await new DAGExecutor({ stepExecutor: childExecutor }).execute(
+            nodes,
+            createTestRun({ nodeStates: states, context: first.context }),
+          );
+          assertEquals(retried.completed, false);
+          assertStringIncludes(
+            retried.error ?? "",
+            "Legacy nested-loop context cannot be restored",
+          );
+          assertEquals(childExecutions, executionsBeforeRetry);
+          assertEquals(completionCalls, 1);
+          assertEquals(outputCalls, 1);
+        });
+      }
+    }
+
     for (const completion of ["onComplete", "onMaxIterations"] as const) {
       it(`restores loop ${completion} context keys after an output exception`, async () => {
         let completionCalls = 0;
