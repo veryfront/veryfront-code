@@ -22,6 +22,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
+import { toPersistedNodeStates } from "./loop-node-strategy.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { NodeStateSchema } from "../../schemas/workflow.schema.ts";
 import type {
@@ -639,6 +640,74 @@ describe("DAGExecutor", () => {
       assertEquals((resumed.context.child as WorkflowContext).before, "before");
       assertEquals(childExecutions, 1);
     });
+
+    for (const encoding of ["run", "loop"] as const) {
+      it(`resumes a durable legacy no-input step with loop-shaped output (${encoding})`, async () => {
+        let executions = 0;
+        const output = { exitReason: "done", iterations: 1, previousResults: [] };
+        const exec = new DAGExecutor({
+          stepExecutor: new MockStepExecutor(new Map(), () => {
+            executions++;
+            return { success: true, output, executionTime: 0 };
+          }),
+        });
+        const nodes = [subWorkflow("child", {
+          input: () => undefined,
+          workflow: {
+            id: "durable-no-input-step",
+            steps: [
+              step("before", { tool: "before" }),
+              { ...waitForEvent("gate", { eventName: "ready" }), dependsOn: ["before"] },
+            ],
+            output: (context) => context.before,
+          },
+        })];
+        const first = await exec.execute(nodes, createTestRun({ input: undefined }));
+        assertEquals(first.waiting, true);
+        assertEquals(Object.hasOwn(first.nodeStates.before!, "input"), true);
+        const states = structuredClone(first.nodeStates);
+        delete states.child!._subWorkflowContext;
+        // Cross the same durable JSON boundary that drops input: undefined.
+        const persisted = JSON.parse(JSON.stringify(
+          encoding === "loop" ? toPersistedNodeStates(states) : states,
+        )) as Record<string, NodeState>;
+        assertEquals(NodeStateSchema.parse(first.nodeStates.before)._stepInputRecorded, true);
+        assertEquals(persisted.before!._stepInputRecorded, true);
+        assertEquals(Object.hasOwn(persisted.before!, "input"), false);
+        persisted.gate!.status = "completed";
+        persisted.gate!.output = "delivered";
+        const unknownProducer = structuredClone(persisted);
+        delete unknownProducer.before!._stepInputRecorded;
+        const resumed = await exec.execute(
+          nodes,
+          createTestRun({
+            input: undefined,
+            status: "waiting",
+            nodeStates: persisted,
+            context: JSON.parse(JSON.stringify(first.context)),
+          }),
+        );
+        assertEquals(resumed.error, undefined);
+        assertEquals(resumed.completed, true);
+        assertEquals(resumed.context.child, output);
+        assertEquals(executions, 1);
+        const ambiguous = await exec.execute(
+          nodes,
+          createTestRun({
+            input: undefined,
+            status: "waiting",
+            nodeStates: unknownProducer,
+            context: JSON.parse(JSON.stringify(first.context)),
+          }),
+        );
+        assertEquals(ambiguous.completed, false);
+        assertStringIncludes(
+          ambiguous.error ?? "",
+          "Legacy nested-loop context cannot be restored",
+        );
+        assertEquals(executions, 1);
+      });
+    }
 
     for (const status of ["waiting", "running"] as const) {
       it(`refuses a legacy parked child with a completed loop on ${status} resume`, async () => {

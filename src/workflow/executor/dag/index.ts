@@ -1227,11 +1227,12 @@ function createSeededSubWorkflowNodeStates(
 /**
  * Whether a persisted state may hold loop output, whatever node now uses its id.
  * Loop output always carries all three result keys. Step and sub-workflow states
- * record their input (or the parsed-input marker); loop states never do.
+ * record their input or a durable input marker; loop states never do.
  */
 function mayHoldLoopPublication(state: NodeState): boolean {
   const { output } = state;
-  return !Object.hasOwn(state, "input") && state._subWorkflowInputParsed !== true &&
+  return !Object.hasOwn(state, "input") && state._stepInputRecorded !== true &&
+    state._subWorkflowInputParsed !== true &&
     typeof output === "object" && output !== null && !Array.isArray(output) &&
     Object.hasOwn(output, "exitReason") && Object.hasOwn(output, "iterations") &&
     Object.hasOwn(output, "previousResults");
@@ -2284,6 +2285,7 @@ export class DAGExecutor {
       nodeId: node.id,
       status: result.success ? "completed" : "failed",
       input: context.input,
+      _stepInputRecorded: true,
       output: result.output,
       error: result.error,
       attempt: 1,
