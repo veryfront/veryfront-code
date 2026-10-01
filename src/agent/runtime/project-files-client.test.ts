@@ -1,6 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
-import { stub } from "#std/testing/mock";
 import {
   assertEquals,
   assertInstanceOf,
@@ -1477,7 +1476,13 @@ Deno.test("strict trace re-entry cannot launch the operation twice", async () =>
 Deno.test("strict request aborts work started by a noncooperative trace wrapper", async () => {
   using time = new FakeTime(1_000);
   // Keep the monotonic admission checks on the same controlled clock as timers.
-  using _clock = stub(Performance.prototype, "now", () => Date.now());
+  const originalNow = performance.now;
+  performance.now = () => Date.now();
+  using _clock = {
+    [Symbol.dispose]() {
+      performance.now = originalNow;
+    },
+  };
   const fetchStarted = createDeferred<void>();
   let fetchSignal: AbortSignal | undefined;
 
