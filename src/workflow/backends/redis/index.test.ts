@@ -27,7 +27,8 @@ import { waitForApproval, waitForEvent } from "../../dsl/wait.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool";
 import { RedisBackend } from "./index.ts";
-import { cloneOwnedCheckpointForPersistence } from "../checkpoint-retention.ts";
+import { MemoryBackend } from "../memory.ts";
+import { CheckpointManager } from "../../executor/checkpoint-manager.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
 import {
   MAX_TRAVERSAL_DEPTH,
@@ -3208,10 +3209,35 @@ describe("RedisBackend", () => {
       );
       const reorderedSnapshot = await backend.getLatestCheckpoint(runId);
 
+      const memory = new MemoryBackend();
+      await memory.createRun(createTestRun(runId));
+      const memoryInput = sharedContextCheckpoint("memory");
+      const memorySnapshot = await new CheckpointManager({ backend: memory }).createCheckpoint(
+        runId,
+        memoryInput.nodeId,
+        memoryInput.context,
+        memoryInput.nodeStates,
+      );
+      const memoryRetained = await memory.getLatestCheckpoint(runId);
+
       assertEquals(calls, []);
-      for (const latest of [direct, snapshot, owned, reorderedSnapshot]) {
+      for (
+        const latest of [
+          direct,
+          snapshot,
+          owned,
+          reorderedSnapshot,
+          memorySnapshot,
+          memoryRetained,
+        ]
+      ) {
         assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
         assertEquals(latest?.nodeStates.a?.output, { input: {}, other: { keep: 1 } });
+        assertEquals(JSON.stringify(latest?.context), '{"input":{},"other":{"keep":1}}');
+        assertEquals(
+          JSON.stringify(latest?.nodeStates),
+          '{"a":{"nodeId":"a","status":"completed","attempt":1,"output":{"input":{},"other":{"keep":1}}}}',
+        );
       }
     });
 

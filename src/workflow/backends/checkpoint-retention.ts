@@ -5,6 +5,7 @@ import {
   deferWorkflowJsonValue,
   isDeferredWorkflowJsonValue,
   MAX_TRAVERSAL_DEPTH,
+  prepareNodeStatesUserData,
   serializeWorkflowJson,
   stabilizeWorkflowJsonPrototypeSnapshot,
   WORKFLOW_CHECKPOINT_RECORD,
@@ -1102,7 +1103,9 @@ export function cloneRetainedCheckpoint(
       options.allowRecordDataCloneFallback,
     ),
     nodeStates: cloneCheckpointJson<Checkpoint["nodeStates"]>(
-      nodeStates,
+      options.allowRecordDataCloneFallback
+        ? prepareNodeStatesUserData(nodeStates, undefined, { strictContext: false }, records)
+        : nodeStates,
       "checkpoint.nodeStates",
       WORKFLOW_NODE_RECORD,
       records,
