@@ -1105,6 +1105,39 @@ describe("MemoryBackend", () => {
       assertEquals((await backend.getRun("run-node-state-bigint"))?.nodeStates, {});
     });
 
+    it("normalizes own undefined node-state data and rejects it in strict mode (#2242)", async () => {
+      await backend.createRun(createTestRun("run-node-state-undefined", {
+        nodeStates: {
+          child: {
+            nodeId: "child",
+            status: "completed",
+            attempt: 1,
+            output: undefined,
+          },
+        },
+      }));
+
+      const stored = (await backend.getRun("run-node-state-undefined"))?.nodeStates.child;
+      assertEquals(Object.hasOwn(stored ?? {}, "output"), false);
+
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-node-state-undefined", {
+            nodeStates: {
+              child: {
+                nodeId: "child",
+                status: "completed",
+                attempt: 1,
+                output: undefined,
+              },
+            },
+          })),
+        Error,
+        "strictContext enabled: nodeStates.output.<redacted> (undefined)",
+      );
+    });
+
     it("rejects lossy node-state user data when strictContext is enabled (#2242)", async () => {
       const strictBackend = new MemoryBackend({ strictContext: true });
       const startedAt = new Date("2026-01-01T00:00:00Z");

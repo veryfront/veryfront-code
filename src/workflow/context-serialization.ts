@@ -1615,8 +1615,8 @@ function collectNodeStateField(
 ): Record<string, unknown> | undefined {
   let values: Record<string, unknown> | undefined;
   for (const nodeId of objectKeys(nodeStates)) {
+    if (!objectHasOwn(nodeStates[nodeId]!, field)) continue;
     const value = nodeStates[nodeId]![field];
-    if (value === undefined) continue;
     // A plain object, because strict mode reports any other prototype as lossy,
     // with defined keys so a node id such as `__proto__` stays an own key.
     values ??= {};
