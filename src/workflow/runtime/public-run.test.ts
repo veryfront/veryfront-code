@@ -62,6 +62,8 @@ describe("workflow/runtime/public-run", () => {
       step: {
         ...completedState("step", nestedUserOutput),
         _subWorkflowOwnerPath: "internal-owner",
+        _subWorkflowCompletedChildIds: ["child"],
+        _loopOutputRetry: { context: leakedContext, iteration: 0 },
         _subWorkflowContext: { private: frameworkTenant },
         _subWorkflowContextWaits: [{ nodeId: "private-wait", waitInstanceId: "private-instance" }],
         _activeCompositeChildIds: ["waiting-child"],
@@ -227,6 +229,8 @@ describe("workflow/runtime/public-run", () => {
     assertEquals(projected.checkpoints[0]?.context.env, undefined);
     for (const states of [projected.nodeStates, projected.checkpoints[0]!.nodeStates]) {
       assertEquals(states.step?._subWorkflowOwnerPath, undefined);
+      assertEquals(states.step?._subWorkflowCompletedChildIds, undefined);
+      assertEquals(states.step?._loopOutputRetry, undefined);
       assertEquals(states.step?._subWorkflowContext, undefined);
       assertEquals(states.step?._subWorkflowContextWaits, undefined);
       assertEquals(states.step?._activeCompositeChildIds, undefined);
