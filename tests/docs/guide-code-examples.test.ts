@@ -328,6 +328,11 @@ describe("Guide: ai-gateway-quickstart.md", () => {
       section(guide, "### Google GenAI (TypeScript)"),
       `baseUrl: "${base.slice(0, -"/v1beta".length)}"`,
     );
+    // The SDK sends `apiKey` as x-goog-api-key, not as a Bearer token (pinned in
+    // tests/integration/docs/provider-client-examples.test.ts), so the guide must
+    // name that header wherever it states how the key is sent.
+    assertStringIncludes(section(guide, "### Google GenAI (TypeScript)"), "`x-goog-api-key`");
+    assertStringIncludes(section(guide, "## Base URLs and key types"), "`x-goog-api-key`");
   });
 
   it("lists models from the neutral model list and names the project for account keys", async () => {

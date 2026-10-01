@@ -34,8 +34,9 @@ the official Anthropic SDK take `https://api.veryfront.com/ai`. Clients that
 take a full version path, such as the Vercel AI SDK, use
 `https://api.veryfront.com/ai/v1`.
 
-Send the key as a Bearer token in the `Authorization` header. Anthropic clients
-can send it in `x-api-key` instead.
+Send the key as a Bearer token in the `Authorization` header. Clients can also
+send it in their native key header: `x-api-key` for Anthropic clients and
+`x-goog-api-key` for Gemini clients.
 
 | Key type    | Scope                                                           | Extra header                               |
 | ----------- | --------------------------------------------------------------- | ------------------------------------------ |
@@ -333,8 +334,9 @@ print(llm.invoke("Say hello.").content)
 ### Google GenAI (TypeScript)
 
 The Gemini client adds the API version to its base URL, so `/ai` plus the
-default `v1beta` reaches `/ai/v1beta`. Gemini models can be named with or
-without the `google/` prefix:
+default `v1beta` reaches `/ai/v1beta`. The client sends `apiKey` in the
+`x-goog-api-key` header, which the gateway accepts. Gemini models can be named
+with or without the `google/` prefix:
 
 ```ts
 import { GoogleGenAI } from "@google/genai";
