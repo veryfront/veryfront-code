@@ -570,6 +570,9 @@ describe("executor byte protocol", () => {
   it("bounds terminal release writes and rejects the call when release stalls", async () => {
     let input!: ReadableStreamDefaultController<Uint8Array>;
     const stalledWrite = Promise.withResolvers<void>();
+    const releaseWriteStarted = Promise.withResolvers<void>();
+    let releaseStartWatchdog: ReturnType<typeof setTimeout> | undefined;
+    let releaseDeadlineWatchdog: ReturnType<typeof setTimeout> | undefined;
     const channel = createExecutorChannel({
       binding,
       cancellationTimeoutMs: 10,
@@ -582,7 +585,10 @@ describe("executor byte protocol", () => {
         writable: new WritableStream({
           write(bytes) {
             const frame = JSON.parse(new TextDecoder().decode(bytes.subarray(4))) as ExecutorFrame;
-            if (frame.message.type === "release") return stalledWrite.promise;
+            if (frame.message.type === "release") {
+              releaseWriteStarted.resolve();
+              return stalledWrite.promise;
+            }
           },
         }),
       },
@@ -593,11 +599,33 @@ describe("executor byte protocol", () => {
     await tick();
     input.enqueue(rawFrame(envelope({ type: "data", id: 1, index: 0, value: null }, 1)));
     input.enqueue(rawFrame(envelope({ type: "end", id: 1 }, 2)));
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
     try {
+      await Promise.race([
+        releaseWriteStarted.promise,
+        new Promise<never>((_, reject) => {
+          releaseStartWatchdog = setTimeout(
+            () => reject(new Error("release write did not start within the test runtime bound")),
+            5_000,
+          );
+        }),
+      ]);
+      clearTimeout(releaseStartWatchdog);
+      const closeError = await Promise.race([
+        channel.closed,
+        new Promise<never>((_, reject) => {
+          releaseDeadlineWatchdog = setTimeout(
+            () => reject(new Error("release write exceeded the test runtime bound")),
+            250,
+          );
+        }),
+      ]);
+      assert(closeError.message.includes("release write deadline"));
       assertEquals(channel.signal.aborted, true);
+      stalledWrite.resolve();
       assertEquals(await outcome, "rejected");
     } finally {
+      clearTimeout(releaseStartWatchdog);
+      clearTimeout(releaseDeadlineWatchdog);
       channel.close();
       stalledWrite.resolve();
     }
