@@ -208,11 +208,20 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         agentRegistry.clear();
         toolRegistry.clear();
 
+        // Adapter generations are process-local: a freshly authorized adapter
+        // can read identical bytes under a new version. Reuse compiled modules
+        // for the same complete source fingerprint, while preserving generation
+        // isolation when the adapter cannot prove content identity. The complete
+        // fingerprint also catches newly added extensionless import candidates.
+        const sourceFingerprint = await ctx.adapter.fs.getSourceSnapshotFingerprint?.();
+        const cacheNamespace = sourceFingerprint !== undefined
+          ? `${key}:content:${sourceFingerprint}`
+          : sourceSnapshotVersion === undefined
+          ? key
+          : `${key}:snapshot:${sourceSnapshotVersion}`;
         const discoveryOptions = createProjectDiscoveryConfig({
           projectDir: ctx.projectDir,
-          cacheNamespace: sourceSnapshotVersion === undefined
-            ? key
-            : `${key}:snapshot:${sourceSnapshotVersion}`,
+          cacheNamespace,
           config: ctx.config,
           fsAdapter: ctx.adapter.fs,
           // Correct by construction, unlike a bare literal elsewhere: the
