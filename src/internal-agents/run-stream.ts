@@ -15,6 +15,7 @@ import {
   markTrustedHostToolProvenance,
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
+import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import {
   type Agent,
   type AgentMessage as Message,
@@ -310,10 +311,13 @@ const controlPlaneNames = [
   "studio_todo_write",
 ];
 
+const controlPlaneNameSet = new _Set(controlPlaneNames);
+
 // Control-plane tools and the reserved `veryfront__` platform namespace are
 // executed or aliased server-side, so they never count as client tools.
 function isPlatformToolName(toolName: string): boolean {
-  return toolName.startsWith("veryfront__") || controlPlaneNames.includes(toolName);
+  return isReservedPlatformToolName(toolName) ||
+    IntrinsicReflectApply(IntrinsicSetHas, controlPlaneNameSet, [toolName]);
 }
 
 const CHILD_RUN_CONTROL_PLANE_TOOL_NAMES = new Set([
