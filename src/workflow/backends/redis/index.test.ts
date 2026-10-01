@@ -23,7 +23,7 @@ import { dependsOn, workflow } from "../../dsl/workflow.ts";
 import { map } from "../../dsl/map.ts";
 import { step } from "../../dsl/step.ts";
 import { subWorkflow } from "../../dsl/sub-workflow.ts";
-import { waitForApproval } from "../../dsl/wait.ts";
+import { waitForApproval, waitForEvent } from "../../dsl/wait.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool";
 import { RedisBackend } from "./index.ts";
@@ -46,13 +46,6 @@ import type {
   RunExecutionInfo,
   RunExecutor,
 } from "../../worker/executors/types.ts";
-import { createWorkflowClient } from "../../api/workflow-client.ts";
-import { map } from "../../dsl/map.ts";
-import { step } from "../../dsl/step.ts";
-import { subWorkflow } from "../../dsl/sub-workflow.ts";
-import { waitForApproval, waitForEvent } from "../../dsl/wait.ts";
-import { dependsOn, workflow } from "../../dsl/workflow.ts";
-
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 const jsonRawSupport = JSON as typeof JSON & {
   rawJSON(source: string): unknown;

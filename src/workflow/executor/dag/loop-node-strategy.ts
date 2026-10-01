@@ -111,6 +111,11 @@ export function toPersistedNodeStates(
       ...(state._subWorkflowContext !== undefined
         ? { _subWorkflowContext: state._subWorkflowContext }
         : {}),
+      ...(state._subWorkflowContextWaits !== undefined
+        ? {
+          _subWorkflowContextWaits: state._subWorkflowContextWaits.map((wait) => ({ ...wait })),
+        }
+        : {}),
       ...(state._activeCompositeChildIds !== undefined
         ? { _activeCompositeChildIds: [...state._activeCompositeChildIds] }
         : {}),

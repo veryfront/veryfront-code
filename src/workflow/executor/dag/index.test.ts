@@ -286,6 +286,90 @@ describe("DAGExecutor", () => {
       assertEquals(observed, [{ first: replacement, second: secondDecision }]);
     });
 
+    it("preserves a nested child's replaced wait across a later loop wait resume (#2244)", async () => {
+      const firstDecision = { approved: true, decidedAt: "2026-10-01T00:00:00.000Z" };
+      const replacement = { source: "nested-child" };
+      const secondDecision = { approved: false, decidedAt: "2026-10-01T00:01:00.000Z" };
+      const observed: unknown[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node, context) => {
+          if (node.id === "repeat/replace") context["repeat/first"] = replacement;
+          if (node.id === "repeat/observe") {
+            observed.push({ first: context["repeat/first"], second: context["repeat/second"] });
+          }
+          return { success: true, output: node.id, executionTime: 0 };
+        }),
+      });
+      const nodes = [loop("repeat", {
+        maxIterations: 1,
+        while: (_context, iteration) => iteration.iteration < 1,
+        steps: [subWorkflow("nested", {
+          workflow: {
+            id: "nested-two-wait-child",
+            steps: [
+              waitForApproval("first", { message: "First review" }),
+              { ...step("replace", { tool: "replace" }), dependsOn: ["first"] },
+              {
+                ...waitForApproval("second", { message: "Second review" }),
+                dependsOn: ["replace"],
+              },
+              { ...step("observe", { tool: "observe" }), dependsOn: ["second"] },
+            ],
+          },
+        })],
+      })];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waitingNode, "repeat/first");
+
+      const afterFirst = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: { ...first.context, "repeat/first": firstDecision },
+          nodeStates: {
+            ...first.nodeStates,
+            "repeat/first": {
+              ...first.nodeStates["repeat/first"]!,
+              status: "completed",
+              output: firstDecision,
+              completedAt: new Date(firstDecision.decidedAt),
+            },
+          },
+        }),
+      );
+      assertEquals(afterFirst.waitingNode, "repeat/second");
+      const loopState = afterFirst.context.repeat_loop_state as {
+        iterationNodeStates?: Record<string, NodeState>;
+      };
+      assertEquals(
+        loopState.iterationNodeStates?.["repeat/nested"]?._subWorkflowContextWaits?.map((wait) =>
+          wait.nodeId
+        ),
+        ["repeat/first"],
+      );
+
+      const resumed = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: { ...afterFirst.context, "repeat/second": secondDecision },
+          nodeStates: {
+            ...afterFirst.nodeStates,
+            "repeat/second": {
+              ...afterFirst.nodeStates["repeat/second"]!,
+              status: "completed",
+              output: secondDecision,
+              completedAt: new Date(secondDecision.decidedAt),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.completed, true);
+      assertEquals(observed, [{ first: replacement, second: secondDecision }]);
+    });
+
     for (const scenario of ["same instance", "new instance", "legacy instance"] as const) {
       it(`restores wait decisions for the ${scenario} boundary (#2244)`, async () => {
         const latest = { approved: true, decidedAt: "2026-10-01T00:00:00.000Z" };
