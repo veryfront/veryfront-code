@@ -38,8 +38,9 @@ jobs:
   tested-run:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
-    # On main it waits up to 30 minutes for a queue run that is still finishing.
-    timeout-minutes: 40
+    # On main it waits up to 30 minutes for a queue run that is still finishing
+    # and up to 10 more for an earlier main run to choose its release number.
+    timeout-minutes: 50
     name: tested merge-queue run
     permissions:
       actions: read

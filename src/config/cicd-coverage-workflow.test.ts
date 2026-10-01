@@ -136,10 +136,11 @@ describe("cicd coverage workflow", () => {
 
     assertStringIncludes(workflow, "coverage:");
     assertStringIncludes(workflow, "name: coverage gate");
-    assertStringIncludes(workflow, "needs: [coverage-shards]");
+    assertStringIncludes(workflow, "needs: [coverage-shards, tested-run]");
+    // A main run that reuses its green merge-queue run skips the gate.
     assertStringIncludes(
       workflow,
-      "if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
+      "if: ${{ always() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
     );
     assertEquals(
       jobTimeoutMinutes(workflow, "coverage"),
