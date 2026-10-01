@@ -9,6 +9,7 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, resolve as pathResolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -161,14 +162,26 @@ function resolveStdCompatTarget(specifier) {
   return null;
 }
 
+const importMapPrefixes = new WeakMap();
+
 function resolveFromMap(map, specifier) {
   // 1. Direct match (highest priority)
   if (map[specifier]) {
     return map[specifier];
   }
 
+  let prefixes = importMapPrefixes.get(map);
+  if (!prefixes) {
+    const entries = Object.entries(map);
+    prefixes = {
+      wildcard: entries.filter(([prefix]) => prefix.endsWith("/*")),
+      directory: entries.filter(([prefix]) => prefix.endsWith("/")),
+    };
+    importMapPrefixes.set(map, prefixes);
+  }
+
   // 2. Prefix match with wildcard (e.g., #veryfront/testing/* -> ./src/testing/*.ts)
-  for (const [prefix, target] of Object.entries(map)) {
+  for (const [prefix, target] of prefixes.wildcard) {
     if (prefix.endsWith("/*") && specifier.startsWith(prefix.slice(0, -1))) {
       let suffix = specifier.slice(prefix.length - 1);
       // If target ends with *.ts and suffix also ends with .ts, strip .ts from suffix
@@ -180,7 +193,7 @@ function resolveFromMap(map, specifier) {
   }
 
   // 3. Prefix match without wildcard (e.g., #veryfront/ -> ./src/)
-  for (const [prefix, target] of Object.entries(map)) {
+  for (const [prefix, target] of prefixes.directory) {
     if (prefix.endsWith("/") && !prefix.endsWith("/*") && specifier.startsWith(prefix)) {
       const suffix = specifier.slice(prefix.length);
       return target + suffix;
@@ -338,7 +351,7 @@ function resolveJsrStdSpecifier(specifier) {
   return findActualFile(stdTarget.replace(/^\.\//, ""));
 }
 
-export async function resolve(specifier, context, nextResolve) {
+export function resolve(specifier, context, nextResolve) {
   // Strip query strings from specifier for matching
   let cleanSpecifier = specifier;
   let querySuffix = "";
@@ -471,5 +484,37 @@ export async function load(url, context, nextLoad) {
   }
 
   // Let Node handle everything else
+  return nextLoad(url, context);
+}
+
+const requireFromResolver = createRequire(import.meta.url);
+let syncEsbuild;
+
+export function loadSync(url, context, nextLoad) {
+  if (!url.startsWith("file://")) return nextLoad(url, context);
+  const filePath = fileURLToPath(url);
+  if (filePath.endsWith(".json")) {
+    return { shortCircuit: true, format: "json", source: readFileSync(filePath, "utf-8") };
+  }
+  const loader = filePath.endsWith(".tsx")
+    ? "tsx"
+    : filePath.endsWith(".jsx")
+    ? "jsx"
+    : filePath.endsWith(".ts") && !filePath.endsWith(".d.ts")
+    ? "ts"
+    : null;
+  if (loader) {
+    syncEsbuild ??= requireFromResolver("esbuild");
+    const result = syncEsbuild.transformSync(readFileSync(filePath, "utf-8"), {
+      loader,
+      format: "esm",
+      sourcefile: filePath,
+      sourcemap: process.sourceMapsEnabled ? "inline" : false,
+      jsx: "automatic",
+      jsxImportSource: "react",
+      target: "node20",
+    });
+    return { shortCircuit: true, format: "module", source: result.code };
+  }
   return nextLoad(url, context);
 }
