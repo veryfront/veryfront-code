@@ -24,8 +24,6 @@ const logger = serverLogger.component("api-wrapper");
 interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
   sourceSnapshotVersion?: number;
-  /** Content identity of the discovered sources, when the adapter can prove it. */
-  sourceFingerprint?: Promise<string | undefined>;
   /** Set when the result has errors: rediscover once the clock reaches it. */
   retryAt?: number;
 }
@@ -183,39 +181,15 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   const existing = discoveredProjects.get<DiscoveryRecord>(key);
   if (
     existing &&
+    (sourceSnapshotVersion === undefined ||
+      existing.sourceSnapshotVersion === sourceSnapshotVersion) &&
     (existing.retryAt === undefined || now() < existing.retryAt)
   ) {
-    if (
-      sourceSnapshotVersion === undefined ||
-      existing.sourceSnapshotVersion === sourceSnapshotVersion
-    ) {
-      return existing.promise;
-    }
-    // Snapshot versions are adapter-local, so every new credential-scoped
-    // adapter reports a new one for unchanged sources. Identical complete
-    // content discovers identical primitives, so reuse the existing result.
-    const existingFingerprint = await existing.sourceFingerprint?.catch(() => undefined);
-    const currentFingerprint = existingFingerprint === undefined
-      ? undefined
-      : await ctx.adapter.fs.getSourceSnapshotFingerprint?.();
-    const current = discoveredProjects.get<DiscoveryRecord>(key);
-    if (
-      current === existing &&
-      existingFingerprint !== undefined &&
-      currentFingerprint === existingFingerprint
-    ) {
-      return existing.promise;
-    }
-    // A concurrent caller may already be discovering this snapshot version.
-    if (current !== undefined && current.sourceSnapshotVersion === sourceSnapshotVersion) {
-      return current.promise;
-    }
+    return existing.promise;
   }
 
-  const sourceFingerprint = Promise.resolve(ctx.adapter.fs.getSourceSnapshotFingerprint?.());
   const discovery: DiscoveryRecord = {
     sourceSnapshotVersion,
-    sourceFingerprint,
     promise: (async () => {
       return await runWithRegistryTransaction(async () => {
         const { discoverAll } = await import("#veryfront/discovery");
@@ -239,9 +213,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         // for the same complete source fingerprint, while preserving generation
         // isolation when the adapter cannot prove content identity. The complete
         // fingerprint also catches newly added extensionless import candidates.
-        const contentFingerprint = await sourceFingerprint;
-        const cacheNamespace = contentFingerprint !== undefined
-          ? `${key}:content:${contentFingerprint}`
+        const sourceFingerprint = await ctx.adapter.fs.getSourceSnapshotFingerprint?.();
+        const cacheNamespace = sourceFingerprint !== undefined
+          ? `${key}:content:${sourceFingerprint}`
           : sourceSnapshotVersion === undefined
           ? key
           : `${key}:snapshot:${sourceSnapshotVersion}`;

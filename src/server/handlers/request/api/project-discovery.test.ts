@@ -434,51 +434,6 @@ describe(
       assertNotStrictEquals(getAgent("snapshot-agent"), changed);
     });
 
-    it("does not rediscover for a fresh credential adapter over identical sources", async () => {
-      agentRegistry.clearAll();
-      toolRegistryInternal.clearAll();
-      const ctx = createHandlerContext(
-        "/fresh-credential-preview",
-        "fresh-credential-preview",
-        "preview",
-      );
-      let version = 1;
-      let fingerprint: string | undefined = "same-content-fingerprint";
-      let readDirCalls = 0;
-      const fs = ctx.adapter.fs as typeof ctx.adapter.fs & {
-        getSourceSnapshotVersion: () => number;
-        getSourceSnapshotFingerprint: () => Promise<string | undefined>;
-      };
-      fs.getSourceSnapshotVersion = () => version;
-      fs.getSourceSnapshotFingerprint = () => Promise.resolve(fingerprint);
-      const readDir = fs.readDir.bind(fs);
-      fs.readDir = (path) => {
-        readDirCalls++;
-        return readDir(path);
-      };
-      await writeAgentFile(ctx, "fresh-credential-agent", "UNCHANGED");
-      const first = await ensureProjectDiscovery(ctx);
-      assertExists(getAgent("fresh-credential-agent"));
-
-      // Each new credential-scoped adapter reports its own snapshot version.
-      version = 2;
-      readDirCalls = 0;
-      assertStrictEquals(await ensureProjectDiscovery(ctx), first);
-      assertEquals(readDirCalls, 0, "identical sources must not be discovered again");
-
-      // Changed content still rediscovers.
-      version = 3;
-      fingerprint = "changed-content-fingerprint";
-      assertNotStrictEquals(await ensureProjectDiscovery(ctx), first);
-      assertEquals(readDirCalls > 0, true);
-
-      // So does an adapter that cannot prove content identity.
-      const changed = await ensureProjectDiscovery(ctx);
-      version = 4;
-      fingerprint = undefined;
-      assertNotStrictEquals(await ensureProjectDiscovery(ctx), changed);
-    });
-
     it("reuses preview discovery for one source snapshot generation", async () => {
       agentRegistry.clearAll();
       toolRegistryInternal.clearAll();
