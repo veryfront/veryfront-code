@@ -382,7 +382,9 @@ describe("repository hardening", () => {
         ) {
           assertEquals(
             jobIf.trim(),
-            "if: ${{ always() }}",
+            jobName === "quality-gate-merge"
+              ? "if: ${{ always() && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
+              : "if: ${{ always() }}",
             `expected trusted aggregate ${jobName} to run and inspect skipped dependencies`,
           );
           assertEquals(
