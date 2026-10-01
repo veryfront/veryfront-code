@@ -90,22 +90,47 @@ async function prepareWorkerModule(
   };
 }
 
+function isWorkerExitMessage(message: unknown): boolean {
+  return typeof message === "object" &&
+    message !== null &&
+    (message as { type?: unknown }).type === "worker-exit";
+}
+
+/**
+ * Resolve with the first control-port message accepted by `predicate`.
+ *
+ * Completion is driven only by worker signals, never by wall-clock time: a
+ * healthy worker that starts slowly under CPU contention still answers, and a
+ * worker that retires first announces it with its `worker-exit` control
+ * message, which rejects any waiter that was not waiting for that exit.
+ * Uncaught worker errors propagate to the test through the Worker itself.
+ */
 function waitForPortMessage(
   port: MessagePort,
   predicate: (message: unknown) => boolean,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    const settle = () => {
       port.removeEventListener("message", onMessage);
-      reject(new Error("Timed out waiting for worker control message"));
-    }, 5_000);
+      port.removeEventListener("messageerror", onMessageError);
+    };
     const onMessage = (event: MessageEvent) => {
-      if (!predicate(event.data)) return;
-      clearTimeout(timeout);
-      port.removeEventListener("message", onMessage);
-      resolve(event.data);
+      if (predicate(event.data)) {
+        settle();
+        resolve(event.data);
+        return;
+      }
+      if (isWorkerExitMessage(event.data)) {
+        settle();
+        reject(new Error("Worker exited before the expected control message"));
+      }
+    };
+    const onMessageError = () => {
+      settle();
+      reject(new Error("Worker control message could not be deserialized"));
     };
     port.addEventListener("message", onMessage);
+    port.addEventListener("messageerror", onMessageError);
   });
 }
 
@@ -1830,10 +1855,7 @@ describe("worker-script prepared modules", () => {
       );
       const exitMessage = waitForPortMessage(
         channel.port1,
-        (message) =>
-          typeof message === "object" &&
-          message !== null &&
-          (message as { type?: unknown }).type === "worker-exit",
+        isWorkerExitMessage,
       );
       channel.port1.postMessage({
         type: "inspect-api-route-methods",
@@ -1942,10 +1964,7 @@ describe("worker-script bootstrap", () => {
     try {
       const exitMessage = waitForPortMessage(
         channel.port1,
-        (message) =>
-          typeof message === "object" &&
-          message !== null &&
-          (message as { type?: unknown }).type === "worker-exit",
+        isWorkerExitMessage,
       );
 
       worker.postMessage(
