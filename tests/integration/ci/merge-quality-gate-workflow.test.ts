@@ -464,7 +464,9 @@ describe("merge quality gate workflow", () => {
     const sonarDownloadIndex = steps.findIndex((step) =>
       step.name === "Download merged Sonar coverage"
     );
-    const scanIndex = steps.findIndex((step) => step.name === "SonarQube Cloud scan");
+    const scanIndex = steps.findIndex((step) =>
+      step.name === "Scan with one Sonar server-error retry"
+    );
     assertEquals(
       asRecord(
         steps[sonarDownloadIndex].with,
@@ -479,12 +481,94 @@ describe("merge quality gate workflow", () => {
       scanIndex > sonarDownloadIndex,
       "sonar must scan after downloading merged coverage",
     );
-    for (const step of steps) {
+    const fetchIndex = steps.findIndex((step) =>
+      step.name ===
+        "Fetch the pinned official Sonar action outside the scan workspace"
+    );
+    const nodeIndex = steps.findIndex((step) =>
+      step.name === "Set up Node for the pinned Sonar action"
+    );
+    assert(
+      nodeIndex > sonarDownloadIndex && fetchIndex > nodeIndex &&
+        scanIndex > fetchIndex,
+    );
+    assertEquals(asRecord(steps[nodeIndex].with, "Sonar Node inputs"), {
+      "node-version": "24",
+    });
+    const fetchStep = steps[fetchIndex];
+    assertEquals(fetchStep.shell, "bash");
+    assertEquals(
+      fetchStep.env,
+      undefined,
+      "fetching the official action receives no secrets",
+    );
+    assertEquals(
+      fetchStep.run,
+      `set -euo pipefail
+action_dir="$RUNNER_TEMP/sonarqube-scan-action"
+action_ref=SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+action_repository="\${action_ref%@*}"
+action_sha="\${action_ref##*@}"
+git init "$action_dir"
+git -C "$action_dir" fetch --depth=1 "https://github.com/$action_repository.git" "$action_sha"
+test "$(git -C "$action_dir" rev-parse FETCH_HEAD)" = "$action_sha"
+git -C "$action_dir" checkout --detach FETCH_HEAD
+`,
+      "the fetch shell must run only the reviewed pinned upstream checkout",
+    );
+    const scanStep = steps[scanIndex];
+    assertEquals(scanStep.shell, "bash");
+    assertEquals(scanStep["continue-on-error"], undefined);
+    assertEquals(
+      scanStep.run,
+      `set -euo pipefail
+# Preserve the official action and its signature verification. Only a
+# failed Compute Engine task may retry; a red quality gate never does.
+for attempt in 1 2; do
+  log="$RUNNER_TEMP/sonar-attempt-$attempt.log"
+  echo "Sonar scan attempt $attempt of 2"
+  set +e
+  node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
+  statuses=("\${PIPESTATUS[@]}")
+  set -e
+  if [ "\${statuses[1]}" -ne 0 ]; then
+    exit "\${statuses[1]}"
+  fi
+  status="\${statuses[0]}"
+  if [ "$status" -eq 0 ] || [ "$attempt" -eq 2 ]; then
+    exit "$status"
+  fi
+  if ! grep -Fq 'CE Task finished abnormally' "$log" || grep -Fq 'QUALITY GATE STATUS: FAILED' "$log"; then
+    exit "$status"
+  fi
+  echo "::warning::Retrying Sonar once after CE Task finished abnormally"
+done
+`,
+      "the secret-bearing shell may execute only the pinned upstream scanner and bounded classifier",
+    );
+    assertEquals(asRecord(scanStep.env, "Sonar scan environment"), {
+      SONAR_TOKEN: "\${{ secrets.SONAR_TOKEN }}",
+      INPUT_ARGS: "",
+      INPUT_PROJECTBASEDIR: ".",
+      INPUT_SCANNERVERSION: "8.1.0.6389",
+      INPUT_SCANNERBINARIESURL: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli",
+      INPUT_SKIPSIGNATUREVERIFICATION: "false",
+      INPUT_SCANNERBINARIESAUTHHEADER: "",
+    });
+    const retryContract = await readRepoFile(
+      ".github/workflows/sonar-retry-contract.yml",
+    );
+    assertStringIncludes(retryContract, "mixed gate and server text");
+    assertStringIncludes(retryContract, "failed log capture");
+    assertStringIncludes(retryContract, "wrapper], env=env");
+    for (const [index, step] of steps.entries()) {
+      if (index === fetchIndex || index === scanIndex) continue;
       assertEquals(
         step.run,
         undefined,
-        "the job holding SONAR_TOKEN must run no shell steps",
+        "only the pinned upstream fetch and scan may run shell",
       );
+      assert(step.env === undefined, "other Sonar steps receive no secrets");
       assert(
         typeof step.uses === "string" && !step.uses.startsWith("./"),
         "the job holding SONAR_TOKEN must not run repository actions",
@@ -518,7 +602,10 @@ describe("merge quality gate workflow", () => {
   it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
     const shards = asRecord(jobs["coverage-shards"], "coverage shards job");
-    assert(Array.isArray(shards.steps), "coverage shard steps must be an array");
+    assert(
+      Array.isArray(shards.steps),
+      "coverage shard steps must be an array",
+    );
     const steps = shards.steps.map((step) => asRecord(step, "coverage shard step"));
     const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
     assertEquals(runCommands.includes("mergeLcovReports"), false);
