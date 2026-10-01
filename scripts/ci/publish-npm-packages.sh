@@ -460,8 +460,14 @@ rc_tag_for_package() {
     # Compare integer components by digit count then digits, without losing
     # precision or sorting 10 before 9. Reject unexpected tag formats.
     def rc_key:
-      capture("^(?<major>0|[1-9][0-9]*)\\.(?<minor>0|[1-9][0-9]*)\\.(?<patch>0|[1-9][0-9]*)-rc\\.(?<run>0|[1-9][0-9]*)$")
-      | [.major, .minor, .patch, .run] | map([length, .]);
+      capture("^(?<major>0|[1-9][0-9]*)\\.(?<minor>0|[1-9][0-9]*)\\.(?<patch>0|[1-9][0-9]*)-(?<pre>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)$") as $version
+      | ([$version.major, $version.minor, $version.patch] | map([length, .]))
+        + [($version.pre | split(".") | map(
+            if test("^[0-9]+$") then
+              if test("^(0|[1-9][0-9]*)$") then [0, length, .]
+              else error("Numeric prerelease identifiers cannot have leading zeroes") end
+            else [1, .] end
+          ))];
     ($candidate | rc_key) as $next
     | if $mode == "dispatch" then
         if $current == $candidate then "true"

@@ -119,6 +119,12 @@ describe("npm package publishing", () => {
       ["0.1.10-rc.1", "0.1.9-rc.999", "rc-history"],
       ["0.1.2-rc.1000", "0.1.2-rc.999", "rc-history"],
       ["", "0.1.2-rc.200", "rc"],
+      ["0.1.2-beta.201", "0.1.2-beta.200", "rc-history"],
+      ["0.1.2-rc.preview.200", "0.1.2-rc.preview.201", "rc"],
+      ["0.1.2-alpha.10.200", "0.1.2-alpha.9.999", "rc-history"],
+      ["0.1.2-beta.200", "0.1.2-rc.1", "rc"],
+      ["0.1.2-rc.preview.200", "0.1.2-rc.999", "rc-history"],
+      ["0.1.2-rc.1.200", "0.1.2-rc.1.preview.1", "rc"],
     ]
   ) {
     it(`keeps rc monotonic when ${candidate} follows ${current || "no tag"}`, async () => {
@@ -150,7 +156,7 @@ describe("npm package publishing", () => {
     assertStringIncludes(decoder.decode(output.stderr), "rc tag lookup failed");
   });
 
-  for (const current of ["0.1.2", "0.1.2-rc.bad", "0.1.2-rc.0201"]) {
+  for (const current of ["0.1.2", "0.1.2-rc..200", "0.1.2-rc.0201"]) {
     it(`rejects unexpected rc tag ${current}`, async () => {
       const output = await runBash(
         [
