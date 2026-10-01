@@ -205,10 +205,10 @@ export function requestForWebSocketUpgrade(request: Request): Request {
 
 /**
  * Seal the request a caller-owned interceptor (the in-process proxy of
- * combined mode) produced from the sealed `source`. The interceptor sets its
- * own `x-token`, so that one comes from its output; the control plane's
- * inference and run-event tokens it would have forwarded from the headers
- * `source` no longer has carry over from `source`.
+ * combined mode) produced from the sealed `source`. A credential the
+ * interceptor writes wins; any it does not write carries over from `source`,
+ * since the interceptor no longer sees them in the headers it would have
+ * forwarded.
  */
 export function sealInterceptedRequest(source: Request, intercepted: Request): Request {
   const before = IntrinsicReflectApply(WeakMapGet, ingressCredentials, [source]) as
@@ -239,7 +239,10 @@ export function sealInterceptedRequest(source: Request, intercepted: Request): R
     sealed,
     ObjectFreeze({
       __proto__: null,
-      [INGRESS_API_TOKEN_HEADER]: after[INGRESS_API_TOKEN_HEADER],
+      // The interceptor's own x-token wins; without one, the token the request
+      // arrived with stays, as it did when interceptors saw the raw request.
+      [INGRESS_API_TOKEN_HEADER]: after[INGRESS_API_TOKEN_HEADER] ??
+        before[INGRESS_API_TOKEN_HEADER],
       [INGRESS_INFERENCE_TOKEN_HEADER]: after[INGRESS_INFERENCE_TOKEN_HEADER] ??
         before[INGRESS_INFERENCE_TOKEN_HEADER],
       [INGRESS_RUN_EVENT_TOKEN_HEADER]: after[INGRESS_RUN_EVENT_TOKEN_HEADER] ??
