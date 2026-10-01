@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { cpuUsage } from "node:process";
 import {
   assertEquals,
   assertObjectMatch,
@@ -190,9 +191,10 @@ describe("child-run-result-summary", () => {
     it("normalizes unterminated horizontal whitespace in bounded linear time", () => {
       buildChildRunResultSummary(" ".repeat(1_000), { mode: "structured" });
       const measure = (length: number): number => {
-        const start = performance.now();
+        const start = cpuUsage();
         buildChildRunResultSummary(" ".repeat(length), { mode: "structured" });
-        return performance.now() - start;
+        const elapsed = cpuUsage(start);
+        return (elapsed.user + elapsed.system) / 1_000;
       };
 
       const shortElapsedMs = measure(16_000);
