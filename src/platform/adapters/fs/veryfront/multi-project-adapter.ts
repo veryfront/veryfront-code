@@ -5,6 +5,7 @@ import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type {
   FileInfo,
   ResolveFileOptions,
+  SourceSnapshotFingerprintOptions,
   SourceSnapshotFreshnessOptions,
 } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
@@ -550,11 +551,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
       : undefined;
   }
 
-  async getSourceSnapshotFingerprint(): Promise<string | undefined> {
+  async getSourceSnapshotFingerprint(
+    options?: SourceSnapshotFingerprintOptions,
+  ): Promise<string | undefined> {
     const adapter = await this.#getAdapter();
     if (!isConcreteVeryfrontFSAdapter(adapter)) {
       return typeof adapter.getSourceSnapshotFingerprint === "function"
-        ? await adapter.getSourceSnapshotFingerprint()
+        ? await adapter.getSourceSnapshotFingerprint(options)
         : undefined;
     }
     const getSourceSnapshotFingerprint = captureEffectiveAdapterMethod(
@@ -565,7 +568,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return await IntrinsicReflectApply(
       getSourceSnapshotFingerprint,
       adapter,
-      [],
+      [options],
     );
   }
 

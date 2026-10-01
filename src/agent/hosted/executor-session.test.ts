@@ -49,8 +49,16 @@ async function tick(): Promise<void> {
 }
 
 function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
-  const expectedRequest = structuredClone(overrides.request ?? request);
-  const expectedBinding = { ...fullBinding, owner: expectedRequest.owner };
+  const expectedRequest: HostedExecutorSessionOptions["request"] = structuredClone(
+    overrides.request ?? request,
+  );
+  const expectedBinding = {
+    ...fullBinding,
+    owner: expectedRequest.owner,
+    ...(expectedRequest.executionProfile === undefined
+      ? {}
+      : { executionProfile: expectedRequest.executionProfile }),
+  };
   const time = new ManualMonotonicClock();
   const clock = createHostedExecutorSessionClock(1000, time);
   const calls: string[] = [];
@@ -179,6 +187,30 @@ function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
 }
 
 describe("hosted executor session", () => {
+  it("retains the requested HTTP profile through allocation and retirement", async () => {
+    const f = fixture({ request: { ...request, executionProfile: "http" } });
+    const session = f.start();
+    try {
+      await session.ready;
+      assertEquals(session.binding?.executionProfile, "http");
+    } finally {
+      await session.close("completed");
+      await f.peerClosed();
+    }
+  });
+
+  for (const profile of [undefined, "project-tools"] as const) {
+    it(`refuses an allocator's ${profile ?? "missing"} profile before connecting`, async () => {
+      const f = fixture({ request: { ...request, executionProfile: "http" } });
+      if (profile === undefined) delete f.returned.binding.executionProfile;
+      else f.returned.binding.executionProfile = profile;
+      const session = f.start();
+      await assertRejects(() => session.ready);
+      await session.close();
+      assertEquals(f.calls.includes("connect"), false);
+    });
+  }
+
   it("owns a global metadata session without any application project", async () => {
     const owner: HostedExecutorOwner = { scopeKind: "global", serviceName: "@example/agent" };
     const f = fixture({ request: { ...request, owner } });

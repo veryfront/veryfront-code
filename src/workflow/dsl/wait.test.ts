@@ -6,7 +6,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { delay, waitForApproval, waitForEvent, type WaitForEventOptions } from "./wait.ts";
+import {
+  delay,
+  waitForApproval,
+  waitForEvent,
+  type WaitForEventOptions,
+  waitForRuns,
+} from "./wait.ts";
 import type { WaitNodeConfig, WorkflowNode } from "../types.ts";
 import { getConfiguredTimedWaitKind, INTERNAL_DELAY_EVENT_NAME } from "../timed-wait-state.ts";
 
@@ -106,6 +112,42 @@ describe("waitForEvent()", () => {
       "reserved",
       "a wait on the reserved delay name would never be released by a published " +
         "event and its timeout would complete the node instead of failing the run",
+    );
+  });
+});
+
+describe("waitForRuns()", () => {
+  it("creates a checkpointed child-run wait without resolving dynamic ids eagerly", () => {
+    const runIds = (context: { input: unknown }) => [String(context.input)];
+    const node = waitForRuns("durable-children", { runIds });
+
+    const config = expectWaitConfig(node);
+    assertEquals(node.id, "durable-children");
+    assertEquals(config.waitType, "child_run");
+    assertEquals(config.runIds, runIds);
+    assertEquals(config.checkpoint, true);
+  });
+
+  it("rejects dependency lists the control-plane waiting contract cannot accept", () => {
+    for (
+      const runIds of [
+        [],
+        [" child "],
+        ["child.run"],
+        ["x".repeat(129)],
+        Array(1001).fill("run_child"),
+      ]
+    ) {
+      assertThrows(
+        () => waitForRuns("durable-children", { runIds }),
+        VeryfrontError,
+        "1 to 1000 run ids",
+      );
+    }
+    assertThrows(
+      () => waitForRuns("x".repeat(256), { runIds: ["run_child"] }),
+      VeryfrontError,
+      "at most 255 code units",
     );
   });
 });

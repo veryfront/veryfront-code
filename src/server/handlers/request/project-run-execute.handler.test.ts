@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertMatch,
@@ -13,8 +14,15 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import { tool } from "#veryfront/tool";
-import { createWorkflowClient, step, workflow, type WorkflowDefinition } from "#veryfront/workflow";
+import {
+  createWorkflowClient,
+  step,
+  subWorkflow,
+  workflow,
+  type WorkflowDefinition,
+} from "#veryfront/workflow";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
@@ -29,18 +37,21 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
   projectWorkflowRedisConfig,
   projectWorkflowRedisPrefix,
+  uploadEvalReportToProjectFiles,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { MemoryBackend } from "#veryfront/workflow/backends/memory.ts";
 import { dependsOn } from "#veryfront/workflow/dsl/workflow.ts";
-import { waitForApproval, waitForEvent } from "#veryfront/workflow/dsl/wait.ts";
+import { waitForApproval, waitForEvent, waitForRuns } from "#veryfront/workflow/dsl/wait.ts";
 import type { WorkflowNode } from "#veryfront/workflow/types.ts";
+import type { DiscoveredWorkflow } from "#veryfront/workflow/discovery";
 import { delay } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -271,7 +282,7 @@ describe("projectWorkflowRedisPrefix", () => {
 /** The waiting payload without its opaque boundary id, which must be a SHA-256 hex digest. */
 function withoutWaitId(waiting: Record<string, unknown>): Record<string, unknown> {
   const { wait_id: waitId, ...rest } = waiting;
-  assertMatch(String(waitId), /^[0-9a-f]{64}$/);
+  assertMatch(String(waitId), /^w(\.[0-9a-f]{16})*$/);
   return rest;
 }
 
@@ -395,7 +406,7 @@ function createDeps(
       records: [],
     }),
     createEvalAgentAdapter: () => async () => ({ text: "Paris" }),
-    uploadEvalReport: async () => null,
+    uploadEvalReport: async () => "evals/reports/default.json",
     executeKnowledgeIngest: async () => ({
       success: true,
       result: { kind: "knowledge_ingest", summary: { ingested_count: 1 } },
@@ -437,6 +448,30 @@ function createDeps(
     ...overrides,
   };
 }
+
+const runTaskDefinition: ProjectRunExecuteHandlerDeps["runTask"] = async (options) => {
+  const startedAt = performance.now();
+  try {
+    options.signal?.throwIfAborted();
+    const result = await options.task.definition.run({
+      env: {},
+      config: options.config ?? {},
+      input: options.input ?? options.config ?? {},
+      runId: options.runId,
+      projectId: options.projectId,
+      environmentId: options.environmentId,
+      signal: options.signal,
+      attempt: options.attempt ?? 1,
+    });
+    return { success: true, result, durationMs: performance.now() - startedAt };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: performance.now() - startedAt,
+    };
+  }
+};
 
 function requestJsonBody(
   init: Parameters<typeof globalThis.fetch>[1],
@@ -486,6 +521,7 @@ function createStyleArtifactCtx(
       environmentName?: string;
       releaseId?: string;
     };
+    onGetAllSourceFiles?: () => void;
   },
 ): { ctx: HandlerContext; readCalls: string[]; sourceFileCalls: { count: number } } {
   const ctx = createCtx(publicKeyPem);
@@ -495,6 +531,7 @@ function createStyleArtifactCtx(
   const underlyingAdapter = {
     async getAllSourceFiles() {
       sourceFileCalls.count++;
+      options.onGetAllSourceFiles?.();
       return options.files;
     },
     getContentContext() {
@@ -589,6 +626,49 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   });
 
   for (
+    const refusal of [
+      { body: { kind: "task", target: "echo-input" }, error: "Invalid task target" },
+      { body: { kind: "workflow", target: "publish" }, error: "Invalid workflow target" },
+      {
+        body: { kind: "task", target: "task:echo-input", deadlineAt: "invalid" },
+        error: "Invalid deadlineAt",
+      },
+    ]
+  ) {
+    it(`returns the execute request validation detail: ${refusal.error}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_1/execute",
+        { runId: "run_1", projectId: "p", ...refusal.body },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+      assertEquals(await result.response.json(), { error: refusal.error });
+    });
+  }
+
+  it("keeps unexpected execute request errors generic", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps());
+    const { publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_1/execute",
+      { runId: "run_1", projectId: "p", kind: "task", target: "task:echo-input" },
+    );
+    const request = new Request("https://example.com/api/control-plane/runs/run_1/execute", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.error(new Error("private transport diagnostic"));
+        },
+      }),
+    });
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "Invalid project run execute request" });
+  });
+
+  for (
     const deadlineAt of [
       "invalid",
       12,
@@ -628,6 +708,111 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       } else assertEquals(result.response.status, 400);
     });
   }
+
+  it("reports every durable workflow-node child dependency with all-of semantics", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "waiting",
+          currentNodes: ["durable-children"],
+          nodeStates: {
+            "durable-children": {
+              status: "running",
+              _waitInstanceId: "wait-children",
+              input: { type: "child_run", runIds: ["run_child_1", "run_child_2"] },
+            },
+          },
+          pendingApprovals: [],
+        }),
+        getPendingEventWaits: async () => [],
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+    }));
+    const runId = "run_workflow_waiting_on_children";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting_reason, "child_run");
+    assertMatch(payload.waiting.wait_id, /^w\.[0-9a-f]{16}(?:\.[0-9a-f]{16})*$/);
+    assertEquals(payload.waiting_on, [
+      {
+        kind: "run",
+        run_id: "run_child_1",
+        correlation: { kind: "workflow_node", id: "durable-children" },
+      },
+      {
+        kind: "run",
+        run_id: "run_child_2",
+        correlation: { kind: "workflow_node", id: "durable-children" },
+      },
+    ]);
+  });
+
+  it("fails the bridge response when parallel child-run waits exceed the aggregate cap", async () => {
+    const childIds = (prefix: string) =>
+      Array.from({ length: 600 }, (_, index) => `run_${prefix}_${index}`);
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "waiting",
+          currentNodes: ["first-children", "second-children"],
+          nodeStates: {
+            "first-children": {
+              status: "running",
+              _waitInstanceId: "wait-first",
+              input: { type: "child_run", runIds: childIds("first") },
+            },
+            "second-children": {
+              status: "running",
+              _waitInstanceId: "wait-second",
+              input: { type: "child_run", runIds: childIds("second") },
+            },
+          },
+          pendingApprovals: [],
+        }),
+        getPendingEventWaits: async () => [],
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+    }));
+    const runId = "run_workflow_too_many_child_dependencies";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "at most 1000 child-run dependencies");
+    assertEquals(payload.waiting_on, undefined);
+  });
 
   it("preserves a successful task result within its deadline", async () => {
     const handler = new ProjectRunExecuteHandler(createDeps());
@@ -754,6 +939,94 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "style-artifact-build",
     ]
   ) {
+    it(`stops reserved task side effects when the run is cancelled: ${target}`, async () => {
+      let receivedSignal: AbortSignal | undefined;
+      let sideEffects = 0;
+      const started = Promise.withResolvers<void>();
+      const execute = async (input: unknown) => {
+        receivedSignal = (input as { signal?: AbortSignal }).signal;
+        started.resolve();
+        if (!receivedSignal) return { success: true };
+        await new Promise<void>((resolve) =>
+          receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
+        );
+        receivedSignal.throwIfAborted();
+        sideEffects++;
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_cancel/execute",
+        {
+          runId: "run_cancel",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+        },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+
+      const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+      await started.promise;
+      controller.abort(new Error("run cancelled"));
+      const result = await pending;
+
+      assertExists(result.response);
+      assertExists(receivedSignal);
+      assertEquals(receivedSignal.aborted, true);
+      assertEquals(sideEffects, 0);
+      assertEquals((await result.response.json()).success, false);
+    });
+
+    it(`stops reserved task side effects when its deadline expires: ${target}`, async () => {
+      let receivedSignal: AbortSignal | undefined;
+      let sideEffects = 0;
+      const execute = async (input: unknown) => {
+        receivedSignal = (input as { signal?: AbortSignal }).signal;
+        if (!receivedSignal) return { success: true };
+        await new Promise<void>((resolve) =>
+          receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
+        );
+        receivedSignal.throwIfAborted();
+        sideEffects++;
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+          deadlineAt: new Date(Date.now() + 25).toISOString(),
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertExists(receivedSignal);
+      assertEquals(receivedSignal.aborted, true);
+      assertEquals(sideEffects, 0);
+      assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+    });
+
     it(`bounds a non-cooperative reserved task: ${target}`, async () => {
       let finish: (() => void) | undefined;
       const execute = async () => {
@@ -1006,6 +1279,121 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals((await result.response.json()).result, ["INV-7731", "Harbor Office"]);
   });
 
+  it("#2108 returns schema identities, violations and the input validation code on the wire", async () => {
+    const violation = {
+      phase: "output" as const,
+      reason: "invalid" as const,
+      schema_sha256: "b".repeat(64),
+      errors: [{ path: "/confidence", message: "must be number" }],
+      detected_at: "2026-09-30T00:00:00.000Z",
+    };
+    let receivedRunId: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: (options) => {
+        receivedRunId = options.runId;
+        return Promise.resolve({
+          success: true,
+          result: { confidence: "high" },
+          durationMs: 1,
+          inputSchemaSha256: "a".repeat(64),
+          outputSchemaSha256: "b".repeat(64),
+          schemaViolation: violation,
+        });
+      },
+    }));
+    const body = {
+      runId: "run_task_schema",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_schema/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(receivedRunId, "run_task_schema");
+    assertEquals(payload.input_schema_sha256, "a".repeat(64));
+    assertEquals(payload.output_schema_sha256, "b".repeat(64));
+    assertEquals(payload.schema_violation, violation);
+    assertEquals("error_code" in payload, false);
+  });
+
+  it("#2108 omits schema fields for a schema-less task so the response is unchanged", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({
+          success: true,
+          result: 1,
+          durationMs: 1,
+          inputSchemaSha256: null,
+          outputSchemaSha256: null,
+          schemaViolation: null,
+        }),
+    }));
+    const body = {
+      runId: "run_task_plain",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_plain/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(Object.keys(await result.response.json()).sort(), [
+      "duration_ms",
+      "logs",
+      "result",
+      "success",
+    ]);
+  });
+
+  it("#2108 reports INPUT_VALIDATION_FAILED with the validation errors", async () => {
+    const errors = [{ path: "/ticketText", message: "must be string" }];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({
+          success: false,
+          error: "input failed inputSchema validation",
+          errorCode: "INPUT_VALIDATION_FAILED",
+          errorDetail: { errors },
+          durationMs: 0,
+          inputSchemaSha256: "a".repeat(64),
+          outputSchemaSha256: null,
+          schemaViolation: null,
+        }),
+    }));
+    const body = {
+      runId: "run_task_bad_input",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      input: { ticketText: 42 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_bad_input/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(payload.error_detail, { errors });
+    assertEquals(payload.result, undefined);
+  });
+
   it("#2105 leaves task input undefined when the request carries none", async () => {
     let received: { hasInput?: boolean } = {};
     const handler = new ProjectRunExecuteHandler(createDeps({
@@ -1143,6 +1531,199 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(receivedConfig, { dry_run: true });
     assertEquals(receivedEnvironmentId, "11111111-1111-4111-8111-111111111111");
+  });
+
+  // veryfront/veryfront-issue-inbox#2113: an output over 1 MiB never crosses the wire.
+  it("fails a result larger than 1 MiB with OUTPUT_TOO_LARGE instead of sending it", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({ success: true, result: "x".repeat(1_048_575), durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_big",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_big/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Run output is 1048577 bytes, over the limit of 1048576 bytes",
+      error_code: "OUTPUT_TOO_LARGE",
+      error_detail: { size_bytes: 1_048_577, limit_bytes: 1_048_576 },
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("drops an oversized result from a failed run and keeps its own error", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({
+          success: false,
+          result: "x".repeat(1_048_575),
+          error: "sync failed",
+          durationMs: 7,
+        }),
+    }));
+    const body = {
+      runId: "run_task_failed_big",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_failed_big/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "sync failed",
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("sends a result of exactly 1 MiB unchanged", async () => {
+    const output = "x".repeat(1_048_574);
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: output, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_at_limit",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_at_limit/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: output,
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("sends the measured bytes of a result that would grow if serialized again", async () => {
+    const rawJSON = (JSON as unknown as { rawJSON: (text: string) => unknown }).rawJSON;
+    const output = Array.from({ length: 50_000 }, () => rawJSON("1e20"));
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: output, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_raw_json",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_raw_json/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const text = await result.response.text();
+    // 250,001 bytes as checked; parsing and serializing again would make it 1,100,001 bytes.
+    assert(text.length < 260_000, `expected the checked serialization, got ${text.length} bytes`);
+    assertStringIncludes(text, `"result":[1e20,1e20,`);
+    const parsed = JSON.parse(text) as { success: boolean; result: number[] };
+    assertEquals(parsed.success, true);
+    assertEquals(parsed.result.length, 50_000);
+  });
+
+  it("measures and sends the same serialization of a result whose toJSON changes", async () => {
+    let serializations = 0;
+    const stateful = {
+      toJSON: () => (++serializations === 1 ? "small" : "x".repeat(1_048_575)),
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: stateful, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_stateful",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_stateful/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(serializations, 1);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: "small",
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("enforces and writes the output cap with intrinsics captured before project code runs", async () => {
+    const originalJsonStringify = JSON.stringify;
+    const originalTextEncoder = globalThis.TextEncoder;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => {
+        JSON.stringify = (() => '"poisoned"') as typeof JSON.stringify;
+        globalThis.TextEncoder = class {
+          encode() {
+            return new Uint8Array();
+          }
+        } as unknown as typeof TextEncoder;
+        return Promise.resolve({ success: true, result: "x".repeat(1_048_575), durationMs: 7 });
+      },
+    }));
+    const body = {
+      runId: "run_task_poisoned_intrinsics",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_poisoned_intrinsics/execute",
+      body,
+    );
+
+    try {
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(await result.response.json(), {
+        success: false,
+        error: "Run output is 1048577 bytes, over the limit of 1048576 bytes",
+        error_code: "OUTPUT_TOO_LARGE",
+        error_detail: { size_bytes: 1_048_577, limit_bytes: 1_048_576 },
+        duration_ms: 7,
+        logs: null,
+      });
+    } finally {
+      JSON.stringify = originalJsonStringify;
+      globalThis.TextEncoder = originalTextEncoder;
+    }
   });
 
   it("preserves explicit null runtime environment targets", async () => {
@@ -1296,6 +1877,111 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedConfig, { upload_ids: ["upload-1"] });
   });
 
+  it("runs the default knowledge ingest executor and uploads its generated document", async () => {
+    const body = {
+      runId: "run_knowledge_default",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+      config: { paths: ["uploads/guide.md"], slug: "guide" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_knowledge_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    const result = await withMockFetch(
+      (async (input, init) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof Request
+          ? input.url
+          : input.toString();
+        if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md/url")) {
+          return new Response(
+            JSON.stringify({
+              signed_url: "https://signed.example.test/guide.md",
+              expires_at: "2026-09-30T23:00:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === "https://signed.example.test/guide.md") {
+          return new Response("# Guide\n\nCancellation-safe knowledge.", { status: 200 });
+        }
+        assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+        uploads.push({ url, body: requestJsonBody(init) ?? {} });
+        return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          signed.request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result.summary.ingested_count, 1);
+    assertEquals(uploads.length, 1);
+    assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+  });
+
+  it("aborts a pending knowledge upload listing before downloads or writes start", async () => {
+    const controller = new AbortController();
+    const listingStarted = Promise.withResolvers<void>();
+    let listingSignal: AbortSignal | undefined;
+    let laterRequests = 0;
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_knowledge_cancel_listing/execute",
+      {
+        runId: "run_knowledge_cancel_listing",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        config: { path_prefix: "uploads", recursive: true },
+      },
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = withMockFetch(
+      ((_input, init) => {
+        laterRequests++;
+        const signal = observeFetchRequestInit(init).signal ?? undefined;
+        listingSignal = signal;
+        listingStarted.resolve();
+        if (!signal) return Promise.reject(new Error("missing abort signal"));
+        return new Promise<Response>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          })
+        );
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    await listingStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertExists(listingSignal);
+    assertEquals(listingSignal.aborted, true);
+    assertEquals(laterRequests, 1);
+  });
+
   it("dispatches built-in style artifact builds through the reusable style executor", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     let attemptedProjectDiscovery = false;
@@ -1405,6 +2091,334 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(attemptedProjectDiscovery, false);
   });
 
+  it("runs the default dependency artifact executor and publishes its graph", async () => {
+    const body = {
+      runId: "run_dependency_artifact_default",
+      kind: "task",
+      target: "task:dependency-artifact-build",
+      projectId: "proj-1",
+      config: {
+        artifact_id: "11111111-1111-4111-8111-111111111111",
+        attempt_count: 1,
+        identity: {
+          origin_key: "npm:public",
+          package_name: "fixture-package",
+          exact_version: "1.2.3",
+          subpath: "",
+          target: "es2022",
+          profile: "standard-v1",
+        },
+        policy: { decision: "allow" },
+      },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    let uploads = 0;
+    let publications = 0;
+
+    const result = await withMockFetch(
+      (async (input) => {
+        const url = String(input);
+        if (url.startsWith("https://esm.sh/")) {
+          return new Response("export const ready = true;", {
+            status: 200,
+            headers: { "Content-Type": "text/javascript" },
+          });
+        }
+        if (url.includes("/assets/")) {
+          uploads++;
+          return new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/result")) {
+          publications++;
+          return new Response(JSON.stringify({ accepted: true, state: "ready" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          signed.request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result.state, "ready");
+    assertEquals(uploads, 1);
+    assertEquals(publications, 1);
+  });
+
+  it("aborts an in-flight dependency asset upload and never publishes the result", async () => {
+    const controller = new AbortController();
+    const uploadStarted = Promise.withResolvers<void>();
+    let uploadSignal: AbortSignal | undefined;
+    let publications = 0;
+    const body = {
+      runId: "run_dependency_artifact_cancel_upload",
+      kind: "task",
+      target: "task:dependency-artifact-build",
+      projectId: "proj-1",
+      config: {
+        artifact_id: "11111111-1111-4111-8111-111111111111",
+        attempt_count: 1,
+        identity: {
+          origin_key: "npm:public",
+          package_name: "fixture-package",
+          exact_version: "1.2.3",
+          subpath: "",
+          target: "es2022",
+          profile: "standard-v1",
+        },
+        policy: { decision: "allow" },
+      },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_cancel_upload/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = withMockFetch(
+      ((input, init) => {
+        const url = String(input);
+        if (url.startsWith("https://esm.sh/")) {
+          return Promise.resolve(
+            new Response("export const ready = true;", {
+              status: 200,
+              headers: { "Content-Type": "text/javascript" },
+            }),
+          );
+        }
+        if (url.includes("/assets/")) {
+          const signal = observeFetchRequestInit(init).signal ?? undefined;
+          uploadSignal = signal;
+          uploadStarted.resolve();
+          if (!signal) return Promise.reject(new Error("missing abort signal"));
+          return new Promise<Response>((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            })
+          );
+        }
+        if (url.endsWith("/result")) publications++;
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(request, createCtx(signed.publicKeyPem)),
+    );
+
+    await uploadStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(uploadSignal?.aborted, true);
+    assertEquals(publications, 0);
+  });
+
+  it("does not continue a release asset build after its start request is cancelled", async () => {
+    const controller = new AbortController();
+    const body = {
+      runId: "run_release_asset_cancelled",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_cancelled/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    let fetchCalls = 0;
+
+    const result = await withMockFetch(
+      (async (input) => {
+        fetchCalls++;
+        assertStringIncludes(String(input), "/releases/release-1/asset-manifest/builds");
+        controller.abort(new Error("run cancelled"));
+        return new Response(
+          JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(fetchCalls, 1);
+  });
+
+  it("runs the default release asset executor through upload and manifest publication", async () => {
+    const body = {
+      runId: "run_release_asset_default",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    const requests: string[] = [];
+
+    const result = await withMockFetch(
+      (async (input, init) => {
+        const url = String(input);
+        requests.push(`${observeFetchRequestInit(init).method ?? "GET"} ${url}`);
+        if (url.endsWith("/asset-manifest/builds")) {
+          return new Response(
+            JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("/releases/release-1/files?")) {
+          return new Response(
+            JSON.stringify({
+              data: [{
+                id: "file-1",
+                version_id: "version-1",
+                path: "pages/index.tsx",
+                content: "export default function Page() { return null; }",
+                type: "page",
+                size: 49,
+                updated_at: "2026-09-30T00:00:00.000Z",
+              }],
+              page_info: { self: null, first: null, next: null, prev: null },
+              release_id: "release-1",
+              release_version: "1",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.endsWith("/asset-manifest/assets")) {
+          return new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/asset-manifest")) {
+          return new Response(JSON.stringify({ state: "ready", manifest_version: 1 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(signed.request, ctx),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, payload.error);
+    assertEquals(payload.result.state, "ready");
+    assertEquals(requests.some((request) => request.includes("asset-manifest/assets")), true);
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), true);
+  });
+
+  it("aborts an in-flight release asset upload and never publishes the manifest", async () => {
+    const controller = new AbortController();
+    const uploadStarted = Promise.withResolvers<void>();
+    let uploadSignal: AbortSignal | undefined;
+    let manifestPuts = 0;
+    const body = {
+      runId: "run_release_asset_cancel_upload",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_cancel_upload/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+
+    const pending = withMockFetch(
+      ((input, init) => {
+        const url = String(input);
+        if (url.endsWith("/asset-manifest/builds")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        if (url.includes("/releases/release-1/files?")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [{
+                  id: "file-1",
+                  version_id: "version-1",
+                  path: "pages/index.tsx",
+                  content: "export default function Page() { return null; }",
+                  type: "page",
+                  size: 49,
+                  updated_at: "2026-09-30T00:00:00.000Z",
+                }],
+                page_info: { self: null, first: null, next: null, prev: null },
+                release_id: "release-1",
+                release_version: "1",
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        if (url.endsWith("/asset-manifest/assets")) {
+          const signal = observeFetchRequestInit(init).signal ?? undefined;
+          uploadSignal = signal;
+          uploadStarted.resolve();
+          if (!signal) return Promise.reject(new Error("missing abort signal"));
+          return new Promise<Response>((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            })
+          );
+        }
+        if (
+          url.endsWith("/asset-manifest") && observeFetchRequestInit(init).method === "PUT"
+        ) manifestPuts++;
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    await uploadStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(uploadSignal?.aborted, true);
+    assertEquals(manifestPuts, 0);
+  });
+
   it("builds style artifacts from adapter source files and adapter stylesheet reads", async () => {
     const body = {
       runId: "run_style_artifact_adapter_source",
@@ -1491,6 +2505,90 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     );
   });
 
+  it("does not publish a ready or failed style artifact after cancellation", async () => {
+    const controller = new AbortController();
+    const body = {
+      runId: "run_style_artifact_cancelled",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "Preview" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_cancelled/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities;",
+      onGetAllSourceFiles: () => controller.abort(new Error("run cancelled")),
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(recorder.upserts, []);
+  });
+
+  it("aborts an in-flight style artifact publication", async () => {
+    const controller = new AbortController();
+    const publicationStarted = Promise.withResolvers<void>();
+    let publicationSignal: AbortSignal | undefined;
+    const body = {
+      runId: "run_style_artifact_cancel_publication",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "Preview" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_cancel_publication/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities;",
+    });
+
+    const pending = withMockFetch(
+      ((_input, init) => {
+        const signal = observeFetchRequestInit(init).signal ?? undefined;
+        publicationSignal = signal;
+        publicationStarted.resolve();
+        if (!signal) return Promise.reject(new Error("missing abort signal"));
+        return new Promise<Response>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          })
+        );
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    await publicationStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(publicationSignal?.aborted, true);
+  });
+
   it("runs a discovered workflow with the canonical run id and input", async () => {
     let started:
       | {
@@ -1547,6 +2645,477 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
+  it("runs task:eval through the task runner and returns its summary and report artifact", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_task_eval_1",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-09-30T10:00:00.000Z",
+      endedAt: "2026-09-30T10:00:01.000Z",
+      summary: { records: 2, passed: 2, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const reportPath = "evals/reports/deep-research/run_task_eval_1.json";
+    let receivedEvalId: string | undefined;
+    let receivedRepetitions: number | undefined;
+    let receivedTaskId: string | undefined;
+    let receivedAgentId: string | null | undefined;
+    let receivedAuthToken: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async (options) => {
+        receivedTaskId = options.task.id;
+        return await runTaskDefinition(options);
+      },
+      findEvalById: async (evalId, options) => {
+        receivedEvalId = evalId;
+        return await createDeps().findEvalById(evalId, options);
+      },
+      runEval: async (definition, options) => {
+        receivedRepetitions = definition.repetitions;
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: "eval:private-customer\nforged-eval-row",
+          recordId: "session-123\nforged-record-row",
+          exampleId: "customer-456\nforged-example-row",
+          repetition: 1,
+          index: 0,
+          total: 2,
+          completed: true,
+          durationMs: 10,
+        });
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: definition.id,
+          recordId: "q1:2",
+          exampleId: "q1",
+          repetition: 2,
+          index: 1,
+          total: 2,
+          completed: true,
+          durationMs: 11,
+        });
+        return report;
+      },
+      createEvalAgentAdapter: (config) => {
+        receivedAgentId = config.agentId;
+        receivedAuthToken = config.authToken;
+        return async () => ({ text: "Paris" });
+      },
+      uploadEvalReport: async () => reportPath,
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_1/execute",
+      {
+        runId: "run_task_eval_1",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research", repetitions: 2 },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result, report.summary);
+    assertEquals(payload.artifacts, [{
+      kind: "eval-report",
+      path: reportPath,
+      contentType: "application/json",
+    }]);
+    assertEquals(String(payload.logs).split("\n"), [
+      '{"level":"info","message":"Eval case completed","case_index":1,"total_cases":2,"repetition":1}',
+      '{"level":"info","message":"Eval case completed","case_index":2,"total_cases":2,"repetition":2}',
+    ]);
+    assertEquals(String(payload.logs).includes("private-customer"), false);
+    assertEquals(String(payload.logs).includes("session-123"), false);
+    assertEquals(String(payload.logs).includes("customer-456"), false);
+    assertEquals(String(payload.logs).split("\n").length, 2);
+    assertEquals(receivedTaskId, "eval");
+    assertEquals(receivedEvalId, "eval:deep-research");
+    assertEquals(receivedRepetitions, 2);
+    assertEquals(receivedAgentId, "researcher");
+    assertEquals(receivedAuthToken, "runtime-token");
+  });
+
+  for (
+    const uploadFailure of [
+      {
+        name: "returns no artifact path",
+        upload: () => Promise.resolve(null),
+        error: "Eval report upload failed: report was not stored",
+      },
+      {
+        name: "rejects",
+        upload: () => Promise.reject(new Error("project file service unavailable")),
+        error: "Eval report upload failed: project file service unavailable",
+      },
+    ]
+  ) {
+    it(`fails task:eval when report upload ${uploadFailure.name}`, async () => {
+      const report: EvalReport = {
+        kind: "eval-report",
+        runId: "run_task_eval_upload_failed",
+        definitionId: "eval:deep-research",
+        targetKind: "agent",
+        target: "agent:researcher",
+        startedAt: "2026-09-30T10:00:00.000Z",
+        endedAt: "2026-09-30T10:00:01.000Z",
+        summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+        records: [],
+      };
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async () => report,
+        uploadEvalReport: uploadFailure.upload,
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_task_eval_upload_failed/execute",
+        {
+          runId: "run_task_eval_upload_failed",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, false);
+      assertEquals(payload.error, uploadFailure.error);
+      assertEquals(payload.result, report.summary);
+      assertEquals(payload.artifacts, undefined);
+    });
+  }
+
+  for (const cancelled of [true, false]) {
+    it(`eval report upload ${cancelled ? "aborts while pending" : "succeeds exactly once"}`, async () => {
+      const uploadStarted = Promise.withResolvers<void>();
+      const finishUpload = Promise.withResolvers<void>();
+      let uploads = 0;
+      let written = false;
+      let uploadSignal: AbortSignal | undefined;
+      const report: EvalReport = {
+        kind: "eval-report",
+        runId: "run_eval_report_upload",
+        definitionId: "eval:deep-research",
+        targetKind: "agent",
+        target: "agent:researcher",
+        startedAt: "2026-09-30T10:00:00.000Z",
+        endedAt: "2026-09-30T10:00:01.000Z",
+        summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+        records: [],
+      };
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async () => report,
+        uploadEvalReport: async (input) => {
+          uploads++;
+          uploadSignal = input.signal;
+          uploadStarted.resolve();
+          await finishUpload.promise;
+          uploadSignal?.throwIfAborted();
+          written = true;
+          return input.reportPath;
+        },
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_eval_report_upload/execute",
+        {
+          runId: "run_eval_report_upload",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+      const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+      await uploadStarted.promise;
+      if (cancelled) controller.abort(new Error("Run cancelled"));
+      finishUpload.resolve();
+      const result = await pending;
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertExists(uploadSignal);
+      assertEquals(uploadSignal.aborted, cancelled);
+      assertEquals(uploads, 1);
+      assertEquals(written, !cancelled);
+      assertEquals(payload.success, !cancelled);
+      if (cancelled) {
+        assertStringIncludes(payload.error, "cancelled");
+        assertEquals(payload.artifacts, undefined);
+      } else {
+        assertEquals(
+          payload.artifacts[0].path,
+          "evals/reports/deep-research/run_eval_report_upload.json",
+        );
+      }
+    });
+  }
+
+  for (const cancelled of [true, false]) {
+    it(`eval report upload HTTP transport ${cancelled ? "receives cancellation" : "stores one report"}`, async () => {
+      const uploadStarted = Promise.withResolvers<void>();
+      const finishUpload = Promise.withResolvers<void>();
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        uploadEvalReport: uploadEvalReportToProjectFiles,
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_eval_report_http/execute",
+        {
+          runId: "run_eval_report_http",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+      let written = false;
+      let uploads = 0;
+      let signal: AbortSignal | null | undefined;
+      const result = await withMockFetch(async (url, init) => {
+        const options = observeFetchRequestInit(init);
+        assertStringIncludes(String(url), "/files/evals%2Freports%2Fdeep-research%2F");
+        assertEquals(options.method, "PUT");
+        signal = options.signal;
+        uploads++;
+        uploadStarted.resolve();
+        await finishUpload.promise;
+        signal?.throwIfAborted();
+        written = true;
+        return Response.json({ path: "evals/reports/deep-research/run_eval_report_http.json" });
+      }, async () => {
+        const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+        await uploadStarted.promise;
+        if (cancelled) controller.abort(new Error("Run cancelled"));
+        finishUpload.resolve();
+        return await pending;
+      });
+      assertExists(signal);
+      assertEquals(signal.aborted, cancelled);
+      assertEquals(uploads, 1);
+      assertEquals(written, !cancelled);
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, !cancelled);
+      if (cancelled) {
+        assertStringIncludes(payload.error, "cancelled");
+        assertEquals(payload.artifacts, undefined);
+      } else {
+        assertEquals(
+          payload.artifacts[0].path,
+          "evals/reports/deep-research/run_eval_report_http.json",
+        );
+      }
+    });
+  }
+
+  it("reports a clear error when task:eval names an unknown eval", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({ runTask: runTaskDefinition }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_missing/execute",
+      {
+        runId: "run_task_eval_missing",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:missing" },
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Eval not found: eval:missing",
+      logs: null,
+      duration_ms: 0,
+    });
+  });
+
+  it("rejects the retired eval run kind and points callers to task:eval", async () => {
+    const handler = new ProjectRunExecuteHandler();
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_legacy/execute",
+      {
+        runId: "run_eval_legacy",
+        kind: "eval",
+        target: "eval:deep-research",
+        projectId: "proj-1",
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertStringIncludes(await result.response.text(), "task:eval");
+  });
+
+  it("reports task:eval as cancelled and does not begin another case", async () => {
+    const startedCases: string[] = [];
+    const firstCaseFinished = Promise.withResolvers<void>();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (definition, options) => {
+        const signal = options.signal;
+        startedCases.push("q1");
+        options.onProgress?.({
+          type: "record-finished",
+          evalId: definition.id,
+          recordId: "q1:1",
+          exampleId: "q1",
+          repetition: 1,
+          index: 0,
+          total: 2,
+          completed: true,
+          durationMs: 1,
+        });
+        firstCaseFinished.resolve();
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+        startedCases.push("q2");
+        throw new Error("unreachable");
+      },
+    }));
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_cancel/execute",
+      {
+        runId: "run_task_eval_cancel",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { "x-token": "runtime-token" },
+    );
+    const controller = new AbortController();
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+    await firstCaseFinished.promise;
+    controller.abort(new Error("Run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "cancelled");
+    assertEquals(
+      payload.logs,
+      '{"level":"info","message":"Eval case completed","case_index":1,"total_cases":2,"repetition":1}',
+    );
+    assertEquals(startedCases, ["q1"]);
+  });
+
+  it("bounds task:eval progress logs and emits one eval truncation marker", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_task_eval_many_cases",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-09-30T10:00:00.000Z",
+      endedAt: "2026-09-30T10:00:01.000Z",
+      summary: { records: 2_000, passed: 2_000, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (definition, options) => {
+        for (let index = 0; index < 2_000; index += 1) {
+          options.onProgress?.({
+            type: "record-finished",
+            evalId: definition.id,
+            recordId: `private-record-${index}`,
+            exampleId: `private-example-${index}`,
+            repetition: 1,
+            index,
+            total: 2_000,
+            completed: true,
+            durationMs: 1,
+          });
+        }
+        return report;
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_many_cases/execute",
+      {
+        runId: "run_task_eval_many_cases",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    const lines = String(payload.logs).split("\n");
+    assertEquals(lines.length, 1_001);
+    assertEquals(
+      lines.filter((line) => line.includes("Eval progress logs were truncated")).length,
+      1,
+    );
+    assertEquals(String(payload.logs).includes("private-example"), false);
+    assertEquals(String(payload.logs).includes("private-record"), false);
+  });
+
+  it("fails task:eval with RUN_TIMEOUT when its task deadline expires", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (_definition, options) => {
+        const signal = options.signal;
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+        throw new Error("unreachable");
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_eval_timeout/execute",
+      {
+        runId: "run_task_eval_timeout",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        config: { eval_id: "eval:deep-research" },
+        deadlineAt: new Date(Date.now() + 25).toISOString(),
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error_code, "RUN_TIMEOUT");
+  });
+
   it("runs a discovered eval with the canonical run id and local routed AG-UI adapter endpoint", async () => {
     const report: EvalReport = {
       kind: "eval-report",
@@ -1572,6 +3141,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedProjectIdHeader: unknown;
     let receivedBranchName: unknown;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       runEval: async (_definition, options) => {
         receivedRunId = options.runId;
         receivedBaseDir = options.baseDir;
@@ -1593,12 +3163,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_1",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
       input: { dataset: "smoke" },
-      config: { repetitions: 2 },
+      config: { eval_id: "eval:deep-research", repetitions: 2 },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_1/execute",
@@ -1623,7 +3193,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: true,
-      result: report,
+      result: report.summary,
+      artifacts: [{
+        kind: "eval-report",
+        path: "evals/reports/default.json",
+        contentType: "application/json",
+      }],
       duration_ms: 0,
       logs: null,
     });
@@ -1641,6 +3216,122 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedBranchName, "main");
   });
 
+  it("rejects schema-invalid eval input before the eval executes", async () => {
+    let executed = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async () => ({
+        id: "eval:invoice-lookup",
+        name: "Invoice lookup",
+        filePath: "evals/invoice-lookup.eval.ts",
+        exportName: "default",
+        definition: evalAgent({
+          id: "eval:invoice-lookup",
+          target: "agent:invoice-lookup",
+          dataset: datasets.inline([{ id: "invoice-1", input: "Find an invoice" }]),
+          inputSchema: defineSchema((v) => v.object({ invoiceId: v.string() }))(),
+        }),
+      }),
+      runEval: async () => {
+        executed = true;
+        throw new Error("eval must not execute");
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_invalid_input/execute",
+      {
+        runId: "run_eval_invalid_input",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        input: { invoiceId: 42 },
+        config: { eval_id: "eval:invoice-lookup" },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const body = await result.response.json();
+    assertEquals(body.success, false);
+    assertEquals(body.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(body.error_detail.errors.length, 1);
+    assertEquals(body.error_detail.errors[0].path, "/invoiceId");
+    assertEquals(executed, false);
+  });
+
+  it("executes an eval whose run input matches its schema", async () => {
+    let executed = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async () => ({
+        id: "eval:invoice-lookup",
+        name: "Invoice lookup",
+        filePath: "evals/invoice-lookup.eval.ts",
+        exportName: "default",
+        definition: evalAgent({
+          id: "eval:invoice-lookup",
+          target: "agent:invoice-lookup",
+          dataset: datasets.inline([{ id: "invoice-1", input: "Find an invoice" }]),
+          inputSchema: defineSchema((v) => v.object({ invoiceId: v.string() }))(),
+        }),
+      }),
+      runEval: async (definition, options) => {
+        executed = true;
+        return createDeps().runEval(definition, options);
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_valid_input/execute",
+      {
+        runId: "run_eval_valid_input",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        input: { invoiceId: "INV-7731" },
+        config: { eval_id: "eval:invoice-lookup" },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(executed, true);
+  });
+
+  it("executes a schema-less eval with any JSON run input", async () => {
+    let executed = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      runEval: async (definition, options) => {
+        executed = true;
+        return createDeps().runEval(definition, options);
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_schema_less/execute",
+      {
+        runId: "run_eval_schema_less",
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        input: ["any", { json: true }, 42],
+        config: { eval_id: "eval:deep-research" },
+      },
+      { "x-token": "runtime-token" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(executed, true);
+  });
+
   it("parses the eval step ceiling with intrinsics captured before project discovery", async () => {
     const definition = evalAgent({
       id: "eval:deep-research",
@@ -1653,6 +3344,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const originalTrunc = Math.trunc;
     let receivedMaxSteps: number | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async () => ({
         id: "eval:deep-research",
         name: "Deep research quality",
@@ -1676,10 +3368,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_intrinsic_step_limit",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
-      config: { max_steps: "2.9" },
+      config: { eval_id: "eval:deep-research", max_steps: "2.9" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_intrinsic_step_limit/execute",
@@ -1706,6 +3398,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("runs a dataset eval without a runtime API token", async () => {
     let adapterCreated = false;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:dataset"
           ? {
@@ -1728,9 +3421,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "/api/control-plane/runs/run_eval_dataset/execute",
       {
         runId: "run_eval_dataset",
-        kind: "eval",
-        target: "eval:dataset",
+        kind: "task",
+        target: "task:eval",
         projectId: "proj-1",
+        config: { eval_id: "eval:dataset" },
       },
     );
 
@@ -1759,6 +3453,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedProjectReference: string | undefined;
     let receivedReportPath: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       runEval: async () => report,
       uploadEvalReport: async (input) => {
         receivedReport = input.report;
@@ -1769,9 +3464,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_report_artifact",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_report_artifact/execute",
@@ -1785,7 +3481,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: true,
-      result: { ...report, reportPath },
+      result: report.summary,
       artifacts: [{ kind: "eval-report", path: reportPath, contentType: "application/json" }],
       duration_ms: 0,
       logs: null,
@@ -1798,6 +3494,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedEndpoint = config.endpoint;
         return async () => ({ text: "Paris" });
@@ -1805,10 +3502,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_local_endpoint",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_local_endpoint/execute",
@@ -1858,6 +3556,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       } as Agent["config"],
     });
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:deep-research"
           ? {
@@ -1881,10 +3580,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_source_agent",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_source_agent/execute",
@@ -1904,18 +3604,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const payload = await result.response.json();
       assertEquals(payload.success, true);
       assertEquals(payload.error, undefined);
-      assertEquals(payload.result.summary.failed, 0);
-      assertEquals(payload.result.summary.usage, {
+      assertEquals(payload.result.failed, 0);
+      assertEquals(payload.result.usage, {
         inputTokens: 12,
         outputTokens: 8,
         totalTokens: 20,
       });
-      assertEquals(payload.result.records[0]?.usage, {
-        inputTokens: 12,
-        outputTokens: 8,
-        totalTokens: 20,
-      });
-      assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
       assertEquals(capturedContext?.runIdBindsToolAuthorization, false);
     } finally {
       agentRegistry.delete("researcher");
@@ -1964,6 +3658,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
 
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:deep-research"
           ? {
@@ -1987,11 +3682,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_restricted_tools",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
-      config: { allowedTools: ["eval_allowed_lookup", "web_fetch"], max_steps: 2 },
+      config: {
+        eval_id: "eval:deep-research",
+        allowedTools: ["eval_allowed_lookup", "web_fetch"],
+        max_steps: 2,
+      },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_restricted_tools/execute",
@@ -2141,6 +3840,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     > = [];
     const conversationId = "11111111-1111-4111-8111-111111111111";
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:deep-research"
           ? {
@@ -2162,10 +3862,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_durable_agent",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_durable_agent/execute",
@@ -2215,8 +3916,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     const payload = await result.response.json();
     assertEquals(payload.success, true);
-    assertEquals(payload.result.summary.failed, 0);
-    assertEquals(payload.result.records[0]?.output?.text, "Paris");
+    assertEquals(payload.result.failed, 0);
 
     assertEquals(requests.length, 2);
     const createRequest = requests[0];
@@ -2260,6 +3960,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const conversationId = "22222222-2222-4222-8222-222222222222";
     const environmentId = "33333333-3333-4333-8333-333333333333";
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       findEvalById: async (target) =>
         target === "eval:deep-research"
           ? {
@@ -2327,13 +4028,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     };
     const body = {
       runId: "run_eval_durable_env_agent",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
       runtimeTargetKind: "environment",
       runtimeTargetEnvironmentId: environmentId,
-      config: { model: "model-override-1", max_steps: 3 },
+      config: { eval_id: "eval:deep-research", model: "model-override-1", max_steps: 3 },
     };
     const result = await execute(body);
 
@@ -2397,6 +4098,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedForwardedProto: unknown;
     let receivedEnvironment: unknown;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedEndpoint = config.endpoint;
         receivedForwardedHost = config.forwardedHost;
@@ -2407,10 +4109,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_generic_control_host",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_generic_control_host/execute",
@@ -2440,6 +4143,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("preserves non-sibling eval AG-UI endpoints", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedEndpoint = config.endpoint;
         return async () => ({ text: "Paris" });
@@ -2447,10 +4151,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_custom_endpoint",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://agent-service.example.com/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_custom_endpoint/execute",
@@ -2468,6 +4173,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("uses local AG-UI endpoints for managed preview URLs when control-plane requests use an internal runtime host", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       createEvalAgentAdapter: (config) => {
         receivedEndpoint = config.endpoint;
         return async () => ({ text: "Paris" });
@@ -2475,10 +4181,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }));
     const body = {
       runId: "run_eval_internal_host",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_internal_host/execute",
@@ -2526,13 +4233,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       }],
     };
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       runEval: async () => report,
     }));
     const body = {
       runId: "run_eval_failed_adapter",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
+      config: { eval_id: "eval:deep-research" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_failed_adapter/execute",
@@ -2546,8 +4255,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), {
       success: false,
-      result: report,
+      result: report.summary,
       error: "1 eval record failed",
+      artifacts: [{
+        kind: "eval-report",
+        path: "evals/reports/default.json",
+        contentType: "application/json",
+      }],
       logs: null,
       duration_ms: 0,
     });
@@ -2717,6 +4431,390 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(response.error_detail.errors[0].path, "/release");
     assertStringIncludes(response.error, "/release");
     assertEquals(executions, 0);
+  });
+
+  it("#2176 reports nested input validation code and paths without executing child steps", async () => {
+    let executions = 0;
+    const child = workflow({
+      id: "number-child",
+      inputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      steps: [step("child-side-effect", {
+        tool: tool({
+          id: "child-side-effect",
+          description: "Record child execution",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => {
+            executions++;
+            return Promise.resolve({});
+          },
+        }),
+      })],
+    });
+    const definition = workflow({
+      id: "nested-number-parent",
+      steps: [subWorkflow("nested", {
+        workflow: child.definition as unknown as WorkflowDefinition,
+        input: { n: "x" },
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: definition.id,
+        filePath: "workflows/nested-number-parent.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_nested_invalid/execute",
+      {
+        runId: "run_workflow_nested_invalid",
+        kind: "workflow",
+        target: "workflow:nested-number-parent",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail.errors.map((error: { path: string }) => error.path), ["/n"]);
+    assertEquals(executions, 0);
+  });
+
+  it("reports workflow output schema failures with structured validation errors (#2174)", async () => {
+    const definition = workflow({
+      id: "invalid-output",
+      steps: [
+        step("n", {
+          tool: tool({
+            id: "invalid-number",
+            description: "Return an invalid number",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => Promise.resolve("x"),
+          }),
+        }),
+      ],
+      outputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      output: (context) => ({ n: context.n }),
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "invalid-output",
+        filePath: "workflows/invalid-output.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_invalid_output_1",
+      kind: "workflow",
+      target: "workflow:invalid-output",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_invalid_output_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.result, undefined);
+    assertEquals(response.error_code, "OUTPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail, {
+      errors: [{ path: "/n", message: "Invalid input: expected number, received string" }],
+    });
+    assertStringIncludes(response.error, "/n");
+  });
+
+  it("reports nested default output schema failures with structured validation errors (#2215)", async () => {
+    const definition = workflow({
+      id: "parent-invalid-nested-output",
+      steps: [subWorkflow("child", {
+        workflow: {
+          id: "invalid-nested-output",
+          outputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+          steps: [
+            step("n", {
+              tool: tool({
+                id: "invalid-nested-number",
+                description: "Return an invalid nested number",
+                inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+                execute: () => Promise.resolve("x"),
+              }),
+            }),
+          ],
+        },
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "parent-invalid-nested-output",
+        filePath: "workflows/parent-invalid-nested-output.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_invalid_nested_output_1",
+      kind: "workflow",
+      target: "workflow:parent-invalid-nested-output",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_invalid_nested_output_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.result, undefined);
+    assertEquals(response.error_code, "OUTPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail, {
+      errors: [{ path: "/n", message: "Invalid input: expected number, received string" }],
+    });
+    assertStringIncludes(response.error, "/n");
+  });
+
+  it("#2108 returns the declared workflow input and output schema identities on the wire", async () => {
+    const inputSchema = defineSchema((v) => v.object({ ticketText: v.string() }))();
+    const outputSchema = defineSchema((v) =>
+      v.object({ category: v.string(), confidence: v.number() })
+    )();
+    const definition = {
+      id: "classify-ticket-flow",
+      inputSchema,
+      outputSchema,
+      steps: [],
+    } as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "classify-ticket-flow",
+        filePath: "workflows/classify-ticket-flow.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "completed",
+          output: { category: "billing", confidence: 0.9 },
+        }),
+        cancel: async () => {},
+        destroy: async () => {},
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_schema_identity",
+      kind: "workflow",
+      target: "workflow:classify-ticket-flow",
+      projectId: "proj-1",
+      input: { ticketText: "I was charged twice" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_schema_identity/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
+    assertEquals(payload.output_schema_sha256, await schemaIdentitySha256(outputSchema));
+    assertMatch(payload.input_schema_sha256, /^[0-9a-f]{64}$/);
+    assertMatch(payload.output_schema_sha256, /^[0-9a-f]{64}$/);
+    assertEquals("schema_violation" in payload, false);
+  });
+
+  it("#2108 reports the workflow input schema identity with INPUT_VALIDATION_FAILED", async () => {
+    const inputSchema = defineSchema((v) => v.object({ release: v.string() }))();
+    const definition = workflow({
+      id: "publish",
+      inputSchema,
+      steps: [step("noop", {
+        tool: tool({
+          id: "noop",
+          description: "Must not run",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => Promise.resolve({}),
+        }),
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_identity_invalid_input",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: 1 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_identity_invalid_input/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
+    // No outputSchema is declared, so the field is omitted as on a schema-less task.
+    assertEquals("output_schema_sha256" in payload, false);
+  });
+
+  it("#2108 keeps the workflow schema identities when execution throws after discovery", async () => {
+    const inputSchema = defineSchema((v) => v.object({ ticketText: v.string() }))();
+    const outputSchema = defineSchema((v) => v.object({ category: v.string() }))();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "classify-ticket-flow",
+        filePath: "workflows/classify-ticket-flow.ts",
+        exportName: "default",
+        definition: {
+          id: "classify-ticket-flow",
+          inputSchema,
+          outputSchema,
+          steps: [],
+        } as unknown as WorkflowDefinition,
+      }),
+      createWorkflowClient: () => Promise.reject(new Error("workflow backend unavailable")),
+    }));
+    const body = {
+      runId: "run_workflow_identity_throws",
+      kind: "workflow",
+      target: "workflow:classify-ticket-flow",
+      projectId: "proj-1",
+      input: { ticketText: "I was charged twice" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_identity_throws/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, false);
+    assertEquals(payload.error, "workflow backend unavailable");
+    assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
+    assertEquals(payload.output_schema_sha256, await schemaIdentitySha256(outputSchema));
+  });
+
+  function publishWorkflow(): DiscoveredWorkflow {
+    const definition = workflow({
+      id: "publish",
+      inputSchema: defineSchema((v) => v.object({ release: v.string() }))(),
+      steps: [
+        step("noop", {
+          tool: tool({
+            id: "noop",
+            description: "Does nothing",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => Promise.resolve({}),
+          }),
+        }),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    return { id: "publish", filePath: "workflows/publish.ts", exportName: "default", definition };
+  }
+
+  it("answers a workflow run whose client cleanup never settles (#2109)", async () => {
+    let destroyCalls = 0;
+    const client = createWorkflowClient();
+    const releaseClient = client.destroy.bind(client);
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => publishWorkflow(),
+      // Durable Redis cleanup can wait forever for a reply that never comes.
+      createWorkflowClient: () =>
+        Object.assign(client, {
+          destroy: () => {
+            destroyCalls++;
+            return new Promise<void>(() => {});
+          },
+        }),
+      workflowClientDestroyTimeoutMs: 5,
+    }));
+    const body = {
+      runId: "run_workflow_cleanup_hang_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: 1 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_cleanup_hang_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail.errors[0].path, "/release");
+    assertEquals(destroyCalls, 1);
+    await releaseClient();
+  });
+
+  it("answers a workflow run whose client cleanup fails (#2109)", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => publishWorkflow(),
+      createWorkflowClient: () => {
+        const client = createWorkflowClient();
+        const releaseClient = client.destroy.bind(client);
+        return Object.assign(client, {
+          destroy: async () => {
+            await releaseClient();
+            throw new Error("socket already closed");
+          },
+        });
+      },
+    }));
+    const body = {
+      runId: "run_workflow_cleanup_fail_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "1.0.0" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_cleanup_fail_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, true);
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
@@ -3273,6 +5371,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         calls.push(["retryEventDelivery", runId, name]);
         return Promise.resolve(false);
       },
+      resumeChildRuns: (...args: unknown[]) => {
+        calls.push(["resumeChildRuns", ...args]);
+        return Promise.resolve(true);
+      },
       getApprovalManager: () => ({
         checkExpiredApprovals: () => {
           calls.push(["releaseDueWaits"]);
@@ -3584,8 +5686,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       approved: true,
       approver: "user:u1",
     }, { workflowResumeTimeoutMs: 5 });
-    assertEquals(payload.success, false);
-    assertStringIncludes(payload.error, "timed out");
+    // The resumed execution keeps running, so the canonical run stays waiting
+    // and is dispatched again shortly to report where the run got to.
+    assertEquals(payload.success, true);
+    assertEquals(payload.status, "waiting");
+    assertExists(payload.waiting.resume_at);
     assertEquals(destroyed, false);
     settle({ status: "completed", output: {} });
     finish();
@@ -3645,8 +5750,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await handler.handle(request, createCtx(signed.publicKeyPem));
     assertExists(result.response);
     const payload = await result.response.json();
-    assertEquals(payload.success, false);
-    assertStringIncludes(payload.error, "timed out");
+    assertEquals(payload.status, "waiting");
 
     requestController.abort(new Error("request closed after timeout response"));
     settle({ status: "running" });
@@ -3686,8 +5790,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { workflowResumeTimeoutMs: 5 },
       controller.signal,
     );
-    assertEquals(payload.success, false);
-    assertStringIncludes(payload.error, "timed out");
+    assertEquals(payload.success, true);
+    assertEquals(payload.status, "waiting");
     assertEquals(destroyed, false);
     controller.abort();
     finish();
@@ -3730,7 +5834,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       controller.signal,
     );
     assertEquals(payload.success, false);
-    assertStringIncludes(payload.error, "timed out");
+    assertEquals(payload.error, "Workflow run cancelled");
     assertEquals(destroyed, false);
     assertEquals(cancelled, true);
     finish();
@@ -3768,7 +5872,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { workflowResumeTimeoutMs: 5 },
       controller.signal,
     );
-    assertStringIncludes(payload.error, "timed out");
+    assertEquals(payload.error, "Workflow run cancelled");
     assertEquals(destroyed, false);
     finishCancel();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3840,6 +5944,230 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     assertEquals(calls.map(([name]) => name), ["approve"]);
     assertEquals(payload.result, { stage: "paid" });
+  });
+
+  it("delivers the second of two parallel event waits under the wait_id of their shared pause", async () => {
+    const invoiceWait = {
+      id: "wait-invoice",
+      nodeId: "invoice",
+      eventName: "invoice.received",
+      waitKind: "event",
+      status: "pending",
+    };
+    const receiptWait = {
+      id: "wait-receipt",
+      nodeId: "receipt",
+      eventName: "receipt.received",
+      waitKind: "event",
+      status: "pending",
+    };
+    const bothPending = {
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [invoiceWait, receiptWait],
+    };
+    const waitId = await reportedWaitId(bothPending);
+    // The first event was delivered: only the receipt wait is left.
+    const { client, calls } = resumableClient({
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [receiptWait],
+    });
+
+    const { payload, runId } = await executeResume(client, {
+      type: "event",
+      name: "receipt.received",
+      payload: { id: 9 },
+      wait_id: waitId,
+    });
+
+    assertEquals(calls, [["publishEvent", runId, "receipt.received", { id: 9 }]]);
+    assertEquals(payload.result, { invoice: { id: 9 } });
+  });
+
+  it("does not let an old child-only wait_id release a boundary that gained another child wait", async () => {
+    const state = {
+      status: "waiting",
+      currentNodes: ["first-children", "second-children"],
+      nodeStates: {
+        "first-children": {
+          status: "running",
+          _waitInstanceId: "wait-first",
+          input: { type: "child_run", runIds: ["run_child_a"] },
+        },
+        "second-children": {
+          status: "running",
+          _waitInstanceId: "wait-second",
+          input: { type: "child_run", runIds: ["run_child_b"] },
+        },
+      },
+      pendingApprovals: [],
+    };
+    const { client, calls } = resumableClient(state);
+    const firstHash = (await computeHash("child:wait-first:run_child_a")).slice(0, 16);
+
+    const { payload } = await executeResume(client, {
+      type: "child_run",
+      wait_id: `w.${firstHash}`,
+    });
+
+    assertEquals(calls, []);
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting_reason, "child_run");
+    assertEquals(payload.waiting_on, [
+      {
+        kind: "run",
+        run_id: "run_child_a",
+        correlation: { kind: "workflow_node", id: "first-children" },
+      },
+      {
+        kind: "run",
+        run_id: "run_child_b",
+        correlation: { kind: "workflow_node", id: "second-children" },
+      },
+    ]);
+  });
+
+  it("does not deliver an event to a later pause on the same node than the one its wait_id names", async () => {
+    const earlier = {
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [{
+        id: "wait-1",
+        nodeId: "invoice",
+        eventName: "invoice.received",
+        waitKind: "event",
+      }],
+    };
+    const waitId = await reportedWaitId(earlier);
+    const { client, calls } = resumableClient({
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [{
+        id: "wait-2",
+        nodeId: "invoice",
+        eventName: "invoice.received",
+        waitKind: "event",
+      }],
+    });
+
+    const { payload } = await executeResume(client, {
+      type: "event",
+      name: "invoice.received",
+      wait_id: waitId,
+    });
+
+    assertEquals(calls, []);
+    assertEquals(payload.status, "waiting");
+  });
+
+  it("releases nothing on a deadline dispatch at the exact expiry instant and re-reports the pause", async () => {
+    const at = 1_700_000_000_000;
+    const parked = {
+      status: "waiting",
+      pendingApprovals: [],
+      eventWaits: [{
+        id: "delay-1",
+        nodeId: "cool-off",
+        eventName: "__veryfront_delay__",
+        waitKind: "delay",
+        status: "pending",
+        expiresAt: new Date(at),
+      }],
+    };
+    const waitId = await reportedWaitId(parked);
+    const { client } = resumableClient({ ...parked, onDeadline: parked });
+
+    const { payload } = await executeResume(client, { type: "deadline", wait_id: waitId }, {
+      now: () => at,
+      sleep: () => new Promise((resolve) => setTimeout(resolve, 0)),
+      workflowResumeTimeoutMs: 200,
+    });
+
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting.wait_id, waitId);
+  });
+
+  it("fails fast when the workflow backend cannot persist the event wait a run parked on", async () => {
+    // The run parked on a `waitForEvent()` the backend saved no record for.
+    const { client } = resumableClient({ status: "waiting", pendingApprovals: [] });
+    let clock = 0;
+    let cancelled = 0;
+    const eventless = {
+      ...client,
+      persistsEventWaits: false,
+      start: () => Promise.resolve({ runId: "run_27714e62-7b05-466e-809e-0d8f1cdf1e62" }),
+      cancel: () => {
+        cancelled += 1;
+        return Promise.resolve();
+      },
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => eventless,
+      now: () => clock,
+      sleep: () => {
+        clock += 1_000;
+        return Promise.resolve();
+      },
+    }));
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+
+    assertEquals(payload.success, false);
+    assertStringIncludes(payload.error, "cannot persist event waits");
+    assertEquals(cancelled, 1);
+    assertEquals(clock < 60_000, true);
+  });
+
+  it("keeps polling an approval pause whose record is slow to persist on a backend without event waits", async () => {
+    // The run is marked waiting on an approval node before its approval record is saved.
+    let clock = 0;
+    let cancelled = 0;
+    const saved = {
+      status: "waiting",
+      currentNodes: ["sign-off"],
+      nodeStates: { "sign-off": { input: { type: "approval" } } },
+      pendingApprovals: [{ id: "approval-1", nodeId: "sign-off", status: "pending" }],
+    };
+    const { client } = resumableClient(saved);
+    const eventless = {
+      ...client,
+      persistsEventWaits: false,
+      start: () => Promise.resolve({ runId: "run_27714e62-7b05-466e-809e-0d8f1cdf1e62" }),
+      getRun: () => Promise.resolve(clock < 20_000 ? { ...saved, pendingApprovals: [] } : saved),
+      cancel: () => {
+        cancelled += 1;
+        return Promise.resolve();
+      },
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => eventless,
+      now: () => clock,
+      sleep: () => {
+        clock += 1_000;
+        return Promise.resolve();
+      },
+    }));
+    const runId = "run_27714e62-7b05-466e-809e-0d8f1cdf1e62";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      { runId, kind: "workflow", target: "workflow:publish", projectId: "proj-1" },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+
+    assertEquals(cancelled, 0);
+    assertEquals(payload.status, "waiting");
+    assertEquals(payload.waiting_reason, "approval");
   });
 
   it("reports every awaited event name when a run waits on several", async () => {
@@ -4021,9 +6349,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   describe("on a real workflow client sharing the durable backend", () => {
     const runId = "run_3f0e6c1a-9b2d-4c7e-8a5f-1d2e3f4a5b6c";
 
-    async function parkRun(steps: WorkflowNode[]) {
+    async function parkRun(
+      steps: WorkflowNode[],
+      output?: (context: Record<string, unknown>) => unknown,
+    ) {
       const backend = new MemoryBackend();
-      const definition = workflow({ id: "publish", steps }).definition;
+      const definition = workflow({ id: "publish", steps, ...(output ? { output } : {}) })
+        .definition;
       const first = createWorkflowClient({ backend });
       first.register(definition);
       const handle = await first.start("publish", {}, { runId, [CONTROL_PLANE_OWNED_START]: true });
@@ -4061,6 +6393,22 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       return await result.response.json();
     }
 
+    async function childRunWaitId(
+      parked: Awaited<ReturnType<typeof parkRun>>,
+      nodeId: string,
+      runIds: string[],
+    ): Promise<string> {
+      const run = await parked.backend.getRun(runId);
+      const waitInstanceId = run?.nodeStates[nodeId]?._waitInstanceId;
+      assertExists(waitInstanceId);
+      const hashes = await Promise.all(
+        runIds.map((childRunId) =>
+          computeHash(`child:${waitInstanceId}:${childRunId}`).then((hash) => hash.slice(0, 16))
+        ),
+      );
+      return ["w", ...hashes].join(".");
+    }
+
     const finalize = step("finalize", {
       tool: {
         id: "finalize-tool",
@@ -4088,6 +6436,142 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(payload.success, true);
       assertEquals(payload.status, undefined);
       assertEquals(payload.error, undefined);
+    });
+
+    // #2102/#2114: a resumed run must report the workflow's selected final
+    // output (#2107), exactly as the same workflow run without a pause does.
+    describe("final output of a resumed run", () => {
+      const prepare = step("prepare", {
+        tool: {
+          id: "prepare-claim",
+          type: "function",
+          description: "Prepare the claim",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => Promise.resolve({ stage: "awaiting-review", claimId: "EXP-1" }),
+        },
+      });
+      const pay = step("finalize", {
+        tool: {
+          id: "finalize-claim",
+          type: "function",
+          description: "Pay the claim",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => Promise.resolve({ stage: "paid", claimId: "EXP-1" }),
+        },
+      });
+      const selectFinal = (context: Record<string, unknown>) => context.finalize;
+
+      async function uninterruptedOutput(): Promise<unknown> {
+        const client = createWorkflowClient({ backend: new MemoryBackend() });
+        try {
+          client.register(
+            workflow({ id: "publish", steps: [prepare, pay], output: selectFinal }).definition,
+          );
+          const handle = await client.start("publish", {});
+          await handle.settled?.();
+          const run = await client.getRun(handle.runId);
+          assertEquals(run?.status, "completed");
+          return run?.output;
+        } finally {
+          await client.destroy();
+        }
+      }
+
+      it("completes an approved run with the same output as the run without a pause", async () => {
+        const expected = await uninterruptedOutput();
+        assertEquals(expected, { stage: "paid", claimId: "EXP-1" });
+        const parked = await parkRun([
+          prepare,
+          waitForApproval("manager-review", { message: "Pay it?" }),
+          pay,
+        ], selectFinal);
+
+        const payload = await dispatchResume(parked, {
+          type: "approval",
+          node_id: "manager-review",
+          approved: true,
+          approver: "user:u1",
+        });
+
+        assertEquals(payload.success, true);
+        assertEquals(payload.result, expected);
+      });
+
+      it("fails a rejected run with no output", async () => {
+        const parked = await parkRun([
+          prepare,
+          waitForApproval("manager-review", { message: "Pay it?" }),
+          pay,
+        ], selectFinal);
+
+        const payload = await dispatchResume(parked, {
+          type: "approval",
+          node_id: "manager-review",
+          approved: false,
+          approver: "user:u1",
+        });
+
+        assertEquals(payload.success, false);
+        assertEquals(payload.result ?? null, null);
+        assertStringIncludes(payload.error, "rejected");
+      });
+    });
+
+    it("continues all child-run waits without resolving their ids or replaying earlier nodes", async () => {
+      let resolutions = 0;
+      const parked = await parkRun([
+        waitForRuns("durable-children", {
+          runIds: () => {
+            resolutions++;
+            return ["run_child_1", "run_child_2"];
+          },
+        }),
+        dependsOn(finalize, "durable-children"),
+      ]);
+      assertEquals(resolutions, 1);
+      const waitId = await childRunWaitId(
+        parked,
+        "durable-children",
+        ["run_child_1", "run_child_2"],
+      );
+
+      const payload = await dispatchResume(parked, { type: "child_run", wait_id: waitId });
+
+      assertEquals(payload.success, true);
+      assertEquals(
+        resolutions,
+        1,
+        "resume must consume persisted ids instead of replaying the node",
+      );
+    });
+
+    it("continues after the child completion patch committed before its resume nudge", async () => {
+      const parked = await parkRun([
+        waitForRuns("children", { runIds: ["run_child_1"] }),
+        dependsOn(finalize, "children"),
+      ]);
+      const waiting = await parked.backend.getRun(runId);
+      const childState = waiting?.nodeStates.children;
+      assertExists(childState?._waitInstanceId);
+      await parked.backend.updateRun(runId, {
+        context: { children: { runIds: ["run_child_1"] } },
+        nodeStates: {
+          children: {
+            ...childState,
+            nodeId: "children",
+            status: "completed",
+            attempt: childState?.attempt ?? 1,
+            output: { runIds: ["run_child_1"] },
+            completedAt: new Date(),
+          },
+        },
+      });
+      const waitId = await childRunWaitId(parked, "children", ["run_child_1"]);
+
+      const payload = await dispatchResume(parked, { type: "child_run", wait_id: waitId });
+
+      assertEquals(payload.success, true);
+      assertEquals(payload.status, undefined);
     });
 
     it("fails an approval that timed out on a deadline dispatch", async () => {
@@ -4150,6 +6634,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           target: "workflow:x",
           projectId: "proj-1",
           resume: { type: "later" },
+        },
+        {
+          runId: "run_task_1",
+          kind: "workflow",
+          target: "workflow:x",
+          projectId: "proj-1",
+          resume: { type: "child_run" },
         },
       ]
     ) {
@@ -4699,6 +7190,7 @@ describe("project run inference credential header", () => {
     const originalGet = Headers.prototype.get;
     let receivedAuthToken: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
       // Stands in for loading the project eval module: from here on, project
       // code has replaced Headers.prototype.get and records every value.
       findEvalById: async (target, options) => {
@@ -4717,10 +7209,10 @@ describe("project run inference credential header", () => {
     }));
     const body = {
       runId: "run_eval_inference",
-      kind: "eval",
-      target: "eval:deep-research",
+      kind: "task",
+      target: "task:eval",
       projectId: "proj-1",
-      config: { agent_id: "researcher" },
+      config: { eval_id: "eval:deep-research", agent_id: "researcher" },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_inference/execute",

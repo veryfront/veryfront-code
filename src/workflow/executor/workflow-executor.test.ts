@@ -16,12 +16,15 @@ import {
   dependsOn,
   parallel,
   step,
+  subWorkflow,
   waitForApproval,
   waitForEvent,
+  waitForRuns,
   workflow,
 } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
-import type { WorkflowRun } from "../types.ts";
+import type { WorkflowChildRunWaitBoundary, WorkflowRun } from "../types.ts";
+import type { WorkflowRunUpdate } from "../backends/types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
 import { FakeTime } from "#std/testing/time";
 import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
@@ -203,6 +206,71 @@ class RejectingNodeStateBoundaryBackend extends MemoryBackend {
       expectedStatuses,
       expectedWorkerId,
       patch,
+    );
+  }
+}
+
+class ConcurrentSiblingChildRunBackend extends MemoryBackend {
+  injected = false;
+
+  override async updateRunIfChildWaitBoundary(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (!this.injected && patch.nodeStates?.children?.status === "completed") {
+      this.injected = true;
+      await super.updateRun(runId, {
+        context: { sibling: { approved: true } },
+        nodeStates: {
+          sibling: {
+            nodeId: "sibling",
+            status: "completed",
+            attempt: 1,
+            output: { approved: true },
+          },
+        },
+      });
+    }
+    return await super.updateRunIfChildWaitBoundary(
+      runId,
+      expectedBoundary,
+      patch,
+      expectedWorkerId,
+    );
+  }
+}
+
+class ReplaceChildBoundaryOnAtomicUpdateBackend extends MemoryBackend {
+  replaced = false;
+
+  override async updateRunIfChildWaitBoundary(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (!this.replaced) {
+      this.replaced = true;
+      await super.updateRun(runId, {
+        currentNodes: ["children"],
+        nodeStates: {
+          children: {
+            nodeId: "children",
+            status: "running",
+            attempt: 2,
+            input: { type: "child_run", runIds: ["run_child_b"] },
+            _waitInstanceId: "wait-b",
+          },
+        },
+      });
+    }
+    return await super.updateRunIfChildWaitBoundary(
+      runId,
+      expectedBoundary,
+      patch,
+      expectedWorkerId,
     );
   }
 }
@@ -457,6 +525,87 @@ describe("workflow/executor/workflow-executor", () => {
       backend.boundaryPatches.every((patch) => !("nodeStateDeletes" in patch)),
       true,
     );
+  });
+
+  it("preserves a concurrently completed sibling while consuming child-run waits", async () => {
+    const backend = new ConcurrentSiblingChildRunBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(
+      workflow({
+        id: "child-run-sibling-race",
+        steps: [waitForRuns("children", { runIds: ["run_child_1"] })],
+      }).definition,
+    );
+    const run: WorkflowRun = {
+      ...createRun("child-run-sibling-race"),
+      status: "waiting",
+      workerId: "worker-1",
+      nodeStates: {
+        children: {
+          nodeId: "children",
+          status: "running",
+          attempt: 1,
+          input: { type: "child_run", runIds: ["run_child_1"] },
+          _waitInstanceId: "wait-1",
+        },
+        sibling: { nodeId: "sibling", status: "running", attempt: 1 },
+      },
+      currentNodes: ["children"],
+    };
+    await backend.createRun(run);
+
+    assertEquals(
+      await executor.resumeChildRuns(run.id, [{
+        nodeId: "children",
+        runIds: ["run_child_1"],
+        waitInstanceId: "wait-1",
+      }]),
+      true,
+    );
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals(completed?.nodeStates.sibling?.status, "completed");
+    assertEquals(completed?.context.sibling, { approved: true });
+  });
+
+  it("does not let a resume validated for an earlier child boundary complete the current one", async () => {
+    const backend = new ReplaceChildBoundaryOnAtomicUpdateBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run: WorkflowRun = {
+      ...createRun("stale-child-run-resume"),
+      status: "waiting",
+      workerId: "worker-1",
+      nodeStates: {
+        children: {
+          nodeId: "children",
+          status: "running",
+          attempt: 1,
+          input: { type: "child_run", runIds: ["run_child_a"] },
+          _waitInstanceId: "wait-a",
+        },
+      },
+      currentNodes: ["children"],
+    };
+    await backend.createRun(run);
+
+    assertEquals(
+      await executor.resumeChildRuns(run.id, [{
+        nodeId: "children",
+        runIds: ["run_child_a"],
+        waitInstanceId: "wait-a",
+      }]),
+      false,
+    );
+
+    const current = await backend.getRun(run.id);
+    assertEquals(current?.status, "waiting");
+    assertEquals(current?.nodeStates.children?.status, "running");
+    assertEquals(current?.nodeStates.children?._waitInstanceId, "wait-b");
+    assertEquals(current?.nodeStates.children?.input, {
+      type: "child_run",
+      runIds: ["run_child_b"],
+    });
   });
 
   it("persists the exact source integration policy when a run starts", async () => {
@@ -2542,7 +2691,107 @@ describe("workflow/executor/workflow-executor final output selection (#2107)", (
     assertEquals(run?.status, "failed");
     assertEquals(run?.output, undefined);
     assertExists(run?.error);
+    assertEquals(
+      (run.error as unknown as { code?: string }).code,
+      "OUTPUT_VALIDATION_FAILED",
+    );
+    assertEquals(
+      (run.error as unknown as { detail?: unknown }).detail,
+      { errors: [{ path: "/amount", message: "Invalid input: expected number, received string" }] },
+    );
     assertEquals(completed, 0);
+  });
+
+  it("validates the default output before persisting completion", async () => {
+    let completed = 0;
+    const { executor, backend } = executorWith({
+      id: "invalid-default-output",
+      steps: [step("n", { tool: createTool("n", () => "x") })],
+      outputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      onComplete: () => {
+        completed++;
+      },
+    });
+
+    const handle = await executor.start("invalid-default-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "failed");
+    assertEquals(run?.output, undefined);
+    assertEquals(
+      (run?.error as unknown as { code?: string }).code,
+      "OUTPUT_VALIDATION_FAILED",
+    );
+    assertEquals(
+      (run?.error as unknown as { detail?: unknown }).detail,
+      { errors: [{ path: "/n", message: "Invalid input: expected number, received string" }] },
+    );
+    assertEquals(completed, 0);
+  });
+
+  it("validates default output without transforming or stripping it and runs onComplete once", async () => {
+    let completed = 0;
+    let completedOutput: unknown;
+    const { executor, backend } = executorWith({
+      id: "valid-default-output",
+      steps: [
+        step("n", { tool: createTool("n", () => "42") }),
+        step("extra", { tool: createTool("extra", () => "retained") }),
+      ],
+      outputSchema: defineSchema((v) => v.object({ n: v.coerce.number() }))(),
+      onComplete: (output) => {
+        completed++;
+        completedOutput = output;
+      },
+    });
+
+    const handle = await executor.start("valid-default-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "completed");
+    assertEquals(run?.output, { n: "42", extra: "retained" });
+    assertEquals(completedOutput, { n: "42", extra: "retained" });
+    assertEquals(completed, 1);
+  });
+
+  it("persists a typed failure when a nested default output violates its schema", async () => {
+    const { executor, backend } = executorWith({
+      id: "parent-with-invalid-child-output",
+      steps: [subWorkflow("child", {
+        workflow: {
+          id: "invalid-child-output",
+          outputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+          steps: [
+            step("amount", {
+              tool: createTool("nested-amount", () => "not-a-number"),
+            }),
+          ],
+        },
+      })],
+    });
+
+    const handle = await executor.start("parent-with-invalid-child-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertEquals(run?.status, "failed");
+    assertEquals(run?.output, undefined);
+    assertEquals(run?.nodeStates.child?.status, "failed");
+    assertEquals(
+      (run?.error as unknown as { code?: string })?.code,
+      "OUTPUT_VALIDATION_FAILED",
+    );
+    assertEquals(
+      (run?.error as unknown as { detail?: unknown })?.detail,
+      {
+        errors: [{
+          path: "/amount",
+          message: "Invalid input: expected number, received string",
+        }],
+      },
+    );
   });
 
   it("keeps the default output without a selector: every step's output by step id", async () => {

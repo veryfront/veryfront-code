@@ -3,6 +3,11 @@ import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from 
 import { isCanonicalNonEmptyString, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { INTERNAL_DELAY_EVENT_NAME, INTERNAL_WAIT_KIND_FIELD } from "../timed-wait-state.ts";
+import {
+  MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES,
+  MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS,
+  MAX_WORKFLOW_CHILD_RUN_NODE_ID_CODE_UNITS,
+} from "../limits.ts";
 
 /** Options accepted by wait for approval. */
 export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint"> {
@@ -47,6 +52,48 @@ export interface WaitForEventOptions extends Omit<BaseNodeConfig, "checkpoint"> 
   timeout?: string | number;
   retry?: RetryConfig;
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
+}
+
+/** Options accepted by a durable wait for independently executed child runs. */
+export interface WaitForRunsOptions extends Omit<BaseNodeConfig, "checkpoint" | "timeout"> {
+  runIds: string[] | ((context: WorkflowContext) => string[]);
+}
+
+/** Pause until the control plane observes every referenced child run as terminal. */
+export function waitForRuns(id: string, options: WaitForRunsOptions): WorkflowNode {
+  validateNodeId(id);
+  if (id.length > MAX_WORKFLOW_CHILD_RUN_NODE_ID_CODE_UNITS) {
+    throw INVALID_ARGUMENT.create({ detail: `waitForRuns node id must be at most 255 code units` });
+  }
+  if (Array.isArray(options.runIds)) validateChildRunIds(id, options.runIds);
+
+  return {
+    id,
+    config: {
+      type: "wait",
+      description: options.description,
+      waitType: "child_run",
+      runIds: options.runIds,
+      checkpoint: true,
+      retry: options.retry,
+      skip: options.skip,
+    },
+  };
+}
+
+function validateChildRunIds(id: string, runIds: string[]): void {
+  if (
+    runIds.length === 0 || runIds.length > MAX_WORKFLOW_CHILD_RUN_DEPENDENCIES ||
+    runIds.some((runId) =>
+      !isCanonicalNonEmptyString(runId) ||
+      runId.length > MAX_WORKFLOW_CHILD_RUN_ID_CODE_UNITS || !/^[a-zA-Z0-9_-]+$/.test(runId)
+    )
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: `waitForRuns "${id}" requires 1 to 1000 run ids matching ` +
+        `[a-zA-Z0-9_-]+ with at most 128 code units`,
+    });
+  }
 }
 
 /** Create a wait-for-event node. Pauses until external event is received. */

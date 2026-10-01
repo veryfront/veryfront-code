@@ -19,6 +19,7 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   applyContextPatch,
   applyRecordPatch,
+  cloneExecutionState,
   createRecordPatch,
   createSetContextPatch,
   mergeContextPatches,
@@ -65,6 +66,8 @@ interface PersistedLoopState {
   previousResults: unknown[];
   iterationNodeStates?: Record<string, PersistedNodeState>;
   completedNodeIds?: string[];
+  context?: WorkflowContext;
+  evaluationContext?: WorkflowContext;
 }
 
 function isOwnedLoopState(value: unknown, nodeId: string): value is PersistedLoopState {
@@ -104,9 +107,27 @@ export function toPersistedNodeStates(
       nodeId: state.nodeId,
       status: state.status,
       attempt: state.attempt,
+      ...(state._stepInputRecorded !== undefined
+        ? { _stepInputRecorded: state._stepInputRecorded }
+        : {}),
       ...(state._waitInstanceId !== undefined ? { _waitInstanceId: state._waitInstanceId } : {}),
       ...(state._subWorkflowOwnerPath !== undefined
         ? { _subWorkflowOwnerPath: state._subWorkflowOwnerPath }
+        : {}),
+      ...(state._loopOutputRetry !== undefined ? { _loopOutputRetry: state._loopOutputRetry } : {}),
+      ...(state._subWorkflowInputParsed !== undefined
+        ? { _subWorkflowInputParsed: state._subWorkflowInputParsed }
+        : {}),
+      ...(state._subWorkflowCompletedChildIds !== undefined
+        ? { _subWorkflowCompletedChildIds: [...state._subWorkflowCompletedChildIds] }
+        : {}),
+      ...(state._subWorkflowContext !== undefined
+        ? { _subWorkflowContext: state._subWorkflowContext }
+        : {}),
+      ...(state._subWorkflowContextWaits !== undefined
+        ? {
+          _subWorkflowContextWaits: state._subWorkflowContextWaits.map((wait) => ({ ...wait })),
+        }
         : {}),
       ...(state._activeCompositeChildIds !== undefined
         ? { _activeCompositeChildIds: [...state._activeCompositeChildIds] }
@@ -171,9 +192,16 @@ export async function executeLoopNodeStrategy(
   let exitedViaCondition = false;
 
   const existingLoopStateValue = context[loopStateKey];
-  const existingLoopState = isPersistedLoopState(existingLoopStateValue)
-    ? existingLoopStateValue
+  const savedOutputRetry = nodeStates[node.id]?._loopOutputRetry;
+  const outputRetryLoopState = isPersistedLoopState(savedOutputRetry)
+    ? savedOutputRetry
     : undefined;
+  const existingLoopState = outputRetryLoopState ??
+    (isPersistedLoopState(existingLoopStateValue) ? existingLoopStateValue : undefined);
+  // A retry consumes this boundary; only another failed completed-child
+  // selector may retain it again. Ordinary loop failures keep their behavior.
+  if (nodeStates[node.id]) Reflect.deleteProperty(nodeStates[node.id]!, "_loopOutputRetry");
+  let outputRetryState: Record<string, unknown> | undefined;
 
   // Child node states for the in-flight (resumed) iteration, so its already
   // completed steps are not re-executed on resume (H9).
@@ -221,8 +249,13 @@ export async function executeLoopNodeStrategy(
       isLastAllowedIteration: iteration === config.maxIterations - 1,
     };
 
-    const shouldContinue = await config.while(context, loopContext);
+    const resumingOutputRetry = resumeIteration === iteration && outputRetryLoopState !== undefined;
+    const shouldContinue = resumingOutputRetry || await config.while(context, loopContext);
     runtime.abortSignal?.throwIfAborted();
+    // Capture after the condition, which may write the context steps are built from.
+    const evaluationContext = resumingOutputRetry && outputRetryLoopState.evaluationContext
+      ? cloneExecutionState(outputRetryLoopState.evaluationContext, "Loop admission context")
+      : cloneExecutionState(context, "Loop admission context");
     if (!shouldContinue) {
       exitReason = "condition";
       exitedViaCondition = true;
@@ -234,7 +267,10 @@ export async function executeLoopNodeStrategy(
       : undefined;
     let steps: WorkflowNode[];
     if (typeof config.steps === "function") {
-      const generatedSteps = config.steps(context, loopContext);
+      const generatedSteps = config.steps(
+        resumingOutputRetry ? evaluationContext : context,
+        loopContext,
+      );
       const namespacedSteps = namespaceWorkflowNodes(`${node.id}/`, generatedSteps);
       const namespacedIds = collectWorkflowNodeIds(namespacedSteps);
       const resumeLegacyDynamicChildIds = resumingIterationNodeStates !== undefined &&
@@ -265,25 +301,40 @@ export async function executeLoopNodeStrategy(
     // already-completed steps are skipped instead of re-executed (H9),
     // reconciled against the run's own map so the node that was just resolved
     // is not replayed as still pending.
+    // An output-retry snapshot was never published, so the run's map can only
+    // hold an earlier iteration's states under the same namespaced ids.
     const iterationNodeStates = resumingIterationNodeStates
-      ? reconcileIterationNodeStates(resumingIterationNodeStates, nodeStates)
+      ? resumingOutputRetry
+        ? { ...resumingIterationNodeStates }
+        : reconcileIterationNodeStates(resumingIterationNodeStates, nodeStates)
       : {};
     // Only rehydrate once; subsequent iterations start fresh.
     resumeIterationNodeStates = undefined;
 
-    const result = await runtime.executeChildGraph(steps, {
-      id: `${node.id}_iter_${iteration}`,
-      workflowId: "",
-      status: "running",
-      input: context.input,
-      nodeStates: iterationNodeStates,
-      currentNodes: [],
-      context: { ...context, _loop: loopContext },
-      checkpoints: [],
-      pendingApprovals: [],
-      createdAt: new Date(),
-      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
-    });
+    const result = await runtime.executeChildGraph(
+      steps,
+      {
+        id: `${node.id}_iter_${iteration}`,
+        workflowId: "",
+        status: "running",
+        input: context.input,
+        nodeStates: iterationNodeStates,
+        currentNodes: [],
+        context: {
+          ...(resumingIterationNodeStates && outputRetryLoopState?.context
+            ? cloneExecutionState(outputRetryLoopState.context, "Loop output retry context")
+            : context),
+          _loop: loopContext,
+        },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
+      },
+      resumingIterationNodeStates
+        ? { resumeWaitBoundaryNodeStates: resumingIterationNodeStates }
+        : undefined,
+    );
     runtime.abortSignal?.throwIfAborted();
 
     const stalledWaitingNodes = result.stalledWaitNodes ??
@@ -334,6 +385,25 @@ export async function executeLoopNodeStrategy(
     }
 
     if (result.error) {
+      if (
+        Object.values(result.nodeStates).some((state) =>
+          state.status === "failed" && state._subWorkflowCompletedChildIds &&
+          state._subWorkflowContext
+        )
+      ) {
+        // Failed node context is deliberately not published. Keep this one
+        // iteration privately on the loop state so configured and durable
+        // retries preserve completed nested work without committing outputs.
+        outputRetryState = {
+          __veryfrontLoopState: { ownerNodeId: node.id, version: 1 },
+          iteration,
+          previousResults,
+          iterationNodeStates: toPersistedNodeStates(result.nodeStates),
+          context: cloneExecutionState(result.context, "Loop output retry context"),
+          evaluationContext,
+        };
+        nodeStates[node.id]!._loopOutputRetry = outputRetryState;
+      }
       lastError = result.error;
       lastErrorCause = result.errorCause;
       exitReason = "error";
@@ -386,6 +456,7 @@ export async function executeLoopNodeStrategy(
     status: exitReason === "error" ? "failed" : "completed",
     output,
     error: lastError,
+    ...(outputRetryState ? { _loopOutputRetry: outputRetryState } : {}),
     attempt: 1,
     startedAt: new Date(startTime),
     completedAt: new Date(),

@@ -188,11 +188,15 @@ function parseCompletedCodexSummary(comment) {
   }
   const completedAt = Date.parse(row[1]);
   const createdAt = Date.parse(comment?.created_at ?? "");
-  const updatedAt = Date.parse(comment?.updated_at ?? "");
+  const updatedAtText = comment?.updated_at ?? "";
+  const updatedAt = Date.parse(updatedAtText);
+  const updatedAtIsWholeSecond =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(updatedAtText);
   if (
     !Number.isFinite(completedAt) || !Number.isFinite(createdAt) ||
     !Number.isFinite(updatedAt) || createdAt > updatedAt ||
-    completedAt > updatedAt
+    (completedAt > updatedAt &&
+      (!updatedAtIsWholeSecond || completedAt >= updatedAt + 1000))
   ) return undefined;
   return { shortRef: row[3], completedAt, updatedAt };
 }

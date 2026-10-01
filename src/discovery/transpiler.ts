@@ -2917,7 +2917,9 @@ export function clearTranspileCacheForNamespace(namespace: string): void {
     const cachedNamespace = (JSON.parse(key) as unknown[])[0];
     if (
       cachedNamespace === namespace ||
-      (typeof cachedNamespace === "string" && cachedNamespace.startsWith(`${namespace}:snapshot:`))
+      (typeof cachedNamespace === "string" &&
+        (cachedNamespace.startsWith(`${namespace}:snapshot:`) ||
+          cachedNamespace.startsWith(`${namespace}:content:`)))
     ) {
       transpileCache.delete(key);
     }

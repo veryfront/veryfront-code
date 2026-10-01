@@ -14,9 +14,17 @@ import type {
   WorkflowQueueItem,
   WorkflowRun,
 } from "../types.ts";
+import type { WorkflowChildRunWaitBoundary } from "../types.ts";
+import { childRunWaitBoundary, sameChildRunWaitBoundary } from "../child-run-wait-boundary.ts";
 import {
+  collectWorkflowJsonRecords,
+  prepareNodeStatesUserData,
+  resolveDeferredWorkflowJsonValue,
   serializeWorkflowContext,
   serializeWorkflowJson,
+  WORKFLOW_CHECKPOINT_RECORD,
+  WORKFLOW_NODE_RECORD,
+  type WorkflowJsonRecords,
   type WorkflowJsonSerializationOptions,
 } from "../context-serialization.ts";
 import {
@@ -207,7 +215,9 @@ function materializeMemoryRunUpdate(
     contextPatch,
     contextPatchKeys,
     contextDeleteKeys: [...contextDeletes],
-    nodeStatePatch: patchNodeStates === undefined ? undefined : { ...patchNodeStates },
+    nodeStatePatch: patchNodeStates === undefined
+      ? undefined
+      : prepareNodeStatesUserData(patchNodeStates, runId, options),
     nodeStateDeleteKeys: [...nodeStateDeletes],
     storedPatch,
   };
@@ -247,7 +257,7 @@ function materializeRunStateSnapshot(
   return {
     ...snapshotFields,
     context: persistedWorkflowContext(snapshotContext, runId, options),
-    nodeStates: { ...snapshotNodeStates },
+    nodeStates: prepareNodeStatesUserData(snapshotNodeStates, runId, options),
   };
 }
 
@@ -264,15 +274,27 @@ function persistedWorkflowContextPatch(
   runId: string,
   options: WorkflowJsonSerializationOptions,
 ): Partial<WorkflowContext> {
-  return jsonParse(serializeWorkflowJson(context, "context", runId, options));
+  return jsonParse(
+    serializeWorkflowJson(context, "context", runId, options, WORKFLOW_NODE_RECORD),
+  );
 }
 
 function persistedCheckpointContext(
   context: WorkflowContext,
   runId: string,
   options: WorkflowJsonSerializationOptions,
+  records: WorkflowJsonRecords,
 ): WorkflowContext {
-  return jsonParse(serializeWorkflowJson(context, "checkpoint.context", runId, options));
+  return jsonParse(
+    serializeWorkflowJson(
+      context,
+      "checkpoint.context",
+      runId,
+      options,
+      WORKFLOW_NODE_RECORD,
+      records,
+    ),
+  );
 }
 
 function persistedApprovalDecisionData(
@@ -472,6 +494,14 @@ export class MemoryBackend implements WorkflowBackend {
     };
   }
 
+  prepareNodeStatesForPersistence(
+    runId: string | undefined,
+    nodeStates: WorkflowRun["nodeStates"],
+    records?: WorkflowJsonRecords,
+  ): WorkflowRun["nodeStates"] {
+    return prepareNodeStatesUserData(nodeStates, runId, this.config, records);
+  }
+
   // =========================================================================
   // Run Management
   // =========================================================================
@@ -486,6 +516,7 @@ export class MemoryBackend implements WorkflowBackend {
       context = persistedWorkflowContext(sourceContext, run.id, this.config);
       runForClone = {
         ...runWithoutContext,
+        nodeStates: this.prepareNodeStatesForPersistence(run.id, run.nodeStates),
         context,
         sourceIntegrationPolicy,
       };
@@ -532,12 +563,14 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId?: string,
+    extraMatches?: (run: WorkflowRun) => boolean,
   ): PreparedMemoryRunCondition {
     this.requireRun(runId);
     const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     const matches = (candidate: WorkflowRun) =>
       hasExpectedRunStatus(expectedStatusSnapshot, candidate.status) &&
-      (expectedWorkerId === undefined || candidate.workerId === expectedWorkerId);
+      (expectedWorkerId === undefined || candidate.workerId === expectedWorkerId) &&
+      (extraMatches === undefined || extraMatches(candidate));
     const run = this.requireRun(runId);
     return { matches, run: matches(run) ? run : null };
   }
@@ -631,10 +664,16 @@ export class MemoryBackend implements WorkflowBackend {
     patch: WorkflowRunUpdate,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId?: string,
+    extraMatches?: (run: WorkflowRun) => boolean,
   ): Promise<boolean> {
     let prepared: PreparedMemoryRunCondition;
     try {
-      prepared = this.prepareRunCondition(runId, expectedStatuses, expectedWorkerId);
+      prepared = this.prepareRunCondition(
+        runId,
+        expectedStatuses,
+        expectedWorkerId,
+        extraMatches,
+      );
     } catch (error) {
       return Promise.reject(error);
     }
@@ -670,6 +709,22 @@ export class MemoryBackend implements WorkflowBackend {
       patch,
       expectedStatuses,
       expectedWorkerId,
+    );
+  }
+
+  updateRunIfChildWaitBoundary(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const boundarySnapshot = structuredCloneValue(expectedBoundary);
+    return this.updateRunConditionally(
+      runId,
+      patch,
+      ["waiting"],
+      expectedWorkerId,
+      (run) => sameChildRunWaitBoundary(childRunWaitBoundary(run), boundarySnapshot),
     );
   }
 
@@ -989,13 +1044,14 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    let context: WorkflowContext;
+    const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
+    let persistedCheckpoint: Checkpoint;
     try {
-      context = persistedCheckpointContext(checkpoint.context, runId, this.config);
+      persistedCheckpoint = this.prepareCheckpointForPersistence(runId, checkpoint, records);
     } catch (error) {
       return Promise.reject(error);
     }
-    appendRetainedCheckpoint(checkpoints, { ...checkpoint, context });
+    appendRetainedCheckpoint(checkpoints, persistedCheckpoint, records);
     this.checkpoints.set(runId, checkpoints);
     this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
@@ -1023,8 +1079,11 @@ export class MemoryBackend implements WorkflowBackend {
 
     let persistedCheckpoint: Checkpoint;
     try {
-      const context = persistedCheckpointContext(checkpoint.context, storageRunId, this.config);
-      persistedCheckpoint = cloneRetainedCheckpoint({ ...checkpoint, context });
+      const records = collectWorkflowJsonRecords(checkpoint, WORKFLOW_CHECKPOINT_RECORD);
+      persistedCheckpoint = cloneRetainedCheckpoint(
+        this.prepareCheckpointForPersistence(storageRunId, checkpoint, records),
+        records,
+      );
     } catch (error) {
       return Promise.reject(error);
     }
@@ -1042,6 +1101,29 @@ export class MemoryBackend implements WorkflowBackend {
     this.checkpoints.set(storageRunId, checkpoints);
     this.advanceRunRetentionRevision(storageRunId);
     return Promise.resolve(true);
+  }
+
+  private prepareCheckpointForPersistence(
+    runId: string,
+    checkpoint: Checkpoint,
+    records: WorkflowJsonRecords,
+  ): Checkpoint {
+    const resumeEnvelope = resolveDeferredWorkflowJsonValue(checkpoint._resumeEnvelope);
+    return {
+      ...checkpoint,
+      context: persistedCheckpointContext(checkpoint.context, runId, this.config, records),
+      nodeStates: this.prepareNodeStatesForPersistence(runId, checkpoint.nodeStates, records),
+      ...(resumeEnvelope === undefined ? {} : {
+        _resumeEnvelope: {
+          ...resumeEnvelope,
+          nodeStates: this.prepareNodeStatesForPersistence(
+            runId,
+            resumeEnvelope.nodeStates,
+            records,
+          ),
+        },
+      }),
+    };
   }
 
   getLatestCheckpoint(runId: string): Promise<Checkpoint | null> {

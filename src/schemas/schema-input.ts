@@ -12,12 +12,15 @@
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { snapshotBoundedJsonValue } from "./json-value.ts";
 
+// Captured at load: project code that runs later may replace the global.
+const arrayIsArray = Array.isArray;
+
 export function snapshotJsonSchemaObject(value: unknown): JsonSchema | undefined {
   const snapshot = snapshotBoundedJsonValue(value);
   return snapshot.success &&
       typeof snapshot.value === "object" &&
       snapshot.value !== null &&
-      !Array.isArray(snapshot.value)
+      !arrayIsArray(snapshot.value)
     ? snapshot.value
     : undefined;
 }
@@ -106,6 +109,15 @@ const JSON_SCHEMA_KEYWORDS = new Set([
 
 export function isInferredJsonSchemaObject(value: JsonSchema): boolean {
   return Object.keys(value).some((key) => JSON_SCHEMA_KEYWORDS.has(key));
+}
+
+/**
+ * A contract schema that can validate: `isContractSchema` plus a callable `safeParse`. A raw
+ * JSON Schema may carry any keyword, `__zod` included, and stays raw under this check.
+ */
+export function isCallableContractSchema(value: unknown): value is Schema<unknown> {
+  return isContractSchema(value) &&
+    typeof (value as { safeParse?: unknown }).safeParse === "function";
 }
 
 export function isContractSchema(value: unknown): value is Schema<unknown> {

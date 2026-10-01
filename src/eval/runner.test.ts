@@ -226,14 +226,39 @@ describe("eval/runner", () => {
     assertEquals(report.summary.failed, 1, "a failing budget metric fails the run");
     assertEquals(
       overBudget.completed,
-      false,
-      "a failing budget metric marks the record incomplete",
+      true,
+      "a failing budget metric leaves the target complete",
     );
+    assertEquals(report.summary.gateFailures?.map((failure) => failure.name), ["ops.cost"]);
     assertEquals(
       softOnly.completed,
       true,
       "a failing soft metric leaves the record complete",
     );
+  });
+
+  it("reports only failed gates when the target completes", async () => {
+    const definition = evalAgent({
+      id: "eval:failed-gates",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?", reference: "Paris" }]),
+      metrics: [metrics.answer.exactMatch().gate()],
+      check(ctx) {
+        ctx.expect.outputContains("Paris").gate();
+      },
+    });
+    const report = await runEval(definition, {
+      adapters: { agent: async () => ({ text: "Wrong answer." }) },
+    });
+
+    assertEquals(report.records[0]?.completed, true);
+    assertEquals(report.records[0]?.error, undefined);
+    assertEquals(report.summary.failed, 1);
+    assertEquals(report.summary.passed, 0);
+    assertEquals(report.summary.gateFailures?.map((failure) => failure.name), [
+      "answer.exactMatch",
+      "expect.outputContains",
+    ]);
   });
 
   it("matches an agent's strict JSON text as structured output", async () => {
@@ -858,6 +883,64 @@ describe("eval/runner", () => {
     assertEquals(report.summary.passed, 1);
   });
 
+  it("stops before loading a cancelled eval", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("run cancelled"));
+    let loaded = false;
+    const dataset = datasets.inline([{ id: "q1", input: "First" }]);
+    dataset.load = async () => {
+      loaded = true;
+      return [];
+    };
+    const definition = evalAgent({
+      id: "eval:cancelled",
+      target: "agent:researcher",
+      dataset,
+    });
+    await assertRejects(
+      () => runEval(definition, { signal: controller.signal, adapters: {} }),
+      Error,
+      "run cancelled",
+    );
+    assertEquals(loaded, false);
+  });
+
+  for (const recordTimeoutMs of [0, 1_000]) {
+    it(`passes cancellation to the active case and stops later cases (timeout ${recordTimeoutMs})`, async () => {
+      const controller = new AbortController();
+      const started: string[] = [];
+      let activeSignal: AbortSignal | undefined;
+      const definition = evalAgent({
+        id: "eval:cancel-mid-run",
+        target: "agent:researcher",
+        dataset: datasets.inline([
+          { id: "q1", input: "First" },
+          { id: "q2", input: "Second" },
+        ]),
+      });
+      await assertRejects(
+        () =>
+          runEval(definition, {
+            signal: controller.signal,
+            recordTimeoutMs,
+            adapters: {
+              agent: ({ example, signal }) => {
+                started.push(example.id);
+                activeSignal = signal;
+                controller.abort(new Error("run cancelled"));
+                return { text: "Paris" };
+              },
+            },
+          }),
+        Error,
+        "run cancelled",
+      );
+      assertEquals(started, ["q1"]);
+      assertExists(activeSignal);
+      assertEquals(activeSignal.aborted, true);
+    });
+  }
+
   it("reports progress for every record in dataset order", async () => {
     const definition = evalAgent({
       id: "eval:progress",
@@ -870,7 +953,7 @@ describe("eval/runner", () => {
     });
     const events: string[] = [];
 
-    await runEval(definition, {
+    const report = await runEval(definition, {
       adapters: { agent: async ({ example }) => example.id === "q1" ? "Paris" : "Lyon" },
       onProgress: (event) => {
         events.push(
@@ -884,6 +967,8 @@ describe("eval/runner", () => {
       },
     });
 
+    assertEquals(report.records.map((record) => record.completed), [true, true]);
+    assertEquals(report.summary.failed, 1);
     assertEquals(events, [
       "eval-started eval:progress total=2",
       "record-started q1:1 1/2",

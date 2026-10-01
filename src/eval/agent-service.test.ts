@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
+  assertExists,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -1395,6 +1396,99 @@ describe("eval/agent-service", () => {
       output: { ok: true },
     }]);
     assertEquals(record.metrics?.[0]?.pass, true);
+  });
+
+  for (const requestTimeoutMs of [undefined, 1_000]) {
+    it(`cancels an active AG-UI stream and starts no later cases (request timeout ${requestTimeoutMs})`, async () => {
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      let requestSignal: AbortSignal | null | undefined;
+      let calls = 0;
+      let streamController!: ReadableStreamDefaultController<Uint8Array>;
+      let streamSettled = false;
+      const abortStream = () => {
+        streamSettled = true;
+        streamController.error(requestSignal?.reason);
+      };
+      const adapter = createAgentServiceEvalAdapter({
+        authToken: "token",
+        ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
+        fetch: async (_input, init) => {
+          calls += 1;
+          requestSignal = init?.signal;
+          const stream = new ReadableStream<Uint8Array>({
+            start(stream) {
+              streamController = stream;
+            },
+          });
+          requestSignal?.addEventListener("abort", abortStream, { once: true });
+          started.resolve();
+          return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+        },
+      });
+      const definition = evalAgent({
+        id: "eval:cancel-service",
+        target: "agent:veryfront",
+        dataset: datasets.inline([
+          { id: "first", input: "First" },
+          { id: "second", input: "Second" },
+        ]),
+      });
+      const pending = runEval(definition, {
+        adapters: { agent: adapter },
+        signal: controller.signal,
+      });
+      pending.catch(() => {});
+      await started.promise;
+      controller.abort(new Error("Run cancelled"));
+      try {
+        assertExists(requestSignal);
+        assertEquals(requestSignal.aborted, true);
+        assertEquals(streamSettled, true);
+        await assertRejects(() => pending, Error, "Run cancelled");
+        assertEquals(calls, 1);
+      } finally {
+        requestSignal?.removeEventListener("abort", abortStream);
+        if (!streamSettled) streamController.close();
+        await pending.catch(() => {});
+      }
+    });
+  }
+
+  it("keeps the AG-UI request timeout when a run signal is present", async () => {
+    const controller = new AbortController();
+    let requestSignal: AbortSignal | null | undefined;
+    const adapter = createAgentServiceEvalAdapter({
+      authToken: "token",
+      requestTimeoutMs: 20,
+      fetch: async (_input, init) => {
+        requestSignal = init?.signal;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              requestSignal?.addEventListener("abort", () => stream.error(requestSignal?.reason), {
+                once: true,
+              });
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:request-timeout",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "first", input: "First" }]),
+    });
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+      signal: controller.signal,
+    });
+    assertExists(requestSignal);
+    assertEquals(requestSignal.aborted, true);
+    assertEquals(requestSignal.reason.name, "TimeoutError");
+    assertEquals(controller.signal.aborted, false);
+    assertEquals(report.records[0]?.completed, false);
   });
 
   it("forwards eval project and model context to optional LLM judge requests", async () => {

@@ -100,6 +100,7 @@ export interface CreateEvalRunInput extends RunCreateBaseInput, RunRuntimeTarget
   /** Eval run input: any JSON value. */
   input?: unknown;
   config?: Record<string, unknown>;
+  /** @deprecated Retained for source compatibility; task-based eval runs ignore this option. */
   startMode?: string;
 }
 
@@ -293,23 +294,21 @@ export class VeryfrontRunsClient {
       target,
       input: evalInput,
       config,
-      startMode,
       ...runtimeTarget
     } = input;
 
     return this.requestJson("/runs", CreateRunResponseSchema, {
       method: "POST",
       body: {
-        kind: "eval",
+        kind: "task",
         owner: { kind: "project", id: projectId },
         public_id: publicId,
         parent_run_id: parentRunId,
         request: {
-          target,
+          target: "task:eval",
           ...runtimeTargetBody(runtimeTarget),
           input: evalInput,
-          config,
-          start_mode: startMode,
+          config: { ...config, eval_id: target },
         },
       },
     });

@@ -63,10 +63,15 @@ export async function loadAllProjectFiles({
       : `release:${ctx.projectSlug}:${ctx.releaseId ?? ""}`
     : undefined;
   const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
-  const skipPersistentCache = !!currentRequestContext()?.token ||
-    (contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false);
+  const persistentCacheInvalidated =
+    contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
+  // The adapter keys its own listing to the request credential, so a hosted
+  // request may reuse it. The fallback key below is shared, so it may not.
+  const skipPersistentCache = !!currentRequestContext()?.token || persistentCacheInvalidated;
 
-  const adapterFiles = !skipPersistentCache ? await contextProvider?.getFileList?.(ctx) : undefined;
+  const adapterFiles = !persistentCacheInvalidated
+    ? await contextProvider?.getFileList?.(ctx)
+    : undefined;
 
   if (adapterFiles) {
     const cacheMs = Math.round(performance.now() - cacheStart);

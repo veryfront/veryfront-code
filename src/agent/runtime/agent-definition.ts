@@ -81,7 +81,8 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
      * positive `tools` selector cannot express a denial, so hosted preparation
      * would otherwise re-add runtime-essential skill tools the author denied.
      * Combining this field with `tools: true` fails closed and disables all
-     * project tools. List the allowed tools explicitly when denials are needed.
+     * project tools; request client tools the agent does not deny still reach
+     * the model. List the allowed tools explicitly when denials are needed.
      */
     deniedTools: v.array(v.string().min(1)).optional(),
     delegates: v.array(v.string().min(1)).optional(),

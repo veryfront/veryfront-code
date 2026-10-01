@@ -1,5 +1,8 @@
+import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import type { AgentConfig } from "../types.ts";
+import { defineSchema } from "#veryfront/schemas";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
@@ -11,6 +14,10 @@ import {
 import { type ProviderReplayCheckpoint } from "./provider-replay.ts";
 
 const ArrayIsArray = Array.isArray;
+const NativeSet = Set;
+const SetAdd = Set.prototype.add;
+const SetHas = Set.prototype.has;
+const reflectApply = Reflect.apply;
 
 function snapshotStringArray(value: unknown): string[] | undefined {
   if (!ArrayIsArray(value)) return undefined;
@@ -39,6 +46,44 @@ export type ProviderReplayTurnFailure = {
   code?: string;
 };
 
+export const MAX_PROVIDER_REPLAY_INVOKE_AGENT_TOOL_CALLS = 100;
+export const MAX_PROVIDER_REPLAY_TOOL_CALL_ID_LENGTH = 128;
+export const MAX_PROVIDER_REPLAY_TOOL_ARGS_JSON_LENGTH = 512 * 1_024;
+
+function hasUniqueProviderReplayToolCallIds(
+  calls: readonly { toolCallId: string }[],
+): boolean {
+  const ids = new NativeSet<string>();
+  for (let index = 0; index < calls.length; index++) {
+    const toolCallId = calls[index]?.toolCallId;
+    if (!toolCallId || reflectApply(SetHas, ids, [toolCallId]) as boolean) return false;
+    reflectApply(SetAdd, ids, [toolCallId]);
+  }
+  return true;
+}
+
+/** Private all-of dispatch snapshot for one completed provider turn. */
+export const getProviderReplayInvokeAgentToolCallsSchema = defineSchema((v) =>
+  v.array(
+    v.object({
+      toolCallId: v.string().min(1).max(MAX_PROVIDER_REPLAY_TOOL_CALL_ID_LENGTH),
+      toolName: v.union([
+        v.literal("invoke_agent"),
+        v.literal("veryfront__invoke_agent"),
+      ]),
+      toolArgsJson: v.string().min(1).max(MAX_PROVIDER_REPLAY_TOOL_ARGS_JSON_LENGTH),
+    }),
+  ).min(2).max(MAX_PROVIDER_REPLAY_INVOKE_AGENT_TOOL_CALLS).refine(
+    hasUniqueProviderReplayToolCallIds,
+    { message: "invoke_agent tool call ids must be unique within one provider turn" },
+  )
+);
+
+export type ProviderReplayInvokeAgentToolCall = InferSchema<
+  ReturnType<typeof getProviderReplayInvokeAgentToolCallsSchema>
+>[number];
+export type ProviderReplayInvokeAgentToolName = ProviderReplayInvokeAgentToolCall["toolName"];
+
 export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
     { name: string; description: string; parameters: Record<string, unknown> }
@@ -46,10 +91,13 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
   __vfProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   __vfProviderReplayCheckpointMessageId?: string;
+  __vfProviderReplayInvokeAgentToolNames?: ProviderReplayInvokeAgentToolName[];
   __vfPersistProviderReplayCheckpoint?: (
     checkpoint: ProviderReplayCheckpoint,
   ) => void | Promise<void>;
-  __vfProviderReplayCheckpointTurnComplete?: () => void | Promise<void>;
+  __vfProviderReplayCheckpointTurnComplete?: (
+    invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[],
+  ) => void | Promise<void>;
   __vfProviderReplayCheckpointTurnFailed?: (
     failure?: ProviderReplayTurnFailure,
   ) => void | Promise<void>;
@@ -160,6 +208,32 @@ export function getRuntimeProviderReplayCheckpointMessageId(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** Return the trusted control-plane delegation names active for this run. */
+export function getRuntimeProviderReplayInvokeAgentToolNames(
+  config: AgentConfig,
+): ProviderReplayInvokeAgentToolName[] {
+  const value = (config as RuntimeToolFilterConfig).__vfProviderReplayInvokeAgentToolNames;
+  if (!ArrayIsArray(value)) return [];
+  const names: ProviderReplayInvokeAgentToolName[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const name = value[index];
+    let alreadyIncluded = false;
+    for (let nameIndex = 0; nameIndex < names.length; nameIndex++) {
+      if (names[nameIndex] === name) {
+        alreadyIncluded = true;
+        break;
+      }
+    }
+    if (
+      (name === "invoke_agent" || name === "veryfront__invoke_agent") &&
+      !alreadyIncluded
+    ) {
+      appendPrivateArray(names, [name]);
+    }
+  }
+  return names;
+}
+
 /** Return the trusted private provider replay checkpoint persistence hook. */
 export function getRuntimeProviderReplayCheckpointPersister(
   config: AgentConfig,
@@ -171,7 +245,11 @@ export function getRuntimeProviderReplayCheckpointPersister(
 /** Return the trusted hook that closes one provider response boundary. */
 export function getRuntimeProviderReplayCheckpointTurnComplete(
   config: AgentConfig,
-): (() => void | Promise<void>) | undefined {
+):
+  | (
+    (invokeAgentToolCalls?: ProviderReplayInvokeAgentToolCall[]) => void | Promise<void>
+  )
+  | undefined {
   const value = (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpointTurnComplete;
   return typeof value === "function" ? value : undefined;
 }

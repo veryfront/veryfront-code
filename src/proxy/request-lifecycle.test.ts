@@ -182,3 +182,29 @@ describe("proxy request lifecycle", () => {
     assertEquals(ended, ["500:Unknown error"]);
   });
 });
+
+describe("proxy request cancellation lifecycle", () => {
+  it("returns 499 and ends once without an application error after cancellation", async () => {
+    const client = new AbortController();
+    const req = new Request("https://proxy.test/slow", { signal: client.signal });
+    const ended: Array<{ status: number; error?: Error }> = [];
+    const response = await runProxyRequestLifecycle({
+      req,
+      url: new URL(req.url),
+      extractContext: () => undefined,
+      startServerSpan: () => null,
+      withContext: (_context, fn) => fn(),
+      endSpan: (_span, status, error) => {
+        ended.push({ status, error });
+      },
+      handle: async () => {
+        client.abort(new Error("client disconnected"));
+        req.signal.throwIfAborted();
+        return new Response("unreachable");
+      },
+    });
+    assertEquals(response.status, 499);
+    assertEquals(await response.json(), { error: "Client Closed Request" });
+    assertEquals(ended, [{ status: 499, error: undefined }]);
+  });
+});

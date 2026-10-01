@@ -24,10 +24,74 @@ concurrency:
 
 jobs:
   # ============================================
+  # CD: Reuse the tested merge-queue run (main only)
+  # The merge queue tests the exact commit that lands on main. When its run
+  # of this workflow succeeded and its artifacts still exist, main skips the
+  # tests, keeps the Sonar gate on the queue's coverage, and publishes the
+  # queue's npm artifact under the queue run's RC number. Otherwise main runs
+  # the full pipeline. The release-number artifact keeps RC numbers in landing
+  # order across main runs (see scripts/ci/tested-merge-queue-run.ts).
+  # The job runs, and finishes at once, on every other ref too: a job whose
+  # `if` has no status function is skipped when any upstream job skipped.
+  # ============================================
+  tested-run:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    # On main it waits up to 30 minutes for a queue run that is still finishing
+    # and up to 10 more for an earlier main run to choose its release number.
+    timeout-minutes: 50
+    name: tested merge-queue run
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      reuse: ${{ steps.decide.outputs.reuse || 'false' }}
+      run_id: ${{ steps.decide.outputs.run_id }}
+      release_number: ${{ steps.decide.outputs.release_number || github.run_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.ref == 'refs/heads/main'
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        if: github.ref == 'refs/heads/main'
+        timeout-minutes: 5
+      - name: Find the tested merge-queue run
+        if: github.ref == 'refs/heads/main'
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deno run --config=scripts/test.deno.json --frozen --no-check \
+            --allow-env=GH_TOKEN,GITHUB_EVENT_NAME,GITHUB_OUTPUT,GITHUB_REPOSITORY,GITHUB_RUN_ATTEMPT,GITHUB_RUN_ID,GITHUB_RUN_NUMBER,GITHUB_SHA \
+            --allow-net=api.github.com --allow-write="${GITHUB_OUTPUT}" \
+            scripts/ci/tested-merge-queue-run.ts \
+            "npm-compatibility-${GITHUB_SHA}" \
+            coverage-shard-1 coverage-shard-2 coverage-shard-3 coverage-shard-4 \
+            coverage-native-executor coverage-integration-client
+      - name: Record release number
+        if: github.ref == 'refs/heads/main'
+        env:
+          RELEASE_NUMBER: ${{ steps.decide.outputs.release_number }}
+        run: |
+          mkdir -p dist/release-number
+          echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
+      - name: Upload release number
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-number-${{ steps.decide.outputs.release_number }}
+          path: dist/release-number
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+  # ============================================
   # CI: Quality Checks
   # ============================================
   ci:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -97,7 +161,8 @@ jobs:
   # ============================================
 
   tests:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     name: tests (integration)
@@ -226,7 +291,8 @@ jobs:
         run: node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs --suite=runtime:bun
 
   npm-compatibility-artifact:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     name: npm compatibility artifact
@@ -243,10 +309,13 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       - name: Build and pack tested npm output
+        env:
+          # Merge-queue builds carry their RC number so main can publish them.
+          RELEASE_NUMBER: ${{ needs.tested-run.outputs.release_number || github.run_number }}
         run: |
           BASE_VERSION=$(jq -r '.version' deno.json)
-          if [ "${GITHUB_REF}" = "refs/heads/main" ] && [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            export VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
+          if { [ "${GITHUB_REF}" = "refs/heads/main" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; } && [[ ! "${BASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            export VERSION="${BASE_VERSION}.${RELEASE_NUMBER}"
             deno run -A scripts/ci/prepare-rc-build.ts
           fi
           deno task build:npm
@@ -305,7 +374,8 @@ jobs:
         run: deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility
 
   tests-windows-localhost:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: windows-2022
     timeout-minutes: 20
     name: tests (Windows localhost routing)
@@ -343,7 +413,8 @@ jobs:
         run: deno run -A scripts/ci/run-windows-localhost-e2e.ts
 
   coverage-shards:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     name: coverage shard ${{ matrix.shard }}/4
@@ -381,26 +452,25 @@ jobs:
           # The CLI regression changes cwd, so give it a separate process.
           deno task test:file --coverage=coverage-cli \
             tests/integration/cli/merge-preview.integration.test.ts
-          deno coverage coverage-history --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-history.lcov
-          deno coverage coverage-cli --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-cli.lcov
-          deno eval '
-            import { mergeLcovReports } from "./scripts/test/coverage-ci.ts";
-            const target = "coverage-shard-1/lcov.info";
-            const reports = await Promise.all([target, "coverage-history.lcov", "coverage-cli.lcov"].map(path => Deno.readTextFile(path)));
-            await Deno.writeTextFile(target, mergeLcovReports(reports));
-          '
+          # Kept as separate reports: block ids are normalized only when every
+          # report is merged at once (coverage gate and Sonar), so an early
+          # merge here must not rewrite them.
+          mkdir -p coverage-shard-1/history coverage-shard-1/cli
+          deno coverage coverage-history --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/history/lcov.info
+          deno coverage coverage-cli --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/cli/lcov.info
       - name: Upload unit coverage lcov
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-shard-${{ matrix.shard }}
-          path: coverage-shard-${{ matrix.shard }}/lcov.info
+          path: coverage-shard-${{ matrix.shard }}/**/lcov.info
           retention-days: 1
       - name: Add coverage shard summary
         run: echo "### Coverage shard ${{ matrix.shard }}/4 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
   coverage-node-executor:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     name: native executor coverage
@@ -430,7 +500,8 @@ jobs:
           if-no-files-found: error
 
   coverage-integration-client:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     name: integration client coverage
@@ -460,8 +531,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     name: coverage gate
-    needs: [coverage-shards]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    needs: [coverage-shards, tested-run]
+    if: ${{ always() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - name: Require coverage shards
         env:
@@ -520,9 +591,7 @@ jobs:
       # the `coverage gate` job read their own copies and are unaffected.
       - name: Normalize lcov paths for Codecov
         run: |
-          for file in coverage-profiles/coverage-shard-*/lcov.info; do
-            sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" "$file"
-          done
+          find coverage-profiles -name lcov.info -exec sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" {} +
       # Authenticated with OIDC rather than a stored CODECOV_TOKEN, so there is
       # no upload secret to manage or rotate. A token is otherwise mandatory
       # here: `main` is a protected branch, and Codecov only permits tokenless
@@ -535,29 +604,88 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           use_oidc: true
-          # Comma separated, the form the action documents. All 4 files go up
-          # in one call, so Codecov records one upload per commit.
-          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info
+          # Comma separated, the form the action documents. All files go up in
+          # one call, so Codecov records one upload per commit.
+          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info
           disable_search: true
           name: unit
           fail_ci_if_error: false
 
+  # Merges every coverage report into the one LCOV file Sonar reads. Merging
+  # runs repository code (`deno task coverage:ci:merge`), so it happens here,
+  # in a job with no secrets, and hands the scan job only the finished report.
+  sonar-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: Sonar coverage report
+    needs: [tested-run, coverage-shards, coverage-node-executor, coverage-integration-client]
+    if: ${{ !cancelled() && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A main run that reuses the merge-queue run merges the queue's coverage.
+      - name: Download unit coverage lcov files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: coverage-profiles
+          pattern: coverage-shard-*
+          run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Download native executor coverage lcov
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-native-executor
+          path: coverage-profiles/coverage-native-executor
+          run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Download integration client coverage lcov
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-integration-client
+          path: coverage-profiles/coverage-integration-client
+          run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Merge coverage reports for SonarQube
+        run: |
+          deno task coverage:ci:merge -- --threshold=0 \
+            coverage-profiles/coverage-shard-* \
+            coverage-profiles/coverage-native-executor \
+            coverage-profiles/coverage-integration-client
+      - name: Normalize lcov paths
+        run: |
+          sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" coverage/lcov.info
+      - name: Upload merged Sonar coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-sonar
+          path: coverage/lcov.info
+          retention-days: 1
+
   # Automatic Analysis runs on Sonar's servers and cannot see coverage, which is
-  # only produced where the tests run. Reuses the shard artifacts; runs no
-  # repository code, like codecov-upload.
+  # only produced where the tests run. This job holds SONAR_TOKEN, so it runs no
+  # repository code: it downloads the merged report from `sonar-coverage` and
+  # calls the scan action.
   #
   # Skipped for forks and for Dependabot: both reach the scan without SONAR_TOKEN
   # (Dependabot branches live in this repository, but Actions secrets are not
   # exposed to Dependabot-triggered runs), and an empty token fails the scan.
-  # The scan waits for SonarCloud's server-side Quality Gate before this
-  # required job succeeds; the timeout leaves room for the observed analysis
-  # and report-processing latency.
+  # The scan waits up to 20 minutes for SonarCloud's server-side Quality Gate
+  # before this required job succeeds; the remaining 8 minutes cover checkout,
+  # the report download and analysis upload (the whole job takes about 6
+  # minutes today). 28 minutes keeps the coverage and Sonar path inside the
+  # merge queue response budget now that `sonar-coverage` sits before it.
   sonar:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 28
     name: SonarQube Cloud scan
-    needs: [coverage-shards, coverage-node-executor, coverage-integration-client]
-    if: ${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    needs: [sonar-coverage]
+    if: ${{ !cancelled() && needs.sonar-coverage.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       contents: read
     steps:
@@ -566,30 +694,61 @@ jobs:
           persist-credentials: false
           # Sonar reads git history for new-code and blame.
           fetch-depth: 0
-      - name: Download unit coverage lcov files
+      - name: Download merged Sonar coverage
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          path: coverage-profiles
-          pattern: coverage-shard-*
-      - name: Download native executor coverage lcov
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+          name: coverage-sonar
+          path: coverage
+      - name: Set up Node for the pinned Sonar action
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          name: coverage-native-executor
-          path: coverage-profiles/coverage-native-executor
-      - name: Download integration client coverage lcov
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: coverage-integration-client
-          path: coverage-profiles/coverage-integration-client
-      - name: Normalize lcov paths
+          node-version: "24"
+      - name: Fetch the pinned official Sonar action outside the scan workspace
+        shell: bash
         run: |
-          for file in coverage-profiles/coverage-shard-*/lcov.info coverage-profiles/coverage-native-executor/lcov.info coverage-profiles/coverage-integration-client/lcov.info; do
-            sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" "$file"
-          done
-      - name: SonarQube Cloud scan
-        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+          set -euo pipefail
+          action_dir="$RUNNER_TEMP/sonarqube-scan-action"
+          action_ref=SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+          action_repository="${action_ref%@*}"
+          action_sha="${action_ref##*@}"
+          git init "$action_dir"
+          git -C "$action_dir" fetch --depth=1 "https://github.com/$action_repository.git" "$action_sha"
+          test "$(git -C "$action_dir" rev-parse FETCH_HEAD)" = "$action_sha"
+          git -C "$action_dir" checkout --detach FETCH_HEAD
+      - name: Scan with one Sonar server-error retry
+        id: sonar-scan
+        shell: bash
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          INPUT_ARGS: ""
+          INPUT_PROJECTBASEDIR: "."
+          INPUT_SCANNERVERSION: "8.1.0.6389"
+          INPUT_SCANNERBINARIESURL: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli
+          INPUT_SKIPSIGNATUREVERIFICATION: "false"
+          INPUT_SCANNERBINARIESAUTHHEADER: ""
+        run: |
+          set -euo pipefail
+          # Preserve the official action and its signature verification. Only a
+          # failed Compute Engine task may retry; a red quality gate never does.
+          for attempt in 1 2; do
+            log="$RUNNER_TEMP/sonar-attempt-$attempt.log"
+            echo "Sonar scan attempt $attempt of 2"
+            set +e
+            node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
+            statuses=("${PIPESTATUS[@]}")
+            set -e
+            if [ "${statuses[1]}" -ne 0 ]; then
+              exit "${statuses[1]}"
+            fi
+            status="${statuses[0]}"
+            if [ "$status" -eq 0 ] || [ "$attempt" -eq 2 ]; then
+              exit "$status"
+            fi
+            if ! grep -Fq 'CE Task finished abnormally' "$log" || grep -Fq 'QUALITY GATE STATUS: FAILED' "$log"; then
+              exit "$status"
+            fi
+            echo "::warning::Retrying Sonar once after CE Task finished abnormally"
+          done
 
   sonar-quality-gate:
     name: SonarQube Cloud quality gate
@@ -608,7 +767,8 @@ jobs:
           fi
 
   tests-e2e-rsc-browser:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     name: tests (rsc browser e2e)
@@ -633,7 +793,8 @@ jobs:
   # ============================================
 
   tests-binary-e2e:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     name: tests (binary e2e)
@@ -668,10 +829,14 @@ jobs:
       - tests-binary-e2e
       - tests-e2e-rsc-browser
       - sonar-quality-gate
+      - tested-run
     if: ${{ always() }}
     steps:
       - name: Require merge correctness dependencies
         env:
+          # A main run that reuses its merge-queue run skips the tests that run
+          # already passed on this commit; Sonar still has to pass here.
+          REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
           # Sonar needs SONAR_TOKEN, so fork and Dependabot PRs intentionally
           # skip it. Pushes, merge-group runs, and trusted PRs must block on it.
           SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
@@ -701,6 +866,10 @@ jobs:
             if [ "$result_name" = "SONAR_RESULT" ] && [ "$SONAR_REQUIRED" != "true" ]; then
               continue
             fi
+            if [ -n "$REUSED_RUN_ID" ] && [ "$result_name" != "SONAR_RESULT" ] && [ "$result" = "skipped" ]; then
+              echo "$result_name passed in merge-queue run $REUSED_RUN_ID"
+              continue
+            fi
             if [ "$result" != "success" ]; then
               echo "::error::$result_name finished with $result"
               failed=1
@@ -716,7 +885,8 @@ jobs:
   # CLI startup, optional-peer metadata, extension package loading, and a real
   # starter dev-server render (see scripts/test/npm-install-smoke.ts).
   npm-smoke-node-versions:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     name: npm smoke Node version contract
@@ -788,10 +958,12 @@ jobs:
       - npm-compatibility-artifact
       - tests-npm-install-smoke
       - tests-runtime-critical-flow
+      - tested-run
     if: ${{ always() }}
     steps:
       - name: Require canonical artifact compatibility
         env:
+          REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
           ARTIFACT_BUILD_RESULT: ${{ needs.npm-compatibility-artifact.result }}
           NPM_SMOKE_RESULT: ${{ needs.tests-npm-install-smoke.result }}
           RUNTIME_CRITICAL_FLOW_RESULT: ${{ needs.tests-runtime-critical-flow.result }}
@@ -803,6 +975,53 @@ jobs:
             RUNTIME_CRITICAL_FLOW_RESULT
           do
             result="${!result_name}"
+            if [ -n "$REUSED_RUN_ID" ] && [ "$result" = "skipped" ]; then
+              echo "$result_name passed in merge-queue run $REUSED_RUN_ID"
+              continue
+            fi
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+  # Release-only test results that are not part of the merge gates. A main
+  # run that reuses its merge-queue run inherits them from that run.
+  quality-gate-release:
+    name: quality gate (release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs:
+      - tested-run
+      - npm-compatibility-artifact
+      - tests-sentry-runtime-packages
+      - tests-windows-localhost
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Require release test results
+        env:
+          TESTED_RUN_RESULT: ${{ needs.tested-run.result }}
+          REUSED_RUN_ID: ${{ needs.tested-run.outputs.reuse == 'true' && needs.tested-run.outputs.run_id || '' }}
+          ARTIFACT_BUILD_RESULT: ${{ needs.npm-compatibility-artifact.result }}
+          SENTRY_RUNTIME_PACKAGES_RESULT: ${{ needs.tests-sentry-runtime-packages.result }}
+          WINDOWS_LOCALHOST_RESULT: ${{ needs.tests-windows-localhost.result }}
+        run: |
+          if [ "$TESTED_RUN_RESULT" != "success" ]; then
+            echo "::error::TESTED_RUN_RESULT finished with $TESTED_RUN_RESULT"
+            exit 1
+          fi
+          failed=0
+          for result_name in \
+            ARTIFACT_BUILD_RESULT \
+            SENTRY_RUNTIME_PACKAGES_RESULT \
+            WINDOWS_LOCALHOST_RESULT
+          do
+            result="${!result_name}"
+            if [ -n "$REUSED_RUN_ID" ] && [ "$result" = "skipped" ]; then
+              echo "$result_name passed in merge-queue run $REUSED_RUN_ID"
+              continue
+            fi
             if [ "$result" != "success" ]; then
               echo "::error::$result_name finished with $result"
               failed=1
@@ -811,7 +1030,8 @@ jobs:
           exit "$failed"
 
   tests-sentry-runtime-packages:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     # Cold-cache runs take ~12-15min; 15 was cutting it too close.
     timeout-minutes: 20
@@ -836,7 +1056,8 @@ jobs:
   # ============================================
 
   tests-split-mode:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     name: tests (split mode)
@@ -971,7 +1192,7 @@ jobs:
 
   build-binaries:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
-    needs: [version-check]
+    needs: [version-check, tested-run]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
@@ -1023,7 +1244,7 @@ jobs:
       - name: Prepare RC build version
         if: needs.version-check.outputs.is_stable == 'false'
         env:
-          VERSION: ${{ needs.version-check.outputs.version }}.${{ github.run_number }}
+          VERSION: ${{ needs.version-check.outputs.version }}.${{ needs.tested-run.outputs.release_number }}
         run: deno run -A scripts/ci/prepare-rc-build.ts
 
       - uses: ./.github/actions/prepare-build-deps
@@ -1075,15 +1296,17 @@ jobs:
   # Appends .{run_number} and publishes with --tag rc
   # ============================================
 
+  # Release jobs check every dependency explicitly: a main run that reuses its
+  # merge-queue run skips the test jobs upstream of the gates, and a job
+  # without a status function would skip with them.
   prerelease:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-merge.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
     needs: [
       quality-gate-merge,
       quality-gate-artifact,
-      tests-sentry-runtime-packages,
-      tests-windows-localhost,
+      quality-gate-release,
       build-binaries,
-      npm-compatibility-artifact,
+      tested-run,
       version-check,
     ]
     runs-on: ubuntu-latest
@@ -1091,6 +1314,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     permissions:
+      actions: read
       contents: write
       id-token: write
     steps:
@@ -1116,7 +1340,7 @@ jobs:
         id: version
         env:
           BASE_VERSION: ${{ needs.version-check.outputs.version }}
-          RUN_NUMBER: ${{ github.run_number }}
+          RUN_NUMBER: ${{ needs.tested-run.outputs.release_number }}
         run: |
           RC_VERSION="${BASE_VERSION}.${RUN_NUMBER}"
           echo "version=${RC_VERSION}" >> "$GITHUB_OUTPUT"
@@ -1127,6 +1351,8 @@ jobs:
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
+          run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Publish tested RC npm artifact
         env:
@@ -1203,14 +1429,13 @@ jobs:
   # ============================================
 
   release:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.version-check.result == 'success' && needs.quality-gate-merge.result == 'success' && needs.quality-gate-artifact.result == 'success' && needs.quality-gate-release.result == 'success' && needs.build-binaries.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
     needs: [
       quality-gate-merge,
       quality-gate-artifact,
-      tests-sentry-runtime-packages,
-      tests-windows-localhost,
+      quality-gate-release,
       build-binaries,
-      npm-compatibility-artifact,
+      tested-run,
       version-check,
     ]
     runs-on: ubuntu-latest
@@ -1218,6 +1443,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     permissions:
+      actions: read
       contents: write
       id-token: write
     steps:
@@ -1284,6 +1510,8 @@ jobs:
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
+          run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Publish tested stable npm artifact
         env:
@@ -1511,7 +1739,7 @@ jobs:
   # ============================================
 
   update-homebrew:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [release, version-check]
     runs-on: ubuntu-latest
     environment: production

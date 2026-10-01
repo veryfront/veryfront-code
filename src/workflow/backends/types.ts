@@ -4,6 +4,7 @@ import type {
   PendingApproval,
   PendingEventWait,
   RunFilter,
+  WorkflowChildRunWaitBoundary,
   WorkflowQueueItem,
   WorkflowRun,
   WorkflowStatus,
@@ -244,6 +245,15 @@ export interface WorkflowBackend {
    * express a checkpoint restore.
    */
   readonly supportsRunPatchKeyMerge?: boolean;
+  /**
+   * Apply this backend's node-state persistence policy before user code can
+   * observe a parsed nested-workflow input. Built-in backends implement this
+   * with the same policy used by their run writes.
+   */
+  prepareNodeStatesForPersistence?(
+    runId: string | undefined,
+    nodeStates: WorkflowRun["nodeStates"],
+  ): WorkflowRun["nodeStates"];
   createRun(run: WorkflowRun): Promise<void>;
   /** Read a run with its current pending approvals hydrated. */
   getRun(runId: string): Promise<WorkflowRun | null>;
@@ -286,6 +296,13 @@ export interface WorkflowBackend {
     runId: string,
     expectedStatuses: WorkflowStatus[],
     snapshot: WorkflowRunStateSnapshot,
+    expectedWorkerId?: string,
+  ): Promise<boolean>;
+  /** Atomically patch a waiting run only while its exact child-run pause still matches. */
+  updateRunIfChildWaitBoundary?(
+    runId: string,
+    expectedBoundary: readonly WorkflowChildRunWaitBoundary[],
+    patch: WorkflowRunUpdate,
     expectedWorkerId?: string,
   ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
@@ -717,6 +734,10 @@ type WithRunObservationSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "openRunObservation">>;
 
+export type WithChildRunWaitBoundaryUpdateSupport =
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "updateRunIfChildWaitBoundary">>;
+
 /** Workflow backend with atomic terminal-run retention support. */
 export type WithTerminalRunRetentionSupport =
   & WorkflowBackend
@@ -747,6 +768,12 @@ export function hasRunObservationSupport(
   backend: WorkflowBackend,
 ): backend is WithRunObservationSupport {
   return typeof backend.openRunObservation === "function";
+}
+
+export function hasChildRunWaitBoundaryUpdateSupport(
+  backend: WorkflowBackend,
+): backend is WithChildRunWaitBoundaryUpdateSupport {
+  return typeof backend.updateRunIfChildWaitBoundary === "function";
 }
 
 /** Check whether fenced terminal-run deletion is available. */

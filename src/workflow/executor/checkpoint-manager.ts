@@ -91,9 +91,11 @@ export class CheckpointManager {
       nodeStates,
     });
 
-    await this.save(runId, checkpoint);
+    const persisted = await this.save(runId, checkpoint);
     // Detach the value returned to the caller only after backend validation succeeds.
-    return cloneRetainedCheckpoint(checkpoint);
+    return cloneRetainedCheckpoint(checkpoint, undefined, {
+      allowRecordDataCloneFallback: persisted,
+    });
   }
 
   getLatest(runId: string): Promise<Checkpoint | null> {

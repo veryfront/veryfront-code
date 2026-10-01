@@ -19,6 +19,66 @@ const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
 const path = "/api/control-plane/runs/run-1/stream";
 
+function managedStart(
+  prepare: ManagedExecutorStartInput["prepare"],
+): ManagedExecutorStartInput {
+  const unavailable = () => Promise.reject(new Error("Unused test executor dependency"));
+  const owner = { scopeKind: "global" as const, serviceName: "test-service" };
+  const source = { type: "release" as const, releaseId: "release-1" };
+  const modelId = "veryfront-cloud/openai/synthetic";
+  return {
+    session: {
+      request: {
+        allocationId: "allocation-1",
+        invocationId: "invocation-1",
+        owner,
+        source,
+        requestedAt: 1_000,
+        prepareDeadlineAt: 2_000,
+        hardDeadlineAt: 3_000,
+      },
+      expectedBrokerInstanceId: "broker-test",
+      expectedImage: "registry.test/executor@sha256:" + "a".repeat(64),
+      allocator: {
+        allocate: unavailable,
+        observe: unavailable,
+        renew: unavailable,
+        release: unavailable,
+      },
+      connectTransport: unavailable,
+    },
+    installation: {
+      version: 1,
+      owner,
+      source,
+      root: "project",
+      grant: {
+        agentId: "builder",
+        defaultModelId: modelId,
+        maxSteps: 5,
+        models: [{ id: modelId, maxOutputTokens: 100, providerToolNames: [] }],
+        allowedToolNames: [],
+        hostToolFacadeIds: [],
+        remoteToolSourceIds: [],
+        execution: { kind: "ephemeral", projectId: null },
+      },
+      capabilities: { persistence: {} },
+    },
+    prepare,
+    model: {
+      resolver: () => undefined,
+      grant: {
+        maxCalls: 1,
+        maxConcurrentCalls: 1,
+        models: new Map([[modelId, { maxOutputTokens: 100, providerTools: [] }]]),
+      },
+    },
+    tools: { catalog: new Map(), sources: new Map(), maxCalls: 1, maxConcurrent: 1 },
+    persistence: {},
+    state: {},
+  };
+}
+
 describe("managed AG-UI broker handler", () => {
   for (const scopeKind of ["global", "project"] as const) {
     for (const namespace of ["veryfront", "custom"]) {
@@ -337,6 +397,151 @@ for (const kind of ["durable", "ag-ui"] as const) {
 }
 
 describe("managed durable broker handler", () => {
+  it("binds a verified resume call into managed runtime preparation", async () => {
+    const fixture = runtimeFixture();
+    const execution = new AbortController();
+    const resumeToolCall = {
+      id: "call-inbox:resume-1",
+      name: "outlook__list_threads",
+      input: { folder: "inbox", options: { limit: 2 } },
+    };
+    let started: ManagedExecutorStartInput | undefined;
+    const managed = createManagedDurableBrokerHandler({
+      owner: { scopeKind: "global", serviceName: "test-service" },
+      broker: {
+        start: (input) => {
+          started = input;
+          return Promise.resolve(fixture.runtime);
+        },
+      },
+      ingress: {
+        authenticate: () => Promise.resolve({ userId, authToken: "synthetic-private-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () =>
+          Promise.resolve({
+            verified: true,
+            resumeToolCallSha256:
+              "964c9f4d464ae2f7c3d782e8c5ca0549737e7c50eb6c41a11bcd6dd7082753c1",
+          }),
+      },
+      prepare: ({ ingress }) => {
+        const projected = ingress.executor.serverResolvedResumeToolCall;
+        if (!projected) throw new Error("Expected verified resume call projection");
+        Reflect.set(projected, "id", "mutated:resume-1");
+        Reflect.set(projected, "name", "mutated_tool");
+        const nested = projected.input.options;
+        if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
+          Reflect.set(nested, "limit", 99);
+        }
+        return Promise.resolve({
+          start: managedStart({ agentId: "builder" }),
+          messages: [],
+          executionSignal: execution.signal,
+          output: {
+            write: () => Promise.resolve(),
+            finish: () => Promise.resolve(),
+          },
+        });
+      },
+    });
+    try {
+      const response = await managed.handle(
+        new Request("https://broker.test/api/runs", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-run-event-token": "synthetic-event-token",
+          },
+          body: JSON.stringify({
+            messages: [],
+            context: {
+              projectId,
+              branchId: "branch-1",
+              conversationId: "00000000-0000-4000-8000-000000000001",
+            },
+            durableRootRun: {
+              runId: "run-1",
+              messageId: "00000000-0000-4000-8000-000000000002",
+            },
+            resumeToolCall,
+          }),
+        }),
+      );
+      assertEquals(response.status, 202, await response.clone().text());
+      assertEquals(started?.prepare.serverResolvedResumeToolCall, resumeToolCall);
+      execution.abort();
+    } finally {
+      fixture.release();
+      await managed.close();
+    }
+  });
+
+  it("strips replay authority supplied only by the preparation adapter", async () => {
+    const fixture = runtimeFixture();
+    const execution = new AbortController();
+    let started: ManagedExecutorStartInput | undefined;
+    const managed = createManagedDurableBrokerHandler({
+      owner: { scopeKind: "global", serviceName: "test-service" },
+      broker: {
+        start: (input) => {
+          started = input;
+          return Promise.resolve(fixture.runtime);
+        },
+      },
+      ingress: {
+        authenticate: () => Promise.resolve({ userId, authToken: "synthetic-private-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+      },
+      prepare: () =>
+        Promise.resolve({
+          start: managedStart({
+            agentId: "builder",
+            serverResolvedResumeToolCall: {
+              id: "counterfeit:resume-1",
+              name: "outlook__list_threads",
+              input: { folder: "inbox" },
+            },
+          }),
+          messages: [],
+          executionSignal: execution.signal,
+          output: {
+            write: () => Promise.resolve(),
+            finish: () => Promise.resolve(),
+          },
+        }),
+    });
+    try {
+      const response = await managed.handle(
+        new Request("https://broker.test/api/runs", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-run-event-token": "synthetic-event-token",
+          },
+          body: JSON.stringify({
+            messages: [],
+            context: {
+              projectId,
+              branchId: "branch-1",
+              conversationId: "00000000-0000-4000-8000-000000000001",
+            },
+            durableRootRun: {
+              runId: "run-1",
+              messageId: "00000000-0000-4000-8000-000000000002",
+            },
+          }),
+        }),
+      );
+      assertEquals(response.status, 202, await response.clone().text());
+      assertEquals(started?.prepare.serverResolvedResumeToolCall, undefined);
+      execution.abort();
+    } finally {
+      fixture.release();
+      await managed.close();
+    }
+  });
+
   it("requires a run-event capability before allocating a canonical executor", async () => {
     let starts = 0;
     const managed = createManagedDurableBrokerHandler({

@@ -12,6 +12,7 @@ import {
   authorizeProjectDependencySourceUrl,
   cdnSourceDecision,
   clearTranspileCache,
+  clearTranspileCacheForNamespace,
   createProjectDependencyCdnPlugin,
   createProjectDependencySourceFetcher,
   deferredDependencyDetail,
@@ -423,6 +424,36 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         projectAAgain === projectA,
         true,
         "the same cache namespace must reuse the cached module",
+      );
+    });
+
+    it("retires content-fingerprint modules without evicting sibling scopes", async () => {
+      const path = "/project/agents/retired.ts";
+      const contextFor = (cacheNamespace: string): FileDiscoveryContext => ({
+        platform: "node",
+        fsAdapter: createMockAdapter({ [path]: "export default { value: 1 };" }),
+        baseDir: "",
+        cacheNamespace,
+      });
+      const scope = "project:invocation:retired";
+      const namespaces = [scope, `${scope}:snapshot:1`, `${scope}:content:source`];
+      const before = [];
+      for (const namespace of namespaces) {
+        before.push(await importModule(`file://${path}`, contextFor(namespace)));
+      }
+      const siblingNamespace = `${scope}-sibling:content:source`;
+      const sibling = await importModule(`file://${path}`, contextFor(siblingNamespace));
+
+      clearTranspileCacheForNamespace(scope);
+
+      for (const [index, namespace] of namespaces.entries()) {
+        const after = await importModule(`file://${path}`, contextFor(namespace));
+        assertEquals(after === before[index], false, `retired namespace ${namespace}`);
+      }
+      assertEquals(
+        await importModule(`file://${path}`, contextFor(siblingNamespace)) === sibling,
+        true,
+        "retiring one invocation must keep unrelated cached modules",
       );
     });
 

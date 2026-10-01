@@ -11,9 +11,11 @@ import {
 } from "veryfront/eval";
 import type { EvalMockToolsResolver } from "veryfront/eval";
 import type { ToolSet } from "veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 describe("eval/factory", () => {
   it("creates a first-class agent eval definition", async () => {
+    const inputSchema = defineSchema((v) => v.object({ invoiceId: v.string() }))();
     const definition = evalAgent({
       id: "eval:deep-research",
       name: "Deep research eval",
@@ -31,6 +33,7 @@ describe("eval/factory", () => {
       repetitions: 2,
       tags: ["quality", "research"],
       metadata: { owner: "ai-platform" },
+      inputSchema,
     });
 
     assertEquals(isEvalDefinition(definition), true);
@@ -48,6 +51,7 @@ describe("eval/factory", () => {
     assertEquals(definition.tags, ["quality", "research"]);
     assertEquals(definition.metadata, { owner: "ai-platform" });
     assertEquals(definition.metrics.map((metric) => metric.name), ["answer.contains"]);
+    assertEquals(definition.inputSchema, inputSchema);
 
     const examples = await definition.dataset.load({ baseDir: Deno.cwd() });
     assertEquals(examples, [

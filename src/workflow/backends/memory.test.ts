@@ -15,6 +15,8 @@ import {
   MAX_WORKFLOW_RUN_EVENT_MAILBOXES,
 } from "../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import { cloneOwnedCheckpointForPersistence } from "./checkpoint-retention.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 const jsonRawSupport = JSON as typeof JSON & {
@@ -442,6 +444,39 @@ describe("MemoryBackend", () => {
         input: {},
         preserved: "kept",
         added: "stored",
+      });
+    });
+
+    it("treats a node id named toJSON as data in created, patched and checkpointed context", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      const runId = "run-context-to-json-node";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, toJSON: hijack, created: { keep: 1 } },
+      }));
+      await backend.updateRun(runId, {
+        context: { toJSON: hijack, patched: { keep: 2 } },
+      });
+      await backend.saveCheckpoint(runId, {
+        id: "cp-to-json-node",
+        nodeId: "toJSON",
+        timestamp: new Date(1),
+        context: { input: {}, toJSON: hijack, checkpointed: { keep: 3 } },
+        nodeStates: {},
+      });
+
+      assertEquals(calls, []);
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        created: { keep: 1 },
+        patched: { keep: 2 },
+      });
+      assertEquals((await backend.getLatestCheckpoint(runId))?.context, {
+        input: {},
+        checkpointed: { keep: 3 },
       });
     });
 
@@ -1002,6 +1037,634 @@ describe("MemoryBackend", () => {
         "strictContext",
       );
       assertEquals(await strictBackend.getCheckpoints("run-strict-child"), []);
+    });
+
+    it("applies node-state user-data policy to checkpoints and resume envelopes (#2242)", async () => {
+      const timestamp = new Date(0);
+      await backend.saveCheckpoint("run-checkpoint-node-state", {
+        ...createCheckpoint("cp-node-state", "step", timestamp),
+        nodeStates: {
+          step: { nodeId: "step", status: "completed", attempt: 1, output: { when: timestamp } },
+        },
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "step",
+          context: { input: {} },
+          nodeStates: {
+            step: { nodeId: "step", status: "completed", attempt: 1, input: { when: timestamp } },
+          },
+          workflowProjection: { context: {} },
+          graphAdmission: {
+            stepsEvaluationContext: { input: {} },
+            stepsEvaluationProjection: { context: {} },
+            graphIdentity: [],
+            workflowVersion: null,
+          },
+        },
+      });
+      const checkpoint = await backend.getLatestCheckpoint("run-checkpoint-node-state");
+      assertEquals(checkpoint?.nodeStates.step?.output, { when: timestamp.toISOString() });
+      assertEquals(checkpoint?._resumeEnvelope?.nodeStates.step?.input, {
+        when: timestamp.toISOString(),
+      });
+
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpoint("run-strict-checkpoint-node-state", {
+            ...createCheckpoint("cp-strict-node-state", "step", timestamp),
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+                output: { when: timestamp },
+              },
+            },
+          }),
+        "strictContext enabled: nodeStates.output",
+      );
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpoint("run-strict-checkpoint-envelope", {
+            ...createCheckpoint("cp-strict-envelope", "step", timestamp),
+            _resumeEnvelope: {
+              schemaVersion: 2,
+              ownerNodeId: "step",
+              context: { input: {} },
+              nodeStates: {
+                step: {
+                  nodeId: "step",
+                  status: "completed",
+                  attempt: 1,
+                  input: { when: timestamp },
+                },
+              },
+              workflowProjection: { context: {} },
+              graphAdmission: {
+                stepsEvaluationContext: { input: {} },
+                stepsEvaluationProjection: { context: {} },
+                graphIdentity: [],
+                workflowVersion: null,
+              },
+            },
+          }),
+        "strictContext enabled: nodeStates.input",
+      );
+      assertEquals(await strictBackend.getCheckpoints("run-strict-checkpoint-node-state"), []);
+      assertEquals(await strictBackend.getCheckpoints("run-strict-checkpoint-envelope"), []);
+
+      await strictBackend.createRun(createTestRun("run-strict-owned-checkpoint", {
+        status: "running",
+        workerId: "worker-1",
+      }));
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return {};
+      };
+      const lossyStates = {
+        toJSON: hijack,
+        step: {
+          nodeId: "step",
+          status: "completed" as const,
+          attempt: 1,
+          output: { when: timestamp },
+        },
+      } as unknown as Checkpoint["nodeStates"];
+      const ownedCheckpoint = cloneOwnedCheckpointForPersistence({
+        ...createCheckpoint("cp-strict-owned", "step", timestamp),
+        nodeStates: lossyStates,
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "step",
+          context: { input: {} },
+          nodeStates: lossyStates,
+          workflowProjection: { context: {} },
+          graphAdmission: {
+            stepsEvaluationContext: { input: {} },
+            stepsEvaluationProjection: { context: {} },
+            graphIdentity: [],
+            workflowVersion: null,
+          },
+        },
+      });
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpointIfStatusAndWorker(
+            "run-strict-owned-checkpoint",
+            "run-strict-owned-checkpoint",
+            ["running"],
+            "worker-1",
+            ownedCheckpoint,
+          ),
+        "strictContext enabled: nodeStates.output",
+      );
+      assertEquals(calls, []);
+      assertEquals(await strictBackend.getCheckpoints("run-strict-owned-checkpoint"), []);
+
+      const ownedEnvelopeCheckpoint = cloneOwnedCheckpointForPersistence({
+        ...createCheckpoint("cp-strict-owned-envelope", "step", timestamp),
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "step",
+          context: { input: {} },
+          nodeStates: lossyStates,
+          workflowProjection: { context: {} },
+          graphAdmission: {
+            stepsEvaluationContext: { input: {} },
+            stepsEvaluationProjection: { context: {} },
+            graphIdentity: [],
+            workflowVersion: null,
+          },
+        },
+      });
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpointIfStatusAndWorker(
+            "run-strict-owned-checkpoint",
+            "run-strict-owned-checkpoint",
+            ["running"],
+            "worker-1",
+            ownedEnvelopeCheckpoint,
+          ),
+        "strictContext enabled: nodeStates.output",
+      );
+      assertEquals(calls, []);
+      assertEquals(await strictBackend.getCheckpoints("run-strict-owned-checkpoint"), []);
+    });
+
+    it("preserves owned node timestamps without reporting them as lossy (#2290)", async () => {
+      for (const withResumeEnvelope of [false, true]) {
+        const runId = `run-owned-node-dates-${withResumeEnvelope}`;
+        const startedAt = new Date(1);
+        const completedAt = new Date(2);
+        const nodeStates: Checkpoint["nodeStates"] = {
+          a: {
+            nodeId: "a",
+            status: "completed",
+            attempt: 1,
+            startedAt,
+            completedAt,
+            output: { toJSON: () => ({ v: 1 }) },
+          },
+        };
+        await backend.createRun(createTestRun(runId, {
+          status: "running",
+          workerId: "worker-1",
+        }));
+        const checkpoint = cloneOwnedCheckpointForPersistence({
+          ...createCheckpoint(`cp-owned-node-dates-${withResumeEnvelope}`, "a", completedAt),
+          nodeStates,
+          ...(withResumeEnvelope
+            ? {
+              _resumeEnvelope: {
+                schemaVersion: 2 as const,
+                ownerNodeId: "a",
+                context: { input: {} },
+                nodeStates,
+                workflowProjection: { context: {} },
+                graphAdmission: {
+                  stepsEvaluationContext: { input: {} },
+                  stepsEvaluationProjection: { context: {} },
+                  graphIdentity: [],
+                  workflowVersion: null,
+                },
+              },
+            }
+            : {}),
+        });
+        const warnings: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          if (entry.level === "warn" && entry.component === "workflow-context") {
+            warnings.push(entry);
+          }
+        });
+
+        try {
+          assertEquals(
+            await backend.saveCheckpointIfStatusAndWorker(
+              runId,
+              runId,
+              ["running"],
+              "worker-1",
+              checkpoint,
+            ),
+            true,
+          );
+        } finally {
+          unsubscribe();
+        }
+
+        const stored = await backend.getLatestCheckpoint(runId);
+        assertEquals(stored?.nodeStates.a?.startedAt, startedAt);
+        assertEquals(stored?.nodeStates.a?.completedAt, completedAt);
+        assertEquals(stored?.nodeStates.a?.output, { v: 1 });
+        if (withResumeEnvelope) {
+          assertEquals(stored?._resumeEnvelope?.nodeStates.a?.startedAt, startedAt);
+          assertEquals(stored?._resumeEnvelope?.nodeStates.a?.completedAt, completedAt);
+        }
+        assertEquals(
+          warnings.some((warning) => String(warning.context?.paths).includes("(Date)")),
+          false,
+        );
+      }
+    });
+
+    it("preserves invalid node timestamps on ordinary and owned checkpoint paths (#2290)", async () => {
+      const invalidDate = new Date(Number.NaN);
+      const nodeStates: Checkpoint["nodeStates"] = {
+        a: {
+          nodeId: "a",
+          status: "completed",
+          attempt: 1,
+          startedAt: invalidDate,
+          completedAt: invalidDate,
+          output: { toJSON: () => ({ v: 1 }) },
+        },
+      };
+      await backend.createRun(createTestRun("run-invalid-owned-node-date", {
+        status: "running",
+        workerId: "worker-1",
+      }));
+
+      await backend.saveCheckpoint("run-invalid-ordinary-node-date", {
+        ...createCheckpoint("cp-invalid-ordinary-node-date", "a", new Date(0)),
+        nodeStates,
+      });
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "run-invalid-owned-node-date",
+          "run-invalid-owned-node-date",
+          ["running"],
+          "worker-1",
+          cloneOwnedCheckpointForPersistence({
+            ...createCheckpoint("cp-invalid-owned-node-date", "a", new Date(0)),
+            nodeStates,
+          }),
+        ),
+        true,
+      );
+
+      for (
+        const runId of [
+          "run-invalid-ordinary-node-date",
+          "run-invalid-owned-node-date",
+        ]
+      ) {
+        const stored = await backend.getLatestCheckpoint(runId);
+        assertEquals(Number.isNaN(stored?.nodeStates.a?.startedAt?.getTime()), true);
+        assertEquals(Number.isNaN(stored?.nodeStates.a?.completedAt?.getTime()), true);
+      }
+    });
+
+    it("persists node-state input and output through the context JSON policy (#2242)", async () => {
+      const startedAt = new Date("2026-01-01T00:00:00Z");
+      await backend.createRun(createTestRun("run-node-state-json", {
+        nodeStates: {
+          parent: {
+            nodeId: "parent",
+            status: "running",
+            attempt: 1,
+            startedAt,
+            input: { due: new Date(0) },
+          },
+        },
+      }));
+      await backend.updateRun("run-node-state-json", {
+        nodeStates: {
+          "child-stamp": {
+            nodeId: "child-stamp",
+            status: "completed",
+            attempt: 1,
+            startedAt,
+            completedAt: startedAt,
+            output: { when: new Date(0), tags: new Map([["a", 1]]) },
+            _subWorkflowOwnerPath: "parent",
+          },
+        },
+      });
+      await backend.restoreRunStateIfStatus("run-node-state-json", ["pending"], {
+        status: "pending",
+        context: { input: {} },
+        nodeStates: {
+          restored: {
+            nodeId: "restored",
+            status: "completed",
+            attempt: 1,
+            completedAt: startedAt,
+            output: { when: new Date(0) },
+          },
+        },
+      });
+
+      const run = await backend.getRun("run-node-state-json");
+      assertEquals(run?.nodeStates.restored, {
+        nodeId: "restored",
+        status: "completed",
+        attempt: 1,
+        completedAt: startedAt,
+        output: { when: "1970-01-01T00:00:00.000Z" },
+      });
+
+      await backend.createRun(createTestRun("run-node-state-json-merge", {
+        nodeStates: {
+          parent: {
+            nodeId: "parent",
+            status: "running",
+            attempt: 1,
+            startedAt,
+            input: { due: new Date(0) },
+          },
+        },
+      }));
+      await backend.updateRun("run-node-state-json-merge", {
+        nodeStates: {
+          "child-stamp": {
+            nodeId: "child-stamp",
+            status: "completed",
+            attempt: 1,
+            completedAt: startedAt,
+            output: { when: new Date(0), tags: new Map([["a", 1]]) },
+          },
+        },
+      });
+      const merged = await backend.getRun("run-node-state-json-merge");
+      // Framework timestamps stay Dates; user data takes its JSON form, as Redis stores it.
+      assertEquals(merged?.nodeStates.parent?.startedAt, startedAt);
+      assertEquals(merged?.nodeStates.parent?.input, { due: "1970-01-01T00:00:00.000Z" });
+      assertEquals(merged?.nodeStates["child-stamp"]?.completedAt, startedAt);
+      assertEquals(merged?.nodeStates["child-stamp"]?.output, {
+        when: "1970-01-01T00:00:00.000Z",
+        tags: {},
+      });
+    });
+
+    it("persists sub-workflow context snapshots through the context JSON policy (#2244)", async () => {
+      const snapshot = (when: Date) => ({
+        when,
+        tags: new Map([["phase", "saved"]]),
+      });
+
+      await backend.createRun(createTestRun("run-sub-workflow-snapshot-json", {
+        nodeStates: {
+          created: {
+            nodeId: "created",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(0)),
+          },
+        },
+      }));
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.created
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.000Z", tags: {} },
+      );
+
+      await backend.updateRun("run-sub-workflow-snapshot-json", {
+        nodeStates: {
+          patched: {
+            nodeId: "patched",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(1)),
+          },
+        },
+      });
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.patched
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.001Z", tags: {} },
+      );
+
+      await backend.restoreRunStateIfStatus("run-sub-workflow-snapshot-json", ["pending"], {
+        status: "pending",
+        context: { input: {} },
+        nodeStates: {
+          restored: {
+            nodeId: "restored",
+            status: "running",
+            attempt: 1,
+            _subWorkflowContext: snapshot(new Date(2)),
+          },
+        },
+      });
+      assertEquals(
+        (await backend.getRun("run-sub-workflow-snapshot-json"))?.nodeStates.restored
+          ?._subWorkflowContext,
+        { when: "1970-01-01T00:00:00.002Z", tags: {} },
+      );
+    });
+
+    it("rejects lossy sub-workflow context snapshots at every write boundary (#2244)", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      const nodeState = (nodeId: string) => ({
+        nodeId,
+        status: "running" as const,
+        attempt: 1,
+        _subWorkflowContext: { when: new Date(0) },
+      });
+      const message =
+        "strictContext enabled: nodeStates._subWorkflowContext.<redacted>.<redacted> (Date)";
+
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-sub-workflow-create", {
+            nodeStates: { created: nodeState("created") },
+          })),
+        Error,
+        message,
+      );
+
+      await strictBackend.createRun(createTestRun("run-strict-sub-workflow-write"));
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.updateRun("run-strict-sub-workflow-write", {
+            nodeStates: { patched: nodeState("patched") },
+          }),
+        message,
+      );
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.restoreRunStateIfStatus("run-strict-sub-workflow-write", ["pending"], {
+            status: "pending",
+            context: { input: {} },
+            nodeStates: { restored: nodeState("restored") },
+          }),
+        message,
+      );
+      assertEquals((await strictBackend.getRun("run-strict-sub-workflow-write"))?.nodeStates, {});
+    });
+
+    it("rejects BigInt in sub-workflow context snapshots at every write boundary (#2244)", async () => {
+      const nodeState = (nodeId: string) => ({
+        nodeId,
+        status: "running" as const,
+        attempt: 1,
+        _subWorkflowContext: { total: 1n },
+      });
+      const message = "nodeStates._subWorkflowContext.<redacted>.<redacted> (BigInt)";
+
+      await assertRejects(
+        () =>
+          backend.createRun(createTestRun("run-bigint-sub-workflow-create", {
+            nodeStates: { created: nodeState("created") },
+          })),
+        Error,
+        message,
+      );
+
+      await backend.createRun(createTestRun("run-bigint-sub-workflow-write"));
+      await assertRejectsAsynchronously(
+        () =>
+          backend.updateRun("run-bigint-sub-workflow-write", {
+            nodeStates: { patched: nodeState("patched") },
+          }),
+        message,
+      );
+      await assertRejectsAsynchronously(
+        () =>
+          backend.restoreRunStateIfStatus("run-bigint-sub-workflow-write", ["pending"], {
+            status: "pending",
+            context: { input: {} },
+            nodeStates: { restored: nodeState("restored") },
+          }),
+        message,
+      );
+      assertEquals((await backend.getRun("run-bigint-sub-workflow-write"))?.nodeStates, {});
+    });
+
+    it("treats a node id named toJSON as data in node-state input and output", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      await backend.createRun(createTestRun("run-node-state-to-json", {
+        nodeStates: {
+          toJSON: {
+            nodeId: "toJSON",
+            status: "completed",
+            attempt: 1,
+            input: hijack,
+            output: hijack,
+          },
+          other: {
+            nodeId: "other",
+            status: "completed",
+            attempt: 1,
+            input: { keep: "input" },
+            output: { keep: "output" },
+          },
+        },
+      }));
+
+      assertEquals(calls, []);
+      const nodeStates = (await backend.getRun("run-node-state-to-json"))?.nodeStates;
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "input"), false);
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "output"), false);
+      assertEquals(nodeStates?.other?.input, { keep: "input" });
+      assertEquals(nodeStates?.other?.output, { keep: "output" });
+    });
+
+    it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
+      await backend.createRun(createTestRun("run-node-state-bigint"));
+      await assertRejectsAsynchronously(
+        () =>
+          backend.updateRun("run-node-state-bigint", {
+            nodeStates: {
+              "child-stamp": {
+                nodeId: "child-stamp",
+                status: "completed",
+                attempt: 1,
+                output: { total: 1n },
+              },
+            },
+          }),
+        "nodeStates.output.<redacted>",
+      );
+      assertEquals((await backend.getRun("run-node-state-bigint"))?.nodeStates, {});
+    });
+
+    it("normalizes own undefined node-state data and rejects it in strict mode (#2242)", async () => {
+      await backend.createRun(createTestRun("run-node-state-undefined", {
+        nodeStates: {
+          child: {
+            nodeId: "child",
+            status: "completed",
+            attempt: 1,
+            output: undefined,
+          },
+        },
+      }));
+
+      const stored = (await backend.getRun("run-node-state-undefined"))?.nodeStates.child;
+      assertEquals(Object.hasOwn(stored ?? {}, "output"), false);
+
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-node-state-undefined", {
+            nodeStates: {
+              child: {
+                nodeId: "child",
+                status: "completed",
+                attempt: 1,
+                output: undefined,
+              },
+            },
+          })),
+        Error,
+        "strictContext enabled: nodeStates.output.<redacted> (undefined)",
+      );
+    });
+
+    it("rejects lossy node-state user data when strictContext is enabled (#2242)", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      const startedAt = new Date("2026-01-01T00:00:00Z");
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-node-state-input", {
+            nodeStates: {
+              parent: {
+                nodeId: "parent",
+                status: "running",
+                attempt: 1,
+                input: { due: new Date(0) },
+              },
+            },
+          })),
+        Error,
+        "strictContext enabled: nodeStates.input.<redacted>.<redacted> (Date)",
+      );
+      assertEquals(await strictBackend.getRun("run-strict-node-state-input"), null);
+
+      await strictBackend.createRun(createTestRun("run-strict-node-state", {
+        nodeStates: {
+          parent: { nodeId: "parent", status: "running", attempt: 1, startedAt },
+        },
+      }));
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.updateRun("run-strict-node-state", {
+            nodeStates: {
+              "child-stamp": {
+                nodeId: "child-stamp",
+                status: "completed",
+                attempt: 1,
+                startedAt,
+                completedAt: startedAt,
+                output: { when: new Date(0) },
+              },
+            },
+          }),
+        "strictContext enabled: nodeStates.output.<redacted>.<redacted> (Date)",
+      );
+      const run = await strictBackend.getRun("run-strict-node-state");
+      assertEquals(run?.nodeStates["child-stamp"], undefined);
+      // Framework-owned timestamps are not user data and never trip the policy.
+      assertEquals(run?.nodeStates.parent?.startedAt, startedAt);
     });
 
     it("merges node-state sets while applying explicit deletions", async () => {

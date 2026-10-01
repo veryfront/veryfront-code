@@ -7,6 +7,7 @@ import {
   getExecutorAgentFailureCodeSchema,
   getExecutorPreparedRuntimeHandleSchema,
 } from "#veryfront/agent/hosted/executor-agent-schema.ts";
+import { getRuntimeAgentResumeToolCallSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 
@@ -72,6 +73,13 @@ export const getExecutorRuntimePrepareRequestSchema = defineSchema((v) =>
     maxOutputTokens: getPositiveLimit().optional(),
     allowedToolNames: getNames().optional(),
     providerToolNames: getNames().optional(),
+    serverResolvedResumeToolCall: getRuntimeAgentResumeToolCallSchema().pipe(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        input: v.record(v.string(), getJsonValueSchema()),
+      }).strict(),
+    ).optional(),
   }).strict()
 );
 export type ExecutorRuntimePrepareRequest = InferSchema<

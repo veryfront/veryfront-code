@@ -158,6 +158,8 @@ Virtual filesystems may publish `symlinkSemantics: "none"` together with a monot
 
 Mutable multi-project adapters that verify one source across credential scopes must also publish `ensureSourceSnapshotFresh()` or `refreshSourceSnapshot()`, plus `getSourceSnapshotFingerprint()`. The fingerprint must identify the complete active source snapshot and return unavailable when that snapshot changes during hashing.
 
+Agent configuration handoff checks request `getSourceSnapshotFingerprint({ purpose: "agent-config", agentMarkdownPaths, skillMarkdownPaths })`. Veryfront's hosted adapter excludes reserved mutable data files under `knowledge/**/*.md` and `evals/reports/**/*.json`, then retains the Markdown definition layouts that agent and skill discovery read beneath the configured roots. A discovered skill's files below `references/`, `resources/`, `assets/`, and `scripts/` also remain in the identity because runtime skill tools can read or execute them, including JSON beneath a skill rooted in `evals/reports`. Hosted config evaluation first compares the same conservative agent-config scope on both sides; after the validated config reveals custom discovery roots, the runtime establishes a fresh discovery-aware baseline and keeps that scope through credential handoff and discovery. Other files in those directories, plus `agents/*` and `veryfront.config.*`, remain part of the identity.
+
 The native implementations use runtime or standard-library primitives only. Provider-specific filesystem behavior belongs behind an adapter or extension boundary.
 
 ### Platform Detection

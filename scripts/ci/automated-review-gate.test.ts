@@ -261,6 +261,43 @@ function record(value: unknown, label: string): Record<string, unknown> {
 }
 
 describe("automated review evidence", () => {
+  it("accepts fractional completion within GitHub's represented update second", async () => {
+    const resolveHead = () => Promise.resolve(HEAD);
+    const summary = codexReviewSummary({
+      updated_at: "2026-09-06T14:32:42Z",
+    });
+    const evidence = {
+      reviews: [],
+      comments: [summary],
+      reactions: [codexCompletionReaction()],
+    };
+
+    assertEquals(
+      (await findAutomatedReview(evidence, HEAD, resolveHead))?.source,
+      "codex-summary",
+    );
+
+    summary.body = (summary.body as string).replaceAll(
+      "2026-09-06T14:32:42.547857Z",
+      "2026-09-06T14:32:43Z",
+    );
+    assertEquals(
+      await findAutomatedReview(evidence, HEAD, resolveHead),
+      undefined,
+    );
+
+    summary.body = (summary.body as string).replaceAll(
+      "2026-09-06T14:32:43Z",
+      "2026-09-06T14:32:42.547857Z",
+    );
+    summary.updated_at = "2026-09-06T14:32:42.100Z";
+    assertEquals(
+      await findAutomatedReview(evidence, HEAD, resolveHead),
+      undefined,
+      "an explicitly fractional server timestamp remains a precise upper bound",
+    );
+  });
+
   it("accepts the live Codex completed-summary proof with its later connector reaction", async () => {
     const liveSummary = codexReviewSummary({
       body: (codexReviewSummary().body as string).replace(
