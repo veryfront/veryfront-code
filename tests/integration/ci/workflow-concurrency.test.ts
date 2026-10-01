@@ -33,6 +33,9 @@ function asRecord(value: unknown, context: string): Record<string, unknown> {
 }
 
 describe("superseded-run cancellation contract", () => {
+  it("demonstrates that the required integration shard rejects a failing test", () => {
+    assertEquals("deliberate negative proof", "must fail");
+  });
   for (const name of WORKFLOWS) {
     it(`${name} cancels superseded PR runs and nothing else`, async () => {
       const url = new URL(

@@ -9,6 +9,11 @@ import {
 } from "./runtime-env.ts";
 
 describe("runs/runtime-env", () => {
+  it("demonstrates that the required test typecheck rejects a broken type", () => {
+    // Deliberate type error; runtime assertions still pass in the unit hook.
+    const value: string = 1;
+    assertEquals(String(value), "1");
+  });
   it("returns an empty object when injected env JSON is missing or invalid", () => {
     assertEquals(readInjectedProjectEnv({}), {});
     assertEquals(readInjectedProjectEnv({ [INJECTED_TASK_ENV_JSON]: "not-json" }), {});

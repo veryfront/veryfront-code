@@ -101,3 +101,5 @@ export function mergeInjectedWorkflowEnv(
 
   return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
 }
+
+// Issue 2310 negative CI proof: this branch must never merge.
