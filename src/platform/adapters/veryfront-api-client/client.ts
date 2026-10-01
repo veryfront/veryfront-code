@@ -461,12 +461,16 @@ export class VeryfrontApiClient {
   // Release-specific Operations
   // =============================================================================
 
-  listReleaseFiles(version = "latest", options: ListFilesOptions = {}) {
-    return this.operations.listReleaseFiles(this.requireProjectSlug(), version, options);
+  listReleaseFiles(version = "latest", options: ListFilesOptions = {}, signal?: AbortSignal) {
+    return this.operations.listReleaseFiles(this.requireProjectSlug(), version, options, signal);
   }
 
-  listAllReleaseFiles(version = "latest", options: Omit<ListFilesOptions, "cursor"> = {}) {
-    return this.operations.listAllReleaseFiles(this.requireProjectSlug(), version, options);
+  listAllReleaseFiles(
+    version = "latest",
+    options: Omit<ListFilesOptions, "cursor"> = {},
+    signal?: AbortSignal,
+  ) {
+    return this.operations.listAllReleaseFiles(this.requireProjectSlug(), version, options, signal);
   }
 
   getReleaseFile(version: string, pathOrId: string) {
@@ -498,8 +502,9 @@ export class VeryfrontApiClient {
   upsertStyleArtifact(
     input: UpsertStyleArtifactInput,
     projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
   ): Promise<ProjectStyleArtifactResolution> {
-    return this.operations.upsertStyleArtifact(projectRef, input);
+    return this.operations.upsertStyleArtifact(projectRef, input, signal);
   }
 
   // =============================================================================
@@ -512,6 +517,7 @@ export class VeryfrontApiClient {
     contentHash: string,
     contentType: DependencyArtifactContentType,
     bytes: Uint8Array<ArrayBuffer>,
+    signal?: AbortSignal,
   ) {
     return this.operations.uploadDependencyArtifactAsset(
       artifactId,
@@ -519,6 +525,7 @@ export class VeryfrontApiClient {
       contentHash,
       contentType,
       bytes,
+      signal,
     );
   }
 
@@ -526,11 +533,13 @@ export class VeryfrontApiClient {
     artifactId: string,
     attemptCount: number,
     result: DependencyArtifactBuildResultBody,
+    signal?: AbortSignal,
   ) {
     return this.operations.reportDependencyArtifactBuildResult(
       artifactId,
       attemptCount,
       result,
+      signal,
     );
   }
 
@@ -538,8 +547,12 @@ export class VeryfrontApiClient {
   // Release Asset Manifest Operations
   // =============================================================================
 
-  beginReleaseAssetManifestBuild(version: string, projectRef = this.requireProjectSlug()) {
-    return this.operations.beginReleaseAssetManifestBuild(projectRef, version);
+  beginReleaseAssetManifestBuild(
+    version: string,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ) {
+    return this.operations.beginReleaseAssetManifestBuild(projectRef, version, signal);
   }
 
   uploadReleaseAsset(
@@ -548,6 +561,7 @@ export class VeryfrontApiClient {
     contentType: string,
     bytes: Uint8Array,
     projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
   ) {
     return this.operations.uploadReleaseAsset(
       projectRef,
@@ -555,6 +569,7 @@ export class VeryfrontApiClient {
       contentHash,
       contentType,
       bytes,
+      signal,
     );
   }
 
@@ -562,8 +577,9 @@ export class VeryfrontApiClient {
     version: string,
     manifest: unknown,
     projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
   ) {
-    return this.operations.putReleaseAssetManifest(projectRef, version, manifest);
+    return this.operations.putReleaseAssetManifest(projectRef, version, manifest, signal);
   }
 
   reportReleaseAssetManifestState(
@@ -571,8 +587,15 @@ export class VeryfrontApiClient {
     state: "partial" | "failed",
     error?: string,
     projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
   ) {
-    return this.operations.reportReleaseAssetManifestState(projectRef, version, state, error);
+    return this.operations.reportReleaseAssetManifestState(
+      projectRef,
+      version,
+      state,
+      error,
+      signal,
+    );
   }
 
   getReleaseAssetManifest(

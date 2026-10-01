@@ -56,10 +56,10 @@ stays `null`.
 Without an `output` selector, a completed run's output is its context without
 `input`: every step's output keyed by step id, plus `env` when the project
 injects environment values. Declare `output` on the workflow to choose the
-value callers receive. With both `output` and `outputSchema`, the schema checks
-the selected value before the run completes. Without `output`, `outputSchema`
-checks the default output after the run completes, and a mismatch does not
-change the stored output. See [Workflows](./workflows.md).
+value callers receive. `outputSchema` checks the selected or default output
+before the run completes. A selected output stores the parsed schema value. A
+valid default output keeps its original shape and values. A mismatch fails the
+run without storing the invalid output. See [Workflows](./workflows.md).
 
 ### Tasks
 
@@ -100,16 +100,16 @@ includes it applies the task rows below. An earlier runtime treats task
 through unchanged and records no violation. Workflow and agent schemas are
 enforced as shown in every release.
 
-| Case                                                                                  | Result                                                                                                                                                           |
-| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Submitted task `input` violates `inputSchema`                                         | Fails. `run()` is never called. The run ends `failed` with `error.code: "INPUT_VALIDATION_FAILED"`, the validation errors in `error.detail`, and `output: null`. |
-| Config-only task run (no `input`) whose `config` violates `inputSchema`               | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                      |
-| A task's `run()` returns a value that violates `outputSchema`                         | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                         |
-| A task's raw JSON Schema that no registered validator can compile                     | Warns. The schema is reported as unenforced, never as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                                   |
-| A task's execution result lacks, or differs from, the admitted output schema identity | Warns. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                                                                     |
-| Submitted workflow `input` violates `inputSchema`                                     | Fails before the first step runs, with `error.code: "INPUT_VALIDATION_FAILED"` and the validation errors in `error.detail`.                                      |
-| A workflow's selected output violates `outputSchema`                                  | Fails. No output is stored, `onError` runs, and `onComplete` does not.                                                                                           |
-| An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output. A run that stops at its step limit completes instead, with no structured result and `output: null`.                     |
+| Case                                                                                  | Result                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Submitted task `input` violates `inputSchema`                                         | Fails. `run()` is never called. The run ends `failed` with `error.code: "INPUT_VALIDATION_FAILED"`, the validation errors in `error.detail`, and `output: null`.                                |
+| Config-only task run (no `input`) whose `config` violates `inputSchema`               | Warns. `run()` receives `config` as before. `metadata.schema_violation.phase` is `"input"`.                                                                                                     |
+| A task's `run()` returns a value that violates `outputSchema`                         | Warns. The run completes with the returned value unchanged as `output`. `metadata.schema_violation.phase` is `"output"`.                                                                        |
+| A task's raw JSON Schema that no registered validator can compile                     | Warns. The schema is reported as unenforced, never as enforced: `metadata.schema_violation.reason` is `"schema_uncompilable"`.                                                                  |
+| A task's execution result lacks, or differs from, the admitted output schema identity | Warns. The run completes. `metadata.schema_violation.phase` is `"identity"`.                                                                                                                    |
+| Submitted workflow `input` violates `inputSchema`                                     | Fails before the first step runs, with `error.code: "INPUT_VALIDATION_FAILED"` and the validation errors in `error.detail`.                                                                     |
+| A workflow's final output violates `outputSchema`                                     | Fails before completion with `error.code: "OUTPUT_VALIDATION_FAILED"` and `{ path, message }` entries in `error.detail.errors`. No output is stored, `onError` runs, and `onComplete` does not. |
+| An agent's final text does not parse or validate against `outputSchema`               | Fails. The run stores no partial output. A run that stops at its step limit completes instead, with no structured result and `output: null`.                                                    |
 
 An agent's raw JSON Schema `outputSchema` that the registered validator fails
 to compile fails the run before the model is called. When the registered

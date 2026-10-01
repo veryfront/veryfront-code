@@ -10,6 +10,7 @@ import {
 import {
   formatSchemaValidationErrors,
   INPUT_VALIDATION_FAILED_CODE,
+  OUTPUT_VALIDATION_FAILED_CODE,
   readSchemaValidationErrors,
   type SchemaValidationError,
 } from "#veryfront/schemas/validation-errors.ts";
@@ -50,6 +51,12 @@ import {
   schemaIdentitySha256,
   type SchemaViolation,
 } from "#veryfront/task/io-contract.ts";
+import {
+  checkRunOutputBytes,
+  measureSerializedRunOutputBytes,
+  parseSerializedRunOutput,
+  serializeRunOutput,
+} from "#veryfront/task/run-output-limit.ts";
 import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
@@ -90,6 +97,8 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
 const TaskDate = Date;
+/** Captured before project code runs, which may replace the global. */
+const TaskError = Error;
 const TaskDateNow = Date.now;
 const TaskDateParse = Date.parse;
 const TaskSetTimeout = globalThis.setTimeout;
@@ -103,6 +112,11 @@ const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
 /** How long a durable run may read `waiting` on no record before a backend without event waits is blamed. */
 const WORKFLOW_UNPERSISTED_WAIT_GRACE_MS = 5_000;
+/**
+ * How long the response waits for the workflow client to release its backend.
+ * Cleanup must never hold back a run's result (veryfront-issue-inbox#2109).
+ */
+const DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS = 5_000;
 /** When the control plane re-dispatches a resume whose request timed out, to report where the run got to. */
 const WORKFLOW_RESUME_RECHECK_MS = 30_000;
 /** Prefix of a `wait_id` that lists one short hash per wait record of the pause. */
@@ -213,8 +227,15 @@ export interface ProjectRunExecuteResponse {
   result?: unknown;
   logs?: string | null;
   error?: string | null;
-  error_code?: "RUN_TIMEOUT" | "INPUT_VALIDATION_FAILED";
-  /** Structured failure detail, such as the validation errors for `INPUT_VALIDATION_FAILED`. */
+  error_code?:
+    | "RUN_TIMEOUT"
+    | "INPUT_VALIDATION_FAILED"
+    | "OUTPUT_VALIDATION_FAILED"
+    | "OUTPUT_TOO_LARGE";
+  /**
+   * Structured failure detail, such as schema validation errors, or
+   * `{ size_bytes, limit_bytes }` for `OUTPUT_TOO_LARGE`.
+   */
   error_detail?: unknown;
   /** The task threw a RetryableError; the API may start another attempt. */
   retryable?: true;
@@ -235,6 +256,7 @@ interface EvalReportUploadInput {
   report: EvalReport;
   projectReference: string;
   reportPath: string;
+  signal?: AbortSignal;
 }
 
 interface WorkflowRunView {
@@ -245,7 +267,7 @@ interface WorkflowRunView {
   nodeStates?: Readonly<
     Record<string, { input?: unknown; status?: string; _waitInstanceId?: string } | undefined>
   >;
-  error?: { message?: string } | null;
+  error?: { message?: string; code?: string; detail?: unknown } | null;
   pendingApprovals?: ReadonlyArray<
     { id: string; nodeId: string; status?: string; expiresAt?: Date | string }
   >;
@@ -338,23 +360,29 @@ export interface ProjectRunExecuteHandlerDeps {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
+    signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   executeReleaseAssetBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
+    signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   executeDependencyArtifactBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
+    signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   executeStyleArtifactBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
+    signal: AbortSignal;
   }): Promise<ProjectRunExecuteResponse>;
   workflowResumeTimeoutMs?: number;
+  /** How long a response waits for workflow client cleanup; defaults to 5 seconds. */
+  workflowClientDestroyTimeoutMs?: number;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -662,6 +690,56 @@ function createInputValidationFailure(
   };
 }
 
+/**
+ * Applies the run output limit before a response is sent (veryfront/veryfront-issue-inbox#2113).
+ * A successful result over the limit becomes an OUTPUT_TOO_LARGE failure without the result; a
+ * failed response drops an oversized result and keeps its own error. Nothing is truncated.
+ */
+function enforceRunOutputLimit(response: ProjectRunExecuteResponse): {
+  response: ProjectRunExecuteResponse;
+  wireJson: string;
+} {
+  if (!("result" in response)) {
+    return { response, wireJson: serializeRunOutput(response) ?? "null" };
+  }
+  // Serialize once: the checked serialization is the one sent, so a result whose `toJSON`
+  // or getters change between serializations cannot slip past the limit.
+  const serialized = serializeRunOutput(response.result);
+  const tooLarge = checkRunOutputBytes(measureSerializedRunOutputBytes(serialized));
+  if (!tooLarge) {
+    const safeResponse = {
+      ...response,
+      result: serialized === undefined ? undefined : parseSerializedRunOutput(serialized),
+    };
+    // Emit the exact bytes that were measured. Re-serializing the parsed copy can grow it,
+    // for example `JSON.rawJSON("1e20")` is 4 bytes checked but 21 bytes once parsed.
+    const { result: _checked, ...envelope } = response;
+    return {
+      response: safeResponse,
+      wireJson: withSerializedResult(serializeRunOutput(envelope) ?? "{}", serialized),
+    };
+  }
+
+  const { result: _oversized, ...withoutResult } = response;
+  const safeResponse = response.success
+    ? {
+      ...withoutResult,
+      success: false,
+      error: tooLarge.message,
+      error_code: tooLarge.code,
+      error_detail: tooLarge.detail,
+    }
+    : withoutResult;
+  return { response: safeResponse, wireJson: serializeRunOutput(safeResponse) ?? "null" };
+}
+
+/** Appends an already serialized `result` member to a serialized response envelope. */
+function withSerializedResult(envelopeJson: string, serializedResult: string | undefined): string {
+  if (serializedResult === undefined) return envelopeJson;
+  const member = `"result":${serializedResult}`;
+  return envelopeJson === "{}" ? `{${member}}` : `${envelopeJson.slice(0, -1)},${member}}`;
+}
+
 function createExecutionFailure(error: unknown, durationMs: number): ProjectRunExecuteResponse {
   return {
     success: false,
@@ -803,6 +881,13 @@ function withRuntimeStepRegistries(config?: WorkflowClientConfig): WorkflowClien
 interface TaskDeadlineControl {
   signal: AbortSignal;
   throwIfExpired(): void;
+}
+
+async function runWhileActive<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted();
+  const result = await operation();
+  signal.throwIfAborted();
+  return result;
 }
 
 async function executeTaskRun(
@@ -1511,10 +1596,25 @@ async function runDiscoveredWorkflow(
       };
     }
 
+    const validationErrors = run.error?.code === INPUT_VALIDATION_FAILED_CODE
+      ? readSchemaValidationErrors((run.error.detail as { errors?: unknown } | undefined)?.errors)
+      : undefined;
     return {
       success: false,
+      ...(validationErrors
+        ? {
+          error_code: INPUT_VALIDATION_FAILED_CODE,
+          error_detail: { errors: validationErrors },
+        }
+        : {}),
       result: run.output,
       error: run.error?.message ?? `Workflow ended with status: ${run.status}`,
+      ...(run.error?.code === OUTPUT_VALIDATION_FAILED_CODE
+        ? {
+          error_code: OUTPUT_VALIDATION_FAILED_CODE,
+          ...(run.error.detail === undefined ? {} : { error_detail: run.error.detail }),
+        }
+        : {}),
       logs: null,
       duration_ms: durationMs,
     };
@@ -1528,15 +1628,64 @@ async function runDiscoveredWorkflow(
         });
       });
     } else {
-      await client.destroy();
+      await destroyWorkflowClient(
+        client,
+        request.runId,
+        deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+      );
     }
   }
 }
 
+/**
+ * Release the workflow client without letting cleanup decide the response: a
+ * cleanup that fails or does not finish in time is logged, and the run's
+ * result is still returned (veryfront-issue-inbox#2109). Uses the host timers
+ * captured at load, because project code may have replaced the globals.
+ */
+async function destroyWorkflowClient(
+  client: WorkflowClientView,
+  runId: string,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Started inside a promise so a synchronous throw is logged like a rejection.
+  const destroyed = Promise.resolve().then(() => client.destroy()).then(
+    () => true,
+    (error: unknown) => {
+      serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
+        runId,
+        errorName: error instanceof TaskError ? error.name : "unknown",
+      });
+      return true;
+    },
+  );
+  const finished = await Promise.race([
+    destroyed,
+    new Promise<false>((resolve) => {
+      timer = TaskSetTimeout(() => resolve(false), timeoutMs);
+    }),
+  ]).finally(() => TaskClearTimeout(timer));
+  if (!finished) {
+    serverLogger.warn("[project-run-execute] Workflow client cleanup did not finish", {
+      runId,
+      timeoutMs,
+    });
+  }
+}
+
 interface RuntimeApiClient {
-  get<T>(path: string, params?: Record<string, string>): Promise<T>;
+  get<T>(
+    path: string,
+    params?: Record<string, string>,
+    options?: { signal?: AbortSignal },
+  ): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
-  put<T>(path: string, body?: unknown): Promise<T>;
+  put<T>(
+    path: string,
+    body?: unknown,
+    options?: { signal?: AbortSignal; retryPolicy?: "default" | "none" },
+  ): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
 }
@@ -1966,7 +2115,11 @@ function getEndpointProtocol(endpoint?: string): string | undefined {
   }
 }
 
-function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiClient {
+function createRuntimeApiClient(
+  req: Request,
+  ctx: HandlerContext,
+  defaultSignal?: AbortSignal,
+): RuntimeApiClient {
   const apiUrl = getEnvironmentConfig().apiBaseUrl;
   const token = getRuntimeApiToken(req, ctx);
   if (!token) {
@@ -1978,6 +2131,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    signal: AbortSignal | undefined = defaultSignal,
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
     for (const [key, value] of Object.entries(params ?? {})) {
@@ -1992,6 +2146,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
         "Content-Type": "application/json",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
 
     if (!response.ok) {
@@ -2006,14 +2161,22 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
   }
 
   return {
-    get<T>(path: string, params?: Record<string, string>): Promise<T> {
-      return requestJson<T>("GET", path, undefined, params);
+    get<T>(
+      path: string,
+      params?: Record<string, string>,
+      options?: { signal?: AbortSignal },
+    ): Promise<T> {
+      return requestJson<T>("GET", path, undefined, params, options?.signal);
     },
     post<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("POST", path, body);
     },
-    put<T>(path: string, body?: unknown): Promise<T> {
-      return requestJson<T>("PUT", path, body);
+    put<T>(
+      path: string,
+      body?: unknown,
+      options?: { signal?: AbortSignal },
+    ): Promise<T> {
+      return requestJson<T>("PUT", path, body, undefined, options?.signal);
     },
     patch<T>(path: string, body?: unknown): Promise<T> {
       return requestJson<T>("PATCH", path, body);
@@ -2024,7 +2187,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
   };
 }
 
-async function uploadEvalReportToProjectFiles(
+export async function uploadEvalReportToProjectFiles(
   input: EvalReportUploadInput,
 ): Promise<string | null> {
   const client = createRuntimeApiClient(input.req, input.ctx);
@@ -2034,7 +2197,9 @@ async function uploadEvalReportToProjectFiles(
   const response = await client.put<{ path?: string }>(
     `/projects/${encodedProject}/files/${encodedPath}`,
     { content: `${JSON.stringify(reportWithPath, null, 2)}\n` },
+    { signal: input.signal },
   );
+  input.signal?.throwIfAborted();
   return response.path ?? input.reportPath;
 }
 
@@ -2153,15 +2318,17 @@ async function executeKnowledgeIngestRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
+  signal: AbortSignal;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
-  const client = createRuntimeApiClient(input.req, input.ctx);
+  const client = createRuntimeApiClient(input.req, input.ctx, input.signal);
   const projectReference = input.ctx.projectSlug ?? input.request.projectId;
   const outputDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-run-" });
   const logLines: string[] = [];
 
   try {
+    input.signal.throwIfAborted();
     const {
       buildKnowledgeIngestRunResult,
     } = await import("#cli/commands/knowledge/result");
@@ -2180,6 +2347,7 @@ async function executeKnowledgeIngestRun(input: {
       ...paths,
       ...await resolveUploadIdsToPaths(client, projectReference, uploadIds),
     ];
+    input.signal.throwIfAborted();
     const pathPrefix = getStringConfig(config, [
       "path_prefix",
       "upload_prefix",
@@ -2217,10 +2385,18 @@ async function executeKnowledgeIngestRun(input: {
       downloadUploads: (uploadTargets) =>
         Promise.all(
           uploadTargets.map((uploadPath) =>
-            downloadUploadToFile(client, projectReference, uploadPath, downloadOutputDir)
+            downloadUploadToFile(
+              client,
+              projectReference,
+              uploadPath,
+              downloadOutputDir,
+              input.signal,
+            )
           ),
         ),
+      signal: input.signal,
     });
+    input.signal.throwIfAborted();
     const requestedCount = collection.sources.length + collection.skipped.length;
     if (requestedCount === 0) {
       throw INVALID_ARGUMENT.create({ detail: "No supported knowledge sources were found." });
@@ -2233,8 +2409,16 @@ async function executeKnowledgeIngestRun(input: {
       runParser: runKnowledgeParser,
       eventLogger: createKnowledgeEventLogger(logLines),
       uploadKnowledgeFile: (remotePath, localPath) =>
-        putRemoteFileFromLocal(client, projectReference, remotePath, localPath),
+        putRemoteFileFromLocal(
+          client,
+          projectReference,
+          remotePath,
+          localPath,
+          input.signal,
+        ),
+      signal: input.signal,
     });
+    input.signal.throwIfAborted();
     const result = buildKnowledgeIngestRunResult({
       requestedCount,
       sourceMode,
@@ -2258,6 +2442,7 @@ async function executeKnowledgeIngestRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    input.signal.throwIfAborted();
     return {
       success: false,
       error: errorMessage(error),
@@ -2506,10 +2691,12 @@ async function executeEvalRun(
     report,
     projectReference,
     reportPath: requestedReportPath,
+    signal: options.signal,
   }).catch((error) => {
     uploadError = `Eval report upload failed: ${errorMessage(error)}`;
     return null;
   });
+  options.signal?.throwIfAborted();
   const result = options.summaryOnly
     ? report.summary
     : reportPath
@@ -2597,6 +2784,7 @@ async function executeReleaseAssetBuildRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
+  signal: AbortSignal;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
@@ -2606,6 +2794,7 @@ async function executeReleaseAssetBuildRun(input: {
   const tempDir = await Deno.makeTempDir({ prefix: "veryfront-release-assets-" });
 
   try {
+    input.signal.throwIfAborted();
     if (!releaseId || releaseVersion === undefined) {
       throw INVALID_ARGUMENT.create({
         detail: "Missing release_id or release_version for release asset build",
@@ -2658,23 +2847,33 @@ async function executeReleaseAssetBuildRun(input: {
       adapter: input.ctx.adapter,
       dependencyMode: "source",
       transform: (source, sourceFile, projectDir, adapter, options) =>
-        transformToESM(source, sourceFile, projectDir, adapter, {
-          projectId: options.projectId,
-          dev: options.dev,
-          ssr: options.ssr,
-          studioEmbed: false,
-          reactVersion: options.reactVersion,
-          serverExternalPackages: releaseConfig.build?.serverExternalPackages,
-          dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
-          dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
-          dependencyPinningSource: options.dependencyPinningSource,
-        }),
-      loadConfig: () => Promise.resolve(releaseConfig),
+        runWhileActive(input.signal, () =>
+          transformToESM(source, sourceFile, projectDir, adapter, {
+            projectId: options.projectId,
+            dev: options.dev,
+            ssr: options.ssr,
+            studioEmbed: false,
+            reactVersion: options.reactVersion,
+            serverExternalPackages: releaseConfig.build?.serverExternalPackages,
+            dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
+            dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
+            dependencyPinningSource: options.dependencyPinningSource,
+          })),
+      loadConfig: () => {
+        input.signal.throwIfAborted();
+        return Promise.resolve(releaseConfig);
+      },
       client: {
         beginReleaseAssetManifestBuild: (version) =>
-          apiClient.beginReleaseAssetManifestBuild(version),
+          runWhileActive(
+            input.signal,
+            () => apiClient.beginReleaseAssetManifestBuild(version, undefined, input.signal),
+          ),
         listAllReleaseFiles: async (version) => {
-          const files = await apiClient.listAllReleaseFiles(version);
+          const files = await runWhileActive(
+            input.signal,
+            () => apiClient.listAllReleaseFiles(version, {}, input.signal),
+          );
           return files.map((file) => {
             if (typeof file.content !== "string") {
               throw API_CLIENT_ERROR.create({
@@ -2686,14 +2885,40 @@ async function executeReleaseAssetBuildRun(input: {
           });
         },
         uploadReleaseAsset: (version, hash, contentType, bytes) =>
-          apiClient.uploadReleaseAsset(version, hash, contentType, bytes),
+          runWhileActive(
+            input.signal,
+            () =>
+              apiClient.uploadReleaseAsset(
+                version,
+                hash,
+                contentType,
+                bytes,
+                undefined,
+                input.signal,
+              ),
+          ),
         putReleaseAssetManifest: (version, manifest) =>
-          apiClient.putReleaseAssetManifest(version, manifest),
+          runWhileActive(
+            input.signal,
+            () => apiClient.putReleaseAssetManifest(version, manifest, undefined, input.signal),
+          ),
         reportReleaseAssetManifestState: (version, state, error) =>
-          apiClient.reportReleaseAssetManifestState(version, state, error),
-        compileProjectCss,
+          runWhileActive(
+            input.signal,
+            () =>
+              apiClient.reportReleaseAssetManifestState(
+                version,
+                state,
+                error,
+                undefined,
+                input.signal,
+              ),
+          ),
+        compileProjectCss: (...args) =>
+          runWhileActive(input.signal, () => compileProjectCss(...args)),
       },
     }, tempDir);
+    input.signal.throwIfAborted();
 
     return {
       success: result.success,
@@ -2703,6 +2928,7 @@ async function executeReleaseAssetBuildRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    input.signal.throwIfAborted();
     return {
       success: false,
       error: errorMessage(error),
@@ -2718,9 +2944,11 @@ async function executeDependencyArtifactBuildRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
+  signal: AbortSignal;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   try {
+    input.signal.throwIfAborted();
     const {
       parseDependencyArtifactBuildTaskInput,
       runDependencyArtifactBuild,
@@ -2742,20 +2970,25 @@ async function executeDependencyArtifactBuildRun(input: {
     });
     const result = await runDependencyArtifactBuild(taskInput, {
       uploadAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
-        apiClient.uploadDependencyArtifactAsset(
-          artifactId,
-          attemptCount,
-          contentHash,
-          contentType,
-          bytes,
-        ),
+        runWhileActive(input.signal, () =>
+          apiClient.uploadDependencyArtifactAsset(
+            artifactId,
+            attemptCount,
+            contentHash,
+            contentType,
+            bytes,
+            input.signal,
+          )),
       reportResult: ({ artifactId, attemptCount, result }) =>
-        apiClient.reportDependencyArtifactBuildResult(
-          artifactId,
-          attemptCount,
-          result,
-        ),
-    });
+        runWhileActive(input.signal, () =>
+          apiClient.reportDependencyArtifactBuildResult(
+            artifactId,
+            attemptCount,
+            result,
+            input.signal,
+          )),
+    }, { signal: input.signal });
+    input.signal.throwIfAborted();
 
     return {
       success: result.success,
@@ -2765,6 +2998,7 @@ async function executeDependencyArtifactBuildRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    input.signal.throwIfAborted();
     return {
       success: false,
       error: errorMessage(error),
@@ -2916,6 +3150,7 @@ async function executeStyleArtifactBuildRun(input: {
   request: ProjectRunExecuteRequest;
   ctx: HandlerContext;
   req: Request;
+  signal: AbortSignal;
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
@@ -2925,6 +3160,7 @@ async function executeStyleArtifactBuildRun(input: {
   let styleProfileHash: string | null = null;
 
   try {
+    input.signal.throwIfAborted();
     const { VeryfrontApiClient } = await import(
       "#veryfront/platform/adapters/veryfront-api-client/client.ts"
     );
@@ -2974,6 +3210,7 @@ async function executeStyleArtifactBuildRun(input: {
       styleProfile,
       collectLocalProjectSourceFiles,
     );
+    input.signal.throwIfAborted();
     if (files.length === 0) {
       throw INVALID_ARGUMENT.create({
         detail: "No project source files were available to build the style artifact",
@@ -2985,6 +3222,7 @@ async function executeStyleArtifactBuildRun(input: {
       (getStyleArtifactSourceProvider(input.ctx)
         ? await readStylesheetFromAdapter(input.ctx, stylesheetPath)
         : await readLocalProjectStylesheet(input.ctx.projectDir, stylesheetPath));
+    input.signal.throwIfAborted();
     const result = await buildPreparedCSSArtifactFromFiles({
       projectSlug: projectReference,
       projectVersion: resolveStyleContentVersion(contentContext, {
@@ -3001,16 +3239,22 @@ async function executeStyleArtifactBuildRun(input: {
       environment: "preview",
       buildMode: "production",
     });
+    input.signal.throwIfAborted();
 
-    await apiClient.upsertStyleArtifact({
-      ...selector,
-      styleProfileHash,
-      status: "ready",
-      artifactHash: result.hash,
-      assetPath: `/_vf/css/${result.hash}.css`,
-      contentType: "text/css; charset=utf-8",
-      buildRunId: input.request.runId,
-    });
+    await apiClient.upsertStyleArtifact(
+      {
+        ...selector,
+        styleProfileHash,
+        status: "ready",
+        artifactHash: result.hash,
+        assetPath: `/_vf/css/${result.hash}.css`,
+        contentType: "text/css; charset=utf-8",
+        buildRunId: input.request.runId,
+      },
+      undefined,
+      input.signal,
+    );
+    input.signal.throwIfAborted();
 
     return {
       success: true,
@@ -3025,14 +3269,19 @@ async function executeStyleArtifactBuildRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    if (input.signal.aborted) throw input.signal.reason;
     if (apiClient && selector && styleProfileHash) {
-      await apiClient.upsertStyleArtifact({
-        ...selector,
-        styleProfileHash,
-        status: "failed",
-        buildRunId: input.request.runId,
-        failureReason: errorMessage(error),
-      }).catch(() => undefined);
+      await apiClient.upsertStyleArtifact(
+        {
+          ...selector,
+          styleProfileHash,
+          status: "failed",
+          buildRunId: input.request.runId,
+          failureReason: errorMessage(error),
+        },
+        undefined,
+        input.signal,
+      ).catch(() => undefined);
     }
 
     return {
@@ -3070,17 +3319,20 @@ function executeProjectRun(
 ): Promise<ProjectRunExecuteResponse> {
   if (request.kind === "task") {
     return executeTaskRun(request, (control) => {
+      const signal = control
+        ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
+        : req.signal;
       switch (request.target) {
         case "task:eval":
           return executeEvalTaskRun(request, ctx, req, req.signal, deps, control);
         case "task:knowledge-ingest":
-          return deps.executeKnowledgeIngest({ request, ctx, req });
+          return deps.executeKnowledgeIngest({ request, ctx, req, signal });
         case "task:release-asset-build":
-          return deps.executeReleaseAssetBuild({ request, ctx, req });
+          return deps.executeReleaseAssetBuild({ request, ctx, req, signal });
         case "task:dependency-artifact-build":
-          return deps.executeDependencyArtifactBuild({ request, ctx, req });
+          return deps.executeDependencyArtifactBuild({ request, ctx, req, signal });
         case "task:style-artifact-build":
-          return deps.executeStyleArtifactBuild({ request, ctx, req });
+          return deps.executeStyleArtifactBuild({ request, ctx, req, signal });
         default:
           return executeDiscoveredTaskRun(request, ctx, req.signal, deps, control);
       }
@@ -3141,20 +3393,25 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           async () => {
             const startedAt = this.deps.now();
             try {
-              const response = inferenceToken === undefined
-                ? await executeProjectRun(request, ctx, req, this.deps)
-                : await runWithProjectRunInferenceCredential(
-                  inferenceToken,
-                  () =>
-                    executeProjectRun(
-                      request,
-                      ctx,
-                      withoutProjectRunInferenceToken(req),
-                      this.deps,
-                    ),
-                );
+              const limited = enforceRunOutputLimit(
+                inferenceToken === undefined
+                  ? await executeProjectRun(request, ctx, req, this.deps)
+                  : await runWithProjectRunInferenceCredential(
+                    inferenceToken,
+                    () =>
+                      executeProjectRun(
+                        request,
+                        ctx,
+                        withoutProjectRunInferenceToken(req),
+                        this.deps,
+                      ),
+                  ),
+              );
+              const response = limited.response;
               if (!response.success) setActiveSpanErrorStatus(new Error("Project run failed"));
-              return this.respond(builder.json(response, 200));
+              return this.respond(
+                builder.withContentType("application/json; charset=utf-8", limited.wireJson, 200),
+              );
             } catch (error) {
               setActiveSpanErrorStatus(new Error(telemetryErrorType(error)));
               return this.respond(
@@ -3183,6 +3440,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
 
         if (error instanceof ControlPlaneRequestError) {
           return this.respond(builder.json({ error: error.message }, error.status));
+        }
+
+        if (error instanceof VeryfrontError && error.slug === "input-validation-failed") {
+          return this.respond(builder.json({ error: error.detail ?? error.message }, 400));
         }
 
         return this.respond(builder.json({ error: "Invalid project run execute request" }, 400));

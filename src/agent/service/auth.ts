@@ -75,6 +75,8 @@ export type HostedServiceRunEventAppendTokenInput = {
 export type HostedServiceRunEventAppendTokenResult = {
   verified: boolean;
   integrationTools?: readonly string[];
+  /** SHA-256 of the exact checkpointed resume call, carried by the signed token. */
+  resumeToolCallSha256?: string;
 };
 
 /**
@@ -712,9 +714,23 @@ export function createHostedServiceAuth(
           return { verified: false };
         }
 
+        const resumeToolCallSha256 = readOwnDataProperty(
+          payload,
+          "resumeToolCallSha256",
+          "Writer claims",
+          false,
+        );
+        if (
+          resumeToolCallSha256 !== undefined &&
+          (typeof resumeToolCallSha256 !== "string" ||
+            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [resumeToolCallSha256]) === null)
+        ) {
+          return { verified: false };
+        }
         const integrationTools = (payload as { integrationTools?: unknown }).integrationTools;
         return {
           verified: true,
+          ...(resumeToolCallSha256 !== undefined ? { resumeToolCallSha256 } : {}),
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
         } as HostedServiceRunEventAppendTokenResult;
       } catch (error) {

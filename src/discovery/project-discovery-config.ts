@@ -118,3 +118,15 @@ export function createProjectDiscoveryConfig(
     allowHostProjectCodeExecution: input.allowHostProjectCodeExecution === true,
   };
 }
+
+/** Markdown discovery roots whose definitions can affect a project agent run. */
+export function getAgentRuntimeMarkdownDiscoveryPaths(config?: VeryfrontConfig | null): {
+  agentMarkdownPaths: string[];
+  skillMarkdownPaths: string[];
+} {
+  const discovery = createProjectDiscoveryConfig({ projectDir: "", config });
+  return {
+    agentMarkdownPaths: discovery.agentDirs,
+    skillMarkdownPaths: discovery.skillDirs,
+  };
+}

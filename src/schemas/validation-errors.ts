@@ -14,10 +14,25 @@ export const MAX_SCHEMA_VALIDATION_ERRORS = 20;
 /** Machine-readable code of a run whose input fails its declared inputSchema. */
 export const INPUT_VALIDATION_FAILED_CODE = "INPUT_VALIDATION_FAILED";
 
+/** Machine-readable code of a run whose output fails its declared outputSchema. */
+export const OUTPUT_VALIDATION_FAILED_CODE = "OUTPUT_VALIDATION_FAILED";
+
 export interface SchemaValidationError {
   /** JSON Pointer to the invalid value, `""` for the root. */
   path: string;
   message: string;
+}
+
+/** Failure raised when a workflow's final output does not match its declared schema. */
+export class OutputSchemaValidationError extends Error {
+  readonly code = OUTPUT_VALIDATION_FAILED_CODE;
+  readonly detail: { errors: SchemaValidationError[] };
+
+  constructor(message: string, errors: SchemaValidationError[]) {
+    super(message);
+    this.name = "OutputSchemaValidationError";
+    this.detail = { errors };
+  }
 }
 
 /** Escape one JSON Pointer reference token (RFC 6901). */

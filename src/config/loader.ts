@@ -3651,6 +3651,8 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     : clean;
 }
 
+export { summarizeConfigLoadCause as __summarizeConfigLoadCauseForTests };
+
 function configLoadFailureDetail(configFile: string, error: unknown): string {
   const summary = summarizeConfigLoadCause(error);
   return summary === undefined

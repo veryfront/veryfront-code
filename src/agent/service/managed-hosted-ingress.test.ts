@@ -19,6 +19,59 @@ function verifyProjectAccess() {
 }
 
 describe("managed agent ingress", () => {
+  it("projects a writer-verified resume call into detached executor data", async () => {
+    const resumeToolCall = {
+      id: "call-inbox:resume-1",
+      name: "outlook__list_threads",
+      input: { folder: "inbox", options: { limit: 2, unread: true } },
+    };
+    const result = await parseManagedDurableAgentIngress(
+      new Request("https://agent.example.test/api/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Veryfront-Run-Event-Token": "run-event-secret",
+        },
+        body: JSON.stringify({
+          messages: [],
+          context: { conversationId, projectId, branchId: "branch-1" },
+          durableRootRun: { runId: "run_root_1", messageId },
+          resumeToolCall,
+        }),
+      }),
+      {
+        authenticate,
+        verifyProjectAccess,
+        verifyRunEventAppendToken: () =>
+          Promise.resolve({
+            verified: true,
+            resumeToolCallSha256:
+              "c2158c29f20bd685f52a531c930512a5e49f8d3b8569b2d989fc2efa28afcf58",
+          }),
+      },
+    );
+
+    if (result instanceof Response) throw new Error("Expected managed durable ingress");
+    assertEquals(result.executor.serverResolvedResumeToolCall, resumeToolCall);
+    assertEquals(result.executor.serverEnvelopeVerified, false);
+    assertEquals(Object.hasOwn(result.executor, "resumeToolCallSha256"), false);
+    assertEquals(JSON.stringify(result.executor).includes("run-event-secret"), false);
+    const parsedResumeToolCall = result.broker.getParsedRequest().serverResolvedResumeToolCall;
+    if (
+      parsedResumeToolCall &&
+      parsedResumeToolCall.input.options !== null &&
+      typeof parsedResumeToolCall.input.options === "object" &&
+      !Array.isArray(parsedResumeToolCall.input.options) &&
+      Object.hasOwn(parsedResumeToolCall.input.options, "limit")
+    ) {
+      Reflect.set(parsedResumeToolCall.input.options, "limit", 99);
+    }
+    assertEquals(result.executor.serverResolvedResumeToolCall, resumeToolCall);
+    for (const key of ["authToken", "authorization", "headers", "resumeToolCallSha256"]) {
+      assertEquals(key in result.executor, false);
+    }
+  });
+
   for (const kind of ["durable", "ag-ui"] as const) {
     for (
       const credential of [
@@ -216,6 +269,11 @@ describe("managed agent ingress", () => {
             serverResolvedProviderReplayCheckpoints: { forged: "replay-secret" },
           },
           serverResolvedProviderReplayCheckpoints: { forged: "top-level-replay-secret" },
+          resumeToolCall: {
+            id: "counterfeit:resume-1",
+            name: "outlook__list_threads",
+            input: { folder: "inbox" },
+          },
         }),
       }),
       { authenticate, verifyProjectAccess },
@@ -234,6 +292,7 @@ describe("managed agent ingress", () => {
     const serialized = JSON.stringify(result.executor);
     assertEquals(serialized.includes("broker-auth-secret"), false);
     assertEquals(serialized.includes("replay-secret"), false);
+    assertEquals(Object.hasOwn(result.executor, "serverResolvedResumeToolCall"), false);
     assertEquals(result.broker.createInferenceModelResolver(), undefined);
     assertEquals(
       result.broker.createRunEventWriterCapability({ apiUrl: "https://api.example.test" }),

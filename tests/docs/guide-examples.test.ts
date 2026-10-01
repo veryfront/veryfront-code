@@ -191,9 +191,64 @@ describe("Guide: middleware.mdx", () => {
 });
 
 // === Guide: workflows.mdx ===
+import type { Workflow } from "../../src/workflow/types.ts";
+import { MemoryBackend } from "../../src/workflow/backends/memory.ts";
+import { WorkflowExecutor } from "../../src/workflow/executor/workflow-executor.ts";
 import { branch, parallel, step, unless, when, workflow } from "../../src/workflow/dsl/index.ts";
 
 describe("Guide: workflows.mdx", () => {
+  it("completes the guide content-generation configuration with the writer article", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/workflows.md", import.meta.url),
+    );
+    const section = guide.split("## Workflow configuration\n")[1];
+    assertExists(section);
+    const snippet = /```ts\n([\s\S]*?)\n```/.exec(section)?.[1];
+    assertExists(snippet);
+    const source = snippet
+      .replace(
+        '"veryfront/schemas"',
+        JSON.stringify(new URL("../../src/schemas/index.ts", import.meta.url).href),
+      )
+      .replace(
+        '"veryfront/workflow"',
+        JSON.stringify(new URL("../../src/workflow/index.ts", import.meta.url).href),
+      );
+    const { default: pipeline }: { default: Workflow } = await import(
+      `data:application/typescript,${encodeURIComponent(source)}`
+    );
+    const calls: string[] = [];
+    const agents = new Map(["researcher", "writer"].map((id) => [id, {
+      ...createGuideAgent({ id }),
+      generate: () => {
+        calls.push(id);
+        return Promise.resolve({
+          text: id === "writer" ? "valid article" : "facts",
+          messages: [],
+          toolCalls: [],
+          object: undefined,
+          status: "completed" as const,
+        });
+      },
+    }]));
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      enableLocking: false,
+      stepExecutor: { agentRegistry: agents },
+    });
+    executor.register(pipeline.definition);
+    const handle = await executor.start(pipeline.id, { topic: "Test topic" });
+    await handle.settled();
+    const run = await backend.getRun(handle.runId);
+    assertExists(run);
+    assertEquals(run.status, "completed");
+    assertEquals(run.output, { article: "valid article" });
+    assertExists(pipeline.definition.outputSchema);
+    assertEquals(pipeline.definition.outputSchema.parse(run.output), run.output);
+    assertEquals(calls, ["researcher", "writer"]);
+  });
+
   it("should create a basic workflow with steps", () => {
     const pipeline = workflow({
       id: "content-pipeline",

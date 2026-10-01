@@ -3,6 +3,7 @@ import {
   buildTestProcessEnv,
   LOOPBACK_TEST_PERMISSIONS,
   partitionDenoSuiteFiles,
+  shouldRunDenoBatchInParallel,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
 
@@ -16,6 +17,7 @@ export interface ShardSpec {
 export interface DenoTestCommandOptions {
   coverageDir: string;
   files: readonly string[];
+  parallel?: boolean;
 }
 
 interface LcovLineRecord {
@@ -49,7 +51,7 @@ export function buildDenoTestCommandArgs(
     "test",
     "--preload=src/testing/preload.ts",
     "--no-check",
-    "--parallel",
+    ...((options.parallel ?? true) ? ["--parallel"] : []),
     // Leaks here are load-dependent and do not reproduce on demand, so the
     // first failure has to carry the stack rather than advise a rerun.
     "--trace-leaks",
@@ -95,12 +97,16 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
 }
 
 export function mergeLcovReports(reports: string[]): string {
+  const blockLayouts = reports.map(collectBranchBlockLayouts);
+  const shiftedBlockLines = findShiftedBranchBlockLines(blockLayouts);
   const files = new Map<string, {
     lines: Map<number, number>;
     branches: Map<string, { key: [number, number, number]; hits: number }>;
   }>();
 
-  for (const report of reports) {
+  for (let reportIndex = 0; reportIndex < reports.length; reportIndex++) {
+    const report = reports[reportIndex];
+    if (report === undefined) continue;
     let currentFile: string | undefined;
 
     for (const line of report.split(/\r?\n/)) {
@@ -131,15 +137,27 @@ export function mergeLcovReports(reports: string[]): string {
       } else if (line.startsWith("BRDA:")) {
         // Deno emits numeric BRDA:<line>,<block>,<branch>,<hits|-> only. Other
         // forms (for example lcov 2.x `e`-prefixed exception blocks) are
-        // intentionally dropped. Branches are keyed by (line, block, branch),
-        // the same key Sonar uses. Deno numbers blocks by V8 function index,
-        // so one condition can carry different block ids in different shards;
-        // those entries stay separate here as they would in Sonar.
+        // intentionally dropped. Deno derives block ids from V8 function
+        // indexes, which can differ between otherwise equivalent reports. If
+        // every report has the same block shape on a line but the ids differ,
+        // use each block's source-order ordinal so Sonar sees one stable
+        // condition set. If a report omits a block or the branch shapes
+        // differ, ordinals would not line up, so the emitted ids are kept.
         const match = /^BRDA:(\d+),(\d+),(\d+),(\d+|-)\s*$/.exec(line);
         if (!match) continue;
+        const lineNumber = Number(match[1]);
+        const emittedBlock = Number(match[2]);
+        const layout = blockLayouts[reportIndex]?.get(currentFile)?.get(
+          lineNumber,
+        );
+        const blockOrdinal = layout?.ids.indexOf(emittedBlock) ?? -1;
+        const block = shiftedBlockLines.get(currentFile)?.has(lineNumber) &&
+            blockOrdinal >= 0
+          ? blockOrdinal
+          : emittedBlock;
         const key: [number, number, number] = [
-          Number(match[1]),
-          Number(match[2]),
+          lineNumber,
+          block,
           Number(match[3]),
         ];
         const hits = match[4] === "-" ? 0 : Number(match[4]);
@@ -180,6 +198,105 @@ export function mergeLcovReports(reports: string[]): string {
     .join("\n");
 }
 
+interface BranchBlockLayout {
+  /** Emitted block ids on the line, in source order. */
+  ids: number[];
+  /** Branch count of each block, in the same order. */
+  branchCounts: number[];
+}
+
+function collectBranchBlockLayouts(
+  report: string,
+): Map<string, Map<number, BranchBlockLayout>> {
+  const blocks = new Map<string, Map<number, Map<number, Set<number>>>>();
+  let currentFile: string | undefined;
+
+  for (const line of report.split(/\r?\n/)) {
+    if (line.startsWith("SF:")) {
+      currentFile = line.slice(3).trim();
+      continue;
+    }
+    if (line === "end_of_record") {
+      currentFile = undefined;
+      continue;
+    }
+    if (!currentFile) continue;
+
+    const match = /^BRDA:(\d+),(\d+),(\d+),(?:\d+|-)\s*$/.exec(line);
+    if (!match) continue;
+    const lineNumber = Number(match[1]);
+    const block = Number(match[2]);
+    const fileBlocks = blocks.get(currentFile) ??
+      new Map<number, Map<number, Set<number>>>();
+    const lineBlocks = fileBlocks.get(lineNumber) ??
+      new Map<number, Set<number>>();
+    const branches = lineBlocks.get(block) ?? new Set<number>();
+    branches.add(Number(match[3]));
+    lineBlocks.set(block, branches);
+    fileBlocks.set(lineNumber, lineBlocks);
+    blocks.set(currentFile, fileBlocks);
+  }
+
+  return new Map(
+    [...blocks].map(([file, lines]) => [
+      file,
+      new Map(
+        [...lines].map(([line, lineBlocks]) => {
+          const ids = [...lineBlocks.keys()].sort((a, b) => a - b);
+          return [line, {
+            ids,
+            branchCounts: ids.map((id) => lineBlocks.get(id)?.size ?? 0),
+          }];
+        }),
+      ),
+    ]),
+  );
+}
+
+/**
+ * Lines whose block ids differ between reports while every report carries the
+ * same blocks in shape: the same number of blocks, each with the same number
+ * of branches in source order. Only those can be aligned by source-order
+ * ordinal. A line where some report omits a block, or where the branch shapes
+ * differ, keeps its emitted ids, because an ordinal there could attribute one
+ * condition's hits to another. LCOV carries no column data, so a line with one
+ * shifted block and a line whose shards each saw a different same-shaped
+ * condition look identical; the shifted-id case is the one Deno produces.
+ */
+function findShiftedBranchBlockLines(
+  layouts: Map<string, Map<number, BranchBlockLayout>>[],
+): Map<string, Set<number>> {
+  const seen = new Map<string, { ids: string; shape: string }>();
+  const differing = new Map<string, { file: string; line: number }>();
+  const mismatched = new Set<string>();
+
+  for (const layout of layouts) {
+    for (const [file, lines] of layout) {
+      for (const [line, blocks] of lines) {
+        const id = `${file}\0${line}`;
+        const ids = blocks.ids.join(",");
+        const shape = blocks.branchCounts.join(",");
+        const first = seen.get(id);
+        if (first === undefined) {
+          seen.set(id, { ids, shape });
+          continue;
+        }
+        if (first.shape !== shape) mismatched.add(id);
+        if (first.ids !== ids) differing.set(id, { file, line });
+      }
+    }
+  }
+
+  const shifted = new Map<string, Set<number>>();
+  for (const [id, { file, line }] of differing) {
+    if (mismatched.has(id)) continue;
+    const fileLines = shifted.get(file) ?? new Set<number>();
+    fileLines.add(line);
+    shifted.set(file, fileLines);
+  }
+  return shifted;
+}
+
 async function runShard(args: string[]): Promise<void> {
   const shardValue = readOption(args, "--shard");
   const coverageDir = readOption(args, "--coverage-dir") ?? "coverage";
@@ -195,7 +312,11 @@ async function runShard(args: string[]): Promise<void> {
 
   for (const batch of partitionDenoSuiteFiles(files, null)) {
     await runDeno(
-      buildDenoTestCommandArgs({ coverageDir, files: batch }),
+      buildDenoTestCommandArgs({
+        coverageDir,
+        files: batch,
+        parallel: shouldRunDenoBatchInParallel(true, batch),
+      }),
       { ...UNIT_COVERAGE_ENV },
     );
   }

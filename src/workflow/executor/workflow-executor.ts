@@ -7,7 +7,6 @@
 import { logger as baseLogger, sleep } from "#veryfront/utils";
 import {
   ensureError,
-  INPUT_VALIDATION_FAILED,
   INVALID_ARGUMENT,
   NOT_SUPPORTED,
   ORCHESTRATION_ERROR,
@@ -43,10 +42,8 @@ import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfr
 import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
-import {
-  formatSchemaValidationErrors,
-  toSchemaValidationErrors,
-} from "#veryfront/schemas/validation-errors.ts";
+import { parseWorkflowInput } from "./workflow-input.ts";
+import { parseWorkflowOutput } from "./output-validation.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import { retryTelemetryErrorType } from "./retry-policy.ts";
@@ -84,24 +81,6 @@ function requireDurableWorkflowSourceContext(): void {
         "Durable workflow recovery requires an independently authorized source binding.",
     });
   }
-}
-
-/**
- * Parse submitted input against the declared inputSchema. Invalid input fails
- * before the run is created, with INPUT_VALIDATION_FAILED and the validation
- * errors in `context.errors` (veryfront/veryfront-issue-inbox#2091).
- */
-function parseWorkflowInput(workflow: WorkflowDefinition, input: unknown): unknown {
-  if (!workflow.inputSchema) return input;
-  const result = workflow.inputSchema.safeParse(input);
-  if (result.success) return result.data;
-  const errors = toSchemaValidationErrors(result.issues ?? []);
-  throw INPUT_VALIDATION_FAILED.create({
-    detail: `Workflow "${workflow.id}" input failed inputSchema validation: ${
-      formatSchemaValidationErrors(errors)
-    }`,
-    context: { errors },
-  });
 }
 
 /** Default polling interval for waiting on workflow result */
@@ -234,6 +213,8 @@ export class WorkflowExecutor {
     this.dagExecutor = new DAGExecutor({
       stepExecutor: this.stepExecutor,
       checkpointManager: this.checkpointManager,
+      prepareNodeStatesForPersistence: (runId, nodeStates) =>
+        this.config.backend.prepareNodeStatesForPersistence?.(runId, nodeStates) ?? nodeStates,
       maxConcurrency: this.config.maxConcurrency,
       debug: this.config.debug,
       // waiting state is handled by executeAsync() after DAG execution returns with waiting: true
@@ -791,21 +772,22 @@ export class WorkflowExecutor {
         onStart: (startedRun) => {
           this.config.onStart?.(startedRun);
         },
-        // A declared selector picks the final output, and `outputSchema`
-        // checks it before it is stored: the parsed value is the output, and
-        // a mismatch fails the run instead of completing it (#2107).
+        // A declared selector picks the final output. The schema checks either
+        // selected or default output before completion is persisted (#2175).
         ...(selectOutput
           ? {
-            selectOutput: (context: WorkflowContext) => {
-              const selected = selectOutput(context);
-              return outputSchema ? outputSchema.parse(selected) : selected;
+            selectOutput: (context: WorkflowContext) => selectOutput(context),
+          }
+          : {}),
+        ...(outputSchema
+          ? {
+            parseOutput: (output: unknown) => {
+              const parsed = parseWorkflowOutput(workflow, output);
+              return selectOutput ? parsed : output;
             },
           }
           : {}),
         onComplete: async (finalRun) => {
-          // Without a selector the output keeps its historical shape: the
-          // context minus `input`, checked after completion as before.
-          if (!selectOutput) outputSchema?.parse(finalRun.output);
           await workflow.onComplete?.(finalRun.output, finalRun.context);
           this.config.onComplete?.(finalRun);
         },

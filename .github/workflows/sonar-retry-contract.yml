@@ -1,0 +1,97 @@
+name: Sonar retry contract
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/cicd.yml
+      - .github/workflows/sonar-retry-contract.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/cicd.yml
+      - .github/workflows/sonar-retry-contract.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Exercise the production retry wrapper
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          import textwrap
+          import time
+
+          source = Path('.github/workflows/cicd.yml').read_text()
+          name = '      - name: Scan with one Sonar server-error retry\n'
+          assert name in source, 'The production Sonar scan has no bounded retry wrapper'
+          step = source.split(name, 1)[1].split('\n      - ', 1)[0].split('\n\n', 1)[0]
+          assert '        run: |\n' in step, 'The scan must expose its output and exit status'
+          wrapper = textwrap.dedent(step.split('        run: |\n', 1)[1])
+          assert 'continue-on-error:' not in step, 'The wrapper must propagate failures'
+
+          cases = [
+              ('success', [('analysis complete', 0)], 0, 1),
+              ('server error then success', [('CE Task finished abnormally', 3), ('analysis complete', 0)], 0, 2),
+              ('server error twice', [('CE Task finished abnormally', 3), ('CE Task finished abnormally', 7)], 7, 2),
+              ('server error then quality gate', [('CE Task finished abnormally', 3), ('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 2),
+              ('quality gate', [('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 1),
+              ('other failure', [('Not authorized', 4)], 4, 1),
+              ('similar message', [('CE Task timeout', 6)], 6, 1),
+              ('mixed gate and server text', [('CE Task finished abnormally; QUALITY GATE STATUS: FAILED', 2)], 2, 1),
+          ]
+          for label, results, expected_status, expected_attempts in cases:
+              with tempfile.TemporaryDirectory() as directory:
+                  tmp = Path(directory)
+                  node = tmp / 'node'
+                  node.write_text('#!/usr/bin/env python3\n' + '''import json, os, pathlib, sys
+          root = pathlib.Path(os.environ['FIXTURE_ROOT'])
+          count = root / 'attempts'
+          attempt = int(count.read_text()) + 1 if count.exists() else 1
+          count.write_text(str(attempt))
+          assert sys.argv[1] == str(root / 'sonarqube-scan-action/dist/index.js')
+          assert os.environ['INPUT_SKIPSIGNATUREVERIFICATION'] == 'false'
+          results = json.loads(os.environ['FIXTURE_RESULTS'])
+          assert attempt <= len(results), 'Unexpected extra retry'
+          message, status = results[attempt - 1]
+          print(message, file=sys.stderr)
+          sys.exit(status)
+          ''')
+                  node.chmod(0o755)
+                  env = {**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'],
+                         'RUNNER_TEMP': str(tmp), 'FIXTURE_ROOT': str(tmp),
+                         'FIXTURE_RESULTS': json.dumps(results), 'INPUT_SKIPSIGNATUREVERIFICATION': 'false'}
+                  started = time.monotonic()
+                  run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper], env=env,
+                                       text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                  attempts = int((tmp / 'attempts').read_text())
+                  assert (run.returncode, attempts) == (expected_status, expected_attempts), (label, run.returncode, attempts, run.stdout)
+                  print(f'PASS {label}: attempts={attempts}, exit={run.returncode}, seconds={time.monotonic() - started:.3f}')
+                  print(run.stdout, end='')
+          # A failed log write must never trigger a retry, even if the CE signature was read.
+          with tempfile.TemporaryDirectory() as directory:
+              tmp = Path(directory)
+              (tmp / 'node').write_text('#!/bin/sh\necho "CE Task finished abnormally" >&2\nexit 3\n')
+              (tmp / 'tee').write_text('#!/bin/sh\ncat\nexit 9\n')
+              for executable in ['node', 'tee']:
+                  (tmp / executable).chmod(0o755)
+              run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper],
+                                   env={**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'], 'RUNNER_TEMP': str(tmp)},
+                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              assert run.returncode == 9, run.stdout
+              assert 'Retrying' not in run.stdout, run.stdout
+              print('PASS failed log capture: exit=9, no retry')
+          PY

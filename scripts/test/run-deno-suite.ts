@@ -7,6 +7,7 @@ import {
   LOOPBACK_TEST_PERMISSIONS,
   partitionDenoSuiteFiles,
   PROVIDER_EGRESS_DENY_NET,
+  shouldRunDenoBatchInParallel,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
 
@@ -176,6 +177,7 @@ export const DENO_SUITE_PROFILES: Readonly<
 
 interface DenoSuiteCommandOptions {
   readonly coverageDir?: string;
+  readonly parallel?: boolean;
   readonly passthroughArgs?: readonly string[];
 }
 
@@ -220,6 +222,7 @@ export function buildDenoSuiteCommandArgs(
   options: DenoSuiteCommandOptions = {},
 ): string[] {
   const profile = DENO_SUITE_PROFILES[suite];
+  const parallel = options.parallel ?? profile.parallel;
   const passthroughArgs = options.passthroughArgs ?? [];
   if (hasDenoPermissionFlag(passthroughArgs)) {
     throw new Error(
@@ -231,7 +234,7 @@ export function buildDenoSuiteCommandArgs(
     ...(profile.preload ? ["--preload=src/testing/preload.ts"] : []),
     "--no-check",
     ...(profile.traceLeaks ? ["--trace-leaks"] : []),
-    ...(profile.parallel ? ["--parallel"] : []),
+    ...(parallel ? ["--parallel"] : []),
     ...(profile.network === "loopback" ? LOOPBACK_TEST_PERMISSIONS : [
       "--allow-all",
       ...(profile.denyNet ? [PROVIDER_EGRESS_DENY_NET] : []),
@@ -280,6 +283,7 @@ if (import.meta.main) {
     const status = await new Deno.Command("deno", {
       args: buildDenoSuiteCommandArgs(suite, files, {
         ...(flags.coverageDir ? { coverageDir: flags.coverageDir } : {}),
+        parallel: shouldRunDenoBatchInParallel(profile.parallel, files),
         passthroughArgs: flags.passthroughArgs,
       }),
       clearEnv: true,

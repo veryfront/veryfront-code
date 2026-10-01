@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { CONTROL_PLANE_OWNED_START } from "#veryfront/workflow/dsl/validation.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertMatch,
@@ -13,7 +14,13 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import { tool } from "#veryfront/tool";
-import { createWorkflowClient, step, workflow, type WorkflowDefinition } from "#veryfront/workflow";
+import {
+  createWorkflowClient,
+  step,
+  subWorkflow,
+  workflow,
+  type WorkflowDefinition,
+} from "#veryfront/workflow";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { schemaIdentitySha256 } from "#veryfront/schemas/schema-identity.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
@@ -37,12 +44,14 @@ import {
   type ProjectRunExecuteHandlerDeps,
   projectWorkflowRedisConfig,
   projectWorkflowRedisPrefix,
+  uploadEvalReportToProjectFiles,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { MemoryBackend } from "#veryfront/workflow/backends/memory.ts";
 import { dependsOn } from "#veryfront/workflow/dsl/workflow.ts";
 import { waitForApproval, waitForEvent, waitForRuns } from "#veryfront/workflow/dsl/wait.ts";
 import type { WorkflowNode } from "#veryfront/workflow/types.ts";
+import type { DiscoveredWorkflow } from "#veryfront/workflow/discovery";
 import { delay } from "#veryfront/testing/deno-compat.ts";
 import { createProjectRunInferenceModelResolver } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -513,6 +522,7 @@ function createStyleArtifactCtx(
       environmentName?: string;
       releaseId?: string;
     };
+    onGetAllSourceFiles?: () => void;
   },
 ): { ctx: HandlerContext; readCalls: string[]; sourceFileCalls: { count: number } } {
   const ctx = createCtx(publicKeyPem);
@@ -522,6 +532,7 @@ function createStyleArtifactCtx(
   const underlyingAdapter = {
     async getAllSourceFiles() {
       sourceFileCalls.count++;
+      options.onGetAllSourceFiles?.();
       return options.files;
     },
     getContentContext() {
@@ -613,6 +624,49 @@ async function withEnvValue<T>(
 describe("server/handlers/request/project-run-execute.handler", () => {
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  for (
+    const refusal of [
+      { body: { kind: "task", target: "echo-input" }, error: "Invalid task target" },
+      { body: { kind: "workflow", target: "publish" }, error: "Invalid workflow target" },
+      {
+        body: { kind: "task", target: "task:echo-input", deadlineAt: "invalid" },
+        error: "Invalid deadlineAt",
+      },
+    ]
+  ) {
+    it(`returns the execute request validation detail: ${refusal.error}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_1/execute",
+        { runId: "run_1", projectId: "p", ...refusal.body },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+      assertEquals(await result.response.json(), { error: refusal.error });
+    });
+  }
+
+  it("keeps unexpected execute request errors generic", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps());
+    const { publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_1/execute",
+      { runId: "run_1", projectId: "p", kind: "task", target: "task:echo-input" },
+    );
+    const request = new Request("https://example.com/api/control-plane/runs/run_1/execute", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.error(new Error("private transport diagnostic"));
+        },
+      }),
+    });
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "Invalid project run execute request" });
   });
 
   for (
@@ -886,6 +940,94 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "style-artifact-build",
     ]
   ) {
+    it(`stops reserved task side effects when the run is cancelled: ${target}`, async () => {
+      let receivedSignal: AbortSignal | undefined;
+      let sideEffects = 0;
+      const started = Promise.withResolvers<void>();
+      const execute = async (input: unknown) => {
+        receivedSignal = (input as { signal?: AbortSignal }).signal;
+        started.resolve();
+        if (!receivedSignal) return { success: true };
+        await new Promise<void>((resolve) =>
+          receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
+        );
+        receivedSignal.throwIfAborted();
+        sideEffects++;
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_cancel/execute",
+        {
+          runId: "run_cancel",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+        },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+
+      const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+      await started.promise;
+      controller.abort(new Error("run cancelled"));
+      const result = await pending;
+
+      assertExists(result.response);
+      assertExists(receivedSignal);
+      assertEquals(receivedSignal.aborted, true);
+      assertEquals(sideEffects, 0);
+      assertEquals((await result.response.json()).success, false);
+    });
+
+    it(`stops reserved task side effects when its deadline expires: ${target}`, async () => {
+      let receivedSignal: AbortSignal | undefined;
+      let sideEffects = 0;
+      const execute = async (input: unknown) => {
+        receivedSignal = (input as { signal?: AbortSignal }).signal;
+        if (!receivedSignal) return { success: true };
+        await new Promise<void>((resolve) =>
+          receivedSignal!.addEventListener("abort", () => resolve(), { once: true })
+        );
+        receivedSignal.throwIfAborted();
+        sideEffects++;
+        return { success: true };
+      };
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          executeKnowledgeIngest: execute,
+          executeReleaseAssetBuild: execute,
+          executeDependencyArtifactBuild: execute,
+          executeStyleArtifactBuild: execute,
+        }),
+      );
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_deadline/execute",
+        {
+          runId: "run_deadline",
+          kind: "task",
+          target: `task:${target}`,
+          projectId: "proj-1",
+          deadlineAt: new Date(Date.now() + 25).toISOString(),
+        },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertExists(receivedSignal);
+      assertEquals(receivedSignal.aborted, true);
+      assertEquals(sideEffects, 0);
+      assertEquals((await result.response.json()).error_code, "RUN_TIMEOUT");
+    });
+
     it(`bounds a non-cooperative reserved task: ${target}`, async () => {
       let finish: (() => void) | undefined;
       const execute = async () => {
@@ -1392,6 +1534,199 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEnvironmentId, "11111111-1111-4111-8111-111111111111");
   });
 
+  // veryfront/veryfront-issue-inbox#2113: an output over 1 MiB never crosses the wire.
+  it("fails a result larger than 1 MiB with OUTPUT_TOO_LARGE instead of sending it", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({ success: true, result: "x".repeat(1_048_575), durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_big",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_big/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Run output is 1048577 bytes, over the limit of 1048576 bytes",
+      error_code: "OUTPUT_TOO_LARGE",
+      error_detail: { size_bytes: 1_048_577, limit_bytes: 1_048_576 },
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("drops an oversized result from a failed run and keeps its own error", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () =>
+        Promise.resolve({
+          success: false,
+          result: "x".repeat(1_048_575),
+          error: "sync failed",
+          durationMs: 7,
+        }),
+    }));
+    const body = {
+      runId: "run_task_failed_big",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_failed_big/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "sync failed",
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("sends a result of exactly 1 MiB unchanged", async () => {
+    const output = "x".repeat(1_048_574);
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: output, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_at_limit",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_at_limit/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: output,
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("sends the measured bytes of a result that would grow if serialized again", async () => {
+    const rawJSON = (JSON as unknown as { rawJSON: (text: string) => unknown }).rawJSON;
+    const output = Array.from({ length: 50_000 }, () => rawJSON("1e20"));
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: output, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_raw_json",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_raw_json/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const text = await result.response.text();
+    // 250,001 bytes as checked; parsing and serializing again would make it 1,100,001 bytes.
+    assert(text.length < 260_000, `expected the checked serialization, got ${text.length} bytes`);
+    assertStringIncludes(text, `"result":[1e20,1e20,`);
+    const parsed = JSON.parse(text) as { success: boolean; result: number[] };
+    assertEquals(parsed.success, true);
+    assertEquals(parsed.result.length, 50_000);
+  });
+
+  it("measures and sends the same serialization of a result whose toJSON changes", async () => {
+    let serializations = 0;
+    const stateful = {
+      toJSON: () => (++serializations === 1 ? "small" : "x".repeat(1_048_575)),
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => Promise.resolve({ success: true, result: stateful, durationMs: 7 }),
+    }));
+    const body = {
+      runId: "run_task_stateful",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_stateful/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(serializations, 1);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: "small",
+      duration_ms: 7,
+      logs: null,
+    });
+  });
+
+  it("enforces and writes the output cap with intrinsics captured before project code runs", async () => {
+    const originalJsonStringify = JSON.stringify;
+    const originalTextEncoder = globalThis.TextEncoder;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: () => {
+        JSON.stringify = (() => '"poisoned"') as typeof JSON.stringify;
+        globalThis.TextEncoder = class {
+          encode() {
+            return new Uint8Array();
+          }
+        } as unknown as typeof TextEncoder;
+        return Promise.resolve({ success: true, result: "x".repeat(1_048_575), durationMs: 7 });
+      },
+    }));
+    const body = {
+      runId: "run_task_poisoned_intrinsics",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_poisoned_intrinsics/execute",
+      body,
+    );
+
+    try {
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(await result.response.json(), {
+        success: false,
+        error: "Run output is 1048577 bytes, over the limit of 1048576 bytes",
+        error_code: "OUTPUT_TOO_LARGE",
+        error_detail: { size_bytes: 1_048_577, limit_bytes: 1_048_576 },
+        duration_ms: 7,
+        logs: null,
+      });
+    } finally {
+      JSON.stringify = originalJsonStringify;
+      globalThis.TextEncoder = originalTextEncoder;
+    }
+  });
+
   it("preserves explicit null runtime environment targets", async () => {
     let receivedEnvironmentId: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
@@ -1543,6 +1878,111 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedConfig, { upload_ids: ["upload-1"] });
   });
 
+  it("runs the default knowledge ingest executor and uploads its generated document", async () => {
+    const body = {
+      runId: "run_knowledge_default",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+      config: { paths: ["uploads/guide.md"], slug: "guide" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_knowledge_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const uploads: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    const result = await withMockFetch(
+      (async (input, init) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof Request
+          ? input.url
+          : input.toString();
+        if (url.endsWith("/projects/demo-project/uploads/uploads%2Fguide.md/url")) {
+          return new Response(
+            JSON.stringify({
+              signed_url: "https://signed.example.test/guide.md",
+              expires_at: "2026-09-30T23:00:00.000Z",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === "https://signed.example.test/guide.md") {
+          return new Response("# Guide\n\nCancellation-safe knowledge.", { status: 200 });
+        }
+        assertStringIncludes(url, "/projects/demo-project/files/knowledge%2Fguide.md");
+        uploads.push({ url, body: requestJsonBody(init) ?? {} });
+        return new Response(JSON.stringify({ path: "knowledge/guide.md" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          signed.request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result.summary.ingested_count, 1);
+    assertEquals(uploads.length, 1);
+    assertStringIncludes(String(uploads[0]?.body.content), "Cancellation-safe knowledge.");
+  });
+
+  it("aborts a pending knowledge upload listing before downloads or writes start", async () => {
+    const controller = new AbortController();
+    const listingStarted = Promise.withResolvers<void>();
+    let listingSignal: AbortSignal | undefined;
+    let laterRequests = 0;
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_knowledge_cancel_listing/execute",
+      {
+        runId: "run_knowledge_cancel_listing",
+        kind: "task",
+        target: "task:knowledge-ingest",
+        projectId: "proj-1",
+        config: { path_prefix: "uploads", recursive: true },
+      },
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = withMockFetch(
+      ((_input, init) => {
+        laterRequests++;
+        const signal = observeFetchRequestInit(init).signal ?? undefined;
+        listingSignal = signal;
+        listingStarted.resolve();
+        if (!signal) return Promise.reject(new Error("missing abort signal"));
+        return new Promise<Response>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          })
+        );
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    await listingStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertExists(listingSignal);
+    assertEquals(listingSignal.aborted, true);
+    assertEquals(laterRequests, 1);
+  });
+
   it("dispatches built-in style artifact builds through the reusable style executor", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     let attemptedProjectDiscovery = false;
@@ -1652,6 +2092,334 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(attemptedProjectDiscovery, false);
   });
 
+  it("runs the default dependency artifact executor and publishes its graph", async () => {
+    const body = {
+      runId: "run_dependency_artifact_default",
+      kind: "task",
+      target: "task:dependency-artifact-build",
+      projectId: "proj-1",
+      config: {
+        artifact_id: "11111111-1111-4111-8111-111111111111",
+        attempt_count: 1,
+        identity: {
+          origin_key: "npm:public",
+          package_name: "fixture-package",
+          exact_version: "1.2.3",
+          subpath: "",
+          target: "es2022",
+          profile: "standard-v1",
+        },
+        policy: { decision: "allow" },
+      },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    let uploads = 0;
+    let publications = 0;
+
+    const result = await withMockFetch(
+      (async (input) => {
+        const url = String(input);
+        if (url.startsWith("https://esm.sh/")) {
+          return new Response("export const ready = true;", {
+            status: 200,
+            headers: { "Content-Type": "text/javascript" },
+          });
+        }
+        if (url.includes("/assets/")) {
+          uploads++;
+          return new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/result")) {
+          publications++;
+          return new Response(JSON.stringify({ accepted: true, state: "ready" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(
+          signed.request,
+          createCtx(signed.publicKeyPem),
+        ),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result.state, "ready");
+    assertEquals(uploads, 1);
+    assertEquals(publications, 1);
+  });
+
+  it("aborts an in-flight dependency asset upload and never publishes the result", async () => {
+    const controller = new AbortController();
+    const uploadStarted = Promise.withResolvers<void>();
+    let uploadSignal: AbortSignal | undefined;
+    let publications = 0;
+    const body = {
+      runId: "run_dependency_artifact_cancel_upload",
+      kind: "task",
+      target: "task:dependency-artifact-build",
+      projectId: "proj-1",
+      config: {
+        artifact_id: "11111111-1111-4111-8111-111111111111",
+        attempt_count: 1,
+        identity: {
+          origin_key: "npm:public",
+          package_name: "fixture-package",
+          exact_version: "1.2.3",
+          subpath: "",
+          target: "es2022",
+          profile: "standard-v1",
+        },
+        policy: { decision: "allow" },
+      },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_cancel_upload/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+
+    const pending = withMockFetch(
+      ((input, init) => {
+        const url = String(input);
+        if (url.startsWith("https://esm.sh/")) {
+          return Promise.resolve(
+            new Response("export const ready = true;", {
+              status: 200,
+              headers: { "Content-Type": "text/javascript" },
+            }),
+          );
+        }
+        if (url.includes("/assets/")) {
+          const signal = observeFetchRequestInit(init).signal ?? undefined;
+          uploadSignal = signal;
+          uploadStarted.resolve();
+          if (!signal) return Promise.reject(new Error("missing abort signal"));
+          return new Promise<Response>((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            })
+          );
+        }
+        if (url.endsWith("/result")) publications++;
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      }) as typeof fetch,
+      async () =>
+        await new ProjectRunExecuteHandler().handle(request, createCtx(signed.publicKeyPem)),
+    );
+
+    await uploadStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(uploadSignal?.aborted, true);
+    assertEquals(publications, 0);
+  });
+
+  it("does not continue a release asset build after its start request is cancelled", async () => {
+    const controller = new AbortController();
+    const body = {
+      runId: "run_release_asset_cancelled",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_cancelled/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    let fetchCalls = 0;
+
+    const result = await withMockFetch(
+      (async (input) => {
+        fetchCalls++;
+        assertStringIncludes(String(input), "/releases/release-1/asset-manifest/builds");
+        controller.abort(new Error("run cancelled"));
+        return new Response(
+          JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(fetchCalls, 1);
+  });
+
+  it("runs the default release asset executor through upload and manifest publication", async () => {
+    const body = {
+      runId: "run_release_asset_default",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_default/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    const requests: string[] = [];
+
+    const result = await withMockFetch(
+      (async (input, init) => {
+        const url = String(input);
+        requests.push(`${observeFetchRequestInit(init).method ?? "GET"} ${url}`);
+        if (url.endsWith("/asset-manifest/builds")) {
+          return new Response(
+            JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("/releases/release-1/files?")) {
+          return new Response(
+            JSON.stringify({
+              data: [{
+                id: "file-1",
+                version_id: "version-1",
+                path: "pages/index.tsx",
+                content: "export default function Page() { return null; }",
+                type: "page",
+                size: 49,
+                updated_at: "2026-09-30T00:00:00.000Z",
+              }],
+              page_info: { self: null, first: null, next: null, prev: null },
+              release_id: "release-1",
+              release_version: "1",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.endsWith("/asset-manifest/assets")) {
+          return new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/asset-manifest")) {
+          return new Response(JSON.stringify({ state: "ready", manifest_version: 1 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(signed.request, ctx),
+    );
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, payload.error);
+    assertEquals(payload.result.state, "ready");
+    assertEquals(requests.some((request) => request.includes("asset-manifest/assets")), true);
+    assertEquals(requests.some((request) => request.startsWith("PUT ")), true);
+  });
+
+  it("aborts an in-flight release asset upload and never publishes the manifest", async () => {
+    const controller = new AbortController();
+    const uploadStarted = Promise.withResolvers<void>();
+    let uploadSignal: AbortSignal | undefined;
+    let manifestPuts = 0;
+    const body = {
+      runId: "run_release_asset_cancel_upload",
+      kind: "task",
+      target: "task:release-asset-build",
+      projectId: "proj-1",
+      config: { release_id: "release-1", release_version: 1 },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_cancel_upload/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+
+    const pending = withMockFetch(
+      ((input, init) => {
+        const url = String(input);
+        if (url.endsWith("/asset-manifest/builds")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        if (url.includes("/releases/release-1/files?")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [{
+                  id: "file-1",
+                  version_id: "version-1",
+                  path: "pages/index.tsx",
+                  content: "export default function Page() { return null; }",
+                  type: "page",
+                  size: 49,
+                  updated_at: "2026-09-30T00:00:00.000Z",
+                }],
+                page_info: { self: null, first: null, next: null, prev: null },
+                release_id: "release-1",
+                release_version: "1",
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        if (url.endsWith("/asset-manifest/assets")) {
+          const signal = observeFetchRequestInit(init).signal ?? undefined;
+          uploadSignal = signal;
+          uploadStarted.resolve();
+          if (!signal) return Promise.reject(new Error("missing abort signal"));
+          return new Promise<Response>((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            })
+          );
+        }
+        if (
+          url.endsWith("/asset-manifest") && observeFetchRequestInit(init).method === "PUT"
+        ) manifestPuts++;
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    await uploadStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(uploadSignal?.aborted, true);
+    assertEquals(manifestPuts, 0);
+  });
+
   it("builds style artifacts from adapter source files and adapter stylesheet reads", async () => {
     const body = {
       runId: "run_style_artifact_adapter_source",
@@ -1736,6 +2504,90 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       String(recorder.upserts[0]?.failure_reason),
       "Style profile hash mismatch",
     );
+  });
+
+  it("does not publish a ready or failed style artifact after cancellation", async () => {
+    const controller = new AbortController();
+    const body = {
+      runId: "run_style_artifact_cancelled",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "Preview" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_cancelled/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities;",
+      onGetAllSourceFiles: () => controller.abort(new Error("run cancelled")),
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(recorder.upserts, []);
+  });
+
+  it("aborts an in-flight style artifact publication", async () => {
+    const controller = new AbortController();
+    const publicationStarted = Promise.withResolvers<void>();
+    let publicationSignal: AbortSignal | undefined;
+    const body = {
+      runId: "run_style_artifact_cancel_publication",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "Preview" },
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_cancel_publication/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const request = new Request(signed.request, { signal: controller.signal });
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities;",
+    });
+
+    const pending = withMockFetch(
+      ((_input, init) => {
+        const signal = observeFetchRequestInit(init).signal ?? undefined;
+        publicationSignal = signal;
+        publicationStarted.resolve();
+        if (!signal) return Promise.reject(new Error("missing abort signal"));
+        return new Promise<Response>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          })
+        );
+      }) as typeof fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    await publicationStarted.promise;
+    controller.abort(new Error("run cancelled"));
+    const result = await pending;
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).success, false);
+    assertEquals(publicationSignal?.aborted, true);
   });
 
   it("runs a discovered workflow with the canonical run id and input", async () => {
@@ -1944,6 +2796,135 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(payload.error, uploadFailure.error);
       assertEquals(payload.result, report.summary);
       assertEquals(payload.artifacts, undefined);
+    });
+  }
+
+  for (const cancelled of [true, false]) {
+    it(`eval report upload ${cancelled ? "aborts while pending" : "succeeds exactly once"}`, async () => {
+      const uploadStarted = Promise.withResolvers<void>();
+      const finishUpload = Promise.withResolvers<void>();
+      let uploads = 0;
+      let written = false;
+      let uploadSignal: AbortSignal | undefined;
+      const report: EvalReport = {
+        kind: "eval-report",
+        runId: "run_eval_report_upload",
+        definitionId: "eval:deep-research",
+        targetKind: "agent",
+        target: "agent:researcher",
+        startedAt: "2026-09-30T10:00:00.000Z",
+        endedAt: "2026-09-30T10:00:01.000Z",
+        summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+        records: [],
+      };
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async () => report,
+        uploadEvalReport: async (input) => {
+          uploads++;
+          uploadSignal = input.signal;
+          uploadStarted.resolve();
+          await finishUpload.promise;
+          uploadSignal?.throwIfAborted();
+          written = true;
+          return input.reportPath;
+        },
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_eval_report_upload/execute",
+        {
+          runId: "run_eval_report_upload",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+      const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+      await uploadStarted.promise;
+      if (cancelled) controller.abort(new Error("Run cancelled"));
+      finishUpload.resolve();
+      const result = await pending;
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertExists(uploadSignal);
+      assertEquals(uploadSignal.aborted, cancelled);
+      assertEquals(uploads, 1);
+      assertEquals(written, !cancelled);
+      assertEquals(payload.success, !cancelled);
+      if (cancelled) {
+        assertStringIncludes(payload.error, "cancelled");
+        assertEquals(payload.artifacts, undefined);
+      } else {
+        assertEquals(
+          payload.artifacts[0].path,
+          "evals/reports/deep-research/run_eval_report_upload.json",
+        );
+      }
+    });
+  }
+
+  for (const cancelled of [true, false]) {
+    it(`eval report upload HTTP transport ${cancelled ? "receives cancellation" : "stores one report"}`, async () => {
+      const uploadStarted = Promise.withResolvers<void>();
+      const finishUpload = Promise.withResolvers<void>();
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        uploadEvalReport: uploadEvalReportToProjectFiles,
+      }));
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_eval_report_http/execute",
+        {
+          runId: "run_eval_report_http",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+        },
+        { "x-token": "runtime-token" },
+      );
+      const controller = new AbortController();
+      const request = new Request(signed.request, { signal: controller.signal });
+      let written = false;
+      let uploads = 0;
+      let signal: AbortSignal | null | undefined;
+      const result = await withMockFetch(async (url, init) => {
+        const options = observeFetchRequestInit(init);
+        assertStringIncludes(String(url), "/files/evals%2Freports%2Fdeep-research%2F");
+        assertEquals(options.method, "PUT");
+        signal = options.signal;
+        uploads++;
+        uploadStarted.resolve();
+        await finishUpload.promise;
+        signal?.throwIfAborted();
+        written = true;
+        return Response.json({ path: "evals/reports/deep-research/run_eval_report_http.json" });
+      }, async () => {
+        const pending = handler.handle(request, createCtx(signed.publicKeyPem));
+        await uploadStarted.promise;
+        if (cancelled) controller.abort(new Error("Run cancelled"));
+        finishUpload.resolve();
+        return await pending;
+      });
+      assertExists(signal);
+      assertEquals(signal.aborted, cancelled);
+      assertEquals(uploads, 1);
+      assertEquals(written, !cancelled);
+      assertExists(result.response);
+      const payload = await result.response.json();
+      assertEquals(payload.success, !cancelled);
+      if (cancelled) {
+        assertStringIncludes(payload.error, "cancelled");
+        assertEquals(payload.artifacts, undefined);
+      } else {
+        assertEquals(
+          payload.artifacts[0].path,
+          "evals/reports/deep-research/run_eval_report_http.json",
+        );
+      }
     });
   }
 
@@ -3453,6 +4434,161 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(executions, 0);
   });
 
+  it("#2176 reports nested input validation code and paths without executing child steps", async () => {
+    let executions = 0;
+    const child = workflow({
+      id: "number-child",
+      inputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      steps: [step("child-side-effect", {
+        tool: tool({
+          id: "child-side-effect",
+          description: "Record child execution",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: () => {
+            executions++;
+            return Promise.resolve({});
+          },
+        }),
+      })],
+    });
+    const definition = workflow({
+      id: "nested-number-parent",
+      steps: [subWorkflow("nested", {
+        workflow: child.definition as unknown as WorkflowDefinition,
+        input: { n: "x" },
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: definition.id,
+        filePath: "workflows/nested-number-parent.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_nested_invalid/execute",
+      {
+        runId: "run_workflow_nested_invalid",
+        kind: "workflow",
+        target: "workflow:nested-number-parent",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail.errors.map((error: { path: string }) => error.path), ["/n"]);
+    assertEquals(executions, 0);
+  });
+
+  it("reports workflow output schema failures with structured validation errors (#2174)", async () => {
+    const definition = workflow({
+      id: "invalid-output",
+      steps: [
+        step("n", {
+          tool: tool({
+            id: "invalid-number",
+            description: "Return an invalid number",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => Promise.resolve("x"),
+          }),
+        }),
+      ],
+      outputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+      output: (context) => ({ n: context.n }),
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "invalid-output",
+        filePath: "workflows/invalid-output.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_invalid_output_1",
+      kind: "workflow",
+      target: "workflow:invalid-output",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_invalid_output_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.result, undefined);
+    assertEquals(response.error_code, "OUTPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail, {
+      errors: [{ path: "/n", message: "Invalid input: expected number, received string" }],
+    });
+    assertStringIncludes(response.error, "/n");
+  });
+
+  it("reports nested default output schema failures with structured validation errors (#2215)", async () => {
+    const definition = workflow({
+      id: "parent-invalid-nested-output",
+      steps: [subWorkflow("child", {
+        workflow: {
+          id: "invalid-nested-output",
+          outputSchema: defineSchema((v) => v.object({ n: v.number() }))(),
+          steps: [
+            step("n", {
+              tool: tool({
+                id: "invalid-nested-number",
+                description: "Return an invalid nested number",
+                inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+                execute: () => Promise.resolve("x"),
+              }),
+            }),
+          ],
+        },
+      })],
+    }).definition as unknown as WorkflowDefinition;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => ({
+        id: "parent-invalid-nested-output",
+        filePath: "workflows/parent-invalid-nested-output.ts",
+        exportName: "default",
+        definition,
+      }),
+      createWorkflowClient: () => createWorkflowClient(),
+    }));
+    const body = {
+      runId: "run_workflow_invalid_nested_output_1",
+      kind: "workflow",
+      target: "workflow:parent-invalid-nested-output",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_invalid_nested_output_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.result, undefined);
+    assertEquals(response.error_code, "OUTPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail, {
+      errors: [{ path: "/n", message: "Invalid input: expected number, received string" }],
+    });
+    assertStringIncludes(response.error, "/n");
+  });
+
   it("#2108 returns the declared workflow input and output schema identities on the wire", async () => {
     const inputSchema = defineSchema((v) => v.object({ ticketText: v.string() }))();
     const outputSchema = defineSchema((v) =>
@@ -3590,6 +4726,96 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(payload.error, "workflow backend unavailable");
     assertEquals(payload.input_schema_sha256, await schemaIdentitySha256(inputSchema));
     assertEquals(payload.output_schema_sha256, await schemaIdentitySha256(outputSchema));
+  });
+
+  function publishWorkflow(): DiscoveredWorkflow {
+    const definition = workflow({
+      id: "publish",
+      inputSchema: defineSchema((v) => v.object({ release: v.string() }))(),
+      steps: [
+        step("noop", {
+          tool: tool({
+            id: "noop",
+            description: "Does nothing",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: () => Promise.resolve({}),
+          }),
+        }),
+      ],
+    }).definition as unknown as WorkflowDefinition;
+    return { id: "publish", filePath: "workflows/publish.ts", exportName: "default", definition };
+  }
+
+  it("answers a workflow run whose client cleanup never settles (#2109)", async () => {
+    let destroyCalls = 0;
+    const client = createWorkflowClient();
+    const releaseClient = client.destroy.bind(client);
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => publishWorkflow(),
+      // Durable Redis cleanup can wait forever for a reply that never comes.
+      createWorkflowClient: () =>
+        Object.assign(client, {
+          destroy: () => {
+            destroyCalls++;
+            return new Promise<void>(() => {});
+          },
+        }),
+      workflowClientDestroyTimeoutMs: 5,
+    }));
+    const body = {
+      runId: "run_workflow_cleanup_hang_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: 1 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_cleanup_hang_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, false);
+    assertEquals(response.error_code, "INPUT_VALIDATION_FAILED");
+    assertEquals(response.error_detail.errors[0].path, "/release");
+    assertEquals(destroyCalls, 1);
+    await releaseClient();
+  });
+
+  it("answers a workflow run whose client cleanup fails (#2109)", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => publishWorkflow(),
+      createWorkflowClient: () => {
+        const client = createWorkflowClient();
+        const releaseClient = client.destroy.bind(client);
+        return Object.assign(client, {
+          destroy: async () => {
+            await releaseClient();
+            throw new Error("socket already closed");
+          },
+        });
+      },
+    }));
+    const body = {
+      runId: "run_workflow_cleanup_fail_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "1.0.0" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_cleanup_fail_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const response = await result.response.json();
+    assertEquals(response.success, true);
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {

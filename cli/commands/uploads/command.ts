@@ -261,21 +261,29 @@ export async function downloadUploadToFile(
   projectSlug: string,
   uploadPath: string,
   outputDir: string,
+  signal?: AbortSignal,
 ): Promise<{ uploadPath: string; localPath: string; bytes: number }> {
   const fs = createFileSystem();
+  signal?.throwIfAborted();
   const signedUrl = await client.get<SignedUrlResponse>(
     buildUploadSignedUrlPath(projectSlug, uploadPath),
+    undefined,
+    { signal },
   );
-  const response = await fetch(signedUrl.signed_url);
+  signal?.throwIfAborted();
+  const response = await fetch(signedUrl.signed_url, { signal });
 
   if (!response.ok) {
     throw new Error(`Failed to download upload: ${uploadPath}`);
   }
 
   const bytes = new Uint8Array(await response.arrayBuffer());
+  signal?.throwIfAborted();
   const localPath = resolveUploadOutputPath(uploadPath, outputDir);
   await fs.mkdir(dirname(localPath), { recursive: true });
+  signal?.throwIfAborted();
   await fs.writeFile(localPath, bytes);
+  signal?.throwIfAborted();
 
   return { uploadPath: normalizeUploadPath(uploadPath), localPath, bytes: bytes.byteLength };
 }

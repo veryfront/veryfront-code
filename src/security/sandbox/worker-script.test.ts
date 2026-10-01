@@ -90,22 +90,74 @@ async function prepareWorkerModule(
   };
 }
 
+function isWorkerExitMessage(
+  message: unknown,
+): message is { type: "worker-exit" } {
+  return typeof message === "object" &&
+    message !== null &&
+    (message as { type?: unknown }).type === "worker-exit";
+}
+
+/**
+ * Resolve with the first control-port message accepted by `predicate`.
+ *
+ * Completion is driven only by worker signals, never by wall-clock time: a
+ * healthy worker that starts slowly under CPU contention still answers, and a
+ * worker that retires first announces it with its `worker-exit` control
+ * message, which rejects any waiter that was not waiting for that exit.
+ * Aborting `signal` rejects the waiter with the abort reason, so a test can
+ * fail fast on a signal it observes outside the control port. Uncaught worker
+ * errors propagate to the test through the Worker itself. A worker that stays
+ * alive but never answers leaves the waiter pending by design; the CI job
+ * timeout is the backstop for that case.
+ */
+function waitForPortMessage<T>(
+  port: MessagePort,
+  predicate: (message: unknown) => message is T,
+  signal?: AbortSignal,
+): Promise<T>;
 function waitForPortMessage(
   port: MessagePort,
   predicate: (message: unknown) => boolean,
+  signal?: AbortSignal,
+): Promise<unknown>;
+function waitForPortMessage(
+  port: MessagePort,
+  predicate: (message: unknown) => boolean,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const settle = () => {
       port.removeEventListener("message", onMessage);
-      reject(new Error("Timed out waiting for worker control message"));
-    }, 5_000);
+      port.removeEventListener("messageerror", onMessageError);
+      signal?.removeEventListener("abort", onAbort);
+    };
     const onMessage = (event: MessageEvent) => {
-      if (!predicate(event.data)) return;
-      clearTimeout(timeout);
-      port.removeEventListener("message", onMessage);
-      resolve(event.data);
+      if (predicate(event.data)) {
+        settle();
+        resolve(event.data);
+        return;
+      }
+      if (isWorkerExitMessage(event.data)) {
+        settle();
+        reject(new Error("Worker exited before the expected control message"));
+      }
+    };
+    const onMessageError = () => {
+      settle();
+      reject(new Error("Worker control message could not be deserialized"));
+    };
+    const onAbort = () => {
+      settle();
+      reject(signal?.reason);
     };
     port.addEventListener("message", onMessage);
+    port.addEventListener("messageerror", onMessageError);
+    signal?.addEventListener("abort", onAbort);
   });
 }
 
@@ -1292,6 +1344,12 @@ describe("worker-script prepared modules", () => {
       import.meta.resolve("./worker-script.ts"),
       workerOptions,
     );
+    const globalResponseBus = new AbortController();
+    worker.addEventListener("message", () => {
+      globalResponseBus.abort(
+        new Error("Worker answered on the global response bus"),
+      );
+    });
     const channel = new MessageChannel();
     channel.port1.start();
 
@@ -1308,6 +1366,7 @@ describe("worker-script prepared modules", () => {
       const pong = waitForPortMessage(
         channel.port1,
         (message) => hasMessageIdentity(message, "ready"),
+        globalResponseBus.signal,
       );
       channel.port1.postMessage({ type: "ping", id: "ready" });
       assertEquals(
@@ -1348,6 +1407,7 @@ describe("worker-script prepared modules", () => {
       const firstResponse = waitForPortMessage(
         channel.port1,
         (message) => hasMessageIdentity(message, "poison"),
+        globalResponseBus.signal,
       );
       channel.port1.postMessage({
         type: "execute-app-route",
@@ -1391,6 +1451,7 @@ describe("worker-script prepared modules", () => {
       const secondResponse = waitForPortMessage(
         channel.port1,
         (message) => hasMessageIdentity(message, "healthy"),
+        globalResponseBus.signal,
       );
       channel.port1.postMessage({
         type: "execute-app-route",
@@ -1830,10 +1891,7 @@ describe("worker-script prepared modules", () => {
       );
       const exitMessage = waitForPortMessage(
         channel.port1,
-        (message) =>
-          typeof message === "object" &&
-          message !== null &&
-          (message as { type?: unknown }).type === "worker-exit",
+        isWorkerExitMessage,
       );
       channel.port1.postMessage({
         type: "inspect-api-route-methods",
@@ -1854,7 +1912,7 @@ describe("worker-script prepared modules", () => {
       assert(!serialized.includes(sentinel));
       assert(serialized.includes(`vf-api:${prepared.sha256}:`));
       assertEquals(
-        (await exitMessage as { type: string }).type,
+        (await exitMessage).type,
         "worker-exit",
       );
     } finally {
@@ -1942,10 +2000,7 @@ describe("worker-script bootstrap", () => {
     try {
       const exitMessage = waitForPortMessage(
         channel.port1,
-        (message) =>
-          typeof message === "object" &&
-          message !== null &&
-          (message as { type?: unknown }).type === "worker-exit",
+        isWorkerExitMessage,
       );
 
       worker.postMessage(
@@ -1958,7 +2013,7 @@ describe("worker-script bootstrap", () => {
       );
 
       assertEquals(
-        (await exitMessage as { type: string }).type,
+        (await exitMessage).type,
         "worker-exit",
       );
     } finally {
