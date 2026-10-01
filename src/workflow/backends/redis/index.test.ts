@@ -18,6 +18,13 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import { createWorkflowClient, type WorkflowClient } from "../../api/workflow-client.ts";
+import { workflow } from "../../dsl/workflow.ts";
+import { map } from "../../dsl/map.ts";
+import { step } from "../../dsl/step.ts";
+import { waitForApproval } from "../../dsl/wait.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { Tool } from "#veryfront/tool";
 import { RedisBackend } from "./index.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
 import {
@@ -1608,6 +1615,60 @@ describe("RedisBackend", () => {
       groupName: "test:group",
       consumerName: "worker-test",
     });
+  });
+
+  it("resumes a default-checkpoint map approval through a fresh public client", async () => {
+    const stamp: Tool = {
+      id: "redis-map-stamp",
+      type: "function",
+      description: "Stamp the child",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => Promise.resolve({ stamped: true }),
+    };
+    const child = workflow({
+      id: "redis-map-child",
+      steps: [
+        step("stamp", { tool: stamp }),
+        waitForApproval("review", { message: "Review child" }),
+        step("observe", { tool: stamp }),
+      ],
+    });
+    const parent = workflow({
+      id: "redis-map-parent",
+      steps: [map("children", { items: [{}], processor: child.definition })],
+    });
+    const first = createWorkflowClient({ backend });
+    const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+    let second: WorkflowClient | undefined;
+    try {
+      first.register(parent);
+      const handle = await first.start(parent.id, {});
+      await handle.settled();
+      assertEquals((await backend.getRun(handle.runId))?.status, "waiting");
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      first.getApprovalManager().stop();
+      first.getEventWaitManager().stop();
+      second = createWorkflowClient({ backend: reader });
+      second.register(parent);
+      await second.approve(handle.runId, approval.id, "reviewer");
+      const run = await reader.getRun(handle.runId);
+      assertExists(run);
+      assertEquals(run.status, "completed");
+      const checkpoint = await reader.getLatestCheckpoint(handle.runId);
+      assertExists(checkpoint);
+      assertEquals(checkpoint.nodeId, "children");
+      for (const state of Object.values(run.nodeStates)) {
+        if (state.startedAt !== undefined) assertInstanceOf(state.startedAt, Date);
+        if (state.completedAt !== undefined) assertInstanceOf(state.completedAt, Date);
+      }
+      assertExists(run.nodeStates.children?.completedAt);
+    } finally {
+      first.getApprovalManager().stop();
+      first.getEventWaitManager().stop();
+      second?.getApprovalManager().stop();
+      second?.getEventWaitManager().stop();
+    }
   });
 
   describe("constructor defaults", () => {
@@ -5089,6 +5150,56 @@ describe("RedisBackend", () => {
       await backend.createRun(createTestRun("run-b"));
       assertEquals(await backend.countRuns({}), 2);
     });
+  });
+
+  it("rehydrates only node metadata timestamps across run and checkpoint reads", async () => {
+    const runId = "timestamp-roundtrip";
+    const startedAt = new Date("2025-01-01T00:00:00Z");
+    const completedAt = new Date("2025-01-01T00:01:00Z");
+    const nodeStates: WorkflowRun["nodeStates"] = {
+      done: {
+        nodeId: "done",
+        status: "completed",
+        attempt: 1,
+        startedAt,
+        completedAt,
+        output: { startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString() },
+      },
+      pending: { nodeId: "pending", status: "pending", attempt: 0 },
+    };
+    await backend.createRun({ ...createTestRun(runId), nodeStates });
+    const run = await backend.getRun(runId);
+    assertExists(run);
+    assertEquals(run.nodeStates, nodeStates);
+    await backend.saveCheckpoint(runId, {
+      id: "dates",
+      nodeId: "done",
+      timestamp: completedAt,
+      context: { input: {} },
+      nodeStates: run.nodeStates,
+      _resumeEnvelope: {
+        schemaVersion: 2,
+        ownerNodeId: "done",
+        context: { input: {} },
+        nodeStates,
+        workflowProjection: { context: {} },
+        graphAdmission: {
+          stepsEvaluationContext: { input: {} },
+          stepsEvaluationProjection: { context: {} },
+          graphIdentity: [],
+          workflowVersion: null,
+        },
+      },
+    });
+    const latest = await backend.getLatestCheckpoint(runId);
+    assertExists(latest);
+    const [historical] = await backend.getCheckpoints(runId);
+    assertExists(historical);
+    for (const checkpoint of [latest, historical]) {
+      assertEquals(checkpoint.nodeStates, nodeStates);
+      assertEquals(checkpoint._resumeEnvelope?.nodeStates, nodeStates);
+      await backend.saveCheckpoint(runId, checkpoint);
+    }
   });
 
   describe("checkpoints", () => {
