@@ -1229,6 +1229,7 @@ function restorePublishedChildOutputs(
   ownerPath: string,
   resumeContext: Readonly<WorkflowContext>,
   restoreOutputs = true,
+  capturedWaits?: ReadonlyMap<string, string | null>,
 ): void {
   for (const node of nodes) {
     const state = nodeStates[node.id];
@@ -1241,6 +1242,7 @@ function restorePublishedChildOutputs(
         ownerPath,
         resumeContext,
         restoreOutputs,
+        capturedWaits,
       );
     } else if (node.config.type === "branch") {
       const output = state?.output;
@@ -1259,8 +1261,13 @@ function restorePublishedChildOutputs(
         ownerPath,
         resumeContext,
         restoreOutputs,
+        capturedWaits,
       );
     } else if (state?.status === "completed" && (restoreOutputs || node.config.type === "wait")) {
+      if (
+        node.config.type === "wait" &&
+        capturedWaits?.get(node.id) === (state._waitInstanceId ?? null)
+      ) continue;
       // Wait resolvers publish richer context than the node-state output,
       // including decision and delivery timestamps. Preserve that exact value.
       const hasWaitContext = node.config.type === "wait" && Object.hasOwn(resumeContext, node.id);
@@ -1270,6 +1277,27 @@ function restorePublishedChildOutputs(
       }
     }
   }
+}
+
+function captureCompletedChildWaits(
+  nodes: readonly WorkflowNode[],
+  nodeStates: Readonly<Record<string, NodeState>>,
+  ownerPath: string,
+): NonNullable<NodeState["_subWorkflowContextWaits"]> {
+  const captured: NonNullable<NodeState["_subWorkflowContextWaits"]> = [];
+  for (const node of nodes) {
+    const state = nodeStates[node.id];
+    if (state?._subWorkflowOwnerPath && state._subWorkflowOwnerPath !== ownerPath) continue;
+    if (node.config.type === "wait" && state?.status === "completed") {
+      captured.push({ nodeId: node.id, waitInstanceId: state._waitInstanceId ?? null });
+    } else if (node.config.type === "parallel") {
+      captured.push(...captureCompletedChildWaits(node.config.nodes, nodeStates, ownerPath));
+    } else if (node.config.type === "branch") {
+      captured.push(...captureCompletedChildWaits(node.config.then, nodeStates, ownerPath));
+      captured.push(...captureCompletedChildWaits(node.config.else ?? [], nodeStates, ownerPath));
+    }
+  }
+  return captured;
 }
 
 function ownSubWorkflowResultNodeStates(
@@ -2006,6 +2034,7 @@ export class DAGExecutor {
           nodeStates[nodeId]?._subWorkflowContext
         ) {
           result.state._subWorkflowContext = nodeStates[nodeId]!._subWorkflowContext;
+          result.state._subWorkflowContextWaits = nodeStates[nodeId]!._subWorkflowContextWaits;
         }
         // A failing node returns a failed state rather than throwing, so the span's own
         // catch never runs. Without this the span stays UNSET and a failed run is
@@ -2574,6 +2603,7 @@ export class DAGExecutor {
     // Preserve the exact publication order in the saved child context, then
     // overlay wait decisions committed after that snapshot was captured.
     const savedContext = nodeStates[node.id]?._subWorkflowContext;
+    const capturedWaits = nodeStates[node.id]?._subWorkflowContextWaits;
     const childContext: WorkflowContext = savedContext
       ? { input, ...cloneExecutionState(savedContext, "Sub-workflow context") }
       : { input };
@@ -2584,6 +2614,9 @@ export class DAGExecutor {
       ownerPath,
       scope.resumeContext,
       savedContext === undefined,
+      capturedWaits === undefined
+        ? undefined
+        : new Map(capturedWaits.map(({ nodeId, waitInstanceId }) => [nodeId, waitInstanceId])),
     );
 
     const subRunId = `${node.id}_sub_${generateId()}`;
@@ -2652,6 +2685,11 @@ export class DAGExecutor {
       currentState._subWorkflowContext = cloneExecutionState(
         result.context,
         "Sub-workflow context",
+      );
+      currentState._subWorkflowContextWaits = captureCompletedChildWaits(
+        steps,
+        result.nodeStates,
+        ownerPath,
       );
     }
 
