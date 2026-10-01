@@ -30,7 +30,9 @@ The active merge queue ruleset gives required checks at least 70 minutes to
 report a conclusion. This covers the longest configured dependency path: 60
 minutes for binary end-to-end tests and 2 minutes for the aggregate merge gate,
 plus 8 minutes of runner scheduling headroom. The sequential coverage and Sonar
-path has a lower 59-minute maximum.
+path has a 62-minute maximum. The Sonar coverage report is merged in a
+token-free job before the scan job, which holds `SONAR_TOKEN` and runs no
+repository code.
 
 Evidence: [CI workflow](workflows/cicd.yml) and
 [merge gate contract](../tests/integration/ci/merge-quality-gate-workflow.test.ts).

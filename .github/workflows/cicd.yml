@@ -381,20 +381,18 @@ jobs:
           # The CLI regression changes cwd, so give it a separate process.
           deno task test:file --coverage=coverage-cli \
             tests/integration/cli/merge-preview.integration.test.ts
-          deno coverage coverage-history --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-history.lcov
-          deno coverage coverage-cli --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-cli.lcov
-          deno eval '
-            import { mergeLcovReports } from "./scripts/test/coverage-ci.ts";
-            const target = "coverage-shard-1/lcov.info";
-            const reports = await Promise.all([target, "coverage-history.lcov", "coverage-cli.lcov"].map(path => Deno.readTextFile(path)));
-            await Deno.writeTextFile(target, mergeLcovReports(reports));
-          '
+          # Kept as separate reports: block ids are normalized only when every
+          # report is merged at once (coverage gate and Sonar), so an early
+          # merge here must not rewrite them.
+          mkdir -p coverage-shard-1/history coverage-shard-1/cli
+          deno coverage coverage-history --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/history/lcov.info
+          deno coverage coverage-cli --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/cli/lcov.info
       - name: Upload unit coverage lcov
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-shard-${{ matrix.shard }}
-          path: coverage-shard-${{ matrix.shard }}/lcov.info
+          path: coverage-shard-${{ matrix.shard }}/**/lcov.info
           retention-days: 1
       - name: Add coverage shard summary
         run: echo "### Coverage shard ${{ matrix.shard }}/4 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
@@ -520,9 +518,7 @@ jobs:
       # the `coverage gate` job read their own copies and are unaffected.
       - name: Normalize lcov paths for Codecov
         run: |
-          for file in coverage-profiles/coverage-shard-*/lcov.info; do
-            sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" "$file"
-          done
+          find coverage-profiles -name lcov.info -exec sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" {} +
       # Authenticated with OIDC rather than a stored CODECOV_TOKEN, so there is
       # no upload secret to manage or rotate. A token is otherwise mandatory
       # here: `main` is a protected branch, and Codecov only permits tokenless
@@ -535,27 +531,20 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           use_oidc: true
-          # Comma separated, the form the action documents. All 4 files go up
-          # in one call, so Codecov records one upload per commit.
-          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info
+          # Comma separated, the form the action documents. All files go up in
+          # one call, so Codecov records one upload per commit.
+          files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-1/history/lcov.info,coverage-profiles/coverage-shard-1/cli/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info
           disable_search: true
           name: unit
           fail_ci_if_error: false
 
-  # Automatic Analysis runs on Sonar's servers and cannot see coverage, which is
-  # only produced where the tests run. Reuses the shard artifacts; runs no
-  # repository code, like codecov-upload.
-  #
-  # Skipped for forks and for Dependabot: both reach the scan without SONAR_TOKEN
-  # (Dependabot branches live in this repository, but Actions secrets are not
-  # exposed to Dependabot-triggered runs), and an empty token fails the scan.
-  # The scan waits for SonarCloud's server-side Quality Gate before this
-  # required job succeeds; the timeout leaves room for the observed analysis
-  # and report-processing latency.
-  sonar:
+  # Merges every coverage report into the one LCOV file Sonar reads. Merging
+  # runs repository code (`deno task coverage:ci:merge`), so it happens here,
+  # in a job with no secrets, and hands the scan job only the finished report.
+  sonar-coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
-    name: SonarQube Cloud scan
+    timeout-minutes: 10
+    name: Sonar coverage report
     needs: [coverage-shards, coverage-node-executor, coverage-integration-client]
     if: ${{ needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
@@ -564,8 +553,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Sonar reads git history for new-code and blame.
-          fetch-depth: 0
       - name: Download unit coverage lcov files
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -581,11 +568,56 @@ jobs:
         with:
           name: coverage-integration-client
           path: coverage-profiles/coverage-integration-client
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Merge coverage reports for SonarQube
+        run: |
+          deno task coverage:ci:merge -- --threshold=0 \
+            coverage-profiles/coverage-shard-* \
+            coverage-profiles/coverage-native-executor \
+            coverage-profiles/coverage-integration-client
       - name: Normalize lcov paths
         run: |
-          for file in coverage-profiles/coverage-shard-*/lcov.info coverage-profiles/coverage-native-executor/lcov.info coverage-profiles/coverage-integration-client/lcov.info; do
-            sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" "$file"
-          done
+          sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" coverage/lcov.info
+      - name: Upload merged Sonar coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-sonar
+          path: coverage/lcov.info
+          retention-days: 1
+
+  # Automatic Analysis runs on Sonar's servers and cannot see coverage, which is
+  # only produced where the tests run. This job holds SONAR_TOKEN, so it runs no
+  # repository code: it downloads the merged report from `sonar-coverage` and
+  # calls the scan action.
+  #
+  # Skipped for forks and for Dependabot: both reach the scan without SONAR_TOKEN
+  # (Dependabot branches live in this repository, but Actions secrets are not
+  # exposed to Dependabot-triggered runs), and an empty token fails the scan.
+  # The scan waits up to 20 minutes for SonarCloud's server-side Quality Gate
+  # before this required job succeeds; the remaining 8 minutes cover checkout,
+  # the report download and analysis upload (the whole job takes about 6
+  # minutes today). 28 minutes keeps the coverage and Sonar path inside the
+  # merge queue response budget now that `sonar-coverage` sits before it.
+  sonar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    name: SonarQube Cloud scan
+    needs: [sonar-coverage]
+    if: ${{ needs.sonar-coverage.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Sonar reads git history for new-code and blame.
+          fetch-depth: 0
+      - name: Download merged Sonar coverage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-sonar
+          path: coverage
       - name: SonarQube Cloud scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
