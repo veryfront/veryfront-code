@@ -431,20 +431,141 @@ function isAgentMarkdownDefinition(relativePath: string): boolean {
     );
   }
   if (!isSafeDiscoverySegment(segments[0]!)) return false;
-  if (
-    segments.length === 2 &&
-    (segments[1] === "AGENT.md" || segments[1] === "SKILL.md")
-  ) {
-    return true;
-  }
-  return segments.length === 4 && segments[1] === "skills" &&
-    isSafeDiscoverySegment(segments[2]!) && segments[3] === "SKILL.md";
+  return segments.length === 2 && segments[1] === "AGENT.md";
 }
 
 function isSkillMarkdownDefinition(relativePath: string): boolean {
   const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
   return segments.length === 2 && isSafeDiscoverySegment(segments[0]!) &&
     segments[1] === "SKILL.md";
+}
+
+function joinDiscoveryPath(root: string, relativePath: string): string {
+  return root === "" ? relativePath : `${root}/${relativePath}`;
+}
+
+type ActiveSkillDirectories = {
+  count: number;
+  members: Map<string, true>;
+  values: Map<number, string>;
+};
+
+function addActiveSkillDirectory(active: ActiveSkillDirectories, path: string): void {
+  if (IntrinsicReflectApply(MapPrototypeGet, active.members, [path]) === true) return;
+  IntrinsicReflectApply(MapPrototypeSet, active.members, [path, true]);
+  IntrinsicReflectApply(MapPrototypeSet, active.values, [active.count, path]);
+  active.count += 1;
+}
+
+function collectActiveSkillDirectories(
+  files: SourceSnapshotFile[],
+  paths: SourceSnapshotMarkdownPaths,
+): { projectPaths: Map<number, string>; skillDirectories: ActiveSkillDirectories } | undefined {
+  const seenPaths = new IntrinsicMap<string, true>();
+  const projectPaths = new IntrinsicMap<number, string>();
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    const path = captureSourceSnapshotRecord(files[fileIndex]!)[0];
+    if (
+      typeof path !== "string" ||
+      IntrinsicReflectApply(MapPrototypeGet, seenPaths, [path]) === true
+    ) {
+      return undefined;
+    }
+    IntrinsicReflectApply(MapPrototypeSet, seenPaths, [path, true]);
+    const projectPath = IntrinsicReflectApply(StringPrototypeCharCodeAt, path, [0]) === 47
+      ? IntrinsicReflectApply(StringPrototypeSlice, path, [1]) as string
+      : path;
+    IntrinsicReflectApply(MapPrototypeSet, projectPaths, [fileIndex, projectPath]);
+  }
+
+  const agentDirectories = new IntrinsicMap<string, true>();
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
+    for (let rootIndex = 0; rootIndex < paths.agent.length; rootIndex++) {
+      const root = paths.agent[rootIndex]!;
+      const relativePath = relativeDiscoveryPath(projectPath, root);
+      if (relativePath === undefined) continue;
+      const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+      if (
+        segments.length === 2 && isSafeDiscoverySegment(segments[0]!) &&
+        segments[1] === "AGENT.md"
+      ) {
+        IntrinsicReflectApply(MapPrototypeSet, agentDirectories, [
+          joinDiscoveryPath(root, segments[0]!),
+          true,
+        ]);
+      }
+    }
+  }
+
+  const skillDirectories: ActiveSkillDirectories = {
+    count: 0,
+    members: new IntrinsicMap<string, true>(),
+    values: new IntrinsicMap<number, string>(),
+  };
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
+    for (let rootIndex = 0; rootIndex < paths.skill.length; rootIndex++) {
+      const root = paths.skill[rootIndex]!;
+      const relativePath = relativeDiscoveryPath(projectPath, root);
+      if (relativePath === undefined) continue;
+      const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+      if (
+        segments.length === 2 && isSafeDiscoverySegment(segments[0]!) &&
+        segments[1] === "SKILL.md"
+      ) {
+        addActiveSkillDirectory(skillDirectories, joinDiscoveryPath(root, segments[0]!));
+      }
+    }
+    for (let rootIndex = 0; rootIndex < paths.agent.length; rootIndex++) {
+      const root = paths.agent[rootIndex]!;
+      const relativePath = relativeDiscoveryPath(projectPath, root);
+      if (relativePath === undefined) continue;
+      const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+      const agentDirectory = segments.length > 0 ? joinDiscoveryPath(root, segments[0]!) : "";
+      if (IntrinsicReflectApply(MapPrototypeGet, agentDirectories, [agentDirectory]) !== true) {
+        continue;
+      }
+      if (segments.length === 2 && segments[1] === "SKILL.md") {
+        addActiveSkillDirectory(skillDirectories, agentDirectory);
+      } else if (
+        segments.length === 4 && segments[1] === "skills" &&
+        isSafeDiscoverySegment(segments[2]!) && segments[3] === "SKILL.md"
+      ) {
+        addActiveSkillDirectory(
+          skillDirectories,
+          joinDiscoveryPath(agentDirectory, `skills/${segments[2]!}`),
+        );
+      }
+    }
+  }
+
+  return { projectPaths, skillDirectories };
+}
+
+function isRuntimeReadableSkillFile(
+  projectPath: string,
+  skillDirectories: ActiveSkillDirectories,
+): boolean {
+  for (let index = 0; index < skillDirectories.count; index++) {
+    const skillDirectory = IntrinsicReflectApply(
+      MapPrototypeGet,
+      skillDirectories.values,
+      [index],
+    ) as string;
+    const relativePath = relativeDiscoveryPath(projectPath, skillDirectory);
+    if (relativePath === undefined) continue;
+    if (relativePath === "SKILL.md") return true;
+    const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+    if (
+      segments.length >= 2 &&
+      (segments[0] === "references" || segments[0] === "resources" ||
+        segments[0] === "assets" || segments[0] === "scripts")
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isRetainedMarkdownDefinition(
@@ -468,34 +589,35 @@ async function computeSourceSnapshotFingerprint(
   markdownPaths: SourceSnapshotMarkdownPaths = { agent: [], skill: [] },
 ): Promise<string | undefined> {
   // A modular sum of cryptographic per-record digests is independent of list
-  // order and keeps working memory constant. Reject invalid or repeated paths
-  // before hashing because filesystem indexing requires one record per path.
+  // order and keeps the hash accumulator fixed-size. Reject invalid or repeated
+  // paths before hashing because filesystem indexing requires one record per path.
+  const activeSkills = collectActiveSkillDirectories(files, markdownPaths);
+  if (!activeSkills) return undefined;
   const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
   const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
-  const seenPaths = new IntrinsicMap<string, true>();
   let includedFileCount = 0;
   for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
     const record = captureSourceSnapshotRecord(files[fileIndex]!);
-    const path = record[0];
-    if (
-      typeof path !== "string" ||
-      IntrinsicReflectApply(MapPrototypeGet, seenPaths, [path]) === true
-    ) {
-      return undefined;
-    }
-    IntrinsicReflectApply(MapPrototypeSet, seenPaths, [path, true]);
-    const projectPath = IntrinsicReflectApply(StringPrototypeCharCodeAt, path, [0]) === 47
-      ? IntrinsicReflectApply(StringPrototypeSlice, path, [1]) as string
-      : path;
-    const isRetainedDiscoveryPath = isRetainedMarkdownDefinition(projectPath, markdownPaths);
+    const projectPath = IntrinsicReflectApply(
+      MapPrototypeGet,
+      activeSkills.projectPaths,
+      [fileIndex],
+    ) as string;
+    const isKnowledgeMarkdown =
+      IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["knowledge/"]) === true &&
+      IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".md"]) === true;
+    const isEvalReport =
+      IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["evals/reports/"]) === true &&
+      IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".json"]) === true;
+    const isRetainedRuntimeSkillFile = (isKnowledgeMarkdown || isEvalReport) &&
+      isRuntimeReadableSkillFile(projectPath, activeSkills.skillDirectories);
+    const isRetainedKnowledgeMarkdown = isKnowledgeMarkdown &&
+      (isRetainedMarkdownDefinition(projectPath, markdownPaths) ||
+        isRetainedRuntimeSkillFile);
     if (
       purpose === "agent-config" &&
-      !isRetainedDiscoveryPath &&
-      ((IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["knowledge/"]) === true &&
-        IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".md"]) === true) ||
-        (IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["evals/reports/"]) ===
-            true &&
-          IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".json"]) === true))
+      ((isKnowledgeMarkdown && !isRetainedKnowledgeMarkdown) ||
+        (isEvalReport && !isRetainedRuntimeSkillFile))
     ) {
       continue;
     }

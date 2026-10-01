@@ -1111,6 +1111,8 @@ describe("VeryfrontFSAdapter", () => {
         { path: "knowledge/reviewer/AGENT.md", content: "first directory agent" },
         { path: "knowledge/reviewer/SKILL.md", content: "first colocated skill" },
         { path: "knowledge/reviewer/skills/research/SKILL.md", content: "first owned skill" },
+        { path: "knowledge/orphan/SKILL.md", content: "inactive colocated skill" },
+        { path: "knowledge/orphan/references/note.md", content: "inactive reference" },
         { path: "knowledge/churn/note.md", content: "first note" },
       ];
       const options = {
@@ -1121,7 +1123,10 @@ describe("VeryfrontFSAdapter", () => {
 
       internals.sourceSnapshotVersion += 1;
       internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
-        file.path === "knowledge/churn/note.md" ? { ...file, content: "changed note" } : file
+        file.path === "knowledge/churn/note.md" ||
+          file.path === "knowledge/orphan/references/note.md"
+          ? { ...file, content: `changed ${file.content}` }
+          : file
       );
       assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
 
@@ -1140,7 +1145,10 @@ describe("VeryfrontFSAdapter", () => {
       ) {
         internals.sourceSnapshotVersion += 1;
         internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
-          file.path === "knowledge/support.md"
+          file.path === "knowledge/churn/note.md" ||
+            file.path === "knowledge/orphan/references/note.md"
+            ? { ...file, content: file.content?.replace("changed ", "") }
+            : file.path === "knowledge/support.md"
             ? { ...file, content: "first agent" }
             : file.path === path
             ? { ...file, content: `${file.content} changed` }
@@ -1237,6 +1245,101 @@ describe("VeryfrontFSAdapter", () => {
       });
 
       assertNotEquals(agentFingerprint, skillFingerprint);
+    });
+
+    it("retains runtime-readable Markdown beneath active skill markers", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "knowledge/global/SKILL.md", content: "global skill" },
+        { path: "knowledge/global/references/nested/guide.md", content: "global guide" },
+        { path: "knowledge/global/scripts/check.md", content: "script" },
+        { path: "knowledge/reviewer/AGENT.md", content: "reviewer" },
+        { path: "knowledge/reviewer/SKILL.md", content: "colocated skill" },
+        { path: "knowledge/reviewer/resources/policies/policy.md", content: "policy" },
+        { path: "knowledge/reviewer/skills/research/SKILL.md", content: "research skill" },
+        {
+          path: "knowledge/reviewer/skills/research/assets/checklists/checklist.md",
+          content: "checklist",
+        },
+        { path: "knowledge/orphan/references/note.md", content: "orphan data" },
+        { path: "knowledge/churn/note.md", content: "ordinary data" },
+      ];
+      const options = {
+        purpose: "agent-config",
+        agentMarkdownPaths: ["knowledge"],
+        skillMarkdownPaths: ["knowledge"],
+      } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
+      const baseline = await adapter.getSourceSnapshotFingerprint(options);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        file.path === "knowledge/churn/note.md" ||
+          file.path === "knowledge/orphan/references/note.md"
+          ? { ...file, content: `changed ${file.content}` }
+          : file
+      );
+      assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+
+      for (
+        const path of [
+          "knowledge/global/references/nested/guide.md",
+          "knowledge/global/scripts/check.md",
+          "knowledge/reviewer/resources/policies/policy.md",
+          "knowledge/reviewer/skills/research/assets/checklists/checklist.md",
+        ]
+      ) {
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+          file.path === "knowledge/churn/note.md" ||
+            file.path === "knowledge/orphan/references/note.md"
+            ? { ...file, content: file.content?.replace("changed ", "") }
+            : file.path === path
+            ? { ...file, content: `${file.content} changed` }
+            : file
+        );
+        assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+          file.path === path ? { ...file, content: file.content?.replace(" changed", "") } : file
+        );
+      }
+    });
+
+    it("retains runtime-readable JSON beneath an active skill in eval reports", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "evals/reports/research/SKILL.md", content: "research skill" },
+        { path: "evals/reports/research/references/context.json", content: '{"version":1}' },
+        { path: "evals/reports/run.json", content: '{"score":1}' },
+      ];
+      const options = {
+        purpose: "agent-config",
+        skillMarkdownPaths: ["evals/reports"],
+      } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
+      const baseline = await adapter.getSourceSnapshotFingerprint(options);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        file.path === "evals/reports/run.json" ? { ...file, content: '{"score":2}' } : file
+      );
+      assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        file.path === "evals/reports/research/references/context.json"
+          ? { ...file, content: '{"version":2}' }
+          : file.path === "evals/reports/run.json"
+          ? { ...file, content: '{"score":1}' }
+          : file
+      );
+      assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
     });
 
     it("captures Markdown discovery scopes before asynchronous hashing", async () => {
