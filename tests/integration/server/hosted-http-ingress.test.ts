@@ -285,6 +285,24 @@ it("refuses untrusted or incomplete request authority before hosted lookup or pr
       await response.body?.cancel();
       assertEquals(resolutions, 0);
       assertEquals(hostReads, 0);
+
+      if (trusted === "1") {
+        const missingRelease = await handler(
+          new Request("https://app.example/api/proof", {
+            headers: {
+              "x-project-id": identity.projectId,
+              "x-project-slug": identity.projectSlug,
+              "x-environment": "production",
+              "x-token": "source-only",
+              "x-environment-id": identity.environmentId,
+              "x-environment-name": identity.environmentName,
+            },
+          }),
+        );
+        assertEquals(missingRelease.status, 503);
+        await missingRelease.body?.cancel();
+        assertEquals(resolutions, 0);
+      }
     });
   }
 });

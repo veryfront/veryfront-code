@@ -165,6 +165,7 @@ import {
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
 import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { parseProxyEnvironment } from "./proxy-environment.ts";
 import {
   isSharedProjectRuntime,
   requiresIsolatedProjectRuntime,
@@ -758,6 +759,26 @@ export function createVeryfrontHandler(
           // hosted requests use the edge-derived header or routed host.
           const wsSlugOverride = undefined;
 
+          // Hosted application requests must be admitted before legacy domain
+          // release lookup. Missing release/environment identity is an ingress
+          // refusal, not permission to resolve a mutable release on the host.
+          if (hostedHttp && isHostedHttpApplicationRequest(request)) {
+            if (!requestMetricsIncremented) {
+              await incrementRequestMetrics();
+              requestMetricsIncremented = true;
+            }
+            return hostedHttp(request, {
+              projectId: headers.projectId,
+              projectSlug: headers.projectSlug,
+              releaseId: headers.releaseId,
+              environmentId: headers.environmentId,
+              environmentName: headers.environmentName,
+              mode: parseProxyEnvironment(headers.environment ?? null),
+              proxyTrusted,
+              sourceToken: reqCtx.token,
+            });
+          }
+
           // Resolve project from various sources
           const projectRes = await profilePhase(
             "runtime.resolve_project",
@@ -779,23 +800,6 @@ export function createVeryfrontHandler(
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
 
           setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
-
-          if (hostedHttp && isHostedHttpApplicationRequest(request)) {
-            if (!requestMetricsIncremented) {
-              await incrementRequestMetrics();
-              requestMetricsIncremented = true;
-            }
-            return hostedHttp(request, {
-              projectId: projectRes.projectId,
-              projectSlug: projectRes.projectSlug,
-              releaseId: projectRes.releaseId,
-              environmentId: headers.environmentId,
-              environmentName: projectRes.environmentName,
-              mode: projectRes.proxyEnv,
-              proxyTrusted,
-              sourceToken: reqCtx.token,
-            });
-          }
 
           // Handle projects discovery UI
           if (
