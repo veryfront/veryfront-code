@@ -3747,6 +3747,53 @@ describe("DAGExecutor", () => {
       });
     }
 
+    for (const composite of ["subWorkflow", "map"] as const) {
+      it(`retains parsed ${composite} input after an output callback throws`, async () => {
+        let defaults = 0;
+        let selections = 0;
+        let executions = 0;
+        const built: unknown[] = [];
+        const child: WorkflowDefinition = {
+          id: "retry-output-child",
+          inputSchema: defineSchema((v) => v.object({ n: v.number().default(() => ++defaults) }))(),
+          steps: ({ input }) => {
+            built.push(input);
+            return [step("child-read", { tool: "read" })];
+          },
+          output: (context) => {
+            if (++selections === 1) throw new Error("Retry output selection");
+            return { input: context.input };
+          },
+        };
+        const nodes = composite === "subWorkflow"
+          ? [subWorkflow("nested", { workflow: child, input: {} })]
+          : [map("nested", { items: [{}], processor: child })];
+        const stepExecutor = new MockStepExecutor(new Map(), (_node, context) => {
+          executions++;
+          return { success: true, output: context.input, executionTime: 1 };
+        });
+        const first = await new DAGExecutor({ stepExecutor }).execute(nodes, createTestRun());
+        assertEquals(first.completed, false);
+        assertStringIncludes(first.error ?? "", "Retry output selection");
+        const retried = await new DAGExecutor({ stepExecutor }).execute(
+          nodes,
+          createTestRun({
+            context: first.context,
+            nodeStates: structuredClone(first.nodeStates),
+          }),
+        );
+        assertEquals(retried.completed, true);
+        assertEquals(defaults, 1);
+        assertEquals(executions, 1);
+        assertEquals(built, [{ n: 1 }, { n: 1 }]);
+        const childNodeId = Object.keys(first.nodeStates).find((id) => id.includes("child-read"));
+        assertExists(childNodeId);
+        assertEquals(retried.nodeStates[childNodeId]?.output, { n: 1 });
+        const selected = { input: { n: 1 } };
+        assertEquals(retried.context.nested, composite === "map" ? [selected] : selected);
+      });
+    }
+
     it("reuses parsed nested input when its step builder retries", async () => {
       let defaults = 0;
       let builds = 0;

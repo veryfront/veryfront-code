@@ -2070,14 +2070,29 @@ export class DAGExecutor {
       }
       case "wait":
         return this.executeWaitNode(node, config, context, abortSignal);
-      case "subWorkflow":
-        return executeCompositeNodeWithPolicy({
+      case "subWorkflow": {
+        const result = await executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
           execute: (attemptSignal) =>
             this.executeSubWorkflowNode(node, config, context, nodeStates, scope, attemptSignal),
         });
+        const parsedState = nodeStates[nodeId];
+        if (result.state.status !== "failed" || !parsedState?._subWorkflowInputParsed) {
+          return result;
+        }
+        // A thrown builder/output callback produces a fresh failed state. Keep
+        // its parsed input too, since a run retry retains completed children.
+        return {
+          ...result,
+          state: {
+            ...result.state,
+            ...(parsedState.input === undefined ? {} : { input: parsedState.input }),
+            _subWorkflowInputParsed: true,
+          },
+        };
+      }
       case "loop":
         return executeCompositeNodeWithPolicy({
           node,
