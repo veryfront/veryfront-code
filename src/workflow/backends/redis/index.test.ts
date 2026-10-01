@@ -3200,9 +3200,16 @@ describe("RedisBackend", () => {
         true,
       );
       const owned = await backend.getLatestCheckpoint(runId);
+      // The snapshot clone reaches the context from node states first here.
+      const { nodeStates, ...reordered } = sharedContextCheckpoint("reordered");
+      await backend.saveCheckpoint(
+        runId,
+        cloneCheckpointForPersistence({ nodeStates, ...reordered }),
+      );
+      const reorderedSnapshot = await backend.getLatestCheckpoint(runId);
 
       assertEquals(calls, []);
-      for (const latest of [direct, snapshot, owned]) {
+      for (const latest of [direct, snapshot, owned, reorderedSnapshot]) {
         assertEquals(latest?.context, { input: {}, other: { keep: 1 } });
         assertEquals(latest?.nodeStates.a?.output, { input: {}, other: { keep: 1 } });
       }

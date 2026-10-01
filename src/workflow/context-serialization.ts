@@ -1095,6 +1095,8 @@ export function collectWorkflowJsonRecords(
   shape: WorkflowJsonRecordShape,
 ): WorkflowJsonRecords {
   const records: WorkflowJsonRecords = new WeakMapConstructor();
+  // Reading a field of an unidentified Proxy would run its hooks.
+  if (!canIdentifyProxyWithoutHooks) return records;
   const pending: Array<readonly [unknown, WorkflowJsonRecordShape]> = [[value, shape]];
   while (pending.length > 0) {
     const [candidate, candidateShape] = pending[pending.length - 1]!;
@@ -1103,7 +1105,7 @@ export function collectWorkflowJsonRecords(
     const source = (reflectApply(weakMapGet, deferredWorkflowJsonSources, [candidate]) ??
       candidate) as JsonTraversalReference;
     if (
-      (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(source)) ||
+      isProxyWithoutHooks(source) ||
       reflectApply(weakMapGet, records, [source]) !== undefined
     ) continue;
     reflectApply(weakMapSet, records, [source, candidateShape]);
