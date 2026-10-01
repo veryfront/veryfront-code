@@ -568,10 +568,14 @@ export default workflow({
     }),
     step("write", { agent: "writer" }),
   ],
+  output: (context) => ({ article: (context.write as { text: string }).text }),
   onError: (error, ctx) => console.error("Failed:", error),
   onComplete: (result) => console.log("Done:", result),
 });
 ```
+
+The writer returns the article as text. The `output` selector takes that text
+from the write step and returns the `{ article }` object declared by `outputSchema`.
 
 ### Select the final output
 
