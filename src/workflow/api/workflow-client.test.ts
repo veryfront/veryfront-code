@@ -1509,6 +1509,72 @@ describe("WorkflowClient", () => {
         });
       }
     }
+    it("preserves dependency-ordered context writes across nested approval (#2244)", async () => {
+      let producerCalls = 0;
+      let loopCalls = 0;
+      const observed: unknown[] = [];
+      const child = workflow({
+        id: "ordered-resume-child",
+        steps: [
+          dependsOn(
+            loop("rewrite", {
+              steps: [],
+              while: () => false,
+              onComplete: () => {
+                loopCalls++;
+                return { producer: "loop" };
+              },
+            }),
+            "producer",
+          ),
+          dependsOn(step("producer", {
+            tool: {
+              ...createMockTool("ordered-resume-producer", "step"),
+              execute: () => {
+                producerCalls++;
+                return Promise.resolve("step");
+              },
+            },
+          })),
+          dependsOn(
+            waitForApproval("ordered-review", { message: "Review ordered writes" }),
+            "rewrite",
+          ),
+          dependsOn(
+            step("observe-order", {
+              tool: createMockTool("ordered-resume-observer", "observed"),
+              input: (context) => {
+                observed.push(context.producer);
+                return {};
+              },
+            }),
+            "ordered-review",
+          ),
+        ],
+        output: (context) => context.producer,
+      });
+      client.register(workflow({
+        id: "ordered-resume-parent",
+        steps: [subWorkflow("ordered-child", { workflow: child.definition })],
+      }));
+      const handle = await client.start("ordered-resume-parent", {});
+      await handle.settled();
+      const waiting = await backend.getRun(handle.runId);
+      assertEquals(waiting?.status, "waiting");
+      assertEquals(observed, []);
+      assertEquals(producerCalls, 1);
+      assertEquals(loopCalls, 1);
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      await client.approve(handle.runId, approval.id, "reviewer");
+      const completed = await backend.getRun(handle.runId);
+      assertEquals(completed?.status, "completed");
+      assertEquals(observed, ["loop"]);
+      assertEquals(completed?.context["ordered-child"], "loop");
+      assertEquals(producerCalls, 1);
+      assertEquals(loopCalls, 1);
+    });
+
     it("creates a pending approval for a wait nested in a branch", async () => {
       client.register(nestedApprovalWorkflow);
 
