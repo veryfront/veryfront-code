@@ -31,6 +31,7 @@ import { INVALID_ARGUMENT, NOT_SUPPORTED, ORCHESTRATION_ERROR } from "#veryfront
 import type { CheckpointOwnership } from "../checkpoint-manager.ts";
 import { toJsonOutput } from "../json-output.ts";
 import { parseWorkflowInput } from "../workflow-input.ts";
+import { parseWorkflowOutput } from "../output-validation.ts";
 
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
@@ -57,6 +58,7 @@ import {
   isCanonicalNonEmptyString,
   namespaceWorkflowDefinition,
   rebaseCompositeDescendants,
+  workflowOutputValidationContext,
 } from "#veryfront/workflow/dsl/validation.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import {
@@ -2632,8 +2634,13 @@ export class DAGExecutor {
       // A nested workflow hands its parent the output it selects, checked by
       // its own outputSchema, exactly as it would as a top-level run (#2107).
       const selected = workflowDef.output(result.context);
-      finalOutput = toJsonOutput(
-        workflowDef.outputSchema ? workflowDef.outputSchema.parse(selected) : selected,
+      finalOutput = toJsonOutput(parseWorkflowOutput(workflowDef, selected));
+    } else if (result.completed && workflowDef.outputSchema) {
+      // A default output remains the complete child context for compatibility.
+      // Parse only to validate it; schemas may coerce or strip their returned value.
+      parseWorkflowOutput(
+        workflowDef,
+        workflowOutputValidationContext(workflowDef, result.context),
       );
     }
     if (result.completed && config.output) {

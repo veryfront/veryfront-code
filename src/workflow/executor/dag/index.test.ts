@@ -15,6 +15,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertNotEquals,
   assertRejects,
   assertStringIncludes,
@@ -1228,6 +1229,127 @@ describe("DAGExecutor", () => {
 
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
+    });
+
+    it("validates default output schemas on mapped workflow definitions", async () => {
+      const processor: WorkflowDefinition = {
+        id: "mapped-output",
+        outputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
+        steps: () => [step("value", { tool: "noop" })],
+      };
+
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map(),
+          () => ({ success: true, output: "invalid", executionTime: 1 }),
+        ),
+      });
+
+      const result = await exec.execute(
+        [map("batch", { items: [{}], processor })],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.nodeStates.batch?.status, "failed");
+      assertEquals(
+        (result.errorCause as unknown as { code?: string })?.code,
+        "OUTPUT_VALIDATION_FAILED",
+      );
+      assertEquals(
+        (result.errorCause as unknown as { detail?: unknown })?.detail,
+        {
+          errors: [{
+            path: "/value",
+            message: "Invalid input: expected number, received string",
+          }],
+        },
+      );
+    });
+
+    it("validates mapped defaults against declared keys and preserves namespaced output", async () => {
+      const processor: WorkflowDefinition = {
+        id: "mapped-output",
+        outputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
+        steps: [step("value", { tool: "noop" })],
+      };
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map(),
+          () => ({ success: true, output: 42, executionTime: 1 }),
+        ),
+      });
+
+      const result = await exec.execute(
+        [map("batch", { items: [{}], processor })],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates.batch?.output, [{
+        input: {},
+        "batch_0/value": 42,
+      }]);
+    });
+
+    it("keeps parsed selected outputs for mapped workflow definitions", async () => {
+      const processor: WorkflowDefinition = {
+        id: "mapped-selected-output",
+        outputSchema: defineSchema((v) => v.object({ value: v.coerce.number() }))(),
+        output: (context) => ({ value: context.value }),
+        steps: [step("value", { tool: "noop" })],
+      };
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map(),
+          () => ({ success: true, output: "42", executionTime: 1 }),
+        ),
+      });
+
+      const result = await exec.execute(
+        [map("batch", { items: [{}], processor })],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates.batch?.output, [{ value: 42 }]);
+    });
+
+    it("composes mapped validation views through nested parallel sub-workflows", async () => {
+      const processor: WorkflowDefinition = {
+        id: "nested-mapped-output",
+        steps: [parallel("outer", [
+          parallel("inner", [
+            subWorkflow("child", {
+              workflow: {
+                id: "deep-output",
+                outputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
+                steps: [step("value", { tool: "noop" })],
+              },
+            }),
+          ]),
+        ])],
+      };
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map(),
+          () => ({ success: true, output: 42, executionTime: 1 }),
+        ),
+      });
+
+      const result = await exec.execute(
+        [map("batch", { items: [{}], processor })],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(
+        result.nodeStates["batch_0/outer/inner/child"]?.output,
+        {
+          input: {},
+          "batch_0/outer/inner/value": 42,
+        },
+      );
     });
 
     it("namespaces composite descendants for every mapped item", async () => {
@@ -4120,7 +4242,8 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, false);
       assertEquals(result.nodeStates.nested?.status, "failed");
       assertEquals(result.errorCause?.slug, "input-validation-failed");
-      const errors = (result.errorCause?.context as { errors?: unknown })?.errors as {
+      assertInstanceOf(result.errorCause, VeryfrontError);
+      const errors = (result.errorCause.context as { errors?: unknown })?.errors as {
         path: string;
         message: string;
       }[];
@@ -6696,6 +6819,92 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
       assertEquals(result.nodeStates["sub1"]!.status, "completed");
+    });
+
+    it("fails a nested workflow whose default output violates its schema", async () => {
+      const nodes = [subWorkflow("invalid-child", {
+        workflow: {
+          id: "invalid-default-output-child",
+          outputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+          steps: [step("amount", { tool: "noop" })],
+        },
+      })];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map([["amount", { success: true, output: "not-a-number" }]]),
+        ),
+      });
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates["invalid-child"]?.status, "failed");
+      assertEquals(result.nodeStates["invalid-child"]?.output, undefined);
+      assertEquals(
+        (result.errorCause as unknown as { code?: string })?.code,
+        "OUTPUT_VALIDATION_FAILED",
+      );
+      assertEquals(
+        (result.errorCause as unknown as { detail?: unknown })?.detail,
+        {
+          errors: [{
+            path: "/amount",
+            message: "Invalid input: expected number, received string",
+          }],
+        },
+      );
+    });
+
+    it("validates a nested default output without replacing its legacy context shape", async () => {
+      const nodes = [subWorkflow("valid-child", {
+        workflow: {
+          id: "valid-default-output-child",
+          outputSchema: defineSchema((v) => v.object({ amount: v.coerce.number() }))(),
+          steps: [
+            step("amount", { tool: "noop" }),
+            step("extra", { tool: "noop" }),
+          ],
+        },
+      })];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map([
+            ["amount", { success: true, output: "42" }],
+            ["extra", { success: true, output: "retained" }],
+          ]),
+        ),
+      });
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["valid-child"]?.output, {
+        input: { topic: "test" },
+        amount: "42",
+        extra: "retained",
+      });
+    });
+
+    it("keeps parsed selected output behavior for nested workflows", async () => {
+      const nodes = [subWorkflow("selected-child", {
+        workflow: {
+          id: "selected-output-child",
+          outputSchema: defineSchema((v) => v.object({ amount: v.coerce.number() }))(),
+          output: (context) => context.total,
+          steps: [step("total", { tool: "noop" })],
+        },
+      })];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map([["total", { success: true, output: { amount: "42", extra: "drop" } }]]),
+        ),
+      });
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["selected-child"]?.output, { amount: 42 });
     });
 
     it("should throw for string workflow reference", async () => {

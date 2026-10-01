@@ -610,10 +610,12 @@ export default workflow({
 });
 ```
 
-When a workflow declares both `output` and `outputSchema`, the schema checks the
-selected value before the run completes. The parsed value is stored as the
-output. A value that fails the schema fails the run, so it is never stored as a
-completed output. Without `output`, the output keeps the default shape above.
+`outputSchema` checks the selected value, or the default output when no
+`output` selector is declared, before the run completes. A selected output
+stores the parsed value. A valid default output keeps its original shape and
+values. A mismatch fails with
+`error.code: "OUTPUT_VALIDATION_FAILED"` and `{ path, message }` entries in
+`error.detail.errors`, so invalid output is never stored as completed.
 
 A workflow nested with `subWorkflow` or `map` hands its parent the same selected
 output. The node's own `output` mapper, when declared, receives that value.

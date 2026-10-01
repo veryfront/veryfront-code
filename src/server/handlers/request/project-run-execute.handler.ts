@@ -10,6 +10,7 @@ import {
 import {
   formatSchemaValidationErrors,
   INPUT_VALIDATION_FAILED_CODE,
+  OUTPUT_VALIDATION_FAILED_CODE,
   readSchemaValidationErrors,
   type SchemaValidationError,
 } from "#veryfront/schemas/validation-errors.ts";
@@ -214,8 +215,8 @@ export interface ProjectRunExecuteResponse {
   result?: unknown;
   logs?: string | null;
   error?: string | null;
-  error_code?: "RUN_TIMEOUT" | "INPUT_VALIDATION_FAILED";
-  /** Structured failure detail, such as the validation errors for `INPUT_VALIDATION_FAILED`. */
+  error_code?: "RUN_TIMEOUT" | "INPUT_VALIDATION_FAILED" | "OUTPUT_VALIDATION_FAILED";
+  /** Structured failure detail, such as schema validation errors. */
   error_detail?: unknown;
   /** The task threw a RetryableError; the API may start another attempt. */
   retryable?: true;
@@ -1528,6 +1529,12 @@ async function runDiscoveredWorkflow(
         : {}),
       result: run.output,
       error: run.error?.message ?? `Workflow ended with status: ${run.status}`,
+      ...(run.error?.code === OUTPUT_VALIDATION_FAILED_CODE
+        ? {
+          error_code: OUTPUT_VALIDATION_FAILED_CODE,
+          ...(run.error.detail === undefined ? {} : { error_detail: run.error.detail }),
+        }
+        : {}),
       logs: null,
       duration_ms: durationMs,
     };
