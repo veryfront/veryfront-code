@@ -2123,6 +2123,27 @@ export class RedisBackend implements WorkflowBackend {
     return Number(result) === 1;
   }
 
+  private deserializeNodeStates(nodeStates: Checkpoint["nodeStates"]): Checkpoint["nodeStates"] {
+    for (const state of Object.values(nodeStates)) {
+      if (state.startedAt !== undefined) state.startedAt = new Date(state.startedAt);
+      if (state.completedAt !== undefined) state.completedAt = new Date(state.completedAt);
+    }
+    return nodeStates;
+  }
+
+  private deserializeCheckpoint(raw: string): Checkpoint {
+    const data: Checkpoint = JSON.parse(raw);
+    data.timestamp = new Date(data.timestamp);
+    data.nodeStates = this.deserializeNodeStates(data.nodeStates);
+    if (data._resumeEnvelope !== undefined) {
+      data._resumeEnvelope = {
+        ...data._resumeEnvelope,
+        nodeStates: this.deserializeNodeStates(data._resumeEnvelope.nodeStates),
+      };
+    }
+    return data;
+  }
+
   private deserializeRun(data: Record<string, string>): WorkflowRun {
     if (!data.id) {
       throw INVALID_ARGUMENT.create({ detail: "Invalid workflow run data: missing 'id' field" });
@@ -2200,7 +2221,9 @@ export class RedisBackend implements WorkflowBackend {
       sourceIntegrationPolicy,
       input: parseJsonOr(data.id, "input", data.input, undefined),
       output: parseJsonOr(data.id, "output", data.output, undefined),
-      nodeStates: parseJsonOr(data.id, "nodeStates", data.nodeStates, {}),
+      nodeStates: this.deserializeNodeStates(
+        parseJsonOr(data.id, "nodeStates", data.nodeStates, {}),
+      ),
       currentNodes: parseJsonOr(data.id, "currentNodes", data.currentNodes, []),
       context: parseJsonOr(data.id, "context", data.context, { input: undefined }),
       checkpoints: [],
@@ -2988,18 +3011,14 @@ export class RedisBackend implements WorkflowBackend {
     const raw = await client.lindex(this.checkpointsKey(runId), -1);
     if (!raw) return null;
 
-    const data = JSON.parse(raw);
-    return { ...data, timestamp: new Date(data.timestamp) };
+    return this.deserializeCheckpoint(raw);
   }
 
   async getCheckpoints(runId: string): Promise<Checkpoint[]> {
     const client = await this.ensureClient();
     const rawList = await client.lrange(this.checkpointsKey(runId), 0, -1);
 
-    return rawList.map((raw) => {
-      const data = JSON.parse(raw);
-      return { ...data, timestamp: new Date(data.timestamp) };
-    });
+    return rawList.map((raw) => this.deserializeCheckpoint(raw));
   }
 
   async savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
