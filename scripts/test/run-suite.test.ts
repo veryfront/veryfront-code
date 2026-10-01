@@ -43,6 +43,7 @@ const UNIT_CWD_FILES = [
 
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
+  "src/agent/child-run/result-summary.test.ts",
   "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ];
 
@@ -50,6 +51,27 @@ const UNIT_CWD_EXCLUSION_FILES = [
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",
 ];
+
+describe("child-run CPU measurement isolation", () => {
+  it("runs the summary guard alone in unit and coverage batches", () => {
+    const summaryTest = "src/agent/child-run/result-summary.test.ts";
+    assertEquals(
+      partitionDenoSuiteFiles(
+        ["src/a.test.ts", summaryTest, "src/b.test.ts"],
+        null,
+      ),
+      [["src/a.test.ts"], [summaryTest], ["src/b.test.ts"]],
+    );
+    for (const suite of ["unit:serial", "coverage:unit"] as const) {
+      assertEquals(
+        buildDenoSuiteCommandArgs(suite, [summaryTest], {
+          parallel: shouldRunDenoBatchInParallel(true, [summaryTest]),
+        }).includes("--parallel"),
+        false,
+      );
+    }
+  });
+});
 
 describe("suite planning parity", () => {
   it("preserves every legacy command inventory", async () => {
