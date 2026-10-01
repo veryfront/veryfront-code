@@ -137,8 +137,8 @@ jobs:
       - name: Install Chromium for integration hydration regressions
         timeout-minutes: 20
         uses: ./.github/actions/install-chromium
+      # Nested Node executor fixtures in both shards need the resolver packages.
       - name: Install Node resolver test dependencies
-        if: ${{ matrix.shard == 2 }}
         run: |
           npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
           mkdir -p node_modules npm/node_modules

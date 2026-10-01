@@ -1129,9 +1129,16 @@ describe("parallel integration workflow contract", () => {
       ]
     ) assertStringIncludes(String(runner.run), required);
     assert(steps.some((step) => step.run === "deno task generate"));
+    const nodeDependencies = steps.find((step) =>
+      step.name === "Install Node resolver test dependencies"
+    );
+    assert(
+      nodeDependencies,
+      "both shards need dependencies for nested Node executor tests",
+    );
+    assertEquals(nodeDependencies.if, undefined);
     for (
       const name of [
-        "Install Node resolver test dependencies",
         "Run Node cache-link compatibility tests",
         "Run Node egress transport tests",
         "Run CLI integration tests",
