@@ -32,7 +32,31 @@ class BlockingApprovalScanBackend extends MemoryBackend {
   }
 }
 
+class FailingApprovalScanBackend extends MemoryBackend {
+  closed = false;
+
+  override listApprovalDecisionClaims(): ReturnType<MemoryBackend["listApprovalDecisionClaims"]> {
+    return Promise.reject(new Error("Redis unavailable"));
+  }
+
+  override async destroy(): Promise<void> {
+    this.closed = true;
+    await super.destroy();
+  }
+}
+
 describe("WorkflowClient shutdown", () => {
+  it("preserves successful shutdown when best-effort approval recovery fails", async () => {
+    const backend = new FailingApprovalScanBackend();
+    const client = createWorkflowClient({ backend });
+    try {
+      await client.destroy();
+      assertEquals(backend.closed, true);
+    } finally {
+      await client.destroy();
+    }
+  });
+
   it("finishes approval claim recovery before closing a short-lived client", async () => {
     const backend = new BlockingApprovalScanBackend();
     await backend.createRun({
