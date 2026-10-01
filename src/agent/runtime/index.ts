@@ -1,8 +1,8 @@
 import { getAgentRuntimeToolCallPart } from "./message-adapter.ts";
 import {
   createTerminalRunControl,
+  isTerminalRunControlError,
   terminalCompletionResponse,
-  TerminalRunControlError,
 } from "./terminal-run-control.ts";
 import {
   appendPrivateArray,
@@ -1861,7 +1861,7 @@ function markSubmittedFormInputRuntimeContext(
 }
 
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
-  if (error instanceof TerminalRunControlError) return false;
+  if (isTerminalRunControlError(error)) return false;
   if (abortSignal?.aborted && error === abortSignal.reason) {
     return true;
   }
@@ -5111,7 +5111,7 @@ export class AgentRuntime {
     encoder?: TextEncoder,
   ): Promise<void> {
     if (
-      !(error instanceof TerminalRunControlError) || error.acknowledgedResult === undefined ||
+      !(isTerminalRunControlError(error)) || error.acknowledgedResult === undefined ||
       error.acknowledgedToolCallId !== toolCall.id
     ) {
       return;

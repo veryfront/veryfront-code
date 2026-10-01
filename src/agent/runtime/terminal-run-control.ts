@@ -3,6 +3,17 @@ import { hasToolExecutionErrorMarker } from "#veryfront/tool/result.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 
 const controlKey = Symbol("terminal-run-control");
+const terminalErrors = new WeakSet<object>();
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
+const apply = Reflect.apply;
+
+/** Recognize owned control errors without invoking application Proxy hooks. */
+export function isTerminalRunControlError(error: unknown): error is TerminalRunControlError {
+  return typeof error === "object" && error !== null &&
+    apply(weakSetHas, terminalErrors, [error]) === true;
+}
+
 type ControlContext = ToolExecutionContext & { [controlKey]?: TerminalRunControl };
 
 /** An authoritative terminal action stops this execution, including sibling tools. */
@@ -18,6 +29,7 @@ export class TerminalRunControlError extends Error {
   ) {
     super(message);
     this.name = "TerminalRunControlError";
+    apply(weakSetAdd, terminalErrors, [this]);
   }
 }
 
@@ -199,7 +211,7 @@ export function terminalCompletionResponse(
   error: unknown,
   jsonOutput = false,
 ): AgentResponse | undefined {
-  if (!(error instanceof TerminalRunControlError) || error.status !== "completed") return undefined;
+  if (!(isTerminalRunControlError(error)) || error.status !== "completed") return undefined;
   return {
     text: typeof error.output === "string" && !jsonOutput
       ? error.output
