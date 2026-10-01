@@ -141,7 +141,9 @@ function splitEmbeddedPublisher(run: string): {
   };
 }
 
-async function runVersionValidation(version: string): Promise<Deno.CommandOutput> {
+async function runVersionValidation(
+  version: string,
+): Promise<Deno.CommandOutput> {
   const jobs = await readJobs();
   const versionCheck = asRecord(jobs["version-check"], "version check job");
   const detect = namedStep(versionCheck, "Detect release type");
@@ -387,8 +389,14 @@ printf '%064d  %s\n' 0 "$1"
         stderr: "piped",
       }).output();
       assertEquals(output.code, 0, decoder.decode(output.stderr));
-      assertEquals(await Deno.readTextFile(`${stateDir}/releases/v1.2.3`), "published");
-      assertEquals(await Deno.readTextFile(retainedRelease), "published RC assets and tag");
+      assertEquals(
+        await Deno.readTextFile(`${stateDir}/releases/v1.2.3`),
+        "published",
+      );
+      assertEquals(
+        await Deno.readTextFile(retainedRelease),
+        "published RC assets and tag",
+      );
       assertStringIncludes(
         await Deno.readTextFile(`${stateDir}/gh.log`),
         "--prerelease=false --latest",
@@ -803,7 +811,9 @@ printf '%064d  %s\n' 0 "$1"
         "peter-evans/repository-dispatch@",
       ],
     } as const;
-    for (const jobName of ["publish-public-release", "dispatch-release"] as const) {
+    for (
+      const jobName of ["publish-public-release", "dispatch-release"] as const
+    ) {
       const job = asRecord(jobs[jobName], jobName);
       for (const step of steps(job, jobName)) {
         const action = String(step.uses ?? "");
@@ -840,14 +850,38 @@ printf '%064d  %s\n' 0 "$1"
         );
       }
     }
-    assertEquals(tokenRepositories(asRecord(jobs["publish-public-release"], "public uploader")), [
-      "veryfront",
-    ]);
-    assertEquals(tokenRepositories(asRecord(jobs["dispatch-release"], "dispatch")), [
-      "veryfront-server",
-      "veryfront-job-runner",
-      "veryfront-sandbox",
-    ]);
+    assertEquals(
+      tokenRepositories(
+        asRecord(jobs["publish-public-release"], "public uploader"),
+      ),
+      [
+        "veryfront",
+      ],
+    );
+    assertEquals(
+      tokenRepositories(asRecord(jobs["dispatch-release"], "dispatch")),
+      [
+        "veryfront-server",
+        "veryfront-job-runner",
+        "veryfront-sandbox",
+      ],
+    );
+  });
+
+  it("replaces the inert release artifact when the same workflow run is rerun", async () => {
+    const jobs = await readJobs();
+    for (const jobName of ["prerelease", "release"]) {
+      const upload = namedStep(
+        asRecord(jobs[jobName], jobName),
+        "Upload public release assets",
+      );
+      assertEquals(asRecord(upload.with, `${jobName} artifact inputs`), {
+        name: "public-release-${{ github.sha }}",
+        path: "dist/public-release/",
+        "if-no-files-found": "error",
+        overwrite: true,
+      });
+    }
   });
 
   it("publishes the selected release from an inert artifact in one isolated job", async () => {
@@ -1015,12 +1049,19 @@ printf '%064d  %s\n' 0 "$1"
     // killed while the smoke was still installing -- an unclassified failure
     // in place of the classified one the poll exists to produce.
     const jobs = await readJobs();
-    const gate = asRecord(jobs["quality-gate-registry"], "registry quality gate job");
+    const gate = asRecord(
+      jobs["quality-gate-registry"],
+      "registry quality gate job",
+    );
     const setupStep = steps(gate, "registry quality gate job").find((step) =>
       String(step.uses) === "./.github/actions/setup-deno"
     );
-    const setupMs = Number(asRecord(setupStep ?? {}, "setup step")["timeout-minutes"]) * 60_000;
-    assert(Number.isFinite(setupMs) && setupMs > 0, "setup-deno must bound its own step");
+    const setupMs = Number(asRecord(setupStep ?? {}, "setup step")["timeout-minutes"]) *
+      60_000;
+    assert(
+      Number.isFinite(setupMs) && setupMs > 0,
+      "setup-deno must bound its own step",
+    );
 
     const { maxAttempts, retryDelayMs } = readPropagationBudget({});
     // The last lookup may begin at the deadline and still spend its request

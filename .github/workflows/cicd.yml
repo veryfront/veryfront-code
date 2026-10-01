@@ -1204,6 +1204,7 @@ jobs:
           name: public-release-${{ github.sha }}
           path: dist/public-release/
           if-no-files-found: error
+          overwrite: true
 
   # ============================================
   # CD: Stable Release (clean semver only)
@@ -1344,6 +1345,7 @@ jobs:
           name: public-release-${{ github.sha }}
           path: dist/public-release/
           if-no-files-found: error
+          overwrite: true
 
   # App keys belong only on fresh runners that execute fixed workflow code.
   # Downloaded publication assets are data and must never be executed.
