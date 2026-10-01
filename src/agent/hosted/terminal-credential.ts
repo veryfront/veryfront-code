@@ -45,7 +45,8 @@ export function hostedTerminalToolSourceFactory(
   const expectedEndpoint = createProjectScopedMcpUrl(apiMcpUrl, authority.projectId);
   return (config, server) => {
     if (server?.kind !== "veryfront-api") return fallback(config);
-    return createRemoteMCPToolSource({
+    const ordinary = fallback(config);
+    const terminal = createRemoteMCPToolSource({
       ...config,
       endpoint: expectedEndpoint,
       headers: async (context) => {
@@ -59,5 +60,13 @@ export function hostedTerminalToolSourceFactory(
         return headers;
       },
     });
+    return {
+      id: ordinary.id,
+      listTools: (context) => ordinary.listTools(context),
+      executeTool: (name, args, context) =>
+        name === "finalized" || name === "veryfront__finalized"
+          ? terminal.executeTool(name, args, context)
+          : ordinary.executeTool(name, args, context),
+    };
   };
 }

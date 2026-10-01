@@ -1,3 +1,4 @@
+import { getAgentRuntimeToolCallPart } from "./message-adapter.ts";
 import {
   createTerminalRunControl,
   terminalCompletionResponse,
@@ -5126,6 +5127,44 @@ export class AgentRuntime {
     const message = createToolResultMessage(toolCall.id, toolCall.name, error.acknowledgedResult);
     pushPrivateArray(currentMessages, message);
     await persistMessage(message);
+    const resolvedIds = createPrivateSet<string>();
+    let terminalAssistantMessage: Message | undefined;
+    for (const entry of currentMessages) {
+      for (const part of entry.parts) {
+        if (part.type === "tool-result") resolvedIds.add(part.toolCallId);
+        else if (
+          entry.role === "assistant" &&
+          getAgentRuntimeToolCallPart(part)?.toolCallId === toolCall.id
+        ) {
+          terminalAssistantMessage = entry;
+        }
+      }
+    }
+    for (const part of terminalAssistantMessage?.parts ?? []) {
+      if (part.type === "tool-result") continue;
+      const sibling = getAgentRuntimeToolCallPart(part);
+      if (!sibling || resolvedIds.has(sibling.toolCallId)) continue;
+      resolvedIds.add(sibling.toolCallId);
+      const reason = "Run finalized before this tool was dispatched";
+      const skipped = createToolErrorMessage(sibling.toolCallId, sibling.toolName, reason);
+      pushPrivateArray(currentMessages, skipped);
+      await persistMessage(skipped);
+      pushPrivateArray(toolCalls, {
+        id: sibling.toolCallId,
+        name: sibling.toolName,
+        args: sibling.input,
+        status: "error",
+        error: reason,
+      });
+      if (controller && encoder) {
+        sendSSE(controller, encoder, {
+          type: "tool-output-error",
+          toolCallId: sibling.toolCallId,
+          errorText: reason,
+          ...(isDynamicTool(sibling.toolName) ? { dynamic: true } : {}),
+        });
+      }
+    }
     error.executionState = {
       messages: [...currentMessages],
       toolCalls: [...toolCalls],

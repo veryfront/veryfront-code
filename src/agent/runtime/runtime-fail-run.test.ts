@@ -98,7 +98,18 @@ describe("runtime finalized terminal control", () => {
             )
           ),
         );
-        assertEquals(result.toolCalls?.at(-1)?.name, failCall.name);
+        assert(
+          result.toolCalls?.some((call) =>
+            call.name === failCall.name && call.status === "completed"
+          ),
+        );
+        assert(
+          result.messages.some((message) =>
+            message.parts.some((part) =>
+              part.type === "tool-result" && part.toolCallId === "marker-1"
+            )
+          ),
+        );
         assert((result.usage?.totalTokens ?? 0) > 0);
         assertEquals(dispatched, [failCall.name]);
         assertEquals(model.callCount, 1);
@@ -163,6 +174,7 @@ describe("runtime finalized terminal control", () => {
         assert(text.includes('"object":{"ingested":3}'), text);
         assert(!text.includes('"type":"error"'), text);
         assert(text.includes('"type":"tool-output-available","toolCallId":"fail-1"'), text);
+        assert(text.includes('"type":"tool-output-error","toolCallId":"marker-1"'), text);
         const history = await runtime.getMemory().getMessages();
         assert(
           history.some((message) =>
