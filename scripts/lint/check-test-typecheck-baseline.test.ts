@@ -146,6 +146,23 @@ Deno.test("test typecheck ratchet rechecks baseline entries hidden by another di
   assertEquals(outcome.inconclusiveBaselineResults, []);
 });
 
+Deno.test("runDenoCheck checks the locked dependency graph", async () => {
+  const file = "src/locked-dependency.test.ts";
+  const result = await runDenoCheck(
+    { kind: "clean", files: [file] },
+    {
+      prefixArgs: [
+        "eval",
+        "console.log(JSON.stringify(Deno.args))",
+        "--",
+      ],
+    },
+  );
+
+  assertEquals(result.success, true);
+  assertEquals(JSON.parse(result.output), ["check", "--frozen", file]);
+});
+
 Deno.test("runDenoCheck kills a child that exceeds its deadline", async () => {
   const startedAt = performance.now();
   const result = await runDenoCheck(
