@@ -1311,6 +1311,28 @@ describe("workflow checkpoint retention", () => {
         other: { keep: 1 },
       });
     });
+
+    it("reports an owned callable node under its own strict context path", async () => {
+      const calls: string[] = [];
+      const backend = new MemoryBackend({ strictContext: true });
+      const workerId = "run-execution:to-json-strict-owner";
+      await backend.createRun(run("to-json-strict-owned", workerId));
+
+      await assertRejects(
+        () =>
+          backend.saveCheckpointIfStatusAndWorker(
+            "to-json-strict-owned",
+            "to-json-strict-owned",
+            ["running"],
+            workerId,
+            cloneOwnedCheckpointForPersistence(hijackingCheckpoint("strict-owned", calls)),
+          ),
+        VeryfrontError,
+        "checkpoint.context.<redacted> (function)",
+      );
+
+      assertEquals(calls, []);
+    });
   });
 
   it("removes only the older twin when a duplicate ID is deleted once", async () => {
