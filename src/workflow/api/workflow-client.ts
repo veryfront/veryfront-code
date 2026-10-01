@@ -572,9 +572,17 @@ export class WorkflowClient {
   }
 
   async destroy(): Promise<void> {
-    this.approvalManager.stop();
+    this.approvalManager.beginShutdown();
     this.eventWaitManager.stop();
-    await this.backend.destroy();
+    try {
+      await this.approvalManager.waitForDecisionClaimRecovery();
+    } catch (error) {
+      // Recovery is best effort and must not replace the workflow result.
+      logger.debug("Approval decision recovery failed during shutdown", error);
+    } finally {
+      this.approvalManager.stop();
+      await this.backend.destroy();
+    }
     logger.debug("Destroyed");
   }
 }
