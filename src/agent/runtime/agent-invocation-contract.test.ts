@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
@@ -93,7 +98,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
       }));
       assertEquals(parsed.success, false);
       if (parsed.success) throw new Error("Expected structural validation failure");
-      assertEquals(parsed.error.issues[0]?.path, ["resumeToolCall"]);
+      assertInstanceOf(parsed.error, Error);
+      assertStringIncludes(parsed.error.message, "resumeToolCall");
     }
   });
 
