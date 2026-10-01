@@ -265,7 +265,8 @@ describe("StatOperations", () => {
       const statOps = createStatOps(
         createMockClient({ listAllFiles: () => Promise.resolve(files) }),
         new PathNormalizer(),
-        createBranchContextWithFiles(files),
+        // The adapter listing follows the source, as a real adapter's does.
+        { ...createBranchContextWithFiles(files), getFileList: () => Promise.resolve(files) },
       );
 
       await runWithRequestContext(
