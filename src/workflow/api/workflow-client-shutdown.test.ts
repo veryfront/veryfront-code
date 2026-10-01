@@ -45,7 +45,30 @@ class FailingApprovalScanBackend extends MemoryBackend {
   }
 }
 
+class CountingApprovalScanBackend extends MemoryBackend {
+  scans = 0;
+
+  override listApprovalDecisionClaims(): ReturnType<MemoryBackend["listApprovalDecisionClaims"]> {
+    this.scans++;
+    return super.listApprovalDecisionClaims();
+  }
+}
+
 describe("WorkflowClient shutdown", () => {
+  it("does not start disabled approval recovery during shutdown", async () => {
+    const backend = new CountingApprovalScanBackend();
+    const client = createWorkflowClient({
+      backend,
+      approval: { decisionClaimCheckInterval: 0 },
+    });
+    try {
+      await client.destroy();
+      assertEquals(backend.scans, 0);
+    } finally {
+      await client.destroy();
+    }
+  });
+
   it("preserves successful shutdown when best-effort approval recovery fails", async () => {
     const backend = new FailingApprovalScanBackend();
     const client = createWorkflowClient({ backend });

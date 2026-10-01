@@ -573,7 +573,7 @@ export class WorkflowClient {
 
   async destroy(): Promise<void> {
     try {
-      await this.approvalManager.checkApprovalDecisionClaims();
+      await this.approvalManager.waitForDecisionClaimRecovery();
     } catch (error) {
       // Recovery is best effort and must not replace the workflow result.
       logger.debug("Approval decision recovery failed during shutdown", error);

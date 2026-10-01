@@ -556,6 +556,11 @@ export class ApprovalManager {
     }
   }
 
+  /** Wait for in-flight decision recovery without starting another scan. */
+  async waitForDecisionClaimRecovery(): Promise<void> {
+    await this.decisionClaimReconciliation;
+  }
+
   /** Reconcile durable decisions left behind by an interrupted process. */
   checkApprovalDecisionClaims(): Promise<void> {
     if (this.destroyed) return Promise.resolve();
