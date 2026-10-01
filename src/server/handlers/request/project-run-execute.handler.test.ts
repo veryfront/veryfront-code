@@ -1760,11 +1760,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const pending = withMockFetch(
       ((_input, init) => {
         laterRequests++;
-        listingSignal = init?.signal ?? undefined;
+        const signal = observeFetchRequestInit(init).signal ?? undefined;
+        listingSignal = signal;
         listingStarted.resolve();
-        if (!listingSignal) return Promise.reject(new Error("missing abort signal"));
+        if (!signal) return Promise.reject(new Error("missing abort signal"));
         return new Promise<Response>((_resolve, reject) =>
-          listingSignal.addEventListener("abort", () => reject(listingSignal?.reason), {
+          signal.addEventListener("abort", () => reject(signal.reason), {
             once: true,
           })
         );
@@ -2007,11 +2008,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           );
         }
         if (url.includes("/assets/")) {
-          uploadSignal = init?.signal ?? undefined;
+          const signal = observeFetchRequestInit(init).signal ?? undefined;
+          uploadSignal = signal;
           uploadStarted.resolve();
-          if (!uploadSignal) return Promise.reject(new Error("missing abort signal"));
+          if (!signal) return Promise.reject(new Error("missing abort signal"));
           return new Promise<Response>((_resolve, reject) =>
-            uploadSignal.addEventListener("abort", () => reject(uploadSignal?.reason), {
+            signal.addEventListener("abort", () => reject(signal.reason), {
               once: true,
             })
           );
@@ -2090,7 +2092,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await withMockFetch(
       (async (input, init) => {
         const url = String(input);
-        requests.push(`${init?.method ?? "GET"} ${url}`);
+        requests.push(`${observeFetchRequestInit(init).method ?? "GET"} ${url}`);
         if (url.endsWith("/asset-manifest/builds")) {
           return new Response(
             JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
@@ -2195,16 +2197,19 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           );
         }
         if (url.endsWith("/asset-manifest/assets")) {
-          uploadSignal = init?.signal ?? undefined;
+          const signal = observeFetchRequestInit(init).signal ?? undefined;
+          uploadSignal = signal;
           uploadStarted.resolve();
-          if (!uploadSignal) return Promise.reject(new Error("missing abort signal"));
+          if (!signal) return Promise.reject(new Error("missing abort signal"));
           return new Promise<Response>((_resolve, reject) =>
-            uploadSignal.addEventListener("abort", () => reject(uploadSignal?.reason), {
+            signal.addEventListener("abort", () => reject(signal.reason), {
               once: true,
             })
           );
         }
-        if (url.endsWith("/asset-manifest") && init?.method === "PUT") manifestPuts++;
+        if (
+          url.endsWith("/asset-manifest") && observeFetchRequestInit(init).method === "PUT"
+        ) manifestPuts++;
         return Promise.resolve(new Response("Not found", { status: 404 }));
       }) as typeof fetch,
       async () => await new ProjectRunExecuteHandler().handle(request, ctx),
@@ -2368,11 +2373,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     const pending = withMockFetch(
       ((_input, init) => {
-        publicationSignal = init?.signal ?? undefined;
+        const signal = observeFetchRequestInit(init).signal ?? undefined;
+        publicationSignal = signal;
         publicationStarted.resolve();
-        if (!publicationSignal) return Promise.reject(new Error("missing abort signal"));
+        if (!signal) return Promise.reject(new Error("missing abort signal"));
         return new Promise<Response>((_resolve, reject) =>
-          publicationSignal.addEventListener("abort", () => reject(publicationSignal?.reason), {
+          signal.addEventListener("abort", () => reject(signal.reason), {
             once: true,
           })
         );
