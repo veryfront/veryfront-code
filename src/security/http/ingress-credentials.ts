@@ -24,9 +24,9 @@ const NativeRequest = Request;
 const NativeWeakMap = WeakMap;
 const ObjectCreate = Object.create;
 const ObjectFreeze = Object.freeze;
-const ObjectHasOwn = Object.hasOwn;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const HeadersGet = NativeHeaders.prototype.get;
+const HeadersAppend = NativeHeaders.prototype.append;
 const HeadersEntries = NativeHeaders.prototype.entries;
 const HeadersIteratorNext = Object.getPrototypeOf(new NativeHeaders().entries()).next as (
   this: IterableIterator<[string, string]>,
@@ -77,8 +77,16 @@ function isWebSocketUpgrade(request: Request): boolean {
  * A Headers object handed to the Request constructor would be read through a
  * patchable `Headers.prototype[Symbol.iterator]`; a record takes no such path.
  */
-function toHeaderRecordWithoutCredentials(request: Request): Record<string, string> {
+interface HeadersWithoutCredentials {
+  /** Every header but the credentials and `set-cookie`, one value per name. */
+  readonly record: Record<string, string>;
+  /** The `set-cookie` values, each its own field; joining them would corrupt them. */
+  readonly setCookies: string[];
+}
+
+function toHeaderRecordWithoutCredentials(request: Request): HeadersWithoutCredentials {
   const record = ObjectCreate(null) as Record<string, string>;
+  const setCookies: string[] = [];
   const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
   const iterator = IntrinsicReflectApply(HeadersEntries, headers, []) as IterableIterator<
     [string, string]
@@ -87,17 +95,20 @@ function toHeaderRecordWithoutCredentials(request: Request): Record<string, stri
     const step = IntrinsicReflectApply(HeadersIteratorNext, iterator, []) as IteratorResult<
       [string, string]
     >;
-    if (step.done) return record;
+    if (step.done) return { record, setCookies };
     // Entries arrive lowercased, so the names compare without normalising.
     const name = step.value[0];
     if (
       name === INGRESS_API_TOKEN_HEADER || name === INGRESS_INFERENCE_TOKEN_HEADER ||
       name === INGRESS_RUN_EVENT_TOKEN_HEADER
     ) continue;
-    // Headers keeps repeated set-cookie entries apart; keep every value.
-    record[name] = IntrinsicReflectApply(ObjectHasOwn, undefined, [record, name])
-      ? `${record[name]}, ${step.value[1]}`
-      : step.value[1];
+    if (name === "set-cookie") {
+      // Not a credential, so this list may use ordinary array writes.
+      setCookies[setCookies.length] = step.value[1];
+      continue;
+    }
+    // Headers already joins every other repeated name.
+    record[name] = step.value[1];
   }
 }
 
@@ -145,8 +156,20 @@ function sealWith(request: Request, credentials: IngressCredentials): Request {
   // Null prototype: the constructor reads `body`, `method`, `signal` and the
   // other init fields by name, and an inherited getter would see `headers`.
   const init = ObjectCreate(null) as RequestInit;
-  init.headers = toHeaderRecordWithoutCredentials(request);
+  const remaining = toHeaderRecordWithoutCredentials(request);
+  init.headers = remaining.record;
   const sealed = new NativeRequest(request, init);
+  if (remaining.setCookies.length > 0) {
+    // Appended one by one so each stays its own field. The copy holds no
+    // credential and is not yet reachable by project code.
+    const sealedHeaders = IntrinsicReflectApply(RequestHeadersGetter, sealed, []) as Headers;
+    for (let index = 0; index < remaining.setCookies.length; index++) {
+      IntrinsicReflectApply(HeadersAppend, sealedHeaders, [
+        "set-cookie",
+        remaining.setCookies[index],
+      ]);
+    }
+  }
   IntrinsicReflectApply(WeakMapSet, ingressCredentials, [sealed, credentials]);
   // A request sealed before keeps pointing at its original server request.
   const upgradeSource = IntrinsicReflectApply(WeakMapGet, upgradeSources, [request]) as
