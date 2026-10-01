@@ -99,7 +99,13 @@ export async function runDenoCheck(
   let child: Deno.ChildProcess;
   try {
     child = new Deno.Command(options.executable ?? Deno.execPath(), {
-      args: [...(options.prefixArgs ?? []), "check", "--no-lock", ...job.files],
+      args: [
+        ...(options.prefixArgs ?? []),
+        "check",
+        "--frozen",
+        "--lock=deno.lock",
+        ...job.files,
+      ],
       stdout: "piped",
       stderr: "piped",
     }).spawn();
@@ -320,7 +326,9 @@ export async function evaluateRatchet(
     failingBaselineCount: baselineResolution.failing.size,
     fixed: [...fixed].sort(compareOrdinal),
     inconclusiveBaselineResults: baselineResolution.inconclusive,
-    newRot: clean.failures.flatMap((result) => result.files).sort(compareOrdinal),
+    newRot: clean.failures.flatMap((result) => result.files).sort(
+      compareOrdinal,
+    ),
     newRotResults: clean.failures,
     unattributedCleanResults: clean.unattributed,
   };
@@ -340,7 +348,11 @@ function printFailureResults(results: CheckResult[]): void {
 }
 
 async function main(): Promise<void> {
-  const testFiles = [...listTestFiles("src"), ...listTestFiles("cli"), ...listTestFiles("templates")].sort(compareOrdinal);
+  const testFiles = [
+    ...listTestFiles("src"),
+    ...listTestFiles("cli"),
+    ...listTestFiles("templates"),
+  ].sort(compareOrdinal);
   const baseline = new Set<string>(
     JSON.parse(
       Deno.readTextFileSync("scripts/lint/test-typecheck-baseline.json"),
@@ -377,7 +389,7 @@ async function main(): Promise<void> {
       ...outcome.inconclusiveBaselineResults,
     ]);
     console.error(
-      "Fix the errors, or run `deno check --no-lock <file>` on the reported files.",
+      "Fix the errors, or run `deno check --frozen --lock=deno.lock <file>` on the reported files.",
     );
     Deno.exit(1);
   }
