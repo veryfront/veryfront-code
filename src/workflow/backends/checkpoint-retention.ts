@@ -162,6 +162,7 @@ function cloneCheckpointJson<T>(
   label: string,
   shape?: WorkflowJsonRecordShape,
   records?: WorkflowJsonRecords,
+  allowRecordDataCloneFallback = false,
 ): T {
   if (
     isDeferredWorkflowJsonValue(value) ||
@@ -175,12 +176,14 @@ function cloneCheckpointJson<T>(
   try {
     return structuredCloneValue(value);
   } catch (error) {
-    // The memory backend rebuilds the envelope after preparing its node states,
-    // which drops the owned-clone marker. Its fixed record shape still gives us
-    // the exact JSON boundary needed to omit an uncloneable `toJSON` node value.
+    // Only a successfully persisted checkpoint may normalize shaped records
+    // for its return value. Ordinary retention still rejects uncloneable data.
+    // Rebuilt resume envelopes retain their existing JSON-boundary fallback.
     if (
       !isStructuredCloneRangeError(error) &&
-      !(shape === WORKFLOW_RESUME_ENVELOPE_RECORD && isStructuredCloneDataError(error))
+      !((shape === WORKFLOW_RESUME_ENVELOPE_RECORD ||
+        (allowRecordDataCloneFallback && shape !== undefined)) &&
+        isStructuredCloneDataError(error))
     ) throw error;
   }
   return jsonParse(
@@ -1080,6 +1083,7 @@ export function cloneRetainedCheckpoint(
     checkpoint,
     WORKFLOW_CHECKPOINT_RECORD,
   ),
+  options: { allowRecordDataCloneFallback?: boolean } = {},
 ): Checkpoint {
   const {
     context,
@@ -1095,12 +1099,14 @@ export function cloneRetainedCheckpoint(
       "checkpoint.context",
       WORKFLOW_NODE_RECORD,
       records,
+      options.allowRecordDataCloneFallback,
     ),
     nodeStates: cloneCheckpointJson<Checkpoint["nodeStates"]>(
       nodeStates,
       "checkpoint.nodeStates",
       WORKFLOW_NODE_RECORD,
       records,
+      options.allowRecordDataCloneFallback,
     ),
   };
   if (_resumeEnvelope !== undefined) {
@@ -1109,6 +1115,7 @@ export function cloneRetainedCheckpoint(
       "checkpoint._resumeEnvelope",
       WORKFLOW_RESUME_ENVELOPE_RECORD,
       records,
+      options.allowRecordDataCloneFallback,
     );
   }
   if (_workflowProjection !== undefined) {

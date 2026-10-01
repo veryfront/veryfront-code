@@ -309,6 +309,36 @@ describe("CheckpointManager", () => {
     });
   });
 
+  it("returns the persisted snapshot when a node output shares a callable-toJSON context", async () => {
+    const runId = "shared-context-return";
+    const backend = await seed(runId, 0);
+    const manager = new CheckpointManager({ backend });
+    let hookCalls = 0;
+    const context: WorkflowContext = {
+      input: {},
+      toJSON: () => {
+        hookCalls++;
+        return { hijacked: "" };
+      },
+      other: { keep: 1 },
+    };
+    const created = await manager.createCheckpoint(runId, "a", context, {
+      a: { nodeId: "a", status: "completed", attempt: 1, output: context },
+    });
+    const persisted = await manager.getLatest(runId);
+    assertExists(persisted);
+    const expected = { input: {}, other: { keep: 1 } };
+    assertEquals(hookCalls, 0);
+    for (const snapshot of [created, persisted]) {
+      assertEquals(snapshot.context, expected);
+      assertEquals(snapshot.nodeStates.a?.output, expected);
+    }
+    assertEquals(JSON.stringify(created.context), JSON.stringify(persisted.context));
+    assertEquals(JSON.stringify(created.nodeStates), JSON.stringify(persisted.nodeStates));
+    (context.other as { keep: number }).keep = 2;
+    assertEquals(created.context, expected);
+  });
+
   it("snapshots checkpoint input before an asynchronous backend yields", async () => {
     let resumeSave!: () => void;
     const saveGate = new Promise<void>((resolve) => {
