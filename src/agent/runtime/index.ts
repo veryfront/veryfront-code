@@ -1,4 +1,9 @@
 import {
+  createTerminalRunControl,
+  terminalCompletionResponse,
+  TerminalRunControlError,
+} from "./terminal-run-control.ts";
+import {
   appendPrivateArray,
   concatPrivateArrays,
   filterPrivateArray,
@@ -1855,6 +1860,7 @@ function markSubmittedFormInputRuntimeContext(
 }
 
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
+  if (error instanceof TerminalRunControlError) return false;
   if (abortSignal?.aborted && error === abortSignal.reason) {
     return true;
   }
@@ -2512,6 +2518,14 @@ export class AgentRuntime {
       outputSchema?: unknown;
     },
   ): Promise<AgentResponse> {
+    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
+    const terminalControl = createTerminalRunControl(
+      context,
+      abortSignal,
+      outputSchema ? (output) => outputSchema.parseOutput(privateJsonStringify(output)) : undefined,
+    );
+    context = terminalControl.context;
+    abortSignal = terminalControl.signal;
     const runRuntimeContext = captureAgentRunRuntimeContext();
     if (this.#modelResolverState.status === "absent") throwIfAborted(abortSignal);
     const { transport, resolveModelRuntime } = await this.#resolveModelTransport(
@@ -2522,7 +2536,6 @@ export class AgentRuntime {
     const abortGuard = createModelRuntimeResolverAbortGuard(resolveModelRuntime, abortSignal);
     try {
       throwIfAborted(abortSignal);
-      const outputSchema = this.resolveOutputSchema(options?.outputSchema);
       const requestedModel = transport.requestedModel;
       const resolvedModelString = transport.resolvedModelString;
       const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
@@ -2579,6 +2592,7 @@ export class AgentRuntime {
                     turnPersistence.validateProviderRequest,
                     turnPersistence.addMessage,
                     {
+                      ...terminalControl.binding,
                       agentId: this.id,
                       projectId: tryGetCacheKeyContext()?.projectId,
                     },
@@ -2621,6 +2635,11 @@ export class AgentRuntime {
         await turnPersistence.commit();
         return response;
       }).catch(async (error) => {
+        const terminalResponse = terminalCompletionResponse(error);
+        if (terminalResponse) {
+          this.status = "completed";
+          return terminalResponse;
+        }
         // A cancellation keeps the relay's neutral default: only a real
         // failure hands the relay the sanitized provider cause.
         // Same rule as the stream path: the relay writes a public RunError, so
@@ -2674,6 +2693,14 @@ export class AgentRuntime {
     abortSignal?: AbortSignal,
     options?: { outputSchema?: unknown },
   ): Promise<ReadableStream<Uint8Array>> {
+    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
+    const terminalControl = createTerminalRunControl(
+      context,
+      abortSignal,
+      outputSchema ? (output) => outputSchema.parseOutput(privateJsonStringify(output)) : undefined,
+    );
+    context = terminalControl.context;
+    abortSignal = terminalControl.signal;
     const runRuntimeContext = captureAgentRunRuntimeContext();
     setOtelActiveSpanAttributes({
       "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
@@ -2687,7 +2714,6 @@ export class AgentRuntime {
     );
     const abortScope = createModelRuntimeResolverAbortScope(resolveModelRuntime, abortSignal);
     try {
-      const outputSchema = this.resolveOutputSchema(options?.outputSchema);
       const requestedModel = transport.requestedModel;
       const resolvedModelString = transport.resolvedModelString;
       debugRuntimeModelRemap(requestedModel, resolvedModelString);
@@ -2775,6 +2801,7 @@ export class AgentRuntime {
       this.#onStreamCompletion?.(completion.promise);
       const runtimeStream = createPrivateReadableStream<Uint8Array>({
         start: async (controller) => {
+          let streamedResponseText = "";
           try {
             throwIfAborted(streamAbortSignal);
             this.status = "streaming";
@@ -2794,7 +2821,6 @@ export class AgentRuntime {
               type: "data-veryfront.runtime_context",
               data: runRuntimeContext,
             });
-            let streamedResponseText = "";
             const streamingCallbacks: AgentRuntimeStreamCallbacks = {
               ...callbacks,
               onChunk: (chunk) => {
@@ -2878,6 +2904,30 @@ export class AgentRuntime {
               await turnPersistence.finalize();
             } catch (finalizationError) {
               error = finalizationError;
+            }
+            const terminalResponse = terminalCompletionResponse(error);
+            if (terminalResponse) {
+              this.status = "completed";
+              if (terminalResponse.text.length > 0 && streamedResponseText.length === 0) {
+                sendSSE(controller, encoder, { type: "text-start", id: textPartId });
+                sendSSE(controller, encoder, {
+                  type: "text-delta",
+                  id: textPartId,
+                  delta: terminalResponse.text,
+                });
+                callbacks?.onChunk?.(terminalResponse.text);
+                sendSSE(controller, encoder, { type: "text-end", id: textPartId });
+              }
+              callbacks?.onFinish?.(terminalResponse);
+              sendSSE(controller, encoder, {
+                type: "message-finish",
+                object: terminalResponse.object,
+                ...(terminalResponse.usage
+                  ? { totalUsage: buildStreamFinishUsage(terminalResponse.usage) }
+                  : {}),
+              });
+              closeSSEStream(controller);
+              return;
             }
             // Resolve the sanitized event first so the replay relay fails with
             // the same cause the stream reports, instead of a manufactured one.
@@ -3649,6 +3699,14 @@ export class AgentRuntime {
               pushPrivateArray(currentMessages, toolResultMessage);
               await persistMessage(toolResultMessage);
             } catch (error) {
+              await this.recordTerminalToolResult(
+                error,
+                toolCall,
+                persistMessage,
+                currentMessages,
+                toolCalls,
+                totalUsage,
+              );
               throwIfAborted(abortSignal);
               toolCall.status = "error";
               toolCall.error = error instanceof Error ? error.message : String(error);
@@ -3988,6 +4046,17 @@ export class AgentRuntime {
           pushPrivateArray(currentMessages, toolResultMessage);
           await persistMessage(toolResultMessage);
         } catch (error) {
+          await this.recordTerminalToolResult(
+            error,
+            toolCall,
+            persistMessage,
+            currentMessages,
+            toolCalls,
+            totalUsage,
+            controller,
+            encoder,
+          );
+          throwIfAborted(abortSignal);
           await this.recordToolError(
             persistMessage,
             toolCall,
@@ -4940,6 +5009,17 @@ export class AgentRuntime {
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           }
         } catch (error) {
+          await this.recordTerminalToolResult(
+            error,
+            toolCall,
+            persistMessage,
+            currentMessages,
+            toolCalls,
+            totalUsage,
+            controller,
+            encoder,
+          );
+          throwIfAborted(abortSignal);
           const errorStr = error instanceof Error ? error.message : String(error);
           await this.recordToolError(
             persistMessage,
@@ -5024,6 +5104,43 @@ export class AgentRuntime {
   /**
    * Record a tool error and send SSE event.
    */
+  private async recordTerminalToolResult(
+    error: unknown,
+    toolCall: ToolCall,
+    persistMessage: (message: Message) => Promise<void>,
+    currentMessages: Message[],
+    toolCalls: ToolCall[],
+    usage: NonNullable<AgentResponse["usage"]>,
+    controller?: ReadableStreamDefaultController,
+    encoder?: TextEncoder,
+  ): Promise<void> {
+    if (
+      !(error instanceof TerminalRunControlError) || error.acknowledgedResult === undefined ||
+      error.acknowledgedToolCallId !== toolCall.id
+    ) {
+      return;
+    }
+    toolCall.status = "completed";
+    toolCall.result = error.acknowledgedResult;
+    pushPrivateArray(toolCalls, toolCall);
+    const message = createToolResultMessage(toolCall.id, toolCall.name, error.acknowledgedResult);
+    pushPrivateArray(currentMessages, message);
+    await persistMessage(message);
+    error.executionState = {
+      messages: [...currentMessages],
+      toolCalls: [...toolCalls],
+      usage: { ...usage },
+    };
+    if (controller && encoder) {
+      sendSSE(controller, encoder, {
+        type: "tool-output-available",
+        toolCallId: toolCall.id,
+        output: error.acknowledgedResult,
+        ...(isDynamicTool(toolCall.name) ? { dynamic: true } : {}),
+      });
+    }
+  }
+
   private async recordToolError(
     persistMessage: (message: Message) => Promise<void>,
     toolCall: ToolCall,
@@ -5143,6 +5260,7 @@ const agentRuntimePrivateMethodNames = [
   "createGenerateReplacementTools",
   "resolveOutputSchema",
   "recordToolError",
+  "recordTerminalToolResult",
   "resolveSystemPrompt",
   "computeMaxSteps",
   "resolveTemperature",

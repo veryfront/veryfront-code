@@ -1,3 +1,7 @@
+import {
+  registerHostedTerminalCredential,
+  RUN_TERMINAL_TOKEN_HEADER,
+} from "./terminal-credential.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -353,6 +357,10 @@ async function withVerifiedRunEventAppendToken(
     },
   );
   registerHostedInferenceCredential(verifiedRequest, inferenceAuthToken);
+  registerHostedTerminalCredential(
+    verifiedRequest,
+    readRequestHeader(request, RUN_TERMINAL_TOKEN_HEADER),
+  );
   return verifiedRequest;
 }
 

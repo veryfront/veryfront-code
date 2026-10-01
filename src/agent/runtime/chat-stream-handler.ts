@@ -1,3 +1,4 @@
+import { TerminalRunControlError } from "./terminal-run-control.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
@@ -248,6 +249,9 @@ export function resolveRelayableExecutionFailure(
 
 /** Serialize an outer runtime failure without inferring provider provenance. */
 export function resolveRuntimeExecutionErrorEvent(error: unknown): RuntimeStreamErrorEvent {
+  if (error instanceof TerminalRunControlError) {
+    return { type: "error", error: error.message, code: error.code };
+  }
   if (isRuntimeEmptyResponseError(error)) {
     return {
       type: "error",

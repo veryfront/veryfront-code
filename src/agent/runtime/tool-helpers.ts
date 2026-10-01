@@ -1,3 +1,8 @@
+import {
+  awaitTerminalRunControl,
+  dispatchWithTerminalRunControl,
+  executeTerminalRunTool,
+} from "./terminal-run-control.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
@@ -330,7 +335,11 @@ async function executeRemoteToolFromSources(
     }
     return {
       handled: true,
-      result: await source.executeTool(toolName, input, context),
+      result: await (hasTrustedPlatformSource(source)
+        ? executeTerminalRunTool(toolName, input, context, () =>
+          source.executeTool(toolName, input, context))
+        : dispatchWithTerminalRunControl(context, () =>
+          source.executeTool(toolName, input, context))),
     };
   }
 
@@ -394,6 +403,7 @@ export async function executeConfiguredTool(
     strictConfiguredToolsOnly?: boolean;
   },
 ): Promise<unknown> {
+  await awaitTerminalRunControl(context);
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
   const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
   const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);
@@ -433,7 +443,10 @@ export async function executeConfiguredTool(
     allowIntegrationStyleConcreteTools: options?.strictConfiguredToolsOnly,
   });
   if (configuredTool) {
-    return await configuredTool.execute(input, context);
+    return await dispatchWithTerminalRunControl(
+      context,
+      () => configuredTool.execute(input, context),
+    );
   }
 
   if (options?.strictConfiguredToolsOnly) {
@@ -445,7 +458,10 @@ export async function executeConfiguredTool(
   // fall through and surface as "not found" via executeTool.
   const registryTool = toolRegistry.get(toolName);
   if (registryTool && isToolVisibleTo(registryTool, context)) {
-    return await registryTool.execute(input, context);
+    return await dispatchWithTerminalRunControl(
+      context,
+      () => registryTool.execute(input, context),
+    );
   }
 
   const remoteSourceResult = await executeRemoteToolFromSources(
@@ -466,10 +482,13 @@ export async function executeConfiguredTool(
     if (allowedRemoteToolNames && !intrinsicIncludes(allowedRemoteToolNames, toolName)) {
       throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
     }
-    return await executeRemoteIntegrationTool(toolName, input, context);
+    return await dispatchWithTerminalRunControl(
+      context,
+      () => executeRemoteIntegrationTool(toolName, input, context),
+    );
   }
 
-  return await executeTool(toolName, input, context);
+  return await dispatchWithTerminalRunControl(context, () => executeTool(toolName, input, context));
 }
 
 function logToolDefinition(name: string, def: ToolDefinition): void {

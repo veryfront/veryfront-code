@@ -1745,3 +1745,30 @@ it("facaded canonical file writes refresh steering only for trusted platform sou
     assertEquals(mutations, trusted ? 1 : 0);
   }
 });
+
+Deno.test("forwards authenticated platform server identity to the runtime source factory", async () => {
+  let receivedKind: string | undefined;
+  let receivedId: string | undefined;
+  await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    instructions: "Finalize the run",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: [],
+    mcpServers: [{ kind: "veryfront-api", id: "custom-platform" }],
+    createRemoteToolSource: (config, server) => {
+      receivedKind = server?.kind;
+      receivedId = config.id;
+      return remoteSourceFromConfig(config);
+    },
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(receivedKind, "veryfront-api");
+  assertEquals(receivedId, "custom-platform");
+});
