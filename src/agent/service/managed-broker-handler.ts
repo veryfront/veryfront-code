@@ -174,9 +174,28 @@ export function createManagedDurableBrokerHandler(options: {
   if (typeof options.ingress.verifyRunEventAppendToken !== "function") {
     throw new TypeError("Managed durable broker requires run-event authorization");
   }
-  return createManagedBrokerIngressHandler({
+  return createManagedBrokerIngressHandler<ManagedDurableAgentIngressResult>({
     ...options,
     responseMode: "detached",
+    async prepare(input) {
+      const prepared = await options.prepare(input);
+      const resumeToolCall = input.ingress.executor.serverResolvedResumeToolCall;
+      if (!prepared.start.prepare) return prepared;
+      const {
+        serverResolvedResumeToolCall: _untrustedAdapterResumeToolCall,
+        ...basePrepare
+      } = prepared.start.prepare;
+      return {
+        ...prepared,
+        start: {
+          ...prepared.start,
+          prepare: {
+            ...basePrepare,
+            ...(resumeToolCall ? { serverResolvedResumeToolCall: resumeToolCall } : {}),
+          },
+        },
+      };
+    },
     async parse(request, signal) {
       if (request.method !== "POST" || new URL(request.url).pathname !== "/api/runs") {
         return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
