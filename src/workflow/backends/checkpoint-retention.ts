@@ -405,7 +405,11 @@ function hasDynamicPrototypeToJson(value: OwnedCheckpointCloneSource): boolean {
   return false;
 }
 
-function cloneOwnedCheckpointValue<T>(value: T, shape?: WorkflowJsonRecordShape): T {
+function cloneOwnedCheckpointValue<T>(
+  value: T,
+  shape?: WorkflowJsonRecordShape,
+  sharedClones?: Map<object, object>,
+): T {
   if (typeof value === "function") {
     return deferWorkflowJsonValue(value) as T;
   }
@@ -431,7 +435,8 @@ function cloneOwnedCheckpointValue<T>(value: T, shape?: WorkflowJsonRecordShape)
   if (rawJson !== undefined) return rawJson as T;
 
   const brandChecks = nativeBrandChecks;
-  const clones = new MapConstructor<object, object>();
+  const clones = sharedClones ?? new MapConstructor<object, object>();
+  const addedSources: object[] = [];
   const frames: OwnedCheckpointCloneFrame[] = [];
   let deferRoot = false;
   let requiresJsonClone = false;
@@ -493,6 +498,7 @@ function cloneOwnedCheckpointValue<T>(value: T, shape?: WorkflowJsonRecordShape)
       ? stabilizeWorkflowJsonPrototypeSnapshot(objectCreate(objectPrototype))
       : objectCreate(objectPrototype);
     reflectApply(mapSet, clones, [source, target]);
+    reflectApply(arrayPush, addedSources, [source]);
     reflectApply(arrayPush, frames, [{
       keys: reflectOwnKeys(source),
       shape: sourceShape,
@@ -557,6 +563,9 @@ function cloneOwnedCheckpointValue<T>(value: T, shape?: WorkflowJsonRecordShape)
 
   if (!deferRoot && requiresJsonClone) {
     reflectApply(weakSetAdd, ownedCheckpointJsonCloneRoots, [rootTarget]);
+  }
+  if (deferRoot && sharedClones !== undefined) {
+    for (const source of addedSources) reflectApply(mapDelete, clones, [source]);
   }
   return (deferRoot ? deferWorkflowJsonValue(value) : rootTarget) as T;
 }
@@ -1029,20 +1038,26 @@ export function cloneOwnedCheckpointForPersistence(checkpoint: Checkpoint): Chec
   if (nativeBrandChecks === undefined) {
     return cloneOwnedCheckpointWithoutNativeBrandChecks(checkpoint);
   }
+  const clones = new MapConstructor<object, object>();
   const clone: Checkpoint = {
     id: checkpoint.id,
     nodeId: checkpoint.nodeId,
-    timestamp: cloneOwnedCheckpointValue(checkpoint.timestamp),
-    context: cloneOwnedCheckpointValue(checkpoint.context, WORKFLOW_NODE_RECORD),
-    nodeStates: cloneOwnedCheckpointValue(checkpoint.nodeStates, WORKFLOW_NODE_RECORD),
+    timestamp: cloneOwnedCheckpointValue(checkpoint.timestamp, undefined, clones),
+    context: cloneOwnedCheckpointValue(checkpoint.context, WORKFLOW_NODE_RECORD, clones),
+    nodeStates: cloneOwnedCheckpointValue(checkpoint.nodeStates, WORKFLOW_NODE_RECORD, clones),
   };
   if (checkpoint._workflowProjection !== undefined) {
-    clone._workflowProjection = cloneOwnedCheckpointValue(checkpoint._workflowProjection);
+    clone._workflowProjection = cloneOwnedCheckpointValue(
+      checkpoint._workflowProjection,
+      undefined,
+      clones,
+    );
   }
   if (checkpoint._resumeEnvelope !== undefined) {
     clone._resumeEnvelope = cloneOwnedCheckpointValue(
       checkpoint._resumeEnvelope,
       WORKFLOW_RESUME_ENVELOPE_RECORD,
+      clones,
     );
   }
   return clone;
