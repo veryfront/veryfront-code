@@ -16,6 +16,7 @@ import type {
 import type {
   FileInfo,
   ResolveFileOptions,
+  SourceSnapshotFingerprintOptions,
   SourceSnapshotFreshnessOptions,
 } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyMetadataHistory } from "#veryfront/platform/adapters/dependency-metadata-history.ts";
@@ -69,6 +70,7 @@ const SOURCE_SNAPSHOT_YIELD_CODE_UNITS = 2 * 1_024 * 1_024;
 const SOURCE_SNAPSHOT_YIELD_RECORDS = 256;
 const SOURCE_SNAPSHOT_DIGEST_BYTES = 32;
 const DateNow = Date.now;
+const IntrinsicArrayIsArray = Array.isArray;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicPerformance = performance;
 const PerformanceNow = IntrinsicPerformance.now;
@@ -87,6 +89,11 @@ const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const SourceSnapshotHashPrototype = IntrinsicReflectApply(
   IntrinsicObjectGetPrototypeOf,
   Object,
@@ -310,16 +317,154 @@ function addSourceSnapshotDigest(
   }
 }
 
-async function computeSourceSnapshotFingerprint(
+function normalizeSourceSnapshotRetainPath(path: string): string {
+  let normalized = path;
+  while (IntrinsicReflectApply(StringPrototypeStartsWith, normalized, ["./"]) === true) {
+    normalized = IntrinsicReflectApply(StringPrototypeSlice, normalized, [2]) as string;
+  }
+  while (IntrinsicReflectApply(StringPrototypeCharCodeAt, normalized, [0]) === 47) {
+    normalized = IntrinsicReflectApply(StringPrototypeSlice, normalized, [1]) as string;
+  }
+  while (
+    normalized.length > 0 &&
+    IntrinsicReflectApply(StringPrototypeCharCodeAt, normalized, [normalized.length - 1]) === 47
+  ) {
+    normalized = IntrinsicReflectApply(StringPrototypeSlice, normalized, [0, -1]) as string;
+  }
+  return normalized === "." ? "" : normalized;
+}
+
+function captureSourceSnapshotMarkdownPaths(
+  options: SourceSnapshotFingerprintOptions,
+  key: "agentMarkdownPaths" | "skillMarkdownPaths",
+): string[] {
+  const descriptor = IntrinsicReflectApply(
+    IntrinsicObjectGetOwnPropertyDescriptor,
+    Object,
+    [options, key],
+  ) as PropertyDescriptor | undefined;
+  if (!descriptor || !("value" in descriptor) || !IntrinsicArrayIsArray(descriptor.value)) {
+    return [];
+  }
+
+  const input = descriptor.value as readonly unknown[];
+  const paths: string[] = [];
+  for (let index = 0; index < input.length; index++) {
+    const item = IntrinsicReflectApply(
+      IntrinsicObjectGetOwnPropertyDescriptor,
+      Object,
+      [input, index],
+    ) as PropertyDescriptor | undefined;
+    if (!item || !("value" in item) || typeof item.value !== "string") continue;
+    paths[paths.length] = normalizeSourceSnapshotRetainPath(item.value);
+  }
+  return paths;
+}
+
+type SourceSnapshotMarkdownPaths = {
+  agent: readonly string[];
+  skill: readonly string[];
+};
+
+function buildSourceSnapshotMarkdownScopeKey(paths: SourceSnapshotMarkdownPaths): string {
+  let key = "agent:";
+  for (let index = 0; index < paths.agent.length; index++) {
+    const path = paths.agent[index]!;
+    key += `${path.length}:${path};`;
+  }
+  key += "skill:";
+  for (let index = 0; index < paths.skill.length; index++) {
+    const path = paths.skill[index]!;
+    key += `${path.length}:${path};`;
+  }
+  return key;
+}
+
+function captureSourceSnapshotMarkdownDiscoveryPaths(
+  options: SourceSnapshotFingerprintOptions | undefined,
+): SourceSnapshotMarkdownPaths {
+  if (options?.purpose !== "agent-config") return { agent: [], skill: [] };
+  return {
+    agent: captureSourceSnapshotMarkdownPaths(options, "agentMarkdownPaths"),
+    skill: captureSourceSnapshotMarkdownPaths(options, "skillMarkdownPaths"),
+  };
+}
+
+function isSafeDiscoverySegment(value: string): boolean {
+  if (value === "" || value === "." || value === "..") return false;
+  for (let index = 0; index < value.length; index++) {
+    const code = IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+    if (
+      (code < 48 || code > 57) &&
+      (code < 65 || code > 90) &&
+      (code < 97 || code > 122) &&
+      code !== 45 &&
+      code !== 46 &&
+      code !== 95
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function relativeDiscoveryPath(projectPath: string, root: string): string | undefined {
+  if (root === "") return projectPath;
+  if (projectPath === root) return "";
+  const prefix = `${root}/`;
+  return IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, [prefix]) === true
+    ? IntrinsicReflectApply(StringPrototypeSlice, projectPath, [prefix.length]) as string
+    : undefined;
+}
+
+function isAgentMarkdownDefinition(relativePath: string): boolean {
+  const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+  if (segments.length === 1) {
+    const fileName = segments[0]!;
+    if (
+      fileName === "AGENT.md" || fileName === "SKILL.md" ||
+      IntrinsicReflectApply(StringPrototypeEndsWith, fileName, [".md"]) !== true
+    ) {
+      return false;
+    }
+    return isSafeDiscoverySegment(
+      IntrinsicReflectApply(StringPrototypeSlice, fileName, [0, -3]) as string,
+    );
+  }
+  if (!isSafeDiscoverySegment(segments[0]!)) return false;
+  return segments.length === 2 && segments[1] === "AGENT.md";
+}
+
+function isSkillMarkdownDefinition(relativePath: string): boolean {
+  const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+  return segments.length === 2 && isSafeDiscoverySegment(segments[0]!) &&
+    segments[1] === "SKILL.md";
+}
+
+function joinDiscoveryPath(root: string, relativePath: string): string {
+  return root === "" ? relativePath : `${root}/${relativePath}`;
+}
+
+function addActiveSkillDirectory(active: Map<string, true>, path: string): void {
+  IntrinsicReflectApply(MapPrototypeSet, active, [path, true]);
+}
+
+async function collectActiveSkillDirectories(
   files: SourceSnapshotFile[],
-): Promise<string | undefined> {
-  // A modular sum of cryptographic per-record digests is independent of list
-  // order and keeps working memory constant. Reject invalid or repeated paths
-  // before hashing because filesystem indexing requires one record per path.
-  const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
-  const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
+  paths: SourceSnapshotMarkdownPaths,
+): Promise<
+  {
+    fileCount: number;
+    projectPaths: Map<number, string>;
+    records: Map<number, SourceSnapshotRecord>;
+    skillDirectories: Map<string, true>;
+  } | undefined
+> {
   const seenPaths = new IntrinsicMap<string, true>();
-  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+  const projectPaths = new IntrinsicMap<number, string>();
+  const records = new IntrinsicMap<number, SourceSnapshotRecord>();
+  const fileCount = files.length;
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
     const record = captureSourceSnapshotRecord(files[fileIndex]!);
     const path = record[0];
     if (
@@ -329,6 +474,197 @@ async function computeSourceSnapshotFingerprint(
       return undefined;
     }
     IntrinsicReflectApply(MapPrototypeSet, seenPaths, [path, true]);
+    IntrinsicReflectApply(MapPrototypeSet, records, [fileIndex, record]);
+    const projectPath = IntrinsicReflectApply(StringPrototypeCharCodeAt, path, [0]) === 47
+      ? IntrinsicReflectApply(StringPrototypeSlice, path, [1]) as string
+      : path;
+    IntrinsicReflectApply(MapPrototypeSet, projectPaths, [fileIndex, projectPath]);
+    if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+      await yieldSourceSnapshotTask();
+    }
+  }
+
+  if (paths.agent.length === 0 && paths.skill.length === 0) {
+    return {
+      fileCount,
+      projectPaths,
+      records,
+      skillDirectories: new IntrinsicMap<string, true>(),
+    };
+  }
+
+  const agentDirectories = new IntrinsicMap<string, true>();
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+    const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
+    for (let rootIndex = 0; rootIndex < paths.agent.length; rootIndex++) {
+      const root = paths.agent[rootIndex]!;
+      const relativePath = relativeDiscoveryPath(projectPath, root);
+      if (relativePath === undefined) continue;
+      const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+      if (
+        segments.length === 2 && isSafeDiscoverySegment(segments[0]!) &&
+        segments[1] === "AGENT.md"
+      ) {
+        IntrinsicReflectApply(MapPrototypeSet, agentDirectories, [
+          joinDiscoveryPath(root, segments[0]!),
+          true,
+        ]);
+      }
+    }
+    if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+      await yieldSourceSnapshotTask();
+    }
+  }
+
+  const skillDirectories = new IntrinsicMap<string, true>();
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+    const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
+    for (let rootIndex = 0; rootIndex < paths.skill.length; rootIndex++) {
+      const root = paths.skill[rootIndex]!;
+      const relativePath = relativeDiscoveryPath(projectPath, root);
+      if (relativePath === undefined) continue;
+      const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+      if (
+        segments.length === 2 && isSafeDiscoverySegment(segments[0]!) &&
+        segments[1] === "SKILL.md"
+      ) {
+        addActiveSkillDirectory(skillDirectories, joinDiscoveryPath(root, segments[0]!));
+      }
+    }
+    for (let rootIndex = 0; rootIndex < paths.agent.length; rootIndex++) {
+      const root = paths.agent[rootIndex]!;
+      const relativePath = relativeDiscoveryPath(projectPath, root);
+      if (relativePath === undefined) continue;
+      const segments = IntrinsicReflectApply(StringPrototypeSplit, relativePath, ["/"]) as string[];
+      const agentDirectory = segments.length > 0 ? joinDiscoveryPath(root, segments[0]!) : "";
+      if (IntrinsicReflectApply(MapPrototypeGet, agentDirectories, [agentDirectory]) !== true) {
+        continue;
+      }
+      if (segments.length === 2 && segments[1] === "SKILL.md") {
+        addActiveSkillDirectory(skillDirectories, agentDirectory);
+      } else if (
+        segments.length === 4 && segments[1] === "skills" &&
+        isSafeDiscoverySegment(segments[2]!) && segments[3] === "SKILL.md"
+      ) {
+        addActiveSkillDirectory(
+          skillDirectories,
+          joinDiscoveryPath(agentDirectory, `skills/${segments[2]!}`),
+        );
+      }
+    }
+    if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+      await yieldSourceSnapshotTask();
+    }
+  }
+
+  return { fileCount, projectPaths, records, skillDirectories };
+}
+
+function hasActiveSkillPayloadPrefix(
+  projectPath: string,
+  marker: string,
+  skillDirectories: Map<string, true>,
+): boolean {
+  let offset = 0;
+  while (offset < projectPath.length) {
+    const markerIndex = IntrinsicReflectApply(StringPrototypeIndexOf, projectPath, [
+      marker,
+      offset,
+    ]) as number;
+    if (markerIndex < 0) return false;
+    const skillDirectory = IntrinsicReflectApply(StringPrototypeSlice, projectPath, [
+      0,
+      markerIndex,
+    ]) as string;
+    if (IntrinsicReflectApply(MapPrototypeGet, skillDirectories, [skillDirectory]) === true) {
+      return true;
+    }
+    offset = markerIndex + 1;
+  }
+  return false;
+}
+
+function isRuntimeReadableSkillFile(
+  projectPath: string,
+  skillDirectories: Map<string, true>,
+): boolean {
+  if (IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, ["/SKILL.md"]) === true) {
+    const skillDirectory = IntrinsicReflectApply(StringPrototypeSlice, projectPath, [
+      0,
+      -9,
+    ]) as string;
+    if (IntrinsicReflectApply(MapPrototypeGet, skillDirectories, [skillDirectory]) === true) {
+      return true;
+    }
+  }
+  return hasActiveSkillPayloadPrefix(projectPath, "/references/", skillDirectories) ||
+    hasActiveSkillPayloadPrefix(projectPath, "/resources/", skillDirectories) ||
+    hasActiveSkillPayloadPrefix(projectPath, "/assets/", skillDirectories) ||
+    hasActiveSkillPayloadPrefix(projectPath, "/scripts/", skillDirectories);
+}
+
+function isRetainedMarkdownDefinition(
+  projectPath: string,
+  paths: SourceSnapshotMarkdownPaths,
+): boolean {
+  for (let index = 0; index < paths.agent.length; index++) {
+    const relativePath = relativeDiscoveryPath(projectPath, paths.agent[index]!);
+    if (relativePath !== undefined && isAgentMarkdownDefinition(relativePath)) return true;
+  }
+  for (let index = 0; index < paths.skill.length; index++) {
+    const relativePath = relativeDiscoveryPath(projectPath, paths.skill[index]!);
+    if (relativePath !== undefined && isSkillMarkdownDefinition(relativePath)) return true;
+  }
+  return false;
+}
+
+async function computeSourceSnapshotFingerprint(
+  files: SourceSnapshotFile[],
+  purpose: "complete" | "agent-config",
+  markdownPaths: SourceSnapshotMarkdownPaths = { agent: [], skill: [] },
+): Promise<string | undefined> {
+  // A modular sum of cryptographic per-record digests is independent of list
+  // order and keeps the hash accumulator fixed-size. Reject invalid or repeated
+  // paths before hashing because filesystem indexing requires one record per path.
+  const activeSkills = await collectActiveSkillDirectories(files, markdownPaths);
+  if (!activeSkills) return undefined;
+  const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
+  const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
+  let includedFileCount = 0;
+  for (let fileIndex = 0; fileIndex < activeSkills.fileCount; fileIndex++) {
+    const record = IntrinsicReflectApply(
+      MapPrototypeGet,
+      activeSkills.records,
+      [fileIndex],
+    ) as SourceSnapshotRecord;
+    const projectPath = IntrinsicReflectApply(
+      MapPrototypeGet,
+      activeSkills.projectPaths,
+      [fileIndex],
+    ) as string;
+    const isKnowledgeMarkdown =
+      IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["knowledge/"]) === true &&
+      IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".md"]) === true;
+    const isEvalReport =
+      IntrinsicReflectApply(StringPrototypeStartsWith, projectPath, ["evals/reports/"]) === true &&
+      IntrinsicReflectApply(StringPrototypeEndsWith, projectPath, [".json"]) === true;
+    const isRetainedRuntimeSkillFile = (isKnowledgeMarkdown || isEvalReport) &&
+      isRuntimeReadableSkillFile(projectPath, activeSkills.skillDirectories);
+    const isRetainedKnowledgeMarkdown = isKnowledgeMarkdown &&
+      (isRetainedMarkdownDefinition(projectPath, markdownPaths) ||
+        isRetainedRuntimeSkillFile);
+    if (
+      purpose === "agent-config" &&
+      ((isKnowledgeMarkdown && !isRetainedKnowledgeMarkdown) ||
+        (isEvalReport && !isRetainedRuntimeSkillFile))
+    ) {
+      if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+        await yieldSourceSnapshotTask();
+        budget.codeUnits = 0;
+      }
+      continue;
+    }
+    includedFileCount++;
     const recordHash = createHash("sha256");
     updateSourceSnapshotHashString(recordHash, "r");
     for (let valueIndex = 0; valueIndex < 7; valueIndex++) {
@@ -363,8 +699,13 @@ async function computeSourceSnapshotFingerprint(
   }
   await yieldSourceSnapshotTask();
   const fingerprintHash = createHash("sha256");
-  updateSourceSnapshotHashString(fingerprintHash, "veryfront-source-snapshot-multiset-v1");
-  updateSourceSnapshotHashString(fingerprintHash, `${files.length}:`);
+  updateSourceSnapshotHashString(
+    fingerprintHash,
+    purpose === "agent-config"
+      ? "veryfront-agent-config-snapshot-multiset-v1"
+      : "veryfront-source-snapshot-multiset-v1",
+  );
+  updateSourceSnapshotHashString(fingerprintHash, `${includedFileCount}:`);
   IntrinsicReflectApply(HashPrototypeUpdate, fingerprintHash, [accumulator]);
   return IntrinsicReflectApply(HashPrototypeDigest, fingerprintHash, ["hex"]) as string;
 }
@@ -444,6 +785,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private hasAppliedSourceSnapshot = false;
   private sourceSnapshotFingerprint:
     | { version: number; value: Promise<string | undefined> }
+    | undefined;
+  private agentConfigSourceSnapshotFingerprint:
+    | { version: number; value: Promise<string | undefined> }
+    | undefined;
+  private scopedAgentConfigSourceSnapshotFingerprint:
+    | { version: number; scopeKey: string; value: Promise<string | undefined> }
     | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
   private sourceSnapshotMutationTail: Promise<void> = IntrinsicReflectApply(
@@ -1307,6 +1654,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotIdentity = undefined;
     this.sourceSnapshotFiles = undefined;
     this.sourceSnapshotFingerprint = undefined;
+    this.agentConfigSourceSnapshotFingerprint = undefined;
+    this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
@@ -1611,7 +1960,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.sourceSnapshotVersion;
   }
 
-  getSourceSnapshotFingerprint(): Promise<string | undefined> {
+  getSourceSnapshotFingerprint(
+    options?: SourceSnapshotFingerprintOptions,
+  ): Promise<string | undefined> {
+    const purpose = options?.purpose === "agent-config" ? "agent-config" : "complete";
+    const markdownPaths = captureSourceSnapshotMarkdownDiscoveryPaths(options);
+    const hasMarkdownPaths = markdownPaths.agent.length > 0 || markdownPaths.skill.length > 0;
+    const markdownScopeKey = hasMarkdownPaths
+      ? buildSourceSnapshotMarkdownScopeKey(markdownPaths)
+      : undefined;
     const files = this.sourceSnapshotFiles;
     if (!files) {
       return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, [undefined]) as Promise<
@@ -1620,17 +1977,34 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const version = this.sourceSnapshotVersion;
-    if (this.sourceSnapshotFingerprint?.version === version) {
-      return this.sourceSnapshotFingerprint.value;
+    const cached = purpose === "agent-config"
+      ? hasMarkdownPaths
+        ? this.scopedAgentConfigSourceSnapshotFingerprint?.scopeKey === markdownScopeKey
+          ? this.scopedAgentConfigSourceSnapshotFingerprint
+          : undefined
+        : this.agentConfigSourceSnapshotFingerprint
+      : this.sourceSnapshotFingerprint;
+    if (cached?.version === version) {
+      return cached.value;
     }
 
     const value = (async () => {
-      const fingerprint = await computeSourceSnapshotFingerprint(files);
+      const fingerprint = await computeSourceSnapshotFingerprint(files, purpose, markdownPaths);
       return this.sourceSnapshotVersion === version && this.sourceSnapshotFiles === files
         ? fingerprint
         : undefined;
     })();
-    this.sourceSnapshotFingerprint = { version, value };
+    if (purpose === "agent-config" && !hasMarkdownPaths) {
+      this.agentConfigSourceSnapshotFingerprint = { version, value };
+    } else if (purpose === "agent-config" && markdownScopeKey !== undefined) {
+      this.scopedAgentConfigSourceSnapshotFingerprint = {
+        version,
+        scopeKey: markdownScopeKey,
+        value,
+      };
+    } else if (purpose === "complete") {
+      this.sourceSnapshotFingerprint = { version, value };
+    }
     return value;
   }
 
@@ -1741,6 +2115,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotIdentity = undefined;
     this.sourceSnapshotFiles = undefined;
     this.sourceSnapshotFingerprint = undefined;
+    this.agentConfigSourceSnapshotFingerprint = undefined;
+    this.scopedAgentConfigSourceSnapshotFingerprint = undefined;
     this.sourceSnapshotRefreshPromise = null;
     this.wsManager.dispose();
     this.manifestFetcherCleanup?.();

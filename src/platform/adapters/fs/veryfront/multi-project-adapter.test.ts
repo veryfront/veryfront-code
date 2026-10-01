@@ -382,8 +382,11 @@ describe("MultiProjectFSAdapter", () => {
         },
       };
       const selectedAdapter = new VeryfrontFSAdapter(config);
-      selectedAdapter.getSourceSnapshotFingerprint = () =>
-        Promise.resolve("subclass-manager-snapshot");
+      let fingerprintPurpose: string | undefined;
+      selectedAdapter.getSourceSnapshotFingerprint = (options) => {
+        fingerprintPurpose = options?.purpose;
+        return Promise.resolve("subclass-manager-snapshot");
+      };
       const calls = { getAdapter: 0, getStats: 0, dispose: 0 };
       class SubclassManager extends ProxyFSAdapterManager {
         override getAdapter(
@@ -410,10 +413,11 @@ describe("MultiProjectFSAdapter", () => {
         const fingerprint = await adapter.runWithContext(
           "project-a",
           "test-token",
-          () => adapter.getSourceSnapshotFingerprint(),
+          () => adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
           "project-id-a",
         );
         assertEquals(fingerprint, "subclass-manager-snapshot");
+        assertEquals(fingerprintPurpose, "agent-config");
         assertEquals(adapter.getManagerStats(), { adapters: 0, stats: {} });
         assertEquals(calls, { getAdapter: 1, getStats: 1, dispose: 0 });
       } finally {
