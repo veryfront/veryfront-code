@@ -1,12 +1,17 @@
+import { createChatUiMessageStreamFromDataStream } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { AgentRuntime } from "./index.ts";
+import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
-import { scriptedModel, type ScriptedTurn } from "./model-runtime.test-helpers.ts";
+import {
+  scriptedModel,
+  type ScriptedTurn,
+} from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 
 const failure = { code: "INGEST_FAILED", message: "no email ingested" };
 const failCall = {
@@ -240,19 +245,49 @@ describe("runtime finalized terminal control", () => {
     );
   });
 
-  it("streams committed string output as a visible text delta", async () => {
+  it("streams committed string output after preliminary model text", async () => {
     const output = "Three emails ingested";
     await fixture(
-      [{ toolCalls: [{ ...failCall, input: { status: "completed", output } }] }],
+      [{
+        parts: [
+          { type: "text-delta", text: "Preparing the result." },
+          {
+            type: "tool-call",
+            toolCallId: failCall.id,
+            toolName: failCall.name,
+            input: { status: "completed", output },
+          },
+          {
+            type: "finish",
+            finishReason: "tool-calls",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ],
+      }],
       async (runtime) => {
         const stream = await runtime.stream([{
           id: "input-1",
           role: "user",
           parts: [{ type: "text", text: "run" }],
         }], { runId: "run-current" });
-        const body = await new Response(stream).text();
-        assert(body.includes('"type":"text-delta"'), body);
-        assert(body.includes('"delta":"Three emails ingested"'), body);
+        let responseMessage: ChatUiMessage | undefined;
+        for await (
+          const _chunk of createChatUiMessageStreamFromDataStream({ stream }, {
+            onFinish: (finish) => {
+              responseMessage = finish.responseMessage;
+            },
+          })
+        ) { /* Drain the collected response. */ }
+        const parts = responseMessage?.parts ?? [];
+        assertEquals(parts.filter((part) => part.type === "text").map((part) => part.text), [
+          "Preparing the result.",
+          output,
+        ]);
+        const terminalToolIndex = parts.findIndex((part) =>
+          "toolCallId" in part && part.toolCallId === failCall.id
+        );
+        assert(terminalToolIndex > 0);
+        assertEquals(parts.at(-1), { type: "text", text: output });
       },
       () => ({
         content: [],

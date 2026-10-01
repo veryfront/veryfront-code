@@ -2,12 +2,12 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type { ParsedHostedChatRequest } from "#veryfront/agent/hosted/chat-request-parser.ts";
 import {
   hostedTerminalToolSourceFactory,
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
-} from "./terminal-credential.ts";
+} from "#veryfront/agent/hosted/terminal-credential.ts";
 
 it("keeps terminal credentials private and pins transport to the bound project endpoint", async () => {
   const request = {

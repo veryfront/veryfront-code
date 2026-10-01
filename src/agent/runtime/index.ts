@@ -2525,7 +2525,6 @@ export class AgentRuntime {
       abortSignal,
       outputSchema ? (output) => outputSchema.parseOutput(privateJsonStringify(output)) : undefined,
     );
-    context = terminalControl.context;
     abortSignal = terminalControl.signal;
     const runRuntimeContext = captureAgentRunRuntimeContext();
     if (this.#modelResolverState.status === "absent") throwIfAborted(abortSignal);
@@ -2701,7 +2700,6 @@ export class AgentRuntime {
       abortSignal,
       outputSchema ? (output) => outputSchema.parseOutput(privateJsonStringify(output)) : undefined,
     );
-    context = terminalControl.context;
     abortSignal = terminalControl.signal;
     const runRuntimeContext = captureAgentRunRuntimeContext();
     setOtelActiveSpanAttributes({
@@ -2728,6 +2726,7 @@ export class AgentRuntime {
       const streamAbortSignal = abortScope.signal;
       const streamCacheCtx = tryGetCacheKeyContext();
       const toolContext = {
+        ...terminalControl.binding,
         agentId: this.id,
         abortSignal: streamAbortSignal,
         projectId: streamCacheCtx?.projectId,
@@ -2883,15 +2882,18 @@ export class AgentRuntime {
             }
             await turnPersistence.commit();
             throwIfAborted(terminalCompleted ? callerAbortSignal : streamAbortSignal);
-            if (response.text.length > 0 && streamedResponseText.length === 0) {
-              sendSSE(controller, encoder, { type: "text-start", id: textPartId });
+            if (
+              response.text.length > 0 && (terminalCompleted || streamedResponseText.length === 0)
+            ) {
+              const responseTextId = terminalCompleted ? generateId("text") : textPartId;
+              sendSSE(controller, encoder, { type: "text-start", id: responseTextId });
               sendSSE(controller, encoder, {
                 type: "text-delta",
-                id: textPartId,
+                id: responseTextId,
                 delta: response.text,
               });
               callbacks?.onChunk?.(response.text);
-              sendSSE(controller, encoder, { type: "text-end", id: textPartId });
+              sendSSE(controller, encoder, { type: "text-end", id: responseTextId });
             }
             callbacks?.onFinish?.(response);
             throwIfAborted(terminalCompleted ? callerAbortSignal : streamAbortSignal);

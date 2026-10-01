@@ -2,10 +2,8 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import { type RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
 import type { RemoteToolSource } from "#veryfront/tool/types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
-import {
-  type AgentServiceMcpServerConfig,
-  createProjectScopedMcpUrl,
-} from "../service/mcp-server-config.ts";
+import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
+import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts";
 
 export const RUN_TERMINAL_TOKEN_HEADER = "X-Veryfront-Run-Terminal-Token";
 const NativeHeaders = Headers;

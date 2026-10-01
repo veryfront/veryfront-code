@@ -1,8 +1,4 @@
-import {
-  awaitTerminalRunControl,
-  dispatchWithTerminalRunControl,
-  executeTerminalRunTool,
-} from "./terminal-run-control.ts";
+import { dispatchWithTerminalRunControl, executeTerminalRunTool } from "./terminal-run-control.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
@@ -403,7 +399,6 @@ export async function executeConfiguredTool(
     strictConfiguredToolsOnly?: boolean;
   },
 ): Promise<unknown> {
-  await awaitTerminalRunControl(context);
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
   const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
   const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);
