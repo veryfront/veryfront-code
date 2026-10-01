@@ -5371,6 +5371,54 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(cancellations, 1);
   });
 
+  it("waits for a new pause reached during settlement to persist its records", async () => {
+    let phase: "first" | "unsaved" | "saved" = "first";
+    let reads = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        cancel: () => Promise.resolve(),
+        start: (_id, _input, options) =>
+          Promise.resolve({
+            runId: options!.runId!,
+            // A delay expires while the execution settles and the run pauses
+            // again on a later approval whose record is not saved yet.
+            settled: () => {
+              phase = "unsaved";
+              return Promise.resolve();
+            },
+          }),
+        getRun: () => {
+          if (phase === "unsaved" && ++reads > 1) phase = "saved";
+          const pendingApprovals = phase === "first"
+            ? [{ id: "approval-1", nodeId: "review" }]
+            : phase === "saved"
+            ? [{ id: "approval-2", nodeId: "sign-off" }]
+            : [];
+          return Promise.resolve({ status: "waiting", pendingApprovals });
+        },
+        getPendingEventWaits: () => Promise.resolve([]),
+        destroy: () => Promise.resolve(),
+      }),
+    }));
+    const runId = "run_new_pause_during_settlement";
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+    );
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.waiting_reason, "approval");
+    assertEquals(payload.waiting.pending_approvals, ["sign-off"]);
+  });
+
   // veryfront-issue-inbox#2102 and #2110: a waiting run the control plane
   // dispatches again under the same run id is continued, never started anew.
   function resumableClient(initial: Record<string, unknown>) {
@@ -5981,6 +6029,58 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       {},
       controller.signal,
     );
+    assertEquals(payload.result, { done: true });
+    assertEquals(cancellations, 0);
+  });
+
+  it("applies a decision whose discovery outlasts the resume timeout", async () => {
+    const { client, calls } = resumableClient(waitingOnReview);
+    const getRun = client.getRun;
+    let reads = 0;
+    client.getRun = () => {
+      reads++;
+      if (reads > 1) return getRun();
+      return new Promise((resolve) => setTimeout(() => resolve(getRun()), 20));
+    };
+    const { payload } = await executeResume(client, {
+      type: "approval",
+      node_id: "manager-review",
+      approved: true,
+      approver: "user:u1",
+    }, { workflowResumeTimeoutMs: 5 });
+    assertEquals(payload.status, "waiting");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assertEquals(calls.map(([name]) => name), ["approve"]);
+  });
+
+  it("reports a completion that cancellation found when the resume times out", async () => {
+    const { client, settle } = resumableClient(waitingOnReview);
+    const controller = new AbortController();
+    let finish!: () => void;
+    let cancellations = 0;
+    client.cancel = () => {
+      cancellations++;
+      return Promise.resolve();
+    };
+    client.approve = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+        settle({ status: "completed", output: { done: true } });
+        controller.abort();
+      });
+    const { payload } = await executeResume(
+      client,
+      {
+        type: "approval",
+        node_id: "manager-review",
+        approved: true,
+        approver: "user:u1",
+      },
+      { workflowResumeTimeoutMs: 5 },
+      controller.signal,
+    );
+    finish();
+    assertEquals(payload.success, true);
     assertEquals(payload.result, { done: true });
     assertEquals(cancellations, 0);
   });

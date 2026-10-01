@@ -1394,9 +1394,8 @@ async function resumeWaitingWorkflowRun(
       ),
     };
   }
-  if (pollingStopped.aborted) {
-    throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
-  }
+  // A timed-out request still applies its decision: the timeout reports the
+  // run waiting and the recheck dispatch names no decision to apply again.
   if (signal.aborted) {
     await cancelRun();
     return { run: { status: "cancelled", error: { message: "Workflow run cancelled" } } };
@@ -1571,15 +1570,20 @@ async function runDiscoveredWorkflow(
         clearTimeout(timer);
         signal.removeEventListener("abort", forwardCancellation);
       });
-      if ("timedOut" in resumed && cancellation) {
-        return {
-          success: false,
-          error: "Workflow run cancelled",
-          logs: null,
-          duration_ms: Math.max(0, deps.now() - startedAt),
-        };
+      let outcome = resumed;
+      if ("timedOut" in outcome && cancellation) {
+        // A cancellation that found the run already terminal keeps that result.
+        if (!cancellationResult) {
+          return {
+            success: false,
+            error: "Workflow run cancelled",
+            logs: null,
+            duration_ms: Math.max(0, deps.now() - startedAt),
+          };
+        }
+        outcome = { run: cancellationResult };
       }
-      if ("timedOut" in resumed) {
+      if ("timedOut" in outcome) {
         // The resumed execution keeps running durably, so the run did not
         // fail: keep the canonical run waiting and have the control plane
         // dispatch it again soon. That dispatch names no pending wait, so it
@@ -1596,15 +1600,15 @@ async function runDiscoveredWorkflow(
           duration_ms: Math.max(0, deps.now() - startedAt),
         };
       }
-      if ("failure" in resumed) {
+      if ("failure" in outcome) {
         return {
           success: false,
-          error: resumed.failure,
+          error: outcome.failure,
           logs: null,
           duration_ms: Math.max(0, deps.now() - startedAt),
         };
       }
-      run = resumed.run;
+      run = outcome.run;
     } else {
       // A null input counts as no input, the same as on the API run record.
       let handle: Awaited<ReturnType<typeof client.start>>;
@@ -1619,13 +1623,18 @@ async function runDiscoveredWorkflow(
         throw error;
       }
       run = await waitForWorkflowResult(client, handle.runId, signal, deps);
+      const pausedOn = run.status === "waiting"
+        ? waitKeys(await readPendingWaits(client, handle.runId, run))
+        : undefined;
       await handle.settled?.();
-      if (run.status === "waiting") {
+      if (pausedOn) {
         const refreshed = await client.getRun(handle.runId) ?? run;
         // An expiring delay or a delivered event can advance the run past the
-        // polled pause while it settles: poll it again, which also cancels it
-        // when the request was aborted meanwhile.
-        run = refreshed.status === "waiting" || isTerminalWorkflowStatus(refreshed.status)
+        // polled pause while it settles: poll it again until a new pause
+        // stabilizes, which also cancels the run when the request was aborted.
+        run = isTerminalWorkflowStatus(refreshed.status) ||
+            (refreshed.status === "waiting" &&
+              sameKeys(waitKeys(await readPendingWaits(client, handle.runId, refreshed)), pausedOn))
           ? refreshed
           : await waitForWorkflowResult(client, handle.runId, signal, deps);
       }
