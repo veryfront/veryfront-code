@@ -2808,7 +2808,7 @@ export class AgentRuntime {
           let streamedResponseText = "";
           let terminalCompleted = false;
           try {
-            throwIfAborted(terminalCompleted ? callerAbortSignal : streamAbortSignal);
+            throwIfAborted(streamAbortSignal);
             this.status = "streaming";
 
             const messageId = generateMessageId();
