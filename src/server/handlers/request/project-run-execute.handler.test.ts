@@ -623,6 +623,49 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   });
 
   for (
+    const refusal of [
+      { body: { kind: "task", target: "echo-input" }, error: "Invalid task target" },
+      { body: { kind: "workflow", target: "publish" }, error: "Invalid workflow target" },
+      {
+        body: { kind: "task", target: "task:echo-input", deadlineAt: "invalid" },
+        error: "Invalid deadlineAt",
+      },
+    ]
+  ) {
+    it(`returns the execute request validation detail: ${refusal.error}`, async () => {
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_1/execute",
+        { runId: "run_1", projectId: "p", ...refusal.body },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+      assertEquals(await result.response.json(), { error: refusal.error });
+    });
+  }
+
+  it("keeps unexpected execute request errors generic", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps());
+    const { publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_1/execute",
+      { runId: "run_1", projectId: "p", kind: "task", target: "task:echo-input" },
+    );
+    const request = new Request("https://example.com/api/control-plane/runs/run_1/execute", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.error(new Error("private transport diagnostic"));
+        },
+      }),
+    });
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "Invalid project run execute request" });
+  });
+
+  for (
     const deadlineAt of [
       "invalid",
       12,
