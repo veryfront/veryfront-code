@@ -291,6 +291,23 @@ describe("security/http/ingress-credentials", () => {
     assertStrictEquals(sealInterceptedRequest(source, source), source);
   });
 
+  it("keeps the arrival x-token when the interceptor writes none", () => {
+    const source = sealIngressCredentials(credentialRequest());
+    const intercepted = sealInterceptedRequest(
+      source,
+      new Request("https://project.example/api/control-plane/runs/run_1/stream", {
+        headers: { "x-project-slug": "demo" },
+      }),
+    );
+
+    assertEquals(intercepted.headers.get("x-token"), null);
+    assertEquals(readIngressCredential(intercepted, INGRESS_API_TOKEN_HEADER), API_TOKEN);
+    assertEquals(
+      readIngressCredential(intercepted, INGRESS_INFERENCE_TOKEN_HEADER),
+      INFERENCE_TOKEN,
+    );
+  });
+
   it("reseals a token an interceptor set on its input in place", () => {
     const source = sealIngressCredentials(credentialRequest());
     source.headers.set("x-token", "proxy-resolved-token");
