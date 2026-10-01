@@ -2496,7 +2496,18 @@ export class DAGExecutor {
       };
       if (input === undefined) delete parsedState.input;
       else parsedState.input = input;
-      nodeStates[node.id] = parsedState;
+      const preparedStates = this.config.prepareNodeStatesForPersistence?.(
+        scope.rootRunId,
+        { [node.id]: parsedState },
+      ) ?? { [node.id]: parsedState };
+      const preparedState = preparedStates[node.id];
+      if (!preparedState) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: `Nested workflow input preparation dropped node "${node.id}"`,
+        });
+      }
+      nodeStates[node.id] = preparedState;
+      input = preparedState.input;
     }
 
     const steps = typeof workflowDef.steps === "function"

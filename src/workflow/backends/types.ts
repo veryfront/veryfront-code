@@ -245,6 +245,15 @@ export interface WorkflowBackend {
    * express a checkpoint restore.
    */
   readonly supportsRunPatchKeyMerge?: boolean;
+  /**
+   * Apply this backend's node-state persistence policy before user code can
+   * observe a parsed nested-workflow input. Built-in backends implement this
+   * with the same policy used by their run writes.
+   */
+  prepareNodeStatesForPersistence?(
+    runId: string | undefined,
+    nodeStates: WorkflowRun["nodeStates"],
+  ): WorkflowRun["nodeStates"];
   createRun(run: WorkflowRun): Promise<void>;
   /** Read a run with its current pending approvals hydrated. */
   getRun(runId: string): Promise<WorkflowRun | null>;

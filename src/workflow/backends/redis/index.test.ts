@@ -3180,6 +3180,165 @@ describe("RedisBackend", () => {
       );
     });
 
+    it("applies the context JSON policy to node-state input and output (#2242)", async () => {
+      const startedAt = new Date("2026-01-01T00:00:00Z");
+      await backend.createRun(createTestRun("run-node-state-json", {
+        nodeStates: {
+          parent: {
+            nodeId: "parent",
+            status: "running",
+            attempt: 1,
+            startedAt,
+            input: { due: new Date(0) },
+          },
+        },
+      }));
+
+      const warnings: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "warn" && entry.component === "workflow-context") {
+          warnings.push(entry);
+        }
+      });
+      try {
+        await backend.updateRun("run-node-state-json", {
+          nodeStates: {
+            "child-stamp": {
+              nodeId: "child-stamp",
+              status: "completed",
+              attempt: 1,
+              startedAt,
+              completedAt: startedAt,
+              output: { when: new Date(0) },
+              _subWorkflowOwnerPath: "parent",
+            },
+          },
+        });
+      } finally {
+        unsubscribe();
+      }
+
+      assertEquals(warnings.length, 1);
+      assertEquals(warnings[0]?.run_id, "run-node-state-json");
+      const run = await backend.getRun("run-node-state-json");
+      // Framework timestamps keep the encoding Redis has always given them.
+      assertEquals(run?.nodeStates.parent?.startedAt, startedAt);
+      assertEquals(run?.nodeStates.parent?.input, { due: "1970-01-01T00:00:00.000Z" });
+      assertEquals(
+        run?.nodeStates["child-stamp"]?.completedAt,
+        startedAt,
+      );
+      assertEquals(run?.nodeStates["child-stamp"]?.output, { when: "1970-01-01T00:00:00.000Z" });
+    });
+
+    it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
+      await backend.createRun(createTestRun("run-node-state-bigint"));
+      await assertRejects(
+        () =>
+          backend.updateRun("run-node-state-bigint", {
+            nodeStates: {
+              "child-stamp": {
+                nodeId: "child-stamp",
+                status: "completed",
+                attempt: 1,
+                output: { total: 1n },
+              },
+            },
+          }),
+        Error,
+        "nodeStates.output.<redacted>",
+      );
+      assertEquals((await backend.getRun("run-node-state-bigint"))?.nodeStates, {});
+    });
+
+    it("normalizes own undefined node-state data and rejects it in strict mode (#2242)", async () => {
+      await backend.createRun(createTestRun("run-node-state-undefined", {
+        nodeStates: {
+          child: {
+            nodeId: "child",
+            status: "completed",
+            attempt: 1,
+            output: undefined,
+          },
+        },
+      }));
+
+      const stored = (await backend.getRun("run-node-state-undefined"))?.nodeStates.child;
+      assertEquals(Object.hasOwn(stored ?? {}, "output"), false);
+
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-node-state-undefined:",
+        strictContext: true,
+      });
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-node-state-undefined", {
+            nodeStates: {
+              child: {
+                nodeId: "child",
+                status: "completed",
+                attempt: 1,
+                output: undefined,
+              },
+            },
+          })),
+        Error,
+        "strictContext enabled: nodeStates.output.<redacted> (undefined)",
+      );
+    });
+
+    it("rejects lossy node-state user data when strictContext is enabled (#2242)", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-node-state:",
+        strictContext: true,
+      });
+      const startedAt = new Date("2026-01-01T00:00:00Z");
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-node-state-input", {
+            nodeStates: {
+              parent: {
+                nodeId: "parent",
+                status: "running",
+                attempt: 1,
+                input: { due: new Date(0) },
+              },
+            },
+          })),
+        Error,
+        "strictContext enabled: nodeStates.input.<redacted>.<redacted> (Date)",
+      );
+      assertEquals(await strictBackend.getRun("run-strict-node-state-input"), null);
+
+      await strictBackend.createRun(createTestRun("run-strict-node-state", {
+        nodeStates: {
+          parent: { nodeId: "parent", status: "running", attempt: 1, startedAt },
+        },
+      }));
+      await assertRejects(
+        () =>
+          strictBackend.updateRun("run-strict-node-state", {
+            nodeStates: {
+              "child-stamp": {
+                nodeId: "child-stamp",
+                status: "completed",
+                attempt: 1,
+                startedAt,
+                completedAt: startedAt,
+                output: { when: new Date(0) },
+              },
+            },
+          }),
+        Error,
+        "strictContext enabled: nodeStates.output.<redacted>.<redacted> (Date)",
+      );
+      const run = await strictBackend.getRun("run-strict-node-state");
+      assertEquals(run?.nodeStates["child-stamp"], undefined);
+      assertEquals(run?.nodeStates.parent?.startedAt, startedAt);
+    });
+
     it("applies explicit node-state deletions without replacing concurrent keys", async () => {
       await backend.createRun(createTestRun("run-node-state-delete"));
       await backend.updateRun("run-node-state-delete", {
@@ -5400,29 +5559,12 @@ describe("RedisBackend", () => {
         "strictContext",
       );
 
-      const outputWarnings: LogEntry[] = [];
-      const unsubscribeOutputWarnings = __subscribeLogRecordEmitter((entry) => {
-        if (entry.level === "warn" && entry.component === "workflow-context") {
-          outputWarnings.push(entry);
-        }
-      });
-
-      try {
-        await strictBackend.saveCheckpoint("run-cp-strict-node-output-date", {
-          id: "cp-strict-node-output-date",
-          nodeId: "step",
-          timestamp,
-          context: { input: {}, step: { saved: true } },
-          nodeStates: {
-            step: {
-              nodeId: "step",
-              status: "completed",
-              attempt: 1,
-            },
-          },
-          _resumeEnvelope: {
-            schemaVersion: 2,
-            ownerNodeId: "step",
+      await assertRejects(
+        () =>
+          strictBackend.saveCheckpoint("run-cp-strict-node-state-date", {
+            id: "cp-strict-node-state-date",
+            nodeId: "step",
+            timestamp,
             context: { input: {}, step: { saved: true } },
             nodeStates: {
               step: {
@@ -5432,28 +5574,51 @@ describe("RedisBackend", () => {
                 output: { when: timestamp },
               },
             },
-            workflowProjection: { context: {} },
-            graphAdmission: {
-              stepsEvaluationContext: { input: {}, step: { saved: true } },
-              stepsEvaluationProjection: { context: {} },
-              graphIdentity: [],
-              workflowVersion: null,
-            },
-          },
-        });
-      } finally {
-        unsubscribeOutputWarnings();
-      }
-
-      assertEquals(outputWarnings.length, 1);
-      const outputWarningPaths = outputWarnings[0]?.context?.paths;
-      if (typeof outputWarningPaths !== "string") {
-        throw new Error("Expected checkpoint warning paths");
-      }
-      assertStringIncludes(
-        outputWarningPaths,
-        "checkpoint._resumeEnvelope.<redacted>.<redacted>.<redacted>.<redacted> (Date)",
+          }),
+        Error,
+        "strictContext enabled: nodeStates.output",
       );
+
+      await assertRejects(
+        () =>
+          strictBackend.saveCheckpoint("run-cp-strict-node-output-date", {
+            id: "cp-strict-node-output-date",
+            nodeId: "step",
+            timestamp,
+            context: { input: {}, step: { saved: true } },
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+              },
+            },
+            _resumeEnvelope: {
+              schemaVersion: 2,
+              ownerNodeId: "step",
+              context: { input: {}, step: { saved: true } },
+              nodeStates: {
+                step: {
+                  nodeId: "step",
+                  status: "completed",
+                  attempt: 1,
+                  output: { when: timestamp },
+                },
+              },
+              workflowProjection: { context: {} },
+              graphAdmission: {
+                stepsEvaluationContext: { input: {}, step: { saved: true } },
+                stepsEvaluationProjection: { context: {} },
+                graphIdentity: [],
+                workflowVersion: null,
+              },
+            },
+          }),
+        Error,
+        "strictContext enabled: nodeStates.output",
+      );
+      assertEquals(await strictBackend.getCheckpoints("run-cp-strict-node-state-date"), []);
+      assertEquals(await strictBackend.getCheckpoints("run-cp-strict-node-output-date"), []);
     });
 
     it("should return null when no checkpoints", async () => {

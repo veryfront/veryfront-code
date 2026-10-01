@@ -90,6 +90,11 @@ Workflow context must be JSON-representable. Veryfront stores suspended workflow
 runs as JSON, and the memory backend applies the same persistence contract as
 durable backends so local development and production read back the same values.
 
+The same rules apply to the step input and output that each node state stores.
+This includes the results that a nested workflow holds while it waits for an
+approval or event. Their paths start with `nodeStates.input` or
+`nodeStates.output`.
+
 Use plain JSON values in step output: strings, numbers, booleans, null, arrays,
 and plain objects. Values that JSON cannot encode, such as `BigInt` or circular
 references, fail persistence with a redacted context path. Veryfront keeps the

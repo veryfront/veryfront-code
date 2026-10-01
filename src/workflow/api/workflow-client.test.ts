@@ -5,6 +5,7 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -1383,6 +1384,180 @@ describe("WorkflowClient", () => {
       assertEquals(run.nodeStates["publish-child"]!.status, "completed");
       const output = run.output as Record<string, unknown>;
       assertEquals(output["publish-child"], { published: "child" });
+    });
+
+    describe("nested node-state persistence policy (#2242)", () => {
+      const when = "1970-01-01T00:00:00.000Z";
+
+      function createStampingWorkflow(stamp: unknown) {
+        return workflow({
+          id: "sub-workflow-stamp-workflow",
+          steps: [
+            subWorkflow("child-workflow", {
+              workflow: workflow({
+                id: "child-stamp-workflow",
+                steps: [
+                  step("stamp", { tool: createMockTool("child-stamp", { when: stamp }) }),
+                  dependsOn(
+                    waitForApproval("child-review", { message: "Review child stamp" }),
+                    "stamp",
+                  ),
+                ],
+              }).definition,
+            }),
+          ],
+        });
+      }
+
+      async function pauseAndResume(
+        policyBackend: MemoryBackend,
+        stamp: unknown,
+      ): Promise<{ waiting: WorkflowRun | null; final: WorkflowRun | null }> {
+        const policyClient = createWorkflowClient({ backend: policyBackend });
+        try {
+          policyClient.register(createStampingWorkflow(stamp));
+          const handle = await policyClient.start("sub-workflow-stamp-workflow", {});
+          await handle.settled();
+          const waiting = await policyBackend.getRun(handle.runId);
+          const [approval] = await policyBackend.getPendingApprovals(handle.runId);
+          if (approval) await policyClient.approve(handle.runId, approval.id, "reviewer");
+          return { waiting, final: await policyBackend.getRun(handle.runId) };
+        } finally {
+          await policyClient.destroy();
+        }
+      }
+
+      function createInputObservingWorkflow(seen: unknown[]) {
+        const observe = (id: string): Tool => ({
+          id,
+          type: "function",
+          description: `Observe nested input: ${id}`,
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: (input) => {
+            seen.push(input);
+            return Promise.resolve(input);
+          },
+        });
+        const childWorkflow = workflow({
+          id: "child-input-policy-workflow",
+          inputSchema: defineSchema((v) =>
+            v.object({ when: v.string().transform((value) => new Date(value)) })
+          )(),
+          steps: [
+            step("before", { tool: observe("observe-before") }),
+            dependsOn(
+              waitForApproval("child-review", { message: "Review normalized input" }),
+              "before",
+            ),
+            dependsOn(step("after", { tool: observe("observe-after") }), "child-review"),
+          ],
+        }).definition as WorkflowDefinition;
+        return workflow({
+          id: "sub-workflow-input-policy-workflow",
+          steps: [
+            subWorkflow("child-workflow", {
+              input: { when },
+              workflow: childWorkflow,
+            }),
+          ],
+        });
+      }
+
+      async function runInputPolicyWorkflow(policyBackend: MemoryBackend) {
+        const seen: unknown[] = [];
+        const policyClient = createWorkflowClient({ backend: policyBackend });
+        try {
+          policyClient.register(createInputObservingWorkflow(seen));
+          const handle = await policyClient.start("sub-workflow-input-policy-workflow", {});
+          await handle.settled();
+          return { handle, policyClient, seen };
+        } catch (error) {
+          await policyClient.destroy();
+          throw error;
+        }
+      }
+
+      it("normalizes parsed nested input before the first child and keeps it stable after resume", async () => {
+        const backend = new MemoryBackend();
+        const { handle, policyClient, seen } = await runInputPolicyWorkflow(backend);
+        try {
+          const waiting = await backend.getRun(handle.runId);
+          assertEquals(waiting?.status, "waiting");
+          assertEquals(seen, [{ when }]);
+          assertEquals(waiting?.nodeStates["child-workflow"]?.input, { when });
+
+          const [approval] = await backend.getPendingApprovals(handle.runId);
+          assertExists(approval);
+          await policyClient.approve(handle.runId, approval.id, "reviewer");
+
+          assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+          assertEquals(seen, [{ when }, { when }]);
+        } finally {
+          await policyClient.destroy();
+        }
+      });
+
+      it("rejects lossy parsed nested input before any child executes in strict mode", async () => {
+        const backend = new MemoryBackend({ strictContext: true });
+        const { handle, policyClient, seen } = await runInputPolicyWorkflow(backend);
+        try {
+          const failed = await backend.getRun(handle.runId);
+          assertEquals(failed?.status, "failed");
+          assertEquals(seen, []);
+          assertStringIncludes(
+            failed?.error?.message ?? "",
+            "strictContext enabled: nodeStates.input.<redacted>.<redacted> (Date)",
+          );
+        } finally {
+          await policyClient.destroy();
+        }
+      });
+
+      it("pauses a child with the JSON form of its step output, as Redis stores it", async () => {
+        const { waiting, final } = await pauseAndResume(new MemoryBackend(), new Date(0));
+
+        assertEquals(waiting?.status, "waiting");
+        assertEquals(waiting?.nodeStates.stamp?.output, { when });
+        assertEquals(
+          (waiting?.nodeStates["child-workflow"]?.output as Record<string, unknown>).stamp,
+          { when },
+        );
+        // Framework timestamps are not user data and keep their Date type.
+        assert(waiting?.nodeStates.stamp?.completedAt instanceof Date);
+        assertEquals(final?.status, "completed");
+      });
+
+      it("fails the run explicitly in strict mode instead of pausing with a changed value", async () => {
+        const { waiting, final } = await pauseAndResume(
+          new MemoryBackend({ strictContext: true }),
+          new Date(0),
+        );
+
+        assertEquals(waiting?.status, "failed");
+        const message = waiting?.error?.message ?? "";
+        assertStringIncludes(message, "strictContext enabled: nodeStates.output.<redacted>");
+        assertStringIncludes(message, "(Date)");
+        assert(!message.includes("(object)"), message);
+        assertEquals(final?.status, "failed");
+      });
+
+      it("pauses and resumes a strict child whose step output is plain JSON", async () => {
+        const { waiting, final } = await pauseAndResume(
+          new MemoryBackend({ strictContext: true }),
+          "1970-01-01T00:00:00.000Z",
+        );
+
+        assertEquals(waiting?.status, "waiting");
+        assertEquals(waiting?.nodeStates.stamp?.output, { when: "1970-01-01T00:00:00.000Z" });
+        assertEquals(final?.status, "completed");
+      });
+
+      it("fails the run with a named path when nested step output cannot be encoded", async () => {
+        const { waiting } = await pauseAndResume(new MemoryBackend(), 1n);
+
+        assertEquals(waiting?.status, "failed");
+        assertStringIncludes(waiting?.error?.message ?? "", "nodeStates.output.<redacted>");
+      });
     });
   });
 

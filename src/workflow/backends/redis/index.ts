@@ -31,7 +31,9 @@ import {
 } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import {
+  prepareNodeStatesUserData,
   prepareWorkflowJson,
+  resolveDeferredWorkflowJsonValue,
   serializeWorkflowContext,
   serializeWorkflowJson,
 } from "../../context-serialization.ts";
@@ -1804,6 +1806,15 @@ export class RedisBackend implements WorkflowBackend {
     if (config.client) this.client = config.client;
   }
 
+  prepareNodeStatesForPersistence(
+    runId: string | undefined,
+    nodeStates: WorkflowRun["nodeStates"],
+  ): WorkflowRun["nodeStates"] {
+    return prepareNodeStatesUserData(nodeStates, runId, {
+      strictContext: this.config.strictContext,
+    });
+  }
+
   private storagePrefix(): string {
     return `${this.config.prefix}${REDIS_STORAGE_SCHEMA_NAMESPACE}`;
   }
@@ -1910,6 +1921,7 @@ export class RedisBackend implements WorkflowBackend {
     const context = serializeWorkflowContext(run.context, run.id, {
       strictContext: this.config.strictContext,
     });
+    const nodeStates = this.serializeNodeStates(run.nodeStates, run.id);
     return {
       id: run.id,
       workflowId: run.workflowId,
@@ -1922,7 +1934,7 @@ export class RedisBackend implements WorkflowBackend {
       sourceIntegrationPolicy: JSON.stringify(sourceIntegrationPolicy),
       input: JSON.stringify(run.input),
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
-      nodeStates: JSON.stringify(run.nodeStates),
+      nodeStates,
       currentNodes: JSON.stringify(run.currentNodes),
       context,
       error: run.error ? JSON.stringify(run.error) : "",
@@ -1951,6 +1963,11 @@ export class RedisBackend implements WorkflowBackend {
         strictContext: this.config.strictContext,
       })
       : undefined;
+    // Node states carry the same step values as `output`, so they are prepared
+    // before it for a named diagnostic instead of the native JSON error.
+    const preparedNodeStates = patch.nodeStates === undefined
+      ? undefined
+      : this.serializeNodeStates(patch.nodeStates, runId);
     const fields: Record<string, string> = {};
     const completion = Object.hasOwn(patch, "completedAt")
       ? serializeCompletionInstant(patch.completedAt)
@@ -1970,7 +1987,7 @@ export class RedisBackend implements WorkflowBackend {
       "output",
       patch.output !== undefined ? JSON.stringify(patch.output) : "",
     );
-    setDefinedField("nodeStates", patch.nodeStates, JSON.stringify(patch.nodeStates));
+    if (preparedNodeStates !== undefined) fields.nodeStates = preparedNodeStates;
     setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
     setDefinedField("currentNodes", patch.currentNodes, JSON.stringify(patch.currentNodes));
     setDefinedField("context", preparedContext, preparedContext?.serialized ?? "");
@@ -1995,12 +2012,19 @@ export class RedisBackend implements WorkflowBackend {
     return fields;
   }
 
+  /** Encode node states with their step data under the run's context policy. */
+  private serializeNodeStates(nodeStates: WorkflowRun["nodeStates"], runId?: string): string {
+    return JSON.stringify(this.prepareNodeStatesForPersistence(runId, nodeStates));
+  }
+
   private serializeCheckpointNodeStates(
     runId: string,
     nodeStates: Checkpoint["nodeStates"],
   ): string {
     return prepareWorkflowJson(
-      this.normalizeCheckpointNodeStates(nodeStates),
+      this.normalizeCheckpointNodeStates(
+        this.prepareNodeStatesForPersistence(runId, nodeStates),
+      ),
       "checkpoint.nodeStates",
       runId,
       { strictContext: false },
@@ -2044,9 +2068,12 @@ export class RedisBackend implements WorkflowBackend {
       ...checkpointMetadata,
       timestamp: checkpoint.timestamp.toISOString(),
     });
-    const normalizedResumeEnvelope = _resumeEnvelope === undefined ? undefined : {
-      ..._resumeEnvelope,
-      nodeStates: this.normalizeCheckpointNodeStates(_resumeEnvelope.nodeStates),
+    const resolvedResumeEnvelope = resolveDeferredWorkflowJsonValue(_resumeEnvelope);
+    const normalizedResumeEnvelope = resolvedResumeEnvelope === undefined ? undefined : {
+      ...resolvedResumeEnvelope,
+      nodeStates: this.normalizeCheckpointNodeStates(
+        this.prepareNodeStatesForPersistence(runId, resolvedResumeEnvelope.nodeStates),
+      ),
     };
     const resumeEnvelope = normalizedResumeEnvelope === undefined
       ? ""
