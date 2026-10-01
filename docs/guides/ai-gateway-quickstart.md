@@ -55,6 +55,11 @@ curl https://api.veryfront.com/ai/v1/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
 
+With an account key, add `-H "x-veryfront-project-slug: <PROJECT_SLUG>"` to
+this command and to the `curl` command in
+[Verify it worked](#verify-it-worked). Client configuration does not apply to
+`curl`.
+
 The response uses the OpenAI list shape. Copy the `id` of a model, for example
 `anthropic/claude-sonnet-4-6`, into your tool. Each base URL lists only the
 models it serves, so an id from this list works on `/ai/v1`. The examples below
@@ -96,10 +101,11 @@ env_key = "VERYFRONT_API_KEY"
 wire_api = "responses"
 ```
 
-With an account key, add the project header to the provider block:
+With an account key, also add the project header to `config.toml`:
 
 ```toml
-http_headers = { "x-veryfront-project-slug" = "<PROJECT_SLUG>" }
+[model_providers.veryfront.http_headers]
+"x-veryfront-project-slug" = "<PROJECT_SLUG>"
 ```
 
 Codex uses the Responses API, so choose a model that supports it. See the
@@ -145,12 +151,18 @@ models:
     apiKey: ${{ secrets.VERYFRONT_API_KEY }}
 ```
 
-With an account key, add the header under the model:
+With an account key, add `requestOptions` to the same model entry:
 
 ```yaml
-requestOptions:
-  headers:
-    x-veryfront-project-slug: <PROJECT_SLUG>
+models:
+  - name: Veryfront Mistral Small
+    provider: openai
+    model: mistral/mistral-small-2503
+    apiBase: https://api.veryfront.com/ai/v1
+    apiKey: ${{ secrets.VERYFRONT_API_KEY }}
+    requestOptions:
+      headers:
+        x-veryfront-project-slug: <PROJECT_SLUG>
 ```
 
 See [Continue OpenAI provider](https://docs.continue.dev/customize/model-providers/top-level/openai).
