@@ -1410,6 +1410,39 @@ describe("MemoryBackend", () => {
       assertEquals((await backend.getRun("run-bigint-sub-workflow-write"))?.nodeStates, {});
     });
 
+    it("treats a node id named toJSON as data in node-state input and output", async () => {
+      const calls: string[] = [];
+      const hijack = () => {
+        calls.push("toJSON");
+        return { hijacked: "" };
+      };
+      await backend.createRun(createTestRun("run-node-state-to-json", {
+        nodeStates: {
+          toJSON: {
+            nodeId: "toJSON",
+            status: "completed",
+            attempt: 1,
+            input: hijack,
+            output: hijack,
+          },
+          other: {
+            nodeId: "other",
+            status: "completed",
+            attempt: 1,
+            input: { keep: "input" },
+            output: { keep: "output" },
+          },
+        },
+      }));
+
+      assertEquals(calls, []);
+      const nodeStates = (await backend.getRun("run-node-state-to-json"))?.nodeStates;
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "input"), false);
+      assertEquals(Object.hasOwn(nodeStates?.toJSON ?? {}, "output"), false);
+      assertEquals(nodeStates?.other?.input, { keep: "input" });
+      assertEquals(nodeStates?.other?.output, { keep: "output" });
+    });
+
     it("rejects node-state user data JSON cannot encode, naming the field (#2242)", async () => {
       await backend.createRun(createTestRun("run-node-state-bigint"));
       await assertRejectsAsynchronously(

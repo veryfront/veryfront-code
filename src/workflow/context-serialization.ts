@@ -1674,7 +1674,13 @@ export function prepareNodeStatesUserData<
     const values = collectNodeStateField(prepared, field);
     if (values === undefined) continue;
     const persisted = jsonParse(
-      serializeWorkflowJson(values, `nodeStates.${field}`, runId, options),
+      serializeWorkflowJson(
+        values,
+        `nodeStates.${field}`,
+        runId,
+        options,
+        WORKFLOW_NODE_RECORD,
+      ),
     ) as Record<string, unknown>;
     for (const nodeId of objectKeys(values)) {
       if (objectHasOwn(persisted, nodeId)) prepared[nodeId]![field] = persisted[nodeId];
