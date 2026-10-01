@@ -15,6 +15,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
@@ -6046,6 +6047,139 @@ describe("RedisBackend", () => {
       );
       assertEquals(await strictBackend.getCheckpoints("run-cp-strict-node-state-date"), []);
       assertEquals(await strictBackend.getCheckpoints("run-cp-strict-node-output-date"), []);
+    });
+
+    it("preserves owned node timestamps without reporting them as lossy (#2290)", async () => {
+      for (const withResumeEnvelope of [false, true]) {
+        const runId = `run-owned-node-dates-${withResumeEnvelope}`;
+        const startedAt = new Date(1);
+        const completedAt = new Date(2);
+        const nodeStates: WorkflowRun["nodeStates"] = {
+          a: {
+            nodeId: "a",
+            status: "completed",
+            attempt: 1,
+            startedAt,
+            completedAt,
+            output: { toJSON: () => ({ v: 1 }) },
+          },
+        };
+        await backend.createRun(createTestRun(runId, {
+          status: "running",
+          workerId: "worker-1",
+        }));
+        const checkpoint = cloneOwnedCheckpointForPersistence({
+          id: `cp-owned-node-dates-${withResumeEnvelope}`,
+          nodeId: "a",
+          timestamp: completedAt,
+          context: { input: {} },
+          nodeStates,
+          ...(withResumeEnvelope
+            ? {
+              _resumeEnvelope: {
+                schemaVersion: 2 as const,
+                ownerNodeId: "a",
+                context: { input: {} },
+                nodeStates,
+                workflowProjection: { context: {} },
+                graphAdmission: {
+                  stepsEvaluationContext: { input: {} },
+                  stepsEvaluationProjection: { context: {} },
+                  graphIdentity: [],
+                  workflowVersion: null,
+                },
+              },
+            }
+            : {}),
+        });
+        const warnings: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          if (entry.level === "warn" && entry.component === "workflow-context") {
+            warnings.push(entry);
+          }
+        });
+
+        try {
+          assertEquals(
+            await backend.saveCheckpointIfStatusAndWorker(
+              runId,
+              runId,
+              ["running"],
+              "worker-1",
+              checkpoint,
+            ),
+            true,
+          );
+        } finally {
+          unsubscribe();
+        }
+
+        const stored = await backend.getLatestCheckpoint(runId);
+        assertEquals(stored?.nodeStates.a?.startedAt, startedAt);
+        assertEquals(stored?.nodeStates.a?.completedAt, completedAt);
+        assertEquals(stored?.nodeStates.a?.output, { v: 1 });
+        if (withResumeEnvelope) {
+          assertEquals(stored?._resumeEnvelope?.nodeStates.a?.startedAt, startedAt);
+          assertEquals(stored?._resumeEnvelope?.nodeStates.a?.completedAt, completedAt);
+        }
+        assertEquals(
+          warnings.some((warning) => String(warning.context?.paths).includes("(Date)")),
+          false,
+        );
+      }
+    });
+
+    it("rejects invalid node timestamps on ordinary and owned checkpoint paths (#2290)", async () => {
+      const invalidDate = new Date(Number.NaN);
+      const nativeError = assertThrows(() => invalidDate.toISOString(), RangeError);
+      assertInstanceOf(nativeError, RangeError);
+      const nodeStates: WorkflowRun["nodeStates"] = {
+        a: {
+          nodeId: "a",
+          status: "completed",
+          attempt: 1,
+          startedAt: invalidDate,
+          completedAt: invalidDate,
+          output: { toJSON: () => ({ v: 1 }) },
+        },
+      };
+      await backend.createRun(createTestRun("run-invalid-owned-node-date", {
+        status: "running",
+        workerId: "worker-1",
+      }));
+
+      await assertRejects(
+        () =>
+          backend.saveCheckpoint("run-invalid-ordinary-node-date", {
+            id: "cp-invalid-ordinary-node-date",
+            nodeId: "a",
+            timestamp: new Date(0),
+            context: { input: {} },
+            nodeStates,
+          }),
+        RangeError,
+        nativeError.message,
+      );
+      await assertRejects(
+        () =>
+          backend.saveCheckpointIfStatusAndWorker(
+            "run-invalid-owned-node-date",
+            "run-invalid-owned-node-date",
+            ["running"],
+            "worker-1",
+            cloneOwnedCheckpointForPersistence({
+              id: "cp-invalid-owned-node-date",
+              nodeId: "a",
+              timestamp: new Date(0),
+              context: { input: {} },
+              nodeStates,
+            }),
+          ),
+        RangeError,
+        nativeError.message,
+      );
+      assertEquals(await backend.getCheckpoints("run-invalid-ordinary-node-date"), []);
+      assertEquals(await backend.getCheckpoints("run-invalid-owned-node-date"), []);
     });
 
     it("should return null when no checkpoints", async () => {
