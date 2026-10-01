@@ -480,7 +480,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
     } finally {
       flushSync(() => root.unmount());
       // Drain scheduler callbacks before restoring timers for the next test.
-      time.runAll();
+      time.tick(0);
       time.restore();
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       restore();
