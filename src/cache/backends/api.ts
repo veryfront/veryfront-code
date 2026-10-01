@@ -10,10 +10,12 @@ import {
 import type { CacheBackend, CacheReadOptions } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import {
+  cacheCredentialIdentity,
   resolveCacheRequestAuthority,
   type ResolvedCacheAuthority,
 } from "#veryfront/cache/request-authority.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   requireHostPrivateApiHttps,
@@ -41,6 +43,11 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 15_000;
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 10;
 const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
+const CIRCUIT_BREAKER_OPTIONS = {
+  failureThreshold: CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+  resetTimeoutMs: CIRCUIT_BREAKER_RESET_TIMEOUT_MS,
+  successThreshold: CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
+};
 const ERROR_BODY_MAX_LENGTH = 500;
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
@@ -94,10 +101,24 @@ type CacheRequestOptions = {
   circuitBreaker?: CircuitBreaker;
 };
 
-/** The pattern delete running now, and the one queued behind it. */
-type PatternDeleteRound = { current: Promise<number>; next?: Promise<number> };
+/**
+ * The pattern delete running now and the one queued behind it, with the
+ * identity of the credential the queued one runs under.
+ */
+type PatternDeleteRound = {
+  current: Promise<number>;
+  next?: Promise<number>;
+  nextCredential?: string;
+};
 
 const ignoreSettlement = (): void => {};
+
+/** The cache API refused the credential itself, not the operation. */
+function isCredentialRejection(error: unknown): boolean {
+  if (!(error instanceof VeryfrontError)) return false;
+  const context = error.context as { upstreamStatus?: unknown } | undefined;
+  return context?.upstreamStatus === 401 || context?.upstreamStatus === 403;
+}
 
 export class ApiCacheBackend implements CacheBackend {
   readonly type = "api" as const;
@@ -110,12 +131,7 @@ export class ApiCacheBackend implements CacheBackend {
   private timeoutMs: number;
   private readonly maxResponseBytes: number;
   private circuitBreaker: CircuitBreaker;
-  /**
-   * Pattern deletes are best-effort invalidations. They run through their own
-   * breaker so a slow or failing invalidation backend cannot open the breaker
-   * that every cache read (agent streams, execute, agents/list) depends on.
-   */
-  private invalidationCircuitBreaker: CircuitBreaker;
+  private readonly circuitBreakerName: string;
   private readonly patternDeleteRounds = new Map<string, PatternDeleteRound>();
 
   constructor(
@@ -148,16 +164,8 @@ export class ApiCacheBackend implements CacheBackend {
     this.maxResponseBytes = maxResponseBytes;
 
     const breakerName = options.circuitBreakerName ?? "api-cache";
-    const breakerOptions = {
-      failureThreshold: CIRCUIT_BREAKER_FAILURE_THRESHOLD,
-      resetTimeoutMs: CIRCUIT_BREAKER_RESET_TIMEOUT_MS,
-      successThreshold: CIRCUIT_BREAKER_SUCCESS_THRESHOLD,
-    };
-    this.circuitBreaker = getCircuitBreaker(breakerName, breakerOptions);
-    this.invalidationCircuitBreaker = getCircuitBreaker(
-      `${breakerName}:invalidation`,
-      breakerOptions,
-    );
+    this.circuitBreakerName = breakerName;
+    this.circuitBreaker = getCircuitBreaker(breakerName, CIRCUIT_BREAKER_OPTIONS);
   }
 
   /**
@@ -304,6 +312,7 @@ export class ApiCacheBackend implements CacheBackend {
             }
             throw REQUEST_ERROR.create({
               detail: `HTTP ${response.status}: ${responseBody.slice(0, ERROR_BODY_MAX_LENGTH)}`,
+              context: { upstreamStatus: response.status },
             });
           }
 
@@ -478,17 +487,26 @@ export class ApiCacheBackend implements CacheBackend {
       return 0;
     }
 
+    const { token, projectRef, tokenSource } = this.cacheAuthority();
+    // Pattern deletes are best-effort invalidations. They run through their
+    // own breaker, scoped to the project, so a slow or failing invalidation
+    // backend cannot open the breaker every cache read (agent streams,
+    // execute, agents/list) depends on, nor stop other projects' invalidations.
+    const invalidationCircuitBreaker = getCircuitBreaker(
+      `${this.circuitBreakerName}:invalidation:${projectRef ?? ""}`,
+      CIRCUIT_BREAKER_OPTIONS,
+    );
     const deletePattern = async () => {
       const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
         pattern: prefixed,
-      }, { failOnError: true, circuitBreaker: this.invalidationCircuitBreaker });
+      }, { failOnError: true, circuitBreaker: invalidationCircuitBreaker });
       return result?.deleted ?? 0;
     };
 
-    const { projectRef, tokenSource } = this.cacheAuthority();
-    if (!projectRef) return await deletePattern();
+    if (!token || !projectRef) return await deletePattern();
     return await this.coalescePatternDelete(
       JSON.stringify([tokenSource, projectRef, prefixed]),
+      cacheCredentialIdentity(token),
       deletePattern,
     );
   }
@@ -498,13 +516,26 @@ export class ApiCacheBackend implements CacheBackend {
    * file write. Callers that arrive while a delete for the same project and
    * pattern is in flight share one delete queued behind it, so N streams cost
    * at most two requests. The queued delete starts after every joined call, so
-   * no caller relies on a scan that began before it asked.
+   * no caller relies on a scan that began before it asked. A caller whose
+   * credential differs from the one the shared delete ran under retries on its
+   * own when the API refused that credential.
    */
-  private coalescePatternDelete(key: string, run: () => Promise<number>): Promise<number> {
+  private coalescePatternDelete(
+    key: string,
+    credential: string,
+    run: () => Promise<number>,
+  ): Promise<number> {
     const round = this.patternDeleteRounds.get(key);
     if (round) {
-      round.next ??= round.current.then(ignoreSettlement, ignoreSettlement).then(run);
-      return round.next;
+      if (round.next === undefined) {
+        round.next = round.current.then(ignoreSettlement, ignoreSettlement).then(run);
+        round.nextCredential = credential;
+      }
+      if (round.nextCredential === credential) return round.next;
+      return round.next.catch((error: unknown) => {
+        if (!isCredentialRejection(error)) throw error;
+        return run();
+      });
     }
 
     const started: PatternDeleteRound = { current: run() };
@@ -516,6 +547,7 @@ export class ApiCacheBackend implements CacheBackend {
       }
       started.current = started.next;
       started.next = undefined;
+      started.nextCredential = undefined;
       started.current.then(advance, advance);
     };
     started.current.then(advance, advance);
